@@ -269,8 +269,10 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
                     throw NSError(
                         domain: WKWebExtensionContext.errorDomain,
                         code: WKWebExtensionContext.Error.unknown.rawValue,
-                        userInfo: [NSLocalizedDescriptionKey:
-                            "Apple Passwords is not a supported Chrome 3.4.0 package for persistent background support."]
+                        userInfo: [
+                            NSLocalizedDescriptionKey:
+                                "Apple Passwords is not a supported Chrome 3.4.0 package for persistent background support.",
+                        ]
                     )
                 }
                 ExtensionShims.ensureApplied(at: package)
@@ -696,7 +698,6 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         action.hasUnreadBadgeText = false
         return true
     }
-
 
     private func clipPopup(_ popover: NSPopover) {
         guard let content = popover.contentViewController?.view,

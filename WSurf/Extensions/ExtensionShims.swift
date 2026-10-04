@@ -21,7 +21,11 @@ nonisolated enum ExtensionShims {
 
     static let applePasswordsID = "pejdijmoenmkgeppbflobdenhhabjlaj"
     private static let applePasswordsVersion = "3.4.0"
-    static let applePasswordsPublicKey = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAk4xPYZla5XqlDN0PPiLCQAYRqdaR06jSl3sntEE5jHoe7XldFqhsdBSp4L8mozwjCwi6z5YtEpTV1L2k4WYmDuiwoH7YKGlQD/YbC8QMcPvGLWOr8WYfXWtECKv0Nx7Tahk8nCIDWgJVm8YmPIDhPv4o5VVrq6aUveCKvTOskHWFyRzSTC2VKpzIVX7F65UzqqOmqLfMpo6lfaLcKSC7G6oQLA/wS7hcGZEwZ11si6XWR4o/hDuUSt6zdacy/sc7H80eH3lMnEmvb6HoB7+KvxfGIU7dqRmhA/w/X0qkiIJYeoo4tZrNxBj7TTLz9hnHUbMRwJqsoIU+pkoprgFWDQIDAQAB"
+    static let applePasswordsPublicKey = """
+        MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAk4xPYZla5XqlDN0PPiLCQAYRqdaR06jSl3sntEE5jHoe7XldFqhsdBSp4L8mozwjCwi6z5YtEpTV1L2k4WYmDuiwoH7YKGlQD/YbC8QMcPvGLWOr8WYf\
+        XWtECKv0Nx7Tahk8nCIDWgJVm8YmPIDhPv4o5VVrq6aUveCKvTOskHWFyRzSTC2VKpzIVX7F65UzqqOmqLfMpo6lfaLcKSC7G6oQLA/wS7hcGZEwZ11si6XWR4o/hDuUSt6zdacy/sc7H80eH3lMnEmvb6HoB7+K\
+        vxfGIU7dqRmhA/w/X0qkiIJYeoo4tZrNxBj7TTLz9hnHUbMRwJqsoIU+pkoprgFWDQIDAQAB
+        """
     private static let appleAdaptationFileName = "wsurf-apple-passwords.js"
     private static let appleAdaptationMarker = "// wsurf-apple-passwords"
     private static let lastErrorMarker = "// wsurf-apple-passwords-last-error"
@@ -172,7 +176,9 @@ nonisolated enum ExtensionShims {
             )
             try converted.write(to: manifestURL, options: .atomic)
         } catch {
-            if let oldWorker { try? oldWorker.write(to: workerURL, options: .atomic) }
+            if let oldWorker {
+                try? oldWorker.write(to: workerURL, options: .atomic)
+            }
             if let oldAdaptation {
                 try? oldAdaptation.write(to: adaptationURL, options: .atomic)
             } else {

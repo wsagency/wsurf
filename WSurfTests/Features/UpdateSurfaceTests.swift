@@ -109,7 +109,6 @@ struct UpdateSurfaceTests {
         #expect(prefixed.version != "0.1.2")
     }
 
-
     /// Quiet while idle, and quiet again once dismissed.
     @Test func theBannerKnowsWhenToAppear() {
         let model = UpdateModel()
@@ -124,7 +123,6 @@ struct UpdateSurfaceTests {
         model.isDismissed = true
         #expect(!model.isBannerVisible)
     }
-
 
     /// The caption sits on one line beside the pop-up menu. Two lines push the
     /// row taller than the ones around it.

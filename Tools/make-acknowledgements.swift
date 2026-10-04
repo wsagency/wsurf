@@ -1,8 +1,9 @@
 #!/usr/bin/env swift
-// Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 // SPDX-FileCopyrightText: 2026 Kavoye
+// SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 WSurf Agency
+// Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 //
 // Writes WSurf/Support/Acknowledgements.json from the resolved packages and

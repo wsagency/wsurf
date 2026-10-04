@@ -138,10 +138,12 @@ struct ExtensionShimsTests {
                 "background": ["service_worker": "background.js"],
                 "permissions": ["nativeMessaging", "storage", "scripting"],
                 "host_permissions": ["*://*/*"],
-                "web_accessible_resources": [[
-                    "matches": ["<all_urls>"],
-                    "resources": ["completion_list.html"],
-                ]],
+                "web_accessible_resources": [
+                    [
+                        "matches": ["<all_urls>"],
+                        "resources": ["completion_list.html"],
+                    ],
+                ],
             ]
         )
         defer { try? FileManager.default.removeItem(at: package.deletingLastPathComponent()) }
@@ -203,7 +205,6 @@ struct ExtensionShimsTests {
             atPath: package.appendingPathComponent("wsurf-apple-passwords.js").path
         ))
     }
-
 
     private func write(_ text: String, to path: String, in package: URL) throws {
         let url = package.appendingPathComponent(path)

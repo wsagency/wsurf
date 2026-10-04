@@ -17,6 +17,8 @@ release notes will be added above this provenance record.
   pages; restricted browser entitlements are not enabled in this UI smoke.
 - Seven update payload/state/layout behavior checks pass. Removed inherited
   wording and configuration-copy assertions rather than pinning new branding.
+- Fixed strict SwiftLint header/import/collection/line-length violations.
+  The compiled Apple public key still derives the official extension ID.
 
 No signed WSurf release has been published yet. Apple Passwords compatibility
 changes are present in source and fixtures, but real PIN, fill, save, OTP,
