@@ -1,6 +1,7 @@
+<!-- Modified for WSurf by wsagency in 2026; based on Linen by Kavoye. -->
 # Architecture
 
-Linen is a macOS SwiftUI app around WebKit. Swift 6 strict concurrency and
+WSurf is a macOS SwiftUI app around WebKit. Swift 6 strict concurrency and
 Main Actor default isolation are enabled for the app target.
 
 ## Runtime structure
@@ -108,7 +109,7 @@ These services have no browser, profile, assistant, or sharing-grant dependency.
 
 ## Assistant execution and context
 
-Providers propose actions. Linen checks permissions, runs each action once, and
+Providers propose actions. WSurf checks permissions, runs each action once, and
 saves its result in a checkpoint. Resuming an interrupted task preserves user
 answers and requires verification before retrying an action with an unknown outcome.
 Repeated failures or unchanged results eventually pause the task.
@@ -131,7 +132,7 @@ not report measured provider token usage. Progress updates remain in private cha
 history; diagnostics record only their event type and status.
 
 See [OpenAI integration](OPENAI.md) for provider configuration and validation,
-and [Browser autofill](Linen/Web/Autofill/README.md) for form and credential handling.
+and [Browser autofill](WSurf/Web/Autofill/README.md) for form and credential handling.
 
 ## State and SwiftUI
 
@@ -140,8 +141,8 @@ screen or independently changing section should be a real `View` type with
 narrow inputs; a computed `some View` property does not create an observation
 boundary.
 
-Use the components and metrics in `Linen/UI/Chrome` and
-`Linen/Settings/SettingsPrimitives.swift`. `Theme` owns shared visual tokens.
+Use the components and metrics in `WSurf/UI/Chrome` and
+`WSurf/Settings/SettingsPrimitives.swift`. `Theme` owns shared visual tokens.
 User-facing strings remain localizable; protocol values, URLs, model IDs and
 third-party error text remain verbatim.
 
@@ -172,7 +173,7 @@ machine’s cores. The `.boundedWebViews` trait takes a slot; apply it to the
 tests that build a view rather than to a whole suite, so the rest do not queue
 for a resource they never use.
 
-`Linen.xctestplan` turns on per-test timeouts: 120 seconds by default, 300 at
+`WSurf.xctestplan` turns on per-test timeouts: 120 seconds by default, 300 at
 most. A stalled test times out and reports its name without blocking the full run.
 
 CI runs the full suite with code coverage and rejects app-target coverage below

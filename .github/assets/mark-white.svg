@@ -1,8 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Linen">
-  <g fill="#FBFCFF">
-    <rect x="159.0" y="159.0" width="480.0" height="190.0" rx="46.0"/>
-    <rect x="675.0" y="159.0" width="190.0" height="480.0" rx="46.0"/>
-    <rect x="385.0" y="675.0" width="480.0" height="190.0" rx="46.0"/>
-    <rect x="159.0" y="385.0" width="190.0" height="480.0" rx="46.0"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="WSurf wave mark">
+<!-- Modified for WSurf by wsagency in 2026; original brand mark replaced. -->
+<title>WSurf</title>
+<path fill="#15d2d7" transform="translate(0 1024) scale(1 -1)" d="M338 571 C327 579 310 579 292 568 C269 554 269 522 282 499 C301 466 339 454 369 466 C392 474 412 497 429 520 C489 594 530 615 575 594 C606 579 610 559 605 550 C590 558 577 559 565 543 C550 523 553 498 573 481 C601 457 630 456 657 473 C696 497 724 552 753 592 C799 657 862 653 900 610 C908 599 910 584 903 576 C887 586 874 585 860 575 C840 564 824 536 807 504 C772 437 735 380 677 372 C627 361 584 381 546 413 C525 430 507 443 488 439 C452 432 433 398 391 379 C337 356 293 366 252 391 C220 411 181 443 167 480 C143 540 163 575 180 594 C218 637 259 635 296 618 C326 606 343 587 338 571 Z"/>
 </svg>

@@ -1,11 +1,12 @@
+<!-- Modified for WSurf by wsagency in 2026; based on Linen by Kavoye. -->
 <div align="center">
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/mark-white.svg">
-  <img src=".github/assets/mark-black.svg" alt="Linen" width="104" height="104">
+  <img src=".github/assets/mark-black.svg" alt="WSurf" width="104" height="104">
 </picture>
 
-# Linen
+# WSurf
 
 **A browser with a built-in assistant for macOS.**
 
@@ -13,17 +14,21 @@ Ask the assistant to search, read websites, and use the tabs you have open.
 It can click, type, and scroll. Click the page at any time to stop the assistant
 and use it yourself.
 
+WSurf is an independent fork of
+[kavoye/linen-browser](https://github.com/kavoye/linen-browser). It preserves
+the upstream Apache 2.0 license, copyright notices, and third-party
+attributions; see [LICENSE](LICENSE) and [NOTICE](NOTICE) for terms,
+provenance, and the WSurf modification record.
+
 <a href="#install">Install</a> ·
 <a href="#what-it-does">Features</a> ·
 <a href="#building">Build</a> ·
 <a href="CONTRIBUTING.md">Contribute</a>
 
-<a href="https://github.com/kavoye/linen-browser/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/kavoye/linen-browser/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status"></a>
+<a href="https://github.com/wsagency/wsurf/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/wsagency/wsurf/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status"></a>
 <img src="https://img.shields.io/badge/macOS-26%2B-1c1c1e?style=flat-square" alt="macOS 26 or later">
 <img src="https://img.shields.io/badge/Apple%20silicon-1c1c1e?style=flat-square" alt="Apple silicon">
 <img src="https://img.shields.io/badge/license-Apache%202.0-1c1c1e?style=flat-square" alt="Apache 2.0 license">
-
-![Linen browser screenshot](https://github.com/user-attachments/assets/9ccadd3b-9090-46a1-8ad7-f17d648a60c1)
 
 </div>
 
@@ -31,12 +36,16 @@ and use it yourself.
 
 Requires **macOS 26 or later** and **Apple silicon**.
 
-Download the disk image from the [latest release](https://github.com/kavoye/linen-browser/releases/latest),
-open it, and drag Linen to Applications. The app checks for updates automatically
-and asks before downloading.
+WSurf does not yet have a verified public signed release. Do not treat an
+unsigned local build as a release artifact. When a WSurf release is published,
+download the disk image from the
+[latest release](https://github.com/wsagency/wsurf/releases/latest), open it,
+and drag WSurf to Applications.
 
 This README describes the current source. See the [release notes](CHANGELOG.md)
-for changes in published versions.
+for upstream historical release facts and WSurf changes; historical entries are
+labelled as inherited provenance and are not claims that WSurf published those
+versions.
 
 ## What it does
 
@@ -46,11 +55,19 @@ for changes in published versions.
   Use `@` to include a tab, attach files, and review actions in Agent Activity.
 - **Preview links:** hold Shift over a link for a summary, or Shift-click to
   open a preview.
-- **Fill forms:** save passwords, payment cards, and contact details in Settings ›
-  Autofill. Passwords and cards require system authentication. Passkeys use macOS.
+- **Fill forms:** use macOS Passwords-compatible password autofill, save
+  payment cards, and contact details in Settings › Autofill. Passwords and
+  cards require system authentication. Passkeys use macOS.
 - **Add extensions:** install from the Chrome Web Store or Firefox Add-ons.
 - **Separate browsing:** profiles keep cookies, history, tabs, permissions, and
   extensions separate. Press ⇧⌘N for private browsing.
+
+The Apple Passwords compatibility work preserves Apple's official Chrome
+extension identity, public key, authentication, PIN, and native protocol
+contracts. That identity is an external Apple client contract, not WSurf
+branding. Source fixtures and extension parsing are covered, but real Apple
+Passwords PIN, fill, save, OTP, 15-minute idle, lock, and sleep behavior has
+not been verified in an own signed WSurf build.
 
 ### Choose a model
 
@@ -58,7 +75,7 @@ Use Apple Intelligence on your Mac, add a provider API key, or connect to a loca
 server such as Ollama or LM Studio. Supported providers include OpenAI,
 Anthropic, Gemini, DeepSeek, Groq, Mistral, OpenRouter, and xAI.
 
-External assistants can use explicitly shared tabs through Linen’s
+External assistants can use explicitly shared tabs through WSurf's
 [MCP server](MCP.md).
 
 ## Privacy and control
@@ -82,38 +99,51 @@ Report vulnerabilities privately through [Security](SECURITY.md).
 - One window. Links requesting another window open in tabs.
 - Pins and folders replace a separate bookmarks manager. Import bookmarks from
   an HTML export in Settings › General; history is not imported.
-- Website notifications require Linen to be running. There is no background web push.
+- Website notifications require WSurf to be running. There is no background web
+  push.
+- The managed browser public-key-credential entitlement requires Apple's
+  organization Account Holder review. A local build may need that entitlement
+  removed, which disables passkeys; see [Releasing](RELEASING.md).
+
+WSurf keeps its own data in `~/Library/Application Support/WSurf` and uses
+separate WSurf defaults, stage, native-host, MCP, logger, and `WSURF_*`
+configuration namespaces. It does not alias or automatically copy personal data
+from another browser.
 
 ## Building
 
 Requires **Xcode 26.5 or later**.
 
 ```bash
-git clone https://github.com/kavoye/linen-browser.git
-cd linen-browser
-open Linen.xcodeproj
+git clone https://github.com/wsagency/wsurf.git
+cd wsurf
+open WSurf.xcodeproj
 ```
 
-Select the `Linen` target, set your team in **Signing & Capabilities**, then build
-and run the `Linen` scheme. Dependencies resolve automatically.
+Select the `WSurf` target, set your team in **Signing & Capabilities**, then
+build and run the `WSurf` scheme. Dependencies resolve automatically.
 
-If your team lacks the passkey entitlement, remove this entry from
-`Linen/Linen.entitlements`. Passkeys will be unavailable in that build.
+For a local team without the passkey entitlement, remove this entry from
+`WSurf/WSurf.entitlements`. Passkeys will be unavailable in that build:
 
 ```xml
 <key>com.apple.developer.web-browser.public-key-credential</key>
 <true/>
 ```
 
-Use a signed build for Keychain access. See [Contributing](CONTRIBUTING.md) for
-test commands and development guidelines, [Architecture](ARCHITECTURE.md) for the
-code structure, and [Releasing](RELEASING.md) for distribution.
+Use a normally signed build for Keychain access and manual Apple Passwords
+compatibility checks. The current source/test checks do not establish real
+vault authentication or fill/save behavior. See [Contributing](CONTRIBUTING.md)
+for test commands and development guidelines, [Architecture](ARCHITECTURE.md)
+for the code structure, and [Releasing](RELEASING.md) for distribution.
 
 ## License and acknowledgements
 
-[Apache 2.0](LICENSE). Provider logos belong to their owners.
+[Apache 2.0](LICENSE). WSurf is a fork with attribution to the upstream
+Kavoye Linen project; provider logos and Apple client identifiers belong to
+their owners.
 
-Linen uses [Sparkle](https://github.com/sparkle-project/Sparkle),
+WSurf uses [Sparkle](https://github.com/sparkle-project/Sparkle),
 [AnyLanguageModel](https://github.com/huggingface/AnyLanguageModel), and other
 open source packages. Full credits and license texts are in **Settings › About**
-and [Acknowledgements.json](Linen/Support/Acknowledgements.json).
+and [Acknowledgements.json](WSurf/Support/Acknowledgements.json).

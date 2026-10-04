@@ -1,15 +1,16 @@
+<!-- Modified for WSurf by wsagency in 2026; based on Linen by Kavoye. -->
 # Connect an external assistant
 
-Linen provides a native MCP server for controlling shared browser tabs from an
-external MCP client. Linen must be running. Its built-in assistant does not need
+WSurf provides a native MCP server for controlling shared browser tabs from an
+external MCP client. WSurf must be running. Its built-in assistant does not need
 an API key, a model, or an open conversation.
 
 1. In Settings, open **Advanced → External Connections** and enable **MCP server**.
 2. Click **Add** beside your MCP client. Restart the client or reload its MCP
    connections. Other clients can use **Copy Configuration**.
-3. Open the webpages you want to share in Linen. A split view can share several
+3. Open the webpages you want to share in WSurf. A split view can share several
    pages together.
-4. Have the client call `requestAccess`. Linen comes to the foreground and opens
+4. Have the client call `requestAccess`. WSurf comes to the foreground and opens
    an approval prompt for the displayed pages. Choose **Read Only** or
    **Allow Control**.
    If no shareable webpage is open, the prompt explains how to proceed; open a
@@ -23,8 +24,8 @@ in Applications, a client accepting the common JSON configuration format uses:
 ```json
 {
   "mcpServers": {
-    "linen": {
-      "command": "/Applications/Linen.app/Contents/MacOS/Linen",
+    "wsurf": {
+      "command": "/Applications/WSurf.app/Contents/MacOS/WSurf",
       "args": ["--mcp"]
     }
   }
@@ -33,35 +34,35 @@ in Applications, a client accepting the common JSON configuration format uses:
 
 ## Automatic client setup
 
-Linen detects the standard macOS app, command-line tool, and configuration
+WSurf detects the standard macOS app, command-line tool, and configuration
 locations for these clients:
 
 | Client | User configuration |
 | --- | --- |
-| Codex | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` when Linen inherits that environment variable |
+| Codex | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` when WSurf inherits that environment variable |
 | Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Claude Code | `~/.claude.json`, with the server added at user scope |
 | Cursor | `~/.cursor/mcp.json` |
 
 The **Copy Configuration** button sits above the client list. Use the
 **… → Choose Configuration…** action beside a client for an existing
-custom profile or another configuration location. Linen does not scan your
+custom profile or another configuration location. WSurf does not scan your
 shell aliases or project directories. **… → Show Configuration** reveals the
 selected file in Finder; file paths are kept out of the client rows.
 
 The **Added** state is read from the saved configuration when this page opens
-and when Linen becomes active again, including entries configured elsewhere.
+and when WSurf becomes active again, including entries configured elsewhere.
 These status checks do not modify the client configuration.
 
-Setup merges only a `linen` server entry into the chosen configuration. Other
+Setup merges only a `wsurf` server entry into the chosen configuration. Other
 servers, client settings, and project-specific entries are preserved. An exact
 existing command and argument are left alone, including any disabled state or
-custom client permissions. A different entry named `linen` is a conflict and is
-never silently overwritten. Review it in the client if you move Linen to a new
+custom client permissions. A different entry named `wsurf` is a conflict and is
+never silently overwritten. Review it in the client if you move WSurf to a new
 location. Setup does not enable MCP tools that the client has disabled.
 
-Before changing an existing file, Linen saves its exact bytes beside it as
-`<filename>.linen-backup-<unique ID>`. **… → Show Backup** reveals that copy.
+Before changing an existing file, WSurf saves its exact bytes beside it as
+`<filename>.wsurf-backup-<unique ID>`. **… → Show Backup** reveals that copy.
 Backups and replacements are readable only by your OS user (`0600`); backups
 may include credentials for your other servers, so keep them private. Setup
 rejects linked, malformed, unsupported, or oversized files and checks for
@@ -71,8 +72,8 @@ can use the manual configuration route instead.
 Codex setup uses the installed Codex CLI, including the executable bundled in
 its desktop app, to parse and edit a private temporary copy of its TOML. This
 preserves TOML syntax and comments without maintaining a second parser in
-Linen. The temporary copy is deleted afterward. Setup does not launch a model,
-connect a server, import client history, or grant access to browser tabs.
+WSurf. Setup does not launch a model, connect a server, import client history,
+or grant access to browser tabs.
 
 Configuration formats follow the official documentation for
 [Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli),
@@ -87,11 +88,12 @@ launches and profile changes. Switching profiles or quitting disconnects clients
 and clears their tab-sharing grants. The listener resumes automatically in a
 normal profile; the relay reconnects on the next tool call and the client must
 request fresh sharing approval. Restarting the MCP client is not needed after
-a browser restart. Calls made while Linen is unavailable return a tool error;
+a browser restart. Calls made while WSurf is unavailable return a tool error;
 interrupted calls are never replayed because an action may already have happened.
 Private browsing pauses the listener and grays out the toggle without changing
-its saved setting. Leaving private browsing resumes it automatically. Use **Disconnect**
-beside a connection in Advanced settings to revoke that connection immediately.
+its saved setting. Leaving private browsing resumes it automatically. Use
+**Disconnect** beside a connection in Advanced settings to revoke that
+connection immediately.
 
 ## Tools in this version
 
@@ -147,7 +149,7 @@ Use screenshots only when text and control state do not answer the task.
   control even when the connection has a control grant. External sharing does
   not change those settings.
 - The existing page driver detects and masks sensitive fields and refuses to
-  fill them. Consequential actions use Linen's native confirmation UI. External
+  fill them. Consequential actions use WSurf's native confirmation UI. External
   confirmations do not inherit the assistant's saved action approvals; any
   remembered approval lasts only for that connection.
 - External page scripts run in WebKit's isolated client world. Observation IDs
@@ -168,7 +170,7 @@ not imply that the external application's processing is local.
 
 ## Implementation
 
-`Linen --mcp` starts a relay before initializing AppDelegate, profiles, databases,
+`WSurf --mcp` starts a relay before initializing AppDelegate, profiles, databases,
 or WebKit. It keeps a standard MCP stdio session alive independently of the
 browser and forwards tool calls over a Unix socket. Browser connections are
 initialized on demand, including after a restart; sharing grants and observations
@@ -180,7 +182,7 @@ the tools, or once when upgrading from the old relay that exited on browser shut
 
 The socket lives in a directory owned by the current OS user with mode `0700`;
 the socket has mode `0600`. Directory and lock-file symlinks are rejected, and a
-file lock prevents another Linen process from replacing the live endpoint.
+file lock prevents another WSurf process from replacing the live endpoint.
 Message sizes, buffered messages, and concurrent connections are bounded.
 
 `MCPBrowserSession` owns external grants, observations, and transient activity.

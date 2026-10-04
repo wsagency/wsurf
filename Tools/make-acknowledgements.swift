@@ -1,10 +1,11 @@
 #!/usr/bin/env swift
+// Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 // SPDX-FileCopyrightText: 2026 Kavoye
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 WSurf Agency
 
 //
-// Writes Linen/Support/Acknowledgements.json from the resolved packages and
+// Writes WSurf/Support/Acknowledgements.json from the resolved packages and
 // from the vendored code in Tools/vendored.
 //
 //     swift Tools/make-acknowledgements.swift [checkouts-directory]
@@ -55,8 +56,8 @@ struct Payload: Encodable {
 let fileManager = FileManager.default
 let root = URL(fileURLWithPath: fileManager.currentDirectoryPath)
 let resolvedPath = root
-    .appending(path: "Linen.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved")
-let output = root.appending(path: "Linen/Support/Acknowledgements.json")
+    .appending(path: "WSurf.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved")
+let output = root.appending(path: "WSurf/Support/Acknowledgements.json")
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data("make-acknowledgements: \(message)\n".utf8))
@@ -82,7 +83,7 @@ func candidateCheckouts() -> [URL] {
         .appending(path: "Library/Developer/Xcode/DerivedData")
     let builds = (try? fileManager.contentsOfDirectory(at: derived, includingPropertiesForKeys: nil)) ?? []
     candidates += builds
-        .filter { $0.lastPathComponent.hasPrefix("Linen-") }
+        .filter { $0.lastPathComponent.hasPrefix("WSurf-") }
         .map { $0.appending(path: "SourcePackages/checkouts") }
 
     return candidates
@@ -111,8 +112,8 @@ func locateCheckouts() -> URL {
 
     fail("""
         no checkouts folder holds all \(wanted.count) resolved packages. \
-        Run `xcodebuild -resolvePackageDependencies -project Linen.xcodeproj \
-        -scheme Linen`, then run this script again.
+        Run `xcodebuild -resolvePackageDependencies -project WSurf.xcodeproj \
+        -scheme WSurf`, then run this script again.
         """)
 }
 

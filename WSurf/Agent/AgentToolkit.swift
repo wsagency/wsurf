@@ -1,0 +1,934 @@
+// SPDX-FileCopyrightText: 2026 Kavoye
+// SPDX-License-Identifier: Apache-2.0
+// Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
+
+import Foundation
+import WebKit
+
+@MainActor
+final class AgentToolkit {
+    private let browser: BrowserModel
+    private let media: MediaCenter
+    private let log: ConversationLog
+    private let services: Services
+    private let questions: AgentQuestionModel?
+    private var task: AgentTaskContext?
+    private var searchCache: [String: (expires: ContinuousClock.Instant, hits: [SearchHit])] = [:]
+    private var hasSeenUntrustedContent = false
+    private var discoveredDestinations: Set<String> = []
+    private var seededContextTabIDs: Set<UUID> = []
+    private var agentOpenedTabIDs: Set<UUID> = []
+    private(set) var lastToolFailed = false
+    var taskLedger = AgentTaskLedger()
+    var fileSelection: ((WKOpenPanelParameters) async -> [URL]?)? {
+        services.chooseFiles
+    }
+    private var embeddedAccessCenters: [String: TabAssistantAccessCenter] = [:]
+
+    func embeddedAccess(for url: URL, in view: WKWebView) -> TabAssistantAccessCenter? {
+        let key = SitePermissions.origin(for: url)
+        if let access = embeddedAccessCenters[key] {
+            return access
+        }
+        guard let tab = onScreenTab(for: view) ?? mentionedTab(for: view) else { return nil }
+        let access = tab.assistantAccess.embeddedAccess(for: url)
+        embeddedAccessCenters[key] = access
+        return access
+    }
+
+    func taskDownloads(in view: WKWebView) -> [DownloadManager.Item] {
+        guard let tab = onScreenTab(for: view) ?? mentionedTab(for: view) else { return [] }
+        let origin = SitePermissions.origin(for: view.url)
+        return browser.downloads.items.filter {
+            $0.sourceTabID == tab.id && $0.started >= taskLedger.startedAt &&
+                $0.sourceOrigin == origin
+        }
+    }
+
+    func rejectTool(name: String, reason: String) -> String {
+        let step = beginTool(name: name, title: AgentDiagnosticPrivacy.title(for: name))
+        completeTool(step, output: reason, failed: true)
+        return reason
+    }
+
+    func resetToolOutcome() {
+        lastToolFailed = false
+    }
+
+    var outputBudget = ContextBudget.ToolOutputBudget.standard
+    @TaskLocal static var requestedPage: String?
+
+    init(
+        browser: BrowserModel,
+        media: MediaCenter,
+        log: ConversationLog,
+        questions: AgentQuestionModel? = nil,
+        services: Services = .live
+    ) {
+        self.browser = browser
+        self.media = media
+        self.log = log
+        self.services = services
+        self.questions = questions
+    }
+
+    func withPageContext(
+        page: String?, observationID: String?,
+        operation: @MainActor () async -> String
+    ) async -> String {
+        await Self.$requestedPage.withValue(page) {
+            await PageDriver.$expectedObservation.withValue(observationID) {
+                await PageDriver.$outputBudget.withValue(outputBudget.driverBudget) {
+                    await operation()
+                }
+            }
+        }
+    }
+
+    private(set) var pendingScreenshot: Data?
+    var computerObservation: PageComputerFrame?
+
+    func setComputerScreenshot(_ data: Data?) {
+        pendingScreenshot = data
+    }
+
+    func takePendingScreenshot() -> Data? {
+        defer { pendingScreenshot = nil }
+        return pendingScreenshot
+    }
+
+    func pageOperation(
+        name: String, readOnly: Bool = false,
+        operation: (WKWebView) async -> String
+    ) async -> String {
+        let step = beginTool(name: name, title: AgentDiagnosticPrivacy.title(for: name))
+        if let cancelled = cancellationOutput(for: step) {
+            pendingScreenshot = nil
+            return cancelled
+        }
+        guard let view = targetWebView else {
+            completeTool(step, output: "No matching page is open.", failed: true)
+            return "No matching page is open."
+        }
+        let capability: AssistantPageCapability = readOnly ? .read : .control
+        let access = await authorize(capability, in: view)
+        if let denial = access.denial {
+            completeTool(step, output: denial, failed: true)
+            return denial
+        }
+        let output = await guardedPageOperation(in: view, authorization: access.authorization, capability: capability) {
+            await operation(view)
+        }
+        if let cancelled = cancellationOutput(for: step) {
+            pendingScreenshot = nil
+            return cancelled
+        }
+        if let denial = postflightDenial(for: access.authorization, in: view) {
+            pendingScreenshot = nil
+            completeTool(step, output: denial, failed: true)
+            return denial
+        }
+        remember(links: links(in: output))
+        let succeeded = [
+            "CONTROL:", "Condition met.", "Clicked", "Typed", "Selected", "Set checked", "Checked state",
+            "Screenshot captured.", "Scrolled", "Already at", "Dispatched hover", "Sent ",
+        ].contains { output.hasPrefix($0) }
+        completeTool(step, output: output, failed: !succeeded)
+        return fencedPageOutput(output)
+    }
+
+    func screenshotPage() async -> String {
+        pendingScreenshot = nil
+        computerObservation = nil
+        return await pageOperation(name: "screenshotPage", readOnly: true) { view in
+            guard let (frame, data) = try? await PageDriver.computerFrame(in: view) else {
+                computerObservation = nil
+                return "Screenshot unavailable. The page may contain filled sensitive fields. Use readPage for redacted text."
+            }
+            computerObservation = frame
+            pendingScreenshot = data
+            return "Screenshot captured. Use its pixel coordinates with movePointer or clickAtPoint.\n"
+                + (await PageDriver.snapshot(view, viewportOnly: true))
+        }
+    }
+
+    func guardedPageOperation(
+        in view: WKWebView, authorization: VisiblePageAuthorization?, capability: AssistantPageCapability,
+        operation: () async -> String
+    ) async -> String {
+        let scope = PageAutomationGuard(documentURL: view.url?.absoluteString ?? "about:blank", snapshot: nil) { [weak self, weak view] in
+            guard let self, let view, self.postflightDenial(for: authorization, in: view) == nil else { return false }
+            guard let authorization else { return false }
+            guard let tab = self.browser.tabs.first(where: { $0.id == authorization.tabID }) else { return false }
+            let policy = tab.assistantAccess.effectivePolicy
+            return policy.allows(capability) && (capability == .read || self.onScreenTab(for: view) === tab)
+        }
+        return await PageAutomationGuard.$current.withValue(scope) {
+            await PageDriver.$outputBudget.withValue(outputBudget.driverBudget) { await operation() }
+        }
+    }
+
+    // MARK: - Task lifecycle
+
+    func beginTask(_ task: AgentTaskContext) {
+        embeddedAccessCenters = [:]
+        computerObservation = nil
+        hasSeenUntrustedContent = false
+        discoveredDestinations = []
+        searchCache = [:]
+        self.task = task
+        seededContextTabIDs = Set(onScreenTabs.map(\.id))
+        agentOpenedTabIDs = []
+    }
+
+    func finishTask(_ completedTask: AgentTaskContext) {
+        guard task?.id == completedTask.id else { return }
+        computerObservation = nil
+        task = nil
+    }
+
+    // MARK: - Behaviour
+
+    func searchWeb(query: String, additionalQueries: [String] = [], domain: String = "") async -> String {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let domain = domain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var seenQueries = Set<String>()
+        let queries = ([query] + additionalQueries).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seenQueries.insert($0).inserted }
+        let step = beginTool(
+            name: "searchWeb",
+            title: "Search the web for “\(query)”"
+        )
+        if let output = cancellationOutput(for: step) {
+            return output
+        }
+        guard (1...4).contains(queries.count), queries.allSatisfy({ $0.utf8.count <= 2048 }) else {
+            let output = "Enter a search term, with at most three additional queries of up to 2,048 bytes each."
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        guard domain.isEmpty || (domain.contains(".") && domain.range(of: #"^[a-z0-9.-]+$"#, options: .regularExpression) != nil
+            && URL(string: "https://" + domain)?.host() == domain) else {
+            let output = "Use a domain such as example.com, without a path or URL scheme."
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        guard visibleTaskTab != nil else {
+            let output = String(localized: "The active tab changed before the assistant could use it.")
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        let groups = await withTaskGroup(of: (Int, [SearchHit]).self) { group in
+            for (index, term) in queries.enumerated() {
+                let scoped = domain.isEmpty ? term : "site:\(domain) \(term)"
+                group.addTask { (index, await self.cachedSearch(scoped)) }
+            }
+            var groups = Array(repeating: [SearchHit](), count: queries.count)
+            for await (index, hits) in group {
+                groups[index] = hits
+            }
+            return groups
+        }
+        var fetchedHits: [SearchHit] = []
+        var seenURLs = Set<String>()
+        for rank in 0..<6 {
+            for group in groups where group.indices.contains(rank) {
+                let hit = group[rank]
+                guard let url = URL(string: hit.url), let host = url.host()?.lowercased(),
+                      domain.isEmpty || host == domain || host.hasSuffix("." + domain),
+                      seenURLs.insert(hit.url).inserted else { continue }
+                fetchedHits.append(hit)
+            }
+        }
+        if let output = cancellationOutput(for: step) {
+            return output
+        }
+        let hits = fetchedHits.filter { hit in
+            URL(string: hit.url).flatMap(Self.webURL) != nil
+        }
+        guard !hits.isEmpty else {
+            let output = "No results (network problem or no matches)."
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+
+        var lines: [String] = []
+        for (index, hit) in hits.prefix(outputBudget.controlLimit <= 12 ? 3 : 6).enumerated() {
+            let line = "\(index + 1). \(hit.title)\n   URL: \(hit.url)\n   \(hit.snippet)"
+            guard PageOutputBudget.cost((lines + [line]).joined(separator: "\n")) < outputBudget.driverBudget.totalCharacters - 150 else { break }
+            lines.append(line)
+        }
+        let output = lines.joined(separator: "\n")
+        let links = hits.prefix(lines.count).compactMap { hit -> ConversationLog.ActivityLink? in
+            guard let url = URL(string: hit.url) else { return nil }
+            return ConversationLog.ActivityLink(title: hit.title, url: url)
+        }
+        remember(links: links)
+        completeTool(step, output: output, links: links)
+        return fencedPageOutput(output)
+    }
+
+    private func cachedSearch(_ query: String) async -> [SearchHit] {
+        if let cached = searchCache[query], cached.expires > .now {
+            return cached.hits
+        }
+        guard !Task.isCancelled else { return [] }
+        let taskID = task?.id
+        let hits = await services.search(query)
+        guard task?.id == taskID else { return [] }
+        if !hits.isEmpty, !Task.isCancelled {
+            if searchCache.count >= 16, let oldest = searchCache.min(by: { $0.value.expires < $1.value.expires })?.key {
+                searchCache[oldest] = nil
+            }
+            searchCache[query] = (.now + .seconds(120), hits)
+        }
+        return hits
+    }
+
+    func navigate(to rawURL: String) async -> String {
+        let destination = normalized(rawURL)
+        let title = destination?.host() ?? rawURL
+        let step = beginTool(name: "navigate", title: "Open \(title)", detail: rawURL)
+        if let output = cancellationOutput(for: step) {
+            return output
+        }
+        guard let url = destination else {
+            let output = "Invalid URL."
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        if let output = outboundDenial(for: url) {
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+
+        guard let tab = visibleTaskTab else {
+            let output = String(localized: "The active tab changed before the assistant could use it.")
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        let webView = tab.webView
+        guard let navigation = tab.load(url, transition: .agent) else {
+            let output = "Couldn’t open the page in the active tab."
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        let loaded = await waitForVisibleNavigation(navigation, in: tab)
+        if let cancelled = cancellationOutput(for: step) {
+            tab.stopLoading()
+            return cancelled
+        }
+        guard loaded else {
+            let output = "Couldn’t open the page in the active tab."
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        let access = await authorize(.read, in: webView)
+        if let denial = access.denial {
+            completeTool(step, output: denial, failed: true)
+            return denial
+        }
+        let output = await guardedPageOperation(in: webView, authorization: access.authorization, capability: .read) {
+            await PageDriver.readRenderedPage(
+                webView,
+                maxTextLength: outputBudget.pageTextCharacters,
+                controlLimit: outputBudget.controlLimit
+            )
+        }
+        if let cancelled = cancellationOutput(for: step) {
+            tab.stopLoading()
+            return cancelled
+        }
+        if let denial = postflightDenial(for: access.authorization, in: webView) {
+            completeTool(step, output: denial, failed: true)
+            return denial
+        }
+        let links = links(in: output)
+        remember(links: links)
+        completeTool(step, output: output, links: links, failed: !output.hasPrefix("PAGE TEXT:"))
+        return fencedPageOutput("pageID: \(tab.id.uuidString)\n" + output)
+    }
+
+    func newTab(url rawURL: String?) async -> String {
+        let step = beginTool(name: "newTab", title: "Open a new tab", detail: rawURL)
+        if let output = cancellationOutput(for: step) {
+            return output
+        }
+        if let rawURL, !rawURL.isEmpty {
+            guard let url = normalized(rawURL) else {
+                let output = "Invalid URL."
+                completeTool(step, output: output, failed: true)
+                return output
+            }
+            if let output = outboundDenial(for: url) {
+                completeTool(step, output: output, failed: true)
+                return output
+            }
+            let tab = browser.newTab(url: url, transition: .agent)
+            agentOpenedTabIDs.insert(tab.id)
+            tab.assistantAccess.pageChanged(url: url)
+            let access = await authorize(.read, in: tab.webView, requiresTaskTab: false)
+            if let output = cancellationOutput(for: step) {
+                browser.close(tab, recordForReopening: false)
+                return output
+            }
+            if let output = access.denial {
+                completeTool(step, output: output, failed: true)
+                return output
+            }
+            let output = await PageDriver.readRenderedPage(
+                tab.webView,
+                maxTextLength: outputBudget.pageTextCharacters,
+                controlLimit: outputBudget.controlLimit
+            )
+            if let cancelled = cancellationOutput(for: step) {
+                browser.close(tab, recordForReopening: false)
+                return cancelled
+            }
+            if let output = postflightDenial(for: access.authorization, in: tab.webView) {
+                completeTool(step, output: output, failed: true)
+                return output
+            }
+            let pageLinks = links(in: output)
+            remember(links: pageLinks)
+            let openedLink = ConversationLog.ActivityLink(
+                title: url.host() ?? url.absoluteString,
+                url: url
+            )
+            remember(links: [openedLink])
+            completeTool(
+                step,
+                output: output,
+                links: [openedLink] + pageLinks.filter { $0.url != url }
+            )
+            return fencedPageOutput(output)
+        }
+        let tab = browser.newTab()
+        agentOpenedTabIDs.insert(tab.id)
+        let output = "New empty tab opened and active."
+        completeTool(step, output: output)
+        return output
+    }
+
+    func switchTab(matching reference: String) -> String {
+        let step = beginTool(name: "switchTab", title: "Switch to “\(reference)”")
+        if let output = cancellationOutput(for: step) {
+            return output
+        }
+        guard let tab = contextTab(matching: reference) else {
+            let output = missingContextTabOutput()
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        browser.activate(tab)
+        let output = "Switched to “\(tab.title)”."
+        completeTool(step, output: output)
+        return output
+    }
+
+    func closeTab(matching reference: String?) -> String {
+        let step = beginTool(
+            name: "closeTab",
+            title: reference.map { "Close tab “\($0)”" } ?? "Close the active tab"
+        )
+        if let output = cancellationOutput(for: step) {
+            return output
+        }
+        if let reference, !reference.isEmpty {
+            guard let tab = contextTab(matching: reference) else {
+                let output = "No tab in this conversation matches that."
+                completeTool(step, output: output, failed: true)
+                return output
+            }
+            browser.close(tab)
+            let output = "Closed “\(tab.title)”."
+            completeTool(step, output: output)
+            return output
+        }
+        guard let active = browser.activeTab else {
+            let output = "There are no tabs open."
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        guard contextTabIDs.contains(active.id) else {
+            let output = String(localized: "The active tab changed before the assistant could use it.")
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        browser.close(active)
+        let output = "Closed the active tab."
+        completeTool(step, output: output)
+        return output
+    }
+
+    func playVideo(topic: String) async -> String {
+        let topic = topic.trimmingCharacters(in: .whitespacesAndNewlines)
+        let step = beginTool(name: "playVideo", title: "Find a video for “\(topic)”")
+        if let output = cancellationOutput(for: step) {
+            return output
+        }
+        guard !topic.isEmpty else {
+            let output = "Enter a video topic."
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        let resolved = await services.resolveVideo(topic)
+        if let output = cancellationOutput(for: step) {
+            return output
+        }
+        if let videoID = resolved.videoID, let watch = Self.watchURL(videoID: videoID) {
+            let tab = browser.newTab(url: watch, activate: !media.isEnabled, transition: .agent)
+            agentOpenedTabIDs.insert(tab.id)
+            media.controlTab(
+                webView: tab.webView,
+                title: topic,
+                tabID: tab.id,
+                artwork: MediaCenter.poster(forPage: watch.absoluteString)
+            )
+            let output = media.isEnabled
+                ? "Opened the video in the browser's media player. Check playback before reporting that it is playing."
+                : "Opened it in a tab. The media player is off in Settings."
+            completeTool(step, output: output)
+            return output
+        }
+        guard let fallbackURL = Self.webURL(resolved.fallbackURL) else {
+            let output = "Couldn’t open an unsafe video result."
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        let fallbackTab = browser.newTab(url: fallbackURL, transition: .agent)
+        agentOpenedTabIDs.insert(fallbackTab.id)
+        let output = "Couldn't resolve a video directly; opened the results in a tab instead."
+        completeTool(
+            step,
+            output: output,
+            links: [ConversationLog.ActivityLink(title: "Video results", url: fallbackURL)]
+        )
+        return output
+    }
+
+    func closeVideo() -> String {
+        let step = beginTool(name: "closeVideo", title: "Close the video")
+        if let output = cancellationOutput(for: step) {
+            return output
+        }
+        guard media.model.isActive else {
+            let output = "No media is playing."
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        media.close()
+        let output = "Paused it and closed the media player. Its tab is still open."
+        completeTool(step, output: output)
+        return output
+    }
+
+    func controlMedia(action: String) -> String {
+        let step = beginTool(name: "controlMedia", title: "Adjust the player", detail: action)
+        if let output = cancellationOutput(for: step) {
+            return output
+        }
+        guard media.model.isActive else {
+            let output = "No media is playing."
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        let output: String
+        switch action {
+        case "pip":
+            if media.model.isInNativePiP {
+                output = "Already in Picture in Picture."
+            } else {
+                media.toggleNativePiP()
+                output = "Moving into Picture in Picture."
+            }
+        case "exitPip":
+            if media.model.isInNativePiP {
+                media.toggleNativePiP()
+                output = "Back in the media player."
+            } else {
+                output = "Not in Picture in Picture."
+            }
+        case "expand", "collapse":
+            output = "The player has one size now. Try Picture in Picture for a bigger view."
+        default:
+            output = "Unknown media action."
+        }
+        completeTool(step, output: output, failed: output == "Unknown media action.")
+        return output
+    }
+
+    // MARK: - Helpers
+
+    var targetWebView: WKWebView? {
+        if let page = Self.requestedPage, !page.isEmpty {
+            return pageSurface(named: page)
+        }
+        return browser.activeTab?.webView
+    }
+
+    private var visibleTaskTab: BrowserTab? {
+        guard let tab = browser.activeTab else { return nil }
+        guard let task else { return tab }
+        guard browser.spaceID(of: tab.id) == task.spaceID || agentOpenedTabIDs.contains(tab.id) else { return nil }
+        return tab
+    }
+
+    private func waitForVisibleNavigation(_ navigation: WKNavigation, in tab: BrowserTab) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+        while ContinuousClock.now < deadline, !Task.isCancelled {
+            if tab.committedNavigation === navigation {
+                return await PageSettle.untilIdle(tab.webView, timeout: .seconds(15)) && !tab.isShowingError
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return false
+    }
+
+    private var onScreenTabs: [BrowserTab] {
+        guard let active = browser.activeTab else { return [] }
+        return browser.splitPanes ?? [active]
+    }
+
+    private var contextTabIDs: Set<UUID> {
+        guard task != nil else { return Set(onScreenTabs.map(\.id)) }
+        return seededContextTabIDs
+            .union(agentOpenedTabIDs)
+            .union(mentionedTabs.map(\.id))
+    }
+
+    private func contextTab(matching reference: String) -> BrowserTab? {
+        let needle = reference.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return nil }
+        let allowed = contextTabIDs
+        let matches = browser.tabs.filter {
+            allowed.contains($0.id)
+                && ($0.id.uuidString.lowercased() == needle || $0.title.lowercased().contains(needle) || $0.urlString.lowercased().contains(needle))
+        }
+        return matches.count == 1 ? matches.first : nil
+    }
+
+    private func missingContextTabOutput() -> String {
+        guard !browser.tabs.isEmpty else { return "There are no tabs open." }
+        let allowed = contextTabIDs
+        let titles = browser.tabs.filter { allowed.contains($0.id) }.map(\.title)
+        guard !titles.isEmpty else { return "No tab belongs to this conversation yet." }
+        return "No tab in this conversation matches. Its tabs: \(titles.joined(separator: " | "))"
+    }
+
+    private func onScreenTab(named reference: String) -> BrowserTab? {
+        let panes = onScreenTabs
+        let needle = reference.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if panes.count > 1,
+           let split = browser.activeSplit,
+           let index = Self.paneIndex(
+               named: needle,
+               axis: split.lineAxis,
+               count: panes.count
+           ) {
+            return panes.indices.contains(index) ? panes[index] : nil
+        }
+        return panes.first {
+            $0.id.uuidString.lowercased() == needle || $0.title.lowercased().contains(needle) || $0.urlString.lowercased().contains(needle)
+        }
+    }
+
+    private nonisolated static func paneIndex(
+        named needle: String,
+        axis: SplitAxis?,
+        count: Int
+    ) -> Int? {
+        let ordinals = ["first", "second", "third", "fourth"]
+        if let index = ordinals.firstIndex(of: needle), index < count {
+            return index
+        }
+        if let number = Int(needle), (1...count).contains(number) {
+            return number - 1
+        }
+
+        switch (needle, axis) {
+        case ("left", .sideBySide), ("top", .stacked):
+            return 0
+        case ("right", .sideBySide), ("bottom", .stacked):
+            return count - 1
+        default:
+            return nil
+        }
+    }
+
+    func pageIdentifier(for view: WKWebView) -> String {
+        browser.tabs.first { $0.isMaterialised && $0.webView === view }?.id.uuidString ?? ""
+    }
+
+    func pageSurface(named reference: String) -> WKWebView? {
+        if reference.isEmpty || reference == "research" {
+            return browser.activeTab?.webView
+        }
+        let needle = reference.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let candidates = onScreenTabs + mentionedTabs.filter { mentioned in !onScreenTabs.contains { $0.id == mentioned.id } }
+        if let exact = candidates.first(where: { $0.id.uuidString.lowercased() == needle }) {
+            exact.realizeDeferredSession()
+            return exact.webView
+        }
+        if ["left", "right", "top", "bottom", "first", "second", "third", "fourth", "1", "2", "3", "4"].contains(needle),
+           let positional = onScreenTab(named: needle) { return positional.webView }
+        let matches = candidates.filter { $0.title.lowercased().contains(needle) || $0.urlString.lowercased().contains(needle) }
+        if matches.count == 1, let found = matches.first {
+            found.realizeDeferredSession()
+            return found.webView
+        }
+        return nil
+    }
+
+    private var mentionedTabs: [BrowserTab] {
+        (task?.mentionedTabIDs ?? []).compactMap { id in
+            browser.tabs.first { $0.id == id }
+        }
+    }
+
+    private func mentionedTab(named reference: String) -> BrowserTab? {
+        let needle = reference.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return nil }
+        return mentionedTabs.first {
+            $0.id.uuidString.lowercased() == needle || $0.title.lowercased().contains(needle) || $0.urlString.lowercased().contains(needle)
+        }
+    }
+
+    private func mentionedTab(for webView: WKWebView) -> BrowserTab? {
+        mentionedTabs.first { $0.webView === webView }
+    }
+
+    func onScreenPageDenial(for reference: String) -> String {
+        guard !browser.tabs.isEmpty else { return "No tab is open yet." }
+        var titles = onScreenTabs.map(\.title)
+        titles += mentionedTabs.map { "\($0.title) (mentioned)" }
+        let listed = titles.joined(separator: " | ")
+        guard !reference.isEmpty, !listed.isEmpty else { return "No tab is open yet." }
+        return "No page on screen or mentioned matches “\(reference)”. Readable: \(listed)"
+    }
+
+    struct VisiblePageAuthorization {
+        let tabID: UUID
+        let origin: String
+    }
+
+    private func onScreenTab(for webView: WKWebView) -> BrowserTab? {
+        onScreenTabs.first { $0.webView === webView }
+    }
+
+    func authorize(
+        _ capability: AssistantPageCapability,
+        in webView: WKWebView,
+        requiresTaskTab: Bool = true
+    ) async -> (authorization: VisiblePageAuthorization?, denial: String?) {
+        let mentioned = capability == .read ? mentionedTab(for: webView) : nil
+        guard let tab = onScreenTab(for: webView) ?? mentioned else {
+            return (nil, String(localized: "The active tab changed before the assistant could use it."))
+        }
+        if requiresTaskTab, mentioned == nil, let task,
+           browser.spaceID(of: tab.id) != task.spaceID,
+           !agentOpenedTabIDs.contains(tab.id) {
+            return (nil, String(localized: "The active tab changed before the assistant could use it."))
+        }
+        syncAssistantOrigin(of: tab, with: webView)
+        let requestedOrigin = tab.assistantAccess.origin
+        let allowed = await tab.assistantAccess.authorize(capability)
+        syncAssistantOrigin(of: tab, with: webView)
+        guard tab.assistantAccess.origin == requestedOrigin else {
+            return (nil, String(localized: "The page changed before the assistant could use it."))
+        }
+        guard allowed else {
+            return (nil, tab.assistantAccess.denialMessage(for: capability))
+        }
+        guard onScreenTab(for: webView) === tab || mentionedTab(for: webView) === tab else {
+            return (nil, String(localized: "The active tab changed before the assistant could use it."))
+        }
+        return (VisiblePageAuthorization(tabID: tab.id, origin: requestedOrigin), nil)
+    }
+
+    func postflightDenial(
+        for authorization: VisiblePageAuthorization?,
+        in webView: WKWebView
+    ) -> String? {
+        guard let authorization else { return nil }
+        guard let tab = onScreenTab(for: webView) ?? mentionedTab(for: webView),
+              tab.id == authorization.tabID
+        else {
+            return String(localized: "The active tab changed before the assistant could finish.")
+        }
+        syncAssistantOrigin(of: tab, with: webView)
+        guard tab.assistantAccess.origin == authorization.origin else {
+            return String(localized: "The page moved to another website. Use Read Page before the assistant reads or controls it.")
+        }
+        return nil
+    }
+
+    private func syncAssistantOrigin(of tab: BrowserTab, with webView: WKWebView) {
+        guard let url = webView.url, url.absoluteString != "about:blank" else { return }
+        tab.assistantAccess.pageChanged(url: url)
+    }
+
+    nonisolated static func untrusted(_ pageText: String) -> String {
+        let escaped = pageText
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+        return """
+        <page-content untrusted="true">
+        \(escaped)
+        </page-content>
+        """
+    }
+
+    func fencedPageOutput(_ pageText: String) -> String {
+        hasSeenUntrustedContent = true
+        return Self.untrusted(pageText)
+    }
+
+    private func outboundDenial(for url: URL) -> String? {
+        guard hasSeenUntrustedContent,
+              !discoveredDestinations.contains(Self.destinationKey(for: url))
+        else { return nil }
+        return "For safety, open an address from search results or a page link. Do not construct an address from page content."
+    }
+
+    func remember(links: [ConversationLog.ActivityLink]) {
+        discoveredDestinations.formUnion(links.map { Self.destinationKey(for: $0.url) })
+    }
+
+    func beginTool(name: String, title: String, detail: String? = nil) -> UUID? {
+        guard let task else { return nil }
+        return log.beginTool(taskID: task.id, name: name, title: title, detail: detail)
+    }
+
+    func completeTool(
+        _ stepID: UUID?,
+        output: String,
+        links: [ConversationLog.ActivityLink] = [],
+        failed: Bool = false
+    ) {
+        lastToolFailed = failed
+        guard let task else { return }
+        log.completeTool(
+            taskID: task.id,
+            stepID: stepID,
+            detail: output,
+            links: links,
+            failed: failed
+        )
+    }
+
+    func cancellationOutput(for stepID: UUID?) -> String? {
+        guard Task.isCancelled else { return nil }
+        let output = String(localized: "Canceled.")
+        completeTool(stepID, output: output, failed: true)
+        return output
+    }
+
+}
+
+extension AgentToolkit {
+    func askUser(_ asked: [(question: String, options: [String])]) async -> String {
+        let put = asked.compactMap { entry -> AgentQuestionModel.Question? in
+            let text = entry.question.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return AgentQuestionModel.Question(text: text, options: entry.options)
+        }
+        guard !put.isEmpty, let questions else {
+            return "No one is there to answer. Carry on with what you have."
+        }
+        let title = put.count == 1
+            ? put[0].text
+            : String(localized: "\(put.count) questions")
+        let step = beginTool(name: "askUser", title: title)
+        if let output = cancellationOutput(for: step) {
+            return output
+        }
+        let answers = await questions.put(put, inSpace: task?.spaceID)
+        let trimmed = answers.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            let output = "Nothing was answered. Carry on with what you have."
+            completeTool(step, output: output, failed: true)
+            return output
+        }
+        completeTool(step, output: trimmed)
+        return trimmed
+    }
+
+    func listTabs() -> String {
+        let step = beginTool(name: "listTabs", title: "List the open tabs")
+        if let output = cancellationOutput(for: step) {
+            return output
+        }
+        let readable = contextTabIDs
+        let tabs = browser.tabs.filter { $0.assistantAccess.effectivePolicy != .deny }
+        guard !tabs.isEmpty else {
+            let output = "No tabs are open."
+            completeTool(step, output: output)
+            return output
+        }
+        let lines = tabs.enumerated().map { index, tab -> String in
+            let place = URL(string: tab.urlString)?.displayHost
+                ?? tab.internalPage?.title
+                ?? "blank"
+            let active = tab.id == browser.activeTabID ? " ← ACTIVE" : ""
+            let reach = readable.contains(tab.id) ? "" : " — title only"
+            return "\(index + 1). [\(tab.id.uuidString)] \(tab.title) (\(place))\(active)\(reach)"
+        }
+        let note = tabs.contains { !readable.contains($0.id) }
+            ? "\nOnly the tabs without “title only” can be read. To read one of the others, "
+                + "switch to it, or ask the person to attach it with @."
+            : ""
+        let output = "\(tabs.count) tabs open:\n" + lines.joined(separator: "\n") + note
+        completeTool(step, output: output)
+        return output
+    }
+}
+
+extension AgentToolkit {
+    func links(in observation: String) -> [ConversationLog.ActivityLink] {
+        PageDriver.listedLinks(in: observation).map { link in
+            let title = link.label.isEmpty ? (link.url.host() ?? link.url.absoluteString) : link.label
+            return ConversationLog.ActivityLink(title: title, url: link.url)
+        }
+    }
+
+    private func normalized(_ rawURL: String) -> URL? {
+        if let url = URL(string: rawURL), let scheme = url.scheme,
+           scheme == "https" || scheme == "http" {
+            return url
+        }
+        if !rawURL.contains(" "), rawURL.contains(".") {
+            return URL(string: "https://\(rawURL)")
+        }
+        return nil
+    }
+}
+
+extension AgentToolkit {
+    private nonisolated static func destinationKey(for url: URL) -> String {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url.absoluteString
+        }
+        components.scheme = components.scheme?.lowercased()
+        components.host = components.host?.lowercased()
+        components.fragment = nil
+        return components.url?.absoluteString ?? url.absoluteString
+    }
+
+    private nonisolated static func webURL(_ url: URL) -> URL? {
+        guard url.scheme == "https" || url.scheme == "http" else { return nil }
+        return url
+    }
+
+    nonisolated static func isVideoIDCharacter(_ character: Character) -> Bool {
+        character.isASCII && (character.isLetter || character.isNumber || character == "_" || character == "-")
+    }
+
+    nonisolated static func watchURL(videoID: String) -> URL? {
+        guard videoID.count == 11, videoID.allSatisfy(Self.isVideoIDCharacter) else { return nil }
+        var components = URLComponents(string: "https://www.youtube.com/watch")
+        components?.queryItems = [URLQueryItem(name: "v", value: videoID)]
+        return components?.url
+    }
+}

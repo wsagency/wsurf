@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Exercise the real Linen agent/tools and independent graders without a paid model.
+# Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
+"""Exercise the real WSurf agent/tools and independent graders without a paid model.
 
 Run with browser-agent-bench's Python environment. All results are validation-only;
 the scripted provider's token values test accounting, not token efficiency.
@@ -210,8 +211,9 @@ def main():
     results = []
     with Server(app) as provider, Server(fixtures.app) as site, Server(fixtures.app) as destination:
         fixtures.destination_url = destination.url
+        # browser-agent-bench's adapter name "linen" is its external protocol.
         config = AgentConfig(
-            id="linen-scripted-validation", adapter="linen", model="gpt-5.6-luna" if args.tool_search else "validation-model", provider=args.provider,
+            id="wsurf-scripted-validation", adapter="linen", model="gpt-5.6-luna" if args.tool_search else "validation-model", provider=args.provider,
             base_url=provider.url + "/v1", credential_env="BAB_VALIDATION_KEY",
             revision=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
             command=[str(root / "Tools/run-benchmark-adapter.sh")],

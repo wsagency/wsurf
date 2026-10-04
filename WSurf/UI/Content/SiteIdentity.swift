@@ -1,0 +1,77 @@
+// SPDX-FileCopyrightText: 2026 Kavoye
+// SPDX-License-Identifier: Apache-2.0
+// Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
+
+import AppKit
+import SwiftUI
+
+enum SiteName {
+    private static let genericSuffixes: Set<String> = ["co", "com", "org", "net", "ac", "gov", "edu"]
+
+    static func name(forHost host: String) -> String {
+        var parts = host.lowercased().split(separator: ".").map(String.init)
+        if parts.first == "www" {
+            parts.removeFirst()
+        }
+        guard parts.count > 1 else { return parts.first ?? host }
+
+        var suffixLength = 1
+        if parts.count > 2,
+           parts[parts.count - 1].count == 2,
+           genericSuffixes.contains(parts[parts.count - 2]) {
+            suffixLength = 2
+        }
+        return parts[max(0, parts.count - suffixLength - 1)]
+    }
+
+    /// What counts as one website: `news.ycombinator.com` and
+    /// `www.ycombinator.com` are both `ycombinator.com`.
+    static func domain(forHost host: String) -> String {
+        var parts = host.lowercased().split(separator: ".").map(String.init)
+        if parts.first == "www" {
+            parts.removeFirst()
+        }
+        guard parts.count > 1 else { return parts.first ?? host.lowercased() }
+
+        var keep = 2
+        if parts.count > 2,
+           parts[parts.count - 1].count == 2,
+           genericSuffixes.contains(parts[parts.count - 2]) {
+            keep = 3
+        }
+        return parts.suffix(keep).joined(separator: ".")
+    }
+
+    static func title(forHost host: String) -> String {
+        let name = name(forHost: host)
+        return name.prefix(1).uppercased() + name.dropFirst()
+    }
+}
+
+struct RemoteSiteBadge: View {
+    let host: String
+    let size: CGFloat
+
+    @State private var icon: NSImage?
+
+    var body: some View {
+        Group {
+            if let icon {
+                FaviconImage(image: icon)
+                    .clipShape(RoundedRectangle(cornerRadius: size / 5, style: .continuous))
+            } else {
+                Image(systemName: "globe")
+                    .font(.system(size: size * 0.75))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(width: size, height: size)
+        .task(id: host) {
+            if let cached = FaviconLoader.shared.cached(for: host) {
+                icon = cached
+            } else {
+                icon = await FaviconLoader.shared.load(forHost: host)
+            }
+        }
+    }
+}

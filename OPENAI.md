@@ -1,22 +1,23 @@
+<!-- Modified for WSurf by wsagency in 2026; based on Linen by Kavoye. -->
 # OpenAI integration
 
-Linen uses its Responses client for providers configured with the Responses
+WSurf uses its Responses client for providers configured with the Responses
 adapter. Other providers use AnyLanguageModel. The implementation lives in
-`Linen/Agent/Providers/OpenAI`.
+`WSurf/Agent/Providers/OpenAI`.
 
 ## Settings and tools
 
 Open Settings > Assistant > OpenAI to configure voice, external connections,
 and data use. Developer Settings contains advanced JSON and model overrides.
 
-For supported models on the official OpenAI endpoint, Linen enables web search,
+For supported models on the official OpenAI endpoint, WSurf enables web search,
 code interpreter, and image generation automatically. Model capability checks
 control availability. Custom endpoints and utility jobs keep separate settings.
 OpenAI usage charges apply.
 
-Browser actions, including screenshot and pointer tools, pass through Linen's
+Browser actions, including screenshot and pointer tools, pass through WSurf's
 permission checks. Hosted tools do not grant extra access to local tabs, files,
-or credentials. Hosted shell runs in an OpenAI container; Linen does not
+or credentials. Hosted shell runs in an OpenAI container; WSurf does not
 execute local shell commands from model output. Unknown action types stop with
 an unsupported-action result.
 
@@ -43,7 +44,7 @@ are private conversation data and must not enter diagnostic exports.
 ## Voice
 
 OpenAI dictation uses microphone transcription. Voice conversations use the
-Realtime connection and PCM playback, with browser work delegated to Linen's
+Realtime connection and PCM playback, with browser work delegated to WSurf's
 assistant. Conversation text follows the chat's storage lifecycle. Users can
 choose on-device voice in settings.
 
@@ -52,9 +53,10 @@ conversation stops its active session. Microphone access requires macOS permissi
 
 ## External connections
 
-Remote MCP servers configured in OpenAI settings are separate from Linen's own
-[MCP server](MCP.md). Linen's server shares selected browser tabs with an external
-client. OpenAI connections let the built-in assistant use a remote service.
+Remote MCP servers configured in OpenAI settings are separate from WSurf's own
+[MCP server](MCP.md). WSurf's server shares selected browser tabs with an
+external client. OpenAI connections let the built-in assistant use a remote
+service.
 
 Remote service credentials stay in Keychain. OAuth and manually entered tokens
 have separate storage. Connecting a service does not grant it browser permissions.
@@ -63,20 +65,20 @@ Tool approvals and browser action permissions remain separate checks.
 ## Validation
 
 The default test suite uses fixtures. Live tests require an explicit opt-in and
-may incur API charges. Use a normally signed development build to access Linen's
-saved Keychain credential. An inherited `OPENAI_API_KEY` is also supported. Do not
-put a key in command arguments or checked-in configuration.
+may incur API charges. Use a normally signed development build to access WSurf's
+saved Keychain credential. An inherited `OPENAI_API_KEY` is also supported. Do
+not put a key in command arguments or checked-in configuration.
 
 Check credential availability without making API requests:
 
 ```sh
-python3 Tools/validate-openai-live.py --build --output /tmp/linen-openai-preflight
+python3 Tools/validate-openai-live.py --build --output /tmp/wsurf-openai-preflight
 ```
 
 Run live acceptance explicitly:
 
 ```sh
-python3 Tools/validate-openai-live.py --live --output /tmp/linen-openai-live
+python3 Tools/validate-openai-live.py --live --output /tmp/wsurf-openai-live
 ```
 
 Use `--model` to select an exact model. Separate modes include `--hosted-only`,
@@ -105,8 +107,12 @@ Scripted browser checks require the separate `browser-agent-bench` checkout:
 ```sh
 Tools/build-benchmark-adapter.sh
 ../browser-agent-bench/.venv/bin/python Tools/validate-agent-workflows.py \
-  --provider openai --output /tmp/linen-openai-validation
+  --provider openai --output /tmp/wsurf-openai-validation
 ```
 
 These checks use synthetic token values. They validate browser outcomes and
 accounting, not live cost or comparative model performance.
+
+The `browser-agent-bench` adapter name and `TEST_RUNNER_BAB_LINEN_*` variables
+are external consumer protocol identifiers retained for compatibility; they do
+not identify the WSurf app or its local namespaces.

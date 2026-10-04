@@ -1,4 +1,5 @@
 #!/bin/sh
+# Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 set -eu
 

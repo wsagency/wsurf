@@ -1,0 +1,57 @@
+// SPDX-FileCopyrightText: 2026 Kavoye
+// SPDX-License-Identifier: Apache-2.0
+// Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
+
+import AppKit
+import SwiftUI
+import Testing
+
+@testable import WSurf
+
+/// The player now stows only in the icons-only sidebar, so its controls have
+/// to fit a sidebar dragged all the way in. The widths are measured from the
+/// real views, because every button in the transport is a fixed size and an
+/// overrun would overlap rather than wrap.
+@MainActor
+struct MediaCardFitTests {
+    private func transportWidth(isCompact: Bool) -> CGFloat {
+        NSHostingView(rootView: MediaTransport(media: MediaCenter(), isCompact: isCompact)).fittingSize.width
+    }
+
+    @Test func theTransportFitsTheNarrowestSidebar() {
+        let panel = MediaSidebarCard.panelWidth(
+            sidebarWidth: SidebarMetrics.minWidth,
+            isStowed: false,
+            isFloating: false
+        )
+        #expect(MediaSidebarCard.isCompact(panelWidth: panel))
+        #expect(transportWidth(isCompact: true) <= MediaSidebarCard.controlsWidth(panelWidth: panel))
+    }
+
+    @Test func theRoomyTransportFitsWhereItIsUsed() {
+        let panel = MediaSidebarCard.widthForRoomyControls
+        #expect(!MediaSidebarCard.isCompact(panelWidth: panel))
+        #expect(transportWidth(isCompact: false) <= MediaSidebarCard.controlsWidth(panelWidth: panel))
+    }
+
+    /// A sidebar that floats over the page is inset on both sides. The card
+    /// used to measure its room as though it were not, which ran it past the
+    /// rows and out to the sidebar's own edge.
+    @Test func theCardTakesTheSameRoomAsTheRowsWhenTheSidebarFloats() {
+        let width = SidebarMetrics.defaultWidth
+        let panel = MediaSidebarCard.panelWidth(sidebarWidth: width, isStowed: false, isFloating: true)
+
+        #expect(panel == SidebarMetrics.contentWidth(width, style: .full, isFloating: true))
+        #expect(panel <= width - 2 * LoomChrome.canvasInset)
+    }
+
+    @Test func theFloatingPlayerIsRoomy() {
+        let panel = MediaSidebarCard.panelWidth(
+            sidebarWidth: SidebarMetrics.iconsWidth,
+            isStowed: true,
+            isFloating: false
+        )
+        #expect(panel == MediaSidebarCard.floatingWidth)
+        #expect(!MediaSidebarCard.isCompact(panelWidth: panel))
+    }
+}

@@ -1,16 +1,17 @@
+# Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 name: Bug report
-description: Something in Linen doesn’t work.
+description: Something in WSurf doesn’t work.
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
-      value: "**Not for security bugs.** Report those privately through [Security › Report a vulnerability](https://github.com/kavoye/linen-browser/security/advisories/new), as [SECURITY.md](https://github.com/kavoye/linen-browser/blob/main/SECURITY.md) describes."
+      value: "**Not for security bugs.** Report those privately through [Security › Report a vulnerability](https://github.com/wsagency/wsurf/security/advisories/new), as [SECURITY.md](https://github.com/wsagency/wsurf/blob/main/SECURITY.md) describes."
 
   - type: textarea
     id: what-happened
     attributes:
       label: What happened
-      description: What Linen did, and what you expected instead. Add a screenshot or a screen recording if the bug is visual.
+      description: What WSurf did, and what you expected instead. Add a screenshot or a screen recording if the bug is visual.
     validations:
       required: true
 
@@ -29,8 +30,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: Linen version
-      description: Read the version in Linen › About Linen.
+      label: WSurf version
+      description: Read the version in WSurf › About WSurf.
       placeholder: "1.2 (145)"
     validations:
       required: true

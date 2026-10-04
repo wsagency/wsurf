@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 """Compare OpenAI's published SDK contract with a reviewed snapshot. No API key is used.
 
 New fields/events require review, not an automatic dependency upgrade. The fetched

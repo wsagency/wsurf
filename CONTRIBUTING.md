@@ -1,4 +1,5 @@
-# Contributing to Linen
+<!-- Modified for WSurf by wsagency in 2026; based on Linen by Kavoye. -->
+# Contributing to WSurf
 
 Keep changes focused, explain the user benefit, and keep the code testable.
 
@@ -7,17 +8,19 @@ Keep changes focused, explain the user benefit, and keep the code testable.
 You need macOS 26 or later, Apple silicon, and Xcode 26.5 or later.
 
 ```bash
-git clone https://github.com/kavoye/linen-browser.git
-cd linen-browser
+git clone https://github.com/wsagency/wsurf.git
+cd wsurf
 xcodebuild test \
-  -project Linen.xcodeproj \
-  -scheme Linen \
+  -project WSurf.xcodeproj \
+  -scheme WSurf \
   -destination 'platform=macOS,arch=arm64' \
   CODE_SIGN_STYLE=Manual \
   CODE_SIGN_IDENTITY=- \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGN_ENTITLEMENTS=
 ```
+
+The `WSurf` scheme runs the `WSurfTests` target from `WSurf.xctestplan`.
 
 The command removes the entitlements. The keychain access group and the passkey
 entitlement both need a provisioning profile. CI runs the same command. To build the app in Xcode,
@@ -35,8 +38,8 @@ Do not weaken concurrency checks to make a change compile.
 - Make each distinct SwiftUI section a separate `View` with narrow inputs.
   Computed `some View` properties do not create invalidation boundaries.
 - Prefer `@Observable` models. Keep view-local `@State` private.
-- Use the existing design primitives in `Linen/UI/Chrome` and
-  `Linen/Settings/SettingsPrimitives.swift` before adding another style.
+- Use the existing design primitives in `WSurf/UI/Chrome` and
+  `WSurf/Settings/SettingsPrimitives.swift` before adding another style.
 - Keep user-facing strings localizable. Prefer `LocalizedStringResource` in
   models and string literals in SwiftUI controls.
 
@@ -96,7 +99,7 @@ unrelated navigation failures. Put the trait on the tests that build a view, not
 on the suite around them, so pure cases do not queue for a resource they never
 use. Add `.serialized` as well when the cases in a suite share state.
 
-`Linen.xctestplan` runs with per-test timeouts: 120 seconds by default, 300 at
+`WSurf.xctestplan` runs with per-test timeouts: 120 seconds by default, 300 at
 most. A stalled test times out and reports its name without blocking the full run.
 Both frameworks run from this plan, and a new test needs no entry in it — the
 plan lists the target, not its tests.
@@ -131,29 +134,29 @@ copy.
 
 Stage mode loads sample browsing data for screenshots and recordings.
 
-Set the session in `Linen/Stage/StageSet.swift`: pinned tabs, folders, loose
+Set the session in `WSurf/Stage/StageSet.swift`: pinned tabs, folders, loose
 tabs, history and downloads.
 
 ```bash
-LINEN_STAGE=1 build/DD/Build/Products/Debug/Linen.app/Contents/MacOS/Linen
+WSURF_STAGE=1 build/DD/Build/Products/Debug/WSurf.app/Contents/MacOS/WSurf
 ```
 
 Prepare the session once. Staged tabs load real websites, which may show cookie
 banners and region prompts on first use.
 
-1. Launch with `LINEN_STAGE=1`.
+1. Launch with `WSURF_STAGE=1`.
 2. Dismiss every banner on every staged tab.
 3. Add a model API key in Settings if a recording needs an agent turn.
 4. Quit. Your choices are saved in the stage data store for the next launch.
 
 A stage run writes to its own support directory, its own website data store and
 its own preference domain. It cannot change the real installation’s history,
-cookies, tabs or settings. Delete `$TMPDIR/linen-stage` to reset it, or set
-`LINEN_STAGE_HOME` to keep more than one staged session.
+cookies, tabs or settings. Delete `$TMPDIR/wsurf-stage` to reset it, or set
+`WSURF_STAGE_HOME` to keep more than one staged session.
 
 ## Write commit messages
 
-Linen uses [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
+WSurf uses [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
 Start the subject with a type, add a scope in parentheses when the change
 belongs to one area, then a colon and a summary. Write the summary as an
 instruction: one imperative sentence, capitalized, with no final period. Keep
@@ -202,10 +205,10 @@ the release job ran the same suite a second time.
 
 ## License of your contribution
 
-Linen is Apache 2.0. Section 5 of the license puts each contribution under the
+WSurf is Apache 2.0. Section 5 of the license puts each contribution under the
 same terms, unless you say otherwise in the pull request. There is no separate
 agreement to sign.
 
-Your contribution also carries a patent license to everybody who uses Linen.
+Your contribution also carries a patent license to everybody who uses WSurf.
 That license covers only patents you own that your own contribution needs. Do
 not submit code that you cannot license this way.

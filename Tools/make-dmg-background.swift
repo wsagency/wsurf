@@ -2,24 +2,16 @@
 
 // SPDX-FileCopyrightText: 2026 Kavoye
 // SPDX-License-Identifier: Apache-2.0
+// Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 //
-// Draws the background of the disk image and writes two PNG files.
+// Draws optional WSurf disk-image artwork and writes two PNG files.
 //
 //     swift Tools/make-dmg-background.swift Tools/dmg
 //
-// Tools/make-dmg-layout.sh calls this, then joins the two files into the
-// multi-resolution background.tiff that the image carries.
-//
-// The canvas is much larger than the window the layout asks for. macOS 26
-// Finder applies the icon positions and the background of a disk image but
-// ignores the window size, so the window opens at the size Finder gives any new
-// window. A canvas of 1280x800 keeps paper under the whole window at any size
-// the user's Finder chooses. The composition therefore sits at the top left,
-// where every window shows it.
-//
-// The coordinates below and the icon positions in make-dmg-layout.sh are the
-// same numbers: a Finder icon position is the centre of the icon.
+// Tools/make-dmg-artwork.sh joins the two files into background.tiff.
+// Release disk images use Finder's native layout and do not embed this artwork.
+// The 1280x800 canvas keeps the optional composition anchored at the top left.
 //
 
 import AppKit
@@ -32,20 +24,16 @@ let ink = NSColor(srgbRed: 0.071, green: 0.071, blue: 0.094, alpha: 1)
 let arrowColor = NSColor(srgbRed: 0.741, green: 0.741, blue: 0.776, alpha: 1)
 
 func markPath(size: CGFloat, origin: CGPoint) -> NSBezierPath {
-    let s = size / 1024
     let path = NSBezierPath()
-    let bars = [
-        NSRect(x: 159, y: 159, width: 480, height: 190),
-        NSRect(x: 675, y: 159, width: 190, height: 480),
-        NSRect(x: 385, y: 675, width: 480, height: 190),
-        NSRect(x: 159, y: 385, width: 190, height: 480),
-    ]
-    for bar in bars {
-        let rect = NSRect(x: origin.x + bar.minX * s,
-                          y: origin.y + (1024 - bar.minY - bar.height) * s,
-                          width: bar.width * s, height: bar.height * s)
-        path.append(NSBezierPath(roundedRect: rect, xRadius: 46 * s, yRadius: 46 * s))
-    }
+    path.move(to: CGPoint(x: origin.x, y: origin.y + size * 0.65))
+    path.curve(to: CGPoint(x: origin.x + size * 0.5, y: origin.y + size * 0.65),
+               controlPoint1: CGPoint(x: origin.x + size * 0.16, y: origin.y - size * 0.05),
+               controlPoint2: CGPoint(x: origin.x + size * 0.35, y: origin.y + size * 1.25))
+    path.curve(to: CGPoint(x: origin.x + size, y: origin.y + size * 0.65),
+               controlPoint1: CGPoint(x: origin.x + size * 0.66, y: origin.y - size * 0.05),
+               controlPoint2: CGPoint(x: origin.x + size * 0.85, y: origin.y + size * 1.25))
+    path.lineWidth = size * 0.22
+    path.lineCapStyle = .round
     return path
 }
 
@@ -80,7 +68,7 @@ func render(scale: CGFloat, to url: URL) {
     NSRect(x: 0, y: 0, width: width, height: height).fill()
 
     let markSize: CGFloat = 26
-    let title = "Linen"
+    let title = "WSurf"
     let font = NSFont.systemFont(ofSize: 21, weight: .semibold)
     let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ink]
     let titleSize = title.size(withAttributes: attributes)
@@ -90,7 +78,7 @@ func render(scale: CGFloat, to url: URL) {
     let groupY: CGFloat = height - 78
 
     ink.setFill()
-    markPath(size: markSize, origin: CGPoint(x: groupX, y: groupY)).fill()
+    markPath(size: markSize, origin: CGPoint(x: groupX, y: groupY)).stroke()
     title.draw(at: NSPoint(x: groupX + markSize + gap,
                            y: groupY + (markSize - titleSize.height) / 2 + 1),
                withAttributes: attributes)

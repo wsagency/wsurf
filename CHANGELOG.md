@@ -1,4 +1,29 @@
+<!-- Modified for WSurf by wsagency in 2026; based on Linen by Kavoye. -->
 # Changelog
+This file preserves release notes inherited from the upstream
+[kavoye/linen-browser](https://github.com/kavoye/linen-browser) project. They
+describe upstream Linen releases, not releases published by WSurf. New WSurf
+release notes will be added above this provenance record.
+
+## WSurf
+
+- Independent WSurf product, app/project/module and `io.wsagency.wsurf`
+  identity, with separate data/defaults and new wave artwork.
+- Preserves Apache-2.0 provenance and third-party notices; does not reuse
+  the upstream publisher's signing or update keys.
+- Extension popup/background, live tab metadata, persistent Apple client
+  compatibility and native context cleanup changes pass 35 scoped regressions.
+- Local ad-hoc build launches with the WSurf icon/onboarding and loads HTTPS
+  pages; restricted browser entitlements are not enabled in this UI smoke.
+- Seven update payload/state/layout behavior checks pass. Removed inherited
+  wording and configuration-copy assertions rather than pinning new branding.
+
+No signed WSurf release has been published yet. Apple Passwords compatibility
+changes are present in source and fixtures, but real PIN, fill, save, OTP,
+15-minute idle, lock, and sleep behavior remains unverified in an own signed
+build.
+
+## Upstream Linen history
 
 ## 0.7.1
 

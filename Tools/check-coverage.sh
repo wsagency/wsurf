@@ -1,10 +1,11 @@
 #!/bin/sh
+# Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 set -eu
 
 result_bundle="${1:-build/TestResults.xcresult}"
 minimum="${2:-20.0}"
-target="${3:-Linen.app}"
+target="${3:-WSurf.app}"
 
 if [ ! -d "$result_bundle" ]; then
   echo "error: coverage result bundle not found: $result_bundle" >&2

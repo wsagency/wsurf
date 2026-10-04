@@ -1,6 +1,6 @@
 ## What changed
 
-Describe the user-visible change and why it belongs in Linen.
+Describe the user-visible change and why it belongs in WSurf.
 
 ## Verification
 

@@ -1,0 +1,30 @@
+WSurf
+https://github.com/wsagency/wsurf
+
+WSurf is an independent derivative of Linen:
+https://github.com/kavoye/linen-browser
+Copyright 2026 Kavoye. Original source is licensed under Apache License 2.0.
+The original copyright, SPDX, license, and third-party attribution notices
+are retained. WSurf is not endorsed by Kavoye or Apple.
+
+Modified for WSurf by wsagency in 2026:
+- Product, module, project, repository, application identifiers, storage,
+  localizations, build/release tooling, and documentation use WSurf branding.
+- The application and repository use a new WSurf wave mark and icon.
+- Extension tab metadata no longer creates dormant web views; popup actions
+  follow WebKit's readiness lifecycle without reloading the whole extension.
+- Native ports are owned and closed by extension context identity.
+- The known official Chrome iCloud Passwords 3.4.0 package is adapted for a
+  persistent macOS background while retaining Apple's authentication protocol.
+- Publisher-owned update/signing configuration is not reused for WSurf.
+
+Modification notices appear in comment-capable source and documentation.
+For structured localization, project/test metadata and generated image files
+whose format does not carry source comments, the modification record above
+and the Git history describe the WSurf changes.
+
+Apple's iCloud Passwords extension is a separately licensed product. Its
+resources, the Apple credential vault, private signing keys, and provisioning
+profiles are not redistributed in this repository. Dependency/provider logos
+and trademarks remain subject to their own notices and licenses; see
+WSurf/Support/Acknowledgements.json and LICENSE.

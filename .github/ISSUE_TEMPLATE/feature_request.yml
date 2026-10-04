@@ -1,12 +1,13 @@
+# Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 name: Feature request
-description: Propose a change to what Linen does.
+description: Propose a change to what WSurf does.
 labels: ["enhancement"]
 body:
   - type: textarea
     id: problem
     attributes:
       label: The problem
-      description: The task Linen makes difficult today. Describe the problem, not the solution.
+      description: The task WSurf makes difficult today. Describe the problem, not the solution.
     validations:
       required: true
 

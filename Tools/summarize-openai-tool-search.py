@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Summarize a paired Linen tool-search probe; never label it a browser benchmark."""
+# Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
+"""Summarize a paired WSurf tool-search probe; never label it a browser benchmark."""
 
 import argparse
 import json

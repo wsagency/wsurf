@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Opt-in live acceptance through Linen's native Swift OpenAI adapter.
+# Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
+"""Opt-in live acceptance through WSurf's native Swift OpenAI adapter.
 
 Defaults to a local credential preflight with no API requests. --live enables
 bounded paid calls; --hosted-tools additionally enables search, code and images.
@@ -21,7 +22,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="Fresh output directory")
     parser.add_argument("--derived-data", type=Path, default=ROOT / "build/OpenAILiveDD")
-    parser.add_argument("--model", help="Exact model ID; otherwise use Linen's configured OpenAI model")
+    parser.add_argument("--model", help="Exact model ID; otherwise use WSurf's configured OpenAI model")
     parser.add_argument("--build", action="store_true")
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--hosted-tools", action="store_true")
@@ -52,11 +53,11 @@ def main():
     output.mkdir(parents=True, mode=0o700, exist_ok=False)
     derived = args.derived_data.resolve()
     env = dict(os.environ)
-    env["LINEN_BENCHMARK_DERIVED_DATA"] = str(derived)
+    env["WSURF_BENCHMARK_DERIVED_DATA"] = str(derived)
     for key in list(env):
-        if key.startswith(("TEST_RUNNER_BAB_", "BAB_", "TEST_RUNNER_LINEN_OPENAI_")):
+        if key.startswith(("TEST_RUNNER_BAB_", "BAB_", "TEST_RUNNER_WSURF_OPENAI_")):
             del env[key]
-    base = ["xcodebuild", "-project", "Linen.xcodeproj", "-scheme", "Linen", "-destination",
+    base = ["xcodebuild", "-project", "WSurf.xcodeproj", "-scheme", "WSurf", "-destination",
             "platform=macOS,arch=arm64", "-derivedDataPath", str(derived),
             "-skipMacroValidation", "-skipPackagePluginValidation"]
     if args.adhoc:
@@ -84,9 +85,9 @@ def main():
     if args.model:
         config["model"] = args.model
     (output / "config.json").write_text(json.dumps(config, indent=2) + "\n")
-    env["TEST_RUNNER_LINEN_OPENAI_LIVE_CONFIG"] = str(output / "config.json")
+    env["TEST_RUNNER_WSURF_OPENAI_LIVE_CONFIG"] = str(output / "config.json")
     if env.get("OPENAI_API_KEY"):
-        env["TEST_RUNNER_LINEN_OPENAI_LIVE_KEY"] = env["OPENAI_API_KEY"]
+        env["TEST_RUNNER_WSURF_OPENAI_LIVE_KEY"] = env["OPENAI_API_KEY"]
     print("Running " + ("bounded live acceptance" if args.live else "credential preflight (no API requests)") + "...", flush=True)
     timed_out = False
     with (output / "test.log").open("w") as log:
@@ -97,8 +98,7 @@ def main():
                      "OpenAIConversationLiveTests" if args.conversation_only else
                      "OpenAIFileLiveTests" if args.files_only else
                      "OpenAIVoiceLiveTests" if args.voice_only else "OpenAILiveValidationTests")
-            result = subprocess.run(base + ["test-without-building", "-only-testing:LinenTests/" + suite,
-                "-parallel-testing-enabled", "NO", "-resultBundlePath", str(output / "tests.xcresult")],
+            result = subprocess.run(base + ["test-without-building", "-only-testing:WSurfTests/" + suite,
                 cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=1200)
         except subprocess.TimeoutExpired:
             timed_out = True

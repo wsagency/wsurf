@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Refuse to benchmark a stale build and identify the exact Linen source."""
+# Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
+"""Refuse to benchmark a stale build and identify the exact WSurf source."""
 import hashlib
 import json
 import os
@@ -8,8 +9,8 @@ import subprocess
 import sys
 
 root = Path(__file__).resolve().parents[1]
-paths = list((root / 'Linen').rglob('*.swift')) + list((root / 'LinenTests').rglob('*.swift'))
-paths += [root / 'Linen.xcodeproj/project.pbxproj', root / 'Linen.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved']
+paths = list((root / 'WSurf').rglob('*.swift')) + list((root / 'WSurfTests').rglob('*.swift'))
+paths += [root / 'WSurf.xcodeproj/project.pbxproj', root / 'WSurf.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved']
 paths += [root / 'Tools' / name for name in ['benchmark-provenance.py', 'build-benchmark-adapter.sh', 'run-benchmark-adapter.sh']]
 digest = hashlib.sha256()
 for path in sorted(paths):
@@ -20,7 +21,7 @@ metadata = {
     'source_sha256': digest.hexdigest(),
     'dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=root, text=True)),
 }
-record = Path(os.environ.get('LINEN_BENCHMARK_DERIVED_DATA', root / 'build/BenchmarkDD')) / 'benchmark-build.json'
+record = Path(os.environ.get('WSURF_BENCHMARK_DERIVED_DATA', root / 'build/BenchmarkDD')) / 'benchmark-build.json'
 if sys.argv[1] == 'write':
     record.write_text(json.dumps(metadata, indent=2))
 elif sys.argv[1] == 'verify':

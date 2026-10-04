@@ -1,3 +1,4 @@
+# Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 name: Release
 
 on:
@@ -13,10 +14,10 @@ concurrency:
   group: release-${{ github.ref }}
 
 env:
-  PROJECT: Linen.xcodeproj
-  SCHEME: Linen
-  APP: Linen
-  TEAM_ID: T8677WC8DG
+  PROJECT: WSurf.xcodeproj
+  SCHEME: WSurf
+  APP: WSurf
+  TEAM_ID: 5X68L55TNU
   XCODE: '26.6'
   DD: ${{ github.workspace }}/build/DD
 
@@ -99,7 +100,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: build/DD/SourcePackages
-          key: spm-${{ hashFiles('Linen.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: spm-${{ hashFiles('WSurf.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       - name: Resolve packages
         run: |
@@ -109,10 +110,30 @@ jobs:
       - name: Check acknowledgements
         run: |
           swift Tools/make-acknowledgements.swift "$DD/SourcePackages/checkouts"
-          if ! git diff --quiet -- Linen/Support/Acknowledgements.json; then
-            echo "::error file=Linen/Support/Acknowledgements.json::Out of date. Run: swift Tools/make-acknowledgements.swift"
+          if ! git diff --quiet -- WSurf/Support/Acknowledgements.json; then
+            echo "::error file=WSurf/Support/Acknowledgements.json::Out of date. Run: swift Tools/make-acknowledgements.swift"
             exit 1
           fi
+      - name: Check own release credentials
+        env:
+          CERTIFICATE_P12: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          PROVISIONING_PROFILE: ${{ secrets.DEVELOPER_ID_PROVISIONING_PROFILE }}
+          AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+          WSURF_SPARKLE_PRIVATE_KEY: ${{ secrets.WSURF_SPARKLE_PRIVATE_KEY }}
+          WSURF_SPARKLE_PUBLIC_KEY: ${{ secrets.WSURF_SPARKLE_PUBLIC_KEY }}
+        run: |
+          for name in CERTIFICATE_P12 CERTIFICATE_PASSWORD PROVISIONING_PROFILE \
+            AC_API_KEY_P8 AC_API_KEY_ID AC_API_ISSUER_ID WSURF_SPARKLE_PRIVATE_KEY \
+            WSURF_SPARKLE_PUBLIC_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing own release credential $name. Configure the release environment; never publish unsigned or upstream-signed artifacts."
+              exit 1
+            fi
+          done
+          echo "Own release credentials are configured; values are not printed."
 
       - name: Version from tag
         id: version
@@ -184,10 +205,12 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Developer ID Application" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
-            LINEN_PROFILE="$PROFILE_NAME" \
+            WSURF_PROFILE="$PROFILE_NAME" \
             OTHER_CODE_SIGN_FLAGS="--timestamp"
 
       - name: Export
+        env:
+          WSURF_SPARKLE_PUBLIC_KEY: ${{ secrets.WSURF_SPARKLE_PUBLIC_KEY }}
         run: |
           cat > build/ExportOptions.plist <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
@@ -201,7 +224,7 @@ jobs:
             <key>signingCertificate</key><string>Developer ID Application</string>
             <key>provisioningProfiles</key>
             <dict>
-              <key>com.kavoye.Linen</key><string>$PROFILE_NAME</string>
+              <key>io.wsagency.wsurf</key><string>$PROFILE_NAME</string>
             </dict>
           </dict>
           </plist>
@@ -226,6 +249,11 @@ jobs:
           codesign -d --entitlements - --xml "build/export/$APP.app" 2>/dev/null \
             | plutil -extract 'com\.apple\.developer\.web-browser\.public-key-credential' raw -o - - > /dev/null 2>&1 \
             || { echo "::error::web-browser.public-key-credential is missing: passkeys cannot be used."; exit 1; }
+          PUBLIC_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "build/export/$APP.app/Contents/Info.plist" 2>/dev/null || true)"
+          if [ -z "$PUBLIC_KEY" ] || [ "$PUBLIC_KEY" != "$WSURF_SPARKLE_PUBLIC_KEY" ]; then
+            echo "::error::WSURF_SPARKLE_PUBLIC_KEY does not match the WSurf app's embedded public key."
+            exit 1
+          fi
 
       - name: Notarize and staple
         env:
@@ -263,20 +291,16 @@ jobs:
       # downloads. The Applications symlink is the whole point of it - a copy
       # made in the Finder is what clears the quarantine flag, and an app that
       # keeps running from ~/Downloads cannot update itself at all.
-      # Only Finder writes a .DS_Store, and the runner has no Finder session, so
-      # the window layout is made on a Mac by Tools/make-dmg-layout.sh and
-      # committed. The volume name must stay Linen: the background is an alias
-      # that names the volume.
+      # Use Finder's native layout rather than inheriting another product's
+      # volume-specific aliases and window metadata.
       - name: Build the disk image
         id: dmg
         run: |
           STAGE="$RUNNER_TEMP/dmg"
           rm -rf "$STAGE"
-          mkdir -p "$STAGE/.background" build/dmg
+          mkdir -p "$STAGE" build/dmg
           ditto "build/export/$APP.app" "$STAGE/$APP.app"
           ln -s /Applications "$STAGE/Applications"
-          cp Tools/dmg/background.tiff "$STAGE/.background/background.tiff"
-          cp Tools/dmg/DS_Store "$STAGE/.DS_Store"
 
           DMG="build/dmg/$APP-${{ steps.version.outputs.version }}.dmg"
           hdiutil create -volname "$APP" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG"
@@ -310,10 +334,14 @@ jobs:
 
       - name: Sign for Sparkle and build the appcast
         env:
-          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          WSURF_SPARKLE_PRIVATE_KEY: ${{ secrets.WSURF_SPARKLE_PRIVATE_KEY }}
         run: |
+          if [ -z "$WSURF_SPARKLE_PRIVATE_KEY" ]; then
+            echo "::error::WSURF_SPARKLE_PRIVATE_KEY is not configured for this own release."
+            exit 1
+          fi
           BIN="$(dirname "$(find "$DD/SourcePackages/artifacts" -type f -name generate_appcast -print -quit)")"
-          echo "$SPARKLE_PRIVATE_KEY" | "$BIN/generate_appcast" \
+          echo "$WSURF_SPARKLE_PRIVATE_KEY" | "$BIN/generate_appcast" \
             --ed-key-file - \
             --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/" \
             --full-release-notes-url "https://github.com/${{ github.repository }}/releases" \

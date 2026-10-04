@@ -1,8 +1,9 @@
+# Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/kavoye/linen-browser/security/advisories/new
+    url: https://github.com/wsagency/wsurf/security/advisories/new
     about: Report a vulnerability privately. Do not open a public issue.
   - name: Website compatibility
     url: https://bugs.webkit.org
-    about: Linen uses WebKit. A page that also fails in Safari is a WebKit bug.
+    about: WSurf uses WebKit. A page that also fails in Safari is a WebKit bug.

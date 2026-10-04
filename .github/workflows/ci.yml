@@ -1,3 +1,4 @@
+# Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 name: CI
 
 on:
@@ -13,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PROJECT: Linen.xcodeproj
-  SCHEME: Linen
+  PROJECT: WSurf.xcodeproj
+  SCHEME: WSurf
   XCODE: '26.6'
   DD: ${{ github.workspace }}/build/DD
   # The macOS runner image carries no SwiftLint. Pinned so a new release cannot
@@ -49,7 +50,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: build/DD/SourcePackages
-          key: spm-${{ hashFiles('Linen.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: spm-${{ hashFiles('WSurf.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: spm-
 
       - name: Resolve packages
@@ -63,9 +64,9 @@ jobs:
       - name: Check acknowledgements
         run: |
           swift Tools/make-acknowledgements.swift "$DD/SourcePackages/checkouts"
-          if ! git diff --quiet -- Linen/Support/Acknowledgements.json; then
-            echo "::error file=Linen/Support/Acknowledgements.json::Out of date. Run: swift Tools/make-acknowledgements.swift"
-            git diff --stat -- Linen/Support/Acknowledgements.json
+          if ! git diff --quiet -- WSurf/Support/Acknowledgements.json; then
+            echo "::error file=WSurf/Support/Acknowledgements.json::Out of date. Run: swift Tools/make-acknowledgements.swift"
+            git diff --stat -- WSurf/Support/Acknowledgements.json
             exit 1
           fi
 

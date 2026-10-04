@@ -1,5 +1,7 @@
+# Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 # macOS
 .DS_Store
+/Tools/dmg/DS_Store
 
 # Xcode user state
 xcuserdata/

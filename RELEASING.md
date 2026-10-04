@@ -1,14 +1,19 @@
-# Releasing Linen
+<!-- Modified for WSurf by wsagency in 2026; based on Linen by Kavoye. -->
+# Releasing WSurf
 
-Linen uses [Sparkle 2.10.0](https://sparkle-project.org) for updates. The app
+WSurf uses [Sparkle 2.10.0](https://sparkle-project.org) for updates. The app
 does not show the Sparkle windows. The update interface is only the banner in
-`Linen/Updates/UpdateBanner.swift`.
+`WSurf/Updates/UpdateBanner.swift`.
+
+No public signed WSurf release is available until WSurf's own Developer ID
+certificate, profile, notarization credentials, and Sparkle key pair are
+configured. Never turn a local unsigned build into a release.
 
 Two files contain the hosting configuration. The values in these two files must
 agree:
 
-- `Linen/Updates/UpdateFeed.swift` — the `owner` and `repository` values
-- `Linen/Info.plist` — the `SUFeedURL` value
+- `WSurf/Updates/UpdateFeed.swift` — the `owner` and `repository` values
+- `WSurf/Info.plist` — the `SUFeedURL` value
 
 The feed URL is
 `https://github.com/<owner>/<repo>/releases/latest/download/appcast.xml`.
@@ -30,27 +35,19 @@ The tools are stored in DerivedData. Cleaning the build folder removes them;
 the next build restores them. You can also download the release tarball from
 https://github.com/sparkle-project/Sparkle/releases.
 
-## One-time: the Sparkle signing keys
+## The WSurf update signing key
 
-The EdDSA key pair already exists. `Linen/Info.plist` holds the public key as
-`SUPublicEDKey`, and this Mac’s login keychain holds the private key, where
-`sign_update` finds it. Nothing else needs configuring.
+The WSurf release owner must create and control a new Sparkle EdDSA key pair.
+Do not reuse, copy, or publish the upstream Kavoye key. `WSurf/Info.plist`
+holds the matching public key as `SUPublicEDKey`; the private key belongs only
+in the protected release environment as `WSURF_SPARKLE_PRIVATE_KEY`.
 
-Back up the private key and keep the backup for at least two years. If you lose
-it, installed copies cannot verify new updates. Users must download the app again.
+The release and preview workflows fail when that own private key is absent.
+They must not publish unsigned artifacts or artifacts signed by an upstream
+publisher key. Verify the embedded public key and the configured private key
+match before enabling releases. Never commit the private key or print it in CI
+logs; the public key belongs in `WSurf/Info.plist`.
 
-To export a copy:
-
-```bash
-"$SPARKLE_BIN/generate_keys" -x sparkle-private-key.txt
-```
-
-The exported key authorizes updates. Store it in a password manager, then delete
-the exported file.
-
-`generate_keys -p` shows the public key again at any time. If you run
-`generate_keys` with no arguments, it keeps the existing key pair. It does not
-make a new key pair.
 
 ## One-time: the Developer ID certificate
 
@@ -85,8 +82,8 @@ signs with `--timestamp`.
 
 ## One-time: the provisioning profile
 
-`Linen.entitlements` declares two restricted entitlements. The app stores API
-keys in the data-protection keychain. That keychain refuses an item from code
+`WSurf/WSurf.entitlements` declares two restricted entitlements. The app stores
+API keys in the data-protection keychain. That keychain refuses an item from code
 that has no keychain access group, so the file declares `keychain-access-groups`.
 The app also lets a website use a passkey, so the file declares
 `com.apple.developer.web-browser.public-key-credential`. A Developer ID
@@ -97,22 +94,23 @@ without the profile.
 Once, in the Apple Developer portal:
 
 1. Open Certificates, Identifiers & Profiles › Identifiers.
-2. Select the `com.kavoye.Linen` App ID, or register it.
+2. Select the `io.wsagency.wsurf` App ID, or register it.
 3. Enable the Web Browser Public Key Credential Requests capability. Apple
    assigns this capability to the account. You must also enable it on the
-   App ID.
+   App ID. This managed browser capability requires organization Account Holder
+   review; see https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.web-browser.public-key-credential.
 4. Open Profiles. Add a profile.
 5. Select the Developer ID type, under Distribution.
-6. Select the `com.kavoye.Linen` App ID and your Developer ID Application
+6. Select the `io.wsagency.wsurf` App ID and your Developer ID Application
    certificate.
-7. Give the profile a name, for example `Linen Developer ID`. Do not use the
+7. Give the profile a name, for example `WSurf Developer ID`. Do not use the
    characters `&`, `<` or `>`. The export step puts the name in a plist.
-8. Download the profile as `Linen.provisionprofile`.
+8. Download the profile as `WSurf.provisionprofile`.
 9. Run this command. The output must contain `keychain-access-groups` and
    `com.apple.developer.web-browser.public-key-credential`:
 
    ```bash
-   security cms -D -i Linen.provisionprofile | plutil -extract Entitlements xml1 -o - -
+   security cms -D -i WSurf.provisionprofile | plutil -extract Entitlements xml1 -o - -
    ```
 
 10. Put the profile in the `DEVELOPER_ID_PROVISIONING_PROFILE` secret below.
@@ -128,10 +126,10 @@ and at the checks after the export.
 
 ## One-time: who can release
 
-Pushing a tag starts the release workflow, which uses the Developer ID
-certificate, notarization key and Sparkle private key. Only accounts with write
-access can push tags. The Sparkle key authorizes updates for installed copies.
-Set up all three controls below before you make the repository public.
+Pushing a tag starts the release workflow, which uses WSurf's Developer ID
+certificate, notarization key, and own Sparkle private key. Only accounts with
+write access can push tags. The Sparkle key authorizes updates for installed
+copies. Set up all three controls below before enabling releases.
 
 **1. The release environment.** The workflow jobs declare
 `environment: release`, and the secrets live in that environment. Only a job
@@ -174,7 +172,7 @@ ruleset is what stops the commit getting to `main`.
 
 ## One-time: the release secrets
 
-`.github/workflows/release.yml` needs seven secrets. Add them to the `release`
+`.github/workflows/release.yml` needs eight secrets. Add them to the `release`
 environment, in Settings › Environments › release › Environment secrets. Do not
 add them in Settings › Secrets and variables › Actions: a repository secret is
 available to every workflow run, with no approval:
@@ -183,11 +181,12 @@ available to every workflow run, with no approval:
 | --- | --- |
 | `DEVELOPER_ID_CERTIFICATE_P12` | The `.p12` file from the certificate section above. Run `base64 -i cert.p12 \| pbcopy` |
 | `DEVELOPER_ID_CERTIFICATE_PASSWORD` | The password that you set on the `.p12` file |
-| `DEVELOPER_ID_PROVISIONING_PROFILE` | The Developer ID profile from the section above. Run `base64 -i Linen.provisionprofile \| pbcopy` |
+| `DEVELOPER_ID_PROVISIONING_PROFILE` | The WSurf Developer ID profile from the section above. Run `base64 -i WSurf.provisionprofile \| pbcopy` |
 | `AC_API_KEY_P8` | The full contents of the App Store Connect API key `.p8` file. Include the `BEGIN` and `END` lines |
 | `AC_API_KEY_ID` | The ID of the key. This is the `ABCD1234EF` part of `AuthKey_ABCD1234EF.p8` |
 | `AC_API_ISSUER_ID` | The issuer UUID. App Store Connect shows it above the list of keys |
-| `SPARKLE_PRIVATE_KEY` | The EdDSA private key, from `generate_keys -x` |
+| `WSURF_SPARKLE_PRIVATE_KEY` | WSurf's own EdDSA private key, matching the public key embedded in `WSurf/Info.plist`; never use an upstream key |
+| `WSURF_SPARKLE_PUBLIC_KEY` | The non-secret public key embedded in `WSurf/Info.plist`; the workflows compare it before publishing |
 
 Make the App Store Connect API key in Users and Access › Integrations › App
 Store Connect API. Give the key the Developer role. App Store Connect downloads
@@ -195,7 +194,10 @@ the `.p8` file one time only. `notarytool` uses this key to authenticate. An app
 password also works, but you can revoke the API key on its own,
 and the API key does not give access to all of your Apple ID.
 
-The team ID is not a secret. The workflow already contains it.
+The team ID is not a secret. The workflow contains WSurf's own team ID
+`5X68L55TNU`. Do not configure the workflows until the organization Account
+Holder has approved the managed browser capability and all eight own secrets
+exist in the protected release environment.
 
 ## Each release
 
@@ -239,10 +241,10 @@ Release requirements:
   disk image out of the `dist` folder. `generate_appcast` reads a disk image
   also, and then the feed contains two items for one version.
 - **Install in Applications.** A copy that runs from another folder cannot
-  always update itself, so Linen offers to move itself to the Applications
-  folder at the first launch. `Linen/App/InstallLocation.swift` makes that
-  decision. Linen asks one time only. Keep the Applications folder link
-  in the disk image to show where to install the app.
+  always update itself, so WSurf offers to move itself to the Applications
+  folder at the first launch. `WSurf/App/InstallLocation.swift` makes that
+  decision. WSurf asks one time only. Keep the Applications folder link in the
+  disk image to show where to install the app.
 - **The tag sets the version.** `MARKETING_VERSION` comes from the tag without
   the `v` character. `CURRENT_PROJECT_VERSION` comes from `git rev-list --count
   HEAD`, the number of commits, so the `CFBundleVersion` that Sparkle compares
@@ -274,7 +276,7 @@ Release requirements:
 ### Acknowledgements
 
 The app shows the license of each open source package in Settings › About. The
-list comes from `Linen/Support/Acknowledgements.json`. A script makes this file
+list comes from `WSurf/Support/Acknowledgements.json`. A script makes this file
 from `Package.resolved` and the resolved checkouts:
 
 ```bash
@@ -293,31 +295,17 @@ binaries, so this file is required.
 
 ### The disk image
 
-The disk image window comes from two files in `Tools/dmg`: `background.tiff`
-and `DS_Store`. The workflow copies both into the staging folder. Only Finder
-writes a `.DS_Store`, and the runner has no Finder session, so the layout is
-made once on a Mac.
+The disk image contains `WSurf.app` and an `Applications` symlink. Finder
+provides the native layout; WSurf does not copy upstream volume aliases or
+window metadata into a release.
 
-After you change the artwork or the icon positions:
+Optional brand artwork can be regenerated without mounting a volume or
+controlling Finder:
 
-1. Run this command on a Mac:
+```bash
+sh Tools/make-dmg-artwork.sh
+```
 
-   ```bash
-   sh Tools/make-dmg-layout.sh
-   ```
-
-2. Open the disk image from a release build. Look at the window.
-3. Commit the two files in `Tools/dmg`.
-
-The volume name must stay `Linen`. The background is an alias that names the
-volume.
-
-macOS 26 Finder ignores the window size in the file. The window opens at the
-size that Finder gives to each new window. The 1280x800 artwork
-covers the window background, with the layout anchored at the top left.
-A Finder icon position is the centre of the icon, so the positions in
-`Tools/make-dmg-layout.sh` and the coordinates in `Tools/make-dmg-background.swift`
-are the same numbers.
 
 ### Manual procedure
 
@@ -328,41 +316,37 @@ Mac:
 2. Notarize the app with `notarytool`.
 3. Staple the ticket to the app with `staple`.
 4. Make a zip file:
-   `ditto -c -k --sequesterRsrc --keepParent Linen.app Linen-1.1.zip`
+   `ditto -c -k --sequesterRsrc --keepParent WSurf.app WSurf-1.1.zip`
 5. Make the appcast:
 
    ```bash
    "$SPARKLE_BIN/generate_appcast" \
-     --download-url-prefix "https://github.com/kavoye/linen-browser/releases/download/v1.1/" \
+     --download-url-prefix "https://github.com/wsagency/wsurf/releases/download/v1.1/" \
      /path/to/folder-with-the-zip
    ```
 
-6. Make a folder that contains the app, a link to the Applications folder and
-   the window layout:
+6. Make a folder that contains the app and a link to the Applications folder:
 
    ```bash
-   mkdir -p dmg/.background && ditto Linen.app dmg/Linen.app && ln -s /Applications dmg/Applications
+   mkdir -p dmg && ditto WSurf.app dmg/WSurf.app && ln -s /Applications dmg/Applications
    ```
 
-   ```bash
-   cp Tools/dmg/background.tiff dmg/.background/ && cp Tools/dmg/DS_Store dmg/.DS_Store
-   ```
 
 7. Make the disk image:
 
    ```bash
-   hdiutil create -volname Linen -srcfolder dmg -fs HFS+ -format UDZO -ov Linen-1.1.dmg
+   hdiutil create -volname WSurf -srcfolder dmg -fs HFS+ -format UDZO -ov WSurf-1.1.dmg
    ```
 
 8. Sign the disk image:
-   `codesign --force --sign "Developer ID Application" --timestamp Linen-1.1.dmg`
+   `codesign --force --sign "Developer ID Application" --timestamp WSurf-1.1.dmg`
 9. Notarize the disk image with `notarytool`.
 10. Staple the ticket to the disk image with `staple`.
 11. Attach the disk image, the zip file **and** `appcast.xml` to the release.
 
 ## Preview builds
 
-Linen has two update channels. A release is the default. A preview build comes
+WSurf has two update channels. A release is the default. A preview build comes
 from the newest commit on `main`, before a release.
 
 To follow preview builds, open Settings › About and set Update channel to
@@ -395,7 +379,7 @@ builds.
 | Release | `v0.1.2`, a new tag each time | No | `appcast.xml` |
 | Preview | `tip`, one tag that moves | **Yes** | `appcast-tip.xml` |
 
-`Linen/Updates/UpdateFeed.swift` contains both URLs. The release feed is
+`WSurf/Updates/UpdateFeed.swift` contains both URLs. The release feed is
 `releases/latest/download/appcast.xml`. The preview feed is
 `releases/download/tip/appcast-tip.xml`. The second URL is a permalink because
 the tag name never changes.
@@ -427,7 +411,7 @@ the tag name never changes.
 
 ### Going back to releases
 
-Set Update channel to Release, and Linen reads the release feed again. Sparkle
+Set Update channel to Release, and WSurf reads the release feed again. Sparkle
 never installs an older version, so the app stays on the preview build until a
 release carries a higher build number. To go back at once, download the disk
 image from the releases page and replace the app.
@@ -441,9 +425,9 @@ image from the releases page and replace the app.
 - When Sparkle finds an update, the banner appears in two places: above the
   settings page, and in the sidebar below the media player.
 - Install downloads the update, installs it, and opens
-  Linen again, without asking a second time. Nothing downloads before someone
+  WSurf again, without asking a second time. Nothing downloads before someone
   chooses Install.
 - Dismissing the banner defers the update rather than skipping it, and a
   downloaded update carries on at the next launch.
-- Linen › Check for Updates… checks straight away, and the same banner shows the
-  result.
+- WSurf › Check for Updates… checks straight away, and the same banner shows
+  the result.

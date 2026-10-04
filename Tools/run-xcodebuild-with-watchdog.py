@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 """Run CI tests and stop xcodebuild if it hangs after the test summary."""
 
@@ -16,8 +17,8 @@ from pathlib import Path
 
 
 SUITE_SUMMARY = re.compile(r"Test run with \d+ tests? in \d+ suites? (?:passed|failed)")
-TOTAL_LIMIT_SECONDS = int(os.getenv("LINEN_CI_TEST_LIMIT_SECONDS", 20 * 60))
-FINALIZATION_LIMIT_SECONDS = int(os.getenv("LINEN_CI_FINALIZATION_LIMIT_SECONDS", 2 * 60))
+TOTAL_LIMIT_SECONDS = int(os.getenv("WSURF_CI_TEST_LIMIT_SECONDS", 20 * 60))
+FINALIZATION_LIMIT_SECONDS = int(os.getenv("WSURF_CI_FINALIZATION_LIMIT_SECONDS", 2 * 60))
 
 
 def capture_diagnostics(process_id: int) -> None:
@@ -32,8 +33,8 @@ def capture_diagnostics(process_id: int) -> None:
     (directory / "processes.txt").write_text(processes)
     targets = [("xcodebuild", process_id)]
     for line in processes.splitlines():
-        if "/Linen.app/Contents/MacOS/Linen" in line:
-            targets.append(("Linen", int(line.split()[0])))
+        if "/WSurf.app/Contents/MacOS/WSurf" in line:
+            targets.append(("WSurf", int(line.split()[0])))
             break
     for name, pid in targets:
         try:
