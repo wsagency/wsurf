@@ -156,7 +156,7 @@ Native WebAuthn handling must enforce:
 - Cancellation, AbortSignal, timeout, page close, navigation, engine/process termination, profile switch, and lock invalidation.
 - Truthful feature-detection and conditional-mediation behavior. Conditional discovery does not prompt for or sign a credential in the background.
 
-Native WSurf confirmation identifies the actual domain and selected account before registration or assertion. The app generates ES256 website credentials; other requested algorithms must either be genuinely implemented/validated or produce the standard unsupported result. Imported key formats are validated before acceptance, and unsupported private-key algorithms are explicit import conflicts rather than silently accepted unusable records.
+Native WSurf confirmation identifies the actual domain and selected account before registration or assertion. Generate and import ES256/P-256 website credentials in this design. A registration with no ES256 option and an imported non-ES256 private key produce an explicit unsupported result before mutation; do not accept an unusable key. Use no hardware/enterprise attestation claim and a zero signature counter for transferable software credentials. `userVerification: required` needs fresh successful native user verification, not merely a previously unlocked vault.
 
 Returned objects must satisfy the WebAuthn response contract used by the page, including byte buffers and relevant response/helper methods. A test-only CDP virtual authenticator is not the production implementation.
 
