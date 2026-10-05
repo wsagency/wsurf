@@ -181,6 +181,10 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         case .ephemeral:
             configuration = .nonPersistent()
         }
+        let dataStore = configuration.webViewConfiguration.websiteDataStore
+        // Use the browser's app-lifetime pool; short-lived extension pools can die inside IPC callbacks.
+        configuration.webViewConfiguration = WebViewPool.makeConfiguration()
+        configuration.webViewConfiguration.websiteDataStore = dataStore
         configuration.webViewConfiguration.applicationNameForUserAgent = WebViewPool.safariApplicationName
         return configuration
     }

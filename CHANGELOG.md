@@ -22,6 +22,9 @@ release notes will be added above this provenance record.
 - Builds extension ZIP test fixtures on the concurrent executor, avoiding
   MainActor Process run-loop reentrancy during WebKit teardown while retaining
   invalid-package and cleanup assertions.
+- Extension controller web views now reuse the browser's pooled configuration,
+  preserving the controller's website data store while avoiding process-pool
+  destruction during pending IPC callbacks.
 
 No signed WSurf release has been published yet. Apple Passwords compatibility
 changes are present in source and fixtures, but real PIN, fill, save, OTP,
