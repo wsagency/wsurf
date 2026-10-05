@@ -108,19 +108,17 @@ struct SidebarFolderMenuItems: View {
         items.contains { browser.sidebarTree.parent(of: $0) != nil }
     }
 
-    private var targets: [TabFolder] {
-        browser.folders.filter { browser.sidebarTree.canHold($0.id, items) }
+    static func targets(in parent: TabFolder?, for items: [SidebarItem], browser: BrowserModel) -> [TabFolder] {
+        browser.rows(in: parent).compactMap { item in
+            guard case .folder(let id) = item, browser.sidebarTree.canHold(id, items) else { return nil }
+            return browser.folder(id: id)
+        }
     }
 
     var body: some View {
+        let targets = Self.targets(in: nil, for: items, browser: browser)
         Menu {
-            ForEach(targets) { folder in
-                Button {
-                    browser.move(items, into: folder)
-                } label: {
-                    Text(verbatim: folder.name)
-                }
-            }
+            SidebarFolderTargetMenuItems(targets: targets, items: items, browser: browser)
             if !targets.isEmpty {
                 Divider()
             }
@@ -140,6 +138,37 @@ struct SidebarFolderMenuItems: View {
             }
         }
         Divider()
+    }
+}
+
+private struct SidebarFolderTargetMenuItems: View {
+    let targets: [TabFolder]
+    let items: [SidebarItem]
+    let browser: BrowserModel
+
+    var body: some View {
+        ForEach(targets) { folder in
+            let children = SidebarFolderMenuItems.targets(in: folder, for: items, browser: browser)
+            if children.isEmpty {
+                Button {
+                    browser.move(items, into: folder)
+                } label: {
+                    Text(verbatim: folder.name)
+                }
+            } else {
+                Menu {
+                    Button {
+                        browser.move(items, into: folder)
+                    } label: {
+                        Label("Move Here", systemImage: "folder")
+                    }
+                    Divider()
+                    AnyView(SidebarFolderTargetMenuItems(targets: children, items: items, browser: browser))
+                } label: {
+                    Text(verbatim: folder.name)
+                }
+            }
+        }
     }
 }
 

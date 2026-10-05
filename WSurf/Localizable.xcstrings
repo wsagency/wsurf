@@ -2956,6 +2956,9 @@
     "Move WSurf to the Applications folder?" : {
       "comment" : "Title of the alert WSurf shows at launch when it runs from anywhere other than an Applications folder. Sentence case, and the question mark is the only closing punctuation macOS dialog titles take."
     },
+    "Move Here" : {
+      "comment" : "First item inside a folder’s Move to Folder submenu. Moves the tab or selection into that folder itself rather than one of its subfolders. Title Case."
+    },
     "Move Pin to This Page" : {
       "comment" : "Item in the Edit Pinned Page submenu of a tab row: it hands the tab's single anchor to the page now open, replacing the old one. Use the same noun for “pin” as in “Pin This Page”. Title Case."
     },

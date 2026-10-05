@@ -228,7 +228,7 @@ struct FolderSection: View {
 }
 
 @MainActor
-private enum FolderContextMenu {
+enum FolderContextMenu {
     static func make(
         folder: TabFolder,
         browser: BrowserModel,
@@ -323,28 +323,7 @@ private enum FolderContextMenu {
         to menu: NSMenu,
         browser: BrowserModel
     ) {
-        let move = NSMenu()
-        move.autoenablesItems = false
-        let targets = browser.folders.filter { browser.sidebarTree.canHold($0.id, items) }
-        for folder in targets {
-            let target = folder
-            move.addItem(actionItem(
-                title: folder.name,
-                symbol: "folder",
-                action: { [weak browser, weak target] in
-                    guard let browser, let target else { return }
-                    browser.move(items, into: target)
-                }
-            ))
-        }
-        if !targets.isEmpty {
-            move.addItem(.separator())
-        }
-        move.addItem(actionItem(
-            title: String(localized: "New Folder…"),
-            symbol: "folder.badge.plus",
-            action: { [weak browser] in browser?.createFolder(containing: items) }
-        ))
+        let move = moveMenu(items, browser: browser)
         let moveItem = NSMenuItem(title: String(localized: "Move to Folder"), action: nil, keyEquivalent: "")
         moveItem.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
         moveItem.submenu = move
@@ -356,6 +335,54 @@ private enum FolderContextMenu {
                 symbol: "folder.badge.minus",
                 action: { [weak browser] in browser?.moveOut(items) }
             ))
+        }
+    }
+
+    static func moveMenu(_ items: [SidebarItem], browser: BrowserModel) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let targets = SidebarFolderMenuItems.targets(in: nil, for: items, browser: browser)
+        addFolderTargets(targets, items: items, to: menu, browser: browser)
+        if !targets.isEmpty {
+            menu.addItem(.separator())
+        }
+        menu.addItem(actionItem(
+            title: String(localized: "New Folder…"),
+            symbol: "folder.badge.plus",
+            action: { [weak browser] in browser?.createFolder(containing: items) }
+        ))
+        return menu
+    }
+
+    private static func addFolderTargets(
+        _ targets: [TabFolder],
+        items: [SidebarItem],
+        to menu: NSMenu,
+        browser: BrowserModel
+    ) {
+        for folder in targets {
+            let children = SidebarFolderMenuItems.targets(in: folder, for: items, browser: browser)
+            let destination = actionItem(
+                title: children.isEmpty ? folder.name : String(localized: "Move Here"),
+                symbol: "folder",
+                action: { [weak browser, weak folder] in
+                    guard let browser, let folder else { return }
+                    browser.move(items, into: folder)
+                }
+            )
+            if children.isEmpty {
+                menu.addItem(destination)
+            } else {
+                let submenu = NSMenu()
+                submenu.autoenablesItems = false
+                submenu.addItem(destination)
+                submenu.addItem(.separator())
+                addFolderTargets(children, items: items, to: submenu, browser: browser)
+                let branch = NSMenuItem(title: folder.name, action: nil, keyEquivalent: "")
+                branch.image = NSImage(systemSymbolName: "folder", accessibilityDescription: folder.name)
+                branch.submenu = submenu
+                menu.addItem(branch)
+            }
         }
     }
 
