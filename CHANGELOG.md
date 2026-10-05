@@ -29,6 +29,10 @@ release notes will be added above this provenance record.
   WebKit query is cold; stale, disabled, animated and permission checks remain.
 - Repeated or late handoffs of the same native download no longer create
   duplicate transfers. Separate requests for the same URL remain independent.
+- Added the dependency-free `wsurf.app/` website and public `webcredentials`
+  association for the configured WSurf release identity. Includes responsive
+  source/build links, upstream attribution, and deployment requirements;
+  no signing secrets or vault data are hosted.
 
 No signed WSurf release has been published yet. Apple Passwords compatibility
 changes are present in source and fixtures, but real PIN, fill, save, OTP,

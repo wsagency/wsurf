@@ -137,6 +137,42 @@ vault authentication or fill/save behavior. See [Contributing](CONTRIBUTING.md)
 for test commands and development guidelines, [Architecture](ARCHITECTURE.md)
 for the code structure, and [Releasing](RELEASING.md) for distribution.
 
+## Website and domain association
+
+[`wsurf.app/`](wsurf.app/) is the static website: HTML, CSS, and the existing
+wave artwork. No build step, JavaScript, third-party assets, or credentials are
+needed. Configure autodeploy from this repository with `wsurf.app/` as the
+webserver's document root, preserving the hidden `.well-known/` directory.
+
+Preview locally:
+
+```bash
+python3 -m http.server 8765 --bind 127.0.0.1 --directory wsurf.app
+```
+
+The public association file must be served at
+`https://wsurf.app/.well-known/apple-app-site-association` with HTTP 200,
+`Content-Type: application/json`, valid HTTPS, and no redirect or authentication.
+The Python preview server serves the extensionless file as
+`application/octet-stream`; configure the production server's MIME type explicitly.
+For Nginx, inside the server block whose root is the deployed website:
+
+```nginx
+location = /.well-known/apple-app-site-association {
+    default_type application/json;
+    try_files $uri =404;
+}
+```
+
+The file authorizes `5X68L55TNU.io.wsagency.wsurf`, using the repository's
+configured release team and bundle ID. Before enabling passkey vault unlock,
+confirm it matches the signed app's `application-identifier`; the App ID prefix
+is not necessarily the Team ID. The app will also need a provisioned
+`webcredentials:wsurf.app` Associated Domains entitlement. This website does not
+implement credential migration or vault unlock, and contains no certificates,
+private keys, vault data, or PRF results. Keep Apple signing material out of
+the website deployment.
+
 ## License and acknowledgements
 
 [Apache 2.0](LICENSE). WSurf is a fork with attribution to the upstream
