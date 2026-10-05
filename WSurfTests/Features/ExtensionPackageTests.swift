@@ -20,7 +20,9 @@ struct ExtensionPackageTests {
 
     /// A package with a manifest and one other file, zipped the way the
     /// Chrome Web Store serves one: everything at the root of the archive.
-    private func makePackage(version: String, extra: String? = nil) throws -> Data {
+    /// Blocking Process waits must not re-enter MainActor during WebKit teardown.
+    @concurrent
+    private nonisolated func makePackage(version: String, extra: String? = nil) async throws -> Data {
         let files = FileManager.default
         let scratch = files.temporaryDirectory
             .appendingPathComponent("wsurf-fixture-\(UUID().uuidString)", isDirectory: true)
@@ -52,7 +54,7 @@ struct ExtensionPackageTests {
         let (library, directory) = makeLibrary()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        try await library.unpack(try makePackage(version: "1"), id: "a")
+        try await library.unpack(try await makePackage(version: "1"), id: "a")
 
         #expect(library.packageURL(for: "a") == directory.appendingPathComponent("a"))
         #expect(manifest(in: library.packageURL(for: "a")).contains("\"1\""))
@@ -64,8 +66,8 @@ struct ExtensionPackageTests {
         let (library, directory) = makeLibrary()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        try await library.unpack(try makePackage(version: "1", extra: "old.js"), id: "a")
-        try await library.unpack(try makePackage(version: "2"), id: "a")
+        try await library.unpack(try await makePackage(version: "1", extra: "old.js"), id: "a")
+        try await library.unpack(try await makePackage(version: "2"), id: "a")
 
         let unpacked = library.packageURL(for: "a")
         #expect(manifest(in: unpacked).contains("\"2\""))
@@ -76,11 +78,11 @@ struct ExtensionPackageTests {
 
     /// Nothing is staged where the loaded extension lives, so a failed
     /// unpack cannot leave a half-package behind either.
-    @Test func aPackageWithNoManifestIsRefused() async throws {
+    @Test func anInvalidArchiveIsRefusedWithoutRemovingAnInstalledPackage() async throws {
         let (library, directory) = makeLibrary()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let empty = try makePackage(version: "1")
+        let empty = try await makePackage(version: "1")
         try await library.unpack(empty, id: "a")
         await #expect(throws: ExtensionLibrary.PackageError.self) {
             try await library.unpack(Data("not a zip".utf8), id: "b")
@@ -97,7 +99,7 @@ struct ExtensionPackageTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         library.recordInstall(id: "a")
-        try await library.unpack(try makePackage(version: "1"), id: "a")
+        try await library.unpack(try await makePackage(version: "1"), id: "a")
 
         library.uninstall(id: "a")
 
