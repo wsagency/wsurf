@@ -36,6 +36,13 @@ release notes will be added above this provenance record.
 - Move to Folder now follows the sidebar hierarchy instead of listing every
   folder at the first level. Nested menus include Move Here for the parent
   folder and keep invalid self/descendant destinations out of folder moves.
+- Added assets-only Cloudflare hosting for `wsurf.app/` with an exact JSON MIME
+  override for the hidden association file. Restricted Worker-only deployment
+  and public anonymous HTTPS GET/HEAD checks pass with the unchanged app
+  identity and domain/DNS binding. The sole GitHub Actions path waits for
+  successful CI on the exact PR-merged main SHA and skips superseded commits;
+  no PR/fork/tag deploy, account-wide token, DNS grant, native Workers Builds
+  connection, or GitHub App grant.
 
 No signed WSurf release has been published yet. Apple Passwords compatibility
 changes are present in source and fixtures, but real PIN, fill, save, OTP,

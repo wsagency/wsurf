@@ -173,6 +173,46 @@ implement credential migration or vault unlock, and contains no certificates,
 private keys, vault data, or PRF results. Keep Apple signing material out of
 the website deployment.
 
+### Cloudflare Workers
+
+[`wrangler.jsonc`](wrangler.jsonc) defines the assets-only Worker `wsurf-site`
+with `./wsurf.app` as its document root and `workers_dev` disabled. The existing
+`wsurf.app` Custom Domain is managed separately: the configuration deliberately
+omits `routes`, so recurring deployments do not need DNS or domain permissions.
+[`wsurf.app/_headers`](wsurf.app/_headers) sets the association file's
+`Content-Type: application/json`. The existing hidden `.well-known` file and
+its app identity are preserved. No JavaScript Worker, website build, or
+application dependencies are required.
+
+The sole production deploy path is GitHub Actions: a PR merged into `main` in
+`wsagency/wsurf` triggers the existing `CI` workflow. After that exact commit's
+push-triggered CI succeeds,
+[`deploy-site.yml`](.github/workflows/deploy-site.yml) checks out the tested
+SHA and runs `npx --yes wrangler@4.136.2 deploy` to publish to
+`https://wsurf.app`. Superseded main commits are skipped. Failed CI, PR/fork/tag
+and other-branch runs cannot deploy. There is no native Workers Builds
+connection, GitHub App grant, or competing manual path. Native app signing and
+release workflows remain independent.
+
+The repository secret `CLOUDFLARE_API_TOKEN` is restricted to **Individual Workers
+Editor** on the existing `wsurf-site` only. It has no account-wide, DNS, route,
+KV, or R2 grant. Never use operator master credentials as the build secret or
+add `routes` to this scoped configuration. Custom Domain changes require
+separately authorized operator access.
+
+The production association file must be served anonymously at
+`https://wsurf.app/.well-known/apple-app-site-association` with HTTP 200,
+`Content-Type: application/json`, valid HTTPS, and no redirect or
+authentication.
+
+Local Wrangler/browser checks and approved operational bootstrap passed.
+An actual deployment using only the restricted Worker token passed on
+2026-10-05, preserving the existing Custom Domain and managed DNS record.
+Public anonymous HTTPS GET/HEAD checks confirm the association's HTTP 200,
+JSON MIME, unchanged identity, and no redirect; the rendered site loads its
+CSS and artwork. These operational checks do not replace the PR review and
+successful main CI gate for recurring deployments.
+
 ## License and acknowledgements
 
 [Apache 2.0](LICENSE). WSurf is a fork with attribution to the upstream
