@@ -40,6 +40,15 @@ struct NativeMessagingTests {
         }
     }
 
+    @MainActor
+    private func controllerConfiguration() -> WKWebExtensionController.Configuration {
+        let configuration = WKWebExtensionController.Configuration.nonPersistent()
+        let dataStore = configuration.webViewConfiguration.websiteDataStore
+        configuration.webViewConfiguration = WebViewPool.makeConfiguration()
+        configuration.webViewConfiguration.websiteDataStore = dataStore
+        return configuration
+    }
+
     // MARK: - Hosts that die
 
     /// A regression here SIGPIPE-kills the test runner itself.
@@ -361,9 +370,9 @@ struct NativeMessagingTests {
             mozillaDirectories: []
         )
         let delegate = Delegate(service: service)
-        let firstController = WKWebExtensionController(configuration: .nonPersistent())
+        let firstController = WKWebExtensionController(configuration: controllerConfiguration())
         firstController.delegate = delegate
-        let secondController = WKWebExtensionController(configuration: .nonPersistent())
+        let secondController = WKWebExtensionController(configuration: controllerConfiguration())
         secondController.delegate = delegate
         let firstExtension = try await WKWebExtension(resourceBaseURL: firstPackage)
         let secondExtension = try await WKWebExtension(resourceBaseURL: secondPackage)

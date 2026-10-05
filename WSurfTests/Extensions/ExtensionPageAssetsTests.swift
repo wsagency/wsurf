@@ -238,7 +238,11 @@ struct ExtensionPageAssetsTests {
     }
 
     private func loadedHarness(for package: URL) async throws -> Harness {
-        let controller = WKWebExtensionController(configuration: .nonPersistent())
+        let configuration = WKWebExtensionController.Configuration.nonPersistent()
+        let dataStore = configuration.webViewConfiguration.websiteDataStore
+        configuration.webViewConfiguration = WebViewPool.makeConfiguration()
+        configuration.webViewConfiguration.websiteDataStore = dataStore
+        let controller = WKWebExtensionController(configuration: configuration)
         let window = ProbeWindow()
         controller.delegate = window
         controller.didOpenWindow(window)

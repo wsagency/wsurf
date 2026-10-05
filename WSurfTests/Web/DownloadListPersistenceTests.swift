@@ -4,6 +4,7 @@
 
 import Foundation
 import Testing
+import WebKit
 
 @testable import WSurf
 
@@ -14,6 +15,38 @@ struct DownloadListPersistenceTests {
     private func scratchFile() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("wsurf-downloads-\(UUID().uuidString).json")
+    }
+
+    @Test(.boundedWebViews)
+    func repeatedHandoffsDoNotDuplicateTransfersOrSuppressSeparateRequests() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wsurf-download-handoff-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let destination = directory.appendingPathComponent("files", isDirectory: true)
+        let file = directory.appendingPathComponent("list.json")
+        let body = Data("single download fixture".utf8)
+        let server = try await HTTPFixtureServer.start(routes: ["/file": .download(body, filename: "fixture.bin")])
+        let source = try server.url("/file")
+        let configuration = WebViewPool.makeConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        let downloads = DownloadManager(destinationFolder: destination, asksWhereToSave: false, file: file)
+        for expected in 1...2 {
+            let download = await view.startDownload(using: URLRequest(url: source))
+            downloads.adopt(download, suggestedSource: source)
+            downloads.adopt(download, suggestedSource: source)
+            #expect(await waitUntil { downloads.items.filter { $0.state == .finished }.count == expected })
+            #expect(downloads.items.count == expected)
+            downloads.adopt(download, suggestedSource: source)
+            #expect(downloads.items.count == expected)
+        }
+        let destinations = try downloads.items.map { try #require($0.destination) }
+        #expect(Set(destinations).count == 2)
+        for url in destinations {
+            #expect(try Data(contentsOf: url) == body)
+        }
+        downloads.writeNow()
+        #expect(DownloadManager(file: file).items.count == 2)
     }
 
     @Test func aFinishedListComesBackAfterARelaunch() {

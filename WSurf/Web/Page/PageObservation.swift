@@ -66,6 +66,8 @@ extension PageDriver {
     static func prepareAction(ref: Int, in view: WKWebView) async -> String? {
         let deadline = ContinuousClock.now + .seconds(1)
         var previousBounds: [Double]?
+        // Cold WebKit IPC can consume the timeout before stability has two samples.
+        var samples = 0
         var lastError = "The control did not become stable. Read the page again."
         repeat {
             guard await validateObservation(in: view, ref: ref) else { return staleMessage }
@@ -81,6 +83,7 @@ extension PageDriver {
                     return JSON.stringify({ error, moving, bounds: [r.x, r.y, r.width, r.height] });
                     """), in: view)
             guard let result else { return staleMessage }
+            samples += 1
             if let error = result["error"] as? String, !error.isEmpty {
                 lastError = error
                 previousBounds = nil
@@ -94,7 +97,7 @@ extension PageDriver {
                 previousBounds = bounds
             }
             try? await Task.sleep(for: .milliseconds(40))
-        } while ContinuousClock.now < deadline
+        } while samples < 2 || ContinuousClock.now < deadline
         return lastError
     }
 }

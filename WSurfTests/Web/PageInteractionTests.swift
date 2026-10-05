@@ -248,6 +248,26 @@ struct PageInteractionTests {
         #expect(await js(view, "Array.from(document.querySelectorAll('input')).every(input => input.value === 'batch')") as? Bool == true)
     }
 
+    @Test func aColdReadinessQueryStillTypesIntoAStableControl() async throws {
+        let view = await page("<input id='field' aria-label='Field'>")
+        _ = await PageDriver.snapshot(view)
+        _ = try await view.evaluateJavaScript("""
+            const animations = Element.prototype.getAnimations;
+            let delayed = false;
+            Element.prototype.getAnimations = function () {
+              if (!delayed && this.id === 'field') {
+                delayed = true;
+                const end = performance.now() + 1100;
+                while (performance.now() < end) {}
+              }
+              return animations.call(this);
+            };
+            true
+            """, in: nil, contentWorld: PageAutomationGuard.world)
+        let result = await PageDriver.type(text: "cold", intoField: "", ref: 1, submit: false, in: view)
+        #expect(await js(view, "document.querySelector('#field').value") as? String == "cold", "\(result)")
+    }
+
     @Test func checkedStateIsIdempotentAndDropdownInspectionContinues() async {
         let options = (1...40).map { "<option>Option \($0)</option>" }.joined()
         let view = await page(

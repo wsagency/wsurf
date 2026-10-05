@@ -176,6 +176,8 @@ final class DownloadManager: NSObject {
         sourceTabID: UUID? = nil,
         privately: Bool = false
     ) {
+        // Delegate ownership also covers a late handoff after active IDs were cleared.
+        guard download.delegate !== self else { return }
         let id = beginItem(
             source: suggestedSource ?? download.originalRequest?.url,
             sourceTabID: sourceTabID,

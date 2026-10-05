@@ -25,6 +25,10 @@ release notes will be added above this provenance record.
 - Extension controller web views now reuse the browser's pooled configuration,
   preserving the controller's website data store while avoiding process-pool
   destruction during pending IPC callbacks.
+- Stable controls receive at least two readiness samples even when the first
+  WebKit query is cold; stale, disabled, animated and permission checks remain.
+- Repeated or late handoffs of the same native download no longer create
+  duplicate transfers. Separate requests for the same URL remain independent.
 
 No signed WSurf release has been published yet. Apple Passwords compatibility
 changes are present in source and fixtures, but real PIN, fill, save, OTP,
