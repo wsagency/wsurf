@@ -168,7 +168,9 @@ struct VoiceGlyph: View {
     }
 
     private var style: AnyShapeStyle {
-        if let override = Theme.controlOverride { return AnyShapeStyle(override) }
+        if let override = Theme.controlOverride {
+            return AnyShapeStyle(override)
+        }
         return switch state {
         case .listening:
             AnyShapeStyle(Color.red)

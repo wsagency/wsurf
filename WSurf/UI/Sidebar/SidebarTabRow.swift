@@ -427,17 +427,23 @@ nonisolated enum SidebarTabAction: Equatable {
 
     var symbol: String {
         switch self {
-        case .close: "xmark"
-        case .unload: "arrow.uturn.down"
-        case .load: "play.fill"
+        case .close:
+            "xmark"
+        case .unload:
+            "arrow.uturn.down"
+        case .load:
+            "play.fill"
         }
     }
 
     var label: LocalizedStringResource {
         switch self {
-        case .close: "Remove Tab"
-        case .unload: "Unload Tab"
-        case .load: "Load Tab"
+        case .close:
+            "Remove Tab"
+        case .unload:
+            "Unload Tab"
+        case .load:
+            "Load Tab"
         }
     }
 }
