@@ -66,6 +66,28 @@ struct ProfileSettingsTests {
         #expect(!settings.javaScriptEnabled)
     }
 
+    @Test func privateSettingsDisappearWithoutChangingTheInheritedProfile() throws {
+        let app = try suite()
+        let persistent = try suite()
+        defer { [app, persistent].forEach(forget) }
+        let settings = BrowserSettings(defaults: app, sessionDefaults: persistent)
+        settings.javaScriptEnabled = false
+
+        let privateSettings = BrowserSettings(
+            defaults: app, sessionDefaults: InMemoryUserDefaults(inheriting: persistent)
+        )
+        #expect(!privateSettings.javaScriptEnabled)
+        privateSettings.javaScriptEnabled = true
+        #expect(privateSettings.javaScriptEnabled)
+
+        let reopened = BrowserSettings(defaults: app, sessionDefaults: persistent)
+        let nextPrivateSession = BrowserSettings(
+            defaults: app, sessionDefaults: InMemoryUserDefaults(inheriting: persistent)
+        )
+        #expect(!reopened.javaScriptEnabled)
+        #expect(!nextPrivateSession.javaScriptEnabled)
+    }
+
     @Test func theProviderAndModelAreWrittenWhereTheProfilePointsThem() throws {
         let work = try suite()
         defer {

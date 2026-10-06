@@ -12,23 +12,24 @@ import WebKit
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct PageComputerInputTests {
-    private func page(_ html: String) async -> (WKWebView, NSWindow) {
+    private func page(_ html: String) async -> (BrowserPage, NSWindow) {
         let config = WebViewPool.makeConfiguration()
         config.websiteDataStore = .nonPersistent()
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 500, height: 400), configuration: config)
+        let page = BrowserPage(webKit: view)
         let foreground = ProcessInfo.processInfo.environment["WSURF_COMPUTER_FOREGROUND_TEST"] == "1"
         let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400),
                               styleMask: foreground ? [.titled, .closable] : [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.contentView = view
+        window.contentView = page
         window.orderBack(nil)
         window.title = "WSurf computer input verification"
-        view.loadHTMLString("<!doctype html><body style='margin:0'>\(html)</body>", baseURL: nil)
-        #expect(await PageSettle.untilIdle(view))
+        page.loadHTMLString("<!doctype html><body style='margin:0'>\(html)</body>", baseURL: nil)
+        #expect(await PageSettle.untilIdle(page))
         if foreground {
             #expect(await waitUntil(timeout: .seconds(60)) { NSApp.isActive && window.isKeyWindow })
         }
-        return (view, window)
+        return (page, window)
     }
 
     private func point(_ x: Double, _ y: Double, frame: PageComputerFrame, type: String = "click") -> OpenAIJSON {
@@ -197,7 +198,7 @@ struct PageComputerInputTests {
     }
 
     private func expectKey(_ keys: [String], key: String, code: String, shift: Bool = false, alt: Bool = false,
-                           frame: PageComputerFrame, in view: WKWebView) async throws {
+                           frame: PageComputerFrame, in view: BrowserPage) async throws {
         _ = try await view.evaluateJavaScript("window.keys=[]")
         try await PageDriver.computerAction(["type": "keypress", "keys": .array(keys.map(OpenAIJSON.string))], frame: frame, in: view)
         let events = try #require(try await view.evaluateJavaScript("window.keys") as? [[String: Any]])

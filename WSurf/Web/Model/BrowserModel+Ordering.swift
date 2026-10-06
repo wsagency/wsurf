@@ -38,15 +38,12 @@ extension BrowserModel {
         scheduleSave()
     }
 
-    func isKept(_ item: SidebarItem, ignoring carried: Set<SidebarItem> = []) -> Bool {
+    func isKept(_ item: SidebarItem) -> Bool {
         switch item {
         case .tab(let id):
             tabsByID[id]?.pinnedURL != nil
         case .folder(let id):
-            foldersByID[id].map { folder in
-                let held = allTabs(in: folder).filter { !carried.contains(.tab($0.id)) }
-                return !held.isEmpty && held.allSatisfy { $0.pinnedURL != nil }
-            } ?? false
+            foldersByID[id]?.isPinned == true
         }
     }
 
@@ -81,24 +78,50 @@ extension BrowserModel {
         setPinned(true, for: items)
     }
 
-    func setPinned(_ pinned: Bool, for items: [SidebarItem]) {
+    func setPinned(_ pinned: Bool, for items: some Sequence<SidebarItem>) {
         var changed = false
-        for case .tab(let id) in reconciledTree().expanded(Set(items)) {
-            guard let tab = tabsByID[id] else { continue }
-            if pinned, tab.pinnedURL == nil {
-                guard let url = URL(string: tab.urlString), !tab.urlString.isEmpty else { continue }
-                tab.pinnedURL = url
-                tab.pinnedTitle = tab.title
+        for item in items {
+            switch item {
+            case .folder(let id):
+                guard let folder = foldersByID[id], folder.isPinned != pinned else { continue }
+                folder.isPinned = pinned
                 changed = true
-            } else if !pinned, tab.pinnedURL != nil {
-                tab.pinnedURL = nil
-                tab.pinnedTitle = ""
-                changed = true
+            case .tab(let id):
+                guard let tab = tabsByID[id] else { continue }
+                if pinned, tab.pinnedURL == nil {
+                    guard let url = URL(string: tab.urlString), !tab.urlString.isEmpty else { continue }
+                    tab.pinnedURL = url
+                    tab.pinnedTitle = tab.title
+                    changed = true
+                } else if !pinned, tab.pinnedURL != nil {
+                    tab.pinnedURL = nil
+                    tab.pinnedTitle = ""
+                    changed = true
+                }
             }
         }
         if changed {
             scheduleSave()
         }
+    }
+
+    func pin(_ folder: TabFolder) {
+        pinAtTop([.folder(folder.id)])
+    }
+
+    func unpin(_ folder: TabFolder) {
+        guard folder.isPinned else { return }
+        let item = SidebarItem.folder(folder.id)
+        let rest = reconciledTree().root.filter { $0 != item }
+        let boundary = pinnedBoundary(in: rest, ignoring: [])
+        folder.isPinned = false
+        move(
+            [item],
+            into: nil,
+            before: rest.indices.contains(boundary) ? rest[boundary] : nil,
+            settlingPins: false
+        )
+        scheduleSave()
     }
 
     func returnToPin(_ tab: BrowserTab) {
@@ -246,7 +269,7 @@ extension BrowserModel {
 
     func close(_ tab: BrowserTab, recordForReopening: Bool = true) {
         if tab.isMaterialised {
-            AutofillSuggestions.shared.dismiss(in: tab.webView)
+            AutofillSuggestions.shared.dismiss(in: tab.page)
         }
         tab.autofillSave.clear()
         if recordForReopening, !tab.isPrivate {
@@ -275,11 +298,6 @@ extension BrowserModel {
         onTabClosed?(tab)
         scheduleSave()
 
-        if tab.isMaterialised {
-            tab.webView.stopLoading()
-            tab.webView.load(URLRequest(url: URL(string: "about:blank")!))
-            tab.webView.removeFromSuperview()
-        }
         tab.detach()
     }
 
@@ -296,7 +314,7 @@ extension BrowserModel {
             ?? above.first
     }
 
-    static func isPlayingMedia(_ webView: WKWebView) async -> Bool {
+    static func isPlayingMedia(_ webView: BrowserPage) async -> Bool {
         let script = """
         !!Array.from(document.querySelectorAll('video, audio'))
             .find(m => !m.paused && !m.ended && m.currentTime > 0
@@ -343,11 +361,8 @@ extension BrowserModel {
         let tab = makeTab(for: URL(string: record.url))
         tab.title = record.title
         tab.urlString = record.url
-        if let state = record.state {
-            tab.webView.interactionState = state
-        } else if let url = URL(string: record.url) {
-            tab.load(url)
-        }
+        tab.deferRestore(state: record.state, url: URL(string: record.url))
+        tab.realizeDeferredSession()
         let at = min(record.index, tabs.count)
         tabs.insert(tab, at: at)
         if let folderID = record.folderID, folders.contains(where: { $0.id == folderID }) {
@@ -442,7 +457,11 @@ extension BrowserModel {
     }
 
     func deleteFolder(_ folder: TabFolder) {
-        storedTree = reconciledTree().dissolving(folder.id)
+        let tree = reconciledTree()
+        let next = tree.dissolving(folder.id)
+        storedTree = tree.parent(of: .folder(folder.id)) == nil
+            ? next.keepingPinsAtRootTop(isKept)
+            : next
         folders.removeAll { $0 === folder }
         syncTabOrder()
         scheduleSave()
@@ -471,7 +490,15 @@ extension BrowserModel {
             folder.isExpanded = true
             autoName(folder)
             if settlingPins {
-                setPinned(false, for: entering)
+                setPinned(
+                    false,
+                    for: entering.filter {
+                        if case .tab = $0 {
+                            return true
+                        }
+                        return false
+                    }
+                )
             }
         }
         syncTabOrder()
@@ -483,9 +510,10 @@ extension BrowserModel {
         let moved = tree.normalized(items)
         guard let first = moved.first, let left = tree.parent(of: first) else { return }
         let folder = SidebarItem.folder(left)
-        guard let next = tree.moving(moved, into: tree.parent(of: folder), before: tree.successor(of: folder))
+        let destination = tree.parent(of: folder)
+        guard let next = tree.moving(moved, into: destination, before: tree.successor(of: folder))
         else { return }
-        storedTree = next
+        storedTree = destination == nil ? next.keepingPinsAtRootTop(isKept) : next
         syncTabOrder()
         scheduleSave()
     }

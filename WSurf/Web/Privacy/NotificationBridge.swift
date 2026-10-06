@@ -4,6 +4,7 @@
 
 import AppKit
 import Foundation
+import os
 import UserNotifications
 import WebKit
 
@@ -13,22 +14,38 @@ final class NotificationBridge: NSObject {
 
     nonisolated static let handlerName = "wsurfnotify"
 
-    var tabResolver: ((WKWebView) -> BrowserTab?)?
+    /// Resolves the page currently owned by a tab. The resolver is supplied by
+    /// the browser coordinator so a retired page can never claim a request.
+    var tabResolver: ((BrowserPage) -> BrowserTab?)?
+
+    private static let world = WKContentWorld.page
 
     private override init() {
         super.init()
         UNUserNotificationCenter.current().delegate = self
     }
 
+    // MARK: - Installation
+
+    @MainActor
+    func install(in page: BrowserPage) {
+        page.installScript(Self.scriptSource, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        page.addScriptMessageHandler(name: Self.handlerName, in: Self.world) { [weak self] message in
+            guard let self, message.frameInfo.isMainFrame,
+                  let body = message.body as? [String: Any] else { return }
+            self.handle(body, message: message)
+        }
+    }
+
     // MARK: - The page's side
 
     nonisolated static let scriptSource = """
         (function () {
-          if (!window.webkit || !window.webkit.messageHandlers
-              || !window.webkit.messageHandlers.wsurfnotify) { return; }
-          var post = function (m) { window.webkit.messageHandlers.wsurfnotify.postMessage(m); };
-          var permission = 'default';
+          var send = globalThis.__wsurfSend;
+          if (typeof send !== 'function' || globalThis.__wsurfNotify) { return; }
+          var post = function (m) { send('wsurfnotify', m); };
           var nextId = 1;
+          var permission = 'default';
           var pending = {};
           function WSurfNotification(title, options) {
             options = options || {};
@@ -53,10 +70,13 @@ final class NotificationBridge: NSObject {
               post({ type: 'request', id: id });
             });
           };
-          WSurfNotification.maxActions = 0;
           window.Notification = WSurfNotification;
           window.__wsurfNotify = {
-            setPermission: function (value) { permission = value; },
+            setPermission: function (value) {
+              if (value === 'granted' || value === 'denied' || value === 'default') {
+                permission = value;
+              }
+            },
             resolve: function (id, value) {
               if (value === 'granted' || value === 'denied') { permission = value; }
               var f = pending[id];
@@ -70,9 +90,44 @@ final class NotificationBridge: NSObject {
 
     // MARK: - Requests
 
-    private func handle(_ body: [String: Any], from webView: WKWebView) {
+    private func context(for message: BrowserScriptMessage) -> (BrowserTab, String)? {
+        let frame = message.frameInfo
+        guard frame.isMainFrame,
+              let frameURL = frame.request.url,
+              let tab = tabResolver?(message.page),
+              tab.isMaterialised,
+              tab.isPrivate == message.page.isPrivate else { return nil }
+        let origin = SitePermissions.origin(for: frameURL)
+        guard !origin.isEmpty,
+              SitePermissions.isPotentiallyTrustworthy(frame.request.url),
+              origin == SitePermissions.origin(for: message.page.url),
+              origin == tab.permissions.origin,
+              frame.securityOrigin == BrowserSecurityOrigin(url: frameURL)
+        else { return nil }
+        return (tab, origin)
+    }
+    private func isCurrent(page: BrowserPage, frame: BrowserFrame, origin: String) async -> Bool {
+        guard let tab = tabResolver?(page),
+              let frameURL = frame.request.url,
+              tab.isMaterialised,
+              tab.isPrivate == page.isPrivate,
+              tab.permissions.origin == origin,
+              SitePermissions.isPotentiallyTrustworthy(frame.request.url),
+              frame.securityOrigin == BrowserSecurityOrigin(url: frameURL),
+              SitePermissions.origin(for: page.url) == origin,
+              SitePermissions.origin(for: frame.request.url) == origin
+        else { return false }
+        if let chromium = page.chromium {
+            return (try? await chromium.isLive(frame: frame)) == true
+        }
+        return page.webKit != nil && frame.webKit != nil
+    }
+
+    private func handle(_ body: [String: Any], message: BrowserScriptMessage) {
         guard let type = body["type"] as? String,
-              let tab = tabResolver?(webView) else { return }
+              let (tab, origin) = context(for: message) else { return }
+        let page = message.page
+        let frame = message.frameInfo
         switch type {
         case "hello":
             let state: String = if tab.permissions.isGranted(.notifications) {
@@ -82,12 +137,15 @@ final class NotificationBridge: NSObject {
             } else {
                 "default"
             }
-            push(permission: state, to: webView)
+            Task { @MainActor [weak self] in
+                guard let self, await self.isCurrent(page: page, frame: frame, origin: origin) else { return }
+                await self.push(permission: state, to: page, frame: frame)
+            }
         case "request":
             guard let jsID = body["id"] as? Int else { return }
-            let origin = SitePermissions.origin(for: webView.url)
-            Task { [weak self, weak webView, weak tab] in
-                guard let tab else { return }
+            Task { @MainActor [weak self, weak tab] in
+                guard let self, let tab,
+                      await self.isCurrent(page: page, frame: frame, origin: origin) else { return }
                 let outcome = await tab.permissions.outcome(.notifications)
                 var answer: String
                 switch outcome {
@@ -100,41 +158,55 @@ final class NotificationBridge: NSObject {
                 case .undecided:
                     answer = "default"
                 }
-                guard let self, let webView,
-                      SitePermissions.origin(for: webView.url) == origin else { return }
-                resolve(jsID, with: answer, in: webView)
+                guard await self.isCurrent(page: page, frame: frame, origin: origin) else { return }
+                await self.resolve(jsID, with: answer, in: page, frame: frame)
             }
         case "show":
-            // Per spec the constructor fails silently without permission.
             guard tab.permissions.isGranted(.notifications) else { return }
-            deliver(
-                title: body["title"] as? String ?? "",
-                text: body["body"] as? String ?? "",
-                tag: body["tag"] as? String ?? "",
-                from: tab
-            )
+            Task { @MainActor [weak self] in
+                guard let self,
+                      await self.isCurrent(page: page, frame: frame, origin: origin) else { return }
+                guard await self.systemAuthorizationIsGranted(),
+                      await self.isCurrent(page: page, frame: frame, origin: origin) else { return }
+                await self.deliver(
+                    title: body["title"] as? String ?? "",
+                    text: body["body"] as? String ?? "",
+                    tag: body["tag"] as? String ?? "",
+                    from: tab
+                )
+            }
         default:
             break
         }
     }
 
-    private func resolve(_ jsID: Int, with answer: String, in webView: WKWebView) {
-        webView.evaluateJavaScript(
-            "window.__wsurfNotify && window.__wsurfNotify.resolve(\(jsID), '\(answer)')",
-            completionHandler: nil
+    private func systemAuthorizationIsGranted() async -> Bool {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func resolve(_ jsID: Int, with answer: String, in page: BrowserPage, frame: BrowserFrame) async {
+        _ = try? await page.callAsyncJavaScript(
+            "globalThis.__wsurfNotify?.resolve(id, answer);",
+            arguments: ["id": jsID, "answer": answer], in: frame, contentWorld: Self.world
         )
     }
 
-    private func push(permission: String, to webView: WKWebView) {
-        webView.evaluateJavaScript(
-            "window.__wsurfNotify && window.__wsurfNotify.setPermission('\(permission)')",
-            completionHandler: nil
+    private func push(permission: String, to page: BrowserPage, frame: BrowserFrame) async {
+        _ = try? await page.callAsyncJavaScript(
+            "globalThis.__wsurfNotify?.setPermission(permission);",
+            arguments: ["permission": permission], in: frame, contentWorld: Self.world
         )
     }
 
     // MARK: - Delivery
 
-    private func deliver(title: String, text: String, tag: String, from tab: BrowserTab) {
+    private func deliver(title: String, text: String, tag: String, from tab: BrowserTab) async {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = text
@@ -143,21 +215,11 @@ final class NotificationBridge: NSObject {
             ? UUID().uuidString
             : "\(tab.permissions.displayHost)#\(tag)"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
-    }
-}
-
-// MARK: - WKScriptMessageHandler
-
-extension NotificationBridge: WKScriptMessageHandler {
-    func userContentController(
-        _ userContentController: WKUserContentController,
-        didReceive message: WKScriptMessage
-    ) {
-        guard message.frameInfo.isMainFrame,
-              let webView = message.webView,
-              let body = message.body as? [String: Any] else { return }
-        handle(body, from: webView)
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+        } catch {
+            Pipeline.log.error("notification: delivery failed: \(error.localizedDescription)")
+        }
     }
 }
 

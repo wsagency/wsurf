@@ -9,6 +9,7 @@ struct SidebarDrag {
     let items: [SidebarItem]
     let lead: SidebarItem
     let origin: CGRect
+    let originTree: SidebarTree
     let covered: Set<SidebarItem>
     let keepsSection: Bool
     let wasKept: Bool
@@ -26,6 +27,7 @@ struct SidebarDrag {
         self.items = items
         self.lead = lead
         self.origin = origin
+        originTree = tree
         self.keepsSection = keepsSection
         self.wasKept = wasKept
         covered = tree.expanded(Set(items))
@@ -37,6 +39,16 @@ struct SidebarDrag {
 
     func carries(_ item: SidebarItem) -> Bool {
         covered.contains(item)
+    }
+
+    func settlesPin(of item: SidebarItem, in tree: SidebarTree) -> Bool {
+        let parent = tree.parent(of: item)
+        return parent == nil || parent != originTree.parent(of: item)
+    }
+
+    func settlePins(_ pinned: Bool, in browser: BrowserModel) {
+        let tree = browser.sidebarTree
+        browser.setPinned(pinned, for: items.lazy.filter { self.settlesPin(of: $0, in: tree) })
     }
 }
 
@@ -162,8 +174,8 @@ struct SidebarRowContext {
     }
 
     func dropMark(_ item: SidebarItem) -> SidebarDropMark.Kind? {
-        guard let lead = drag?.lead, lead == item else { return nil }
-        if pinsCarried != browser.isKept(lead) {
+        guard let drag, drag.lead == item else { return nil }
+        if drag.settlesPin(of: item, in: browser.sidebarTree), pinsCarried != browser.isKept(item) {
             return pinsCarried ? .pin : .unpin
         }
         return .move
@@ -247,7 +259,7 @@ struct SidebarDropMark: View {
                 .frame(width: SidebarMetrics.rowIconSize)
             if sidebarStyle == .full {
                 label
-                    .font(Theme.Font.title)
+                    .font(BrowserSettings.shared.sidebarFont)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -273,13 +285,15 @@ struct SidebarRows: View {
     let context: SidebarRowContext
 
     var body: some View {
-        ForEach(Array(items.enumerated()), id: \.element) { _, item in
-            row(item)
-                .overlay {
-                    if let mark = context.dropMark(item) {
-                        SidebarDropMark(kind: mark, isArmed: true)
+        VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: context.coordinator.settings)) {
+            ForEach(Array(items.enumerated()), id: \.element) { _, item in
+                row(item)
+                    .overlay {
+                        if let mark = context.dropMark(item) {
+                            SidebarDropMark(kind: mark, isArmed: true)
+                        }
                     }
-                }
+            }
         }
     }
 

@@ -66,7 +66,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             rows: browser.sidebarItems.map { item in
                 SidebarSectionPlan.Row(
                     item: item,
-                    isKept: browser.isKept(item, ignoring: carried),
+                    isKept: browser.isKept(item),
                     isCarried: carried.contains(item)
                 )
             },
@@ -120,7 +120,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 2) {
+            VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: coordinator.settings)) {
                 let sections = sections
                 if !sections.kept.isEmpty {
                     SidebarRows(items: sections.kept, depth: 0, context: context)
@@ -292,7 +292,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         }
 
         if !settled {
-            browser.setPinned(pinsCarried, for: drag.items)
+            drag.settlePins(pinsCarried, in: browser)
         }
 
         withAnimation(.spring(response: 0.24, dampingFraction: 0.85)) {
@@ -338,7 +338,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
     }
 
     private func keepsSection(_ item: SidebarItem) -> Bool {
-        browser.isKept(item, ignoring: drag?.covered ?? [])
+        browser.isKept(item)
     }
 
     private func lands(before isBefore: Bool, of anchor: SidebarItem) -> Bool {
@@ -529,10 +529,17 @@ struct SidebarDragChip: View {
         case .tab(let id):
             if let tab = browser.tab(id: id) {
                 HStack(spacing: 8) {
-                    TabIcon(tab: tab)
+                    TabIcon(tab: tab, tint: BrowserSettings.shared.sidebarTextColor(
+                        isDeferred: tab.isDeferred,
+                        scheme: windowColorScheme
+                    ))
                     if sidebarStyle == .full {
                         Text(verbatim: tab.title)
-                            .font(Theme.Font.title)
+                            .font(BrowserSettings.shared.sidebarFont)
+                            .foregroundStyle(BrowserSettings.shared.sidebarTextColor(
+                                isDeferred: tab.isDeferred,
+                                scheme: windowColorScheme
+                            ))
                             .lineLimit(1)
                         Spacer(minLength: 0)
                     }
@@ -546,8 +553,8 @@ struct SidebarDragChip: View {
                         .foregroundStyle(folder.color.tint)
                     if sidebarStyle == .full {
                         Text(verbatim: folder.name)
-                            .font(Theme.Font.control)
-                            .lineLimit(1)
+                            .font(BrowserSettings.shared.sidebarFont)
+                            .foregroundStyle(BrowserSettings.shared.sidebarTextColor(scheme: windowColorScheme))
                         Spacer(minLength: 0)
                     }
                 }

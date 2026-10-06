@@ -194,7 +194,10 @@ final class AppCoordinator {
             self?.voiceInput.clearTranscript()
             self?.statusMessage = nil
         }
-        browser.downloads.webViewProvider = { [weak self] in self?.browser.activeTab?.webView }
+        browser.downloads.webViewProvider = { [weak self] in
+            guard let tab = self?.browser.activeTab, tab.isMaterialised else { return nil }
+            return tab.page.webKit
+        }
 
         let extensionTabClosed = browser.onTabClosed
         browser.onTabClosed = { [weak self] tab in
@@ -260,7 +263,7 @@ final class AppCoordinator {
             isPanelVisible: sidePanel.isVisible,
             isPanelExpanded: sidePanel.isVisible && sidePanel.isExpanded
         )
-        let peeked = shownPeek?.webView
+        let peeked = shownPeek?.page.webKit
         for view in TabWebView.liveInstances.allObjects {
             guard view.window != nil else {
                 view.setHoverParked(false)
@@ -279,29 +282,10 @@ final class AppCoordinator {
                     isPeeking: sidebar.isPeeking,
                     viewMaxX: viewMaxX,
                     width: width,
-                    isMediaPicture: view === media.model.pictureWebView
+                    isMediaPicture: view === media.model.picturePage?.webKit
                 )
                     || shell.panelCoversPage
             )
-        }
-    }
-
-    private func tabDidClose(_ tab: BrowserTab) {
-        if conversationSpaceID == tab.id {
-            endVoiceConversation()
-        }
-        playedPages[tab.id] = nil
-        FaviconTint.forget(tab.id)
-        if peek.belongs(to: tab.id) {
-            closePeek()
-        }
-        if media.controlledTabID == tab.id {
-            media.releaseControl()
-            dockSuccessor(to: tab.id)
-        }
-        if agentTurns.closeTab(tab.id) {
-            voiceInput.clearTranscript()
-            statusMessage = nil
         }
     }
 
@@ -349,12 +333,16 @@ final class AppCoordinator {
         speech.isMuted = muted
     }
 
-    func clearDataOnQuitIfNeeded() async {
+    func clearDataOnQuitIfNeeded() async throws {
         guard settings.clearsDataOnQuit else { return }
-        await BrowsingData.clearEverything(
+        let profile = profiles.current
+        let store = BrowsingData.store
+        try await BrowsingData.clearEverything(
             history: browser.history,
             agent: conversationLog,
-            tabs: browser.tabs
+            tabs: browser.tabs,
+            profile: profile,
+            store: store
         )
     }
 
@@ -538,8 +526,8 @@ final class AppCoordinator {
     }
 
     func printActivePage() {
-        guard let webView = pageCommandTab?.webView else { return }
-        PagePrinting.begin(for: webView)
+        guard let page = pageCommandTab?.page else { return }
+        PagePrinting.begin(for: page)
     }
 
     func toggleFullScreen() {
@@ -568,7 +556,7 @@ final class AppCoordinator {
 
     func linkURL(for tab: BrowserTab) -> URL? {
         guard !tab.urlString.isEmpty,
-              let url = (tab.isMaterialised ? tab.webView.url : nil) ?? URL(string: tab.urlString),
+              let url = (tab.isMaterialised ? tab.page.url : nil) ?? URL(string: tab.urlString),
               url.scheme != "about", !SystemPages.isStart(url)
         else { return nil }
         return url
@@ -646,7 +634,20 @@ final class AppCoordinator {
         guard browser.history.count > 0 else { return }
         Task {
             guard let choice = await ConfirmAlert.clear(.history()) else { return }
-            await BrowsingData.clear(choice.kinds, range: choice.range, history: browser.history)
+            let profile = profiles.current
+            let store = BrowsingData.store
+            let history = browser.history
+            do {
+                try await BrowsingData.clear(
+                    choice.kinds,
+                    range: choice.range,
+                    history: history,
+                    profile: profile,
+                    store: store
+                )
+            } catch {
+                statusMessage = error.localizedDescription
+            }
         }
     }
 
@@ -694,27 +695,34 @@ final class AppCoordinator {
         }
     }
 
-    func closeAskingIfPinned(_ tab: BrowserTab) {
-        guard tab.pinnedURL != nil else {
-            browser.close(tab)
-            return
+    func unloadTab(_ tab: BrowserTab) {
+        guard browser.tabs.contains(where: { $0 === tab }) else { return }
+        if !browser.unload(tab) {
+            let message: String
+            switch browser.protectionReason(for: tab) {
+            case .editedForm:
+                message = String(localized: "This tab has unsaved form changes.")
+            case .activeDownload:
+                message = String(localized: "This tab has an active download.")
+            case .deviceAccess:
+                message = String(localized: "This tab is using the camera or microphone.")
+            case .agentWorking:
+                message = String(localized: "The assistant is working in this tab.")
+            case .mediaPlayback:
+                message = String(localized: "This tab is playing media.")
+            case .visibleInSplit:
+                message = String(localized: "This tab is visible in a split.")
+            case .alwaysKeepActive:
+                message = String(localized: "This tab is kept active by a site setting.")
+            case .privateBrowsing:
+                message = String(localized: "Private tabs cannot be unloaded.")
+            case .extensionPage:
+                message = String(localized: "Extension tabs cannot be unloaded.")
+            case nil:
+                message = String(localized: "This tab cannot be unloaded right now.")
+            }
+            show(notice: message)
         }
-        Task {
-            guard await ConfirmAlert.destructive(
-                "Close this pinned tab?",
-                detail: "Closing this tab also removes its pin. You can pin the page again later.",
-                verb: "Close Tab"
-            ) else { return }
-            browser.close(tab)
-        }
-    }
-
-    func closeActiveTabAskingIfPinned() {
-        if closePeek() {
-            return
-        }
-        guard let tab = browser.activeTab else { return }
-        closeAskingIfPinned(tab)
     }
 
     func showHistory() {

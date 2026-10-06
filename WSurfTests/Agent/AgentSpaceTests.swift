@@ -254,7 +254,7 @@ struct AgentSpaceTests {
         let left = model.newTab(url: try server.url("/departures"))
         let right = model.newTab(url: try server.url("/arrivals"))
         for tab in [left, right] {
-            #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
+            #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
             tab.assistantAccess.persistsAnswers = false
             tab.assistantAccess.pageChanged(url: try server.url())
             tab.assistantAccess.set(.control)
@@ -288,7 +288,7 @@ struct AgentSpaceTests {
         var panes: [BrowserTab] = []
         for path in ["/one", "/two", "/three", "/four"] {
             let tab = model.newTab(url: try server.url(path))
-            #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
+            #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
             tab.assistantAccess.persistsAnswers = false
             tab.assistantAccess.pageChanged(url: try server.url())
             tab.assistantAccess.set(.control)

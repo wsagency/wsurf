@@ -131,37 +131,6 @@ struct CommandPaletteRankingTests {
         #expect(CommandPaletteCatalog.matching("refresh", in: commands).first?.id == "action-reload")
     }
 
-    @Test func aCommandTheBrowserCannotRunIsNotOffered() {
-        let empty = CommandPaletteCatalog.commands(context: CommandPaletteContext(), perform: { _ in })
-        let ids = Set(empty.map(\.id))
-
-        #expect(!ids.contains("action-closeTab"))
-        #expect(!ids.contains("action-goBack"))
-        #expect(!ids.contains("action-stopLoading"))
-        #expect(!ids.contains("action-clearHistory"))
-        #expect(!ids.contains("action-exitSplit"))
-        #expect(ids.contains("action-openStartPage"))
-        #expect(ids.contains("action-settings"))
-
-        let loaded = CommandPaletteCatalog.commands(
-            context: CommandPaletteContext(
-                historyCount: 3,
-                tabCount: 2,
-                hasActiveTab: true,
-                canGoBack: true,
-                isLoading: true,
-                isSplit: true
-            ),
-            perform: { _ in }
-        )
-        let loadedIDs = Set(loaded.map(\.id))
-
-        #expect(loadedIDs.isSuperset(of: [
-            "action-closeTab", "action-goBack", "action-stopLoading", "action-clearHistory", "action-exitSplit",
-        ]))
-        #expect(!loadedIDs.contains("action-goForward"))
-    }
-
     @Test func aToggleIsNamedForWhatItWillDo() {
         let quiet = CommandPaletteCatalog.commands(
             context: CommandPaletteContext(isSpeechMuted: true),

@@ -23,25 +23,26 @@ struct TabZoomTests {
         #expect(!tab.isZoomed)
     }
 
-    @Test func zoomingEnablesActualSizeAndResetPutsEverythingBack() {
+    @Test func zoomingEnablesActualSizeAndResetPutsEverythingBack() throws {
         let tab = BrowserTab()
-        let before = tab.webView.pageZoom
+        let before = tab.page.pageZoom
+        let webKit = try #require(tab.page.webKit)
 
         tab.zoomIn()
-        #expect(abs(tab.webView.pageZoom - (before + TabWebView.zoomStep)) < 0.001)
+        #expect(abs(tab.page.pageZoom - (before + TabWebView.zoomStep)) < 0.001)
         #expect(tab.isZoomed)
 
         tab.resetZoom()
         #expect(!tab.isZoomed)
-        #expect(abs(tab.webView.pageZoom - BrowserSettings.shared.pageZoom) < 0.005)
-        #expect(tab.webView.magnification == 1)
+        #expect(abs(tab.page.pageZoom - BrowserSettings.shared.pageZoom) < 0.005)
+        #expect(webKit.magnification == 1)
     }
 
     /// A leftover pinch counts as zoomed too - Actual Size answers for the
-    /// pair, so its enabled state has to as well.
-    @Test func aPinchAloneCountsAsZoomed() {
+    @Test func aPinchAloneCountsAsZoomed() throws {
         let tab = BrowserTab()
-        tab.webView.magnification = 1.6
+        let webKit = try #require(tab.page.webKit)
+        webKit.magnification = 1.6
         #expect(tab.isZoomed)
 
         tab.resetZoom()
@@ -51,7 +52,7 @@ struct TabZoomTests {
     /// The sizes live on the web view, which SwiftUI can't watch. Every path
     /// that changes one has to say so, or a menu goes on showing the answer
     /// it was built with - which is how Actual Size came to ignore a zoom.
-    @Test func everyZoomPathAnnouncesItself() {
+    @Test func everyZoomPathAnnouncesItself() throws {
         let tab = BrowserTab()
         var seen = tab.zoomChanges
 
@@ -69,7 +70,8 @@ struct TabZoomTests {
 
         // ⌘-scroll and the pinch happen inside the web view and come back
         // through this hook.
-        (tab.webView as? TabWebView)?.onZoomChanged?()
+        let tabWebView = try #require(tab.page.webKit as? TabWebView)
+        tabWebView.onZoomChanged?()
         #expect(tab.zoomChanges > seen)
     }
 
@@ -110,11 +112,11 @@ struct TabZoomTests {
         for _ in 0..<40 {
             tab.zoomIn()
         }
-        #expect(abs(tab.webView.pageZoom - TabWebView.zoomRange.upperBound) < 0.001)
+        #expect(abs(tab.page.pageZoom - TabWebView.zoomRange.upperBound) < 0.001)
 
         for _ in 0..<40 {
             tab.zoomOut()
         }
-        #expect(abs(tab.webView.pageZoom - TabWebView.zoomRange.lowerBound) < 0.001)
+        #expect(abs(tab.page.pageZoom - TabWebView.zoomRange.lowerBound) < 0.001)
     }
 }

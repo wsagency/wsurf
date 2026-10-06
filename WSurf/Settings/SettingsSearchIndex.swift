@@ -33,7 +33,9 @@ struct SettingsEntry: Identifiable, Hashable {
     }
 
     var targetAnchor: String {
-        id == "appearance.transparency" ? "appearance.windowStyle" : id
+        if id == "appearance.transparency" { return "appearance.windowStyle" }
+        if id == "websites.engine" { return "websites.list" }
+        return id
     }
 
     static func == (lhs: SettingsEntry, rhs: SettingsEntry) -> Bool {
@@ -112,8 +114,8 @@ enum SettingsIndex {
         SettingsEntry("general.defaultBrowser", .general, "Open links from other apps", "Whether WSurf is your default browser.",
                       ["default browser", "default", "links", "handler", "http", "https", "system"]),
 
-        SettingsEntry("appearance.theme", .appearance, "Theme", "Light, dark, or match your Mac.",
-                      ["dark mode", "light mode", "theme", "appearance", "colour", "color", "night"]),
+        SettingsEntry("appearance.theme", .appearance, "Theme", "Choose light, dark, pastel Calm, or match your Mac.",
+                      ["dark mode", "light mode", "calm", "pastel", "theme", "appearance", "colour", "color", "night"]),
         SettingsEntry("appearance.windowStyle", .appearance, "Window style", "Choose Standard or Transparent.",
                       ["loom", "window", "standard", "liquid glass", "clear", "opacity",
                        "transparency", "transparent", "translucent", "contrast", "toolbar",
@@ -134,6 +136,32 @@ enum SettingsIndex {
                       ["refract", "glass", "colour", "color", "tint", "selected tab", "favicon", "sidebar"]),
         SettingsEntry("appearance.sidebarStyle", .appearance, "Icons only", "Narrow the sidebar to its icons.",
                       ["sidebar", "icons", "narrow", "compact", "tabs"]),
+        SettingsEntry("appearance.sidebarFont", .appearance, "Sidebar font",
+                      "Choose an installed font family for tab and folder names.",
+                      ["sidebar", "font", "font family", "typeface", "tabs", "folders"]),
+        SettingsEntry("appearance.sidebarFontWeight", .appearance, "Sidebar font weight",
+                      "Choose regular, medium, semibold, or bold sidebar text.",
+                      ["sidebar", "font", "weight", "bold", "semibold", "text"]),
+        SettingsEntry("appearance.sidebarFontSize", .appearance, "Sidebar font size",
+                      "Adjust the text size in the sidebar.",
+                      ["sidebar", "font", "size", "text", "larger", "smaller"]),
+        SettingsEntry("appearance.sidebarLoadedColor", .appearance, "Loaded tab color",
+                      "Text and icon color and opacity are saved separately for each theme.",
+                      ["sidebar", "font", "text", "color", "colour", "opacity", "loaded", "theme"]),
+        SettingsEntry("appearance.sidebarUnloadedColor", .appearance, "Unloaded tab color",
+                      "Text and icon color and opacity are saved separately for each theme.",
+                      ["sidebar", "font", "text", "color", "colour", "opacity", "unloaded", "sleep", "theme"]),
+        SettingsEntry("appearance.sidebar.unloadedTabAction", .appearance,
+                      "Unloaded tab action",
+                      "For unloaded tab rows only: hold ⌘ to remove, or show an X next to Play.",
+                      ["sidebar", "tab", "tabs", "unloaded", "deferred", "sleeping", "remove", "close",
+                       "delete", "x", "play", "command", "cmd", "keyboard shortcut", ]),
+        SettingsEntry("appearance.sidebarRowSpacing", .appearance, "Sidebar row spacing",
+                      "Add vertical breathing room between sidebar rows.",
+                      ["sidebar", "spacing", "padding", "compact", "rows"]),
+        SettingsEntry("appearance.sidebarFolderTint", .appearance, "Folder tint",
+                      "Set the background tint for expanded folders, including none.",
+                      ["sidebar", "folder", "tint", "background", "shade", "none"]),
 
         SettingsEntry("profiles.current", .profiles, "Current profile", "Edit the current profile.",
                       ["profile", "current", "open now", "name", "color", "symbol"]),
@@ -176,6 +204,10 @@ enum SettingsIndex {
                       ["permission", "location", "camera", "microphone", "mic", "notifications", "geolocation",
                        "gps", "webcam", "video call", "allow", "deny", "revoke", "getusermedia",
                        ]),
+        SettingsEntry("websites.engine", .websites, "Browser engine",
+                      "Choose WebKit or Chromium for each website.",
+                      ["engine", "webkit", "chromium", "browser", "rendering", "per website", "site setting",
+                       "reload", "sign-in", "login", ]),
         SettingsEntry("websites.list", .websites, "Websites you’ve changed", "View websites with custom settings.",
                       ["site settings", "per site", "exceptions", "assistant access", "read only", "control",
                        "keep active", "keep awake", "always active", "always loaded", "memory", "unload", "background",

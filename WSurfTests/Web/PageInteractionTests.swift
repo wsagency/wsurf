@@ -12,16 +12,17 @@ import WebKit
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct PageInteractionTests {
-    private func page(_ body: String) async -> WKWebView {
+    private func page(_ body: String) async -> BrowserPage {
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 500, height: 400), configuration: configuration)
-        view.loadHTMLString("<!doctype html><body>\(body)</body>", baseURL: nil)
-        #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
-        return view
+        let page = BrowserPage(webKit: view)
+        page.loadHTMLString("<!doctype html><body>\(body)</body>", baseURL: nil)
+        #expect(await PageSettle.untilIdle(page, timeout: .seconds(20)))
+        return page
     }
 
-    private func js(_ view: WKWebView, _ script: String) async -> Any? {
+    private func js(_ view: BrowserPage, _ script: String) async -> Any? {
         try? await view.evaluateJavaScript(script)
     }
 

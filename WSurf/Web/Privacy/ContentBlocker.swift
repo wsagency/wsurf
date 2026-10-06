@@ -32,6 +32,7 @@ final class ContentBlocker {
             (defaults.stringArray(forKey: Self.exemptDefaultsKey) ?? []).map(Self.normalized)
         )
         refresh()
+        BrowserSettings.shared.onWebPreferencesChanged?()
     }
 
     private init() {
@@ -96,6 +97,7 @@ final class ContentBlocker {
         guard changed else { return }
         defaults.set(Array(exemptHosts).sorted(), forKey: Self.exemptDefaultsKey)
         refresh()
+        BrowserSettings.shared.onWebPreferencesChanged?()
     }
 
     func forgetExceptions() {
@@ -103,6 +105,7 @@ final class ContentBlocker {
         exemptHosts = []
         defaults.removeObject(forKey: Self.exemptDefaultsKey)
         refresh()
+        BrowserSettings.shared.onWebPreferencesChanged?()
     }
 
     static func normalized(_ host: String) -> String {

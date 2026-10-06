@@ -16,6 +16,7 @@ struct FolderSection: View {
 
     @Environment(\.sidebarStyle) private var sidebarStyle
     @Environment(\.windowColorScheme) private var windowColorScheme
+    @Environment(\.colorScheme) private var colorScheme
     @State private var hovering = false
     @State private var windowFrame: CGRect = .zero
 
@@ -30,9 +31,7 @@ struct FolderSection: View {
     }
 
     static let outlineInset: CGFloat = 2
-
-    static let tintOpacity: Double = 0.11
-    static let fillOpacity: Double = 0.03
+    static let fillOpacity: Double = 0.08
     static let edgeOpacity: Double = 0.14
 
     static func outlineRadius(depth: Int) -> CGFloat {
@@ -69,8 +68,7 @@ struct FolderSection: View {
         let rows = browser.rows(in: folder)
         let audible = audibleTab
         let showsOutline = folder.isExpanded && !rows.isEmpty
-
-        VStack(spacing: 1) {
+        VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: context.coordinator.settings)) {
             HStack(spacing: 7) {
                 Image(systemName: audible == nil
                     ? (folder.isExpanded ? "folder" : "folder.fill")
@@ -87,7 +85,8 @@ struct FolderSection: View {
                     TextField("", text: $draftName)
                         .fieldPlaceholder("Folder name", isShowing: draftName.isEmpty)
                         .textFieldStyle(.plain)
-                        .font(Theme.Font.control)
+                        .font(context.coordinator.settings.sidebarFont)
+                        .foregroundStyle(context.coordinator.settings.sidebarTextColor(scheme: colorScheme))
                         .focused($renameFocused)
                         .onSubmit(commitRename)
                         .onKeyPress(.escape) {
@@ -102,8 +101,8 @@ struct FolderSection: View {
                         }
                 } else {
                     Text(verbatim: folder.name)
-                        .font(Theme.Font.control)
-                        .foregroundStyle(.secondary)
+                        .font(context.coordinator.settings.sidebarFont)
+                        .foregroundStyle(context.coordinator.settings.sidebarTextColor(scheme: colorScheme))
                         .lineLimit(1)
                 }
 
@@ -114,8 +113,19 @@ struct FolderSection: View {
                         .foregroundStyle(.tertiary)
 
                     Spacer(minLength: 0)
+
+                    if hovering, context.coordinator.linkModifiers.contains(.command), !isRenaming {
+                        ChromeIcon.rowControl(
+                            symbol: "xmark",
+                            help: String(localized: "Unload Folder Tabs"),
+                            action: unloadFolderTabs
+                        )
+                        .frame(width: SidebarMetrics.rowControlExtent)
+                        .accessibilityLabel(Text("Unload Folder Tabs"))
+                    }
+
                     countBadge(rows.count)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(context.coordinator.settings.sidebarFont)
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1.5)
@@ -123,8 +133,8 @@ struct FolderSection: View {
                 }
             }
             .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
-            .frame(maxWidth: .infinity)
-            .frame(height: 30)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: SidebarMetrics.rowHeight(settings: context.coordinator.settings))
             .sidebarRowSelectionEffect(
                 isSelected: isSelected,
                 isHovering: hovering,
@@ -174,18 +184,18 @@ struct FolderSection: View {
         .background {
             if showsOutline {
                 let shape = RoundedRectangle(cornerRadius: outlineRadius, style: .continuous)
-                ZStack {
-                    Color.clear
-                        .glassEffect(
-                            .clear.tint(folder.color.tint.opacity(Self.tintOpacity)),
-                            in: shape
+                shape
+                    .fill(folder.color.tint.opacity(
+                        Self.fillOpacity * context.coordinator.settings.sidebarFolderTint
+                    ))
+                    .overlay {
+                        shape.strokeBorder(
+                            folder.color.tint.opacity(
+                                Self.edgeOpacity * context.coordinator.settings.sidebarFolderTint
+                            ),
+                            lineWidth: 1
                         )
-                    shape.fill(folder.color.tint.opacity(Self.fillOpacity))
-                    shape.strokeBorder(
-                        folder.color.tint.opacity(Self.edgeOpacity),
-                        lineWidth: 1
-                    )
-                }
+                    }
                 .environment(\.colorScheme, windowColorScheme)
             }
         }
@@ -194,6 +204,15 @@ struct FolderSection: View {
 
     private var contents: AnyView {
         AnyView(SidebarRows(items: browser.rows(in: folder), depth: depth + 1, context: context))
+    }
+
+    private func unloadFolderTabs() {
+        context.coordinator.tabPreview.dismiss()
+        FolderContextMenu.unloadTabs(
+            [.folder(folder.id)],
+            coordinator: context.coordinator,
+            browser: browser
+        )
     }
 
     private func tapped() {
@@ -249,6 +268,19 @@ enum FolderContextMenu {
             symbol: "pencil",
             action: onRename
         ))
+        let pinTitle: LocalizedStringResource = folder.isPinned ? "Unpin" : "Pin"
+        menu.addItem(actionItem(
+            title: String(localized: pinTitle),
+            symbol: folder.isPinned ? "pin.slash" : "pin",
+            action: { [weak browser, weak folder] in
+                guard let browser, let folder else { return }
+                if folder.isPinned {
+                    browser.unpin(folder)
+                } else {
+                    browser.pin(folder)
+                }
+            }
+        ))
         menu.addItem(.separator())
 
         let colors = NSMenuItem()
@@ -264,7 +296,8 @@ enum FolderContextMenu {
 
         let kept = browser.allTabs(in: folder).count
         if kept > 0 {
-            menu.addItem(closeTabsItem([.folder(folder.id)], count: kept, browser: browser))
+            menu.addItem(removeTabsItem([.folder(folder.id)], count: kept, browser: browser))
+            menu.addItem(unloadTabsItem([.folder(folder.id)], count: kept, coordinator: coordinator, browser: browser))
         }
         menu.addItem(actionItem(
             title: String(localized: "Delete Folder…"),
@@ -311,11 +344,11 @@ enum FolderContextMenu {
         addFolderItems(selected, to: menu, browser: browser)
         menu.addItem(.separator())
 
-        menu.addItem(closeTabsItem(
-            selected,
-            count: browser.tabCount(in: selected),
-            browser: browser
-        ))
+        let count = browser.tabCount(in: selected)
+        if count > 0 {
+            menu.addItem(removeTabsItem(selected, count: count, browser: browser))
+            menu.addItem(unloadTabsItem(selected, count: count, coordinator: coordinator, browser: browser))
+        }
     }
 
     private static func addFolderItems(
@@ -386,23 +419,50 @@ enum FolderContextMenu {
         }
     }
 
-    private static func closeTabsItem(
+    static func unloadTabs(
+        _ items: [SidebarItem],
+        coordinator: AppCoordinator,
+        browser: BrowserModel
+    ) {
+        browser.unload(items)
+        for tab in browser.tabs(under: items) where tab.isMaterialised {
+            coordinator.unloadTab(tab)
+        }
+    }
+
+    private static func removeTabsItem(
         _ items: [SidebarItem],
         count: Int,
         browser: BrowserModel
     ) -> NSMenuItem {
         actionItem(
-            title: String(localized: "Close \(count) Tabs"),
-            symbol: "xmark",
+            title: String(localized: "Remove \(count) Tabs"),
+            symbol: "trash",
             action: { [weak browser] in
                 guard let browser else { return }
                 Task {
                     guard await ConfirmAlert.destructive(
-                        "Close \(count) tabs?",
-                        verb: "Close Tabs"
+                        "Remove \(count) tabs?",
+                        verb: "Remove Tabs"
                     ) else { return }
                     browser.close(items)
                 }
+            }
+        )
+    }
+
+    private static func unloadTabsItem(
+        _ items: [SidebarItem],
+        count: Int,
+        coordinator: AppCoordinator,
+        browser: BrowserModel
+    ) -> NSMenuItem {
+        actionItem(
+            title: String(localized: "Unload \(count) Tabs"),
+            symbol: "arrow.down.circle",
+            action: { [weak coordinator, weak browser] in
+                guard let coordinator, let browser else { return }
+                unloadTabs(items, coordinator: coordinator, browser: browser)
             }
         )
     }
@@ -438,7 +498,7 @@ private final class FolderMenuAction: NSObject {
     }
 }
 
-private struct FolderContextMenuCatcher: NSViewRepresentable {
+struct FolderContextMenuCatcher: NSViewRepresentable {
     let menu: () -> NSMenu
 
     func makeNSView(context: Context) -> CatcherView {
@@ -463,7 +523,7 @@ private struct FolderContextMenuCatcher: NSViewRepresentable {
         }
 
         override func hitTest(_ point: NSPoint) -> NSView? {
-            guard bounds.contains(point),
+            guard bounds.contains(convert(point, from: superview)),
                   let event = window?.currentEvent ?? NSApp.currentEvent
             else { return nil }
 

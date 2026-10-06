@@ -390,13 +390,22 @@ private struct ProfileDetailPage: View {
 
     private func clearHistory(_ profile: Profile) async {
         clearing = false
-        if isCurrent {
-            await BrowsingData.clear(
-                [.history],
-                range: .everything,
-                history: coordinator.browser.history,
-                agent: coordinator.conversationLog
-            )
+        let targetIsCurrent = store.current.id == profile.id
+        if targetIsCurrent {
+            let history = coordinator.browser.history
+            let selectedStore = BrowsingData.store
+            do {
+                try await BrowsingData.clear(
+                    [.history],
+                    range: .everything,
+                    history: history,
+                    agent: coordinator.conversationLog,
+                    profile: profile,
+                    store: selectedStore
+                )
+            } catch {
+                coordinator.statusMessage = error.localizedDescription
+            }
         } else {
             ProfileMaintenance.clearHistory(of: profile)
         }

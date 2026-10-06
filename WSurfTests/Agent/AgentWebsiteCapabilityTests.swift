@@ -25,14 +25,14 @@ struct AgentWebsiteCapabilityTests {
         }
         let fixture = try await ComputerWorkflowFixture(services: services)
         defer { fixture.close() }
-        _ = try await fixture.tab.webView.evaluateJavaScript("document.body.innerHTML='<input type=file aria-label=Document>'")
+        _ = try await fixture.tab.page.evaluateJavaScript("document.body.innerHTML='<input type=file aria-label=Document>'")
         _ = await fixture.toolkit.readPage()
-        let observation = try #require(PageDriver.observations.object(forKey: fixture.tab.webView))
+        let observation = try #require(PageDriver.observations.object(forKey: fixture.tab.page))
         let ref = try #require(observation.refs.first)
         let output = try await ChooseFilesOnPageTool(toolkit: fixture.toolkit).call(arguments: .init(page: nil, observationID: observation.id, ref: ref))
         #expect(selections == 1)
         #expect(output.contains(cancelled ? "cancelled" : "selected 1 files"))
-        #expect(try await fixture.tab.webView.evaluateJavaScript("document.querySelector('input').files.length") as? Int == (cancelled ? 0 : 1))
+        #expect(try await fixture.tab.page.evaluateJavaScript("document.querySelector('input').files.length") as? Int == (cancelled ? 0 : 1))
         #expect(!output.contains(file.path))
     }
 
@@ -50,7 +50,7 @@ struct AgentWebsiteCapabilityTests {
         fixture.tab.assistantAccess.set(.control)
         let downloads = fixture.browser.downloads
         let foreign = downloads.beginItem(source: try server.url("/file"), sourceTabID: UUID())
-        _ = try await fixture.tab.webView.evaluateJavaScript("document.querySelector('a').click()")
+        _ = try await fixture.tab.page.evaluateJavaScript("document.querySelector('a').click()")
         #expect(await waitUntil { downloads.items.contains { $0.sourceTabID == fixture.tab.id && $0.state == .finished } })
         let item = try #require(downloads.items.first { $0.sourceTabID == fixture.tab.id })
         let recorded = fixture.toolkit.taskLedger.add(id: "download", requirement: "Download the document")
@@ -71,13 +71,13 @@ struct AgentWebsiteCapabilityTests {
         let toolkit = fixture.toolkit
         let acceptedOutcome1 = toolkit.taskLedger.add(id: "saved", requirement: "Save the record")
         #expect(acceptedOutcome1)
-        let url = try #require(fixture.tab.webView.url?.absoluteString)
-        _ = try await fixture.tab.webView.evaluateJavaScript("document.querySelector('#status').textContent='Saved record 42'")
+        let url = try #require(fixture.tab.page.url?.absoluteString)
+        _ = try await fixture.tab.page.evaluateJavaScript("document.querySelector('#status').textContent='Saved record 42'")
         let verified = await toolkit.verifyOutcome(id: "saved", page: nil, expectedURL: url, expectedText: "Saved record 42")
         #expect(verified.contains("Outcome verified"))
         #expect(toolkit.taskLedger.completion == .verified)
 
-        _ = try await fixture.tab.webView.evaluateJavaScript("document.querySelector('#status').textContent='Save failed'")
+        _ = try await fixture.tab.page.evaluateJavaScript("document.querySelector('#status').textContent='Save failed'")
         let missing = await toolkit.verifyOutcome(id: "saved", page: nil, expectedURL: url, expectedText: "Saved record 42")
         #expect(missing.contains("Verification failed"))
         #expect(toolkit.taskLedger.completion == .unverified)
@@ -95,10 +95,11 @@ struct AgentWebsiteCapabilityTests {
         ])
         let childURL = try child.url()
         let encoded = try #require(PageDriver.jsonString(childURL.absoluteString))
-        _ = try await fixture.tab.webView.evaluateJavaScript("const frame=document.createElement('iframe');frame.src=\(encoded);document.body.append(frame)")
-        #expect(await waitUntil { !PageFrameRegistry.shared.targets(in: fixture.tab.webView).isEmpty })
-        let target = try #require(PageFrameRegistry.shared.targets(in: fixture.tab.webView).first)
-        let access = try #require(fixture.toolkit.embeddedAccess(for: childURL, in: fixture.tab.webView))
+        _ = try await fixture.tab.page.evaluateJavaScript("const frame=document.createElement('iframe');frame.src=\(encoded);document.body.append(frame)")
+        #expect(await waitUntil { !(await PageFrameRegistry.shared.targets(in: fixture.tab.page)).isEmpty })
+        let targets = await PageFrameRegistry.shared.targets(in: fixture.tab.page)
+        let target = try #require(targets.first)
+        let access = try #require(fixture.toolkit.embeddedAccess(for: childURL, in: fixture.tab.page))
         #expect(access.effectivePolicy == .ask)
         access.set(.deny)
         let read = ReadFrameTool(toolkit: fixture.toolkit)
@@ -109,7 +110,7 @@ struct AgentWebsiteCapabilityTests {
         access.set(.control)
         let output = try await read.call(arguments: arguments)
         #expect(output.contains("Embedded private record"))
-        let observation = try #require(PageDriver.observations.object(forKey: fixture.tab.webView))
+        let observation = try #require(PageDriver.observations.object(forKey: fixture.tab.page))
         let ref = try #require(observation.refs.first)
         let action = ActInFrameTool(toolkit: fixture.toolkit)
         let clicked = try await action.call(arguments: .init(page: nil, frameID: target.id, observationID: observation.id,
@@ -123,8 +124,8 @@ struct AgentWebsiteCapabilityTests {
             expectedURL: childURL.absoluteString, expectedText: "Embedded saved record")
         #expect(verified.contains("Outcome verified"))
 
-        _ = try await fixture.tab.webView.evaluateJavaScript("document.querySelector('iframe').remove()")
-        #expect(await waitUntil { !(await PageFrameRegistry.shared.isLive(target, in: fixture.tab.webView)) })
+        _ = try await fixture.tab.page.evaluateJavaScript("document.querySelector('iframe').remove()")
+        #expect(await waitUntil { !(await PageFrameRegistry.shared.isLive(target, in: fixture.tab.page)) })
         let stale = try await read.call(arguments: arguments)
         #expect(!stale.contains("Embedded saved record"))
     }
@@ -132,7 +133,7 @@ struct AgentWebsiteCapabilityTests {
     @Test func doubleClickAndDragToolsChangeThePage() async throws {
         let fixture = try await ComputerWorkflowFixture()
         defer { fixture.close() }
-        _ = try await fixture.tab.webView.evaluateJavaScript("""
+        _ = try await fixture.tab.page.evaluateJavaScript("""
             document.querySelector('button').addEventListener('dblclick', e => { if(e.isTrusted) window.doubleHit=true; });
             const box = document.createElement('div'); box.id = 'drag-box';
             box.style = 'position:absolute;left:40px;top:180px;width:60px;height:40px;background:blue';
@@ -150,14 +151,14 @@ struct AgentWebsiteCapabilityTests {
         let y = Int(110 * frame.pixels.height / frame.geometry.height)
         let double = DoubleClickAtPointTool(toolkit: fixture.toolkit)
         _ = try await double.call(arguments: .init(page: nil, x: x, y: y))
-        #expect(try await fixture.tab.webView.evaluateJavaScript("window.doubleHit === true") as? Bool == true)
+        #expect(try await fixture.tab.page.evaluateJavaScript("window.doubleHit === true") as? Bool == true)
         _ = await fixture.toolkit.screenshotPage()
         let drag = DragOnPageTool(toolkit: fixture.toolkit)
         let dragY = Int(200 * frame.pixels.height / frame.geometry.height)
         let distance = Int(30 * frame.pixels.width / frame.geometry.width)
         let result = try await drag.call(arguments: .init(page: nil, path: [.init(x: x, y: dragY), .init(x: x + distance, y: dragY)]))
         #expect(result.contains("Drag events dispatched"))
-        #expect(try await fixture.tab.webView.evaluateJavaScript("document.querySelector('#drag-box').style.left === '70px'") as? Bool == true)
+        #expect(try await fixture.tab.page.evaluateJavaScript("document.querySelector('#drag-box').style.left === '70px'") as? Bool == true)
         let invalid = try await drag.call(arguments: .init(page: nil, path: []))
         #expect(invalid.contains("2–50"))
     }
@@ -165,7 +166,7 @@ struct AgentWebsiteCapabilityTests {
     @Test func htmlDragTransfersDataToADropTarget() async throws {
         let fixture = try await ComputerWorkflowFixture()
         defer { fixture.close() }
-        _ = try await fixture.tab.webView.evaluateJavaScript("""
+        _ = try await fixture.tab.page.evaluateJavaScript("""
             document.body.innerHTML = `<div id="source" draggable="true"
               style="position:absolute;left:40px;top:180px;width:60px;height:40px">Record</div>
               <div id="destination" style="position:absolute;left:160px;top:180px;width:100px;height:40px">Drop here</div>`;
@@ -182,7 +183,7 @@ struct AgentWebsiteCapabilityTests {
         let end = DragOnPageTool.Point(x: Int(180 * frame.pixels.width / frame.geometry.width), y: start.y)
         let output = try await DragOnPageTool(toolkit: fixture.toolkit).call(arguments: .init(page: nil, path: [start, end]))
         #expect(output.contains("Drag events dispatched"))
-        #expect(try await fixture.tab.webView.evaluateJavaScript("document.querySelector('#destination').textContent") as? String == "Record 42")
+        #expect(try await fixture.tab.page.evaluateJavaScript("document.querySelector('#destination').textContent") as? String == "Record 42")
     }
 }
 

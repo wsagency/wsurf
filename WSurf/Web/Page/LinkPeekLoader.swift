@@ -28,7 +28,7 @@ final class LinkPeekLoader {
     private static let quietCeiling: Duration = .milliseconds(700)
     private static let snapshotWidth: CGFloat = 640
 
-    private var webView: WKWebView?
+    private var page: BrowserPage?
 
     static func canPeek(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased() else { return false }
@@ -37,18 +37,18 @@ final class LinkPeekLoader {
     }
 
     func load(_ url: URL) async throws -> LinkPeekPage {
-        let view = surface()
-        view.load(URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 8))
+        let page = surface()
+        page.load(URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 8))
 
-        let finished = await PageSettle.untilIdle(view, timeout: Self.loadCeiling)
+        let finished = await PageSettle.untilIdle(page, timeout: Self.loadCeiling)
         try Task.checkCancellation()
-        await PageSettle.untilQuiet(view, ceiling: Self.quietCeiling)
-        try Task.checkCancellation()
-
-        let object = await evaluate(Self.script, in: view)
+        await PageSettle.untilQuiet(page, ceiling: Self.quietCeiling)
         try Task.checkCancellation()
 
-        let snapshot = await WebViewSnapshot.capture(view, width: Self.snapshotWidth)
+        let object = await evaluate(Self.script, in: page)
+        try Task.checkCancellation()
+
+        let snapshot = await WebViewSnapshot.capture(page, width: Self.snapshotWidth)
         try Task.checkCancellation()
 
         return LinkPeekPage(
@@ -62,19 +62,19 @@ final class LinkPeekLoader {
     }
 
     func stop() {
-        webView?.stopLoading()
+        page?.stopLoading()
         guard let blank = URL(string: "about:blank") else { return }
-        webView?.load(URLRequest(url: blank))
+        page?.load(URLRequest(url: blank))
     }
 
     func release() {
         stop()
-        webView = nil
+        page = nil
     }
 
-    private func surface() -> WKWebView {
-        if let webView {
-            return webView
+    private func surface() -> BrowserPage {
+        if let page {
+            return page
         }
         let configuration = Self.configuration()
         let view = WKWebView(
@@ -83,8 +83,9 @@ final class LinkPeekLoader {
         )
         BrowserSettings.shared.apply(to: view)
         view.customUserAgent = WebViewPool.safariUserAgent
-        webView = view
-        return view
+        let page = BrowserPage(webKit: view)
+        self.page = page
+        return page
     }
 
     static func configuration() -> WKWebViewConfiguration {
@@ -97,8 +98,8 @@ final class LinkPeekLoader {
         return configuration
     }
 
-    private func evaluate(_ script: String, in webView: WKWebView) async -> [String: Any]? {
-        let value = try? await webView.evaluateJavaScript(script)
+    private func evaluate(_ script: String, in page: BrowserPage) async -> [String: Any]? {
+        let value = try? await page.evaluateJavaScript(script)
         guard let text = value as? String, let data = text.data(using: .utf8) else { return nil }
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }

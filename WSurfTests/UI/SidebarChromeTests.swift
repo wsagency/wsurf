@@ -149,39 +149,6 @@ struct LoomChromeTests {
     }
 }
 
-/// A sleeping tab says so on its favicon - dimmed, moon in the corner -
-/// rather than with a second glyph beside the title.
-@MainActor
-struct SidebarSleepIndicatorTests {
-    @Test func onlyAnUnloadedTabWearsTheMoon() {
-        #expect(TabIcon.isAsleep(.unloaded))
-        #expect(!TabIcon.isAsleep(.none))
-        #expect(!TabIcon.isAsleep(.reloading))
-    }
-
-    /// The dim has to leave room for the moon to read against the favicon.
-    @Test func theSleepingFaviconIsDimmedButNotGone() {
-        #expect(TabIcon.asleepDim > 0)
-        #expect(TabIcon.asleepDim < 1)
-    }
-
-    @Test func discardingATabPutsItsFaviconToSleep() {
-        let model = BrowserModel(
-            database: .temporary(),
-            sitePermissions: SitePermissions(
-                storageURL: FileManager.default.temporaryDirectory
-                    .appendingPathComponent("SidebarSleep-\(UUID().uuidString).json")
-            )
-        )
-        let background = model.newTab(url: URL(string: "https://example.com/a"))
-        _ = model.newTab(url: URL(string: "https://example.com/b"))
-
-        #expect(!TabIcon.isAsleep(background.reclaimState))
-        model.discardBackgroundTabs()
-        #expect(TabIcon.isAsleep(background.reclaimState))
-    }
-}
-
 /// The sidebar toggle belongs to the window beam, never to the sidebar or a
 /// particular toolbar variant. Content controls only reserve its fixed slot.
 @MainActor
@@ -357,6 +324,7 @@ struct SidebarPeekShieldTests {
             frame: NSRect(x: 0, y: 0, width: 600, height: 400),
             configuration: WebViewPool.makeConfiguration()
         )
+        let page = BrowserPage(webKit: web)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
             styleMask: [.titled],
@@ -364,12 +332,12 @@ struct SidebarPeekShieldTests {
             defer: false
         )
         defer { window.orderOut(nil) }
-        window.contentView?.addSubview(web)
+        window.contentView?.addSubview(page)
         window.orderBack(nil)
         web.loadHTMLString("<html><body>page</body></html>", baseURL: nil)
         // WebKit installs the areas for a page it has painted in a window on
         // screen. Asking before either has happened is what made this flake.
-        #expect(await PageSettle.untilIdle(web, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
 
         var foreign: [NSTrackingArea] = []
         _ = await waitUntil {

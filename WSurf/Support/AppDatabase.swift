@@ -110,6 +110,32 @@ struct AppDatabase: Sendable {
     private static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1") { db in try defineSchema(in: db) }
+        migrator.registerMigration("v2-folder-pinning") { db in
+            let hadPinnedColumn = try db.tableExists("sessionFolder")
+                && db.columns(in: "sessionFolder").contains { $0.name == "isPinned" }
+            try defineSchema(in: db)
+            guard !hadPinnedColumn else { return }
+            try db.execute(sql: """
+                WITH RECURSIVE descendants(rootID, folderID) AS (
+                    SELECT id, id FROM sessionFolder
+                    UNION
+                    SELECT d.rootID, i.folderID
+                    FROM descendants d
+                    JOIN sessionItem i ON i.parentID = d.folderID
+                    WHERE i.folderID IS NOT NULL
+                )
+                UPDATE sessionFolder
+                SET isPinned = 1
+                WHERE id IN (
+                    SELECT d.rootID
+                    FROM descendants d
+                    JOIN sessionItem i ON i.parentID = d.folderID
+                    JOIN sessionTab t ON t.id = i.tabID
+                    GROUP BY d.rootID
+                    HAVING MAX(t.pinnedURL IS NULL) = 0
+                )
+                """)
+        }
         return migrator
     }
 
@@ -129,38 +155,7 @@ struct AppDatabase: Sendable {
             t.column("title")
         }
 
-        try db.create(table: "sessionFolder", options: .ifNotExists) {  t in
-            t.primaryKey("id", .blob)
-            t.column("position", .integer).notNull()
-            t.column("name", .text).notNull()
-            t.column("color", .text).notNull()
-            t.column("isExpanded", .boolean).notNull()
-        }
-
-        try db.create(table: "sessionTab", options: .ifNotExists) {  t in
-            t.primaryKey("id", .blob)
-            t.column("title", .text).notNull()
-            t.column("customTitle", .text)
-            t.column("url", .text).notNull()
-            t.column("state", .blob)
-            t.column("pinnedURL", .text)
-            t.column("pinnedTitle", .text)
-            t.column("internalPage", .text)
-            t.column("isActive", .boolean).notNull().defaults(to: false)
-        }
-
-        if try !db.columns(in: "sessionTab").contains(where: { $0.name == "customTitle" }) {
-            try db.alter(table: "sessionTab") { t in
-                t.add(column: "customTitle", .text)
-            }
-        }
-
-        try db.create(table: "sessionItem", options: .ifNotExists) {  t in
-            t.primaryKey("position", .integer)
-            t.column("tabID", .blob).references("sessionTab", onDelete: .cascade)
-            t.column("folderID", .blob).references("sessionFolder", onDelete: .cascade)
-            t.column("parentID", .blob).references("sessionFolder", onDelete: .cascade)
-        }
+        try defineSessionSchema(in: db)
 
         try db.create(table: "agentTrace", options: .ifNotExists) {  t in
             t.primaryKey("id", .blob)
@@ -247,6 +242,48 @@ struct AppDatabase: Sendable {
             t.column("columnIndex", .integer).notNull()
             t.column("rowFraction", .double).notNull()
             t.column("columnFraction", .double).notNull()
+        }
+    }
+
+    private nonisolated static func defineSessionSchema(in db: Database) throws {
+        try db.create(table: "sessionFolder", options: .ifNotExists) { t in
+            t.primaryKey("id", .blob)
+            t.column("position", .integer).notNull()
+            t.column("name", .text).notNull()
+            t.column("color", .text).notNull()
+            t.column("isExpanded", .boolean).notNull()
+            t.column("isPinned", .boolean).notNull().defaults(to: false)
+        }
+
+        if try !db.columns(in: "sessionFolder").contains(where: { $0.name == "isPinned" }) {
+            try db.alter(table: "sessionFolder") { t in
+                t.add(column: "isPinned", .boolean).notNull().defaults(to: false)
+            }
+        }
+
+        try db.create(table: "sessionTab", options: .ifNotExists) { t in
+            t.primaryKey("id", .blob)
+            t.column("title", .text).notNull()
+            t.column("customTitle", .text)
+            t.column("url", .text).notNull()
+            t.column("state", .blob)
+            t.column("pinnedURL", .text)
+            t.column("pinnedTitle", .text)
+            t.column("internalPage", .text)
+            t.column("isActive", .boolean).notNull().defaults(to: false)
+        }
+
+        if try !db.columns(in: "sessionTab").contains(where: { $0.name == "customTitle" }) {
+            try db.alter(table: "sessionTab") { t in
+                t.add(column: "customTitle", .text)
+            }
+        }
+
+        try db.create(table: "sessionItem", options: .ifNotExists) { t in
+            t.primaryKey("position", .integer)
+            t.column("tabID", .blob).references("sessionTab", onDelete: .cascade)
+            t.column("folderID", .blob).references("sessionFolder", onDelete: .cascade)
+            t.column("parentID", .blob).references("sessionFolder", onDelete: .cascade)
         }
     }
 }

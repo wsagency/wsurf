@@ -43,12 +43,17 @@ locations for these clients:
 | Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Claude Code | `~/.claude.json`, with the server added at user scope |
 | Cursor | `~/.cursor/mcp.json` |
+| omp.sh | `~/.omp/agent/mcp.json` |
 
 The **Copy Configuration** button sits above the client list. Use the
 **… → Choose Configuration…** action beside a client for an existing
 custom profile or another configuration location. WSurf does not scan your
 shell aliases or project directories. **… → Show Configuration** reveals the
 selected file in Finder; file paths are kept out of the client rows.
+
+omp.sh uses the same JSON configuration shown above. For a named profile,
+choose `~/.omp/profiles/<name>/agent/mcp.json`. After adding WSurf, run
+`/mcp reload` and `/mcp test wsurf` in omp to load and check the connection.
 
 The **Added** state is read from the saved configuration when this page opens
 and when WSurf becomes active again, including entries configured elsewhere.
@@ -78,8 +83,9 @@ or grant access to browser tabs.
 Configuration formats follow the official documentation for
 [Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli),
 [Claude Desktop](https://modelcontextprotocol.io/docs/develop/connect-local-servers),
-[Claude Code](https://code.claude.com/docs/en/mcp), and
-[Cursor](https://cursor.com/docs/mcp).
+[Claude Code](https://code.claude.com/docs/en/mcp),
+[Cursor](https://cursor.com/docs/mcp), and
+[omp.sh](https://omp.sh/docs/mcp).
 
 Clients with a different settings format need the same command and argument.
 Restart the client's connection after moving the app or enabling the server.

@@ -9,7 +9,8 @@ nonisolated enum AutofillSaveScript {
     static let clientSource = #"""
     (() => {
       if (globalThis.__wsurfAutofillSave || location.protocol !== 'https:') return;
-      const channel = window.webkit?.messageHandlers?.wsurfAutofillSave;
+      const channel = globalThis.__wsurfSend
+        ? { postMessage: value => globalThis.__wsurfSend('wsurfAutofillSave', value) } : null;
       const forms = globalThis.__wsurfAutofillForms;
       const documentID = forms.documentID;
       let policy = {password:false,card:false,contact:false};

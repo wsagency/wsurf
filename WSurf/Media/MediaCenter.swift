@@ -27,7 +27,7 @@ final class MediaModel {
     var volume: Double = 1
     var isMuted = false
     var artworkURL: URL?
-    var pictureWebView: WKWebView?
+    var picturePage: BrowserPage?
 
     var playerViewportRect: CGRect?
     var controlledTabID: UUID?
@@ -37,21 +37,6 @@ final class MediaModel {
     var progress: Double? {
         guard !isLive, duration > 0 else { return nil }
         return min(max(currentTime / duration, 0), 1)
-    }
-}
-
-/// Page messages report presentation changes; WebKit also reports page teardown.
-/// Only page messages imply a user request without a separate return callback.
-enum PictureSource {
-    case page
-    case webKit
-
-    var speaksForTheUser: Bool {
-        self == .page
-    }
-
-    var name: String {
-        self == .page ? "the page" : "WebKit"
     }
 }
 
@@ -75,43 +60,42 @@ final class MediaCenter {
             setPicture(nil)
         }
     }
-    var onReturnedInline: ((WKWebView?) -> Void)?
-    var onTabAudioChanged: ((WKWebView, Bool) -> Void)?
-    var onTabVideoChanged: ((WKWebView, Bool) -> Void)?
-    var onTabUnmuted: ((WKWebView) -> Void)?
-    var onPictureOutChanged: ((WKWebView, Bool) -> Void)?
+
+    var onReturnedInline: ((BrowserPage) -> Void)?
+    var onTabAudioChanged: ((BrowserPage, Bool) -> Void)?
+    var onTabVideoChanged: ((BrowserPage, Bool) -> Void)?
+    var onTabUnmuted: ((BrowserPage) -> Void)?
+    var onPictureOutChanged: ((BrowserPage, Bool) -> Void)?
     var onControlledTabChanged: ((UUID?, UUID?) -> Void)?
     var onPictureChanged: (() -> Void)?
 
-    private let messageHandler = MediaMessageHandler()
-
-    var frameScriptHandler: any WKScriptMessageHandler & AnyObject {
-        messageHandler
-    }
     nonisolated static var frameScriptSource: String {
         MediaScript.source
     }
     nonisolated static let frameScriptHandlerName = "wsurfpip"
 
-    init() {
-        messageHandler.onMessage = { [weak self] message, webView, isMainFrame in
-            self?.receiveScriptMessage(message, from: webView, isMainFrame: isMainFrame)
+    @MainActor
+    func install(in page: BrowserPage) {
+        page.installScript(MediaScript.source, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        page.addScriptMessageHandler(name: Self.frameScriptHandlerName, in: .page) { [weak self] message in
+            guard let body = message.body as? String else { return }
+            self?.receiveScriptMessage(body, from: message.page, isMainFrame: message.frameInfo.isMainFrame)
         }
     }
 
-    func receiveScriptMessage(_ message: String, from webView: WKWebView?, isMainFrame: Bool) {
-        if let webView, message == "picture-in-picture" || message == "inline" {
-            applyPresentationMode(message, from: webView)
+    func receiveScriptMessage(_ message: String, from page: BrowserPage, isMainFrame: Bool) {
+        if message == "picture-in-picture" || message == "inline" {
+            applyPresentationMode(message, from: page)
             return
         }
-        if let webView, isMainFrame, message == "hello" {
-            forgetPicture(webView)
+        if isMainFrame, message == "hello" {
+            forgetPicture(page)
         }
-        if let webView, message == "tabunmuted" {
-            onTabUnmuted?(webView)
+        if message == "tabunmuted" {
+            onTabUnmuted?(page)
             return
         }
-        if let controlled = controlledWebView, webView === controlled {
+        if let controlled = controlledPage, page === controlled {
             if isMainFrame, let playing = Self.audioReport(in: message) {
                 onTabAudioChanged?(controlled, playing)
             }
@@ -121,27 +105,25 @@ final class MediaCenter {
             handleScriptMessage(message, from: controlled, isMainFrame: isMainFrame)
             return
         }
-        if let webView, webView === pipTarget,
-           handlePiPMessage(message, from: webView, isMainFrame: isMainFrame) {
-            return
-        }
+        if page === pipTargetPage,
+           handlePiPMessage(message, from: page, isMainFrame: isMainFrame) { return }
         guard isMainFrame else { return }
-        if let playing = Self.audioReport(in: message), let webView {
-            onTabAudioChanged?(webView, playing)
+        if let playing = Self.audioReport(in: message) {
+            onTabAudioChanged?(page, playing)
         }
-        if let hasVideo = Self.videoReport(in: message), let webView {
-            onTabVideoChanged?(webView, hasVideo)
+        if let hasVideo = Self.videoReport(in: message) {
+            onTabVideoChanged?(page, hasVideo)
         }
-        if let watchedWebView, webView === watchedWebView {
+        if page === watchedPage {
             applyWatched(message)
         }
     }
 
     // MARK: - The tab you are looking at
 
-    func watch(webView: WKWebView, title: String, tabID: UUID, artwork: URL?) {
-        guard watchedWebView !== webView else { return }
-        watchedWebView = webView
+    func watch(page: BrowserPage, title: String, tabID: UUID, artwork: URL?) {
+        guard watchedPage !== page else { return }
+        watchedPage = page
         watched.artworkURL = artwork
         watched.controlledTabID = tabID
         watched.pageTitle = title
@@ -154,12 +136,12 @@ final class MediaCenter {
         watched.isLive = false
         watched.isPlaying = true
         watched.isActive = true
-        Self.post("wsurf-resend", to: webView)
+        Self.post("wsurf-resend", to: page)
     }
 
-    func stopWatching() {
-        guard watchedWebView != nil else { return }
-        watchedWebView = nil
+    func unwatch() {
+        guard watchedPage != nil else { return }
+        watchedPage = nil
         watched.controlledTabID = nil
         watched.artworkURL = nil
         watched.title = ""
@@ -194,20 +176,21 @@ final class MediaCenter {
     // MARK: - The tab in the dock
 
     func controlTab(
-        webView: WKWebView,
+        page: BrowserPage,
         title: String,
         tabID: UUID,
         isPlaying: Bool = true,
         artwork: URL?
     ) {
-        guard isEnabled, controlledTabID != tabID else { return }
-
+        guard isEnabled, controlledTabID != tabID || controlledPage !== page else { return }
         let previous = controlledTabID
         setPicture(nil)
         model.playerViewportRect = nil
         model.controlledTabID = tabID
-        controlledWebView = webView
-        onControlledTabChanged?(previous, tabID)
+        controlledPage = page
+        if previous != tabID {
+            onControlledTabChanged?(previous, tabID)
+        }
         model.artworkURL = artwork
         artworkIsGuess = artwork == nil
         model.pageTitle = title
@@ -215,7 +198,7 @@ final class MediaCenter {
         model.artist = ""
         model.album = ""
         model.title = title.isEmpty ? String(localized: "Now Playing") : title
-        model.isInNativePiP = nativePiPView === webView
+        model.isInNativePiP = nativePiPPage === page
         model.hasVideo = false
         model.isPlaying = isPlaying
         model.isLive = false
@@ -223,8 +206,7 @@ final class MediaCenter {
         model.duration = 0
         model.isActive = true
         needsReveal = true
-        Self.post("wsurf-resend", to: webView)
-        Pipeline.log.notice("media: controlling playback in a background tab")
+        Self.post("wsurf-resend", to: page)
     }
 
     func releaseControl() {
@@ -234,7 +216,7 @@ final class MediaCenter {
         model.hasVideo = false
         model.playerViewportRect = nil
         model.controlledTabID = nil
-        controlledWebView = nil
+        controlledPage = nil
         onControlledTabChanged?(previous, nil)
         model.artworkURL = nil
         model.pageTitle = ""
@@ -246,26 +228,26 @@ final class MediaCenter {
         Pipeline.log.notice("media: released tab playback control")
     }
 
-    func pageDidReset(_ webView: WKWebView) {
-        forgetPicture(webView)
-        if webView === watchedWebView {
+    func pageDidReset(_ page: BrowserPage) {
+        forgetPicture(page)
+        if page === watchedPage {
             watched.currentTime = 0
             watched.duration = 0
             watched.isLive = false
         }
-        guard webView === controlledWebView else { return }
+        guard page === controlledPage else { return }
         forgetControlledPage()
-        dropDockIfThePageStaysQuiet(webView)
+        dropDockIfThePageStaysQuiet(page)
     }
 
-    private func dropDockIfThePageStaysQuiet(_ webView: WKWebView) {
+    private func dropDockIfThePageStaysQuiet(_ page: BrowserPage) {
         controlledPageResets += 1
         let reset = controlledPageResets
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(4))
             guard let self,
                   reset == controlledPageResets,
-                  webView === controlledWebView,
+                  page === controlledPage,
                   !model.isPlaying
             else { return }
             releaseControl()
@@ -292,26 +274,27 @@ final class MediaCenter {
         needsReveal = true
     }
 
-    private func setPicture(_ webView: WKWebView?) {
-        guard model.pictureWebView !== webView else { return }
-        model.pictureWebView = webView
+    private func setPicture(_ page: BrowserPage?) {
+        guard model.picturePage !== page else { return }
+        model.picturePage = page
         onPictureChanged?()
     }
 
     var controlledTabID: UUID? {
         model.controlledTabID
     }
-    private weak var controlledWebView: WKWebView?
-    private weak var watchedWebView: WKWebView?
+    private weak var controlledPage: BrowserPage?
+    private weak var watchedPage: BrowserPage?
+    private weak var pipTargetPage: BrowserPage?
     private var needsReveal = true
 
     var pictureCrop: CGRect? {
-        guard let webView = model.pictureWebView,
+        guard let page = model.picturePage,
               let rect = model.playerViewportRect else { return nil }
         return MediaCropMath.visibleCrop(
             viewportRect: rect,
-            viewBounds: webView.bounds,
-            topInset: webView.obscuredContentInsets.top
+            viewBounds: page.bounds,
+            topInset: 0
         )
     }
     private var artworkIsGuess = true
@@ -380,25 +363,28 @@ final class MediaCenter {
     }
 
     private func send(_ message: String) {
-        guard let controlledWebView else { return }
-        Self.post(message, to: controlledWebView)
+        guard let controlledPage else { return }
+        Self.post(message, to: controlledPage)
     }
 
-    static func seek(to seconds: Double, on webView: WKWebView) {
-        post("wsurf-seekabs:\(seconds)", to: webView)
+    static func seek(to seconds: Double, on page: BrowserPage) {
+        post("wsurf-seekabs:\(seconds)", to: page)
     }
 
-    static func setMuted(_ muted: Bool, on webView: WKWebView) {
-        post("wsurf-mute:\(muted ? 1 : 0)", to: webView)
+    static func setMuted(_ muted: Bool, on page: BrowserPage) {
+        post("wsurf-mute:\(muted ? 1 : 0)", to: page)
     }
-
-    private static func post(_ message: String, to webView: WKWebView) {
-        webView.evaluateJavaScript("""
-        window.postMessage('\(message)', '*');
-        Array.prototype.forEach.call(document.querySelectorAll('iframe'), function (f) {
-          try { f.contentWindow.postMessage('\(message)', '*'); } catch (e) {}
-        });
-        """)
+    private static func post(_ message: String, to page: BrowserPage) {
+        guard let data = try? JSONSerialization.data(withJSONObject: message, options: [.fragmentsAllowed]),
+              let escaped = String(data: data, encoding: .utf8) else { return }
+        Task { @MainActor in
+            _ = try? await page.evaluateJavaScript("""
+            window.postMessage(\(escaped), '*');
+            Array.prototype.forEach.call(document.querySelectorAll('iframe'), function (f) {
+              try { f.contentWindow.postMessage(\(escaped), '*'); } catch (e) {}
+            });
+            """)
+        }
     }
 
     nonisolated private static func audioReport(in message: String) -> Bool? {
@@ -411,65 +397,80 @@ final class MediaCenter {
         return message.hasSuffix("1")
     }
 
+    var canToggleNativePiP: Bool {
+        controlledPage?.webKit != nil
+    }
+
+    var nativePiPUnavailableReason: LocalizedStringResource? {
+        guard model.hasVideo, let page = controlledPage, page.webKit == nil else { return nil }
+        return "Picture in Picture is unavailable for Chromium pages"
+    }
+
     func toggleNativePiP() {
-        guard let controlledWebView else { return }
-        togglePictureInPicture(for: controlledWebView)
+        guard let controlledPage, controlledPage.webKit != nil else {
+            Pipeline.log.notice("media: native Picture in Picture is unavailable for Chromium")
+            return
+        }
+        togglePictureInPicture(for: controlledPage)
     }
 
-    func isPictureOut(_ webView: WKWebView) -> Bool {
-        nativePiPView === webView
+    func isPictureOut(_ page: BrowserPage) -> Bool {
+        nativePiPPage === page
     }
 
-    /// Only toggle when WebKit confirms PiP is active. Otherwise request inline playback
-    /// explicitly, so stale state cannot accidentally start PiP.
-    func exitPictureInPicture(for webView: WKWebView) {
-        guard nativePiPView === webView else { return }
+    func exitPictureInPicture(for page: BrowserPage) {
+        guard let webKit = page.webKit, nativePiPPage === page else { return }
         returnAskedAt = Date()
-        if Self.pictureInPictureActive(webView) == true, Self.togglePictureInPicture(on: webView) {
+        if Self.pictureInPictureActive(webKit) == true, Self.togglePictureInPicture(on: webKit) {
             forgetGestureRequest()
             return
         }
-        Self.post("wsurf-pip-exit", to: webView)
-        guard Self.pictureInPictureActive(webView) == false else { return }
-        Pipeline.log.notice("media: WebKit says the picture was already home")
-        setPictureInPicture(false, for: webView, source: .webKit)
+        Self.post("wsurf-pip-exit", to: page)
+        if Self.pictureInPictureActive(webKit) == false {
+            setPictureInPicture(false, for: page)
+        }
     }
 
-    /// Off-screen web views need the synthesized gesture fallback.
-    func togglePictureInPicture(for webView: WKWebView) {
-        guard nativePiPView !== webView else {
-            exitPictureInPicture(for: webView)
+    func togglePictureInPicture(for page: BrowserPage) {
+        guard let webKit = page.webKit else {
+            Pipeline.log.notice("media: native Picture in Picture is unavailable for Chromium")
             return
         }
-        if Self.canTogglePictureInPicture(webView), Self.togglePictureInPicture(on: webView) {
+        if nativePiPPage === page {
+            exitPictureInPicture(for: page)
+            return
+        }
+        if Self.canTogglePictureInPicture(webKit), Self.togglePictureInPicture(on: webKit) {
             forgetGestureRequest()
             return
         }
         pipRequestedAt = Date()
-        pipTarget = webView
+        pipTargetPage = page
         pipTargetRect = nil
-        Self.post("wsurf-rect", to: webView)
-        Self.post("wsurf-pip", to: webView)
+        Self.post("wsurf-rect", to: page)
+        Self.post("wsurf-pip", to: page)
     }
 
-    func requestNativePiP(on webView: WKWebView) {
-        guard nativePiPView !== webView else { return }
-        if Self.canTogglePictureInPicture(webView), Self.togglePictureInPicture(on: webView) {
+    func requestNativePiP(on page: BrowserPage) {
+        guard let webKit = page.webKit else {
+            Pipeline.log.notice("media: automatic native Picture in Picture is unavailable for Chromium")
+            return
+        }
+        if Self.canTogglePictureInPicture(webKit), Self.togglePictureInPicture(on: webKit) {
             forgetGestureRequest()
             return
         }
         pipRequestedAt = Date()
-        pipTarget = webView
+        pipTargetPage = page
         pipTargetRect = nil
-        Self.post("wsurf-rect", to: webView)
-        Self.post("wsurf-pip-auto", to: webView)
+        Self.post("wsurf-rect", to: page)
+        Self.post("wsurf-pip-auto", to: page)
     }
 
     private var pipRequestedAt: Date?
-    private weak var pipTarget: WKWebView?
     private var pipTargetRect: CGRect?
     private var pipGesturePoint: CGPoint?
-    private weak var nativePiPView: WKWebView?
+    private weak var nativePiPPage: BrowserPage?
     private var pictureWentOutAt: Date?
     private var returnAskedAt: Date?
     private static let gestureWindow: TimeInterval = 10
@@ -478,28 +479,26 @@ final class MediaCenter {
 
     private func forgetGestureRequest() {
         pipRequestedAt = nil
-        pipTarget = nil
+        pipTargetPage = nil
         pipTargetRect = nil
         pipGesturePoint = nil
     }
 
-    private func forgetPicture(_ webView: WKWebView) {
-        guard nativePiPView === webView else { return }
-        nativePiPView = nil
-        if pipTarget === webView {
-            pipTarget = nil
-            pipTargetRect = nil
+    private func forgetPicture(_ page: BrowserPage) {
+        guard nativePiPPage === page else { return }
+        nativePiPPage = nil
+        if pipTargetPage === page {
+            forgetGestureRequest()
         }
-        if webView === controlledWebView {
+        if page === controlledPage {
             model.isInNativePiP = false
         }
-        onPictureOutChanged?(webView, false)
+        returnAskedAt = nil
+        onPictureOutChanged?(page, false)
     }
 
-    /// Ignore return callbacks during the initial PiP transition. WebKit sends them
-    /// while entering PiP too, before the user has requested a return.
-    func notePictureReturnAsk(for webView: WKWebView) -> Bool {
-        guard nativePiPView === webView else { return false }
+    func notePictureReturnAsk(for page: BrowserPage) -> Bool {
+        guard nativePiPPage === page else { return false }
         if let wentOut = pictureWentOutAt,
            Date().timeIntervalSince(wentOut) < Self.settleAfterLeaving {
             return false
@@ -508,48 +507,46 @@ final class MediaCenter {
         return true
     }
 
-    private func returnWasAsked(for webView: WKWebView) -> Bool {
+    private func returnWasAsked(for page: BrowserPage) -> Bool {
         guard let asked = returnAskedAt else { return false }
         return Date().timeIntervalSince(asked) < Self.returnWindow
     }
-
-    private func applyPresentationMode(_ message: String, from webView: WKWebView) {
-        setPictureInPicture(message == "picture-in-picture", for: webView, source: .page)
+    private func applyPresentationMode(_ message: String, from page: BrowserPage) {
+        if message == "inline" { returnAskedAt = Date() }
+        setPictureInPicture(message == "picture-in-picture", for: page)
     }
 
-    /// Track PiP independently of the dock, using both WebKit delegate callbacks
-    /// and presentation-mode messages from the page.
-    func setPictureInPicture(_ isNative: Bool, for webView: WKWebView, source: PictureSource) {
-        if webView === controlledWebView {
+    func setPictureInPicture(_ isNative: Bool, for page: BrowserPage) {
+        guard !isNative || page.webKit != nil else {
+            Pipeline.log.notice("media: ignored native Picture in Picture report from Chromium")
+            return
+        }
+        if page === controlledPage {
             model.isInNativePiP = isNative
         }
         if isNative {
-            guard nativePiPView !== webView else { return }
-            if let previous = nativePiPView {
+            guard nativePiPPage !== page else { return }
+            if let previous = nativePiPPage {
                 forgetPicture(previous)
             }
             pipRequestedAt = nil
-            nativePiPView = webView
+            nativePiPPage = page
             pictureWentOutAt = Date()
-            onPictureOutChanged?(webView, true)
-            Pipeline.log.notice("media: the picture is out, \(source.name, privacy: .public) said so")
+            onPictureOutChanged?(page, true)
             return
         }
-        guard nativePiPView === webView else { return }
-        let wasAsked = source.speaksForTheUser || returnWasAsked(for: webView)
-        forgetPicture(webView)
+        guard nativePiPPage === page else { return }
+        let wasAsked = returnWasAsked(for: page)
+        forgetPicture(page)
         returnAskedAt = nil
-        Pipeline.log.notice("""
-        media: the picture came home, \(source.name, privacy: .public) said so, \
-        asked for \(wasAsked)
-        """)
-        guard wasAsked else { return }
-        onReturnedInline?(webView)
+        if wasAsked {
+            onReturnedInline?(page)
+        }
     }
 
     private func handlePiPMessage(
         _ message: String,
-        from webView: WKWebView,
+        from page: BrowserPage,
         isMainFrame: Bool
     ) -> Bool {
         if isMainFrame, message.hasPrefix("rect:") {
@@ -561,7 +558,7 @@ final class MediaCenter {
             return true
         }
         if message == "diag:need-gesture" {
-            answerGestureRequest(on: webView)
+            answerGestureRequest(on: page)
             return true
         }
         if message.hasPrefix("diag:") {
@@ -571,32 +568,32 @@ final class MediaCenter {
         return false
     }
 
-    private func answerGestureRequest(on webView: WKWebView) {
-        guard let asked = pipRequestedAt, Date().timeIntervalSince(asked) < Self.gestureWindow else {
+    private func answerGestureRequest(on page: BrowserPage) {
+        guard let asked = pipRequestedAt,
+              Date().timeIntervalSince(asked) < Self.gestureWindow,
+              let webKit = page.webKit
+        else {
             Pipeline.log.notice("media: unsolicited gesture request ignored")
             return
         }
         if let cssPoint = pipGesturePoint {
             pipGesturePoint = nil
-            synthesizeGestureClick(on: webView, atPagePoint: cssPoint)
-            return
+            synthesizeGestureClick(on: webKit, atPagePoint: cssPoint)
+        } else {
+            let rect = page === controlledPage ? model.playerViewportRect : pipTargetRect
+            synthesizeGestureClick(on: webKit, viewportRect: rect)
         }
-        let rect = webView === controlledWebView ? model.playerViewportRect : pipTargetRect
-        synthesizeGestureClick(on: webView, viewportRect: rect)
     }
 
     nonisolated private static func point(in payload: String) -> CGPoint? {
         let parts = payload.split(separator: ",")
-        guard parts.count == 2,
-              let x = Double(parts[0]),
-              let y = Double(parts[1])
-        else { return nil }
+        guard parts.count == 2, let x = Double(parts[0]), let y = Double(parts[1]) else { return nil }
         return CGPoint(x: x, y: y)
     }
 
     // MARK: - Script messages
 
-    private func handleScriptMessage(_ message: String, from source: WKWebView?, isMainFrame: Bool) {
+    private func handleScriptMessage(_ message: String, from source: BrowserPage, isMainFrame: Bool) {
         if message == "hello" {
             if isMainFrame {
                 forgetControlledPage()
@@ -614,37 +611,20 @@ final class MediaCenter {
         }
         if message == "ended" {
             model.isPlaying = false
-            return
-        }
-        if message.hasPrefix("pipat:") {
-            guard isMainFrame else { return }
+        } else if message.hasPrefix("pipat:"), isMainFrame {
             pipGesturePoint = Self.point(in: String(message.dropFirst("pipat:".count)))
-            return
-        }
-        if message == "diag:need-gesture" {
-            if let source {
-                answerGestureRequest(on: source)
-            }
-            return
-        }
-        if message.hasPrefix("audio:") || message.hasPrefix("video:") {
-            return
-        }
-        if message.hasPrefix("meta:") {
+        } else if message.hasPrefix("meta:") {
             applyMetadata(String(message.dropFirst("meta:".count)), to: model)
-            return
-        }
-        if message.hasPrefix("diag:") {
+        } else if message == "diag:need-gesture" {
+            answerGestureRequest(on: source)
+        } else if message.hasPrefix("diag:") {
             Pipeline.log.notice("Media diagnostic received")
-            return
         }
-        Pipeline.log.notice("Media state received")
     }
 
-    private func applyState(_ json: String, from source: WKWebView?) {
+    private func applyState(_ json: String, from source: BrowserPage) {
         guard let fields = Self.fields(in: json) else { return }
-
-        if let source, source === controlledWebView {
+        if source === controlledPage {
             let hasVideo = (fields["w"] ?? 0) > 0
             model.hasVideo = hasVideo
             if hasVideo, lendsPicture {
@@ -948,20 +928,5 @@ enum MediaRoster {
         guard let index = roster.firstIndex(of: previous) else { return roster.first }
         guard roster.count > 1 else { return nil }
         return roster[(index + 1) % roster.count]
-    }
-}
-
-private final class MediaMessageHandler: NSObject, WKScriptMessageHandler {
-    var onMessage: ((String, WKWebView?, Bool) -> Void)?
-
-    func userContentController(
-        _ userContentController: WKUserContentController,
-        didReceive message: WKScriptMessage
-    ) {
-        onMessage?(
-            message.body as? String ?? "",
-            message.webView,
-            message.frameInfo.isMainFrame
-        )
     }
 }
