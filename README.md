@@ -200,6 +200,13 @@ vault authentication or fill/save behavior. See [Contributing](CONTRIBUTING.md)
 for test commands and development guidelines, [Architecture](ARCHITECTURE.md)
 for the code structure, and [Releasing](RELEASING.md) for distribution.
 
+### Session worktrees
+
+omp sessions use [`.omp/config.yml`](.omp/config.yml) to place worktrees under
+`~/projects/wsurf/.worktrees`. Work on feature branches in those worktrees;
+keep the primary checkout on `main`. Changes to `main` must be merged through
+a pull request; never commit or push directly to `main`.
+
 ## Website and domain association
 
 [`wsurf.app/`](wsurf.app/) is the static website: HTML, CSS, and the existing
