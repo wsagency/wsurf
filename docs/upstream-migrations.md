@@ -8,7 +8,7 @@ Versioned provenance for changes imported from [Linen](https://github.com/kavoye
 - Upstream tip (inclusive): `eb338d70bd1740a33e6a34f71e328e13d014bc42`.
 - Scope: **31 unique commits**, every feature/fix/test/dependency/CI/docs change. No merge commits in the range.
 - WSurf research baseline: last deployed `4d33cb93ed22a92ffa2db0d5fc8109b5e4a78557` ([PR #5](https://github.com/wsagency/wsurf/pull/5)); installed binary provenance is in the [spec](superpowers/specs/2026-10-06-linen-upstream-migration-design.md).
-- Execution base: latest origin/main, preserving the observed postdeployment formatting-only `11ab647c184bb2f0a13b65e3a589b5a1baa29f2e`; reassess additional main changes.
+- Execution base: `9606f9d4d14669798049f32c37aa8f8beab7e2c8`, fetched from origin/main on 2026-10-06. Preserves `11ab647` app formatting and the subsequent website deployment/session-worktree policy changes; see T00 below.
 - [Implementation plan](superpowers/plans/2026-10-06-linen-upstream-migration.md) defines T00–T17. All tasks use OMP-supplied feature worktrees under project-root `.worktrees/`, gitignored.
 - User-supplied assumption: upstream thoroughly tested. New evidence below is for WSurf adoption/compatibility, not re-certification of upstream.
 
@@ -247,3 +247,13 @@ All **125 changed upstream paths** below are accounted for in the atomic cutover
 - Workflow edit smoke: `git check-ignore -v .worktrees/ignore-probe/` inside the planning worktree returned `.gitignore:18:/.worktrees/`; the shared checkout also already contains `/.worktrees/`.
 - Tool limitation: Air sourcekit references returned empty for queried compaction/OCR/form-fill symbols; do not interpret as no callers. T09 obtains a Pro indexed reference graph before changing exported owners.
 - No new native app build, test suite, UI smoke or production deployment has been performed for the migration during planning. Those are future task transitions and must carry actual results.
+
+### T00 execution authorized and isolated — 2026-10-06
+
+- The user approved execution and integration of the complete plan. Production app replacement remains a separately approved transition.
+- Reused `.worktrees/linen-migration-plan-20261006` with execution branch `feature/linen-upstream-migration`, based on current main `9606f9d4d14669798049f32c37aa8f8beab7e2c8`. Imported the completed planning documents as `4c074ba8a5386e94e5d1eb477081ae654fb1a524`; preserved original planning branch/commit `469d01d30428c704b7322cc0286ca5b24348675d`.
+- Main delta beyond the researched `11ab647`: `7130832` adds the CI-gated website deployment, and `9606f9d` adds session-worktree/PR policy. These add no application source changes. Their workflow/configuration and README/changelog additions remain in scope to preserve, not overwrite.
+- Isolation check: `git check-ignore -v .worktrees/ignore-probe/` returned `.gitignore:18:/.worktrees/`. `git rev-list --count 3c532ff33660f14b7ba4039cd924473de5f80b60..eb338d70bd1740a33e6a34f71e328e13d014bc42` in the pinned upstream clone returned **31**.
+- Owned Pro snapshot: `/tmp/wsurf-linen-pdU0S7Ye/source`; reserved DerivedData: `/tmp/wsurf-linen-pdU0S7Ye/DD`. Initial source sync completed, excluding Git/worktrees/build output and execution scratch. Existing Pro source and builds are unchanged.
+- Native toolchain rechecked on `PRO.local`: `/Applications/Xcode.app/Contents/Developer`, Xcode **27.0 (`27A266a`)**, Apple Swift **6.4 (`swiftlang-6.4.0.34.1`)**, arm64.
+- No upstream implementation, app test, new build, merge or deployment is claimed by this preflight event.
