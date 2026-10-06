@@ -2,7 +2,7 @@
 
 Date: 2026-10-05
 
-Status: All five conversational design sections approved. Written-spec review is the next approval gate. Product implementation is not authorized by this document alone.
+Status: Written design approved on 2026-10-06. Implementation planning is authorized. Product implementation still requires review of the implementation plan and selection of its execution method.
 
 ## Intent and agreed scope
 
@@ -229,7 +229,7 @@ User approval of this design is not permission to access real production passwor
 
 ## Approval and handoff
 
-The five in-chat sections and the removal of migration were approved. Review this written document before the planning handoff. Written-spec approval permits writing the implementation plan only; product implementation also requires review of that plan and selection of its execution method.
+The five in-chat sections, removal of migration, and written design were approved. Written-spec approval permits writing the implementation plan only; product implementation also requires review of that plan and selection of its execution method.
 
 ## Evidence
 
