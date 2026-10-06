@@ -277,12 +277,14 @@ extension PageDriver {
 
     private static func awaitComputerReceipt(in view: BrowserPage, documentURL: URL?) async throws {
         let deadline = ContinuousClock.now + .seconds(1)
-        repeat {
+        while true {
             try Task.checkCancellation()
             guard PageAutomationGuard.allowsExecution else { throw PageComputerFailure.stale }
             if view.isLoading || view.url != documentURL {
                 return
             }
+            // Check once more after a wait or slow IPC reply crosses the deadline.
+            let finalCheck = ContinuousClock.now >= deadline
             let result = await evaluateJSON(scripted("""
                 const state = window.__wsurfComputerAck;
                 if (state?.received) state.dispose();
@@ -291,9 +293,11 @@ extension PageDriver {
             if result?["received"] as? Bool == true {
                 return
             }
+            if finalCheck {
+                throw PageComputerFailure.unverified
+            }
             try await Task.sleep(for: .milliseconds(20))
-        } while ContinuousClock.now < deadline
-        throw PageComputerFailure.unverified
+        }
     }
 
     private static func performComputerAction(_ action: OpenAIJSON, frame: PageComputerFrame, point: CGPoint?, current: [String: Any],
