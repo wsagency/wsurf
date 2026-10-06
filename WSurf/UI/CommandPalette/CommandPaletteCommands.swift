@@ -244,10 +244,6 @@ enum CommandPaletteCatalog {
             .map(\.command)
     }
 
-    static func bestScore(_ query: String, in commands: [CommandPaletteCommand]) -> Int {
-        commands.compactMap { CommandMatch.score($0, for: query) }.max() ?? 0
-    }
-
     private struct Builder {
         let context: CommandPaletteContext
         let perform: (CommandPaletteAction) -> Void

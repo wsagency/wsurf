@@ -92,6 +92,9 @@ release notes will be added above this provenance record.
 - WebKit download callbacks acquire their delegates before yielding, including
   resumed transfers. Assistant key presses finish their native press/release
   pair before awaiting the select-all fallback.
+- Command-palette projection reuses its ranked command matches for promotion
+  instead of scoring the full catalog twice; ordering and performance budgets
+  remain unchanged.
 
 No signed WSurf release has been published yet. Apple Passwords compatibility
 changes are present in source and fixtures, but real PIN, fill, save, OTP,
