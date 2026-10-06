@@ -83,7 +83,7 @@ struct LyricsSurface: View {
         .onDisappear {
             lyrics.isOnScreen = false
             coordinator.lyricsPinnedTabID = nil
-            coordinator.media.stopWatching()
+            coordinator.media.unwatch()
         }
     }
 
@@ -97,7 +97,7 @@ struct LyricsSurface: View {
         if coordinator.isLyricsSourceDocked {
             media.seek(toFraction: seconds / model.duration)
         } else if let tab = coordinator.lyricsTab {
-            MediaCenter.seek(to: seconds, on: tab.webView)
+            MediaCenter.seek(to: seconds, on: tab.page)
         }
     }
 }

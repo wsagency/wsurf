@@ -110,6 +110,32 @@ struct AppDatabase: Sendable {
     private static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1") { db in try defineSchema(in: db) }
+        migrator.registerMigration("v2-folder-pinning") { db in
+            let hadPinnedColumn = try db.tableExists("sessionFolder")
+                && db.columns(in: "sessionFolder").contains { $0.name == "isPinned" }
+            try defineSchema(in: db)
+            guard !hadPinnedColumn else { return }
+            try db.execute(sql: """
+                WITH RECURSIVE descendants(rootID, folderID) AS (
+                    SELECT id, id FROM sessionFolder
+                    UNION
+                    SELECT d.rootID, i.folderID
+                    FROM descendants d
+                    JOIN sessionItem i ON i.parentID = d.folderID
+                    WHERE i.folderID IS NOT NULL
+                )
+                UPDATE sessionFolder
+                SET isPinned = 1
+                WHERE id IN (
+                    SELECT d.rootID
+                    FROM descendants d
+                    JOIN sessionItem i ON i.parentID = d.folderID
+                    JOIN sessionTab t ON t.id = i.tabID
+                    GROUP BY d.rootID
+                    HAVING MAX(t.pinnedURL IS NULL) = 0
+                )
+                """)
+        }
         return migrator
     }
 
@@ -135,6 +161,13 @@ struct AppDatabase: Sendable {
             t.column("name", .text).notNull()
             t.column("color", .text).notNull()
             t.column("isExpanded", .boolean).notNull()
+            t.column("isPinned", .boolean).notNull().defaults(to: false)
+        }
+
+        if try !db.columns(in: "sessionFolder").contains(where: { $0.name == "isPinned" }) {
+            try db.alter(table: "sessionFolder") { t in
+                t.add(column: "isPinned", .boolean).notNull().defaults(to: false)
+            }
         }
 
         try db.create(table: "sessionTab", options: .ifNotExists) {  t in

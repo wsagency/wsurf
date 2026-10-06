@@ -248,8 +248,27 @@ private struct SiteHandlingSection: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SiteZoomSection(tab: tab)
+            if !siteOrigin.isEmpty {
+                SiteControlRow(symbol: "globe", title: "Browser Engine") {
+                    SitePolicyMenu(
+                        options: BrowserEngine.allCases.map {
+                            ($0, String(localized: $0.label))
+                        },
+                        selection: browser.engine(for: tab)
+                    ) { engine in
+                        Task { _ = await browser.setEngine(engine, for: siteOrigin) }
+                    }
+                }
+                .help("Changing engines reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL.")
+                if tab.isMaterialised, tab.engine != browser.engine(for: tab) {
+                    Text("Current page: \(String(localized: tab.engine.label)). Submitted requests stay in their original engine.")
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, SiteControlsMetrics.inset)
+                }
+            }
 
+            SiteZoomSection(tab: tab)
             if !tab.assistantAccess.origin.isEmpty {
                 SiteControlRow(symbol: "sparkles", title: "Assistant Access") {
                     AssistantAccessMenu(tab: tab)
@@ -327,7 +346,7 @@ private struct SiteSafetySection: View {
                             isOn: !ContentBlocker.shared.isExempt(blockableHost),
                             set: { blocks in
                                 ContentBlocker.shared.setExempt(!blocks, for: blockableHost)
-                                tab.webView.reload()
+                                tab.page.reload()
                             }
                         )
                     }
@@ -480,7 +499,7 @@ private struct TrackerInfoPopover: View {
         .frame(width: 310)
         .background(.ultraThickMaterial)
         .task(id: tab.urlString) {
-            let result = await TrackerPageReport.matchingDomains(in: tab.webView)
+            let result = await TrackerPageReport.matchingDomains(in: tab.page)
             guard !Task.isCancelled else { return }
             domains = result
         }

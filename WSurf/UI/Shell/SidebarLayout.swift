@@ -35,14 +35,24 @@ enum SidebarMetrics {
         max(0, rowContentPadding(style: .full) + rowIconSize / 2 - 14)
     }
 
-    static let rowHeight: CGFloat = 32
+    static func rowHeight(settings: BrowserSettings) -> CGFloat {
+        max(24, settings.sidebarLineHeight + CGFloat(settings.sidebarRowSpacing * 2 + 8))
+    }
 
     static func rowContentPadding(style: SidebarStyle) -> CGFloat {
         style == .icons ? 0 : 9
     }
 
-    static func rowControlEdgeOffset(style: SidebarStyle) -> CGFloat {
-        (rowHeight - rowControlExtent) / 2 - rowContentPadding(style: style)
+    static func rowVerticalSpacing(settings: BrowserSettings) -> CGFloat {
+        CGFloat(settings.sidebarRowSpacing)
+    }
+
+    static func rowControlEdgeOffset(
+        style: SidebarStyle,
+        settings: BrowserSettings
+    ) -> CGFloat {
+        (rowHeight(settings: settings) - rowControlExtent) / 2
+            - rowContentPadding(style: style)
     }
 
     nonisolated static func contentInsets(style: SidebarStyle, isFloating: Bool) -> EdgeInsets {

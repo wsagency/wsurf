@@ -184,26 +184,44 @@ struct SidebarSelectionMenuItems: View {
     var body: some View {
         SidebarLinkMenuItems(tabs: tabs, coordinator: coordinator)
         SidebarFolderMenuItems(items: items, browser: browser)
-        SidebarCloseTabsButton(items: items, browser: browser)
+        SidebarTabActions(items: items, browser: browser, coordinator: coordinator)
     }
 }
 
-struct SidebarCloseTabsButton: View {
+struct SidebarTabActions: View {
     let items: [SidebarItem]
     let browser: BrowserModel
+    let coordinator: AppCoordinator
+
+    private var tabs: [BrowserTab] {
+        browser.tabs(under: items)
+    }
 
     var body: some View {
-        let count = browser.tabCount(in: items)
+        let count = tabs.count
+        let unloadLabel = count == 1 ? String(localized: "Unload Tab") : String(localized: "Unload \(count) Tabs")
+        let removeLabel = count == 1 ? String(localized: "Remove Tab") : String(localized: "Remove \(count) Tabs")
+        Button {
+            let selected = tabs
+            browser.unload(items)
+            for tab in selected where tab.isMaterialised {
+                coordinator.unloadTab(tab)
+            }
+        } label: {
+            Label(unloadLabel, systemImage: "minus")
+        }
+        .disabled(count == 0)
+
         Button(role: .destructive) {
             Task {
                 guard await ConfirmAlert.destructive(
-                    "Close \(count) tabs?",
-                    verb: "Close Tabs"
+                    "Remove \(count) tabs?",
+                    verb: "Remove Tabs"
                 ) else { return }
                 browser.close(items)
             }
         } label: {
-            Label("Close \(count) Tabs", systemImage: "xmark")
+            Label(removeLabel, systemImage: "trash")
         }
         .disabled(count == 0)
     }

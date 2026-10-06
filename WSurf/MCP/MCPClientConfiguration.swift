@@ -6,7 +6,7 @@ import AppKit
 import Foundation
 
 nonisolated enum MCPClientKind: String, CaseIterable, Identifiable, Sendable {
-    case codex, claudeDesktop, claudeCode, cursor
+    case codex, claudeDesktop, claudeCode, cursor, omp
 
     var id: Self {
         self
@@ -22,6 +22,8 @@ nonisolated enum MCPClientKind: String, CaseIterable, Identifiable, Sendable {
             "Claude Code"
         case .cursor:
             "Cursor"
+        case .omp:
+            "omp.sh"
         }
     }
 
@@ -38,6 +40,8 @@ nonisolated enum MCPClientKind: String, CaseIterable, Identifiable, Sendable {
             return home.appending(path: ".claude.json")
         case .cursor:
             return home.appending(path: ".cursor/mcp.json")
+        case .omp:
+            return home.appending(path: ".omp/agent/mcp.json")
         }
     }
 }
@@ -82,6 +86,8 @@ enum MCPClientDiscovery {
             case .cursor:
                 installed = appRoots.contains { FileManager.default.fileExists(atPath: $0.appending(path: "Cursor.app").path) }
                     || NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.todesktop.230313mzl4w4u92") != nil
+            case .omp:
+                installed = executable(named: "omp", home: home, environment: environment) != nil
             }
             return MCPClientTarget(kind: kind, configurationURL: url, codexExecutable: codex,
                                    isDetected: installed || FileManager.default.fileExists(atPath: url.path))

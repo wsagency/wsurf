@@ -88,7 +88,7 @@ extension AgentToolkit {
         }
         // A failed recheck must revoke old evidence.
         taskLedger.outcomes[index].evidence = nil
-        let operation: (WKWebView) async -> String = { view in
+        let operation: (BrowserPage) async -> String = { view in
                 guard (PageDriver.selectedFrame?.url ?? view.url)?.absoluteString == expectedURL else { return "Verification failed: the page URL does not match." }
                 if let ref = controlRef {
                     guard let observationID, !observationID.isEmpty, expectedValue != nil || expectedChecked != nil else {

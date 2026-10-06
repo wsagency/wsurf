@@ -30,30 +30,16 @@ extension AppCoordinator {
         menu.install()
         mainMenu = menu
         ContentBlocker.shared.refresh()
-        WebViewPool.shared.prepare(
-            scriptSource: MediaCenter.frameScriptSource,
-            handlerName: MediaCenter.frameScriptHandlerName,
-            handler: media.frameScriptHandler
-        )
-        WebViewPool.shared.addScript(
-            GeolocationBridge.scriptSource,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true,
-            handlerName: GeolocationBridge.handlerName,
-            handler: GeolocationBridge.shared
-        )
-        WebViewPool.shared.addScript(
-            NotificationBridge.scriptSource,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true,
-            handlerName: NotificationBridge.handlerName,
-            handler: NotificationBridge.shared
-        )
-        GeolocationBridge.shared.tabResolver = { [weak self] webView in
-            self?.browser.tabs.first { $0.isMaterialised && $0.webView === webView }
+        WebViewPool.shared.configurePage = { [weak self] page in
+            self?.media.install(in: page)
+            GeolocationBridge.shared.install(in: page)
+            NotificationBridge.shared.install(in: page)
         }
-        NotificationBridge.shared.tabResolver = { [weak self] webView in
-            self?.browser.tabs.first { $0.isMaterialised && $0.webView === webView }
+        GeolocationBridge.shared.tabResolver = { [weak self] page in
+            self?.browser.tabs.first { $0.isMaterialised && $0.page === page }
+        }
+        NotificationBridge.shared.tabResolver = { [weak self] page in
+            self?.browser.tabs.first { $0.isMaterialised && $0.page === page }
         }
         WebViewPool.shared.installExtensionController(extensions.controller)
         timing.mark("web setup")
@@ -289,6 +275,7 @@ extension AppCoordinator {
 
     private func installTabSwitchHandler() {
         guard tabSwitchMonitor == nil else { return }
+        noteLinkModifiers(NSEvent.modifierFlags)
         tabSwitchMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             MainActor.assumeIsolated {
                 self?.controlChanged(isDown: event.modifierFlags.contains(.control), at: event.timestamp)
@@ -303,6 +290,16 @@ extension AppCoordinator {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.controlChanged(isDown: false, at: ProcessInfo.processInfo.systemUptime)
+                self?.noteLinkModifiers([])
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.noteLinkModifiers(NSEvent.modifierFlags)
             }
         }
     }

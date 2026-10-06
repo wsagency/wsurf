@@ -6,35 +6,89 @@ import AppKit
 import SwiftUI
 
 enum Theme {
-    static let windowBackground = adaptive(
+    private static let standardWindowBackground = adaptive(
         dark: NSColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1),
         light: NSColor(red: 0.98, green: 0.98, blue: 0.99, alpha: 1)
     )
+    private static let calmWindowBackground = adaptive(
+        dark: NSColor(red: 0.125, green: 0.115, blue: 0.18, alpha: 1),
+        light: NSColor(red: 0.86, green: 0.80, blue: 0.79, alpha: 1)
+    )
+    static var windowBackground: Color {
+        isCalm ? calmWindowBackground : standardWindowBackground
+    }
 
-    static let controlSurface = adaptive(
+    private static let standardControlSurface = adaptive(
         dark: NSColor(white: 0.34, alpha: 1),
         light: NSColor(white: 1, alpha: 1)
     )
+    private static let calmControlSurface = adaptive(
+        dark: NSColor(red: 0.23, green: 0.20, blue: 0.29, alpha: 1),
+        light: NSColor(red: 0.91, green: 0.85, blue: 0.85, alpha: 1)
+    )
+    static var controlSurface: Color {
+        isCalm ? calmControlSurface : standardControlSurface
+    }
 
-    static let sidebarTint = adaptive(
+    private static let standardSidebarTint = adaptive(
         dark: NSColor(red: 0.05, green: 0.05, blue: 0.065, alpha: 1),
         light: NSColor(red: 0.91, green: 0.91, blue: 0.93, alpha: 1)
     )
+    private static let calmSidebarTint = adaptive(
+        dark: NSColor(red: 0.095, green: 0.085, blue: 0.14, alpha: 1),
+        light: NSColor(red: 0.78, green: 0.70, blue: 0.74, alpha: 1)
+    )
+    static var sidebarTint: Color {
+        isCalm ? calmSidebarTint : standardSidebarTint
+    }
 
-    static let accent = Color.blue
-    static let thinkingMax = adaptive(
+    private static let standardAccent = Color.blue
+    private static let calmAccent = adaptive(
+        dark: NSColor(red: 0.82, green: 0.63, blue: 0.76, alpha: 1),
+        light: NSColor(red: 0.68, green: 0.39, blue: 0.54, alpha: 1)
+    )
+    static var accent: Color {
+        isCalm ? calmAccent : standardAccent
+    }
+
+    private static let standardThinkingMax = adaptive(
         dark: NSColor(red: 0.77, green: 0.64, blue: 1.00, alpha: 1),
         light: NSColor(red: 0.38, green: 0.12, blue: 0.62, alpha: 1)
     )
+    private static let calmThinkingMax = adaptive(
+        dark: NSColor(red: 0.76, green: 0.68, blue: 0.96, alpha: 1),
+        light: NSColor(red: 0.48, green: 0.30, blue: 0.62, alpha: 1)
+    )
+    static var thinkingMax: Color {
+        isCalm ? calmThinkingMax : standardThinkingMax
+    }
 
-    static let systemAccent = Color(nsColor: .controlAccentColor)
+    private static let standardSystemAccent = adaptive(
+        dark: .controlAccentColor,
+        light: .controlAccentColor
+    )
+    private static let calmSystemAccent = adaptive(
+        dark: NSColor(red: 0.82, green: 0.63, blue: 0.76, alpha: 1),
+        light: NSColor(red: 0.68, green: 0.39, blue: 0.54, alpha: 1)
+    )
+    static var systemAccent: Color {
+        isCalm ? calmSystemAccent : standardSystemAccent
+    }
+
     static let danger = Color(nsColor: .systemRed)
     static let success = Color(nsColor: .systemGreen)
 
-    static let warning = adaptive(
+    private static let standardWarning = adaptive(
         dark: NSColor(red: 0.90, green: 0.64, blue: 0.39, alpha: 1),
         light: NSColor(red: 0.71, green: 0.33, blue: 0.05, alpha: 1)
     )
+    private static let calmWarning = adaptive(
+        dark: NSColor(red: 0.91, green: 0.68, blue: 0.52, alpha: 1),
+        light: NSColor(red: 0.62, green: 0.35, blue: 0.24, alpha: 1)
+    )
+    static var warning: Color {
+        isCalm ? calmWarning : standardWarning
+    }
 
     enum Radius {
         static var window: CGFloat {
@@ -82,7 +136,9 @@ enum Theme {
         )
     }
 
-    static let edgeHandle = edgeHandle(along: .vertical)
+    static var edgeHandle: LinearGradient {
+        edgeHandle(along: .vertical)
+    }
 
     static func chrome(_ opacity: Double) -> Color {
         Color.primary.opacity(opacity)
@@ -117,6 +173,15 @@ enum Theme {
         static let monoCaption: SwiftUI.Font = .system(size: 10.5, design: .monospaced)
         static let badge: SwiftUI.Font = .system(size: 10, weight: .semibold)
         static let micro: SwiftUI.Font = .system(size: 10)
+    }
+
+    static var isCalm: Bool {
+        switch BrowserSettings.shared.appearance {
+        case .lightCalm, .darkCalm:
+            true
+        case .system, .light, .dark:
+            false
+        }
     }
 
     static func adaptive(dark: NSColor, light: NSColor) -> Color {

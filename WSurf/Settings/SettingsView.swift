@@ -167,7 +167,8 @@ private struct SettingsDetail: View {
                     case .websites:
                         WebsiteSettings(
                             settings: coordinator.settings,
-                            permissions: coordinator.browser.sitePermissions
+                            permissions: coordinator.browser.sitePermissions,
+                            browser: coordinator.browser
                         )
                     case .downloads:
                         DownloadsSettings(coordinator: coordinator, settings: coordinator.settings)

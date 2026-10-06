@@ -14,6 +14,8 @@ struct SiteSettingsEntry: Identifiable, Equatable {
     var allowsTrackers = false
     var autoplay: AutoplayPolicy?
     var popups: PopupPolicy?
+    var engine: BrowserEngine = .webKit
+    var hasEngineSetting = false
     var assistantGrants: [SensitiveAction.Category] = []
 
     var id: String {
@@ -32,6 +34,7 @@ struct SiteSettingsEntry: Identifiable, Equatable {
             && !allowsTrackers
             && autoplay == nil
             && popups == nil
+            && !hasEngineSetting
             && assistantGrants.isEmpty
     }
 
@@ -99,6 +102,9 @@ struct SiteSettingsEntry: Identifiable, Equatable {
         case nil:
             break
         }
+        if hasEngineSetting {
+            phrases.append(String(localized: engine.label))
+        }
 
         return phrases
     }
@@ -160,6 +166,12 @@ enum SiteSettingsIndex {
         for origin in permissions.popupOrigins {
             var found = entry(for: origin)
             found.popups = permissions.popups(for: origin)
+            byOrigin[origin] = found
+        }
+        for origin in permissions.engineOrigins {
+            var found = entry(for: origin)
+            found.engine = permissions.engine(for: origin)
+            found.hasEngineSetting = permissions.hasEngineSetting(for: origin)
             byOrigin[origin] = found
         }
 

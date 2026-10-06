@@ -13,6 +13,7 @@ struct PrivacySettings: View {
     @State private var cleared = false
     @State private var siteCount: Int?
     @State private var showingWebsiteData = false
+    @State private var error: String?
 
     private var pageCount: Int {
         coordinator.browser.history.count
@@ -20,7 +21,11 @@ struct PrivacySettings: View {
 
     var body: some View {
         if showingWebsiteData {
-            WebsiteDataPage { showingWebsiteData = false }
+            WebsiteDataPage(
+                profile: coordinator.profiles.current,
+                store: BrowsingData.store,
+                onBack: { showingWebsiteData = false }
+            )
         } else {
             page
         }
@@ -100,8 +105,27 @@ struct PrivacySettings: View {
             .disabled((siteCount ?? 0) == 0)
             .settingsAnchor("privacy.storage")
         }
-        .task {
-            siteCount = await BrowsingData.siteCount()
+        .task(id: coordinator.profiles.current.id) {
+            siteCount = nil
+            let profile = coordinator.profiles.current
+            let store = BrowsingData.store
+            do {
+                let count = try await BrowsingData.siteCount(profile: profile, store: store)
+                guard coordinator.profiles.current.id == profile.id else { return }
+                siteCount = count
+            } catch {
+                guard coordinator.profiles.current.id == profile.id else { return }
+                siteCount = nil
+                self.error = error.localizedDescription
+            }
+        }
+        .alert(
+            "Couldn’t clear browsing data",
+            isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(error ?? String(localized: "Try again."))
         }
     }
 
@@ -124,17 +148,29 @@ struct PrivacySettings: View {
 
     private func clear() async {
         guard let choice = await ConfirmAlert.clear(.privacy()) else { return }
+        let profile = coordinator.profiles.current
+        let store = BrowsingData.store
+        let history = coordinator.browser.history
+        let tabs = coordinator.browser.tabs
         isClearing = true
         cleared = false
-        await BrowsingData.clear(
-            choice.kinds,
-            range: choice.range,
-            history: coordinator.browser.history,
-            agent: coordinator.conversationLog,
-            tabs: coordinator.browser.tabs
-        )
-        siteCount = await BrowsingData.siteCount()
-        isClearing = false
-        cleared = true
+        defer { isClearing = false }
+        do {
+            try await BrowsingData.clear(
+                choice.kinds,
+                range: choice.range,
+                history: history,
+                agent: coordinator.conversationLog,
+                tabs: tabs,
+                profile: profile,
+                store: store
+            )
+            guard coordinator.profiles.current.id == profile.id else { return }
+            siteCount = try await BrowsingData.siteCount(profile: profile, store: store)
+            cleared = true
+        } catch {
+            guard coordinator.profiles.current.id == profile.id else { return }
+            self.error = error.localizedDescription
+        }
     }
 }

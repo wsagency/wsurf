@@ -283,7 +283,7 @@ private struct TabFace: View {
     private static let imageHeight: CGFloat = 150
 
     private var isAsleep: Bool {
-        TabIcon.isAsleep(tab.reclaimState)
+        tab.reclaimState == .unloaded
     }
 
     private var host: String {
@@ -348,7 +348,7 @@ private struct TabFace: View {
         .task(id: tab.id) {
             guard !isSystemPage else { return }
             while !Task.isCancelled {
-                memoryBytes = tab.isMaterialised ? WebProcessFootprint.bytes(of: tab.webView) : nil
+                memoryBytes = tab.isMaterialised ? WebProcessFootprint.bytes(of: tab.page) : nil
                 try? await Task.sleep(for: .seconds(2))
             }
         }

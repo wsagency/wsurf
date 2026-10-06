@@ -1,8 +1,8 @@
 <!-- Modified for WSurf by wsagency in 2026; based on Linen by Kavoye. -->
 # Architecture
 
-WSurf is a macOS SwiftUI app around WebKit. Swift 6 strict concurrency and
-Main Actor default isolation are enabled for the app target.
+WSurf is a macOS SwiftUI app with default WebKit and on-demand embedded Chromium
+through CEF. Swift 6 strict concurrency and Main Actor default isolation are enabled.
 
 ## Runtime structure
 
@@ -15,13 +15,15 @@ flowchart LR
     Coordinator --> Input["Voice and keyboard input"]
     Browser --> Tabs["BrowserTab"]
     Tabs --> Process["TabProcessState"]
-    Tabs --> WebKit["WKWebView"]
+    Tabs --> Page["BrowserPage"]
+    Page --> WebKit["WKWebView"]
+    Page --> Chromium["ChromiumPage / CEF"]
     Agent --> Toolkit["AgentToolkit"]
     Tabs --> Access["TabAssistantAccessCenter"]
     Access --> Permissions["SitePermissions"]
     Toolkit --> Access
     Access --> Driver["PageDriver"]
-    Driver --> WebKit
+    Driver --> Page
     Browser --> Stores["Profile stores"]
     Turns --> Log["ConversationLog"]
     Stores --> Database["AppDatabase / GRDB"]
@@ -42,23 +44,23 @@ outside observation.
 ## Browser state
 
 `BrowserModel` owns tab and folder order, activation, session restoration and
-history integration. `BrowserTab` owns one page’s observable state and WebKit
-lifecycle. `TabProcessState` owns process-protection signals, unload status and
-unexpected-termination throttling. `WebViewPool` prepares reusable views
-without owning tab state.
+history integration. `BrowserTab` owns a `BrowserPage` backed by exactly one
+WebKit or Chromium view. `TabProcessState` owns process-protection signals,
+unload status and unexpected-termination throttling. `WebViewPool` prepares
+WebKit views without owning tab state.
 
-A restored tab holds no `WKWebView` until you open it. `BrowserTab.webView`
-builds one on first use and `isMaterialised` reports whether it exists, so code
-that iterates over tabs must check it before accessing the view. A tab unloaded
-under memory pressure retains its view but replaces the loaded page.
-In both cases the title, address, favicon and WebKit interaction state remain, so
-activation loads the page again. Code that adds a new kind of in-progress page work must decide whether
-that work prevents discarding.
+A restored tab holds no browser view until opened. `BrowserTab.page` builds the
+selected engine on first use; callers iterating tabs must check `isMaterialised`
+before accessing it. Unloading retains the link and metadata, not live page
+content. WebKit can restore native interaction state; Chromium restores only
+the URL. An engine switch reloads without replaying submitted requests and
+awaits the old browser's actual close acknowledgment before installing its replacement.
 
-Profiles are isolated from one another. Each profile has its own WebKit data store,
-database, permission records and extension directory. Private browsing uses an
-ephemeral profile and an in-memory database. Never add profile identity as a
-column to a shared persistent store.
+Each profile has its own WebKit data store, Chromium request context and cache,
+database, permission records and extension directory. Engine choices belong to
+that profile's canonical HTTP(S) origins. Private browsing uses non-persistent
+website stores and an in-memory database. Never add profile identity as a column
+to a shared persistent store.
 
 `BrowserModel` owns the active profile’s permission store and gives that exact
 store to every new `BrowserTab`. A profile switch writes the outgoing session,
@@ -67,6 +69,12 @@ database and permission store together, swaps the extension controller, and
 restores the next session. The extensions themselves load afterwards, so the
 window is usable first. Each phase logs its own duration under `profile:
 switched`.
+
+`ChromiumRuntime` initializes CEF only for the first Chromium page and stays
+initialized until quit because CEF cannot be restarted in-process. Its AppKit
+application subclass is installed at startup without loading Chromium.
+The native child host view must be released to receive `on_before_close`; a
+tab closes that child, never the containing WSurf window.
 
 ## Agent trust boundaries
 

@@ -29,6 +29,36 @@ release notes will be added above this provenance record.
   WebKit query is cold; stale, disabled, animated and permission checks remain.
 - Repeated or late handoffs of the same native download no longer create
   duplicate transfers. Separate requests for the same URL remain independent.
+- Sidebar appearance now includes installed font families, size, weight,
+  compact row spacing, and adjustable folder tint. Folder and link labels use
+  primary text contrast; expanded folders no longer stack tinted glass.
+- Sidebar X/minus, middle-click, and ⌘W now unload page content without removing
+  links, pins, or folder membership. Selecting a retained link reloads it;
+  permanent removal uses explicit right-click Remove actions. Existing
+  unsaved-form, download, media, and other unload protections remain in force.
+- Unloaded sidebar tabs show Play instead of X/minus, including split rows.
+  Click Play to load the page again. Holding ⌘ changes row controls to X;
+  ⌘-click X to permanently remove the tab and its link. Clicking a title only
+  activates it; renaming remains available in the context menu.
+- Unloaded-tab actions now have an Appearance setting: keep the existing
+  hold-⌘ removal control or show a separate X immediately left of Play.
+  In separate-X mode, Play always loads the retained link, including ⌘-click.
+- Folder context menus now offer independent Pin/Unpin, including empty
+  folders. Pin state and sidebar order persist without changing child bookmarks.
+  Fixed context-menu hit testing for folder rows away from the top.
+  Child reordering preserves each bookmark; Delete Folder and Move Out keep
+  the root pinned section contiguous without changing child bookmarks.
+- Initial icon markup no longer invalidates locally cached favicons on every
+  navigation. The icon watcher starts after the initial DOM is ready and still
+  refreshes icons when the page changes them later.
+- Added pastel Light Calm and Dark Calm themes. Light Calm uses a deeper muted
+  palette; Calm chrome stays light or dark independently of the website.
+- Loaded and unloaded sidebar text/icon colors and opacity persist separately
+  for each theme, defaulting to black on light surfaces and white on dark ones.
+  Favicons keep their original glyph in monochrome without an unloaded badge.
+- Folder X appears only while hovering with ⌘ held, immediately left of the
+  far-right count. It unloads all descendant tabs, including collapsed folders,
+  while retaining links, pins, hierarchy, and existing unload protections.
 - Added the dependency-free `wsurf.app/` website and public `webcredentials`
   association for the configured WSurf release identity. Includes responsive
   source/build links, upstream attribution, and deployment requirements;
@@ -36,6 +66,19 @@ release notes will be added above this provenance record.
 - Move to Folder now follows the sidebar hierarchy instead of listing every
   folder at the first level. Nested menus include Move Here for the parent
   folder and keep invalid self/descendant destinations out of folder moves.
+- Added omp.sh to external MCP clients, with automatic CLI detection and setup
+  in `~/.omp/agent/mcp.json` using the existing safe JSON merge and backup.
+- Added per-website WebKit/Chromium selection with lazy embedded CEF startup,
+  separate engine website data, and profile-specific preferences.
+- Fixed native Chromium initial navigation, IO-thread tracker policy isolation,
+  canonical cache paths, and child-view teardown without closing the app window.
+  Native accessibility is enabled; CEF errors remain on standard error without
+  a persistent debug log file.
+- Engine changes reload rather than replaying submitted requests. Chromium
+  unloads restore the URL; WebKit extensions and native Picture in Picture remain
+  WebKit-only.
+- The WebKit autofill navigation adapter reads the source frame only for a form
+  submission, rather than eagerly reading it for unrelated navigation kinds.
 
 No signed WSurf release has been published yet. Apple Passwords compatibility
 changes are present in source and fixtures, but real PIN, fill, save, OTP,
