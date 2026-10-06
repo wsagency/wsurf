@@ -85,7 +85,7 @@ struct MediaScriptTests {
             """,
             baseURL: nil
         )
-        #expect(await PageSettle.untilIdle(webView, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(BrowserPage(webKit: webView), timeout: .seconds(30)))
         #expect(await waitUntil { collector.messages.contains("hello") })
         _ = try? await webView.evaluateJavaScript(Self.stand)
         return (webView, collector)

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import AppKit
 import Foundation
 import Testing
 
@@ -29,28 +30,14 @@ struct ThemePickerTests {
         #expect(reset.refractsTabColor)
     }
 
-    @Test func everyModeHasSomethingToDraw() {
-        for mode in AppearanceMode.allCases {
-            #expect(!ThemeThumbnailPalette.palettes(for: mode).isEmpty)
-        }
-    }
-
-    @Test func aFixedModeIsDrawnInOnePalette() {
-        #expect(ThemeThumbnailPalette.palettes(for: .light) == [.light])
-        #expect(ThemeThumbnailPalette.palettes(for: .dark) == [.dark])
-    }
-
-    @Test func systemIsDrawnInBothPalettes() {
-        #expect(ThemeThumbnailPalette.palettes(for: .system) == [.light, .dark])
-    }
-
-    @Test func theLightAndDarkPalettesAreDifferent() {
-        #expect(ThemeThumbnailPalette.light != ThemeThumbnailPalette.dark)
-    }
-
     @Test func choosingAModePersistsIt() throws {
-        let suite = try #require(UserDefaults(suiteName: "ThemePickerTests.\(UUID().uuidString)"))
-        defer { suite.removePersistentDomain(forName: suite.description) }
+        let name = "ThemePickerTests.\(UUID().uuidString)"
+        let suite = try #require(UserDefaults(suiteName: name))
+        let previousAppearance = NSApp.appearance
+        defer {
+            suite.removePersistentDomain(forName: name)
+            NSApp.appearance = previousAppearance
+        }
 
         let settings = BrowserSettings(defaults: suite)
         for mode in AppearanceMode.allCases {

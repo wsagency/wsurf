@@ -53,3 +53,4 @@ struct PageDialogMessageTests {
         #expect(shown.hasSuffix("…"))
     }
 }
+

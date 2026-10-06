@@ -13,8 +13,8 @@ private func isolatedSystemTab() -> BrowserTab {
     let configuration = WebViewPool.makeConfiguration()
     configuration.websiteDataStore = .nonPersistent()
     configuration.setURLSchemeHandler(SystemPageSchemeHandler(), forURLScheme: SystemPages.scheme)
-    let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
-    return BrowserTab(adopting: view, opensBlank: false)
+    let page = WKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+    return BrowserTab(adopting: page, opensBlank: false)
 }
 
 @MainActor
@@ -41,11 +41,13 @@ struct SystemPageReachTests {
     }
 
     private func expectRefused(_ script: String, in tab: BrowserTab) async throws {
-        let delegate = try #require(tab.webView.navigationDelegate as? TabNavigationDelegate)
+        let page = tab.page
+        let webKit = try #require(page.webKit)
+        let delegate = try #require(webKit.navigationDelegate as? TabNavigationDelegate)
         let observer = PolicyObserver(delegate: delegate)
-        tab.webView.navigationDelegate = observer
-        defer { tab.webView.navigationDelegate = delegate }
-        _ = try await tab.webView.evaluateJavaScript(script)
+        webKit.navigationDelegate = observer
+        defer { webKit.navigationDelegate = delegate }
+        _ = try await page.evaluateJavaScript(script)
         try #require(await waitUntil { observer.decision != nil })
         #expect(observer.decision == .cancel)
     }
@@ -141,9 +143,9 @@ struct SystemPageAddressTests {
 
     @Test func anAddressThatNamesNoPageDoesNotOpenOne() async {
         let tab = isolatedSystemTab()
-        tab.load(URL(string: "wsurf://nonsense")!)
-        await PageSettle.untilQuiet(tab.webView, ceiling: .milliseconds(600))
-
+        let page = tab.page
+        page.load(URLRequest(url: URL(string: "wsurf://nonsense")!))
+        await PageSettle.untilQuiet(page, ceiling: .milliseconds(600))
         #expect(tab.internalPage == nil)
         #expect(!tab.isShowingStartPage)
     }

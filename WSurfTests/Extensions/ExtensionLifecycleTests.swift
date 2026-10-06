@@ -116,10 +116,10 @@ struct ExtensionLifecycleTests {
         let view = try #require(action.popupWebView)
         let nonce = try #require(try await view.evaluateJavaScript("document.body.dataset.nonce") as? String)
         #expect(try await view.evaluateJavaScript("document.body.dataset.frames") as? String == "2")
-        #expect(try await tab.webView.evaluateJavaScript(
+        #expect(try await tab.page.evaluateJavaScript(
             "document.documentElement.dataset.injected === 'yes' && document.querySelector('iframe').contentDocument.documentElement.dataset.injected === 'yes'"
         ) as? Bool == true)
-        _ = try await tab.webView.evaluateJavaScript("history.pushState({}, '', '/spa'); true")
+        _ = try await tab.page.evaluateJavaScript("history.pushState({}, '', '/spa'); true")
         #expect(await waitUntil { adapterURL(manager, tab) == "/spa" })
         action.closePopup()
         manager.registerAnchor(anchor, for: id)

@@ -33,7 +33,7 @@ struct SameDocumentBackTests {
         let (tab, page, server) = try await servedTab()
         _ = server
 
-        _ = try? await tab.webView.evaluateJavaScript("history.pushState({}, '', '#discussion_r1')")
+        _ = try? await tab.page.evaluateJavaScript("history.pushState({}, '', '#discussion_r1')")
         #expect(await waitUntil { tab.canGoBack && tab.urlString.hasSuffix("#discussion_r1") })
 
         tab.goBack()
@@ -46,7 +46,7 @@ struct SameDocumentBackTests {
         let (tab, page, server) = try await servedTab()
         _ = server
 
-        _ = try? await tab.webView.evaluateJavaScript("history.pushState({}, '', '#discussion_r1')")
+        _ = try? await tab.page.evaluateJavaScript("history.pushState({}, '', '#discussion_r1')")
         #expect(await waitUntil { tab.canGoBack })
         tab.goBack()
         #expect(await waitUntil { tab.canGoForward && tab.urlString == page.absoluteString })

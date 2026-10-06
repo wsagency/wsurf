@@ -174,6 +174,16 @@ final class SitePermissions {
 
     private(set) var popupRecords: [String: PopupPolicy] = [:]
 
+    /// Non-default raw engine identifiers are kept per canonical HTTP(S)
+    /// origin. Missing entries default to WebKit for old profile files.
+    private(set) var engineRecords: [String: String] = [:]
+    var engineOrigins: [String] { engineRecords.keys.sorted() }
+    func hasEngineSetting(for origin: String) -> Bool {
+        let key = normalizeEngineOrigin(origin)
+        return !key.isEmpty && engineRecords[key] != nil
+    }
+    var onEngineChanged: ((String) -> Void)?
+
     private let file: URL
     private var saveTask: Task<Void, Never>?
 
@@ -229,6 +239,30 @@ final class SitePermissions {
     func popups(for origin: String) -> PopupPolicy? {
         popupRecords[normalize(origin)]
     }
+    func engine(for origin: String) -> BrowserEngine {
+        let key = normalizeEngineOrigin(origin)
+        return BrowserEngine(rawValue: engineRecords[key] ?? "webkit") ?? .webKit
+    }
+
+    func setEngine(_ engine: BrowserEngine, for origin: String) {
+        let key = normalizeEngineOrigin(origin)
+        guard !key.isEmpty else { return }
+        if engine == .webKit {
+            engineRecords[key] = nil
+        } else {
+            engineRecords[key] = engine.rawValue
+        }
+        scheduleSave()
+        onEngineChanged?(key)
+    }
+    private func normalizeEngineOrigin(_ origin: String) -> String {
+        guard let url = URL(string: origin),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else { return "" }
+        return normalize(Self.origin(for: url))
+    }
+
 
     var autoplayOrigins: [String] {
         autoplayRecords.keys.sorted()
@@ -325,6 +359,7 @@ final class SitePermissions {
         assistantRecords = [:]
         autoplayRecords = [:]
         popupRecords = [:]
+        engineRecords = [:]
         keptActiveOriginSet = []
         keptActiveOrigins = []
         noAutomaticPictureOriginSet = []
@@ -403,6 +438,7 @@ final class SitePermissions {
         var noAutomaticPicture: Set<String> = []
         var autoplay: [String: AutoplayPolicy] = [:]
         var popups: [String: PopupPolicy] = [:]
+        var engines: [String: String] = [:]
 
         init(
             records: [String: [WebPermission: PermissionPolicy]],
@@ -412,7 +448,8 @@ final class SitePermissions {
             keptActive: Set<String>,
             noAutomaticPicture: Set<String>,
             autoplay: [String: AutoplayPolicy],
-            popups: [String: PopupPolicy]
+            popups: [String: PopupPolicy],
+            engines: [String: String]
         ) {
             self.records = records
             self.defaults = defaults
@@ -421,6 +458,7 @@ final class SitePermissions {
             self.noAutomaticPicture = noAutomaticPicture
             self.autoplay = autoplay
             self.popups = popups
+            self.engines = engines
         }
 
         init(from decoder: Decoder) throws {
@@ -453,6 +491,10 @@ final class SitePermissions {
                 [String: PopupPolicy].self,
                 forKey: .popups
             ) ?? [:]
+            engines = try values.decodeIfPresent(
+                [String: String].self,
+                forKey: .engines
+            ) ?? [:]
         }
     }
 
@@ -464,6 +506,7 @@ final class SitePermissions {
             .union(snapshot.assistantAccess.keys)
             .union(snapshot.autoplay.keys)
             .union(snapshot.popups.keys)
+            .union(snapshot.engines.keys)
             .count
     }
 
@@ -477,7 +520,8 @@ final class SitePermissions {
             keptActive: keptActiveOriginSet,
             noAutomaticPicture: noAutomaticPictureOriginSet,
             autoplay: autoplayRecords,
-            popups: popupRecords
+            popups: popupRecords,
+            engines: engineRecords
         )
         let url = file
         saveTask = Task {
@@ -525,6 +569,11 @@ final class SitePermissions {
             if !origin.isEmpty, popupRecords[origin] == nil {
                 popupRecords[origin] = policy
             }
+        }
+        for (key, rawEngine) in snapshot.engines {
+            let origin = normalizeEngineOrigin(key)
+            guard !origin.isEmpty, BrowserEngine(rawValue: rawEngine) != nil else { continue }
+            engineRecords[origin] = rawEngine
         }
     }
 

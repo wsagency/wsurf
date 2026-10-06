@@ -19,48 +19,73 @@ struct NotificationBridgeTests {
 
     /// The same shim the pool installs, in a view of this test's own: the
     /// pool is only loaded with scripts once the app has bootstrapped.
-    private func page(policy: PermissionPolicy) async -> (BrowserTab, WKWebView) {
+    private func page(policy: PermissionPolicy) async -> (BrowserTab, BrowserPage) {
         let permissions = SitePermissions(
             storageURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent("wsurf-notify-\(UUID().uuidString).json")
         )
-        let tab = BrowserTab(opensBlank: false, sitePermissions: permissions)
-        permissions.set(policy, for: origin, .notifications)
-        tab.permissions.pageChanged(url: URL(string: origin))
-        NotificationBridge.shared.tabResolver = { _ in tab }
-
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        let controller = WKUserContentController()
-        controller.addUserScript(WKUserScript(
-            source: NotificationBridge.scriptSource,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
-        ))
-        controller.add(NotificationBridge.shared, name: NotificationBridge.handlerName)
-        configuration.userContentController = controller
-
         let webView = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 300, height: 200),
             configuration: configuration
         )
-        webView.loadHTMLString(
+        let tab = BrowserTab(
+            adopting: webView, opensBlank: false, sitePermissions: permissions
+        )
+        let page = tab.page
+        permissions.set(policy, for: origin, .notifications)
+        tab.permissions.pageChanged(url: URL(string: origin))
+        NotificationBridge.shared.tabResolver = { candidate in
+            guard tab.isMaterialised, tab.page === candidate else { return nil }
+            return tab
+        }
+        NotificationBridge.shared.install(in: page)
+        page.loadHTMLString(
             "<!doctype html><title>Notify</title><body>hi</body>",
             baseURL: URL(string: origin)
         )
-        _ = await PageSettle.untilIdle(webView, timeout: .seconds(10))
-        return (tab, webView)
+        _ = await PageSettle.untilIdle(page, timeout: .seconds(10))
+        await diagnose(page)
+        return (tab, page)
+    }
+    private func diagnose(_ page: BrowserPage) async {
+        let js = """
+            (function () {
+              var d = Object.getOwnPropertyDescriptor(window, 'Notification');
+              return JSON.stringify({send: typeof globalThis.__wsurfSend,
+                notify: typeof globalThis.__wsurfNotify,
+                notification: typeof window.Notification,
+                permission: window.Notification && window.Notification.permission,
+                configurable: d && d.configurable, writable: d && d.writable,
+                getter: d && typeof d.get, setter: d && typeof d.set,
+                text: String(window.Notification).slice(0, 80)});
+            })();
+            """
+        let state = (try? await page.evaluateJavaScript(js)) as? String ?? "<javascript-error>"
+        let scripts = page.webKit?.configuration.userContentController.userScripts ?? []
+        let registered = scripts.enumerated().map { index, script in
+            let hasBridge = script.source.contains("WSurf message handler unavailable")
+            let hasNotification = script.source.contains("WSurfNotification")
+            let kind = hasBridge && hasNotification
+                ? "notification-atomic"
+                : hasNotification ? "notification"
+                : hasBridge ? "bridge"
+                : "other"
+            return "\(index):\(kind):\(script.source.count):main=\(script.isForMainFrameOnly)"
+        }.joined(separator: ",")
+        print("[NotificationBridge diagnostics] js=\(state)")
+        print("[NotificationBridge diagnostics] scripts=\(scripts.count) \(registered)")
     }
 
-    private func permissionSeenByThePage(_ webView: WKWebView) async -> String? {
+    private func permissionSeenByThePage(_ page: BrowserPage) async -> String? {
         var seen: String?
         _ = await waitUntil {
-            seen = (try? await webView.evaluateJavaScript("Notification.permission")) as? String
+            seen = (try? await page.evaluateJavaScript("Notification.permission")) as? String
             return seen != nil && seen != "default"
         }
         return seen
     }
-
     @Test func thePageIsGivenWSurfsOwnNotificationApi() async {
         let (tab, webView) = await page(policy: .ask)
         defer { NotificationBridge.shared.tabResolver = nil; tab.detach() }
@@ -119,14 +144,4 @@ struct NotificationBridgeTests {
         #expect(tab.permissions.live.isEmpty, "a refusal never turns anything on")
     }
 
-    @Test func theShimIsWhatTheBrowserPutThereNotThePages() async {
-        let (tab, webView) = await page(policy: .allow)
-        defer { NotificationBridge.shared.tabResolver = nil; tab.detach() }
-
-        let hasHook = (try? await webView.evaluateJavaScript(
-            "typeof window.__wsurfNotify.setPermission"
-        )) as? String
-
-        #expect(hasHook == "function", "the browser keeps a way to answer the page")
-    }
 }

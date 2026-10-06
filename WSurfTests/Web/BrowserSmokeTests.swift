@@ -20,7 +20,7 @@ struct BrowserSmokeTests {
         )
     }
 
-    private func webView(using dataStore: WKWebsiteDataStore) -> WKWebView {
+    private func page(using dataStore: WKWebsiteDataStore) -> WKWebView {
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = dataStore
         return WKWebView(
@@ -47,7 +47,7 @@ struct BrowserSmokeTests {
         let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
         let tab = browser.newTab(url: firstURL)
 
-        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
         #expect(await waitUntil { tab.urlString == firstURL.absoluteString })
         #expect(await waitUntil { tab.title == "First fixture" })
 
@@ -75,7 +75,7 @@ struct BrowserSmokeTests {
         #expect(await waitUntil { tab.urlString == firstURL.absoluteString && tab.canGoForward })
 
         tab.goForward()
-        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
         #expect(await waitUntil { tab.urlString == secondURL.absoluteString && tab.canGoBack })
     }
 
@@ -88,7 +88,7 @@ struct BrowserSmokeTests {
         let tab = browser.newTab(url: try server.url("/form"))
         defer { browser.closeAllTabs() }
         try #require(await waitUntil { tab.title == "Form" && !tab.isLoading })
-        _ = try await tab.webView.evaluateJavaScript("document.forms[0].requestSubmit(); true")
+        _ = try await tab.page.evaluateJavaScript("document.forms[0].requestSubmit(); true")
         try #require(await waitUntil { tab.title == "Submitted" && !tab.isLoading })
         #expect(tab.pendingTransition == .formSubmit)
         #expect(tab.urlString.hasPrefix(try server.url("/submitted").absoluteString))
@@ -177,11 +177,11 @@ struct BrowserSmokeTests {
             browser.adopt(database: session.database, sitePermissions: store, privately: true)
             let tab = browser.newTab(
                 url: try server.url("/set"),
-                adopting: webView(using: session.dataStore)
+                adopting: page(using: session.dataStore)
             )
 
             #expect(await waitUntil(timeout: .seconds(10)) { tab.title == "Private state" })
-            let cookie = try await tab.webView.evaluateJavaScript("document.cookie") as? String
+            let cookie = try await tab.page.evaluateJavaScript("document.cookie") as? String
             #expect(cookie?.contains("privateToken=secret") == true)
 
             let log = ConversationLog(database: session.database)
@@ -207,10 +207,10 @@ struct BrowserSmokeTests {
 
         let tab = browser.newTab(
             url: try server.url("/read"),
-            adopting: webView(using: fresh.dataStore)
+            adopting: page(using: fresh.dataStore)
         )
         #expect(await waitUntil(timeout: .seconds(10)) { tab.title == "Fresh private state" })
-        let cookie = try await tab.webView.evaluateJavaScript("document.cookie") as? String
+        let cookie = try await tab.page.evaluateJavaScript("document.cookie") as? String
         #expect(cookie?.isEmpty == true)
     }
 

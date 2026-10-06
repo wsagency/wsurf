@@ -5,7 +5,9 @@
 import Foundation
 import WebKit
 
-extension WKWebView {
+@testable import WSurf
+
+extension BrowserPage {
     func finishPendingPageMessages() async throws {
         _ = try await callAsyncJavaScript(
             """

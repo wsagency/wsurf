@@ -10,16 +10,25 @@ enum PageDriver {
     // MARK: - The page-side runtime
 
     static func scripted(_ body: String) -> String {
-        let frameCheck = selectedFrame.flatMap { jsonString($0.id) }.map {
-            "if (window.__wsurfFrameToken !== \($0)) return JSON.stringify({ stale: true });\n"
-        } ?? ""
-        return "(() => {\n" + frameCheck + PageAutomationGuard.scriptCheck + PageRuntime.script + "\n" + body + "\n})()"
+        let frameCheck: String
+        if let frame = selectedFrame {
+            if frame.frame.webKit != nil, let id = jsonString(frame.id) {
+                frameCheck = "if (window.__wsurfFrameToken !== \(id)) return JSON.stringify({ stale: true });\n"
+            } else if let id = jsonString(frame.frame.documentID) {
+                frameCheck = "if (window.__wsurfFrameDocumentID !== \(id)) return JSON.stringify({ stale: true });\n"
+            } else {
+                frameCheck = ""
+            }
+        } else {
+            frameCheck = ""
+        }
+        return "(() => {\n" + PageAutomationGuard.scriptCheck + PageRuntime.script + "\n" + frameCheck + body + "\n})()"
     }
 
     // MARK: - Reading
 
     static func readRenderedPage(
-        _ webView: WKWebView,
+        _ webView: BrowserPage,
         lookingFor: String = "",
         maxTextLength: Int = 2400,
         controlLimit: Int = 40,
@@ -37,7 +46,7 @@ enum PageDriver {
     }
 
     static func snapshot(
-        _ webView: WKWebView, lookingFor: String = "", textLimit: Int? = nil, controlLimit: Int? = nil,
+        _ webView: BrowserPage, lookingFor: String = "", textLimit: Int? = nil, controlLimit: Int? = nil,
         textOffset: Int = 0, controlOffset: Int = 0, scope: String = "", viewportOnly: Bool = false
     ) async -> String {
         let textLength = max(0, min(textLimit ?? outputBudget.textCharacters, outputBudget.textCharacters))
@@ -178,7 +187,7 @@ enum PageDriver {
 
     // MARK: - Actions
 
-    static func click(ref: Int, label: String, in webView: WKWebView, announced: Bool = false) async -> String {
+    static func click(ref: Int, label: String, in webView: BrowserPage, announced: Bool = false) async -> String {
         let resolved = await resolve(ref: ref, label: label, kinds: #"["button","link","checkbox","radio","field","select","combobox"]"#, in: webView)
         switch resolved {
         case .failure(let message):
@@ -279,7 +288,7 @@ enum PageDriver {
         intoField fieldLabel: String,
         ref: Int,
         submit: Bool,
-        in webView: WKWebView,
+        in webView: BrowserPage,
         announced: Bool = false,
         refreshControls: Bool = true
     ) async -> String {
@@ -353,7 +362,7 @@ enum PageDriver {
         _ option: String,
         ref: Int,
         field: String,
-        in webView: WKWebView,
+        in webView: BrowserPage,
         announced: Bool = false,
         refreshControls: Bool = true
     ) async -> String {
@@ -421,7 +430,7 @@ enum PageDriver {
         let select: Bool
     }
 
-    static func fillFields(_ fields: [FieldValue], in webView: WKWebView, announced: Bool = false) async -> String {
+    static func fillFields(_ fields: [FieldValue], in webView: BrowserPage, announced: Bool = false) async -> String {
         guard (1...8).contains(fields.count), fields.allSatisfy({ $0.ref > 0 }),
             Set(fields.map(\.ref)).count == fields.count
         else {
@@ -469,8 +478,8 @@ enum PageDriver {
         })
     }
 
-    private static func batchState(in webView: WKWebView) async -> String? {
-        guard PageAutomationGuard.allowsExecution else { return nil }
+    private static func batchState(in webView: BrowserPage) async -> String? {
+        guard PageAutomationGuard.allowsExecution, await selectedFrameIsLive(in: webView) else { return nil }
         let script = scripted(
             """
             const textOutsideFields = doc => {
@@ -505,7 +514,7 @@ enum PageDriver {
         return (try? await webView.evaluateJavaScript(script, in: selectedFrame?.frame, contentWorld: PageAutomationGuard.world)) as? String
     }
 
-    static func scroll(direction: String, ref: Int = 0, in webView: WKWebView) async -> String {
+    static func scroll(direction: String, ref: Int = 0, in webView: BrowserPage) async -> String {
         guard ["up", "down", "left", "right"].contains(direction) else { return "Use up, down, left, or right." }
         guard PageAutomationGuard.allowsExecution else { return staleMessage }
         if ref > 0, !(await validateObservation(in: webView, ref: ref)) {
@@ -535,7 +544,7 @@ enum PageDriver {
         })
     }
 
-    static func goBack(in webView: WKWebView) async -> String {
+    static func goBack(in webView: BrowserPage) async -> String {
         guard PageAutomationGuard.allowsExecution else { return staleMessage }
         guard webView.canGoBack else { return "There is no page to go back to." }
         webView.goBack()
@@ -551,8 +560,8 @@ enum PageDriver {
     }
     private static let ringLife = 1200
 
-    static func announce(ref: Int, in webView: WKWebView, pause: Bool) async {
-        guard PageAutomationGuard.allowsExecution else { return }
+    static func announce(ref: Int, in webView: BrowserPage, pause: Bool) async {
+        guard PageAutomationGuard.allowsExecution, await selectedFrameIsLive(in: webView) else { return }
         let script = scripted(
             """
               const el = window.__wsurfRefs[\(ref) - 1];
@@ -585,7 +594,7 @@ enum PageDriver {
     static let staleMessage =
         "That element is gone - the page has changed since it was read. Use readPage and act on the fresh refs."
 
-    static func resolve(ref: Int, label: String, kinds: String, in webView: WKWebView) async -> Resolution {
+    static func resolve(ref: Int, label: String, kinds: String, in webView: BrowserPage) async -> Resolution {
         guard ref > 0 || !label.trimmingCharacters(in: .whitespaces).isEmpty else {
             return .failure("Say which element: a [ref] number from readPage, or a visible label.")
         }
@@ -655,7 +664,7 @@ enum PageDriver {
 
     // MARK: - Helpers
 
-    static func settleAndSnippet(_ webView: WKWebView, refreshControls: Bool = true) async -> String {
+    static func settleAndSnippet(_ webView: BrowserPage, refreshControls: Bool = true) async -> String {
         await PageSettle.afterInteraction(webView)
         guard refreshControls else { return "The page now shows: \(await snippet(of: webView))" }
         return await PageAutomationGuard.withCurrentDocument(in: webView) {
@@ -663,25 +672,32 @@ enum PageDriver {
         }
     }
 
-    private static func snippet(of webView: WKWebView) async -> String {
-        guard PageAutomationGuard.allowsExecution else { return "" }
+    private static func snippet(of webView: BrowserPage) async -> String {
+        guard PageAutomationGuard.allowsExecution, await selectedFrameIsLive(in: webView) else { return "" }
         let script = scripted("return R.viewportText(1200);")
         let text = (try? await webView.evaluateJavaScript(script, in: selectedFrame?.frame, contentWorld: PageAutomationGuard.world)) as? String ?? ""
-        return PageAutomationGuard.allowsExecution ? text : ""
+        guard PageAutomationGuard.allowsExecution, await selectedFrameIsLive(in: webView) else { return "" }
+        return text
     }
 
-    static func evaluateJSON(_ script: String, in webView: WKWebView) async -> [String: Any]? {
+    static func evaluateJSON(_ script: String, in webView: BrowserPage) async -> [String: Any]? {
         guard PageAutomationGuard.allowsExecution,
+            await selectedFrameIsLive(in: webView),
             let raw = (try? await webView.evaluateJavaScript(script, in: selectedFrame?.frame, contentWorld: PageAutomationGuard.world)) as? String,
             PageAutomationGuard.allowsExecution,
+            await selectedFrameIsLive(in: webView),
             let data = raw.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return object
     }
+    static func selectedFrameIsLive(in page: BrowserPage) async -> Bool {
+        guard let selectedFrame else { return true }
+        return await PageFrameRegistry.shared.isLive(selectedFrame, in: page)
+    }
 
-    static func automationSnapshot(in webView: WKWebView) async -> String? {
-        guard PageAutomationGuard.allowsExecution else { return nil }
+    static func automationSnapshot(in webView: BrowserPage) async -> String? {
+        guard PageAutomationGuard.allowsExecution, await selectedFrameIsLive(in: webView) else { return nil }
         return
             (try? await webView.evaluateJavaScript(
                 "window.__wsurfSnapshot", in: selectedFrame?.frame, contentWorld: PageAutomationGuard.world

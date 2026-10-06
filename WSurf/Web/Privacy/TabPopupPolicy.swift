@@ -46,12 +46,12 @@ final class TabPopupPolicy {
 
 extension BrowserTab {
     func applySitePopups() {
-        guard popups.pageChanged(url: webView.url) else { return }
+        guard popups.pageChanged(url: page.url) else { return }
         refreshPopupPolicy()
     }
 
     func refreshPopupPolicy() {
         guard isMaterialised else { return }
-        webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically = !popups.effective.blocks
+        page.webKit?.configuration.preferences.javaScriptCanOpenWindowsAutomatically = !popups.effective.blocks
     }
 }

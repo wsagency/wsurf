@@ -13,7 +13,7 @@ enum PageSettle {
 
     @discardableResult
     static func untilIdle(
-        _ webView: WKWebView,
+        _ webView: BrowserPage,
         timeout: Duration = loadCeiling,
         clock: some Clock<Duration> = ContinuousClock()
     ) async -> Bool {
@@ -21,7 +21,7 @@ enum PageSettle {
     }
 
     static func afterInteraction(
-        _ webView: WKWebView,
+        _ webView: BrowserPage,
         grace: Duration = navigationGrace,
         quietCeiling: Duration = .milliseconds(1500),
         clock: some Clock<Duration> = ContinuousClock()
@@ -35,7 +35,7 @@ enum PageSettle {
     }
 
     static func untilQuiet(
-        _ webView: WKWebView,
+        _ webView: BrowserPage,
         ceiling: Duration = .milliseconds(2500),
         interval: Duration = .milliseconds(120),
         clock: some Clock<Duration> = ContinuousClock()
@@ -54,7 +54,7 @@ enum PageSettle {
         }
     }
 
-    private static func signature(of webView: WKWebView, timeout: Duration) async -> Int? {
+    private static func signature(of webView: BrowserPage, timeout: Duration) async -> Int? {
         let script = """
         (() => {
           const elements = document.getElementsByTagName('*').length;
@@ -83,10 +83,10 @@ enum PageSettle {
     }
 
     private static func wait(
-        on webView: WKWebView,
+        on webView: BrowserPage,
         timeout: Duration,
         clock: some Clock<Duration>,
-        until isSatisfied: @escaping @MainActor (WKWebView) -> Bool
+        until isSatisfied: @escaping @MainActor (BrowserPage) -> Bool
     ) async -> Bool {
         guard !Task.isCancelled else { return false }
         if isSatisfied(webView) {

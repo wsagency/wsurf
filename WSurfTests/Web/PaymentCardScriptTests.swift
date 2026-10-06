@@ -18,22 +18,23 @@ struct PaymentCardScriptTests {
         }
     }
 
-    private func load(_ html: String) async throws -> (WKWebView, Sink) {
+    private func load(_ html: String) async throws -> (BrowserPage, Sink) {
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let sink = Sink()
         configuration.userContentController.add(sink, contentWorld: PaymentCardAutofill.world, name: "wsurfCardAutofill")
+        BrowserPage.installBridge(in: configuration.userContentController, world: PaymentCardAutofill.world)
         configuration.userContentController.addUserScript(WKUserScript(
             source: PaymentCardScript.source, injectionTime: .atDocumentStart,
             forMainFrameOnly: false, in: PaymentCardAutofill.world
         ))
-        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+        let view = BrowserPage(webKit: WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration))
         view.loadHTMLString("<!doctype html>" + html, baseURL: URL(string: "https://checkout.example/"))
         #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
         return (view, sink)
     }
 
-    private func select(_ id: String, in view: WKWebView, sink: Sink) async throws -> String {
+    private func select(_ id: String, in view: BrowserPage, sink: Sink) async throws -> String {
         sink.body = nil
         _ = try await view.callAsyncJavaScript(
             "document.getElementById(id).focus();", arguments: ["id": id],
@@ -43,7 +44,7 @@ struct PaymentCardScriptTests {
         return try #require(sink.body?["token"] as? String)
     }
 
-    private func fill(_ token: String, in view: WKWebView, url: String = "https://checkout.example/") async throws -> Int {
+    private func fill(_ token: String, in view: BrowserPage, url: String = "https://checkout.example/") async throws -> Int {
         let result = try await view.callAsyncJavaScript(
             "return globalThis.__wsurfCardAutofill.fill(token, url, card);",
             arguments: ["token": token, "url": url,

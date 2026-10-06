@@ -58,6 +58,12 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
                 tab.noteTransition(mapped)
             }
         }
+        if let tab, !tab.permitsEngineNavigation(
+            navigationAction.request, isMainFrame: navigationAction.targetFrame?.isMainFrame == true
+        ) {
+            decisionHandler(.cancel)
+            return
+        }
 
         guard let tab, let base = tab.extensionBaseURL,
               let url = navigationAction.request.url,
@@ -149,7 +155,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         tab?.noteHoveredLink(url, modifiers: flags, at: Self.pointer(in: webView))
     }
 
-    static func pointer(in webView: WKWebView) -> CGPoint {
+    static func pointer(in webView: NSView) -> CGPoint {
         guard let window = webView.window else { return .zero }
         let inWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
         let inView = webView.convert(inWindow, from: nil)
@@ -202,25 +208,40 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         runOpenPanelWith parameters: WKOpenPanelParameters,
         initiatedByFrame frame: WKFrameInfo
     ) async -> [URL]? {
-        let selection = PageFileSelection.pending.object(forKey: webView)
+        guard let page = BrowserPage.from(webView) else { return nil }
+        let selection = PageFileSelection.pending.object(forKey: page)
+        let beforeObservation: String?
+        if selection == nil {
+            beforeObservation = nil
+        } else {
+            beforeObservation = await PageDriver.automationSnapshot(in: page)
+        }
         if let selection {
             selection.requestedPanel = true
-            guard selection.validate(), frame.isMainFrame,
-                  SitePermissions.origin(for: frame.request.url) == selection.origin else {
+            guard !selection.isCompleted, selection.validate(), frame.isMainFrame,
+                  frame.request.url == page.url,
+                  SitePermissions.origin(for: frame.request.url) == selection.origin,
+                  beforeObservation == selection.observationID else {
                 selection.finish(nil)
                 return nil
             }
         }
+        let nativeParameters = PageFileSelection.Parameters(
+            allowsMultipleSelection: parameters.allowsMultipleSelection,
+            allowsDirectories: parameters.allowsDirectories
+        )
         let files: [URL]?
         if let chooser = selection?.selectFiles {
-            files = await chooser(parameters)
+            files = await chooser(nativeParameters)
         } else {
-            files = await PageDialogs.chooseFiles(parameters, in: webView.window) { panel in
+            files = await PageDialogs.chooseFiles(nativeParameters, in: webView.window) { panel in
                 selection?.cancelPanel = { [weak panel] in panel?.cancel(nil) }
             }
         }
         if let selection {
-            guard selection.validate(), await PageDriver.automationSnapshot(in: webView) == selection.observationID else {
+            guard !selection.isCompleted, selection.validate(),
+                  frame.request.url == page.url,
+                  await PageDriver.automationSnapshot(in: page) == selection.observationID else {
                 selection.finish(nil)
                 return nil
             }
@@ -240,7 +261,8 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         pdfFirstPageSize: CGSize,
         completionHandler: @escaping () -> Void
     ) {
-        PagePrinting.begin(for: webView, then: completionHandler)
+        guard let page = BrowserPage.from(webView) else { completionHandler(); return }
+        PagePrinting.begin(for: page, then: completionHandler)
     }
 
     // MARK: - Media capture
@@ -313,15 +335,8 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        if let tab, !isLoadingErrorPage {
-            tab.isShowingError = false
-        }
-        tab?.noteNavigationStarted()
-        tab?.provisionalNavigation = navigation
-        tab?.refreshChrome()
-        if let url = webView.url {
-            tab?.onNavigationStarted?(url)
-        }
+        guard let page = BrowserPage.from(webView) else { return }
+        page.onNavigationStarted?(page.navigation(for: navigation), webView.url)
     }
 
     // MARK: - Authentication
@@ -364,71 +379,23 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        tab?.committedNavigation = navigation
-        tab?.autofillSave.resetDismissalsForNavigation()
-        if tab?.provisionalNavigation === navigation {
-            tab?.provisionalNavigation = nil
-        }
-        tab?.noteDocumentChanged()
-        tab?.noteHoveredLink(nil)
-        tab?.clearPageActivity()
-        if let tab, tab.isShowingRealPage, !tab.hasPresentedContent {
-            tab.coverUntilPresented()
-        }
-        tab?.holdPageColorUntilLoaded()
-        tab?.refreshChrome()
-        tab?.invalidateSessionState()
+        guard let page = BrowserPage.from(webView) else { return }
+        page.onNavigationCommitted?(page.navigation(for: navigation))
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        guard let tab else { return }
-        let wasRestore = tab.isRestoring
-        tab.isRestoring = false
-        tab.finishReclaim()
-        isLoadingErrorPage = false
-        tab.refreshChrome()
-        tab.invalidateSessionState()
-        guard tab.isShowingRealPage else {
-            // Nothing to record, but the session still moved.
-            tab.onNavigationFinished?(true)
-            return
-        }
-        tab.didPresentContent()
-        tab.refreshFavicon()
-        tab.releasePageColorHold()
-        tab.refreshPageColor(from: webView)
-        tab.restoreScrollOffsetIfNeeded()
-        tab.onNavigationFinished?(wasRestore || tab.isShowingError)
+        guard let page = BrowserPage.from(webView) else { return }
+        page.onNavigationFinished?(page.navigation(for: navigation))
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        if (error as? URLError)?.code != .cancelled {
-            tab?.autofillSave.submissions.clear()
-        }
-        tab?.isRestoring = false
-        tab?.finishReclaim()
-        tab?.releasePageColorHold()
-        showError(error, in: webView)
-        tab?.refreshChrome()
+        guard let page = BrowserPage.from(webView) else { return }
+        page.onNavigationFailed?(page.navigation(for: navigation), error)
     }
 
-    func webView(
-        _ webView: WKWebView,
-        didFailProvisionalNavigation navigation: WKNavigation!,
-        withError error: Error
-    ) {
-        if (error as? URLError)?.code != .cancelled {
-            tab?.autofillSave.submissions.clear()
-        }
-        if let tab, tab.provisionalNavigation === navigation {
-            tab.provisionalNavigation = nil
-            tab.releasePageColorHold()
-            tab.refreshPageColor(from: webView)
-        }
-        tab?.isRestoring = false
-        tab?.finishReclaim()
-        showError(error, in: webView)
-        tab?.refreshChrome()
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard let page = BrowserPage.from(webView) else { return }
+        page.onNavigationFailed?(page.navigation(for: navigation), error)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
@@ -436,14 +403,4 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         tab?.contentProcessDidTerminate()
     }
 
-    private var isLoadingErrorPage = false
-
-    private func showError(_ error: any Error, in webView: WKWebView) {
-        guard let tab, !ErrorPage.isSilent(error) else { return }
-        let fallback = URL(string: tab.urlString)
-        guard ErrorPage.failedURL(from: error, fallback: fallback) != nil else { return }
-        tab.isShowingError = true
-        isLoadingErrorPage = true
-        ErrorPage.show(error, in: webView, fallbackURL: fallback)
-    }
 }

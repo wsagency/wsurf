@@ -271,19 +271,56 @@ struct FaviconNavigationTests {
         return try #require(image.tiffRepresentation)
     }
 
-    private func makeWebView() -> WKWebView {
+    private func makeWebView() -> BrowserPage {
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        return WKWebView(
+        return BrowserPage(webKit: WKWebView(
             frame: NSRect(x: 0, y: 0, width: 500, height: 400),
             configuration: configuration
-        )
+        ))
     }
 
     private func localhost(_ url: URL) throws -> URL {
         var components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
         components.host = "localhost"
         return try #require(components.url)
+    }
+
+    @Test func initialIconMarkupKeepsTheCachedIconButLaterChangesInvalidateIt() async throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/page": .html(#"<link rel="icon" href="/original.png"><h1>Page</h1>"#),
+        ])
+        let host = try #require(server.url("/page").host())
+        let loader = FaviconLoader(cacheDirectory: directory)
+        _ = loader.store(try iconData(side: 24), forHost: host)
+        let configuration = WebViewPool.makeConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = BrowserPage(webKit: TabWebView(
+            frame: NSRect(x: 0, y: 0, width: 500, height: 400),
+            configuration: configuration
+        ))
+        FaviconWatcher.shared.install(in: webView) { loader.forget(host: host) }
+        webView.load(URLRequest(url: try server.url("/page")))
+        #expect(await PageSettle.untilIdle(webView, timeout: .seconds(30)))
+        // Fence the observer's 60 ms debounce on the same JavaScript event loop.
+        _ = try await webView.callAsyncJavaScript(
+            "await new Promise(resolve => setTimeout(resolve, 100));",
+            arguments: [:], in: nil, contentWorld: .page
+        )
+        #expect(loader.cached(for: host)?.size.width == 24)
+        let reopened = FaviconLoader(cacheDirectory: directory)
+        #expect(reopened.cached(for: host)?.size.width == 24)
+        _ = try await webView.callAsyncJavaScript(
+            """
+            document.querySelector('link[rel="icon"]').href = '/changed.png';
+            await new Promise(resolve => setTimeout(resolve, 100));
+            """,
+            arguments: [:], in: nil, contentWorld: .page
+        )
+        #expect(await waitUntil { loader.cached(for: host) == nil })
+        #expect(FaviconLoader(cacheDirectory: directory).cached(for: host) == nil)
     }
 
     @Test func navigatingToAnotherHostFetchesThatSitesIcon() async throws {

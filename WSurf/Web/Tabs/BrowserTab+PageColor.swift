@@ -19,7 +19,7 @@ extension BrowserTab {
         holdsPageColor = false
     }
 
-    func refreshPageColor(from webView: WKWebView) {
+    func refreshPageColor(from page: BrowserPage) {
         guard isShowingRealPage else {
             clearPageColor()
             return
@@ -33,8 +33,8 @@ extension BrowserTab {
     }
 
     func measureBandUnderBar() {
-        guard isShowingRealPage, hasPresentedContent, !holdsPageColor, webView.window != nil,
-              webView.bounds.height > 0 else { return }
+        guard !isClosed, isMaterialised, isShowingRealPage, hasPresentedContent, !holdsPageColor, page.window != nil,
+              page.bounds.height > 0 else { return }
         guard !isMeasuringBand else {
             // The first presentation can still contain the old/blank frame.
             // Keep the didFinish request instead of dropping it behind that
@@ -45,11 +45,10 @@ extension BrowserTab {
         isMeasuringBand = true
         needsBandRemeasure = false
         let requestedURL = urlString
-        let bandFraction = Theme.topBarHeight / webView.bounds.height
-        let configuration = WKSnapshotConfiguration()
-        configuration.snapshotWidth = 48
-        configuration.afterScreenUpdates = true
-        webView.takeSnapshot(with: configuration) { [weak self] image, _ in
+        let bandFraction = Theme.topBarHeight / page.bounds.height
+        let view = page
+        Task { [weak self] in
+            let image = try? await view.capture(width: 48, afterScreenUpdates: true)
             guard let self else { return }
             isMeasuringBand = false
             let shouldRemeasure = needsBandRemeasure
@@ -59,8 +58,8 @@ extension BrowserTab {
                     measureBandUnderBar()
                 }
             }
-            guard urlString == requestedURL, provisionalNavigation == nil,
-                  hasPresentedContent, !holdsPageColor,
+            guard !isClosed, isMaterialised, page === view, !view.isClosed, urlString == requestedURL,
+                  provisionalNavigation == nil, hasPresentedContent, !holdsPageColor,
                   let image,
                   let average = Self.averageOfTopBand(of: image, fraction: bandFraction)
             else { return }
@@ -69,8 +68,8 @@ extension BrowserTab {
     }
 
     func webViewDidBecomeVisible() {
-        refreshCanvas(from: webView)
-        refreshPageColor(from: webView)
+        refreshCanvas(from: page)
+        refreshPageColor(from: page)
     }
 
     static func averageOfTopBand(of image: NSImage, fraction: CGFloat) -> NSColor? {

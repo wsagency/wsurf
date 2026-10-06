@@ -11,8 +11,8 @@ enum WebProcessFootprint {
 
     static let isSupported = WKWebView.instancesRespond(to: pidGetter)
 
-    static func bytes(of webView: WKWebView) -> UInt64? {
-        guard isSupported,
+    static func bytes(of page: BrowserPage) -> UInt64? {
+        guard let webView = page.webKit, isSupported,
               let pid = (webView.value(forKey: "_webProcessIdentifier") as? NSNumber)?.int32Value,
               pid > 0
         else { return nil }

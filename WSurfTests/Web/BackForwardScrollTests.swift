@@ -16,19 +16,19 @@ import WebKit
 @Suite(.serialized)
 struct BackForwardScrollTests {
 
-    private func scrollY(_ webView: WKWebView) async -> Double {
-        (try? await webView.evaluateJavaScript("window.scrollY")) as? Double ?? -1
+    private func scrollY(_ page: BrowserPage) async -> Double {
+        (try? await page.evaluateJavaScript("window.scrollY")) as? Double ?? -1
     }
 
-    private func window(hosting webView: WKWebView) -> NSWindow {
+    private func window(hosting page: BrowserPage) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
             styleMask: [.titled],
             backing: .buffered,
             defer: false
         )
-        webView.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
-        window.contentView?.addSubview(webView)
+        page.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        window.contentView?.addSubview(page)
         window.orderBack(nil)
         return window
     }
@@ -58,30 +58,30 @@ struct BackForwardScrollTests {
         )
         let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
         let tab = browser.newTab(url: tall)
-        let host = window(hosting: tab.webView)
+        let host = window(hosting: tab.page)
         defer { host.orderOut(nil) }
 
-        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
         #expect(await waitUntil { tab.urlString == tall.absoluteString })
 
-        _ = try? await tab.webView.evaluateJavaScript("window.scrollTo(0, 1500)")
-        let before = await scrollY(tab.webView)
+        _ = try? await tab.page.evaluateJavaScript("window.scrollTo(0, 1500)")
+        let before = await scrollY(tab.page)
         #expect(before == 1500)
         // The scroll monitor reports on a short throttle; leaving the page
         // before it fires is not the gesture under test.
         #expect(await waitUntil { tab.lastReportedScrollY == before })
 
-        _ = try? await tab.webView.evaluateJavaScript(
+        _ = try? await tab.page.evaluateJavaScript(
             "document.getElementById('next').href = '\(other.absoluteString)'; document.getElementById('next').click()"
         )
         #expect(await waitUntil { tab.urlString == other.absoluteString && tab.canGoBack })
-        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
 
         tab.goBack()
         #expect(await waitUntil { tab.urlString == tall.absoluteString })
-        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
 
-        #expect(await waitUntil { await scrollY(tab.webView) == before })
+        #expect(await waitUntil { await scrollY(tab.page) == before })
     }
 
     // MARK: - The memory itself

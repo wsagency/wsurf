@@ -38,7 +38,7 @@ struct AgentToolkitPolicyTests {
     ) async -> (BrowserModel, BrowserTab, AgentToolkit) {
         let browser = BrowserModel(database: .temporary())
         let tab = browser.newTab(url: url)
-        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
         tab.assistantAccess.persistsAnswers = false
         tab.assistantAccess.pageChanged(url: url)
         tab.assistantAccess.set(.control)
@@ -191,7 +191,7 @@ struct AgentToolkitPolicyTests {
         let browser = BrowserModel(database: .temporary())
         let log = ConversationLog(database: .temporary())
         let tab = browser.newTab(url: url)
-        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
         tab.assistantAccess.persistsAnswers = false
         tab.assistantAccess.pageChanged(url: url)
         tab.assistantAccess.set(.control)
@@ -459,7 +459,7 @@ struct AgentToolkitPolicyTests {
             submit: true
         )
 
-        #expect(SitePermissions.origin(for: tab.webView.url) == SitePermissions.origin(for: destinationURL))
+        #expect(SitePermissions.origin(for: tab.page.url) == SitePermissions.origin(for: destinationURL))
         #expect(output.contains("moved to another website"), "\(output)")
         #expect(!output.contains("Destination secret"))
         #expect(!output.contains("<page-content"))
@@ -482,7 +482,7 @@ struct AgentToolkitPolicyTests {
 
         let output = await subject.selectOption("Leave", ref: 0, field: "Choice")
 
-        #expect(SitePermissions.origin(for: tab.webView.url) == SitePermissions.origin(for: destinationURL))
+        #expect(SitePermissions.origin(for: tab.page.url) == SitePermissions.origin(for: destinationURL))
         #expect(output.contains("moved to another website"), "\(output)")
         #expect(!output.contains("Destination secret"))
         #expect(!output.contains("<page-content"))
@@ -504,7 +504,7 @@ struct AgentToolkitPolicyTests {
 
         let output = await subject.scrollPage(direction: "down")
 
-        #expect(SitePermissions.origin(for: tab.webView.url) == SitePermissions.origin(for: destinationURL))
+        #expect(SitePermissions.origin(for: tab.page.url) == SitePermissions.origin(for: destinationURL))
         #expect(output.contains("moved to another website"), "\(output)")
         #expect(!output.contains("Destination secret"))
         #expect(!output.contains("<page-content"))
@@ -521,9 +521,9 @@ struct AgentToolkitPolicyTests {
         let currentURL = try current.url("/current")
         let browser = BrowserModel(database: .temporary())
         let tab = browser.newTab(url: earlierURL)
-        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
         tab.load(currentURL)
-        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
         tab.assistantAccess.persistsAnswers = false
         tab.assistantAccess.pageChanged(url: currentURL)
         tab.assistantAccess.set(.control)
@@ -532,7 +532,7 @@ struct AgentToolkitPolicyTests {
 
         let output = await subject.goBack()
 
-        #expect(SitePermissions.origin(for: tab.webView.url) == SitePermissions.origin(for: earlierURL))
+        #expect(SitePermissions.origin(for: tab.page.url) == SitePermissions.origin(for: earlierURL))
         #expect(output.contains("moved to another website"), "\(output)")
         #expect(!output.contains("Earlier secret"))
         #expect(!output.contains("<page-content"))

@@ -7,14 +7,6 @@ import WebKit
 
 enum AutofillPage {
     static let world = WKContentWorld.world(name: "WSurfAutofill")
-    private static let controllers = NSHashTable<WKUserContentController>.weakObjects()
-
-    static func install(in controller: WKUserContentController) {
-        guard !controllers.contains(controller) else { return }
-        controllers.add(controller)
-        controller.addUserScript(WKUserScript(source: AutofillFormScript.source + AutofillSuggestionScript.source,
-                                             injectionTime: .atDocumentStart, forMainFrameOnly: false, in: world))
-    }
 }
 
 nonisolated enum AutofillFormScript {
