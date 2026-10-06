@@ -12,12 +12,40 @@ These rules apply to all code, documentation, and configuration changes in this 
 
 Follow [CONTRIBUTING.md](CONTRIBUTING.md#development-workflow) for the worktree setup and PR checklist, and [RELEASING.md](RELEASING.md#source-and-deployment-policy) for release and deployment gates.
 
+## Agent workflow
+
+- Use Superpowers for all work in this repository.
+- At the start of each task, read `skill://using-superpowers`, then load and
+  follow the relevant Superpowers skills before responding or acting.
+- Use native omp tools for the workflows: `read` for skills, `task` for
+  subagents, and `todo` for task lists.
+
 ## Native builds and verification
 
-- Develop locally on the Air (`m5air.local`); build and test the native app on Pro through the existing SSH alias `pro`.
-- Pro has full Xcode at `/Applications/Xcode.app`. Use `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`; do not change global `xcode-select`.
-- Preserve Pro's `~/projects/wsurf` working tree and existing builds. Sync sources into an owned snapshot with separate DerivedData, result bundles, and stage data.
-- The Air has Command Line Tools, not full Xcode. A missing `SwiftUIMacros` there is a local toolchain limitation; do not fake macros or change app semantics to bypass it.
-- Before reporting missing Xcode, check Pro's `xcode-select -p`, `xcodebuild -version`, and `xcrun swift --version` with the explicit developer directory.
-- Follow the native `xcodebuild` workflow in `CONTRIBUTING.md`. Copy the app to Air for actual UI verification using `WSURF_STAGE=1` and an owned `WSURF_STAGE_HOME`.
-- Component probes do not prove a whole-app build or real UI behavior. Production app replacement is separate from stage verification and requires the user's deployment authorization.
+- Develop locally on the Air (`m5air.local`); build and test the native WSurf app
+  on the MacBook Pro through the existing SSH alias `pro`.
+- The full Xcode installation is on Pro at `/Applications/Xcode.app`. Verified:
+  Xcode 27.0 (`27A266a`), Apple Swift 6.4 (`swiftlang-6.4.0.34.1`). Recheck the
+  remote toolchain when a build reports an incompatibility.
+- The Air currently has Command Line Tools, not full Xcode. Local Swift/CEF
+  probes can work while the SwiftUI app build fails because `SwiftUIMacros` is
+  missing. This is a local toolchain limitation, not a project-wide blocker.
+  Do not fake macros or alter application semantics to bypass it.
+- Before reporting missing Xcode or proposing an installation, check Pro:
+
+  ```sh
+  ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes pro \
+    'hostname && xcode-select -p && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -version && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swift --version'
+  ```
+
+- Use `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` for remote
+  build/test commands; do not change global `xcode-select` settings.
+- Pro's established project is `~/projects/wsurf`. Preserve its working tree
+  and existing builds. Sync current sources into an isolated worktree or owned
+  build snapshot, then use the native `xcodebuild` workflow in `CONTRIBUTING.md`.
+- Copy the resulting app back to the Air for real UI verification. Use a
+  separate stage app and `WSURF_STAGE=1` with an owned `WSURF_STAGE_HOME`; do not
+  replace the user's installed app or use production browsing data.
+- Report component probes separately from whole-app builds and UI checks.
+  Never claim the app is verified from a CEF probe or Swift syntax check alone.
+- Production app replacement is separate from stage verification and requires the user's deployment authorization.

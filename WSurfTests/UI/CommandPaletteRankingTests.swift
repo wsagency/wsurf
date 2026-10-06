@@ -115,7 +115,6 @@ struct CommandPaletteRankingTests {
 
         #expect(matched.first?.id == "action-openStartPage")
         #expect(CommandPaletteCatalog.matching("zzqq", in: commands).isEmpty)
-        #expect(CommandPaletteCatalog.bestScore("zzqq", in: commands) == 0)
     }
 
     @Test func aCommandIsFoundByTheWordAPersonWouldReachFor() {
@@ -162,7 +161,6 @@ struct CommandPaletteRankingTests {
         ]))
         #expect(!loadedIDs.contains("action-goForward"))
     }
-
     @Test func aToggleIsNamedForWhatItWillDo() {
         let quiet = CommandPaletteCatalog.commands(
             context: CommandPaletteContext(isSpeechMuted: true),

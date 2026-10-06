@@ -53,17 +53,17 @@ final class ComputerWorkflowFixture {
         tab = browser.newTab(url: URL(string: "about:blank")!)
         window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.contentView = tab.webView
+        window.contentView = tab.page
         window.orderBack(nil)
         let base = try server.url()
         tab.load(base)
         guard await waitForObservation({ self.tab.committedURL == base && !self.tab.isLoading }),
-              (try? await tab.webView.evaluateJavaScript("!!document.querySelector('#query')")) as? Bool == true else {
+              (try? await tab.page.evaluateJavaScript("!!document.querySelector('#query')")) as? Bool == true else {
             close()
             throw HarnessFixtureFailure()
         }
         tab.assistantAccess.persistsAnswers = false
-        tab.assistantAccess.pageChanged(url: tab.webView.url ?? base)
+        tab.assistantAccess.pageChanged(url: tab.page.url ?? base)
         tab.assistantAccess.set(.control)
     }
 
@@ -82,7 +82,7 @@ final class ComputerWorkflowFixture {
 
     func close() {
         agent?.discardAllSessions()
-        tab.webView.stopLoading()
+        tab.page.stopLoading()
         window.contentView = nil
         window.close()
         try? FileManager.default.removeItem(at: folder)

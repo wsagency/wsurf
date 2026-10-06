@@ -17,16 +17,17 @@ struct PasswordAutofillScriptTests {
         }
     }
 
-    private func load(_ html: String) async throws -> (WKWebView, Sink) {
+    private func load(_ html: String) async throws -> (BrowserPage, Sink) {
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let sink = Sink()
         configuration.userContentController.add(sink, contentWorld: PasswordAutofill.world, name: "wsurfPasswords")
+        BrowserPage.installBridge(in: configuration.userContentController, world: PasswordAutofill.world)
         configuration.userContentController.addUserScript(WKUserScript(
             source: PasswordAutofillScript.source, injectionTime: .atDocumentStart,
             forMainFrameOnly: false, in: PasswordAutofill.world
         ))
-        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+        let view = BrowserPage(webKit: WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration))
         view.loadHTMLString("<!doctype html>" + html, baseURL: URL(string: "https://login.example/"))
         #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
         _ = try await view.callAsyncJavaScript("globalThis.__wsurfPasswords.setEnabled(true);", arguments: [:], in: nil, contentWorld: PasswordAutofill.world)
@@ -34,13 +35,13 @@ struct PasswordAutofillScriptTests {
         return (view, sink)
     }
 
-    private func select(in view: WKWebView, sink: Sink) async throws -> String {
+    private func select(in view: BrowserPage, sink: Sink) async throws -> String {
         _ = try await view.callAsyncJavaScript("document.getElementById('password').focus();", arguments: [:], in: nil, contentWorld: PasswordAutofill.world)
         #expect(await waitUntil { sink.body?["token"] is String })
         return try #require(sink.body?["token"] as? String)
     }
 
-    private func fill(_ token: String, in view: WKWebView) async throws -> Int {
+    private func fill(_ token: String, in view: BrowserPage) async throws -> Int {
         let result = try await view.callAsyncJavaScript(
             "return globalThis.__wsurfPasswords.fill(token,url,login);",
             arguments: ["token": token, "url": "https://login.example/", "login": ["username": "ada@example.test", "password": "dummy-secret"]],

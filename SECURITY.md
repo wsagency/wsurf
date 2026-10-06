@@ -50,6 +50,12 @@ your report.
   `ProfileStore.swift`). Each profile has its own website data store,
   database, permission file and extension directory. A path that lets data
   from one profile reach another is a defect.
+- Embedded browser boundaries (`WSurf/Web/Engines`). Chromium uses the native
+  CEF sandbox and separate profile request contexts; private contexts have no
+  persistent cache. Switching engines must not copy cookies or replay a POST.
+  CEF frame/document IDs, security origins, and unique execution contexts must
+  stay current across asynchronous script and permission operations. Page
+  bindings belong to their isolated world and must not authorize another frame.
 - Website permissions (`WSurf/Web/Privacy/SitePermissions.swift`,
   `PermissionCenter.swift`, `NotificationBridge.swift`). A permission belongs to
   one origin: the scheme, the host and the port. A page that is not on TLS is

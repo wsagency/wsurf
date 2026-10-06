@@ -33,6 +33,16 @@ struct MCPClientInstallerTests {
         #expect(try await !installer.isInstalled(target(url), command: command))
     }
 
+    @Test func standardLocationsAndCodexHomeOverride() {
+        let home = URL(fileURLWithPath: "/Users/test")
+        #expect(MCPClientKind.codex.configurationURL(home: home, environment: [:]).path == "/Users/test/.codex/config.toml")
+        #expect(MCPClientKind.codex.configurationURL(home: home, environment: ["CODEX_HOME": "/work/profile"]).path == "/work/profile/config.toml")
+        #expect(MCPClientKind.codex.configurationURL(home: home, environment: ["CODEX_HOME": "relative"]).path == "/Users/test/.codex/config.toml")
+        #expect(MCPClientKind.claudeDesktop.configurationURL(home: home, environment: [:]).path == "/Users/test/Library/Application Support/Claude/claude_desktop_config.json")
+        #expect(MCPClientKind.claudeCode.configurationURL(home: home, environment: [:]).path == "/Users/test/.claude.json")
+        #expect(MCPClientKind.cursor.configurationURL(home: home, environment: [:]).path == "/Users/test/.cursor/mcp.json")
+        #expect(MCPClientKind.omp.configurationURL(home: home, environment: [:]).path == "/Users/test/.omp/agent/mcp.json")
+    }
     @Test(arguments: [MCPClientKind.claudeDesktop, .claudeCode, .cursor, .omp])
     func JSONMergePreservesOtherServersAndPrivateClientState(kind: MCPClientKind) throws {
         let source = Data(#"""

@@ -168,7 +168,6 @@ struct SidebarSleepIndicatorTests {
         #expect(background.reclaimState == .unloaded)
     }
 }
-
 /// The sidebar toggle belongs to the window beam, never to the sidebar or a
 /// particular toolbar variant. Content controls only reserve its fixed slot.
 @MainActor
@@ -344,6 +343,7 @@ struct SidebarPeekShieldTests {
             frame: NSRect(x: 0, y: 0, width: 600, height: 400),
             configuration: WebViewPool.makeConfiguration()
         )
+        let page = BrowserPage(webKit: web)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
             styleMask: [.titled],
@@ -351,12 +351,12 @@ struct SidebarPeekShieldTests {
             defer: false
         )
         defer { window.orderOut(nil) }
-        window.contentView?.addSubview(web)
+        window.contentView?.addSubview(page)
         window.orderBack(nil)
         web.loadHTMLString("<html><body>page</body></html>", baseURL: nil)
         // WebKit installs the areas for a page it has painted in a window on
         // screen. Asking before either has happened is what made this flake.
-        #expect(await PageSettle.untilIdle(web, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
 
         var foreign: [NSTrackingArea] = []
         _ = await waitUntil {

@@ -66,7 +66,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             rows: browser.sidebarItems.map { item in
                 SidebarSectionPlan.Row(
                     item: item,
-                    isKept: browser.isKept(item, ignoring: carried),
+                    isKept: browser.isKept(item),
                     isCarried: carried.contains(item)
                 )
             },
@@ -292,7 +292,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         }
 
         if !settled {
-            browser.setPinned(pinsCarried, for: drag.items)
+            drag.settlePins(pinsCarried, in: browser)
         }
 
         withAnimation(.spring(response: 0.24, dampingFraction: 0.85)) {
@@ -338,7 +338,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
     }
 
     private func keepsSection(_ item: SidebarItem) -> Bool {
-        browser.isKept(item, ignoring: drag?.covered ?? [])
+        browser.isKept(item)
     }
 
     private func lands(before isBefore: Bool, of anchor: SidebarItem) -> Bool {

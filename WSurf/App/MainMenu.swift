@@ -3,7 +3,6 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import AppKit
-import WebKit
 
 @MainActor
 enum ShortcutPriority {
@@ -296,7 +295,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         coordinator.pageCommandTab?.reload()
     }
     @objc private func hardReload() {
-        activeWebView?.reloadFromOrigin()
+        coordinator.pageCommandTab?.page.reloadFromOrigin()
     }
     @objc private func stopLoading() {
         coordinator.pageCommandTab?.stopLoading()
@@ -384,10 +383,6 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     }
     @objc private func zoomOut() {
         coordinator.pageCommandTab?.zoomOut()
-    }
-
-    private var activeWebView: WKWebView? {
-        coordinator.pageCommandTab?.webView
     }
 
     // MARK: - Validation

@@ -38,7 +38,7 @@ extension BrowserModel {
         scheduleSave()
     }
 
-    func isKept(_ item: SidebarItem, ignoring _: Set<SidebarItem> = []) -> Bool {
+    func isKept(_ item: SidebarItem) -> Bool {
         switch item {
         case .tab(let id):
             tabsByID[id]?.pinnedURL != nil
@@ -78,7 +78,7 @@ extension BrowserModel {
         setPinned(true, for: items)
     }
 
-    func setPinned(_ pinned: Bool, for items: [SidebarItem]) {
+    func setPinned(_ pinned: Bool, for items: some Sequence<SidebarItem>) {
         var changed = false
         for item in items {
             switch item {
@@ -269,7 +269,7 @@ extension BrowserModel {
 
     func close(_ tab: BrowserTab, recordForReopening: Bool = true) {
         if tab.isMaterialised {
-            AutofillSuggestions.shared.dismiss(in: tab.webView)
+            AutofillSuggestions.shared.dismiss(in: tab.page)
         }
         tab.autofillSave.clear()
         if recordForReopening, !tab.isPrivate {
@@ -298,11 +298,6 @@ extension BrowserModel {
         onTabClosed?(tab)
         scheduleSave()
 
-        if tab.isMaterialised {
-            tab.webView.stopLoading()
-            tab.webView.load(URLRequest(url: URL(string: "about:blank")!))
-            tab.webView.removeFromSuperview()
-        }
         tab.detach()
     }
 
@@ -319,7 +314,7 @@ extension BrowserModel {
             ?? above.first
     }
 
-    static func isPlayingMedia(_ webView: WKWebView) async -> Bool {
+    static func isPlayingMedia(_ webView: BrowserPage) async -> Bool {
         let script = """
         !!Array.from(document.querySelectorAll('video, audio'))
             .find(m => !m.paused && !m.ended && m.currentTime > 0
@@ -366,11 +361,8 @@ extension BrowserModel {
         let tab = makeTab(for: URL(string: record.url))
         tab.title = record.title
         tab.urlString = record.url
-        if let state = record.state {
-            tab.webView.interactionState = state
-        } else if let url = URL(string: record.url) {
-            tab.load(url)
-        }
+        tab.deferRestore(state: record.state, url: URL(string: record.url))
+        tab.realizeDeferredSession()
         let at = min(record.index, tabs.count)
         tabs.insert(tab, at: at)
         if let folderID = record.folderID, folders.contains(where: { $0.id == folderID }) {
@@ -465,7 +457,11 @@ extension BrowserModel {
     }
 
     func deleteFolder(_ folder: TabFolder) {
-        storedTree = reconciledTree().dissolving(folder.id)
+        let tree = reconciledTree()
+        let next = tree.dissolving(folder.id)
+        storedTree = tree.parent(of: .folder(folder.id)) == nil
+            ? next.keepingPinsAtRootTop(isKept)
+            : next
         folders.removeAll { $0 === folder }
         syncTabOrder()
         scheduleSave()
@@ -514,9 +510,10 @@ extension BrowserModel {
         let moved = tree.normalized(items)
         guard let first = moved.first, let left = tree.parent(of: first) else { return }
         let folder = SidebarItem.folder(left)
-        guard let next = tree.moving(moved, into: tree.parent(of: folder), before: tree.successor(of: folder))
+        let destination = tree.parent(of: folder)
+        guard let next = tree.moving(moved, into: destination, before: tree.successor(of: folder))
         else { return }
-        storedTree = next
+        storedTree = destination == nil ? next.keepingPinsAtRootTop(isKept) : next
         syncTabOrder()
         scheduleSave()
     }

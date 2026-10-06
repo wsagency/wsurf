@@ -459,10 +459,6 @@ extension BrowserModel {
             saveBlocking()
         }
         for tab in tabs {
-            if tab.isMaterialised {
-                tab.webView.stopLoading()
-                tab.webView.removeFromSuperview()
-            }
             tab.detach()
         }
         tabs = []

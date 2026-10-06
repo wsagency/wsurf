@@ -51,6 +51,33 @@ versions.
 
 - **Browse:** tabs, folders, pins, split view, history, resumable downloads, and
   bookmark import. Play media in Picture in Picture and view synced lyrics.
+- **Choose a website engine:** Website Settings › Browser Engine selects
+  WebKit (default) or embedded Chromium. Changing engines reloads the website
+  and resets its Back/Forward history; cookies, storage, and sign-ins are separate.
+- **Choose a theme:** Settings › Appearance offers Auto, Light, Dark, pastel
+  Light Calm, and Dark Calm.
+- **Tune the sidebar:** Settings › Appearance › Sidebar controls the installed
+  font family, text size and weight, row spacing, and folder tint (including none).
+  Loaded and unloaded text/icon colors and opacity are saved separately for each
+  theme. Original favicons remain recognizable in monochrome. Click a tab title
+  to activate it; use Right-click › Rename to edit its name.
+- **Unload without losing links:** sidebar X/minus, middle-click, and ⌘W unload
+  page content while retaining the link, pin, and folder membership. Unloaded
+  tabs show Play to load them again; selecting the link also reloads it.
+  Settings › Appearance › Sidebar › Unloaded tab action chooses between
+  holding ⌘ to remove and a separate X immediately left of Play.
+  In the separate-X mode, Play reloads even with ⌘ held. Right-click › Remove Tab
+  is available in either mode.
+  Hover a folder while holding ⌘ to show its X immediately left of the far-right
+  count. Click that X to unload every descendant tab without removing links.
+  Tabs with unsaved forms, active downloads, or other protections stay loaded.
+- **Pin folders independently:** Right-click a folder › Pin moves it into the
+  top pinned section; Unpin moves it below the remaining pins. Folder pinning
+  does not change its tabs' bookmarked URLs. Empty folders can be pinned, and
+  folder pin state and order survive a restart.
+  Reordering tabs inside the same folder preserves their bookmarks.
+  Deleting a folder or moving its children out keeps root pins above ordinary
+  rows without changing child bookmarks.
 - **Ask the assistant:** type in the address field or hold ⌥Space to speak.
   Use `@` to include a tab, attach files, and review actions in Agent Activity.
 - **Preview links:** hold Shift over a link for a summary, or Shift-click to
@@ -58,7 +85,7 @@ versions.
 - **Fill forms:** use macOS Passwords-compatible password autofill, save
   payment cards, and contact details in Settings › Autofill. Passwords and
   cards require system authentication. Passkeys use macOS.
-- **Add extensions:** install from the Chrome Web Store or Firefox Add-ons.
+- **Add WebKit extensions:** install from the Chrome Web Store or Firefox Add-ons.
 - **Separate browsing:** profiles keep cookies, history, tabs, permissions, and
   extensions separate. Press ⇧⌘N for private browsing.
 - **Choose a theme:** Settings › Appearance offers Auto, Light, Dark, pastel
@@ -118,6 +145,10 @@ Report vulnerabilities privately through [Security](SECURITY.md).
   an HTML export in Settings › General; history is not imported.
 - Website notifications require WSurf to be running. There is no background web
   push.
+- Chromium is loaded only when needed, but its runtime remains initialized
+  until quit. Adding it does not guarantee lower RAM, CPU, or faster websites.
+  Unloaded Chromium tabs restore their URL, not a WebKit history stack.
+- Extension integration and native WebKit Picture in Picture remain WebKit-only.
 - The managed browser public-key-credential entitlement requires Apple's
   organization Account Holder review. A local build may need that entitlement
   removed, which disables passkeys; see [Releasing](RELEASING.md).
@@ -126,6 +157,10 @@ WSurf keeps its own data in `~/Library/Application Support/WSurf` and uses
 separate WSurf defaults, stage, native-host, MCP, logger, and `WSURF_*`
 configuration namespaces. It does not alias or automatically copy personal data
 from another browser.
+
+Chromium errors remain visible on standard error; WSurf does not keep a CEF
+debug log file. Inspect captured native diagnostics before sharing them: they
+can contain local paths and website details.
 
 ## Building
 
@@ -139,6 +174,11 @@ open WSurf.xcodeproj
 
 Select the `WSurf` target, set your team in **Signing & Capabilities**, then
 build and run the `WSurf` scheme. Dependencies resolve automatically.
+
+The pinned CefSwift package supplies Chromium. `Tools/embed-chromium.sh` embeds
+the CEF framework, helper apps, and licenses and signs them with the build's
+identity. A production distribution requires proper signing; an ad-hoc debug
+build is not a verified release.
 
 For a local team without the passkey entitlement, remove this entry from
 `WSurf/WSurf.entitlements`. Passkeys will be unavailable in that build:

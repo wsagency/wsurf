@@ -26,7 +26,8 @@ struct MediaSidebarCard: View {
     }
 
     private var pipHelp: LocalizedStringResource {
-        media.model.isInNativePiP ? "Exit Picture in Picture" : "Picture in Picture"
+        media.nativePiPUnavailableReason
+            ?? (media.model.isInNativePiP ? "Exit Picture in Picture" : "Picture in Picture")
     }
 
     private var titleFont: Font {
@@ -161,7 +162,7 @@ struct MediaSidebarCard: View {
                 }
             }
 
-            if media.model.pictureWebView != nil, !media.model.isInNativePiP {
+            if media.model.picturePage != nil, !media.model.isInNativePiP {
                 MediaButton(
                     systemName: isPlayerHidden ? "eye.slash" : "eye",
                     size: 9,
@@ -179,6 +180,7 @@ struct MediaSidebarCard: View {
                 ) {
                     media.toggleNativePiP()
                 }
+                .disabled(!media.canToggleNativePiP)
             }
 
             if let goToSource {
@@ -239,10 +241,10 @@ struct MediaSidebarCard: View {
 
     private var panel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let picture = media.model.pictureWebView, let crop = media.pictureCrop {
+            if let picture = media.model.picturePage, let crop = media.pictureCrop {
                 MediaPlayerSurface(
                     media: media,
-                    webView: picture,
+                    page: picture,
                     crop: crop,
                     width: panelWidth,
                     cornerRadius: Theme.Radius.control,

@@ -9,14 +9,14 @@ import WebKit
 
 @MainActor
 final class PageComputerFrame {
-    weak var view: WKWebView?
+    weak var view: BrowserPage?
     let geometry: CGSize
     let zoom: CGFloat
     let pixels: CGSize
     let document: String
     let revision: Int
     let screenshot: Data
-    init(view: WKWebView, pixels: CGSize, document: String, revision: Int, screenshot: Data) {
+    init(view: BrowserPage, pixels: CGSize, document: String, revision: Int, screenshot: Data) {
         self.view = view
         self.geometry = view.bounds.size
         self.zoom = view.pageZoom
@@ -72,7 +72,7 @@ extension PageDriver {
         }
         """
 
-    static func computerFrame(in view: WKWebView) async throws -> (PageComputerFrame, Data) {
+    static func computerFrame(in view: BrowserPage) async throws -> (PageComputerFrame, Data) {
         guard view.bounds.width > 0, view.bounds.height > 0, !view.isLoading else { throw PageComputerFailure.unavailable }
         let deadline = ContinuousClock.now + .seconds(1)
         repeat {
@@ -89,7 +89,7 @@ extension PageDriver {
         throw PageComputerFailure.stale
     }
 
-    static func validateComputerFrame(_ frame: PageComputerFrame, in view: WKWebView, checkRevision: Bool) async throws {
+    static func validateComputerFrame(_ frame: PageComputerFrame, in view: BrowserPage, checkRevision: Bool) async throws {
         guard frame.view === view, frame.geometry == view.bounds.size, frame.zoom == view.pageZoom,
               !view.isLoading, PageAutomationGuard.allowsExecution else {
             throw PageComputerFailure.stale
@@ -99,7 +99,7 @@ extension PageDriver {
               !checkRevision || state?["revision"] as? Int == frame.revision else { throw PageComputerFailure.stale }
     }
 
-    static func validateComputerAction(_ action: OpenAIJSON, frame: PageComputerFrame, in view: WKWebView) async throws {
+    static func validateComputerAction(_ action: OpenAIJSON, frame: PageComputerFrame, in view: BrowserPage) async throws {
         try await validateComputerFrame(frame, in: view, checkRevision: false)
         let state = await evaluateJSON(scripted("return JSON.stringify({ revision: window.__wsurfComputer?.revision });"), in: view)
         guard let revision = state?["revision"] as? Int else { throw PageComputerFailure.stale }
@@ -143,7 +143,7 @@ extension PageDriver {
         return CGPoint(x: CGFloat(x) * frame.geometry.width / frame.pixels.width, y: CGFloat(y) * frame.geometry.height / frame.pixels.height)
     }
 
-    private static func computerTarget(point: CGPoint?, in view: WKWebView) async throws -> [String: Any] {
+    private static func computerTarget(point: CGPoint?, in view: BrowserPage) async throws -> [String: Any] {
         let x = point.map { String(Double($0.x / view.pageZoom)) } ?? "null"
         let y = point.map { String(Double($0.y / view.pageZoom)) } ?? "null"
         let body = """
@@ -181,7 +181,7 @@ extension PageDriver {
         return result
     }
 
-    static func computerAction(_ action: OpenAIJSON, frame: PageComputerFrame, in view: WKWebView) async throws {
+    static func computerAction(_ action: OpenAIJSON, frame: PageComputerFrame, in view: BrowserPage) async throws {
         try await validateComputerFrame(frame, in: view, checkRevision: false)
         guard let type = action["type"].string else { throw PageComputerFailure.unavailable }
         if type == "screenshot" {
@@ -253,7 +253,7 @@ extension PageDriver {
         }
     }
 
-    private static func installComputerReceipt(_ event: String, in view: WKWebView) async throws {
+    private static func installComputerReceipt(_ event: String, in view: BrowserPage) async throws {
         let encoded = try OpenAIJSON.string(event).text()
         let result = await evaluateJSON(scripted("""
             window.__wsurfComputerAck?.dispose();
@@ -275,14 +275,16 @@ extension PageDriver {
         guard result?["ok"] as? Bool == true else { throw PageComputerFailure.unavailable }
     }
 
-    private static func awaitComputerReceipt(in view: WKWebView, documentURL: URL?) async throws {
+    private static func awaitComputerReceipt(in view: BrowserPage, documentURL: URL?) async throws {
         let deadline = ContinuousClock.now + .seconds(1)
-        repeat {
+        while true {
             try Task.checkCancellation()
             guard PageAutomationGuard.allowsExecution else { throw PageComputerFailure.stale }
             if view.isLoading || view.url != documentURL {
                 return
             }
+            // Check once more after a wait or slow IPC reply crosses the deadline.
+            let finalCheck = ContinuousClock.now >= deadline
             let result = await evaluateJSON(scripted("""
                 const state = window.__wsurfComputerAck;
                 if (state?.received) state.dispose();
@@ -291,13 +293,15 @@ extension PageDriver {
             if result?["received"] as? Bool == true {
                 return
             }
+            if finalCheck {
+                throw PageComputerFailure.unverified
+            }
             try await Task.sleep(for: .milliseconds(20))
-        } while ContinuousClock.now < deadline
-        throw PageComputerFailure.unverified
+        }
     }
 
     private static func performComputerAction(_ action: OpenAIJSON, frame: PageComputerFrame, point: CGPoint?, current: [String: Any],
-                                              modifiers: NSEvent.ModifierFlags, in view: WKWebView, window: NSWindow) async throws {
+                                              modifiers: NSEvent.ModifierFlags, in view: BrowserPage, window: NSWindow) async throws {
         guard window.attachedSheet == nil else { throw PageComputerFailure.unavailable }
         let type = action["type"].string ?? ""
         if let point, ["click", "double_click", "move", "drag", "drag_events"].contains(type) {
@@ -354,7 +358,7 @@ extension PageDriver {
             guard current["editable"] as? Bool == true, window.makeFirstResponder(view), let text = action["text"].string else {
                 throw PageComputerFailure.unavailable
             }
-            view.insertText(text)
+            try await view.insertText(text)
             AgentAuthoredText.record(in: view)
         case "keypress":
             try await computerKey(action["keys"].array?.compactMap(\.string) ?? [], frame: frame, in: view, window: window)
@@ -366,7 +370,7 @@ extension PageDriver {
 
     private static func performComputerClick(
         _ action: OpenAIJSON, type: String, point: CGPoint, modifiers: NSEvent.ModifierFlags,
-        in view: WKWebView, window: NSWindow
+        in view: BrowserPage, window: NSWindow
     ) async throws {
         let button = action["button"].string ?? "left"
         if button == "back" {
@@ -384,7 +388,7 @@ extension PageDriver {
         }
     }
 
-    private static func showAssistantPointer(at point: CGPoint, in view: WKWebView) async {
+    private static func showAssistantPointer(at point: CGPoint, in view: BrowserPage) async {
         let pointer = view.subviews.compactMap { $0 as? AssistantPointerView }.first ?? AssistantPointerView(frame: .zero)
         pointer.identifier = NSUserInterfaceItemIdentifier("assistant-pointer")
         let localY = view.isFlipped ? point.y : view.bounds.height - point.y
@@ -407,7 +411,7 @@ extension PageDriver {
         }
     }
 
-    private static func computerMouse(point: CGPoint, button: String, phase: String, count: Int = 1, modifiers: NSEvent.ModifierFlags = [], in view: WKWebView, window: NSWindow) throws {
+    private static func computerMouse(point: CGPoint, button: String, phase: String, count: Int = 1, modifiers: NSEvent.ModifierFlags = [], in view: BrowserPage, window: NSWindow) throws {
         guard PageAutomationGuard.allowsExecution, view.window === window else { throw PageComputerFailure.stale }
         let local = CGPoint(x: point.x, y: view.isFlipped ? point.y : view.bounds.height - point.y)
         let type: NSEvent.EventType
@@ -438,11 +442,17 @@ extension PageDriver {
               let hit = content.hitTest(content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow),
               hit.isDescendant(of: view), window.attachedSheet == nil else { throw PageComputerFailure.unavailable }
         if phase == "move" {
+            if let chromium = view.chromium {
+                chromium.sendMouseMove(to: chromium.convert(local, from: view), modifiers: modifiers)
+                return
+            }
+            guard let webKit = view.webKit else { throw PageComputerFailure.unavailable }
+            let nativePoint = webKit.convert(local, from: view)
             let selector = #selector(NSResponder.mouseMoved(with:))
-            guard let owner = view.trackingAreas.first(where: {
+            guard let owner = webKit.trackingAreas.first(where: {
                 $0.options.contains([.mouseMoved, .mouseEnteredAndExited])
-                    && ($0.options.contains(.inVisibleRect) || $0.rect.contains(local))
-                    && ($0.owner as? NSObject) !== view
+                    && ($0.options.contains(.inVisibleRect) || $0.rect.contains(nativePoint))
+                    && ($0.owner as? NSObject) !== webKit
                     && ($0.owner as? NSObject)?.responds(to: selector) == true
             })?.owner as? NSObject else { throw PageComputerFailure.unavailable }
             owner.perform(selector, with: event)
@@ -469,7 +479,7 @@ extension PageDriver {
         return flags
     }
 
-    private static func computerKey(_ keys: [String], frame: PageComputerFrame, in view: WKWebView, window: NSWindow) async throws {
+    private static func computerKey(_ keys: [String], frame: PageComputerFrame, in view: BrowserPage, window: NSWindow) async throws {
         guard keys.allSatisfy({ $0.utf8.allSatisfy { $0 < 128 } }) else { throw PageComputerFailure.unsupportedKey }
         let normalized = keys.map { $0.uppercased() }
         var flags = computerModifiers(keys)
@@ -499,23 +509,20 @@ extension PageDriver {
             flags.remove(.control); flags.insert(.command)
         }
         guard window.attachedSheet == nil, window.makeFirstResponder(view) else { throw PageComputerFailure.unavailable }
+        // Complete the native key pair before yielding to the editing fallback.
         for type in [NSEvent.EventType.keyDown, .keyUp] {
             guard PageAutomationGuard.allowsExecution,
                   let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                       windowNumber: window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
             else { throw PageComputerFailure.stale }
-            if type == .keyDown {
-                view.keyDown(with: event)
-                if flags.contains(.command) {
-                    try await computerSelectAll(frame: frame, in: view, window: window)
-                }
-            } else {
-                view.keyUp(with: event)
-            }
+            view.sendKeyEvent(event)
+        }
+        if flags.contains(.command) {
+            try await computerSelectAll(frame: frame, in: view, window: window)
         }
     }
 
-    private static func computerSelectAll(frame: PageComputerFrame, in view: WKWebView, window: NSWindow) async throws {
+    private static func computerSelectAll(frame: PageComputerFrame, in view: BrowserPage, window: NSWindow) async throws {
         let deadline = ContinuousClock.now + .seconds(1)
         repeat {
             try Task.checkCancellation()
@@ -529,8 +536,21 @@ extension PageDriver {
                 if result?["prevented"] as? Bool != true {
                     _ = try await computerTarget(point: nil, in: view)
                     try await validateComputerFrame(frame, in: view, checkRevision: false)
-                    guard window.attachedSheet == nil, view.window === window, window.firstResponder === view else { throw PageComputerFailure.unavailable }
-                    view.selectAll(nil)
+                    let responder = window.firstResponder
+                    let ownsResponder: Bool
+                    if let webKit = view.webKit {
+                        ownsResponder = responder === webKit
+                    } else {
+                        ownsResponder = view.chromium?.ownsResponder(responder) == true
+                    }
+                    guard window.attachedSheet == nil, view.window === window, ownsResponder else { throw PageComputerFailure.unavailable }
+                    if let webKit = view.webKit {
+                        webKit.selectAll(nil)
+                    } else if let chromium = view.chromium {
+                        chromium.selectAll()
+                    } else {
+                        throw PageComputerFailure.unavailable
+                    }
                 }
                 return
             }

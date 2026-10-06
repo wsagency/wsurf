@@ -28,8 +28,9 @@ final class BrowserSettings {
         static let sidebarFolderTint = "appearance.sidebar.folderTint"
         static let sidebarTextStyles = "appearance.sidebar.textStyles"
         static let directRemoveUnloadedTabs = "appearance.sidebar.directRemoveUnloadedTabs"
-        static let pageZoom = "content.defaultZoom"
+
         static let sleepsInactiveTabs = "tabs.sleep"
+        static let pageZoom = "content.defaultZoom"
         static let linkPreview = "content.linkPreview"
         static let linkPeek = "content.linkPeek"
         static let searchEngine = "search.engine"
@@ -406,6 +407,7 @@ final class BrowserSettings {
             guard blocksTrackers != oldValue else { return }
             write(blocksTrackers, forKey: Key.blockTrackers)
             ContentBlocker.shared.refresh()
+            onWebPreferencesChanged?()
         }
     }
 
@@ -740,27 +742,6 @@ final class BrowserSettings {
         NSApp.appearance = forcesDarkAppearance
             ? NSAppearance(named: .darkAqua)
             : appearance.nsAppearance
-    }
-
-    func apply(to configuration: WKWebViewConfiguration) {
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = javaScriptEnabled
-        configuration.preferences.javaScriptCanOpenWindowsAutomatically = !blocksPopups
-        configuration.mediaTypesRequiringUserActionForPlayback = javaScriptEnabled ? [] : autoplay.mediaTypes
-        configuration.preferences.isElementFullscreenEnabled = true
-        // `isInspectable` only lets an external inspector attach. This private
-        // preference enables the page's own Inspect Element item.
-        configuration.preferences.setValue(webInspectorEnabled, forKey: "developerExtrasEnabled")
-        WebKitFeatures.apply(to: configuration.preferences)
-        NativeApplePay.apply(to: configuration.preferences)
-    }
-
-    func apply(to webView: WKWebView) {
-        apply(to: webView.configuration)
-        if webView.pageZoom != pageZoom {
-            webView.pageZoom = pageZoom
-        }
-        webView.customUserAgent = userAgentString
-        webView.isInspectable = webInspectorEnabled
     }
 
     func resetToDefaults() {

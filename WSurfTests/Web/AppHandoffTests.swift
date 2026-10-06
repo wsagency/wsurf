@@ -22,7 +22,7 @@ struct AppHandoffTests {
 
         let tab = BrowserTab(opensBlank: false)
         defer {
-            tab.webView.stopLoading()
+            tab.page.stopLoading()
             withExtendedLifetime(server) {}
         }
         tab.load(try server.url(route))

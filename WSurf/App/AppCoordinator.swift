@@ -194,7 +194,10 @@ final class AppCoordinator {
             self?.voiceInput.clearTranscript()
             self?.statusMessage = nil
         }
-        browser.downloads.webViewProvider = { [weak self] in self?.browser.activeTab?.webView }
+        browser.downloads.webViewProvider = { [weak self] in
+            guard let tab = self?.browser.activeTab, tab.isMaterialised else { return nil }
+            return tab.page.webKit
+        }
 
         let extensionTabClosed = browser.onTabClosed
         browser.onTabClosed = { [weak self] tab in
@@ -260,7 +263,7 @@ final class AppCoordinator {
             isPanelVisible: sidePanel.isVisible,
             isPanelExpanded: sidePanel.isVisible && sidePanel.isExpanded
         )
-        let peeked = shownPeek?.webView
+        let peeked = shownPeek?.page
         for view in TabWebView.liveInstances.allObjects {
             guard view.window != nil else {
                 view.setHoverParked(false)
@@ -268,7 +271,7 @@ final class AppCoordinator {
             }
             // A page under the peek must not answer the pointer: hover reaches
             // it through its own tracking areas, whatever is drawn on top.
-            if let peeked, view !== peeked {
+            if let peeked, view !== peeked.webKit {
                 view.setHoverParked(true)
                 continue
             }
@@ -279,29 +282,10 @@ final class AppCoordinator {
                     isPeeking: sidebar.isPeeking,
                     viewMaxX: viewMaxX,
                     width: width,
-                    isMediaPicture: view === media.model.pictureWebView
+                    isMediaPicture: view === media.model.picturePage?.webKit
                 )
                     || shell.panelCoversPage
             )
-        }
-    }
-
-    private func tabDidClose(_ tab: BrowserTab) {
-        if conversationSpaceID == tab.id {
-            endVoiceConversation()
-        }
-        playedPages[tab.id] = nil
-        FaviconTint.forget(tab.id)
-        if peek.belongs(to: tab.id) {
-            closePeek()
-        }
-        if media.controlledTabID == tab.id {
-            media.releaseControl()
-            dockSuccessor(to: tab.id)
-        }
-        if agentTurns.closeTab(tab.id) {
-            voiceInput.clearTranscript()
-            statusMessage = nil
         }
     }
 
@@ -349,12 +333,16 @@ final class AppCoordinator {
         speech.isMuted = muted
     }
 
-    func clearDataOnQuitIfNeeded() async {
+    func clearDataOnQuitIfNeeded() async throws {
         guard settings.clearsDataOnQuit else { return }
-        await BrowsingData.clearEverything(
+        let profile = profiles.current
+        let store = BrowsingData.store
+        try await BrowsingData.clearEverything(
             history: browser.history,
             agent: conversationLog,
-            tabs: browser.tabs
+            tabs: browser.tabs,
+            profile: profile,
+            store: store
         )
     }
 
@@ -538,8 +526,8 @@ final class AppCoordinator {
     }
 
     func printActivePage() {
-        guard let webView = pageCommandTab?.webView else { return }
-        PagePrinting.begin(for: webView)
+        guard let page = pageCommandTab?.page else { return }
+        PagePrinting.begin(for: page)
     }
 
     func toggleFullScreen() {
@@ -568,7 +556,7 @@ final class AppCoordinator {
 
     func linkURL(for tab: BrowserTab) -> URL? {
         guard !tab.urlString.isEmpty,
-              let url = (tab.isMaterialised ? tab.webView.url : nil) ?? URL(string: tab.urlString),
+              let url = (tab.isMaterialised ? tab.page.url : nil) ?? URL(string: tab.urlString),
               url.scheme != "about", !SystemPages.isStart(url)
         else { return nil }
         return url
@@ -646,7 +634,20 @@ final class AppCoordinator {
         guard browser.history.count > 0 else { return }
         Task {
             guard let choice = await ConfirmAlert.clear(.history()) else { return }
-            await BrowsingData.clear(choice.kinds, range: choice.range, history: browser.history)
+            let profile = profiles.current
+            let store = BrowsingData.store
+            let history = browser.history
+            do {
+                try await BrowsingData.clear(
+                    choice.kinds,
+                    range: choice.range,
+                    history: history,
+                    profile: profile,
+                    store: store
+                )
+            } catch {
+                statusMessage = error.localizedDescription
+            }
         }
     }
 

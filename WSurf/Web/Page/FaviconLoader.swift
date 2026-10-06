@@ -5,7 +5,6 @@
 import AppKit
 import CryptoKit
 import Foundation
-import WebKit
 
 @MainActor
 final class FaviconLoader {
@@ -121,7 +120,7 @@ final class FaviconLoader {
         }
     }
 
-    func load(for webView: WKWebView) async -> NSImage? {
+    func load(for webView: BrowserPage) async -> NSImage? {
         guard let pageURL = webView.url, let rawHost = pageURL.host() else { return nil }
         let host = rawHost.lowercased()
         if let hit = cached(for: host), !guessed.contains(key(host)) {
@@ -135,7 +134,7 @@ final class FaviconLoader {
         }
     }
 
-    private func fetchDeclared(from webView: WKWebView, pageURL: URL, host: String) async -> NSImage? {
+    private func fetchDeclared(from webView: BrowserPage, pageURL: URL, host: String) async -> NSImage? {
         let beganPrivately = !persistsToDisk
         let beganInGeneration = profileGeneration
         var candidates: [URL] = []

@@ -3,6 +3,7 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import Foundation
+import os
 import WebKit
 
 nonisolated struct Profile: Identifiable, Codable, Hashable, Sendable {
@@ -102,6 +103,11 @@ extension Profile {
             try? await AutofillVaults.contacts(for: profile.id).erase()
             try? await AutofillVaults.passwords(for: profile.id).erase()
             _ = await Task.detached { try? AutofillSaveIndex.erase(profileID: profile.id) }.value
+            do {
+                try await ChromiumRuntime.shared.erase(profile: profile)
+            } catch {
+                Pipeline.log.error("profile: Chromium data erase failed")
+            }
         }
         await ExtensionManager.eraseData(for: profile)
         try? FileManager.default.removeItem(at: profile.supportDirectory)

@@ -348,7 +348,7 @@ private struct TabFace: View {
         .task(id: tab.id) {
             guard !isSystemPage else { return }
             while !Task.isCancelled {
-                memoryBytes = tab.isMaterialised ? WebProcessFootprint.bytes(of: tab.webView) : nil
+                memoryBytes = tab.isMaterialised ? WebProcessFootprint.bytes(of: tab.page) : nil
                 try? await Task.sleep(for: .seconds(2))
             }
         }

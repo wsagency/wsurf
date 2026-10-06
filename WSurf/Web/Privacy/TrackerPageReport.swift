@@ -22,6 +22,13 @@ enum TrackerPageReport {
             topLevelURL: topLevelURL
         )
     }
+    static func matchingDomains(in page: BrowserPage) async -> [String] {
+        let topLevelURL = page.url
+        guard let value = try? await page.evaluateJavaScript(resourceURLScript),
+              let resourceURLs = value as? [String],
+              !Task.isCancelled, page.url == topLevelURL else { return [] }
+        return TrackerList.matchingDomains(in: resourceURLs, topLevelURL: topLevelURL)
+    }
 
     private static let resourceURLScript = #"""
     const found = new Set();

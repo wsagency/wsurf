@@ -54,4 +54,36 @@ struct SidebarFolderMoveMenuTests {
         #expect(browser.folder(containing: child) === other)
         #expect(browser.folder(containing: leaf) === child)
     }
+
+    @Test func lowerFolderRowsReceiveContextMenuMouseHitsInSuperviewCoordinates() throws {
+        let window = FolderContextEventWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 240, height: 240),
+            styleMask: .borderless, backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let parent = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 240))
+        window.contentView = parent
+        let catcher = FolderContextMenuCatcher.CatcherView(
+            frame: NSRect(x: 20, y: 60, width: 120, height: 28)
+        )
+        parent.addSubview(catcher)
+        window.event = try #require(NSEvent.mouseEvent(
+            with: .rightMouseDown, location: NSPoint(x: 40, y: 74),
+            modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+        ))
+
+        #expect(catcher.hitTest(NSPoint(x: 40, y: 74)) === catcher)
+        #expect(catcher.hitTest(NSPoint(x: 40, y: 54)) == nil)
+    }
+}
+
+@MainActor
+private final class FolderContextEventWindow: NSWindow {
+    var event: NSEvent?
+
+    override var currentEvent: NSEvent? {
+        event
+    }
 }

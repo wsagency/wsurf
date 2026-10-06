@@ -498,7 +498,7 @@ private final class FolderMenuAction: NSObject {
     }
 }
 
-private struct FolderContextMenuCatcher: NSViewRepresentable {
+struct FolderContextMenuCatcher: NSViewRepresentable {
     let menu: () -> NSMenu
 
     func makeNSView(context: Context) -> CatcherView {
@@ -523,7 +523,7 @@ private struct FolderContextMenuCatcher: NSViewRepresentable {
         }
 
         override func hitTest(_ point: NSPoint) -> NSView? {
-            guard bounds.contains(point),
+            guard bounds.contains(convert(point, from: superview)),
                   let event = window?.currentEvent ?? NSApp.currentEvent
             else { return nil }
 

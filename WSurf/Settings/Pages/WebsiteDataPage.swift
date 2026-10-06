@@ -6,14 +6,16 @@ import SwiftUI
 import WebKit
 
 struct WebsiteDataPage: View {
+    let profile: Profile
+    let store: WKWebsiteDataStore
     let onBack: () -> Void
 
     @State private var entries: [WebsiteData.Entry] = []
     @State private var query = ""
     @State private var isLoading = true
-    @State private var removingName: String?
+    @State private var removingEntry: WebsiteData.Entry?
     @State private var confirmingRemoveAll = false
-
+    @State private var error: String?
     @FocusState private var searchFocused: Bool
 
     private var shown: [WebsiteData.Entry] {
@@ -31,7 +33,7 @@ struct WebsiteDataPage: View {
                     isPresented: $confirmingRemoveAll
                 ) {
                     Button("Remove all", role: .destructive) {
-                        Task { await remove(Set(entries.map(\.displayName))) }
+                        Task { await removeAll() }
                     }
                     Button("Cancel", role: .cancel) {}
                 } message: {
@@ -71,26 +73,38 @@ struct WebsiteDataPage: View {
                     }
                     SiteRow(host: entry.displayName, summary: entry.summary) {
                         SettingsButton(title: "Remove…", isDestructive: true) {
-                            removingName = entry.displayName
+                            removingEntry = entry
                         }
                     }
                 }
             }
         })
-        .settingsAnchor("privacy.storage")
+        .task(id: profile.id) {
+            isLoading = true
+            entries = []
+            await reload()
+        }
         .confirmationDialog(
-            removingName.map {
-                Text("Remove the data stored by \"\($0)\"?")
+            removingEntry.map {
+                Text("Remove the data stored by \"\($0.displayName)\" in \(String(localized: $0.engine.label))?")
             } ?? Text(verbatim: ""),
-            isPresented: Binding(get: { removingName != nil }, set: { if !$0 { removingName = nil } })
+            isPresented: Binding(get: { removingEntry != nil }, set: { if !$0 { removingEntry = nil } })
         ) {
             Button("Remove", role: .destructive) {
-                guard let name = removingName else { return }
-                Task { await remove([name]) }
+                guard let entry = removingEntry else { return }
+                Task { await remove([entry]) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("You’re signed out of this website, and its preferences are removed.")
+        }
+        .alert(
+            "Couldn’t update website data",
+            isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(error ?? String(localized: "Try again."))
         }
     }
 
@@ -104,7 +118,6 @@ struct WebsiteDataPage: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, SettingsMetrics.rowPaddingV)
-        .task { await reload() }
     }
 
     private var searchField: some View {
@@ -119,12 +132,40 @@ struct WebsiteDataPage: View {
     }
 
     private func reload() async {
-        entries = await WebsiteData.entries(in: BrowsingData.store)
-        isLoading = false
+        guard ProfileStore.shared.current.id == profile.id else { return }
+        do {
+            let loaded = try await WebsiteData.entries(in: store, profile: profile)
+            guard ProfileStore.shared.current.id == profile.id else { return }
+            entries = loaded
+        } catch {
+            guard ProfileStore.shared.current.id == profile.id else { return }
+            self.error = error.localizedDescription
+        }
+        if ProfileStore.shared.current.id == profile.id {
+            isLoading = false
+        }
     }
 
-    private func remove(_ names: Set<String>) async {
-        await WebsiteData.remove(names, from: BrowsingData.store)
-        await reload()
+    private func remove(_ selected: Set<WebsiteData.Entry>) async {
+        do {
+            try await WebsiteData.remove(selected, from: store, profile: profile)
+            guard ProfileStore.shared.current.id == profile.id else { return }
+            removingEntry = nil
+            await reload()
+        } catch {
+            guard ProfileStore.shared.current.id == profile.id else { return }
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func removeAll() async {
+        do {
+            try await WebsiteData.removeAll(from: store, profile: profile)
+            guard ProfileStore.shared.current.id == profile.id else { return }
+            await reload()
+        } catch {
+            guard ProfileStore.shared.current.id == profile.id else { return }
+            self.error = error.localizedDescription
+        }
     }
 }

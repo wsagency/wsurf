@@ -62,6 +62,13 @@ struct WebsiteDataTests {
         #expect(summary.contains("cached files"))
     }
 
+    @Test func engineTagKeepsDuplicateOriginsDistinct() {
+        let webKit = WebsiteData.Entry(displayName: "example.com", types: [WKWebsiteDataTypeCookies], engine: .webKit)
+        let chromium = WebsiteData.Entry(displayName: "example.com", types: [WKWebsiteDataTypeCookies], engine: .chromium)
+        #expect(webKit.id != chromium.id)
+        #expect(chromium.summary.contains("Chromium"))
+    }
+
     @Test func searchMatchesTheStartOfANameOrOfAnyPartOfIt() {
         let github = entry("github.com", [WKWebsiteDataTypeCookies])
         #expect(WebsiteData.matches(github, query: "git"))

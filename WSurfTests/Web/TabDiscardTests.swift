@@ -42,7 +42,7 @@ struct TabDiscardTests {
         #expect(model.tabs.contains { $0 === background })
     }
 
-    @Test func manualUnloadRetainsPinnedFolderLinkAndReloadsWithoutLosingWork() {
+    @Test func manualUnloadRetainsPinnedFolderLinkAndReloadsWithoutLosingWork() async {
         let model = makeModel()
         let tab = model.newTab(url: URL(string: "https://example.com/a"))
         tab.customTitle = "Saved page"
@@ -50,7 +50,7 @@ struct TabDiscardTests {
         model.setPinned(true, for: [.tab(tab.id)])
         let other = model.newTab(url: URL(string: "https://example.com/b"), activate: false)
         model.activate(tab)
-        let before = tab.webView
+        let before = tab.page
 
         #expect(model.unload(tab))
         #expect(!tab.isMaterialised)
@@ -61,9 +61,11 @@ struct TabDiscardTests {
         #expect(tab.customTitle == "Saved page")
         #expect(tab.pinnedURL?.absoluteString == "https://example.com/a")
 
+        await tab.waitForRetirement()
         model.activate(tab)
+        _ = await tab.waitForPendingNavigation()
         #expect(tab.isMaterialised)
-        #expect(tab.webView !== before)
+        #expect(tab.page !== before)
 
         let downloadID = model.downloads.beginItem(
             source: URL(string: "https://example.com/file.zip"),
@@ -123,7 +125,7 @@ struct TabDiscardTests {
         let model = makeModel()
         let background = model.newTab(url: URL(string: "https://example.com/a"))
         _ = model.newTab(url: URL(string: "https://example.com/b"))
-        let before = background.webView
+        let before = background.page
 
         model.discardBackgroundTabs()
 
@@ -246,11 +248,11 @@ struct TabDiscardTests {
         _ = model.newTab(url: URL(string: "https://example.com/b"))
 
         model.discardBackgroundTabs()
-        let view = background.webView
+        let view = background.page
         #expect(!background.canDiscardWebContent)
 
         model.discardBackgroundTabs()
-        #expect(background.webView === view)
+        #expect(background.page === view)
         #expect(background.urlString == "https://example.com/a")
     }
 

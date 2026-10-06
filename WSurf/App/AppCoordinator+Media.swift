@@ -5,7 +5,6 @@
 import AppKit
 import Foundation
 import os
-import WebKit
 
 extension AppCoordinator {
     // MARK: - Media following the tab you're looking at
@@ -30,7 +29,7 @@ extension AppCoordinator {
         guard let previousTab, previousTab.id != newTab?.id else { return }
         Task { [weak self] in
             guard let self,
-                  await BrowserModel.isPlayingMedia(previousTab.webView),
+                  await BrowserModel.isPlayingMedia(previousTab.page),
                   claim == mediaClaim,
                   browser.activeTabID != previousTab.id,
                   !browser.isVisibleInSplit(previousTab),
@@ -38,7 +37,7 @@ extension AppCoordinator {
             else { return }
             controlPlayback(in: previousTab)
             if settings.automaticPictureInPicture, browser.allowsAutomaticPicture(previousTab) {
-                media.requestNativePiP(on: previousTab.webView)
+                media.requestNativePiP(on: previousTab.page)
             }
         }
     }
@@ -49,9 +48,9 @@ extension AppCoordinator {
 
     /// WebKit requires an on-screen destination before returning video from Picture in Picture.
     /// The media card already provides one when it hosts this web view.
-    func makeRoomForPicture(in webView: WKWebView?) {
-        if let webView, webView !== media.model.pictureWebView,
-           let tab = browser.tabs.first(where: { $0.isMaterialised && $0.webView === webView }) {
+    func makeRoomForPicture(in page: BrowserPage?) {
+        if let page, page !== media.model.picturePage,
+           let tab = browser.tabs.first(where: { $0.isMaterialised && $0.page === page }) {
             openTab(tab)
         }
         showBrowser()
@@ -63,14 +62,14 @@ extension AppCoordinator {
             $0.id == browser.activeTabID || browser.isVisibleInSplit($0)
         }
         guard let tab = inFront.first(where: {
-            media.isPictureOut($0.webView) && browser.allowsAutomaticPicture($0)
+            media.isPictureOut($0.page) && browser.allowsAutomaticPicture($0)
         }) else { return }
         Pipeline.log.notice("media: its tab is in front again, putting the picture back")
-        media.exitPictureInPicture(for: tab.webView)
+        media.exitPictureInPicture(for: tab.page)
     }
 
     func togglePictureInPicture(for tab: BrowserTab) {
-        media.togglePictureInPicture(for: tab.webView)
+        media.togglePictureInPicture(for: tab.page)
     }
 
     func moveVideoToPictureInPicture() {
@@ -85,7 +84,7 @@ extension AppCoordinator {
             let tab = browser.tabs.first(where: { $0.id == id }), !tab.isDeferred,
             browser.allowsAutomaticPicture(tab)
         else { return }
-        media.requestNativePiP(on: tab.webView)
+        media.requestNativePiP(on: tab.page)
     }
 
     func wireMedia() {
@@ -99,56 +98,60 @@ extension AppCoordinator {
                 tab.isControlledByMediaDock = true
             }
         }
-        media.onTabAudioChanged = { [weak self] webView, isPlaying in
-            guard let self, let tab = browser.tabs.first(where: { $0.isMaterialised && $0.webView === webView }) else { return }
+        media.onTabAudioChanged = { [weak self] page, isPlaying in
+            guard let self, let tab = browser.tabs.first(where: { $0.isMaterialised && $0.page === page }) else { return }
             guard tab.isPlayingAudio != isPlaying else { return }
             tab.isPlayingAudio = isPlaying
             if isPlaying {
                 playedPages[tab.id] = tab.urlString
             }
-            if isPlaying, !tab.isMuted, tab.id != browser.activeTabID,
-               media.controlledTabID == nil {
+            if isPlaying, !tab.isMuted, tab.id != browser.activeTabID, media.controlledTabID == nil {
                 controlPlayback(in: tab)
             }
         }
-        media.onTabUnmuted = { [weak self] webView in
-            guard let self, let tab = browser.tabs.first(where: { $0.isMaterialised && $0.webView === webView }),
-                  tab.isMuted
-            else { return }
+        media.onTabVideoChanged = { [weak self] page, hasVideo in
+            guard let self, let tab = browser.tabs.first(where: { $0.isMaterialised && $0.page === page }),
+                  tab.hasVideo != hasVideo else { return }
+            tab.hasVideo = hasVideo
+        }
+        media.onTabUnmuted = { [weak self] page in
+            guard let self, let tab = browser.tabs.first(where: { $0.isMaterialised && $0.page === page }),
+                  tab.isMuted else { return }
             tab.isMuted = false
             if media.controlledTabID == tab.id {
                 media.model.isMuted = false
             }
         }
-        media.onTabVideoChanged = { [weak self] webView, hasVideo in
-            guard let self, let tab = browser.tabs.first(where: { $0.isMaterialised && $0.webView === webView }),
-                  tab.hasVideo != hasVideo
-            else { return }
-            tab.hasVideo = hasVideo
-        }
-        media.onPictureOutChanged = { [weak self] webView, isOut in
-            guard let self, let tab = browser.tabs.first(where: { $0.isMaterialised && $0.webView === webView }),
-                  tab.isPictureOut != isOut
-            else { return }
+        media.onPictureOutChanged = { [weak self] page, isOut in
+            guard let self, let tab = browser.tabs.first(where: { $0.isMaterialised && $0.page === page }),
+                  tab.isPictureOut != isOut else { return }
             tab.isPictureOut = isOut
         }
-        media.onReturnedInline = { [weak self] webView in
+        media.onReturnedInline = { [weak self] page in
             guard let self else { return }
             Pipeline.log.notice("media: the picture came home, making room for it")
-            makeRoomForPicture(in: webView)
+            makeRoomForPicture(in: page)
         }
         browser.onContentProcessTerminated = { [weak self] tab in
             tab.hasVideo = false
-            self?.media.pageDidReset(tab.webView)
+            self?.media.pageDidReset(tab.page)
+        }
+        browser.onPageRetired = { [weak self] tab, page in
+            guard let self else { return }
+            media.forgetPicture(page)
+            if media.controlledTabID == tab.id {
+                media.releaseControl()
+                dockSuccessor(to: tab.id)
+            }
         }
         browser.onPictureInPictureChanged = { [weak self] tab, isOut in
             Pipeline.log.notice("media: WebKit reports the picture \(isOut ? "out" : "home", privacy: .public)")
-            self?.media.setPictureInPicture(isOut, for: tab.webView, source: .webKit)
+            self?.media.setPictureInPicture(isOut, for: tab.page)
         }
         browser.onPictureReturnExpected = { [weak self] tab in
-            guard let self, media.notePictureReturnAsk(for: tab.webView) else { return }
             Pipeline.log.notice("media: the floating window wants to hand the video back")
-            makeRoomForPicture(in: tab.webView)
+            guard let self, media.notePictureReturnAsk(for: tab.page) else { return }
+            makeRoomForPicture(in: tab.page)
         }
         NotificationCenter.default.addObserver(
             forName: NSApplication.willResignActiveNotification,
@@ -222,7 +225,7 @@ extension AppCoordinator {
 
     func controlPlayback(in tab: BrowserTab) {
         media.controlTab(
-            webView: tab.webView,
+            page: tab.page,
             title: tab.title,
             tabID: tab.id,
             isPlaying: tab.isPlayingAudio,
@@ -302,11 +305,11 @@ extension AppCoordinator {
         guard let tab, settings.showsLyrics, !tab.isPrivate,
               tab.id != media.controlledTabID || !media.model.isActive
         else {
-            media.stopWatching()
+            media.unwatch()
             return
         }
         media.watch(
-            webView: tab.webView,
+            page: tab.page,
             title: tab.title,
             tabID: tab.id,
             artwork: MediaCenter.poster(forPage: tab.urlString)
@@ -315,8 +318,27 @@ extension AppCoordinator {
 
     func toggleMute(tab: BrowserTab) {
         tab.isMuted.toggle()
-        MediaCenter.setMuted(tab.isMuted, on: tab.webView)
+        MediaCenter.setMuted(tab.isMuted, on: tab.page)
         guard media.controlledTabID == tab.id else { return }
         media.model.isMuted = tab.isMuted
+    }
+
+    func tabDidClose(_ tab: BrowserTab) {
+        if conversationSpaceID == tab.id {
+            endVoiceConversation()
+        }
+        playedPages[tab.id] = nil
+        FaviconTint.forget(tab.id)
+        if peek.belongs(to: tab.id) {
+            closePeek()
+        }
+        if media.controlledTabID == tab.id {
+            media.releaseControl()
+            dockSuccessor(to: tab.id)
+        }
+        if agentTurns.closeTab(tab.id) {
+            voiceInput.clearTranscript()
+            statusMessage = nil
+        }
     }
 }

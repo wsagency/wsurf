@@ -101,6 +101,43 @@ extension BrowserModel {
         else { return "" }
         return SitePermissions.origin(for: url)
     }
+    func setEngine(_ engine: BrowserEngine, for origin: String) async -> Bool {
+        let permissions = sitePermissions
+        let canonical = SitePermissions.origin(for: URL(string: origin))
+        guard let scheme = URL(string: canonical)?.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else { return false }
+        guard sitePermissions.engine(for: canonical) != engine else { return true }
+
+        let affected = tabs.filter { siteOrigin(for: $0) == canonical && $0.isMaterialised }
+        let protected = affected.contains {
+            $0.intrinsicProtectionReason != nil || downloads.hasActiveDownload(for: $0.id)
+        }
+        if protected {
+            guard await ConfirmAlert.destructive(
+                "Switch rendering engine?",
+                detail: "This reloads the website and may end active work, media, or downloads.",
+                verb: "Switch Engine"
+            ) else { return false }
+        }
+        guard sitePermissions === permissions else { return false }
+
+        sitePermissions.setEngine(engine, for: canonical)
+        await applyStoredEngine(to: canonical)
+        return true
+    }
+
+    func engine(for tab: BrowserTab) -> BrowserEngine {
+        sitePermissions.engine(for: siteOrigin(for: tab))
+    }
+
+    func applyStoredEngine(to origin: String) async {
+        let engine = sitePermissions.engine(for: origin)
+        for tab in tabs where siteOrigin(for: tab) == origin && tab.isMaterialised {
+            guard tab.page.engine != engine else { continue }
+            _ = await tab.switchEngine(to: engine)
+        }
+    }
 
     func keepsActive(_ tab: BrowserTab) -> Bool {
         let origin = siteOrigin(for: tab)
@@ -136,7 +173,7 @@ extension BrowserModel {
     func applyWebSettings() {
         let settings = BrowserSettings.shared
         for tab in tabs where tab.isMaterialised {
-            settings.apply(to: tab.webView)
+            settings.apply(to: tab.page)
             tab.refreshPopupPolicy()
         }
         WebViewPool.shared.discardIdle()

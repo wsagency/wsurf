@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
+import CoreGraphics
 import Foundation
 import GRDB
 import Testing
@@ -9,6 +10,100 @@ import Testing
 
 @MainActor
 struct FolderPinTests {
+    @Test(arguments: [false, true])
+    func reorderingFolderChildrenPreservesTheirOwnBookmarks(folderIsPinned: Bool) {
+        let browser = BrowserModel(database: .temporary())
+        let folder = browser.createFolder(named: "Work")
+        let anchor = browser.newTab(url: URL(string: "https://anchor.example/"), activate: false)
+        let bookmarked = browser.newTab(url: URL(string: "https://bookmarked.example/current"), activate: false)
+        let loose = browser.newTab(url: URL(string: "https://loose.example/"), activate: false)
+        browser.setPin(URL(string: "https://bookmarked.example/saved")!, title: "Saved", for: bookmarked)
+        browser.move(
+            [.tab(anchor.id), .tab(bookmarked.id), .tab(loose.id)],
+            into: folder,
+            settlingPins: false
+        )
+        browser.pin(folder)
+        if !folderIsPinned {
+            browser.unpin(folder)
+        }
+        let drag = SidebarDrag(
+            items: [.tab(bookmarked.id), .tab(loose.id)],
+            lead: .tab(bookmarked.id),
+            origin: .zero,
+            tree: browser.sidebarTree,
+            keepsSection: false,
+            wasKept: true
+        )
+
+        browser.move(drag.items, into: folder, before: .tab(anchor.id), settlingPins: false)
+        drag.settlePins(folder.isPinned, in: browser)
+
+        #expect(browser.rows(in: folder) == [.tab(bookmarked.id), .tab(loose.id), .tab(anchor.id)])
+        #expect(bookmarked.pinnedURL?.absoluteString == "https://bookmarked.example/saved")
+        #expect(bookmarked.pinnedTitle == "Saved")
+        #expect(loose.pinnedURL == nil && loose.pinnedTitle.isEmpty)
+        #expect(folder.isPinned == folderIsPinned)
+    }
+
+    @Test(arguments: [false, true])
+    func leavingTheOriginalFolderStillSettlesTheDraggedBookmark(intoFolder: Bool) {
+        let browser = BrowserModel(database: .temporary())
+        let origin = browser.createFolder(named: "Origin")
+        let destination = intoFolder ? browser.createFolder(named: "Destination") : nil
+        let tab = browser.newTab(url: URL(string: "https://bookmarked.example/"), activate: false)
+        browser.setPin(URL(string: "https://bookmarked.example/")!, title: "Saved", for: tab)
+        browser.move([.tab(tab.id)], into: origin, settlingPins: false)
+        let drag = SidebarDrag(
+            items: [.tab(tab.id)],
+            lead: .tab(tab.id),
+            origin: .zero,
+            tree: browser.sidebarTree,
+            keepsSection: false,
+            wasKept: true
+        )
+
+        browser.move(drag.items, into: destination, settlingPins: false)
+        drag.settlePins(false, in: browser)
+
+        #expect(browser.folder(containing: tab)?.id == destination?.id)
+        #expect(tab.pinnedURL == nil && tab.pinnedTitle.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func releasingFolderChildrenPreservesTheRootPinBoundary(moveOut: Bool) {
+        let browser = BrowserModel(database: .temporary())
+        let folder = browser.createFolder(named: "Work")
+        let first = browser.newTab(url: URL(string: "https://first.example/"), activate: false)
+        let bookmarked = browser.newTab(url: URL(string: "https://bookmarked.example/current"), activate: false)
+        let last = browser.newTab(url: URL(string: "https://last.example/"), activate: false)
+        browser.setPin(URL(string: "https://bookmarked.example/saved")!, title: "Saved", for: bookmarked)
+        let children: [SidebarItem] = [.tab(first.id), .tab(bookmarked.id), .tab(last.id)]
+        browser.move(children, into: folder, settlingPins: false)
+        browser.pin(folder)
+        let kept = browser.newTab(url: URL(string: "https://kept.example/"), activate: false)
+        browser.pin(kept)
+        let loose = browser.newTab(url: URL(string: "https://loose.example/"), activate: false)
+
+        if moveOut {
+            browser.moveOut(children)
+            #expect(browser.sidebarItems == [
+                .folder(folder.id), .tab(bookmarked.id), .tab(kept.id),
+                .tab(first.id), .tab(last.id), .tab(loose.id),
+            ])
+            #expect(browser.keptRunAtTop() == [.folder(folder.id), .tab(bookmarked.id), .tab(kept.id)])
+        } else {
+            browser.deleteFolder(folder)
+            #expect(browser.sidebarItems == [
+                .tab(bookmarked.id), .tab(kept.id), .tab(first.id), .tab(last.id), .tab(loose.id),
+            ])
+            #expect(browser.keptRunAtTop() == [.tab(bookmarked.id), .tab(kept.id)])
+        }
+        #expect(bookmarked.pinnedURL?.absoluteString == "https://bookmarked.example/saved")
+        #expect(bookmarked.pinnedTitle == "Saved")
+        #expect(first.pinnedURL == nil && last.pinnedURL == nil)
+        #expect(kept.pinnedURL?.absoluteString == "https://kept.example/")
+    }
     @Test func folderPinsKeepOrderAcrossRestartWithoutChangingChildBookmarks() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("FolderPin-\(UUID().uuidString).sqlite")

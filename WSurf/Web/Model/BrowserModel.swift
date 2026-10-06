@@ -3,6 +3,7 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import AppKit
+import CefKit
 import Foundation
 import GRDB
 import Observation
@@ -17,7 +18,12 @@ final class BrowserModel {
     var folders: [TabFolder] = []
     var storedTree = SidebarTree()
     var history: HistoryStore
-    var sitePermissions: SitePermissions
+    var sitePermissions: SitePermissions {
+        didSet {
+            oldValue.onEngineChanged = nil
+            followEnginePreferences()
+        }
+    }
     let downloads: DownloadManager
     private let webViewFactory: (@MainActor () -> WKWebView)?
 
@@ -33,6 +39,17 @@ final class BrowserModel {
         self.history = history ?? HistoryStore(database: database)
         self.sitePermissions = sitePermissions
         self.downloads = downloads
+        followEnginePreferences()
+    }
+
+    private func followEnginePreferences() {
+        let permissions = sitePermissions
+        permissions.onEngineChanged = { [weak self, weak permissions] origin in
+            Task { @MainActor [weak self, weak permissions] in
+                guard let self, let permissions, self.sitePermissions === permissions else { return }
+                await applyStoredEngine(to: origin)
+            }
+        }
     }
     let sidebarSelection = SidebarSelection()
 
@@ -68,6 +85,7 @@ final class BrowserModel {
     var onActiveTabChanged: ((BrowserTab?, BrowserTab?) -> Void)?
     var onSpaceAnchorChanged: ((UUID, UUID) -> Void)?
     var onContentProcessTerminated: ((BrowserTab) -> Void)?
+    var onPageRetired: ((BrowserTab, BrowserPage) -> Void)?
     var onPictureInPictureChanged: ((BrowserTab, Bool) -> Void)?
     var onLinkHovered: ((BrowserTab, URL?, NSEvent.ModifierFlags, CGPoint) -> Void)?
     var onOpenInPeek: ((BrowserTab?, URL, CGPoint) -> Void)?
@@ -157,8 +175,47 @@ final class BrowserModel {
                 privately: tab?.isPrivate ?? false
             )
         }
+        tab.onChromiumDownload = { [weak self, weak tab] page, download, name, completion in
+            guard let self, let tab, let chromium = page.chromium, !chromium.isClosed else {
+                completion(.deny)
+                return
+            }
+            let controls = ChromiumDownloadControls(
+                pageID: ObjectIdentifier(chromium),
+                isLive: { [weak page, weak chromium] in
+                    guard let page, let chromium else { return false }
+                    return !chromium.isClosed && page.chromium === chromium
+                },
+                cancel: { [weak chromium] id in chromium?.cancelDownload(id: id) },
+                pause: { [weak chromium] id in chromium?.pauseDownload(id: id) },
+                resume: { [weak chromium] id in chromium?.resumeDownload(id: id) }
+            )
+            self.downloads.decideChromiumDownload(
+                ChromiumDownloadRequest(
+                    download: download,
+                    suggestedName: name,
+                    sourceTabID: tab.id,
+                    isPrivate: page.isPrivate,
+                    window: page.window,
+                    controls: controls
+                ),
+                completion: completion
+            )
+        }
+        tab.onChromiumDownloadProgress = { [weak self] page, download in
+            self?.downloads.noteChromiumDownload(download, from: page)
+        }
+        tab.onPageRetired = { [weak self, weak tab] page in
+            self?.downloads.retireChromiumPage(page)
+            guard let tab else { return }
+            self?.onPageRetired?(tab, page)
+        }
+        tab.hasActiveDownload = { [weak self, weak tab] in
+            guard let self, let tab else { return false }
+            return self.downloads.hasActiveDownload(for: tab.id)
+        }
         if tab.isMaterialised {
-            BrowserSettings.shared.apply(to: tab.webView)
+            BrowserSettings.shared.apply(to: tab.page)
         }
         return tab
     }
@@ -258,11 +315,6 @@ final class BrowserModel {
     }
 
     func dismissPeekTab(_ tab: BrowserTab) {
-        if tab.isMaterialised {
-            tab.webView.stopLoading()
-            tab.webView.load(URLRequest(url: URL(string: "about:blank")!))
-            tab.webView.removeFromSuperview()
-        }
         tab.detach()
     }
 

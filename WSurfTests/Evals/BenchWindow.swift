@@ -21,7 +21,7 @@ final class BenchWindow {
     }
 
     func update(_ browser: BrowserModel) {
-        guard let window, let view = browser.activeTab?.webView, window.contentView !== view else { return }
+        guard let window, let view = browser.activeTab?.page, window.contentView !== view else { return }
         window.contentView = view
         window.orderBack(nil)
     }

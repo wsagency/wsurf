@@ -33,7 +33,9 @@ struct SettingsEntry: Identifiable, Hashable {
     }
 
     var targetAnchor: String {
-        id == "appearance.transparency" ? "appearance.windowStyle" : id
+        if id == "appearance.transparency" { return "appearance.windowStyle" }
+        if id == "websites.engine" { return "websites.list" }
+        return id
     }
 
     static func == (lhs: SettingsEntry, rhs: SettingsEntry) -> Bool {
@@ -202,6 +204,10 @@ enum SettingsIndex {
                       ["permission", "location", "camera", "microphone", "mic", "notifications", "geolocation",
                        "gps", "webcam", "video call", "allow", "deny", "revoke", "getusermedia",
                        ]),
+        SettingsEntry("websites.engine", .websites, "Browser engine",
+                      "Choose WebKit or Chromium for each website.",
+                      ["engine", "webkit", "chromium", "browser", "rendering", "per website", "site setting",
+                       "reload", "sign-in", "login", ]),
         SettingsEntry("websites.list", .websites, "Websites you’ve changed", "View websites with custom settings.",
                       ["site settings", "per site", "exceptions", "assistant access", "read only", "control",
                        "keep active", "keep awake", "always active", "always loaded", "memory", "unload", "background",

@@ -40,6 +40,47 @@ struct FindDriver {
             }
         )
     }
+
+    static func browserPage(_ page: @escaping @MainActor () -> BrowserPage?) -> FindDriver {
+        FindDriver(
+            find: { query, backwards, completion in
+                guard let current = page() else {
+                    completion(false)
+                    return
+                }
+                if let webKit = current.webKit {
+                    let configuration = WKFindConfiguration()
+                    configuration.backwards = backwards
+                    configuration.caseSensitive = false
+                    configuration.wraps = true
+                    webKit.find(query, configuration: configuration) { result in
+                        MainActor.assumeIsolated { completion(result.matchFound) }
+                    }
+                } else {
+                    Task { @MainActor in
+                        let script = FindSession.findScript(for: query, backwards: backwards)
+                        let found = (try? await current.evaluateJavaScript(script)) as? Bool ?? false
+                        completion(found)
+                    }
+                }
+            },
+            countMatches: { query, completion in
+                guard let current = page() else {
+                    completion(0)
+                    return
+                }
+                Task { @MainActor in
+                    let count = (try? await current.evaluateJavaScript(
+                        FindSession.countScript(for: query)
+                    )) as? Int ?? 0
+                    completion(count)
+                }
+            },
+            clearHighlight: {
+                page()?.evaluateJavaScript("window.getSelection().removeAllRanges()")
+            }
+        )
+    }
 }
 
 @MainActor
@@ -130,6 +171,46 @@ final class FindSession {
             return current == 1 ? total : current - 1
         }
         return current == total ? 1 : current + 1
+    }
+    nonisolated static func findScript(for query: String, backwards: Bool) -> String {
+        let json = (try? JSONEncoder().encode([query]))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? #"[""]"#
+        let direction = backwards ? "-1" : "1"
+        let initial = backwards ? "nodes.length - 1" : "0"
+        return """
+        (() => {
+          const needle = \(json)[0].toLowerCase();
+          if (!needle || !document.body) return false;
+          const nodes = [];
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          let node;
+          while (node = walker.nextNode()) {
+            if (node.parentElement?.closest('script,style,noscript')) continue;
+            const text = node.nodeValue?.toLowerCase() || '';
+            let at = text.indexOf(needle);
+            while (at >= 0) {
+              nodes.push([node, at]);
+              at = text.indexOf(needle, at + needle.length);
+            }
+          }
+          if (!nodes.length) return false;
+          const state = window.__wsurfFindState || (window.__wsurfFindState = {});
+          const same = state.query === needle && state.count === nodes.length;
+          state.query = needle;
+          state.count = nodes.length;
+          state.index = same
+            ? (state.index + \(direction) + nodes.length) % nodes.length
+            : (\(initial));
+          const [textNode, start] = nodes[state.index];
+          const range = document.createRange();
+          range.setStart(textNode, start);
+          range.setEnd(textNode, start + needle.length);
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          return true;
+        })()
+        """
     }
 
     nonisolated static func countScript(for query: String) -> String {
