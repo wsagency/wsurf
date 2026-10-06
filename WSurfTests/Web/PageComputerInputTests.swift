@@ -218,20 +218,37 @@ struct PageComputerInputTests {
     }
 
     @Test func keypressInsertsTextAndSelectAllReplacesOnlyPageText() async throws {
-        let (view, window) = await page("<input aria-label='Query'><script>document.querySelector('input').focus();</script>")
+        let (view, window) = await page("""
+            <input aria-label='Query'><script>window.events=[];
+            for(const type of ['keydown','keyup','beforeinput','input'])
+              document.addEventListener(type,e=>events.push({type,key:e.key,code:e.code,data:e.data,inputType:e.inputType,trusted:e.isTrusted}));
+            document.querySelector('input').focus();</script>
+            """)
         defer { window.close() }
         let (frame, _) = try await PageDriver.computerFrame(in: view)
+        func perform(_ action: OpenAIJSON) async throws {
+            do {
+                try await PageDriver.computerAction(action, frame: frame, in: view)
+            } catch {
+                let state = try? await view.evaluateJavaScript("""
+                    JSON.stringify({value:document.querySelector('input').value,start:document.querySelector('input').selectionStart,
+                      end:document.querySelector('input').selectionEnd,focused:document.hasFocus(),events:window.events})
+                    """)
+                Issue.record("Keyboard action \(action) failed; fixture state: \(state as? String ?? "unavailable")")
+                throw error
+            }
+        }
         for keys: [OpenAIJSON] in [["B"], ["SHIFT", "Z"], ["SHIFT", "1"], ["?"], ["SPACE"]] {
-            try await PageDriver.computerAction(["type": "keypress", "keys": .array(keys)], frame: frame, in: view)
+            try await perform(["type": "keypress", "keys": .array(keys)])
         }
         #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "bZ!? ")
         for modifier: OpenAIJSON in ["CMD", "CTRL"] {
-            try await PageDriver.computerAction(["type": "keypress", "keys": [modifier, "A"]], frame: frame, in: view)
+            try await perform(["type": "keypress", "keys": [modifier, "A"]])
             #expect(try await view.evaluateJavaScript("(()=>{const e=document.querySelector('input');return e.selectionStart===0&&e.selectionEnd===e.value.length;})()") as? Bool == true)
-            try await PageDriver.computerAction(["type": "type", "text": "Replacement"], frame: frame, in: view)
+            try await perform(["type": "type", "text": "Replacement"])
             #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "Replacement")
         }
-        try await PageDriver.computerAction(["type": "keypress", "keys": ["BACKSPACE"]], frame: frame, in: view)
+        try await perform(["type": "keypress", "keys": ["BACKSPACE"]])
         #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "Replacemen")
     }
 
