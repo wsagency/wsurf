@@ -69,6 +69,34 @@ struct SidebarPinMenuItems: View {
     }
 }
 
+struct SidebarFavoriteMenuItems: View {
+    let tabs: [BrowserTab]
+    let browser: BrowserModel
+
+    var body: some View {
+        if tabs.contains(where: { !$0.isFavorite }) {
+            Button {
+                for tab in tabs where !tab.isFavorite {
+                    browser.addFavorite(tab)
+                }
+            } label: {
+                Label("Add Favorite", systemImage: "star")
+            }
+            .disabled(tabs.allSatisfy { $0.urlString.isEmpty && $0.pinnedURL == nil })
+        }
+        if tabs.contains(where: \.isFavorite) {
+            Button {
+                for tab in tabs where tab.isFavorite {
+                    browser.removeFavorite(tab)
+                }
+            } label: {
+                Label("Remove Favorite", systemImage: "star.slash")
+            }
+        }
+        Divider()
+    }
+}
+
 struct SidebarUnpinButton: View {
     let tab: BrowserTab
     let browser: BrowserModel
@@ -123,7 +151,7 @@ struct SidebarFolderMenuItems: View {
                 Divider()
             }
             Button {
-                browser.createFolder(containing: items)
+                browser.createFolderForRenaming(containing: items)
             } label: {
                 Label("New Folder…", systemImage: "folder.badge.plus")
             }
@@ -183,6 +211,7 @@ struct SidebarSelectionMenuItems: View {
 
     var body: some View {
         SidebarLinkMenuItems(tabs: tabs, coordinator: coordinator)
+        SidebarFavoriteMenuItems(tabs: tabs, browser: browser)
         SidebarFolderMenuItems(items: items, browser: browser)
         SidebarTabActions(items: items, browser: browser, coordinator: coordinator)
     }
@@ -199,6 +228,7 @@ struct SidebarTabActions: View {
 
     var body: some View {
         let count = tabs.count
+        let loadedCount = tabs.filter { !$0.isDeferred }.count
         let unloadLabel = count == 1 ? String(localized: "Unload Tab") : String(localized: "Unload \(count) Tabs")
         let removeLabel = count == 1 ? String(localized: "Remove Tab") : String(localized: "Remove \(count) Tabs")
         Button {
@@ -208,9 +238,9 @@ struct SidebarTabActions: View {
                 coordinator.unloadTab(tab)
             }
         } label: {
-            Label(unloadLabel, systemImage: "minus")
+            Label(unloadLabel, systemImage: "arrow.uturn.down")
         }
-        .disabled(count == 0)
+        .disabled(loadedCount == 0)
 
         Button(role: .destructive) {
             Task {
@@ -221,7 +251,7 @@ struct SidebarTabActions: View {
                 browser.close(items)
             }
         } label: {
-            Label(removeLabel, systemImage: "trash")
+            Label(removeLabel, systemImage: "xmark")
         }
         .disabled(count == 0)
     }

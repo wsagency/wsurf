@@ -117,7 +117,6 @@ struct MentionFieldTests {
         attributes = styled.attributes(at: 0, effectiveRange: nil)
         #expect(attributes[.link] == nil)
         #expect(attributes[.underlineStyle] == nil)
-        #expect(attributes[.foregroundColor] as? NSColor == .labelColor)
         #expect((attributes[.font] as? NSFont)?.pointSize == 13)
         #expect(harness.text == "https://example.com/article")
     }

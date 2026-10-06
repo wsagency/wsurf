@@ -12,7 +12,6 @@ struct FolderSection: View {
 
     @State private var isRenaming = false
     @State private var draftName = ""
-    @FocusState private var renameFocused: Bool
 
     @Environment(\.sidebarStyle) private var sidebarStyle
     @Environment(\.windowColorScheme) private var windowColorScheme
@@ -79,27 +78,9 @@ struct FolderSection: View {
                     .animation(Theme.Motion.settle, value: audible?.id)
                     .help(audible.map { Text("“\($0.title)” is playing") } ?? Text(verbatim: ""))
 
-                if sidebarStyle == .icons {
-                    EmptyView()
-                } else if isRenaming {
-                    TextField("", text: $draftName)
-                        .fieldPlaceholder("Folder name", isShowing: draftName.isEmpty)
-                        .textFieldStyle(.plain)
-                        .font(context.coordinator.settings.sidebarFont)
-                        .foregroundStyle(context.coordinator.settings.sidebarTextColor(scheme: colorScheme))
-                        .focused($renameFocused)
-                        .onSubmit(commitRename)
-                        .onKeyPress(.escape) {
-                            isRenaming = false
-                            renameFocused = false
-                            return .handled
-                        }
-                        .onChange(of: renameFocused) { _, focused in
-                            if !focused {
-                                commitRename()
-                            }
-                        }
-                } else {
+                if isRenaming && sidebarStyle == .full {
+                    renameField
+                } else if sidebarStyle == .full {
                     Text(verbatim: folder.name)
                         .font(context.coordinator.settings.sidebarFont)
                         .foregroundStyle(context.coordinator.settings.sidebarTextColor(scheme: colorScheme))
@@ -116,7 +97,7 @@ struct FolderSection: View {
 
                     if hovering, context.coordinator.linkModifiers.contains(.command), !isRenaming {
                         ChromeIcon.rowControl(
-                            symbol: "xmark",
+                            symbol: "arrow.uturn.down",
                             help: String(localized: "Unload Folder Tabs"),
                             action: unloadFolderTabs
                         )
@@ -162,6 +143,16 @@ struct FolderSection: View {
                 context.coordinator.tabPreview.moved(folder.id, anchor: frame)
             }
             .onTapGesture { tapped() }
+            .id(item)
+            .help(sidebarStyle == .icons ? Text(verbatim: folder.name) : Text(verbatim: ""))
+            .popover(isPresented: Binding(
+                get: { isRenaming && sidebarStyle == .icons },
+                set: { if !$0 { commitRename() } }
+            )) {
+                renameField
+                    .frame(width: 200, height: 24)
+                    .padding(12)
+            }
             .overlay {
                 FolderContextMenuCatcher {
                     FolderContextMenu.make(
@@ -200,6 +191,22 @@ struct FolderSection: View {
             }
         }
         .opacity(context.isLifted(item) ? 0 : 1)
+        .onChange(of: browser.folderRenameID, initial: true) { _, id in
+            if id == folder.id && !isRenaming {
+                beginRename()
+            }
+        }
+    }
+
+    private var renameField: some View {
+        SidebarFolderNameField(
+            text: $draftName,
+            fontSize: context.coordinator.settings.sidebarFontSize,
+            onCommit: commitRename,
+            onCancel: cancelRename
+        )
+        .frame(minWidth: 0, maxWidth: .infinity)
+        .accessibilityLabel(Text("Folder name"))
     }
 
     private var contents: AnyView {
@@ -216,6 +223,7 @@ struct FolderSection: View {
     }
 
     private func tapped() {
+        guard !isRenaming else { return }
         let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if modifiers.contains(.shift) {
             context.selection.hold(context.activeItem)
@@ -231,18 +239,103 @@ struct FolderSection: View {
                 folder.isExpanded.toggle()
             }
         }
+        context.selection.excludeFavorites(browser.favorites)
     }
 
     private func beginRename() {
+        context.coordinator.tabPreview.dismiss()
+        context.selection.clear()
+        browser.folderRenameID = folder.id
         draftName = folder.name
         isRenaming = true
-        renameFocused = true
+    }
+
+    private func cancelRename() {
+        guard isRenaming else { return }
+        isRenaming = false
+        browser.finishFolderRename(folder.id)
     }
 
     private func commitRename() {
         guard isRenaming else { return }
         isRenaming = false
         browser.renameFolder(folder, to: draftName)
+        browser.finishFolderRename(folder.id)
+    }
+}
+
+private struct SidebarFolderNameField: NSViewRepresentable {
+    @Binding var text: String
+    let fontSize: Double
+    let onCommit: () -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> Field {
+        let field = Field()
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.placeholderString = String(localized: "Folder name")
+        field.setAccessibilityLabel(String(localized: "Folder name"))
+        field.font = .systemFont(ofSize: fontSize)
+        field.stringValue = text
+        field.delegate = context.coordinator
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func updateNSView(_ field: Field, context: Context) {
+        context.coordinator.parent = self
+    }
+
+    final class Field: NSTextField {
+        private var requestedFocus = false
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil, !requestedFocus else { return }
+            requestedFocus = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.window != nil else { return }
+                self.selectText(nil)
+            }
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: SidebarFolderNameField
+
+        init(_ parent: SidebarFolderNameField) {
+            self.parent = parent
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            parent.text = field.stringValue
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            parent.text = field.stringValue
+            parent.onCommit()
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                parent.onCancel()
+                return true
+            }
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                parent.text = textView.string
+                parent.onCommit()
+                return true
+            }
+            return false
+        }
     }
 }
 
@@ -382,7 +475,7 @@ enum FolderContextMenu {
         menu.addItem(actionItem(
             title: String(localized: "New Folder…"),
             symbol: "folder.badge.plus",
-            action: { [weak browser] in browser?.createFolder(containing: items) }
+            action: { [weak browser] in browser?.createFolderForRenaming(containing: items) }
         ))
         return menu
     }
@@ -457,14 +550,16 @@ enum FolderContextMenu {
         coordinator: AppCoordinator,
         browser: BrowserModel
     ) -> NSMenuItem {
-        actionItem(
+        let item = actionItem(
             title: String(localized: "Unload \(count) Tabs"),
-            symbol: "arrow.down.circle",
+            symbol: "arrow.uturn.down",
             action: { [weak coordinator, weak browser] in
                 guard let coordinator, let browser else { return }
                 unloadTabs(items, coordinator: coordinator, browser: browser)
             }
         )
+        item.isEnabled = browser.tabs(under: items).contains { !$0.isDeferred }
+        return item
     }
 
     private static func actionItem(

@@ -17,6 +17,7 @@ extension BrowserModel {
         guard tab.pinnedURL != nil else { return }
         tab.pinnedURL = nil
         tab.pinnedTitle = ""
+        tab.isFavorite = false
         moveToPinnedBoundary(tab)
         scheduleSave()
     }
@@ -96,6 +97,7 @@ extension BrowserModel {
                 } else if !pinned, tab.pinnedURL != nil {
                     tab.pinnedURL = nil
                     tab.pinnedTitle = ""
+                    tab.isFavorite = false
                     changed = true
                 }
             }
@@ -247,6 +249,10 @@ extension BrowserModel {
 
     private func settleSplit(containing tab: BrowserTab) {
         if let split = splits.split(containing: tab.id) {
+            // Favorites are single-tab shortcuts; split groups stay in the sidebar.
+            for id in split.tabs {
+                tabsByID[id]?.isFavorite = false
+            }
             gather(split.tabs)
         }
         refreshTopBarCoverage()
@@ -268,20 +274,19 @@ extension BrowserModel {
     }
 
     func close(_ tab: BrowserTab, recordForReopening: Bool = true) {
+        guard tabsByID[tab.id] === tab else { return }
         if tab.isMaterialised {
             AutofillSuggestions.shared.dismiss(in: tab.page)
         }
         tab.autofillSave.clear()
         if recordForReopening, !tab.isPrivate {
-            closedTabs.append(ClosedTab(
-                title: tab.title,
-                url: tab.urlString,
-                state: tab.sessionState,
-                folderID: folder(containing: tab)?.id,
-                index: tabs.firstIndex { $0 === tab } ?? 0
-            ))
+            let record = ClosedTab(tab, in: self)
+            closedTabs.append(record)
             if closedTabs.count > Self.closedTabMemory {
                 closedTabs.removeFirst()
+            }
+            registerSidebarUndo(named: String(localized: "Close Tab")) { model in
+                model.restoreClosedTab(record)
             }
         }
 
@@ -324,9 +329,7 @@ extension BrowserModel {
     }
 
     func closeOthers(_ kept: BrowserTab) {
-        for tab in tabs.reversed() where tab !== kept {
-            close(tab)
-        }
+        close(tabs.filter { $0 !== kept }.map { .tab($0.id) })
     }
 
     func closeActiveTab() {
@@ -343,11 +346,37 @@ extension BrowserModel {
     // MARK: - Reopening and cycling
 
     struct ClosedTab {
+        let id: UUID
         let title: String
+        let pageTitle: String
+        let customTitle: String
         let url: String
         let state: Data?
+        let pinnedURL: URL?
+        let pinnedTitle: String
+        let isFavorite: Bool
+        let wasActive: Bool
         let folderID: UUID?
+        let before: SidebarItem?
         let index: Int
+        let split: TabSplit?
+
+        init(_ tab: BrowserTab, in model: BrowserModel) {
+            id = tab.id
+            title = tab.title
+            pageTitle = tab.pageTitle
+            customTitle = tab.customTitle
+            url = tab.urlString
+            state = tab.sessionState
+            pinnedURL = tab.pinnedURL
+            pinnedTitle = tab.pinnedTitle
+            isFavorite = tab.isFavorite
+            wasActive = model.activeTabID == tab.id
+            folderID = model.folder(containing: tab)?.id
+            before = model.sidebarTree.successor(of: .tab(tab.id))
+            index = model.tabs.firstIndex { $0 === tab } ?? 0
+            split = model.splits.split(containing: tab.id)
+        }
     }
 
     private static let closedTabMemory = 20
@@ -358,24 +387,7 @@ extension BrowserModel {
 
     func reopenLastClosedTab() {
         guard let record = closedTabs.popLast() else { return }
-        let tab = makeTab(for: URL(string: record.url))
-        tab.title = record.title
-        tab.urlString = record.url
-        tab.deferRestore(state: record.state, url: URL(string: record.url))
-        tab.realizeDeferredSession()
-        let at = min(record.index, tabs.count)
-        tabs.insert(tab, at: at)
-        if let folderID = record.folderID, folders.contains(where: { $0.id == folderID }) {
-            place([.tab(tab.id)], in: folderID, before: nil)
-        } else if at > 0 {
-            storedTree = reconciledTree().inserting(.tab(tab.id), after: .tab(tabs[at - 1].id))
-        } else {
-            place([.tab(tab.id)], in: nil, before: reconciledTree().root.first)
-        }
-        sidebarDidChange()
-        onTabOpened?(tab)
-        activeTabID = tab.id
-        scheduleSave()
+        restoreClosedTab(record)
     }
 
     func activateTab(at index: Int) {
@@ -402,7 +414,11 @@ extension BrowserModel {
     static let defaultFolderName = String(localized: "New Folder")
 
     @discardableResult
-    func createFolder(named name: String = defaultFolderName, containing items: [SidebarItem] = []) -> TabFolder {
+    func createFolder(
+        named name: String = defaultFolderName,
+        containing items: [SidebarItem] = [],
+        requestingRename: Bool = false
+    ) -> TabFolder {
         let tree = reconciledTree()
         let order = tree.walk()
         let topmost = tree.normalized(items).min {
@@ -410,6 +426,10 @@ extension BrowserModel {
         }
         let folder = TabFolder(name: name)
         folders.append(folder)
+        if requestingRename {
+            folderRenameID = folder.id
+            sidebarSelection.dropMarks()
+        }
         storedTree = tree.moving(
             [.folder(folder.id)],
             into: topmost.flatMap { tree.parent(of: $0) },
@@ -430,12 +450,17 @@ extension BrowserModel {
     }
 
     func autoName(_ folder: TabFolder) {
-        guard folder.name == Self.defaultFolderName, FolderNamer.isAvailable else { return }
+        guard folderRenameID != folder.id,
+              folder.name == Self.defaultFolderName, FolderNamer.isAvailable
+        else { return }
         let titles = tabs(in: folder).map(\.title)
+        let revision = folder.nameRevision
         Task { [weak self, weak folder] in
             guard let suggestion = await FolderNamer.suggestName(forTitles: titles) else { return }
             guard let self, let folder,
                   folders.contains(where: { $0 === folder }),
+                  folderRenameID != folder.id,
+                  folder.nameRevision == revision,
                   folder.name == Self.defaultFolderName
             else { return }
             folder.name = suggestion
@@ -444,6 +469,7 @@ extension BrowserModel {
     }
 
     func renameFolder(_ folder: TabFolder, to name: String) {
+        folder.nameRevision += 1
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         folder.name = trimmed
@@ -458,6 +484,13 @@ extension BrowserModel {
 
     func deleteFolder(_ folder: TabFolder) {
         let tree = reconciledTree()
+        guard foldersByID[folder.id] === folder else { return }
+        let parentID = tree.parent(of: .folder(folder.id))
+        let before = tree.successor(of: .folder(folder.id))
+        let children = tree.rows(in: folder.id)
+        registerSidebarUndo(named: String(localized: "Delete Folder")) { model in
+            model.restoreFolder(folder, parentID: parentID, before: before, children: children)
+        }
         let next = tree.dissolving(folder.id)
         storedTree = tree.parent(of: .folder(folder.id)) == nil
             ? next.keepingPinsAtRootTop(isKept)
@@ -465,6 +498,8 @@ extension BrowserModel {
         folders.removeAll { $0 === folder }
         syncTabOrder()
         scheduleSave()
+        finishFolderRename(folder.id)
+        sidebarSelection.takeKeyboard()
     }
 
     func move(_ tab: BrowserTab, to folder: TabFolder?) {
@@ -519,7 +554,9 @@ extension BrowserModel {
     }
 
     func close(_ items: [SidebarItem]) {
-        let all = sidebarTree.expanded(Set(items))
+        sidebarUndoManager.beginUndoGrouping()
+        defer { sidebarUndoManager.endUndoGrouping() }
+        let all = sidebarTree.walk().filter(sidebarTree.expanded(Set(items)).contains)
         for case .tab(let id) in all {
             if let tab = tabsByID[id] {
                 close(tab)
@@ -530,6 +567,7 @@ extension BrowserModel {
                 deleteFolder(folder)
             }
         }
+        sidebarSelection.takeKeyboard()
     }
 
     func tabs(under items: [SidebarItem]) -> [BrowserTab] {
@@ -557,7 +595,7 @@ extension BrowserModel {
     }
 
     var sidebarItems: [SidebarItem] {
-        sidebarTree.root
+        sidebarTree.root.filter { !isFavorite($0) }
     }
 
     func reconciledTree() -> SidebarTree {
@@ -605,7 +643,7 @@ extension BrowserModel {
     }
 
     func rows(in folder: TabFolder?) -> [SidebarItem] {
-        sidebarTree.rows(in: folder?.id)
+        sidebarTree.rows(in: folder?.id).filter { !isFavorite($0) }
     }
 
     func tabs(in folder: TabFolder) -> [BrowserTab] {

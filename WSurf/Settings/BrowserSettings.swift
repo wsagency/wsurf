@@ -27,8 +27,7 @@ final class BrowserSettings {
         static let sidebarRowSpacing = "appearance.sidebar.rowSpacing"
         static let sidebarFolderTint = "appearance.sidebar.folderTint"
         static let sidebarTextStyles = "appearance.sidebar.textStyles"
-        static let directRemoveUnloadedTabs = "appearance.sidebar.directRemoveUnloadedTabs"
-
+        static let themeCustomizations = "appearance.themeCustomizations"
         static let sleepsInactiveTabs = "tabs.sleep"
         static let pageZoom = "content.defaultZoom"
         static let linkPreview = "content.linkPreview"
@@ -199,12 +198,6 @@ final class BrowserSettings {
             write(sidebarFolderTint, forKey: Key.sidebarFolderTint)
         }
     }
-    var showsDirectRemoveForUnloadedTabs: Bool {
-        didSet {
-            guard showsDirectRemoveForUnloadedTabs != oldValue else { return }
-            write(showsDirectRemoveForUnloadedTabs, forKey: Key.directRemoveUnloadedTabs)
-        }
-    }
 
     var sidebarTextStyles: [String: SidebarTextStyle] {
         didSet {
@@ -212,6 +205,15 @@ final class BrowserSettings {
                   let data = try? JSONEncoder().encode(sidebarTextStyles)
             else { return }
             write(data, forKey: Key.sidebarTextStyles)
+        }
+    }
+
+    var themeCustomizations: [String: ThemeCustomization] {
+        didSet {
+            guard themeCustomizations != oldValue,
+                  let data = try? JSONEncoder().encode(themeCustomizations)
+            else { return }
+            write(data, forKey: Key.themeCustomizations)
         }
     }
 
@@ -636,7 +638,10 @@ final class BrowserSettings {
             .flatMap(SidebarFontWeight.init(rawValue:)) ?? .medium
         sidebarRowSpacing = min(max(finiteNumber(Key.sidebarRowSpacing) ?? 1, 0), 8)
         sidebarFolderTint = min(max(finiteNumber(Key.sidebarFolderTint) ?? 0.35, 0), 1)
-        showsDirectRemoveForUnloadedTabs = object(Key.directRemoveUnloadedTabs) as? Bool ?? false
+        let storedThemes = defaults.data(forKey: Key.themeCustomizations)
+            .flatMap { try? JSONDecoder().decode([String: ThemeCustomization].self, from: $0) } ?? [:]
+        themeCustomizations = storedThemes.mapValues { $0.bounded() }
+        defaults.removeObject(forKey: "appearance.sidebar.directRemoveUnloadedTabs")
         sidebarTextStyles = Self.decodeSidebarTextStyles(defaults.data(forKey: Key.sidebarTextStyles))
 
         showsMediaPlayer = object(Key.mediaPlayer) as? Bool ?? true
@@ -760,7 +765,7 @@ final class BrowserSettings {
         sidebarFolderTint = 0.35
         sidebarTextStyles = [:]
         refractsTabColor = true
-        showsDirectRemoveForUnloadedTabs = false
+        themeCustomizations = [:]
         pageZoom = 1
         searchEngineID = SearchEngine.duckDuckGo.id
         customSearchName = ""

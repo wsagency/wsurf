@@ -23,6 +23,7 @@ extension BrowserModel {
         var pinnedTitle: String?
         var internalPage: BrowserTab.InternalPage?
         var isActive: Bool
+        var isFavorite: Bool
     }
 
     private nonisolated struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -167,7 +168,8 @@ extension BrowserModel {
                 pinnedURL: tab.pinnedURL,
                 pinnedTitle: tab.pinnedTitle.isEmpty ? nil : tab.pinnedTitle,
                 internalPage: tab.internalPage,
-                isActive: tab.id == activeTabID
+                isActive: tab.id == activeTabID,
+                isFavorite: tab.isFavorite
             )
         }
         writtenStateGeneration = writtenStateGeneration.filter { id, _ in
@@ -239,8 +241,8 @@ extension BrowserModel {
                 sql: """
                     INSERT INTO sessionTab
                         (id, title, customTitle, url, state, pinnedURL, pinnedTitle,
-                         internalPage, isActive)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         internalPage, isActive, isFavorite)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         title = excluded.title,
                         customTitle = excluded.customTitle,
@@ -249,12 +251,13 @@ extension BrowserModel {
                         pinnedURL = excluded.pinnedURL,
                         pinnedTitle = excluded.pinnedTitle,
                         internalPage = excluded.internalPage,
-                        isActive = excluded.isActive
+                        isActive = excluded.isActive,
+                        isFavorite = excluded.isFavorite
                     """,
                 arguments: [
                     tab.id, tab.title, tab.customTitle, tab.url, tab.state,
                     tab.pinnedURL, tab.pinnedTitle,
-                    tab.internalPage?.rawValue, tab.isActive,
+                    tab.internalPage?.rawValue, tab.isActive, tab.isFavorite,
                 ]
             )
         }
@@ -352,6 +355,7 @@ extension BrowserModel {
             tab.urlString = restoredURL.map(\.absoluteString) ?? record.url
             tab.pinnedURL = record.pinnedURL
             tab.pinnedTitle = record.pinnedTitle ?? ""
+            tab.isFavorite = record.isFavorite
             tab.deferRestore(state: record.state, url: restoredURL)
             if let host = URL(string: record.url)?.host() {
                 dressRow(tab, fromHost: host)
@@ -359,6 +363,9 @@ extension BrowserModel {
             tabs.append(tab)
             writtenStateGeneration[tab.id] = tab.sessionStateGeneration
             onTabOpened?(tab)
+            if tab.isFavorite {
+                tab.realizeDeferredSession()
+            }
         }
 
         var foldersByStoredID: [UUID: TabFolder] = [:]
@@ -467,6 +474,8 @@ extension BrowserModel {
         splits = TabSplits()
         activeTabID = nil
         closedTabs = []
+        sidebarUndoManager.removeAllActions()
+        folderRenameID = nil
         lastVisitID = [:]
         recentlyActive = []
         writtenStateGeneration = [:]

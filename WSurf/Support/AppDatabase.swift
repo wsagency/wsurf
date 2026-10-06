@@ -274,11 +274,18 @@ struct AppDatabase: Sendable {
             t.column("pinnedTitle", .text)
             t.column("internalPage", .text)
             t.column("isActive", .boolean).notNull().defaults(to: false)
+            t.column("isFavorite", .boolean).notNull().defaults(to: false)
         }
 
         if try !db.columns(in: "sessionTab").contains(where: { $0.name == "customTitle" }) {
             try db.alter(table: "sessionTab") { t in
                 t.add(column: "customTitle", .text)
+            }
+        }
+
+        if try !db.columns(in: "sessionTab").contains(where: { $0.name == "isFavorite" }) {
+            try db.alter(table: "sessionTab") { t in
+                t.add(column: "isFavorite", .boolean).notNull().defaults(to: false)
             }
         }
 

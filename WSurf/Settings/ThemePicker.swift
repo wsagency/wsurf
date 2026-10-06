@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import AppKit
 import SwiftUI
 
 enum AppearanceThumbnailMetrics {
@@ -90,6 +91,19 @@ struct ThemeThumbnailPalette: Equatable {
         }
     }
 
+    func customized(for theme: AppearanceMode) -> Self {
+        let customization = BrowserSettings.shared.themeCustomization(theme: theme)
+        func adjusted(_ color: Color, accent: Bool = false) -> Color {
+            Color(nsColor: Theme.customized(NSColor(color), customization: customization, isAccent: accent))
+        }
+        return Self(
+            id: id, backdrop: adjusted(backdrop), chrome: adjusted(chrome),
+            canvas: canvas, surface: adjusted(surface),
+            primary: (customization.controls.color ?? primary).opacity(customization.controls.opacity),
+            secondary: (customization.url.color ?? secondary).opacity(customization.url.opacity),
+            accent: adjusted(accent, accent: true)
+        )
+    }
 }
 
 struct ThemePicker: View {
@@ -136,7 +150,9 @@ private struct ThemeThumbnailCard: View {
     }
 
     private var thumbnail: some View {
-        let palettes = ThemeThumbnailPalette.palettes(for: mode)
+        let palettes = ThemeThumbnailPalette.palettes(for: mode).map {
+            $0.customized(for: mode == .system ? ($0.id == .dark ? .dark : .light) : mode)
+        }
         return ZStack(alignment: .leading) {
             ForEach(Array(palettes.enumerated()), id: \.element.id) { index, palette in
                 ThemeThumbnailWindow(palette: palette)

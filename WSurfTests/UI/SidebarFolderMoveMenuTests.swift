@@ -55,6 +55,31 @@ struct SidebarFolderMoveMenuTests {
         #expect(browser.folder(containing: leaf) === child)
     }
 
+    @Test func creatingFromTheMoveMenuRequestsNamingAndRevealsTheFolder() throws {
+        let browser = BrowserModel(database: .temporary())
+        let parent = browser.createFolder(named: "Parent")
+        let child = browser.createFolder(named: "Child")
+        browser.move([.folder(child.id)], into: parent)
+        parent.isExpanded = false
+        let menu = FolderContextMenu.moveMenu([.folder(child.id)], browser: browser)
+
+        menu.performActionForItem(at: menu.items.count - 1)
+
+        let id = try #require(browser.folderRenameID)
+        let created = try #require(browser.folder(id: id))
+        #expect(browser.folder(containing: child) === created)
+        #expect(created.isExpanded)
+        var ancestor = browser.sidebarTree.parent(of: .folder(id))
+        while let ancestorID = ancestor {
+            #expect(browser.folder(id: ancestorID)?.isExpanded == true)
+            ancestor = browser.sidebarTree.parent(of: .folder(ancestorID))
+        }
+        browser.renameFolder(created, to: "Manual name")
+        browser.finishFolderRename(id)
+        #expect(browser.folderRenameID == nil)
+        #expect(created.name == "Manual name")
+    }
+
     @Test func lowerFolderRowsReceiveContextMenuMouseHitsInSuperviewCoordinates() throws {
         let window = FolderContextEventWindow(
             contentRect: NSRect(x: 0, y: 0, width: 240, height: 240),

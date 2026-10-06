@@ -127,6 +127,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         let menu = NSMenu()
         menu.addItem(chain("Undo", Selector(("undo:")), key: "z"))
         menu.addItem(chain("Redo", Selector(("redo:")), key: "z", modifiers: [.command, .shift]))
+        menu.addItem(hidden(chain("Undo", Selector(("undo:")), key: "z", modifiers: [.control])))
+        menu.addItem(hidden(chain("Redo", Selector(("redo:")), key: "z", modifiers: [.control, .shift])))
         menu.addItem(.separator())
         menu.addItem(chain("Cut", #selector(NSText.cut(_:)), key: "x"))
         menu.addItem(chain("Copy", #selector(NSText.copy(_:)), key: "c"))

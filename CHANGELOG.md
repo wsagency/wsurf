@@ -34,17 +34,18 @@ release notes will be added above this provenance record.
 - Sidebar appearance now includes installed font families, size, weight,
   compact row spacing, and adjustable folder tint. Folder and link labels use
   primary text contrast; expanded folders no longer stack tinted glass.
-- Sidebar X/minus, middle-click, and ⌘W now unload page content without removing
-  links, pins, or folder membership. Selecting a retained link reloads it;
-  permanent removal uses explicit right-click Remove actions. Existing
-  unsaved-form, download, media, and other unload protections remain in force.
-- Unloaded sidebar tabs show Play instead of X/minus, including split rows.
-  Click Play to load the page again. Holding ⌘ changes row controls to X;
-  ⌘-click X to permanently remove the tab and its link. Clicking a title only
-  activates it; renaming remains available in the context menu.
-- Unloaded-tab actions now have an Appearance setting: keep the existing
-  hold-⌘ removal control or show a separate X immediately left of Play.
-  In separate-X mode, Play always loads the retained link, including ⌘-click.
+- Unpinned sidebar X now removes the tab and link; ⌘-click unloads instead.
+  Pinned controls unload or load by default and remove with ⌘. Removed the
+  obsolete unloaded-tab-action preference; context menus retain explicit actions.
+- Added per-profile, icon-only Favorites without duplicate sidebar rows.
+  Favorites never auto-sleep, support manual unload, and return to ordinary pins
+  when removed from Favorites.
+- New Folder and Move to Folder › New Folder reveal and focus inline rename,
+  including icons-only mode.
+- Native sidebar Undo/Redo restores deleted folders and removed links, including
+  names, tree positions, pins, and split panes. ⌘Z and Ctrl-Z preserve text Undo.
+- Themes now preview brightness, hue, and a primary-derived palette live, with
+  independent control-icon and URL-text colors/opacity, per-theme storage and reset.
 - Folder context menus now offer independent Pin/Unpin, including empty
   folders. Pin state and sidebar order persist without changing child bookmarks.
   Fixed context-menu hit testing for folder rows away from the top.
@@ -58,9 +59,9 @@ release notes will be added above this provenance record.
 - Loaded and unloaded sidebar text/icon colors and opacity persist separately
   for each theme, defaulting to black on light surfaces and white on dark ones.
   Favicons keep their original glyph in monochrome without an unloaded badge.
-- Folder X appears only while hovering with ⌘ held, immediately left of the
-  far-right count. It unloads all descendant tabs, including collapsed folders,
-  while retaining links, pins, hierarchy, and existing unload protections.
+- Sidebar and folder controls use X only for removal, the curved-down arrow
+  only for unload, and Play only for load. Folder unload retains descendant
+  links, pins, hierarchy, and existing unload protections.
 - Added the dependency-free `wsurf.app/` website and public `webcredentials`
   association for the configured WSurf release identity. Includes responsive
   source/build links, upstream attribution, and deployment requirements;
