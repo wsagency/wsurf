@@ -222,15 +222,19 @@ struct PageComputerInputTests {
         defer { window.close() }
         let (frame, _) = try await PageDriver.computerFrame(in: view)
         for keys: [OpenAIJSON] in [["B"], ["SHIFT", "Z"], ["SHIFT", "1"], ["?"], ["SPACE"]] {
+            print("Native input step: printable \(keys)")
             try await PageDriver.computerAction(["type": "keypress", "keys": .array(keys)], frame: frame, in: view)
         }
         #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "bZ!? ")
         for modifier: OpenAIJSON in ["CMD", "CTRL"] {
+            print("Native input step: select all \(modifier)")
             try await PageDriver.computerAction(["type": "keypress", "keys": [modifier, "A"]], frame: frame, in: view)
             #expect(try await view.evaluateJavaScript("(()=>{const e=document.querySelector('input');return e.selectionStart===0&&e.selectionEnd===e.value.length;})()") as? Bool == true)
+            print("Native input step: replace after \(modifier)")
             try await PageDriver.computerAction(["type": "type", "text": "Replacement"], frame: frame, in: view)
             #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "Replacement")
         }
+        print("Native input step: backspace")
         try await PageDriver.computerAction(["type": "keypress", "keys": ["BACKSPACE"]], frame: frame, in: view)
         #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "Replacemen")
     }
