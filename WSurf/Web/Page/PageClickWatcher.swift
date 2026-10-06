@@ -28,7 +28,6 @@ final class PageClickWatcher {
         }
     }
 
-
     private static let script = """
     (function () {
       if (window !== window.top) { return; }

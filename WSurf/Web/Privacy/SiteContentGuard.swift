@@ -36,7 +36,6 @@ final class SiteContentGuard {
         }
     }
 
-
     private static let script = #"""
     (() => {
       if (window.__wsurfSiteGuard) return;
