@@ -36,6 +36,21 @@ release notes will be added above this provenance record.
 - Move to Folder now follows the sidebar hierarchy instead of listing every
   folder at the first level. Nested menus include Move Here for the parent
   folder and keep invalid self/descendant destinations out of folder moves.
+- Sidebar appearance now includes installed font families, size, weight, row
+  spacing and adjustable folder tint, without stacking tinted folder glass.
+- Added Light Calm and Dark Calm themes. Loaded and unloaded sidebar text/icon
+  colors and opacity persist separately for each theme; favicons retain their
+  original glyph in monochrome.
+- Sidebar X/minus, middle-click and ⌘W unload page content without removing links,
+  pins or folder membership. Play reloads an unloaded tab. Settings can show a
+  removal X beside Play or reveal it while holding ⌘; permanent removal is explicit.
+- Folder X appears on hover with ⌘ held, immediately left of the far-right count.
+  It unloads descendant tabs while preserving existing unload protections.
+- Folders can be pinned independently of their child bookmarks. Pin/Unpin and
+  order persist across restart, including empty folders; existing folder pins
+  migrate without changing child bookmark identities.
+- Added omp.sh to external MCP clients, using existing safe JSON merge, backup
+  and conflict handling for `~/.omp/agent/mcp.json`.
 
 No signed WSurf release has been published yet. Apple Passwords compatibility
 changes are present in source and fixtures, but real PIN, fill, save, OTP,

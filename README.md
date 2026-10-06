@@ -61,6 +61,23 @@ versions.
 - **Add extensions:** install from the Chrome Web Store or Firefox Add-ons.
 - **Separate browsing:** profiles keep cookies, history, tabs, permissions, and
   extensions separate. Press ⇧⌘N for private browsing.
+- **Choose a theme:** Settings › Appearance offers Auto, Light, Dark, pastel
+  Light Calm, and Dark Calm.
+- **Tune the sidebar:** Settings › Appearance › Sidebar controls the installed
+  font family, text size and weight, row spacing, and folder tint.
+  Loaded and unloaded text/icon colors and opacity are saved separately for each
+  theme. Original favicons remain recognizable in monochrome. Click a tab title
+  to activate it; use Right-click › Rename to edit its name.
+- **Unload without losing links:** sidebar X/minus, middle-click, and ⌘W unload
+  page content while retaining the link, pin, and folder membership. Unloaded
+  tabs show Play to load them again; selecting the link also reloads it.
+  Settings › Appearance lets you show a removal X beside Play or reveal it
+  while holding ⌘. Remove Tab permanently removes the tab and its link.
+  Hover a folder while holding ⌘ to show its X immediately left of the far-right
+  count. It unloads descendant tabs; existing unload protections still apply.
+- **Pin a folder:** Right-click › Pin keeps the folder above unpinned rows without
+  changing its child bookmarks. Pin/Unpin and folder order survive a restart,
+  including empty folders.
 
 The Apple Passwords compatibility work preserves Apple's official Chrome
 extension identity, public key, authentication, PIN, and native protocol

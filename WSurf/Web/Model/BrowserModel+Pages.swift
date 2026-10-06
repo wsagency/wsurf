@@ -24,18 +24,72 @@ extension BrowserModel {
         return discarded
     }
 
+    @discardableResult
+    func unload(_ tab: BrowserTab) -> Bool {
+        guard tabsByID[tab.id] === tab else { return false }
+        guard tab.isMaterialised else { return true }
+        guard !tab.isDeferred, !tab.urlString.isEmpty else { return true }
+
+        let splitReplacement = activeTabID == tab.id
+            ? activeSplit?.tabs.compactMap { tabsByID[$0] }.first { $0 !== tab }
+            : nil
+        guard tab.intrinsicProtectionReason == nil,
+              !downloads.hasActiveDownload(for: tab.id),
+              !keepsActive(tab)
+        else { return false }
+        if protectionReason(for: tab) == .visibleInSplit {
+            removeFromSplit(tab)
+        }
+        guard tab.canDiscardWebContent else { return true }
+
+        if activeTabID == tab.id {
+            let replacement = splitReplacement
+                ?? tabs.first { $0 !== tab && $0.isMaterialised && !$0.isDeferred }
+            if let replacement {
+                activeTabID = replacement.id
+            } else {
+                hasNoActiveTab = true
+                activeTabID = nil
+            }
+        }
+        tab.discardWebContent()
+        scheduleSave()
+        return !tab.isMaterialised
+    }
+
+    func unload(_ items: [SidebarItem]) {
+        let selected = tabs(under: items)
+        let selectedIDs = Set(selected.map(\.id))
+        if let active = activeTab, selectedIDs.contains(active.id),
+           active.intrinsicProtectionReason == nil,
+           !downloads.hasActiveDownload(for: active.id),
+           !keepsActive(active) {
+            if let replacement = tabs.first(where: {
+                !selectedIDs.contains($0.id) && $0.isMaterialised && !$0.isDeferred
+            }) {
+                activate(replacement)
+            } else {
+                hasNoActiveTab = true
+                activeTabID = nil
+            }
+        }
+        for tab in selected {
+            _ = unload(tab)
+        }
+    }
+
     func protectionReason(for tab: BrowserTab) -> TabProtectionReason? {
         if let reason = tab.intrinsicProtectionReason {
             return reason
-        }
-        if isVisibleInSplit(tab) {
-            return .visibleInSplit
         }
         if downloads.hasActiveDownload(for: tab.id) {
             return .activeDownload
         }
         if keepsActive(tab) {
             return .alwaysKeepActive
+        }
+        if isVisibleInSplit(tab) {
+            return .visibleInSplit
         }
         return nil
     }

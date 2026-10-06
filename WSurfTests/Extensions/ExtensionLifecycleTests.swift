@@ -96,6 +96,7 @@ struct ExtensionLifecycleTests {
         let tab = browser.newTab(url: try server.url())
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 320, height: 200),
                               styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
         let anchor = NSView(frame: CGRect(x: 20, y: 20, width: 30, height: 30))
         window.contentView?.addSubview(anchor)
         window.orderFront(nil)

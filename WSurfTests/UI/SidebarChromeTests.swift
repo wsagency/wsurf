@@ -149,23 +149,10 @@ struct LoomChromeTests {
     }
 }
 
-/// A sleeping tab says so on its favicon - dimmed, moon in the corner -
-/// rather than with a second glyph beside the title.
+/// Unloading a background tab remains observable without the retired moon badge.
 @MainActor
 struct SidebarSleepIndicatorTests {
-    @Test func onlyAnUnloadedTabWearsTheMoon() {
-        #expect(TabIcon.isAsleep(.unloaded))
-        #expect(!TabIcon.isAsleep(.none))
-        #expect(!TabIcon.isAsleep(.reloading))
-    }
-
-    /// The dim has to leave room for the moon to read against the favicon.
-    @Test func theSleepingFaviconIsDimmedButNotGone() {
-        #expect(TabIcon.asleepDim > 0)
-        #expect(TabIcon.asleepDim < 1)
-    }
-
-    @Test func discardingATabPutsItsFaviconToSleep() {
+    @Test func discardingABackgroundTabMarksItUnloaded() {
         let model = BrowserModel(
             database: .temporary(),
             sitePermissions: SitePermissions(
@@ -176,9 +163,9 @@ struct SidebarSleepIndicatorTests {
         let background = model.newTab(url: URL(string: "https://example.com/a"))
         _ = model.newTab(url: URL(string: "https://example.com/b"))
 
-        #expect(!TabIcon.isAsleep(background.reclaimState))
+        #expect(background.reclaimState != .unloaded)
         model.discardBackgroundTabs()
-        #expect(TabIcon.isAsleep(background.reclaimState))
+        #expect(background.reclaimState == .unloaded)
     }
 }
 

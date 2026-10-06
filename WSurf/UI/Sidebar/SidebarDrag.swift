@@ -247,7 +247,7 @@ struct SidebarDropMark: View {
                 .frame(width: SidebarMetrics.rowIconSize)
             if sidebarStyle == .full {
                 label
-                    .font(Theme.Font.title)
+                    .font(BrowserSettings.shared.sidebarFont)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -273,13 +273,15 @@ struct SidebarRows: View {
     let context: SidebarRowContext
 
     var body: some View {
-        ForEach(Array(items.enumerated()), id: \.element) { _, item in
-            row(item)
-                .overlay {
-                    if let mark = context.dropMark(item) {
-                        SidebarDropMark(kind: mark, isArmed: true)
+        VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: context.coordinator.settings)) {
+            ForEach(Array(items.enumerated()), id: \.element) { _, item in
+                row(item)
+                    .overlay {
+                        if let mark = context.dropMark(item) {
+                            SidebarDropMark(kind: mark, isArmed: true)
+                        }
                     }
-                }
+            }
         }
     }
 

@@ -33,6 +33,7 @@ extension BrowserModel {
         var name: String
         var color: TabFolderColor
         var isExpanded: Bool
+        var isPinned: Bool
     }
 
     private nonisolated struct ItemRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -179,7 +180,8 @@ extension BrowserModel {
                 position: position,
                 name: folder.name,
                 color: folder.color,
-                isExpanded: folder.isExpanded
+                isExpanded: folder.isExpanded,
+                isPinned: folder.isPinned
             )
         }
         let known = Set(persisted.map(\.id))
@@ -295,7 +297,7 @@ extension BrowserModel {
     }
 
     func restoreSession() {
-        guard tabs.isEmpty else { return }
+        guard tabs.isEmpty, folders.isEmpty else { return }
 
         let stored = try? database.writer.read { db in
             (
@@ -304,7 +306,7 @@ extension BrowserModel {
                 items: try ItemRecord.order(Column("position")).fetchAll(db)
             )
         }
-        guard let stored, !stored.tabs.isEmpty else { return }
+        guard let stored else { return }
 
         let storedTrees = (try? database.writer.read { db in
             try SplitTreeRecord.order(Column("position")).fetchAll(db)
@@ -328,12 +330,11 @@ extension BrowserModel {
             ordered.append(record)
         }
 
-        let activeIndex = ordered.firstIndex { $0.isActive } ?? 0
-        let activeID = ordered[activeIndex].id
+        let activeID = (ordered.first { $0.isActive } ?? ordered.first)?.id
         let grids = Self.grids(from: storedTrees) + Self.grids(fromFlat: storedPanes)
-        let onScreen = Set(
-            [activeID] + (grids.first { $0.contains(activeID) }?.tabs ?? [])
-        )
+        let onScreen = Set(activeID.map { id in
+            [id] + (grids.first { $0.contains(id) }?.tabs ?? [])
+        } ?? [])
 
         for record in ordered {
             let restoredURL = record.url.isEmpty
@@ -365,6 +366,7 @@ extension BrowserModel {
             let folder = TabFolder(name: record.name)
             folder.color = record.color
             folder.isExpanded = record.isExpanded
+            folder.isPinned = record.isPinned
             foldersByStoredID[record.id] = folder
             folders.append(folder)
         }
@@ -391,7 +393,7 @@ extension BrowserModel {
         splits = TabSplits(grids)
         sidebarDidChange()
 
-        activeTabID = tabs[min(activeIndex, tabs.count - 1)].id
+        activeTabID = activeID
         for pane in activeTab.map({ splitOthers(of: $0) }) ?? [] {
             pane.realizeDeferredSession()
         }

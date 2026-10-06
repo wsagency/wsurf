@@ -283,7 +283,7 @@ private struct TabFace: View {
     private static let imageHeight: CGFloat = 150
 
     private var isAsleep: Bool {
-        TabIcon.isAsleep(tab.reclaimState)
+        tab.reclaimState == .unloaded
     }
 
     private var host: String {
