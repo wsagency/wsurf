@@ -7,6 +7,8 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+- Added repository-local omp worktree placement and documented feature-branch,
+  PR-only changes to `main`.
 - Independent WSurf product, app/project/module and `io.wsagency.wsurf`
   identity, with separate data/defaults and new wave artwork.
 - Preserves Apache-2.0 provenance and third-party notices; does not reuse
