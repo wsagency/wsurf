@@ -106,6 +106,8 @@ final class ExtensionLibrary {
     private var catalogue = Catalogue()
     private var placements = Placements()
     private nonisolated let baseDirectory: URL
+    // ponytail: serialize unpacking per library; per-extension locks if parallel installs need it.
+    private nonisolated let unpackingLock = NSLock()
     private let profileKey: String
 
     var records: [InstalledExtension] {
@@ -249,29 +251,32 @@ final class ExtensionLibrary {
         }
     }
 
+    @concurrent
     nonisolated func unpack(_ zip: Data, id: String) async throws {
-        let files = FileManager.default
-        try files.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+        try unpackingLock.withLock {
+            let files = FileManager.default
+            try files.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
 
-        let archive = baseDirectory.appendingPathComponent("\(id).unpacking.zip")
-        let staging = baseDirectory.appendingPathComponent("\(id).unpacking", isDirectory: true)
-        try? files.removeItem(at: staging)
-        try zip.write(to: archive, options: .atomic)
-        defer {
-            try? files.removeItem(at: archive)
+            let archive = baseDirectory.appendingPathComponent("\(id).unpacking.zip")
+            let staging = baseDirectory.appendingPathComponent("\(id).unpacking", isDirectory: true)
             try? files.removeItem(at: staging)
-        }
+            try zip.write(to: archive, options: .atomic)
+            defer {
+                try? files.removeItem(at: archive)
+                try? files.removeItem(at: staging)
+            }
 
-        try Self.extract(archive, to: staging)
-        guard files.fileExists(atPath: staging.appendingPathComponent("manifest.json").path) else {
-            throw PackageError.noManifest
-        }
+            try Self.extract(archive, to: staging)
+            guard files.fileExists(atPath: staging.appendingPathComponent("manifest.json").path) else {
+                throw PackageError.noManifest
+            }
 
-        let destination = packageURL(for: id)
-        if files.fileExists(atPath: destination.path) {
-            _ = try files.replaceItemAt(destination, withItemAt: staging)
-        } else {
-            try files.moveItem(at: staging, to: destination)
+            let destination = packageURL(for: id)
+            if files.fileExists(atPath: destination.path) {
+                _ = try files.replaceItemAt(destination, withItemAt: staging)
+            } else {
+                try files.moveItem(at: staging, to: destination)
+            }
         }
     }
 

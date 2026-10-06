@@ -162,7 +162,9 @@ final class WebViewContainer: NSView {
         super.setFrameSize(newSize)
         guard let installedPage, installedPage.superview === self else { return }
         let frame = installedPage.frameInViewport(bounds)
-        if installedPage.frame != frame { installedPage.frame = frame }
+        if installedPage.frame != frame {
+            installedPage.frame = frame
+        }
         reportReadyIfPossible()
     }
 

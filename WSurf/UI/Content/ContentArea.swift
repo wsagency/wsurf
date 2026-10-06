@@ -159,7 +159,7 @@ private struct KeptAliveTabs: View {
                 && tab.id != browser.activeTab?.id
                 && !browser.isVisibleInSplit(tab)
                 && tab.internalPage == nil
-                && (tab.isPlayingAudio || media.controlledTabID == tab.id)
+                && (tab.isFavorite || tab.isPlayingAudio || media.controlledTabID == tab.id)
                 && tab.page !== media.model.picturePage
         }
         ForEach(kept) { tab in

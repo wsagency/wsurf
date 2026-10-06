@@ -20,6 +20,7 @@ final class SidebarSelection {
     private(set) var items: Set<SidebarItem> = []
     private(set) var anchor: SidebarItem?
     private(set) var ownsKeyboard = false
+    private(set) var keyboardRequestID = 0
 
     var isEmpty: Bool {
         items.isEmpty
@@ -70,6 +71,7 @@ final class SidebarSelection {
         items = []
         anchor = nil
         ownsKeyboard = true
+        keyboardRequestID += 1
     }
 
     func extend(to item: SidebarItem, in tree: SidebarTree, isExpanded: @escaping (UUID) -> Bool) {
@@ -100,6 +102,16 @@ final class SidebarSelection {
         items.formIntersection(live)
         if let anchor, !live.contains(anchor) {
             self.anchor = nil
+        }
+    }
+
+    func excludeFavorites(_ favorites: [BrowserTab]) {
+        for tab in favorites {
+            let item = SidebarItem.tab(tab.id)
+            items.remove(item)
+            if anchor == item {
+                anchor = nil
+            }
         }
     }
 

@@ -84,7 +84,9 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandler {
     }
 
     func isCurrent(_ target: Target, in view: BrowserPage) -> Bool {
-        if view.engine == .chromium { return !target.frame.documentID.isEmpty }
+        if view.engine == .chromium {
+            return !target.frame.documentID.isEmpty
+        }
         let store = stores.object(forKey: view)
         return store?.root == target.root && store?.frames[target.id] === target
     }

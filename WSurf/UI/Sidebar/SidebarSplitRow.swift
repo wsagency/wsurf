@@ -183,6 +183,7 @@ struct SidebarSplitRow: View {
                 coordinator.openTab(opened)
             }
         }
+        context.selection.excludeFavorites(browser.favorites)
     }
 
     private var panes: [BrowserTab] {
@@ -192,6 +193,7 @@ struct SidebarSplitRow: View {
     @ViewBuilder
     private var menu: some View {
         SidebarLinkMenuItems(tabs: panes, coordinator: coordinator)
+        SidebarFavoriteMenuItems(tabs: panes, browser: browser)
 
         if let axis = split.axis {
             Button {
@@ -213,12 +215,17 @@ struct SidebarSplitRow: View {
 
         SidebarFolderMenuItems(items: carried, browser: browser)
 
-        Button(role: .destructive) {
-            for tab in panes.reversed() {
-                browser.close(tab)
+        if panes.contains(where: { !$0.isDeferred }) {
+            Button {
+                FolderContextMenu.unloadTabs(carried, coordinator: coordinator, browser: browser)
+            } label: {
+                Label("Unload Tabs", systemImage: "arrow.uturn.down")
             }
+        }
+        Button(role: .destructive) {
+            browser.close(panes.map { .tab($0.id) })
         } label: {
-            Label("Remove Tabs", systemImage: "trash")
+            Label("Remove Tabs", systemImage: "xmark")
         }
     }
 }

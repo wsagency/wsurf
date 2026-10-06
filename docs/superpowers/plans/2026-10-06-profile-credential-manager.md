@@ -12,6 +12,8 @@
 
 **Status:** Approved on 2026-10-06 for Subagent-driven execution. Consequential external actions still require exact interactive approval at their point of risk.
 
+**Source baseline:** `origin/main` at `9606f9d4d14669798049f32c37aa8f8beab7e2c8`, fetched on 2026-10-06. Continue on `feat/profile-credentials-20261006` in `/Users/klukacin/projects/wsurf/.worktrees/profile-credentials-20261006`; do not restart from the old private source snapshots.
+
 ## Global Constraints
 
 - Independent vault, encryption key, and lock state for each normal profile.
@@ -31,6 +33,8 @@
 - Native builds/tests run on Pro with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`; preserve its established project and builds. App target currently supports macOS 26.0; do not raise its floor to avoid availability handling.
 - Stage mode is DEBUG-only. Copy a separate Debug app to the Air, set `WSURF_STAGE=1` and an owned `WSURF_STAGE_HOME`, and never use a Release launch or production browsing data as an isolated smoke run.
 - Confirm exact external credential creation/transfer, signing-portal changes, publication, permission grants, and sensitive-data access at the point of risk. Provider safety approval remains interactive; use owned test credentials only.
+- Every source/documentation edit, commit, build and test uses this task's linked feature worktree; native source work on Pro requires its own linked feature worktree, not an owned source snapshot.
+- Follow current main's PR/release policy: local Debug validation is allowed on the feature branch; release/signed-preview publication requires a reviewed PR-merged main commit and successful CI.
 
 ## Review Focus
 
@@ -56,7 +60,7 @@ Paths marked **new** are deliberate additions, not existing helpers. Source/test
 
 | Files | Responsibility / owning task |
 |---|---|
-| `WSurf/Stage/CredentialIntegrationProbe.swift` **new, temporary**, `WSurf/Stage/StageRun.swift` | Explicit Debug-only native gate UI and ephemeral PRF/WebAuthn/exchange assertions; Tasks 1–3. Remove the probe after final smoke proof. |
+| `WSurf/Stage/CredentialIntegrationProbe.swift`, `CredentialWebAuthnProbe.swift` **temporary**, `WSurf/Stage/StageRun.swift` | Explicit Debug-only native gate UI and ephemeral PRF/WebAuthn/exchange assertions; Tasks 1–3. Remove both probes and their entry after final smoke proof. |
 | `Tools/CredentialFixture/server.py` **new** | Owned HTTPS login/WebAuthn fixture, independent registration/assertion verification with OpenSSL, deterministic account/TOTP fixtures; Tasks 2–3, 14. No production service. |
 | `WSurf/WSurf.entitlements`, `WSurf/Info.plist`, `WSurf.xcodeproj/project.pbxproj`, `WSurf.xcodeproj/xcshareddata/xcschemes/WSurf.xcscheme`, `WSurf/App/AppDelegate.swift` | Signed Associated Domains, embedded exchange extension, activity dispatch, termination locking; Tasks 1, 3, 5, 13. |
 | `WSurfCredentialExchange/Info.plist`, `WSurfCredentialExchange/WSurfCredentialExchange.entitlements`, `WSurfCredentialExchange/CredentialExchangeProvider.swift` **new** | Capability-only credential-provider extension `io.wsagency.wsurf.CredentialExchange`; exchange eligibility, not general AutoFill or a second credential store; Task 3. |
@@ -84,37 +88,47 @@ Paths marked **new** are deliberate additions, not existing helpers. Source/test
 
 ## Execution and verification conventions
 
-Before execution, read both documents, load the selected execution skill and `using-git-worktrees`, and create an isolated local branch/worktree preserving the current user's work. Sync its sources into a newly owned Pro snapshot, not `~/projects/wsurf`. Record real values for `PRO_SNAPSHOT`, `PRO_DERIVED_DATA`, `CEF_PACKAGE`, `AIR_STAGE_APP`, and `STAGE_HOME`; reuse the existing CEF package/cache without changing it. `CEF_PACKAGE` must identify the CefSwift checkout used by `Tools/embed-chromium.sh`.
+Before execution, read both documents and the current `AGENTS.md`, load the selected execution skill and `using-git-worktrees`, and reuse this task's local branch/worktree. Sync its resolved sources into the dedicated Pro branch `feature/profile-credentials-main-refresh-20261006` at `/Users/klukacin/projects/wsurf/.worktrees/profile-credentials-main-refresh-20261006`, not Pro's main checkout or another task's worktree. Set `PRO_WORKTREE` to that path and `PRO_DERIVED_DATA` to `$PRO_WORKTREE/.build/DD`; clone the owned dependency cache into `$PRO_WORKTREE/.build/SourcePackages` without changing its original. `CEF_PACKAGE` is `$PRO_WORKTREE/.build/SourcePackages/checkouts/CefSwift`, pinned at `59cad64e124b8efdb6b2ee811963097bb6e689e8`, and is used by `Tools/embed-chromium.sh`. Record separate owned `AIR_STAGE_APP` and `STAGE_HOME` values for the actual smoke run.
 
 Before changing/removing an exported symbol, query LSP references and migrate every caller; use repository pattern checks only for non-symbol strings or when no language server is available. Follow Main Actor isolation by default; mark pure Sendable value/crypto types `nonisolated` and keep AppKit/browser objects on Main Actor. Assertion snippets below pin outcomes on the owned fixtures named in the same task; they are tests, not additional production interfaces.
 
-Every RED/GREEN suite step below means run this concrete command with `SUITE` set to the named Swift Testing suite; sync the changed worktree files to the owned snapshot before running it:
+Every RED/GREEN suite step below means run this concrete command with `SUITE` set to the named Swift Testing suite; sync the changed feature files to the Pro worktree before running it and verify its branch/path:
 
 ```bash
 ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes pro \
-  "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer WSURF_CEF_PACKAGE='$CEF_PACKAGE' xcodebuild test -project '$PRO_SNAPSHOT/WSurf.xcodeproj' -scheme WSurf -destination 'platform=macOS,arch=arm64' -derivedDataPath '$PRO_DERIVED_DATA' -onlyUsePackageVersionsFromResolvedFile -skipMacroValidation -skipPackagePluginValidation -only-testing:WSurfTests/$SUITE CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGN_ENTITLEMENTS="
+  "cd '$PRO_WORKTREE' && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer WSURF_CEF_PACKAGE='$CEF_PACKAGE' xcodebuild test -project WSurf.xcodeproj -scheme WSurf -destination 'platform=macOS,arch=arm64' -derivedDataPath '$PRO_DERIVED_DATA' -clonedSourcePackagesDirPath '$PRO_WORKTREE/.build/SourcePackages' -onlyUsePackageVersionsFromResolvedFile -skipMacroValidation -skipPackagePluginValidation -only-testing:WSurfTests/$SUITE CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGN_ENTITLEMENTS="
 ```
 
 A missing symbol may establish initial RED; subsequent RED must show the named incorrect behavior, not a missing import or broken fixture. GREEN is the selected suite with zero failures/skips; inspect the generated result bundle under the owned derived-data `Logs/Test` directory, not a truncated console summary. Tests use existing Swift Testing conventions, `.boundedWebViews` for live WebKit views and existing exclusive-access traits for shared process state; inject time, not sleeps. Unit tests never open a real Keychain vault or prompt Apple Passwords.
 
 Native gate/smoke builds use the same project/scheme, **Debug**, and owned paths, but retain real app/extension entitlements and provisioned signing. The ad-hoc test command above does not prove Apple integrations. Inspect signed entitlements and embedded provisioning before launching; verify `codesign --verify --deep --strict` on Pro and Air. Launch the copied stage executable with `WSURF_STAGE=1 WSURF_STAGE_HOME="$STAGE_HOME"`; leave the installed app untouched. A locked Air desktop is a human-unlock prerequisite, not permission to bypass login.
 
+For the prepared Task 1/2 gates, also launch with `WSURF_CREDENTIAL_PROBE=1 WSURF_CREDENTIAL_FIXTURE_ORIGIN=https://localhost:57443`; the first flag exposes the explicit credential-probe menu, and the second matches the still-running memory-only fixture's exact origin. These flags expose the UI, not authorization to create/assert/transfer external credentials or bypass provider approval. Leave the probe flag unset for an ordinary main-integration smoke.
+
 Signed native build command (per-target app/extension provisioning is established in Tasks 1 and 3; do not apply the app's profile to every target):
 
 ```bash
 ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes pro \
-  "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer WSURF_CEF_PACKAGE='$CEF_PACKAGE' xcodebuild build -project '$PRO_SNAPSHOT/WSurf.xcodeproj' -scheme WSurf -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath '$PRO_DERIVED_DATA' -onlyUsePackageVersionsFromResolvedFile -skipMacroValidation -skipPackagePluginValidation"
+  "cd '$PRO_WORKTREE' && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer WSURF_CEF_PACKAGE='$CEF_PACKAGE' xcodebuild build -project WSurf.xcodeproj -scheme WSurf -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath '$PRO_DERIVED_DATA' -clonedSourcePackagesDirPath '$PRO_WORKTREE/.build/SourcePackages' -onlyUsePackageVersionsFromResolvedFile -skipMacroValidation -skipPackagePluginValidation"
 ```
 
 StageRun reseeds browsing tabs at launch; restart proof must compare persisted account/credential IDs and successfully use their secrets in the same owned stage home, not infer persistence from seeded tabs. Before an OS transfer fetch, verify the launched recipient's PID/app path/stage home. A token routed to the installed/production app must not be fetched; stop and correct routing with explicit approval for any registration change.
 
-The HTTPS fixture has `server.py --host 127.0.0.1 --port 57443 --cert CERT --key KEY --state STATE_DIRECTORY`; certificates and state belong to that smoke run. Use `https://localhost:57443`, an explicit fixture-only trust decision in the owned stage, and no global Keychain trust changes or production TLS bypass. Its initial self-check command is `python3 Tools/CredentialFixture/server.py --self-check`; success is `credential-fixture: PASS` after valid registration/assertion and deliberately invalid challenge/signature cases. Keep private fixture data out of logs and commits.
+The HTTPS fixture starts with `python3 Tools/CredentialFixture/server.py --port 57443 --cert CERT --key KEY`; it binds only `127.0.0.1` and keeps credential/challenge state in memory, with no `--host` or `--state` option. Preserve its running process for fixture identity continuity. Use `https://localhost:57443`, an explicit fixture-only trust decision in the owned stage, and no global Keychain trust changes or production TLS bypass. Its initial self-check command is `python3 Tools/CredentialFixture/server.py --self-check`; success is exit 0 after independent valid registration/assertion and deliberately invalid challenge/signature cases. Keep private fixture data out of logs and commits.
 
 Before each task's commit, review its observable result and exact diff, and update user-facing docs only after its real smoke path works. Commit only the task's listed files with a Conventional Commit subject. Never stage the repository wholesale. A fresh reviewer gate is per task in subagent-driven execution; native execution still self-reviews each task and obtains a fresh whole-branch review before delivery. No build/lint/tests/formatters run inside delegated mid-flight slices; the integration owner runs each completed task's RED/GREEN gates.
 
+### Current execution checkpoint
+
+- Checkpoint `36652ce` preserves the prepared PRF/WebAuthn probes, fixture and signing declarations; it accepts no credential integration gate. Reuse them instead of repeating source preparation.
+- Task 1 still needs a valid authorized Mac App Development profile for `io.wsagency.wsurf` and genuine signed external-PRF/restart evidence. Do not repeat the unchanged failed signing build, enable provisioning updates, or remove restricted entitlements to bypass this gate.
+- Task 2's independent fixture and scoped-HTTPS component checks passed before the main refresh; native WebKit/Chromium credential ceremonies remain unproved. Preserve the running owned fixture and its test identities. An ad-hoc main-integration build/smoke is not PRF, WebAuthn or Apple Passwords acceptance.
+- Main-integration verification on 2026-10-06: the whole ad-hoc Debug app builds on Pro; the focused native result bundle records 129 passed tests, zero failures, and one skipped installed-Codex-CLI check across thirteen suites. Deep/strict signature verification passes on Pro and on the separate Air stage copy. The owned stage launches and persists its sample session, but Air's current loginwindow blocks visual/interactive UI acceptance. This is not signed credential-gate evidence.
+- Next native gate work resumes after the signing prerequisite and exact interactive credential/provider approvals. Keep the fourteen-task dependency order and all six Apple Passwords transfer cells; no narrower password-only scope or fallback.
+
 ### Task 1: Prove signed external PRF-only unlocking
 
-**Files:** Create temporary `WSurf/Stage/CredentialIntegrationProbe.swift`; modify `StageRun.swift`, `WSurf.entitlements` and signing settings in `project.pbxproj`; update `RELEASING.md` after proof.
+**Files:** Reuse prepared temporary `WSurf/Stage/CredentialIntegrationProbe.swift` and the `StageRun.swift` entry, `WSurf.entitlements` and signing settings in `project.pbxproj`; complete their native proof and update `RELEASING.md` after proof.
 
 **Interfaces:** Consumes `ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: "wsurf.app")`, native registration/assertion requests and `ASAuthorizationPublicKeyCredentialPRFAssertionInput.InputValues(saltInput1:saltInput2:)`. Produces a gate record with PRF stability, independent credential IDs, AES-GCM wrap/unlock success and cancellation outcomes; no persistent PRF output or DEK.
 
@@ -135,7 +149,7 @@ Before each task's commit, review its observable result and exact diff, and upda
 
 ### Task 2: Prove the WebAuthn bridge on both engines with a real verifier
 
-**Files:** Create `Tools/CredentialFixture/server.py`; extend the temporary probe; use existing `BrowserPage`/engine script APIs without changing production credential ownership.
+**Files:** Reuse `Tools/CredentialFixture/server.py`, temporary `WSurf/Stage/CredentialWebAuthnProbe.swift` and its `CredentialIntegrationProbe` foreground entry; use existing `BrowserPage`/engine script APIs without changing production credential ownership.
 
 **Interfaces:** Consumes `BrowserPage.installScript(_:in:injectionTime:forMainFrameOnly:)`, `addScriptMessageHandler(name:in:handler:)`, `callAsyncJavaScript(_:arguments:in:contentWorld:)`, and native `BrowserScriptMessage.page/frameInfo`. Produces server-accepted ephemeral ES256 registration/assertion evidence for **WebKit and Chromium**, plus transport/context limitations feeding Task 9.
 
@@ -443,12 +457,12 @@ Before each task's commit, review its observable result and exact diff, and upda
 
 ### Task 14: Accept the complete native feature and remove probe-only code
 
-**Files:** All affected callsites/tests/docs; remove temporary `CredentialIntegrationProbe.swift` and its `StageRun.swift` entry after production paths have smoke evidence. Keep the controlled verifier fixture and permanent behavioral tests.
+**Files:** All affected callsites/tests/docs; remove temporary `CredentialIntegrationProbe.swift`, `CredentialWebAuthnProbe.swift` and their `StageRun.swift` entry after production paths have smoke evidence. Keep the controlled verifier fixture and permanent behavioral tests.
 
 **Interfaces:** Consumes the full plan; produces a reviewed branch plus native/server evidence for every required outcome. No partial release or replacement of the installed app is authorized by this task.
 
 - [ ] Run all new suites and affected existing card/contact/autofill/profile/page suites on Pro, then the full existing suite and project format/performance checks once after integration. Report the already-observed unrelated framework-fixture failures separately; do not claim a clean full suite or rerun just to reconfirm known failures. A newly broken affected consumer contract must be fixed, not skipped/re-pinned.
-- [ ] Build the **whole** signed Debug app and embedded extension on Pro from the isolated source snapshot, copy to a separate Air stage, and verify signing on both hosts. Component CryptoKit/CEF probes or Swift syntax checks are not whole-app evidence.
+- [ ] Build the **whole** signed Debug app and embedded extension on Pro from this task's linked feature worktree, copy to a separate Air stage, and verify signing on both hosts. Component CryptoKit/CEF probes or Swift syntax checks are not whole-app evidence.
 - [ ] Exercise real native settings/unlock/account UI and controlled HTTPS login in both engines: first save, update one of ten accounts, ambiguous/case-distinct usernames, username-first password/TOTP navigation, time-step refresh and copy/fill, private refusal, profile switch, manual/screen lock, sleep/wake, five-minute expiry, independent wrapper removal and restart. Record fresh screenshots/accessibility and field/server outcomes; never inspect production credentials.
 - [ ] Exercise actual public-key create/get, supported feature detection/conditional behavior, fresh UV, server verification, invalid RP, abort/stale frame/page/process/profile cancellation on both engines. Repeat actual Apple Passwords password/passkey/TOTP transfers in both directions with secret-use proof and no false synchronization claim.
 - [ ] Remove probe-only entry/code after smoke proof; update final docs and capability/signing/PSL-refresh instructions. Confirm no obsolete password store/index/extension-selection fallback callers or temporary plaintext fixtures remain; retain all shared card/contact paths. Check exported-symbol removals with LSP references and repository pattern checks, not compatibility aliases.

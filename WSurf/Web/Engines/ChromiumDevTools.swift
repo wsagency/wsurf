@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 wsagency
+// SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
 import CCef
@@ -193,8 +193,7 @@ final class ChromiumDevTools {
                 }
                 pending[id] = PendingCommand(continuation: continuation, result: result)
                 timeouts[id] = Task { [weak self] in
-                    do { try await Task.sleep(for: self?.commandTimeout ?? .seconds(15)) }
-                    catch { return }
+                    do { try await Task.sleep(for: self?.commandTimeout ?? .seconds(15)) } catch { return }
                     guard let self else { return }
                     self.finishFailure(id: id, error: ChromiumError.unavailable("Chromium DevTools command timed out."))
                 }
@@ -351,25 +350,39 @@ final class ChromiumDevTools {
     private func receiveEvent(name: String, pointer: UnsafeRawPointer?, size: Int) {
         guard !closed, size <= 8 * 1_048_576 else { return }
         let params: [String: Any]
-        if size == 0 { params = [:] }
-        else { guard let value = try? Self.jsonObject(pointer, size: size) as? [String: Any] else { return }; params = value }
+        if size == 0 {
+            params = [:]
+        } else {
+            guard let value = try? Self.jsonObject(pointer, size: size) as? [String: Any] else { return }
+            params = value
+        }
         switch name {
-        case "Runtime.executionContextCreated": contextCreated(params)
+        case "Runtime.executionContextCreated":
+            contextCreated(params)
         case "Runtime.executionContextDestroyed":
-            if let executionID = params["executionContextId"] as? Int { removeContexts(executionID: executionID) }
+            if let executionID = params["executionContextId"] as? Int {
+                removeContexts(executionID: executionID)
+            }
         case "Runtime.executionContextsCleared":
-            contextsByUniqueID.removeAll(); uniqueIDByExecutionID.removeAll()
-        case "Runtime.bindingCalled": bindingCalled(params)
-        case "Page.frameNavigated": frameNavigated(params)
-        case "Page.frameDetached": frameDetached(params)
+            contextsByUniqueID.removeAll()
+            uniqueIDByExecutionID.removeAll()
+        case "Runtime.bindingCalled":
+            bindingCalled(params)
+        case "Page.frameNavigated":
+            frameNavigated(params)
+        case "Page.frameDetached":
+            frameDetached(params)
         case "Security.securityStateChanged":
-            if let state = params["securityState"] as? String { page?.didChangeSecurity(state == "secure") }
+            if let state = params["securityState"] as? String {
+                page?.didChangeSecurity(state == "secure")
+            }
         case "Security.visibleSecurityStateChanged":
             if let visible = params["visibleSecurityState"] as? [String: Any],
                let state = visible["securityState"] as? String {
                 page?.didChangeSecurity(state == "secure")
             }
-        default: break
+        default:
+            break
         }
     }
 
@@ -414,7 +427,9 @@ final class ChromiumDevTools {
             retireDescendants(parentID: parsed.id)
             removeContexts(frameID: parsed.id)
         }
-        if !parsed.documentID.isEmpty { page?.didNavigate(frame: parsed.browserFrame) }
+        if !parsed.documentID.isEmpty {
+            page?.didNavigate(frame: parsed.browserFrame)
+        }
     }
 
     private func frameDetached(_ params: [String: Any]) {
@@ -427,7 +442,10 @@ final class ChromiumDevTools {
                 changed = true
             }
         }
-        for id in removed { framesByID.removeValue(forKey: id); removeContexts(frameID: id) }
+        for id in removed {
+            framesByID.removeValue(forKey: id)
+            removeContexts(frameID: id)
+        }
     }
 
     private func targetFrame(_ requested: BrowserFrame?) async throws -> BrowserFrame {
@@ -466,9 +484,9 @@ final class ChromiumDevTools {
     }
 
     private func setDocumentMarker(contextID: String, documentID: String) async throws {
-        guard var context = contextsByUniqueID[contextID], !context.markerSet else { return }
+        guard let context = contextsByUniqueID[contextID], !context.markerSet else { return }
         let response = try await command("Runtime.evaluate", params: [
-            "expression": "Object.defineProperty(globalThis, '__wsurfFrameDocumentID', {value: \(jsonLiteral(documentID)), writable: false, configurable: false, enumerable: false});",
+            "expression": "void Object.defineProperty(globalThis, '__wsurfFrameDocumentID', {value: \(jsonLiteral(documentID)), writable: false, configurable: false, enumerable: false});",
             "uniqueContextId": contextID, "returnByValue": true,
         ])
         _ = try runtimeValue(response)
@@ -504,7 +522,9 @@ final class ChromiumDevTools {
         framesByID = parsed
         let staleContexts = contextsByUniqueID.compactMap { uniqueID, context -> (String, Int)? in
             guard let frame = parsed[context.frameID] else { return (uniqueID, context.executionID) }
-            if context.documentID.isEmpty { return nil }
+            if context.documentID.isEmpty {
+                return nil
+            }
             return context.documentID == frame.documentID ? nil : (uniqueID, context.executionID)
         }
         for (uniqueID, executionID) in staleContexts {
@@ -526,7 +546,9 @@ final class ChromiumDevTools {
         guard let frame = tree["frame"] as? [String: Any], let parsed = parseFrame(frame, parentID: parentID) else { return }
         result[parsed.id] = parsed
         if let children = tree["childFrames"] as? [[String: Any]] {
-            for child in children { parseFrameTree(child, parentID: parsed.id, into: &result) }
+            for child in children {
+                parseFrameTree(child, parentID: parsed.id, into: &result)
+            }
         }
     }
 
@@ -571,7 +593,9 @@ final class ChromiumDevTools {
                 : script.source
         } else {
             let body = script.mainFrameOnly ? "if (window === window.top) {\n\(script.source)\n}" : script.source
-            source = "(() => { const run = () => {\n\(body)\n}; if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, {once: true}); else queueMicrotask(run); })();"
+            source = "(() => { const run = () => {\n\(body)\n}; " +
+                "if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, {once: true}); " +
+                "else queueMicrotask(run); })();"
         }
         var params: [String: Any] = ["source": source]
         if !script.worldName.isEmpty { params["worldName"] = script.worldName }
@@ -602,7 +626,9 @@ final class ChromiumDevTools {
         while changed {
             changed = false
             for frame in framesByID.values where frame.parentID == parentID || frame.parentID.map(retired.contains) == true {
-                if retired.insert(frame.id).inserted { changed = true }
+                if retired.insert(frame.id).inserted {
+                    changed = true
+                }
             }
         }
         for id in retired {
@@ -638,13 +664,18 @@ final class ChromiumDevTools {
         let waiters = prepareWaiters
         prepareWaiters.removeAll()
         for waiter in waiters {
-            if let error { waiter.resume(throwing: error) }
-            else { waiter.resume() }
+            if let error {
+                waiter.resume(throwing: error)
+            } else {
+                waiter.resume()
+            }
         }
     }
 
     nonisolated private static func releaseBrowser(_ browser: UnsafeMutablePointer<cef_browser_t>?) {
-        if let browser { ChromiumInterop.release(UnsafeMutableRawPointer(browser)) }
+        if let browser {
+            ChromiumInterop.release(UnsafeMutableRawPointer(browser))
+        }
     }
     private static func jsonObject(_ pointer: UnsafeRawPointer?, size: Int) throws -> Any {
         guard let pointer, size > 0 else { throw ChromiumError.protocolFailure("Empty DevTools JSON payload.") }

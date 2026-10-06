@@ -277,12 +277,14 @@ extension PageDriver {
 
     private static func awaitComputerReceipt(in view: BrowserPage, documentURL: URL?) async throws {
         let deadline = ContinuousClock.now + .seconds(1)
-        repeat {
+        while true {
             try Task.checkCancellation()
             guard PageAutomationGuard.allowsExecution else { throw PageComputerFailure.stale }
             if view.isLoading || view.url != documentURL {
                 return
             }
+            // Check once more after a wait or slow IPC reply crosses the deadline.
+            let finalCheck = ContinuousClock.now >= deadline
             let result = await evaluateJSON(scripted("""
                 const state = window.__wsurfComputerAck;
                 if (state?.received) state.dispose();
@@ -291,9 +293,11 @@ extension PageDriver {
             if result?["received"] as? Bool == true {
                 return
             }
+            if finalCheck {
+                throw PageComputerFailure.unverified
+            }
             try await Task.sleep(for: .milliseconds(20))
-        } while ContinuousClock.now < deadline
-        throw PageComputerFailure.unverified
+        }
     }
 
     private static func performComputerAction(_ action: OpenAIJSON, frame: PageComputerFrame, point: CGPoint?, current: [String: Any],
@@ -354,7 +358,7 @@ extension PageDriver {
             guard current["editable"] as? Bool == true, window.makeFirstResponder(view), let text = action["text"].string else {
                 throw PageComputerFailure.unavailable
             }
-            view.insertText(text)
+            try await view.insertText(text)
             AgentAuthoredText.record(in: view)
         case "keypress":
             try await computerKey(action["keys"].array?.compactMap(\.string) ?? [], frame: frame, in: view, window: window)
@@ -438,11 +442,17 @@ extension PageDriver {
               let hit = content.hitTest(content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow),
               hit.isDescendant(of: view), window.attachedSheet == nil else { throw PageComputerFailure.unavailable }
         if phase == "move" {
+            if let chromium = view.chromium {
+                chromium.sendMouseMove(to: chromium.convert(local, from: view), modifiers: modifiers)
+                return
+            }
+            guard let webKit = view.webKit else { throw PageComputerFailure.unavailable }
+            let nativePoint = webKit.convert(local, from: view)
             let selector = #selector(NSResponder.mouseMoved(with:))
-            guard let owner = view.trackingAreas.first(where: {
+            guard let owner = webKit.trackingAreas.first(where: {
                 $0.options.contains([.mouseMoved, .mouseEnteredAndExited])
-                    && ($0.options.contains(.inVisibleRect) || $0.rect.contains(local))
-                    && ($0.owner as? NSObject) !== view
+                    && ($0.options.contains(.inVisibleRect) || $0.rect.contains(nativePoint))
+                    && ($0.owner as? NSObject) !== webKit
                     && ($0.owner as? NSObject)?.responds(to: selector) == true
             })?.owner as? NSObject else { throw PageComputerFailure.unavailable }
             owner.perform(selector, with: event)
@@ -499,19 +509,16 @@ extension PageDriver {
             flags.remove(.control); flags.insert(.command)
         }
         guard window.attachedSheet == nil, window.makeFirstResponder(view) else { throw PageComputerFailure.unavailable }
+        // Complete the native key pair before yielding to the editing fallback.
         for type in [NSEvent.EventType.keyDown, .keyUp] {
             guard PageAutomationGuard.allowsExecution,
                   let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                       windowNumber: window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
             else { throw PageComputerFailure.stale }
-            if type == .keyDown {
-                view.sendKeyEvent(event)
-                if flags.contains(.command) {
-                    try await computerSelectAll(frame: frame, in: view, window: window)
-                }
-            } else {
-                view.sendKeyEvent(event)
-            }
+            view.sendKeyEvent(event)
+        }
+        if flags.contains(.command) {
+            try await computerSelectAll(frame: frame, in: view, window: window)
         }
     }
 
@@ -529,8 +536,21 @@ extension PageDriver {
                 if result?["prevented"] as? Bool != true {
                     _ = try await computerTarget(point: nil, in: view)
                     try await validateComputerFrame(frame, in: view, checkRevision: false)
-                    guard window.attachedSheet == nil, view.window === window, window.firstResponder === view else { throw PageComputerFailure.unavailable }
-                    view.selectAll(nil)
+                    let responder = window.firstResponder
+                    let ownsResponder: Bool
+                    if let webKit = view.webKit {
+                        ownsResponder = responder === webKit
+                    } else {
+                        ownsResponder = view.chromium?.ownsResponder(responder) == true
+                    }
+                    guard window.attachedSheet == nil, view.window === window, ownsResponder else { throw PageComputerFailure.unavailable }
+                    if let webKit = view.webKit {
+                        webKit.selectAll(nil)
+                    } else if let chromium = view.chromium {
+                        chromium.selectAll()
+                    } else {
+                        throw PageComputerFailure.unavailable
+                    }
                 }
                 return
             }

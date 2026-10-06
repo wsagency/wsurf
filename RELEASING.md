@@ -21,6 +21,19 @@ GitHub redirects that URL to the asset of the same name in the most recent
 release, so you need no web server and no `gh-pages` branch. Attach
 `appcast.xml` to each release to keep that URL working.
 
+## Source and deployment policy
+
+Develop changes in dedicated worktrees on feature branches, then merge them
+through a PR targeting `main`; follow [Contributing](CONTRIBUTING.md#development-workflow).
+Do not build release artifacts or deploy from feature branches, dirty working
+trees, or changes committed directly to `main`. Local and PR validation builds
+are not deployments.
+
+Release and signed preview builds must use the merged `main` commit after its
+CI checks pass. The preview workflow already waits for successful CI on `main`;
+the release workflow checks that the tag is on `main` and waits for CI on that
+commit. These gates must not be bypassed.
+
 ## The signing tools
 
 Sparkle ships `generate_keys`, `sign_update` and `generate_appcast` in an
@@ -201,11 +214,13 @@ exist in the protected release environment.
 
 ## Each release
 
-The release does not run the tests. CI tests each push to `main`, and the
-workflow reads the result. Push the tag:
+The release does not run the tests. Merge the release changes through a PR
+targeting `main`, then tag the merged commit. CI tests each push to `main`, and
+the release workflow reads the result. Refresh `origin/main` before tagging:
 
 ```bash
-git tag v1.1 && git push origin v1.1
+git fetch origin main
+git tag v1.1 origin/main && git push origin v1.1
 ```
 
 Push the tag as soon as the commit is on `main`. You do not have to wait for

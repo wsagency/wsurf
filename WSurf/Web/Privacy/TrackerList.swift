@@ -125,7 +125,9 @@ nonisolated enum TrackerList {
 
         for rule in rules {
             guard host == rule.host || host.hasSuffix(".\(rule.host)") else { continue }
-            if rule.path.isEmpty || resourceURL.path.hasPrefix(rule.path) { return true }
+            if rule.path.isEmpty || resourceURL.path.hasPrefix(rule.path) {
+                return true
+            }
         }
         return false
     }

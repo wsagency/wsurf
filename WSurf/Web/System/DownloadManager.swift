@@ -321,7 +321,6 @@ final class DownloadManager: NSObject {
         controls.pause(nativeID.key)
     }
 
-
     func cancel(_ item: Item) {
         if let nativeID = chromiumIDs.first(where: { $0.value == item.id }) {
             guard let controls = chromiumControls[nativeID.key], controls.isLive() else {
@@ -358,9 +357,7 @@ final class DownloadManager: NSObject {
         let id = item.id
         noteResumeStarted(id)
         webView.resumeDownload(fromResumeData: data) { [weak self] download in
-            Task { @MainActor [weak self] in
-                self?.attach(download, to: id)
-            }
+            self?.attach(download, to: id)
         }
     }
 
@@ -424,7 +421,6 @@ final class DownloadManager: NSObject {
             }
         }
     }
-
 
     // MARK: - What a row becomes
 

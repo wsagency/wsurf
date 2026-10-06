@@ -119,7 +119,9 @@ enum WebsiteData {
             .filter { !$0.facets.isEmpty }
         let chromium = try await ChromiumRuntime.shared.websiteDataEntries(profile: profile)
         return (webKit + chromium).sorted {
-            if $0.displayName == $1.displayName { return $0.engine.rawValue < $1.engine.rawValue }
+            if $0.displayName == $1.displayName {
+                return $0.engine.rawValue < $1.engine.rawValue
+            }
             return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
         }
     }
@@ -165,4 +167,3 @@ enum WebsiteData {
             || name.split(separator: ".").contains { $0.hasPrefix(needle) }
     }
 }
-

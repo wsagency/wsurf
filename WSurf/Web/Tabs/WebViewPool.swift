@@ -333,7 +333,6 @@ final class WebViewPool {
         idle.removeAll()
     }
 
-
     func installExtensionController(_ controller: WKWebExtensionController?) {
         extensionController = controller
         idle.removeAll()

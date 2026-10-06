@@ -213,7 +213,6 @@ final class FindSession {
         """
     }
 
-
     nonisolated static func countScript(for query: String) -> String {
         let json = (try? JSONEncoder().encode([query]))
             .flatMap { String(data: $0, encoding: .utf8) } ?? #"[""]"#

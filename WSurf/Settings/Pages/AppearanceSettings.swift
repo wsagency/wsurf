@@ -55,6 +55,8 @@ struct AppearanceSettings: View {
             .settingsAnchor("appearance.zoom")
         }
 
+        themeCustomizationSection
+
         WindowStyleSettingsSection(settings: settings)
 
         SettingsSection(title: "Sidebar", symbol: "sidebar.left") {
@@ -142,22 +144,6 @@ struct AppearanceSettings: View {
             RowSeparator()
 
             DetailRow(
-                title: "Unloaded tab action",
-                caption: "For unloaded tab rows only: hold ⌘ to remove, or show an X next to Play."
-            ) {
-                SettingsMenu(
-                    options: [
-                        .init(value: false, label: String(localized: "Hold ⌘")),
-                        .init(value: true, label: String(localized: "X next to Play")),
-                    ],
-                    selection: $settings.showsDirectRemoveForUnloadedTabs
-                )
-            }
-            .settingsAnchor("appearance.sidebar.unloadedTabAction")
-
-            RowSeparator()
-
-            DetailRow(
                 title: "Row spacing",
                 caption: "Add vertical breathing room between sidebar rows."
             ) {
@@ -189,6 +175,98 @@ struct AppearanceSettings: View {
                 }
             }
             .settingsAnchor("appearance.sidebarFolderTint")
+        }
+    }
+
+    private var customizationTheme: AppearanceMode {
+        settings.sidebarAppearance(scheme: windowColorScheme)
+    }
+
+    private func customizationBinding<Value>(_ keyPath: WritableKeyPath<ThemeCustomization, Value>) -> Binding<Value> {
+        let theme = customizationTheme
+        return Binding(
+            get: { settings.themeCustomization(theme: theme)[keyPath: keyPath] },
+            set: {
+                var value = settings.themeCustomization(theme: theme)
+                value[keyPath: keyPath] = $0
+                settings.setThemeCustomization(value, theme: theme)
+            }
+        )
+    }
+
+    private var themeCustomizationSection: some View {
+        SettingsSection(title: "Theme customization", symbol: "paintpalette") {
+            DetailRow(
+                title: "Customize current theme",
+                caption: "Changes preview live. System uses the matching Light or Dark settings; custom palette colors take precedence over website tint."
+            ) {
+                Text(customizationTheme.label)
+                    .foregroundStyle(.secondary)
+            }
+            RowSeparator()
+            DetailRow(title: "Brightness") {
+                Slider(value: customizationBinding(\.brightness), in: -0.5...0.5)
+                    .frame(width: 160)
+                    .accessibilityLabel("Theme brightness")
+            }
+            RowSeparator()
+            DetailRow(title: "Hue") {
+                Slider(value: customizationBinding(\.hue), in: -0.5...0.5)
+                    .frame(width: 160)
+                    .accessibilityLabel("Theme hue")
+            }
+            RowSeparator()
+            DetailRow(title: "Primary color", caption: "Derives the background, surface, and accent palette without changing website content.") {
+                themeColorControls(\.primary, label: "Primary color")
+            }
+            RowSeparator()
+            DetailRow(title: "Control icons") {
+                themeColorControls(\.controls, label: "Control icons", opacityLabel: "Control icons opacity")
+            }
+            RowSeparator()
+            DetailRow(title: "URL text") {
+                themeColorControls(\.url, label: "URL text", opacityLabel: "URL text opacity")
+            }
+            RowSeparator()
+            DetailRow(title: "Reset theme", caption: "Restore this theme’s original palette and chrome colors.") {
+                Button("Reset") { settings.resetThemeCustomization(theme: customizationTheme) }
+            }
+        }
+        .settingsAnchor("appearance.themeCustomization")
+    }
+
+    private func themeColorControls(
+        _ keyPath: WritableKeyPath<ThemeCustomization, SidebarTextStyle>,
+        label: LocalizedStringResource,
+        opacityLabel: LocalizedStringResource? = nil
+    ) -> some View {
+        let binding = customizationBinding(keyPath)
+        return HStack(spacing: 8) {
+            ColorPicker(String(localized: label), selection: Binding(
+                get: { binding.wrappedValue.color ?? (keyPath == \.primary ? Theme.accent : Color.primary) },
+                set: {
+                    var style = binding.wrappedValue
+                    style.setColor($0)
+                    binding.wrappedValue = style
+                }
+            ), supportsOpacity: false)
+            .labelsHidden()
+            .accessibilityLabel(Text(label))
+            if let opacityLabel {
+                Slider(value: Binding(
+                    get: { binding.wrappedValue.opacity },
+                    set: {
+                        var style = binding.wrappedValue
+                        style.opacity = $0
+                        binding.wrappedValue = style
+                    }
+                ), in: 0...1, step: 0.05)
+                .frame(width: 110)
+                .accessibilityLabel(Text(opacityLabel))
+                Text(binding.wrappedValue.opacity, format: .percent.precision(.fractionLength(0)))
+                    .monospacedDigit()
+                    .frame(width: 42, alignment: .trailing)
+            }
         }
     }
 

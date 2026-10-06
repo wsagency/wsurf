@@ -193,7 +193,9 @@ extension ChromiumRuntime {
             )
         }
         var catalog = originCatalog(for: profile)
-        for name in names { catalog.origins[name] = nil }
+        for name in names {
+            catalog.origins[name] = nil
+        }
         saveOriginCatalog(catalog, for: profile)
     }
 

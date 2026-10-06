@@ -1,0 +1,9 @@
+{
+  "name": "wsurf-site",
+  "account_id": "8b4b87eb858efaaf5e5eecf00c6d5b1d",
+  "compatibility_date": "2026-09-28",
+  "workers_dev": false,
+  "assets": {
+    "directory": "./wsurf.app"
+  }
+}

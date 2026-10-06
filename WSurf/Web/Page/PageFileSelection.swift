@@ -14,7 +14,9 @@ final class PageFileSelection {
         let allowsDirectories: Bool
     }
     var selectFiles: ((Parameters) async -> [URL]?)?
-    var isCompleted: Bool { completed }
+    var isCompleted: Bool {
+        completed
+    }
     var requestedPanel = false
     var cancelPanel: (() -> Void)?
     private var continuation: CheckedContinuation<Int?, Never>?

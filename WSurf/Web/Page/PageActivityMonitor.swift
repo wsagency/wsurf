@@ -38,7 +38,6 @@ final class PageActivityMonitor {
         }
     }
 
-
     private static let script = #"""
     (() => {
       if (window.__wsurfPageActivity) return;
@@ -183,7 +182,6 @@ final class ScrollPositionMonitor {
             onScroll(y, message.frameInfo.request.url)
         }
     }
-
 
     private static let script = #"""
     (() => {

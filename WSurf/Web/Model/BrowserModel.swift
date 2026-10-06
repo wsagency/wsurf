@@ -25,6 +25,14 @@ final class BrowserModel {
         }
     }
     let downloads: DownloadManager
+    let sidebarUndoManager = UndoManager()
+    var folderRenameID: UUID? {
+        didSet {
+            guard folderRenameID != oldValue, let id = folderRenameID else { return }
+            folder(id: id)?.nameRevision += 1
+        }
+    }
+
     private let webViewFactory: (@MainActor () -> WKWebView)?
 
     init(
@@ -40,6 +48,8 @@ final class BrowserModel {
         self.sitePermissions = sitePermissions
         self.downloads = downloads
         followEnginePreferences()
+        sidebarUndoManager.groupsByEvent = false
+        sidebarUndoManager.levelsOfUndo = 20
     }
 
     private func followEnginePreferences() {
@@ -56,7 +66,7 @@ final class BrowserModel {
     var hasNoActiveTab = false
     var activeTabID: UUID? {
         didSet {
-            if activeTabID != nil {
+            if activeTabID != nil, hasNoActiveTab {
                 hasNoActiveTab = false
             }
             guard oldValue != activeTabID else { return }
@@ -85,6 +95,7 @@ final class BrowserModel {
     var onActiveTabChanged: ((BrowserTab?, BrowserTab?) -> Void)?
     var onSpaceAnchorChanged: ((UUID, UUID) -> Void)?
     var onContentProcessTerminated: ((BrowserTab) -> Void)?
+    var onPageRetired: ((BrowserTab, BrowserPage) -> Void)?
     var onPictureInPictureChanged: ((BrowserTab, Bool) -> Void)?
     var onLinkHovered: ((BrowserTab, URL?, NSEvent.ModifierFlags, CGPoint) -> Void)?
     var onOpenInPeek: ((BrowserTab?, URL, CGPoint) -> Void)?
@@ -204,14 +215,18 @@ final class BrowserModel {
         tab.onChromiumDownloadProgress = { [weak self] page, download in
             self?.downloads.noteChromiumDownload(download, from: page)
         }
-        tab.onPageRetired = { [weak self] page in
+        tab.onPageRetired = { [weak self, weak tab] page in
             self?.downloads.retireChromiumPage(page)
+            guard let tab else { return }
+            self?.onPageRetired?(tab, page)
         }
         tab.hasActiveDownload = { [weak self, weak tab] in
             guard let self, let tab else { return false }
             return self.downloads.hasActiveDownload(for: tab.id)
         }
-        if tab.isMaterialised { BrowserSettings.shared.apply(to: tab.page) }
+        if tab.isMaterialised {
+            BrowserSettings.shared.apply(to: tab.page)
+        }
         return tab
     }
 

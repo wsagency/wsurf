@@ -163,7 +163,9 @@ struct TabRecoveryTests {
             await runtime.releaseContext(profileID: profile.id)
             try? FileManager.default.removeItem(at: runtime.cacheDirectory(profileID: profile.id))
         }
-        if let failure { throw failure }
+        if let failure {
+            throw failure
+        }
     }
 
     @Test func htmlLoadDuringRetirementReplacesTheRetiredDocument() async throws {

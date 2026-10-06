@@ -3,6 +3,28 @@
 
 Keep changes focused, explain the user benefit, and keep the code testable.
 
+## Development workflow
+
+All changes, including fixes and documentation, must use a dedicated Git
+worktree and a unique `feature/<short-name>` branch based on the latest
+`origin/main`. Keep one task per worktree and branch. Do not develop in the
+`main` checkout, switch branches in a shared checkout, or stash, discard, move,
+or commit another task's uncommitted changes.
+
+Keep build output and DerivedData inside your worktree; do not reuse another
+worktree's build directory. Local development builds, tests, and PR validation
+builds are allowed before merge.
+
+Submit changes through a pull request targeting `main`. Resolve review
+feedback and pass the required CI checks before merging. Do not commit or push
+changes directly to `main`.
+
+Release builds and deployments, including signed previews, must use a commit
+merged into `main` through a PR and wait for CI to pass on that commit. Never
+deploy a feature branch or an uncommitted working tree. Release tags must point
+to commits on `main`. See [Releasing](RELEASING.md) for the existing release and
+preview gates.
+
 ## Set up the project
 
 You need macOS 26 or later, Apple silicon, and Xcode 26.5 or later.
@@ -10,15 +32,22 @@ You need macOS 26 or later, Apple silicon, and Xcode 26.5 or later.
 ```bash
 git clone https://github.com/wsagency/wsurf.git
 cd wsurf
+git fetch origin main
+git worktree add -b feature/my-change ../wsurf-worktrees/my-change origin/main
+cd ../wsurf-worktrees/my-change
 xcodebuild test \
   -project WSurf.xcodeproj \
   -scheme WSurf \
   -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath build/DD \
   CODE_SIGN_STYLE=Manual \
   CODE_SIGN_IDENTITY=- \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGN_ENTITLEMENTS=
 ```
+
+Replace `my-change` with a unique name for your task. Run development commands
+from that worktree, not from the original `main` checkout.
 
 The `WSurf` scheme runs the `WSurfTests` target from `WSurf.xctestplan`.
 
@@ -195,6 +224,7 @@ the release job ran the same suite a second time.
 
 ## Pull request checklist
 
+- The change uses a dedicated worktree and feature branch; the PR targets `main`.
 - The app builds without new warnings.
 - The full test suite passes locally.
 - New behavior has meaningful tests.

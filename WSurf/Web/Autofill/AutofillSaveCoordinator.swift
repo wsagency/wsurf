@@ -32,7 +32,9 @@ final class AutofillSaveSession: NSObject {
     @ObservationIgnored var username: UsernameStep?
     @ObservationIgnored let submissions = AutofillSubmissionTracker()
 
-    var current: Offer? { offers.first }
+    var current: Offer? {
+        offers.first
+    }
 
     func attach(to page: BrowserPage, profileID: UUID) {
         clear(); self.page = page; self.profileID = profileID; submissions.attach(to: self); dismissed = [:]
@@ -44,17 +46,28 @@ final class AutofillSaveSession: NSObject {
     func refreshPolicy() {
         revision += 1; submissions.clear()
         offers.removeAll { !AutofillSaveCoordinator.shared.isEnabled($0.candidate.kind, profileID: profileID) }
-        if offers.isEmpty { isPopoverPresented = false }
-        if !AutofillSaveCoordinator.shared.isEnabled(.password, profileID: profileID) { username = nil }
+        if offers.isEmpty {
+            isPopoverPresented = false
+        }
+        if !AutofillSaveCoordinator.shared.isEnabled(.password, profileID: profileID) {
+            username = nil
+        }
     }
-    func resetDismissals(kind: AutofillSaveKind) { dismissed[kind] = nil }
-    func resetDismissalsForNavigation() { dismissed = [:] }
+    func resetDismissals(kind: AutofillSaveKind) {
+        dismissed[kind] = nil
+    }
+    func resetDismissalsForNavigation() {
+        dismissed = [:]
+    }
 
     func receive(_ candidates: [AutofillSaveCandidate], origin: String, documentID: String = "") {
         let revision = revision
         Task { [weak self] in
             guard let self else { return }
-            for candidate in candidates { guard revision == self.revision else { return }; await offer(candidate, origin: origin, documentID: documentID) }
+            for candidate in candidates {
+                guard revision == self.revision else { return }
+                await offer(candidate, origin: origin, documentID: documentID)
+            }
         }
     }
     func offer(_ candidate: AutofillSaveCandidate, origin: String, documentID: String = "") async {
@@ -66,19 +79,28 @@ final class AutofillSaveSession: NSObject {
         let decision = await Task.detached { (try? AutofillSaveIndex.decision(for: candidate, origin: origin, profileID: profileID)) ?? .new }.value
         guard revision == self.revision, let page, page.profileID == profileID, !page.isPrivate,
               page.url.flatMap(SavedPassword.origin(for:)) != nil,
-              (documentID.isEmpty ? true : await AutofillSaveCoordinator.shared.isLive(page: page, documentID: documentID, origin: origin)),
+              documentID.isEmpty ? true : await AutofillSaveCoordinator.shared.isLive(page: page, documentID: documentID, origin: origin),
               AutofillSaveCoordinator.shared.isEnabled(candidate.kind, profileID: profileID),
               dismissed[candidate.kind]?.contains(fingerprint) != true, !offers.contains(where: { $0.fingerprint == fingerprint }),
               decision != .unchanged, decision != .blocked else { return }
         let previous = current?.id
         offers.removeAll { $0.candidate.kind == candidate.kind }
         offers.append(Offer(candidate: candidate, origin: origin, isUpdate: decision == .update, fingerprint: fingerprint, documentID: documentID))
-        if current?.id != previous { isPopoverPresented = true }
+        if current?.id != previous {
+            isPopoverPresented = true
+        }
         AutofillDiagnostics.note(.saveOffered, kind: candidate.kind)
         expiry?.cancel(); expiry = Task { [weak self] in try? await Task.sleep(for: .seconds(120)); guard !Task.isCancelled else { return }; self?.clear() }
     }
     func dismiss(_ offer: Offer, rememberingChoice: Bool = true) {
-        if rememberingChoice { var values = dismissed[offer.candidate.kind] ?? []; if values.count >= 100 { values.removeAll() }; values.insert(offer.fingerprint); dismissed[offer.candidate.kind] = values }
+        if rememberingChoice {
+            var values = dismissed[offer.candidate.kind] ?? []
+            if values.count >= 100 {
+                values.removeAll()
+            }
+            values.insert(offer.fingerprint)
+            dismissed[offer.candidate.kind] = values
+        }
         offers.removeAll { $0.id == offer.id }; isPopoverPresented = !offers.isEmpty; error = nil
     }
     func never(_ offer: Offer) async {
@@ -86,25 +108,45 @@ final class AutofillSaveSession: NSObject {
         isBusy = true; let profileID = profileID; defer { isBusy = false }
         do {
             try await Task.detached { try AutofillSaveIndex.block(kind: offer.candidate.kind, origin: offer.origin, profileID: profileID) }.value
-            if self.profileID == profileID && current?.id == offer.id { dismiss(offer) }
-        } catch { if self.profileID == profileID && current?.id == offer.id { self.error = String(localized: "Couldn’t remember this choice. Try again.") } }
+            if self.profileID == profileID && current?.id == offer.id {
+                dismiss(offer)
+            }
+        } catch {
+            if self.profileID == profileID && current?.id == offer.id {
+                self.error = String(localized: "Couldn’t remember this choice. Try again.")
+            }
+        }
     }
     func save(_ offer: Offer, replacement: AutofillSaveCandidate? = nil) async {
         guard !isBusy, current?.id == offer.id, AutofillSaveCoordinator.shared.isEnabled(offer.candidate.kind, profileID: profileID),
               let page, page.window != nil, await AutofillSaveCoordinator.shared.isLive(page: page, documentID: offer.documentID, origin: offer.origin) else { return }
         let candidate = replacement ?? offer.candidate
         guard candidate.kind == offer.candidate.kind else { return }
-        if case .password(let password) = candidate, password.origin != offer.origin { return }
+        if case .password(let password) = candidate, password.origin != offer.origin {
+            return
+        }
         isBusy = true; error = nil; let profileID = profileID; defer { isBusy = false }
         do {
             switch candidate {
-            case .password(let login): _ = try await AutofillVaults.passwords(for: profileID).update { SavedPassword.merging(login, into: $0) }
-            case .card(let card): _ = try await AutofillVaults.cards(for: profileID).importCards([card], preservingMissingSecurityCodes: replacement == nil)
-            case .contact(let contact): _ = try await AutofillVaults.contacts(for: profileID).update { contacts in guard !contacts.contains(where: { AutofillSaveCandidate.contact($0).values == candidate.values }) else { return contacts }; guard contacts.count < 100 else { throw AutofillVaultError.invalidData }; return contacts + [contact] }
+            case .password(let login):
+                _ = try await AutofillVaults.passwords(for: profileID).update { SavedPassword.merging(login, into: $0) }
+            case .card(let card):
+                _ = try await AutofillVaults.cards(for: profileID).importCards([card], preservingMissingSecurityCodes: replacement == nil)
+            case .contact(let contact):
+                _ = try await AutofillVaults.contacts(for: profileID).update { contacts in
+                    guard !contacts.contains(where: { AutofillSaveCandidate.contact($0).values == candidate.values }) else { return contacts }
+                    guard contacts.count < 100 else { throw AutofillVaultError.invalidData }
+                    return contacts + [contact]
+                }
             }
-            guard await AutofillSaveCoordinator.shared.isLive(page: page, documentID: offer.documentID, origin: offer.origin), self.profileID == profileID, current?.id == offer.id else { return }
+            guard await AutofillSaveCoordinator.shared.isLive(page: page, documentID: offer.documentID, origin: offer.origin),
+                  self.profileID == profileID, current?.id == offer.id else { return }
             dismiss(offer, rememberingChoice: false)
-        } catch { if self.profileID == profileID && current?.id == offer.id { self.error = String(localized: "Couldn’t save these details. Try again.") } }
+        } catch {
+            if self.profileID == profileID && current?.id == offer.id {
+                self.error = String(localized: "Couldn’t save these details. Try again.")
+            }
+        }
     }
 }
 
@@ -125,24 +167,64 @@ final class AutofillSaveCoordinator {
     }
 
     private init() {
-        observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.sessionIsActive = false; self?.clear(); self?.refreshPolicy() } })
-        observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.sessionIsActive = true; self?.refreshPolicy() } })
-        observers.append(DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.screenIsLocked = true; self?.clear(); self?.refreshPolicy() } })
-        observers.append(DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.screenIsLocked = false; self?.refreshPolicy() } })
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.sessionDidResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sessionIsActive = false; self?.clear(); self?.refreshPolicy() }
+        })
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.sessionDidBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sessionIsActive = true; self?.refreshPolicy() }
+        })
+        observers.append(DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.apple.screenIsLocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.screenIsLocked = true; self?.clear(); self?.refreshPolicy() }
+        })
+        observers.append(DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.apple.screenIsUnlocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.screenIsLocked = false; self?.refreshPolicy() }
+        })
     }
-    func use(profileID: UUID) { clear(); self.profileID = profileID; refreshPolicy() }
+    func use(profileID: UUID) {
+        clear(); self.profileID = profileID; refreshPolicy()
+    }
     private func clear() {
         AutofillSuggestions.shared.reset(); frames.removeAll()
-        for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? [] { session.clear() }
+        for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? [] {
+            session.clear()
+        }
     }
-    func resetDismissals(kind: AutofillSaveKind, profileID: UUID) { for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? [] where session.profileID == profileID { session.resetDismissals(kind: kind) } }
+    func resetDismissals(kind: AutofillSaveKind, profileID: UUID) {
+        for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? []
+        where session.profileID == profileID {
+            session.resetDismissals(kind: kind)
+        }
+    }
     func rememberFilledUsername(_ value: String, origin: String, documentID: String, in page: BrowserPage) {
         guard !value.isEmpty, value.count <= 500, isEnabled(.password, profileID: page.profileID), let session = sessions.object(forKey: page) else { return }
         var step = AutofillSaveSession.UsernameStep(origin: origin, value: value, documentID: documentID, attemptID: UUID()); step.completed = true; session.username = step
     }
     func isEnabled(_ kind: AutofillSaveKind, profileID: UUID) -> Bool {
         guard sessionIsActive, !screenIsLocked, profileID == self.profileID, profileID != Profile.privateID else { return false }
-        switch kind { case .password: return PasswordAutofill.shared.isEnabled; case .card: return BrowserSettings.shared.fillsPaymentCards; case .contact: return BrowserSettings.shared.fillsContacts }
+        switch kind {
+        case .password:
+            return PasswordAutofill.shared.isEnabled
+        case .card:
+            return BrowserSettings.shared.fillsPaymentCards
+        case .contact:
+            return BrowserSettings.shared.fillsContacts
+        }
     }
 
     func install(in page: BrowserPage, session: AutofillSaveSession) {
@@ -153,8 +235,16 @@ final class AutofillSaveCoordinator {
     }
     func refreshPolicy() {
         AutofillSuggestions.shared.reset()
-        for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? [] { session.refreshPolicy() }
-        for (key, list) in frames { guard let page = sessions.keyEnumerator().allObjects.compactMap({ $0 as? BrowserPage }).first(where: { ObjectIdentifier($0) == key }) else { continue }; for frame in list.values.values { applyPolicy(in: page, frame: frame) } }
+        for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? [] {
+            session.refreshPolicy()
+        }
+        for (key, list) in frames {
+            guard let page = sessions.keyEnumerator().allObjects.compactMap({ $0 as? BrowserPage })
+                .first(where: { ObjectIdentifier($0) == key }) else { continue }
+            for frame in list.values.values {
+                applyPolicy(in: page, frame: frame)
+            }
+        }
     }
     private func applyPolicy(in page: BrowserPage, frame: BrowserFrame) {
         guard let session = sessions.object(forKey: page), session.page === page else { return }
@@ -187,7 +277,9 @@ final class AutofillSaveCoordinator {
                 && (frame.securityOrigin.port == 0 ? 443 : frame.securityOrigin.port) == (expected.port ?? 443)
         }
         guard let list = frames[ObjectIdentifier(page)], let frame = list.values[documentID], matches(frame) else { return false }
-        if let chromium = page.chromium { return (try? await chromium.isLive(frame: frame)) == true }
+        if let chromium = page.chromium {
+            return (try? await chromium.isLive(frame: frame)) == true
+        }
         let current = try? await page.callAsyncJavaScript("return globalThis.__wsurfAutofillForms?.documentID;", arguments: [:], in: frame.isMainFrame ? nil : frame, contentWorld: Self.world)
         return current as? String == documentID
     }
@@ -199,8 +291,14 @@ final class AutofillSaveCoordinator {
             AutofillDiagnostics.note(.saveScriptReady, kind: .password)
             guard let documentID = body["documentID"] as? String, UUID(uuidString: documentID) != nil else { return }
             let list = frames[key] ?? FrameList(); if message.frameInfo.isMainFrame, list.mainDocumentID != documentID { list.mainDocumentID = documentID; list.values = [:] }
-            if list.values[documentID] == nil, list.values.count >= 100, let oldest = list.values.keys.first(where: { $0 != list.mainDocumentID }) { list.values[oldest] = nil }
-            list.values[documentID] = message.frameInfo; frames[key] = list; applyPolicy(in: page, frame: message.frameInfo); return
+            if list.values[documentID] == nil, list.values.count >= 100,
+               let oldest = list.values.keys.first(where: { $0 != list.mainDocumentID }) {
+                list.values[oldest] = nil
+            }
+            list.values[documentID] = message.frameInfo
+            frames[key] = list
+            applyPolicy(in: page, frame: message.frameInfo)
+            return
         }
         guard page.window != nil, !page.isHiddenOrHasHiddenAncestor, page.hasOnlySecureContent,
               let documentID = body["documentID"] as? String, frames[key]?.values[documentID] != nil,
@@ -208,21 +306,84 @@ final class AutofillSaveCoordinator {
               let rawURL = body["url"] as? String, let url = URL(string: rawURL), let origin = SavedPassword.origin(for: url),
               message.frameInfo.securityOrigin.protocol == "https", message.frameInfo.securityOrigin.host == url.host?.lowercased(),
               (message.frameInfo.securityOrigin.port == 0 ? 443 : message.frameInfo.securityOrigin.port) == (url.port ?? 443) else { return }
-        if action == "diagnostic", let value = body["event"] as? String, let event = AutofillDiagnostics.Event(rawValue: value), [.editNoScope, .editDisabled, .editRecorded, .submitNoEdits, .submitInvalid, .submitCaptured].contains(event) { AutofillDiagnostics.note(event, kind: .password); return }
+        if action == "diagnostic", let value = body["event"] as? String,
+           let event = AutofillDiagnostics.Event(rawValue: value),
+           [.editNoScope, .editDisabled, .editRecorded, .submitNoEdits, .submitInvalid, .submitCaptured].contains(event) {
+            AutofillDiagnostics.note(event, kind: .password)
+            return
+        }
         guard let rawAttemptID = body["attemptID"] as? String, let attemptID = UUID(uuidString: rawAttemptID), let formID = body["formID"] as? String, Int(formID) ?? 0 > 0 else { return }
-        if action == "discard" { if session.username?.attemptID == attemptID { session.username = nil }; session.submissions.discard(id: attemptID, documentID: documentID, formID: formID); return }
-        if action == "complete" { if session.username?.attemptID == attemptID { session.username?.completed = true }; session.submissions.complete(id: attemptID, documentID: documentID, formID: formID); return }
-        guard action == "stage", let source = body["source"] as? String, ["submit", "interaction", "automatic", "pagehide"].contains(source) else { return }
-        if source != "pagehide", isEnabled(.password, profileID: session.profileID), let value = body["username"] as? String, !value.isEmpty, value.count <= 500 { session.username = AutofillSaveSession.UsernameStep(origin: origin, value: value, documentID: documentID, attemptID: attemptID) }
+        if action == "discard" {
+            if session.username?.attemptID == attemptID {
+                session.username = nil
+            }
+            session.submissions.discard(id: attemptID, documentID: documentID, formID: formID)
+            return
+        }
+        if action == "complete" {
+            if session.username?.attemptID == attemptID {
+                session.username?.completed = true
+            }
+            session.submissions.complete(id: attemptID, documentID: documentID, formID: formID)
+            return
+        }
+        guard action == "stage", let source = body["source"] as? String,
+              ["submit", "interaction", "automatic", "pagehide"].contains(source) else { return }
+        if source != "pagehide", isEnabled(.password, profileID: session.profileID),
+           let value = body["username"] as? String, !value.isEmpty, value.count <= 500 {
+            session.username = AutofillSaveSession.UsernameStep(
+                origin: origin,
+                value: value,
+                documentID: documentID,
+                attemptID: attemptID
+            )
+        }
         var candidates: [AutofillSaveCandidate] = []
         if isEnabled(.password, profileID: session.profileID), let login = body["password"] as? [String: String], let password = login["password"] {
-            var username = login["username"] ?? ""; if username.isEmpty, let remembered = session.username, remembered.origin == origin, (remembered.completed || remembered.documentID != documentID), Date.now.timeIntervalSince(remembered.date) < 300 { username = remembered.value }
-            if let record = try? SavedPassword(website: origin, username: username, password: password) { candidates.append(.password(record)) }
+            var username = login["username"] ?? ""
+            if username.isEmpty, let remembered = session.username, remembered.origin == origin,
+               remembered.completed || remembered.documentID != documentID,
+               Date.now.timeIntervalSince(remembered.date) < 300 {
+                username = remembered.value
+            }
+            if let record = try? SavedPassword(website: origin, username: username, password: password) {
+                candidates.append(.password(record))
+            }
         }
-        if isEnabled(.card, profileID: session.profileID), let values = body["card"] as? [String: String], values["cc-number"]?.count ?? 0 <= 32,
-           let number = values["cc-number"], let month = values["cc-exp-month"].flatMap(Int.init), let year = values["cc-exp-year"].flatMap(Int.init), let card = try? PaymentCard(number: number, cardholder: values["cc-name"] ?? "", month: month, year: year, securityCode: values["cc-csc"]), !card.isExpired() { candidates.append(.card(card)) }
-        if isEnabled(.contact, profileID: session.profileID), let values = body["contact"] as? [String: String], values.count <= 16, values.values.allSatisfy({ $0.count <= 500 }) {
-            var contact = AutofillContact(); contact.givenName = values["given-name"] ?? values["name"] ?? ""; contact.familyName = values["family-name"] ?? ""; contact.organization = values["organization"] ?? ""; contact.email = values["email"] ?? ""; contact.phone = values["tel"] ?? ""; contact.street = values["street-address"] ?? [values["address-line1"], values["address-line2"], values["address-line3"]].compactMap { $0 }.joined(separator: "\n"); contact.city = values["address-level2"] ?? ""; contact.region = values["address-level1"] ?? ""; contact.postalCode = values["postal-code"] ?? ""; contact.countryCode = (values["country"] ?? "").uppercased(); if contact.isValid, (!contact.street.isEmpty && !contact.name.isEmpty) || !contact.email.isEmpty { candidates.append(.contact(contact)) }
+        if isEnabled(.card, profileID: session.profileID),
+           let values = body["card"] as? [String: String], values["cc-number"]?.count ?? 0 <= 32,
+           let number = values["cc-number"], let month = values["cc-exp-month"].flatMap(Int.init),
+           let year = values["cc-exp-year"].flatMap(Int.init),
+           let card = try? PaymentCard(
+               number: number,
+               cardholder: values["cc-name"] ?? "",
+               month: month,
+               year: year,
+               securityCode: values["cc-csc"]
+           ), !card.isExpired() {
+            candidates.append(.card(card))
+        }
+        if isEnabled(.contact, profileID: session.profileID),
+           let values = body["contact"] as? [String: String],
+           values.count <= 16, values.values.allSatisfy({ $0.count <= 500 }) {
+            var contact = AutofillContact()
+            contact.givenName = values["given-name"] ?? values["name"] ?? ""
+            contact.familyName = values["family-name"] ?? ""
+            contact.organization = values["organization"] ?? ""
+            contact.email = values["email"] ?? ""
+            contact.phone = values["tel"] ?? ""
+            contact.street = values["street-address"] ?? [
+                values["address-line1"],
+                values["address-line2"],
+                values["address-line3"],
+            ].compactMap { $0 }.joined(separator: "\n")
+            contact.city = values["address-level2"] ?? ""
+            contact.region = values["address-level1"] ?? ""
+            contact.postalCode = values["postal-code"] ?? ""
+            contact.countryCode = (values["country"] ?? "").uppercased()
+            if contact.isValid, (!contact.street.isEmpty && !contact.name.isEmpty) || !contact.email.isEmpty {
+                candidates.append(.contact(contact))
+            }
         }
         session.submissions.stage(id: attemptID, documentID: documentID, formID: formID, origin: origin, candidates: candidates, frame: message.frameInfo, source: source)
     }

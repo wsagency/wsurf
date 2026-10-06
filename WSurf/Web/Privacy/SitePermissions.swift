@@ -177,7 +177,9 @@ final class SitePermissions {
     /// Non-default raw engine identifiers are kept per canonical HTTP(S)
     /// origin. Missing entries default to WebKit for old profile files.
     private(set) var engineRecords: [String: String] = [:]
-    var engineOrigins: [String] { engineRecords.keys.sorted() }
+    var engineOrigins: [String] {
+        engineRecords.keys.sorted()
+    }
     func hasEngineSetting(for origin: String) -> Bool {
         let key = normalizeEngineOrigin(origin)
         return !key.isEmpty && engineRecords[key] != nil
@@ -262,7 +264,6 @@ final class SitePermissions {
         else { return "" }
         return normalize(Self.origin(for: url))
     }
-
 
     var autoplayOrigins: [String] {
         autoplayRecords.keys.sorted()

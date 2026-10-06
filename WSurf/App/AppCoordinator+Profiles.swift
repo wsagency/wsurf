@@ -44,9 +44,10 @@ extension AppCoordinator {
 
         let closingTabs = browser.tabs
         browser.closeAllTabs(saving: false)
-        for tab in closingTabs { await tab.waitForRetirement() }
+        for tab in closingTabs {
+            await tab.waitForRetirement()
+        }
         timing.mark("close tabs")
-
 
         let database = profile.isPrivate ? nil : profile.makeDatabase()
         timing.mark("open database")

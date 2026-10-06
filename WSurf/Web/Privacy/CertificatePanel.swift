@@ -56,4 +56,3 @@ extension ChromiumPage {
         return CertificateTrust.makeTrust(from: chain, host: owner?.url?.host)
     }
 }
-

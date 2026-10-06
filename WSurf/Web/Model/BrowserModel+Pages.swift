@@ -16,6 +16,7 @@ extension BrowserModel {
         let spared = Set([activeTabID].compactMap { $0 } + recentlyActive.prefix(keep))
         var discarded = 0
         for tab in tabs where !spared.contains(tab.id)
+            && !tab.isFavorite
             && tab.canDiscardWebContent
             && protectionReason(for: tab) == nil {
             tab.discardWebContent()
@@ -138,7 +139,6 @@ extension BrowserModel {
             _ = await tab.switchEngine(to: engine)
         }
     }
-
 
     func keepsActive(_ tab: BrowserTab) -> Bool {
         let origin = siteOrigin(for: tab)

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 wsagency
+// SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
 import AppKit
@@ -11,8 +11,12 @@ import WebKit
 @MainActor
 final class ChromiumPage: NSView {
     let profile: Profile
-    var profileID: UUID { profile.id }
-    var isPrivate: Bool { profile.isPrivate }
+    var profileID: UUID {
+        profile.id
+    }
+    var isPrivate: Bool {
+        profile.isPrivate
+    }
     weak var owner: BrowserPage?
     private(set) var browserID: Int32 = -1
     private(set) var isClosed = false
@@ -54,9 +58,15 @@ final class ChromiumPage: NSView {
         autoresizingMask = [.width, .height]
     }
 
-    required init?(coder: NSCoder) { nil }
-    override var isFlipped: Bool { true }
-    override var acceptsFirstResponder: Bool { !isClosed }
+    required init?(coder: NSCoder) {
+        nil
+    }
+    override var isFlipped: Bool {
+        true
+    }
+    override var acceptsFirstResponder: Bool {
+        !isClosed
+    }
 
     override func becomeFirstResponder() -> Bool {
         guard !isClosed else { return false }
@@ -69,7 +79,9 @@ final class ChromiumPage: NSView {
         guard window != nil, raw == nil, !closing, !isClosed else { return }
         do {
             defer {
-                for waiter in attachmentWaiters { waiter.resume() }
+                for waiter in attachmentWaiters {
+                    waiter.resume()
+                }
                 attachmentWaiters.removeAll()
             }
             try materialize()
@@ -92,7 +104,9 @@ final class ChromiumPage: NSView {
         let client = ChromiumClient(page: self)
         let pointer = client.makeClient()
         defer {
-            if raw == nil { client.close() }
+            if raw == nil {
+                client.close()
+            }
         }
         var info = cef_window_info_t()
         info.size = MemoryLayout<cef_window_info_t>.stride
@@ -138,7 +152,9 @@ final class ChromiumPage: NSView {
 
     func ensureReady() async throws {
         guard !isClosed, !closing else { throw ChromiumError.closed }
-        if raw == nil { try materialize() }
+        if raw == nil {
+            try materialize()
+        }
         guard let preparation else { throw ChromiumError.closed }
         try await preparation.value
         guard !isClosed, !closing else { throw ChromiumError.closed }
@@ -253,7 +269,9 @@ final class ChromiumPage: NSView {
         guard let nativeRequest = factories.request() else { throw ChromiumError.closed }
         var requestTransferred = false
         defer {
-            if !requestTransferred { ChromiumInterop.release(UnsafeMutableRawPointer(nativeRequest)) }
+            if !requestTransferred {
+                ChromiumInterop.release(UnsafeMutableRawPointer(nativeRequest))
+            }
         }
         ChromiumInterop.withString(url.absoluteString) { nativeRequest.pointee.set_url?(nativeRequest, $0) }
         ChromiumInterop.withString(request.httpMethod ?? "GET") { nativeRequest.pointee.set_method?(nativeRequest, $0) }
@@ -268,12 +286,16 @@ final class ChromiumPage: NSView {
             guard let post = factories.post() else { throw ChromiumError.unavailable("Chromium could not create the request body.") }
             var postTransferred = false
             defer {
-                if !postTransferred { ChromiumInterop.release(UnsafeMutableRawPointer(post)) }
+                if !postTransferred {
+                    ChromiumInterop.release(UnsafeMutableRawPointer(post))
+                }
             }
             guard let element = factories.element() else { throw ChromiumError.unavailable("Chromium could not create the request body.") }
             var elementTransferred = false
             defer {
-                if !elementTransferred { ChromiumInterop.release(UnsafeMutableRawPointer(element)) }
+                if !elementTransferred {
+                    ChromiumInterop.release(UnsafeMutableRawPointer(element))
+                }
             }
             body.withUnsafeBytes { element.pointee.set_to_bytes?(element, $0.count, $0.baseAddress) }
             guard let addElement = post.pointee.add_element else {
@@ -315,8 +337,11 @@ final class ChromiumPage: NSView {
         awaitingNativeNavigation = true
         navigationStarted = false
         withBrowser { browser in
-            if ignoreCache { browser.pointee.reload_ignore_cache?(browser) }
-            else { browser.pointee.reload?(browser) }
+            if ignoreCache {
+                browser.pointee.reload_ignore_cache?(browser)
+            } else {
+                browser.pointee.reload?(browser)
+            }
         }
         return next
     }
@@ -350,8 +375,7 @@ final class ChromiumPage: NSView {
         navigationStarted = false
         Task { [weak self] in
             guard let self else { return }
-            do { _ = try await command("Page.navigateToHistoryEntry", params: ["entryId": entry]) }
-            catch { owner?.onNavigationFailed?(next, error) }
+            do { _ = try await command("Page.navigateToHistoryEntry", params: ["entryId": entry]) } catch { owner?.onNavigationFailed?(next, error) }
         }
         return next
     }
@@ -369,8 +393,12 @@ final class ChromiumPage: NSView {
         }
     }
 
-    func frames() async throws -> [BrowserFrame] { try await devTools.frames() }
-    func isLive(frame: BrowserFrame) async throws -> Bool { try await devTools.isLive(frame: frame) }
+    func frames() async throws -> [BrowserFrame] {
+        try await devTools.frames()
+    }
+    func isLive(frame: BrowserFrame) async throws -> Bool {
+        try await devTools.isLive(frame: frame)
+    }
 
     func frame(id: String?, requestURL: URL?, isMainFrame: Bool) async throws -> BrowserFrame {
         let live = try await frames()
@@ -388,10 +416,10 @@ final class ChromiumPage: NSView {
         let area = rect ?? bounds
         if let width, area.width > 0 {
             parameters["clip"] = ["x": area.minX, "y": area.minY, "width": area.width,
-                "height": area.height, "scale": Double(width / area.width)]
+                "height": area.height, "scale": Double(width / area.width), ]
         } else if rect != nil {
             parameters["clip"] = ["x": area.minX, "y": area.minY, "width": area.width,
-                "height": area.height, "scale": 1]
+                "height": area.height, "scale": 1, ]
         }
         let response = try await command("Page.captureScreenshot", params: parameters)
         guard let encoded = response["data"] as? String, let data = Data(base64Encoded: encoded), let image = NSImage(data: data) else {
@@ -400,9 +428,49 @@ final class ChromiumPage: NSView {
         return image
     }
 
+    func insertText(_ text: String) async throws {
+        _ = try await command("Input.insertText", params: ["text": text])
+    }
+
+    func selectAll() {
+        guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return }
+        responder.selectAll(nil)
+    }
+
+    func ownsResponder(_ responder: NSResponder?) -> Bool {
+        responder === self || (responder as? NSView)?.isDescendant(of: self) == true
+    }
+
     func sendKeyEvent(_ event: NSEvent) {
-        if event.type == .keyUp { nativeView?.keyUp(with: event) }
-        else { nativeView?.keyDown(with: event) }
+        guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return }
+        if event.type == .keyUp {
+            responder.keyUp(with: event)
+        } else {
+            responder.keyDown(with: event)
+        }
+    }
+
+    func sendMouseMove(to point: CGPoint, modifiers: NSEvent.ModifierFlags) {
+        var flags: UInt32 = 0
+        if modifiers.contains(.shift) {
+            flags |= UInt32(EVENTFLAG_SHIFT_DOWN.rawValue)
+        }
+        if modifiers.contains(.control) {
+            flags |= UInt32(EVENTFLAG_CONTROL_DOWN.rawValue)
+        }
+        if modifiers.contains(.option) {
+            flags |= UInt32(EVENTFLAG_ALT_DOWN.rawValue)
+        }
+        if modifiers.contains(.command) {
+            flags |= UInt32(EVENTFLAG_COMMAND_DOWN.rawValue)
+        }
+        if modifiers.contains(.capsLock) {
+            flags |= UInt32(EVENTFLAG_CAPS_LOCK_ON.rawValue)
+        }
+        withHost { host in
+            var event = cef_mouse_event_t(x: Int32(point.x.rounded()), y: Int32(point.y.rounded()), modifiers: flags)
+            host.pointee.send_mouse_move_event?(host, &event, 0)
+        }
     }
 
     func willNavigate(_ request: URLRequest, isRedirect: Bool) {
@@ -413,7 +481,9 @@ final class ChromiumPage: NSView {
             navigation = PageNavigation()
             navigationStarted = false
         }
-        if navigation == nil { navigation = PageNavigation() }
+        if navigation == nil {
+            navigation = PageNavigation()
+        }
         awaitingNativeNavigation = false
         requestedURL = url
         owner?.isLoading = true
@@ -463,8 +533,12 @@ final class ChromiumPage: NSView {
         owner?.onNavigationFailed?(navigation, error)
     }
 
-    func didTerminate() { owner?.onContentProcessTerminated?() }
-    func didChangeTitle(_ title: String) { owner?.title = title }
+    func didTerminate() {
+        owner?.onContentProcessTerminated?()
+    }
+    func didChangeTitle(_ title: String) {
+        owner?.title = title
+    }
     func didChangeURL(_ url: URL?) {
         guard !initialDocument || url?.absoluteString != "about:blank" else { return }
         owner?.url = url
@@ -477,10 +551,16 @@ final class ChromiumPage: NSView {
         owner?.isLoading = loading
         owner?.canGoBack = canGoBack
         owner?.canGoForward = canGoForward
-        if !loading { owner?.estimatedProgress = 1 }
+        if !loading {
+            owner?.estimatedProgress = 1
+        }
     }
-    func didChangeProgress(_ progress: Double) { owner?.estimatedProgress = progress }
-    func didChangeSecurity(_ secure: Bool) { owner?.hasOnlySecureContent = secure }
+    func didChangeProgress(_ progress: Double) {
+        owner?.estimatedProgress = progress
+    }
+    func didChangeSecurity(_ secure: Bool) {
+        owner?.hasOnlySecureContent = secure
+    }
 
     private func updateNativeSecurity() {
         let secure = withHost { host -> Bool in
@@ -493,8 +573,12 @@ final class ChromiumPage: NSView {
         } ?? false
         owner?.hasOnlySecureContent = secure
     }
-    func didHoverLink(_ url: URL?) { owner?.onLinkHovered?(url) }
-    func didChangeFullscreen(_ enabled: Bool) { owner?.isFullscreen = enabled }
+    func didHoverLink(_ url: URL?) {
+        owner?.onLinkHovered?(url)
+    }
+    func didChangeFullscreen(_ enabled: Bool) {
+        owner?.isFullscreen = enabled
+    }
 
     private func refreshHistory() {
         guard raw != nil, !closing, !isClosed else { return }
@@ -544,18 +628,29 @@ final class ChromiumPage: NSView {
         devTools.close()
         client?.close()
         client = nil
-        if let raw { ChromiumInterop.release(UnsafeMutableRawPointer(raw)) }
+        if let raw {
+            ChromiumInterop.release(UnsafeMutableRawPointer(raw))
+        }
         raw = nil
         ChromiumRuntime.shared.unregister(self)
-        for waiter in attachmentWaiters { waiter.resume() }
+        for waiter in attachmentWaiters {
+            waiter.resume()
+        }
         attachmentWaiters.removeAll()
-        for waiter in closeWaiters { waiter.resume() }
+        for waiter in closeWaiters {
+            waiter.resume()
+        }
         closeWaiters.removeAll()
     }
-
-    func cancelDownload(id: UInt32) { client?.cancelDownload(id: id) }
-    func pauseDownload(id: UInt32) { client?.pauseDownload(id: id) }
-    func resumeDownload(id: UInt32) { client?.resumeDownload(id: id) }
+    func cancelDownload(id: UInt32) {
+        client?.cancelDownload(id: id)
+    }
+    func pauseDownload(id: UInt32) {
+        client?.pauseDownload(id: id)
+    }
+    func resumeDownload(id: UInt32) {
+        client?.resumeDownload(id: id)
+    }
 
     func revokeCapture(_ permission: WebPermission) async throws {
         guard let client else { throw ChromiumError.closed }

@@ -19,7 +19,6 @@ final class FaviconWatcher {
         }
     }
 
-
     private static let script = #"""
     (() => {
       if (window.__wsurfFavicon) return;

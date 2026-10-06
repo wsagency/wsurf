@@ -56,7 +56,9 @@ enum CertificateTrust {
         guard let trusted = try? await evaluate(trust),
               generation == exceptionGeneration
         else { return .useDefaultHandling }
-        if trusted { return .useDefaultHandling }
+        if trusted {
+            return .useDefaultHandling
+        }
         guard let fingerprint = fingerprint(of: trust) else { return .useDefaultHandling }
         let key = host.lowercased()
         if accepted[key] == fingerprint {
@@ -89,19 +91,21 @@ enum CertificateTrust {
         }
     }
 
-    static var acceptedHostCount: Int { accepted.count }
-    
+    static var acceptedHostCount: Int {
+        accepted.count
+    }
+
     nonisolated static func chainData(
         from certificate: UnsafeMutablePointer<cef_x509_certificate_t>
     ) -> [Data] {
         let count = certificate.pointee.get_issuer_chain_size?(certificate) ?? 0
-        var values = Array<Data?>(repeating: nil, count: count + 1)
+        var values = [Data?](repeating: nil, count: count + 1)
         if let leaf = certificate.pointee.get_derencoded?(certificate) {
             values[0] = copy(binary: leaf)
             ChromiumInterop.release(UnsafeMutableRawPointer(leaf))
         }
         guard count > 0 else { return values.compactMap { $0 } }
-        var chain = Array<UnsafeMutablePointer<cef_binary_value_t>?>(repeating: nil, count: count)
+        var chain = [UnsafeMutablePointer<cef_binary_value_t>?](repeating: nil, count: count)
         var returned = count
         chain.withUnsafeMutableBufferPointer { buffer in
             certificate.pointee.get_derencoded_issuer_chain?(certificate, &returned, buffer.baseAddress)
@@ -136,7 +140,6 @@ enum CertificateTrust {
         guard copied == size else { return nil }
         return data
     }
-
 
     // MARK: - Asking
 

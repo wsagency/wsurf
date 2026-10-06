@@ -13,22 +13,42 @@ final class PasswordAutofill {
     static let world = AutofillPage.world
     private static let handlerName = "wsurfPasswords"
     private(set) var profileID = Profile.originalID
-    var isPrivate: Bool { profileID == Profile.privateID }
+    var isPrivate: Bool {
+        profileID == Profile.privateID
+    }
     @ObservationIgnored var extensions: () -> [InstalledExtension] = { [] }
-    var isEnabled: Bool { !isPrivate && BrowserSettings.shared.fillsPasswords && PasswordExtensionPolicy.provider(in: extensions(), selectedID: BrowserSettings.shared.passwordExtensionID) == nil }
+    var isEnabled: Bool {
+        !isPrivate && BrowserSettings.shared.fillsPasswords
+            && PasswordExtensionPolicy.provider(in: extensions(), selectedID: BrowserSettings.shared.passwordExtensionID) == nil
+    }
     @ObservationIgnored private let pages = NSHashTable<BrowserPage>.weakObjects()
     @ObservationIgnored private var frames: [ObjectIdentifier: [String: BrowserFrame]] = [:]
 
     func refreshPolicy() {
         AutofillSaveCoordinator.shared.refreshPolicy()
-        for page in pages.allObjects { for frame in (frames[ObjectIdentifier(page)] ?? [:]).values { applyPolicy(in: page, frame: frame) } }
+        for page in pages.allObjects {
+            for frame in (frames[ObjectIdentifier(page)] ?? [:]).values {
+                applyPolicy(in: page, frame: frame)
+            }
+        }
     }
     private func applyPolicy(in page: BrowserPage, frame: BrowserFrame) {
         guard page.profileID == profileID else { return }
         let enabled = isEnabled
-        Task { _ = try? await page.callAsyncJavaScript("globalThis.__wsurfPasswords?.setEnabled(enabled);", arguments: ["enabled": enabled], in: frame, contentWorld: Self.world) }
+        Task {
+            _ = try? await page.callAsyncJavaScript(
+                "globalThis.__wsurfPasswords?.setEnabled(enabled);",
+                arguments: ["enabled": enabled],
+                in: frame,
+                contentWorld: Self.world
+            )
+        }
     }
-    func use(profileID: UUID) { self.profileID = profileID; frames.removeAll(); refreshPolicy() }
+    func use(profileID: UUID) {
+        self.profileID = profileID
+        frames.removeAll()
+        refreshPolicy()
+    }
 
     func install(in page: BrowserPage) {
         pages.add(page)
@@ -40,7 +60,11 @@ final class PasswordAutofill {
                 guard let documentID = body["documentID"] as? String, UUID(uuidString: documentID) != nil else { return }
                 var values = self.frames[ObjectIdentifier(message.page)] ?? [:]
                 values[documentID] = message.frameInfo
-                if message.frameInfo.isMainFrame { self.frames[ObjectIdentifier(message.page)] = [documentID: message.frameInfo] } else { self.frames[ObjectIdentifier(message.page)] = values }
+                if message.frameInfo.isMainFrame {
+                    self.frames[ObjectIdentifier(message.page)] = [documentID: message.frameInfo]
+                } else {
+                    self.frames[ObjectIdentifier(message.page)] = values
+                }
                 AutofillDiagnostics.note(.scriptReady, kind: .password)
                 self.applyPolicy(in: message.page, frame: message.frameInfo)
             } else {

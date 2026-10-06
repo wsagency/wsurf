@@ -1,6 +1,18 @@
-# WSurf agent instructions
+# Development rules
 
-## Development workflow
+These rules apply to all code, documentation, and configuration changes in this repository.
+
+- Use Superpowers for every task: start with `using-superpowers` and follow the relevant skills using native omp tools.
+
+- Use one dedicated Git worktree and a unique `feature/<short-name>` branch per task, based on the latest `origin/main`. Do not develop in the `main` checkout or switch branches in a shared checkout.
+- Leave other tasks' uncommitted changes alone. Never stash, discard, move, or commit them as part of your task.
+- Keep build output and DerivedData local to your worktree; do not reuse another worktree's build directory.
+- Integrate changes only through a PR targeting `main`, after review and required CI checks pass. Never commit or push changes directly to `main`.
+- Local development builds, tests, and PR validation builds are allowed on feature branches. Release builds and deployments, including signed previews, use only PR-merged commits on `main` after CI passes. Release tags must point to commits on `main`; never deploy a feature branch or dirty working tree.
+
+Follow [CONTRIBUTING.md](CONTRIBUTING.md#development-workflow) for the worktree setup and PR checklist, and [RELEASING.md](RELEASING.md#source-and-deployment-policy) for release and deployment gates.
+
+## Agent workflow
 
 - Use Superpowers for all work in this repository.
 - At the start of each task, read `skill://using-superpowers`, then load and
@@ -31,7 +43,6 @@
 - Merging or publishing back to the shared checkout requires explicit user
   authorization. Build outputs and stage data must remain separately owned;
   they are not a substitute for a source worktree.
-
 ## Native builds and verification
 
 - Develop locally on the Air (`m5air.local`); build and test the native WSurf app
@@ -60,3 +71,4 @@
   replace the user's installed app or use production browsing data.
 - Report component probes separately from whole-app builds and UI checks.
   Never claim the app is verified from a CEF probe or Swift syntax check alone.
+- Production app replacement is separate from stage verification and requires the user's deployment authorization.

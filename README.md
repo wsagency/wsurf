@@ -55,22 +55,28 @@ versions.
   WebKit (default) or embedded Chromium. Changing engines reloads the website
   and resets its Back/Forward history; cookies, storage, and sign-ins are separate.
 - **Choose a theme:** Settings › Appearance offers Auto, Light, Dark, pastel
-  Light Calm, and Dark Calm.
+  Light Calm, and Dark Calm. Theme customization previews brightness, hue, and
+  a primary-derived palette live. Control icons and URL text have independent
+  colors and opacity, saved per theme; Reset restores that theme's defaults.
 - **Tune the sidebar:** Settings › Appearance › Sidebar controls the installed
   font family, text size and weight, row spacing, and folder tint (including none).
   Loaded and unloaded text/icon colors and opacity are saved separately for each
   theme. Original favicons remain recognizable in monochrome. Click a tab title
   to activate it; use Right-click › Rename to edit its name.
-- **Unload without losing links:** sidebar X/minus, middle-click, and ⌘W unload
-  page content while retaining the link, pin, and folder membership. Unloaded
-  tabs show Play to load them again; selecting the link also reloads it.
-  Settings › Appearance › Sidebar › Unloaded tab action chooses between
-  holding ⌘ to remove and a separate X immediately left of Play.
-  In the separate-X mode, Play reloads even with ⌘ held. Right-click › Remove Tab
-  is available in either mode.
-  Hover a folder while holding ⌘ to show its X immediately left of the far-right
-  count. Click that X to unload every descendant tab without removing links.
-  Tabs with unsaved forms, active downloads, or other protections stay loaded.
+- **Close or unload:** X removes an unpinned tab and its link; ⌘-click its
+  control to unload instead. Pinned tabs unload with the curved-down arrow or
+  reload with Play; ⌘-click their control to remove the pin and tab.
+  Right-click › Unload Tab retains the link, pin, and folder membership.
+  Middle-click and ⌘W also unload. A folder's curved-down arrow unloads all
+  descendant tabs; X is reserved for removal. Existing unload protections remain.
+- **Keep favorites:** Right-click a tab › Add to Favorites promotes its existing
+  link into the icon-only strip above the sidebar without a duplicate row.
+  Favorites belong to the current profile and never sleep automatically.
+  Their context menu can unload them manually or return them to ordinary pins.
+- **Create and restore folders:** New Folder and Move to Folder › New Folder
+  reveal the new folder and focus its inline name editor, including in icons-only
+  mode. Undo, ⌘Z, or Ctrl-Z restores deleted folders and removed links with their
+  names, hierarchy, pins, and positions. Text editors retain their own Undo.
 - **Pin folders independently:** Right-click a folder › Pin moves it into the
   top pinned section; Unpin moves it below the remaining pins. Folder pinning
   does not change its tabs' bookmarked URLs. Empty folders can be pinned, and
@@ -88,6 +94,23 @@ versions.
 - **Add WebKit extensions:** install from the Chrome Web Store or Firefox Add-ons.
 - **Separate browsing:** profiles keep cookies, history, tabs, permissions, and
   extensions separate. Press ⇧⌘N for private browsing.
+- **Choose a theme:** Settings › Appearance offers Auto, Light, Dark, pastel
+  Light Calm, and Dark Calm.
+- **Tune the sidebar:** Settings › Appearance › Sidebar controls the installed
+  font family, text size and weight, row spacing, and folder tint.
+  Loaded and unloaded text/icon colors and opacity are saved separately for each
+  theme. Original favicons remain recognizable in monochrome. Click a tab title
+  to activate it; use Right-click › Rename to edit its name.
+- **Unload without losing links:** sidebar X/minus, middle-click, and ⌘W unload
+  page content while retaining the link, pin, and folder membership. Unloaded
+  tabs show Play to load them again; selecting the link also reloads it.
+  Settings › Appearance lets you show a removal X beside Play or reveal it
+  while holding ⌘. Remove Tab permanently removes the tab and its link.
+  Hover a folder while holding ⌘ to show its X immediately left of the far-right
+  count. It unloads descendant tabs; existing unload protections still apply.
+- **Pin a folder:** Right-click › Pin keeps the folder above unpinned rows without
+  changing its child bookmarks. Pin/Unpin and folder order survive a restart,
+  including empty folders.
 
 The Apple Passwords compatibility work preserves Apple's official Chrome
 extension identity, public key, authentication, PIN, and native protocol
@@ -212,6 +235,46 @@ is not necessarily the Team ID. The app will also need a provisioned
 implement credential migration or vault unlock, and contains no certificates,
 private keys, vault data, or PRF results. Keep Apple signing material out of
 the website deployment.
+
+### Cloudflare Workers
+
+[`wrangler.jsonc`](wrangler.jsonc) defines the assets-only Worker `wsurf-site`
+with `./wsurf.app` as its document root and `workers_dev` disabled. The existing
+`wsurf.app` Custom Domain is managed separately: the configuration deliberately
+omits `routes`, so recurring deployments do not need DNS or domain permissions.
+[`wsurf.app/_headers`](wsurf.app/_headers) sets the association file's
+`Content-Type: application/json`. The existing hidden `.well-known` file and
+its app identity are preserved. No JavaScript Worker, website build, or
+application dependencies are required.
+
+The sole production deploy path is GitHub Actions: a PR merged into `main` in
+`wsagency/wsurf` triggers the existing `CI` workflow. After that exact commit's
+push-triggered CI succeeds,
+[`deploy-site.yml`](.github/workflows/deploy-site.yml) checks out the tested
+SHA and runs `npx --yes wrangler@4.136.2 deploy` to publish to
+`https://wsurf.app`. Superseded main commits are skipped. Failed CI, PR/fork/tag
+and other-branch runs cannot deploy. There is no native Workers Builds
+connection, GitHub App grant, or competing manual path. Native app signing and
+release workflows remain independent.
+
+The repository secret `CLOUDFLARE_API_TOKEN` is restricted to **Individual Workers
+Editor** on the existing `wsurf-site` only. It has no account-wide, DNS, route,
+KV, or R2 grant. Never use operator master credentials as the build secret or
+add `routes` to this scoped configuration. Custom Domain changes require
+separately authorized operator access.
+
+The production association file must be served anonymously at
+`https://wsurf.app/.well-known/apple-app-site-association` with HTTP 200,
+`Content-Type: application/json`, valid HTTPS, and no redirect or
+authentication.
+
+Local Wrangler/browser checks and approved operational bootstrap passed.
+An actual deployment using only the restricted Worker token passed on
+2026-10-05, preserving the existing Custom Domain and managed DNS record.
+Public anonymous HTTPS GET/HEAD checks confirm the association's HTTP 200,
+JSON MIME, unchanged identity, and no redirect; the rendered site loads its
+CSS and artwork. These operational checks do not replace the PR review and
+successful main CI gate for recurring deployments.
 
 ## License and acknowledgements
 

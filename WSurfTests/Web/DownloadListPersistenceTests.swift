@@ -32,9 +32,13 @@ struct DownloadListPersistenceTests {
         let view = WKWebView(frame: .zero, configuration: configuration)
         let downloads = DownloadManager(destinationFolder: destination, asksWhereToSave: false, file: file)
         for expected in 1...2 {
-            let download = await view.startDownload(using: URLRequest(url: source))
-            downloads.adopt(download, suggestedSource: source)
-            downloads.adopt(download, suggestedSource: source)
+            let download: WKDownload = await withCheckedContinuation { continuation in
+                view.startDownload(using: URLRequest(url: source)) { download in
+                    downloads.adopt(download, suggestedSource: source)
+                    downloads.adopt(download, suggestedSource: source)
+                    continuation.resume(returning: download)
+                }
+            }
             #expect(await waitUntil { downloads.items.filter { $0.state == .finished }.count == expected })
             #expect(downloads.items.count == expected)
             downloads.adopt(download, suggestedSource: source)

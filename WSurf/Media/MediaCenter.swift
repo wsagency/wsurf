@@ -40,7 +40,6 @@ final class MediaModel {
     }
 }
 
-
 @MainActor
 final class MediaCenter {
     let model = MediaModel()
@@ -109,11 +108,16 @@ final class MediaCenter {
         if page === pipTargetPage,
            handlePiPMessage(message, from: page, isMainFrame: isMainFrame) { return }
         guard isMainFrame else { return }
-        if let playing = Self.audioReport(in: message) { onTabAudioChanged?(page, playing) }
-        if let hasVideo = Self.videoReport(in: message) { onTabVideoChanged?(page, hasVideo) }
-        if page === watchedPage { applyWatched(message) }
+        if let playing = Self.audioReport(in: message) {
+            onTabAudioChanged?(page, playing)
+        }
+        if let hasVideo = Self.videoReport(in: message) {
+            onTabVideoChanged?(page, hasVideo)
+        }
+        if page === watchedPage {
+            applyWatched(message)
+        }
     }
-
 
     // MARK: - The tab you are looking at
 
@@ -134,7 +138,6 @@ final class MediaCenter {
         watched.isActive = true
         Self.post("wsurf-resend", to: page)
     }
-
 
     func unwatch() {
         guard watchedPage != nil else { return }
@@ -185,7 +188,9 @@ final class MediaCenter {
         model.playerViewportRect = nil
         model.controlledTabID = tabID
         controlledPage = page
-        if previous != tabID { onControlledTabChanged?(previous, tabID) }
+        if previous != tabID {
+            onControlledTabChanged?(previous, tabID)
+        }
         model.artworkURL = artwork
         artworkIsGuess = artwork == nil
         model.pageTitle = title
@@ -479,11 +484,15 @@ final class MediaCenter {
         pipGesturePoint = nil
     }
 
-    private func forgetPicture(_ page: BrowserPage) {
+    func forgetPicture(_ page: BrowserPage) {
         guard nativePiPPage === page else { return }
         nativePiPPage = nil
-        if pipTargetPage === page { forgetGestureRequest() }
-        if page === controlledPage { model.isInNativePiP = false }
+        if pipTargetPage === page {
+            forgetGestureRequest()
+        }
+        if page === controlledPage {
+            model.isInNativePiP = false
+        }
         returnAskedAt = nil
         onPictureOutChanged?(page, false)
     }
@@ -512,10 +521,14 @@ final class MediaCenter {
             Pipeline.log.notice("media: ignored native Picture in Picture report from Chromium")
             return
         }
-        if page === controlledPage { model.isInNativePiP = isNative }
+        if page === controlledPage {
+            model.isInNativePiP = isNative
+        }
         if isNative {
             guard nativePiPPage !== page else { return }
-            if let previous = nativePiPPage { forgetPicture(previous) }
+            if let previous = nativePiPPage {
+                forgetPicture(previous)
+            }
             pipRequestedAt = nil
             nativePiPPage = page
             pictureWentOutAt = Date()
@@ -526,7 +539,9 @@ final class MediaCenter {
         let wasAsked = returnWasAsked(for: page)
         forgetPicture(page)
         returnAskedAt = nil
-        if wasAsked { onReturnedInline?(page) }
+        if wasAsked {
+            onReturnedInline?(page)
+        }
     }
 
     private func handlePiPMessage(
@@ -580,7 +595,9 @@ final class MediaCenter {
 
     private func handleScriptMessage(_ message: String, from source: BrowserPage, isMainFrame: Bool) {
         if message == "hello" {
-            if isMainFrame { forgetControlledPage() }
+            if isMainFrame {
+                forgetControlledPage()
+            }
             return
         }
         if message.hasPrefix("state:") {
@@ -620,7 +637,6 @@ final class MediaCenter {
         }
         applyTiming(fields, to: model)
     }
-
 
     nonisolated private static func fields(in json: String) -> [String: Double]? {
         guard let data = json.data(using: .utf8) else { return nil }
@@ -914,4 +930,3 @@ enum MediaRoster {
         return roster[(index + 1) % roster.count]
     }
 }
-

@@ -102,7 +102,9 @@ extension AppCoordinator {
             guard let self, let tab = browser.tabs.first(where: { $0.isMaterialised && $0.page === page }) else { return }
             guard tab.isPlayingAudio != isPlaying else { return }
             tab.isPlayingAudio = isPlaying
-            if isPlaying { playedPages[tab.id] = tab.urlString }
+            if isPlaying {
+                playedPages[tab.id] = tab.urlString
+            }
             if isPlaying, !tab.isMuted, tab.id != browser.activeTabID, media.controlledTabID == nil {
                 controlPlayback(in: tab)
             }
@@ -116,7 +118,9 @@ extension AppCoordinator {
             guard let self, let tab = browser.tabs.first(where: { $0.isMaterialised && $0.page === page }),
                   tab.isMuted else { return }
             tab.isMuted = false
-            if media.controlledTabID == tab.id { media.model.isMuted = false }
+            if media.controlledTabID == tab.id {
+                media.model.isMuted = false
+            }
         }
         media.onPictureOutChanged = { [weak self] page, isOut in
             guard let self, let tab = browser.tabs.first(where: { $0.isMaterialised && $0.page === page }),
@@ -132,14 +136,22 @@ extension AppCoordinator {
             tab.hasVideo = false
             self?.media.pageDidReset(tab.page)
         }
+        browser.onPageRetired = { [weak self] tab, page in
+            guard let self else { return }
+            media.forgetPicture(page)
+            if media.controlledTabID == tab.id {
+                media.releaseControl()
+                dockSuccessor(to: tab.id)
+            }
+        }
         browser.onPictureInPictureChanged = { [weak self] tab, isOut in
             Pipeline.log.notice("media: WebKit reports the picture \(isOut ? "out" : "home", privacy: .public)")
             self?.media.setPictureInPicture(isOut, for: tab.page)
         }
         browser.onPictureReturnExpected = { [weak self] tab in
             Pipeline.log.notice("media: the floating window wants to hand the video back")
-            self?.media.notePictureReturnAsk(for: tab.page)
-            self?.makeRoomForPicture(in: tab.page)
+            guard let self, media.notePictureReturnAsk(for: tab.page) else { return }
+            makeRoomForPicture(in: tab.page)
         }
         NotificationCenter.default.addObserver(
             forName: NSApplication.willResignActiveNotification,
@@ -309,5 +321,24 @@ extension AppCoordinator {
         MediaCenter.setMuted(tab.isMuted, on: tab.page)
         guard media.controlledTabID == tab.id else { return }
         media.model.isMuted = tab.isMuted
+    }
+
+    func tabDidClose(_ tab: BrowserTab) {
+        if conversationSpaceID == tab.id {
+            endVoiceConversation()
+        }
+        playedPages[tab.id] = nil
+        FaviconTint.forget(tab.id)
+        if peek.belongs(to: tab.id) {
+            closePeek()
+        }
+        if media.controlledTabID == tab.id {
+            media.releaseControl()
+            dockSuccessor(to: tab.id)
+        }
+        if agentTurns.closeTab(tab.id) {
+            voiceInput.clearTranscript()
+            statusMessage = nil
+        }
     }
 }

@@ -12,9 +12,14 @@ final class PaymentCardAutofill {
     static let world = AutofillPage.world
     private static let handlerName = "wsurfCardAutofill"
     private(set) var profileID = Profile.originalID
-    var isPrivate: Bool { profileID == Profile.privateID }
+    var isPrivate: Bool {
+        profileID == Profile.privateID
+    }
 
-    func use(profileID: UUID) { self.profileID = profileID; AutofillSuggestions.shared.reset() }
+    func use(profileID: UUID) {
+        self.profileID = profileID
+        AutofillSuggestions.shared.reset()
+    }
     func install(in page: BrowserPage) {
         page.installScript(AutofillFormScript.source + AutofillSuggestionScript.source, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.installScript(PaymentCardScript.clientSource, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
@@ -23,5 +28,7 @@ final class PaymentCardAutofill {
             AutofillSuggestions.shared.receive(message, kind: .card, profileID: self.profileID, world: Self.world, bridge: "__wsurfCardAutofill")
         }
     }
-    static func isSecure(_ url: URL) -> Bool { SavedPassword.origin(for: url) != nil }
+    static func isSecure(_ url: URL) -> Bool {
+        SavedPassword.origin(for: url) != nil
+    }
 }

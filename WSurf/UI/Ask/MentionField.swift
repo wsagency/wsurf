@@ -110,6 +110,7 @@ struct MentionField: NSViewRepresentable {
     let isFocused: Bool
     var selectAllToken: Int = 0
     var accessibilityLabel: String = ""
+    var textColor: NSColor?
     /// An `NSTextField` that wraps cannot scroll, so it must grow to fit.
     var wraps = false
     var onFocusChange: (Bool) -> Void = { _ in }
@@ -159,6 +160,7 @@ struct MentionField: NSViewRepresentable {
             field.font = .systemFont(ofSize: fontSize)
         }
         field.setAccessibilityLabel(accessibilityLabel.isEmpty ? nil : accessibilityLabel)
+        field.textColor = textColor ?? .labelColor
         coordinator.applyPlaceholder(placeholder, fontSize: fontSize, to: field)
         coordinator.apply(text: text, chips: chips, isDark: isDark, to: field)
         coordinator.syncFocus(isFocused, in: field)
@@ -194,6 +196,7 @@ struct MentionField: NSViewRepresentable {
         private var renderedChips: [UUID] = []
         private var lastChips: [MentionChip] = []
         private var renderedDark: Bool?
+        private var renderedColor: NSColor?
         private var renderedPlaceholder: String?
         private var isSyncingFocus = false
         private var pendingFocus: Bool?
@@ -222,7 +225,7 @@ struct MentionField: NSViewRepresentable {
             loadMissingIcons(for: chips, in: field)
             let ids = chips.map(\.id)
             let holdsContent = renderedText == value && renderedChips == ids
-            guard !(holdsContent && renderedDark == isDark) || needsRefresh else { return }
+            guard !(holdsContent && renderedDark == isDark && renderedColor == field.textColor) || needsRefresh else { return }
             let editor = field.currentEditor() as? NSTextView
             guard editor?.hasMarkedText() != true else { return }
             needsRefresh = false
@@ -232,17 +235,24 @@ struct MentionField: NSViewRepresentable {
                 text: value,
                 chips: chips,
                 fontSize: field.font?.pointSize ?? 13,
-                isDark: isDark
+                isDark: isDark,
+                textColor: field.textColor ?? .labelColor
             )
             renderedText = value
             renderedChips = ids
             renderedDark = isDark
+            renderedColor = field.textColor
             lastChips = chips
             field.attributedStringValue = attributed
 
             guard let editor = field.currentEditor() as? NSTextView else { return }
+            editor.typingAttributes = MentionFieldRendering.baseAttributes(
+                fontSize: field.font?.pointSize ?? 13, textColor: field.textColor ?? .labelColor
+            )
             let caret = holdsContent ? (selection?.location ?? attributed.length) : attributed.length
-            editor.selectedRange = NSRange(location: min(caret, attributed.length), length: 0)
+            let location = min(caret, attributed.length)
+            let length = holdsContent ? min(selection?.length ?? 0, attributed.length - location) : 0
+            editor.selectedRange = NSRange(location: location, length: length)
         }
 
         private func loadMissingIcons(for chips: [MentionChip], in field: NSTextField) {
@@ -308,9 +318,9 @@ struct MentionField: NSViewRepresentable {
                   let editor = field.currentEditor() as? NSTextView
             else { return }
             let fontSize = field.font?.pointSize ?? 13
-            MentionFieldRendering.stripPastedStyles(in: editor, fontSize: fontSize)
+            MentionFieldRendering.stripPastedStyles(in: editor, fontSize: fontSize, textColor: field.textColor ?? .labelColor)
             let attributed = editor.attributedString()
-            editor.typingAttributes = MentionFieldRendering.baseAttributes(fontSize: fontSize)
+            editor.typingAttributes = MentionFieldRendering.baseAttributes(fontSize: fontSize, textColor: field.textColor ?? .labelColor)
             renderedText = attributed.string
             renderedChips = MentionFieldRendering.mentionIDs(in: attributed)
             text.wrappedValue = attributed.string
@@ -366,10 +376,10 @@ struct MentionField: NSViewRepresentable {
 }
 
 enum MentionFieldRendering {
-    static func baseAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+    static func baseAttributes(fontSize: CGFloat, textColor: NSColor = .labelColor) -> [NSAttributedString.Key: Any] {
         [
             .font: NSFont.systemFont(ofSize: fontSize),
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: textColor,
         ]
     }
 
@@ -387,7 +397,7 @@ enum MentionFieldRendering {
         .expansion,
     ]
 
-    static func stripPastedStyles(in editor: NSTextView, fontSize: CGFloat) {
+    static func stripPastedStyles(in editor: NSTextView, fontSize: CGFloat, textColor: NSColor = .labelColor) {
         guard let storage = editor.textStorage, storage.length > 0 else { return }
         let full = NSRange(location: 0, length: storage.length)
         var dirty: [NSRange] = []
@@ -395,12 +405,12 @@ enum MentionFieldRendering {
             guard attributes[.attachment] == nil else { return }
             let styled = pastedStyleKeys.contains { attributes[$0] != nil }
             let resized = (attributes[.font] as? NSFont)?.pointSize != fontSize
-            let tinted = (attributes[.foregroundColor] as? NSColor) != .labelColor
+            let tinted = (attributes[.foregroundColor] as? NSColor) != textColor
             guard styled || resized || tinted else { return }
             dirty.append(range)
         }
         guard !dirty.isEmpty else { return }
-        let base = baseAttributes(fontSize: fontSize)
+        let base = baseAttributes(fontSize: fontSize, textColor: textColor)
         storage.beginEditing()
         for range in dirty {
             storage.setAttributes(base, range: range)
@@ -425,7 +435,8 @@ enum MentionFieldRendering {
         text: String,
         chips: [MentionChip],
         fontSize: CGFloat,
-        isDark: Bool
+        isDark: Bool,
+        textColor: NSColor = .labelColor
     ) -> NSAttributedString {
         let font = NSFont.systemFont(ofSize: fontSize)
         let result = NSMutableAttributedString()
@@ -434,7 +445,7 @@ enum MentionFieldRendering {
             guard character == MentionText.markerCharacter else {
                 result.append(NSAttributedString(
                     string: String(character),
-                    attributes: baseAttributes(fontSize: fontSize)
+                    attributes: baseAttributes(fontSize: fontSize, textColor: textColor)
                 ))
                 continue
             }

@@ -44,6 +44,7 @@ struct AskSurfaceRow: View {
                     isFocused: model.isFocused,
                     selectAllToken: model.selectAllToken,
                     accessibilityLabel: String(localized: placement.accessibilityLabel),
+                    textColor: placement == .toolbar ? Theme.urlOverride.map { NSColor($0) } : nil,
                     onFocusChange: { model.fieldFocusDidChange($0) },
                     onChipsChange: { model.mentionsDidChange($0) },
                     onSubmit: { model.submit(in: sections) },

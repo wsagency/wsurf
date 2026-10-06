@@ -27,7 +27,7 @@ final class BrowserSettings {
         static let sidebarRowSpacing = "appearance.sidebar.rowSpacing"
         static let sidebarFolderTint = "appearance.sidebar.folderTint"
         static let sidebarTextStyles = "appearance.sidebar.textStyles"
-        static let directRemoveUnloadedTabs = "appearance.sidebar.directRemoveUnloadedTabs"
+        static let themeCustomizations = "appearance.themeCustomizations"
         static let sleepsInactiveTabs = "tabs.sleep"
         static let pageZoom = "content.defaultZoom"
         static let linkPreview = "content.linkPreview"
@@ -198,12 +198,6 @@ final class BrowserSettings {
             write(sidebarFolderTint, forKey: Key.sidebarFolderTint)
         }
     }
-    var showsDirectRemoveForUnloadedTabs: Bool {
-        didSet {
-            guard showsDirectRemoveForUnloadedTabs != oldValue else { return }
-            write(showsDirectRemoveForUnloadedTabs, forKey: Key.directRemoveUnloadedTabs)
-        }
-    }
 
     var sidebarTextStyles: [String: SidebarTextStyle] {
         didSet {
@@ -211,6 +205,15 @@ final class BrowserSettings {
                   let data = try? JSONEncoder().encode(sidebarTextStyles)
             else { return }
             write(data, forKey: Key.sidebarTextStyles)
+        }
+    }
+
+    var themeCustomizations: [String: ThemeCustomization] {
+        didSet {
+            guard themeCustomizations != oldValue,
+                  let data = try? JSONEncoder().encode(themeCustomizations)
+            else { return }
+            write(data, forKey: Key.themeCustomizations)
         }
     }
 
@@ -635,7 +638,10 @@ final class BrowserSettings {
             .flatMap(SidebarFontWeight.init(rawValue:)) ?? .medium
         sidebarRowSpacing = min(max(finiteNumber(Key.sidebarRowSpacing) ?? 1, 0), 8)
         sidebarFolderTint = min(max(finiteNumber(Key.sidebarFolderTint) ?? 0.35, 0), 1)
-        showsDirectRemoveForUnloadedTabs = object(Key.directRemoveUnloadedTabs) as? Bool ?? false
+        let storedThemes = defaults.data(forKey: Key.themeCustomizations)
+            .flatMap { try? JSONDecoder().decode([String: ThemeCustomization].self, from: $0) } ?? [:]
+        themeCustomizations = storedThemes.mapValues { $0.bounded() }
+        defaults.removeObject(forKey: "appearance.sidebar.directRemoveUnloadedTabs")
         sidebarTextStyles = Self.decodeSidebarTextStyles(defaults.data(forKey: Key.sidebarTextStyles))
 
         showsMediaPlayer = object(Key.mediaPlayer) as? Bool ?? true
@@ -743,45 +749,6 @@ final class BrowserSettings {
             : appearance.nsAppearance
     }
 
-    func apply(to configuration: WKWebViewConfiguration) {
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = javaScriptEnabled
-        configuration.preferences.javaScriptCanOpenWindowsAutomatically = !blocksPopups
-        configuration.mediaTypesRequiringUserActionForPlayback = javaScriptEnabled ? [] : autoplay.mediaTypes
-        configuration.preferences.isElementFullscreenEnabled = true
-        // `isInspectable` only lets an external inspector attach. This private
-        // preference enables the page's own Inspect Element item.
-        configuration.preferences.setValue(webInspectorEnabled, forKey: "developerExtrasEnabled")
-        WebKitFeatures.apply(to: configuration.preferences)
-        NativeApplePay.apply(to: configuration.preferences)
-    }
-
-    func apply(to webView: WKWebView) {
-        apply(to: webView.configuration)
-        if webView.pageZoom != pageZoom {
-            webView.pageZoom = pageZoom
-        }
-        webView.customUserAgent = userAgentString
-        webView.isInspectable = webInspectorEnabled
-    }
-
-    func apply(to page: BrowserPage) {
-        if let webKit = page.webKit { apply(to: webKit); return }
-        guard let chromium = page.chromium, chromium.browserID >= 0 else { return }
-        Task { [weak page, weak chromium] in
-            guard let page, let chromium, !page.isClosed else { return }
-            do { try await chromium.applySettings(self) }
-            catch {
-                guard !page.isClosed else { return }
-                let alert = NSAlert()
-                alert.alertStyle = .warning
-                alert.messageText = String(localized: "Website preferences could not be applied.")
-                alert.informativeText = error.localizedDescription
-                if let window = page.window { await alert.beginSheetModal(for: window) }
-                else { alert.runModal() }
-            }
-        }
-    }
-
     func resetToDefaults() {
         fillsPasswords = true
         passwordExtensionID = ""
@@ -791,9 +758,14 @@ final class BrowserSettings {
         loomStyle = .standard
         matchesWebsiteColor = true
         transparency = 0.5
+        sidebarFontFamily = ""
+        sidebarFontSize = 12
+        sidebarFontWeight = .medium
+        sidebarRowSpacing = 1
+        sidebarFolderTint = 0.35
         sidebarTextStyles = [:]
         refractsTabColor = true
-        showsDirectRemoveForUnloadedTabs = false
+        themeCustomizations = [:]
         pageZoom = 1
         searchEngineID = SearchEngine.duckDuckGo.id
         customSearchName = ""

@@ -332,7 +332,7 @@ final class GeolocationBridge: NSObject {
             _ = try? await page.callAsyncJavaScript(
                 "globalThis.__wsurfGeo?.position(id, coords, timestamp);",
                 arguments: ["id": request.jsID, "coords": coords,
-                            "timestamp": Int(location.timestamp.timeIntervalSince1970 * 1000)],
+                            "timestamp": Int(location.timestamp.timeIntervalSince1970 * 1000), ],
                 in: request.frame, contentWorld: Self.world
             )
         }

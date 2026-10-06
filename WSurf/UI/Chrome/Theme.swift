@@ -15,7 +15,7 @@ enum Theme {
         light: NSColor(red: 0.86, green: 0.80, blue: 0.79, alpha: 1)
     )
     static var windowBackground: Color {
-        isCalm ? calmWindowBackground : standardWindowBackground
+        palette(isCalm ? calmWindowBackground : standardWindowBackground)
     }
 
     private static let standardControlSurface = adaptive(
@@ -27,7 +27,7 @@ enum Theme {
         light: NSColor(red: 0.91, green: 0.85, blue: 0.85, alpha: 1)
     )
     static var controlSurface: Color {
-        isCalm ? calmControlSurface : standardControlSurface
+        palette(isCalm ? calmControlSurface : standardControlSurface)
     }
 
     private static let standardSidebarTint = adaptive(
@@ -39,7 +39,7 @@ enum Theme {
         light: NSColor(red: 0.78, green: 0.70, blue: 0.74, alpha: 1)
     )
     static var sidebarTint: Color {
-        isCalm ? calmSidebarTint : standardSidebarTint
+        palette(isCalm ? calmSidebarTint : standardSidebarTint)
     }
 
     private static let standardAccent = Color.blue
@@ -48,7 +48,7 @@ enum Theme {
         light: NSColor(red: 0.68, green: 0.39, blue: 0.54, alpha: 1)
     )
     static var accent: Color {
-        isCalm ? calmAccent : standardAccent
+        palette(isCalm ? calmAccent : standardAccent, isAccent: true)
     }
 
     private static let standardThinkingMax = adaptive(
@@ -72,7 +72,7 @@ enum Theme {
         light: NSColor(red: 0.68, green: 0.39, blue: 0.54, alpha: 1)
     )
     static var systemAccent: Color {
-        isCalm ? calmSystemAccent : standardSystemAccent
+        palette(isCalm ? calmSystemAccent : standardSystemAccent, isAccent: true)
     }
 
     static let danger = Color(nsColor: .systemRed)
@@ -182,6 +182,48 @@ enum Theme {
         case .system, .light, .dark:
             false
         }
+    }
+
+    static func customized(_ base: NSColor, customization: ThemeCustomization, isAccent: Bool) -> NSColor {
+        guard customization.changesPalette, let rgb = base.usingColorSpace(.sRGB) else { return base }
+        let primary = customization.primary.color.flatMap { NSColor($0).usingColorSpace(.sRGB) }
+        let source = primary ?? rgb
+        let hue = (Double(source.hueComponent) + customization.hue + 1).truncatingRemainder(dividingBy: 1)
+        let saturation = primary == nil ? rgb.saturationComponent
+            : (isAccent ? source.saturationComponent : min(source.saturationComponent, 0.35))
+        let brightness = (isAccent && primary != nil ? source.brightnessComponent : rgb.brightnessComponent)
+            + CGFloat(customization.brightness)
+        return NSColor(
+            hue: CGFloat(hue), saturation: saturation,
+            brightness: min(max(brightness, 0), 1), alpha: rgb.alphaComponent
+        )
+    }
+
+    static func palette(_ base: Color, isAccent: Bool = false) -> Color {
+        let settings = BrowserSettings.shared
+        let light = settings.themeCustomization(theme: settings.sidebarAppearance(scheme: .light))
+        let dark = settings.themeCustomization(theme: settings.sidebarAppearance(scheme: .dark))
+        guard light.changesPalette || dark.changesPalette else { return base }
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            var resolved = NSColor(base)
+            appearance.performAsCurrentDrawingAppearance {
+                resolved = NSColor(base).usingColorSpace(.sRGB) ?? resolved
+            }
+            return customized(resolved, customization: isDark ? dark : light, isAccent: isAccent)
+        })
+    }
+
+    static var controlOverride: Color? {
+        let style = BrowserSettings.shared.currentThemeCustomization.controls
+        guard style.colorRGB != nil || style.opacity != 1 else { return nil }
+        return (style.color ?? .primary).opacity(style.opacity)
+    }
+
+    static var urlOverride: Color? {
+        let style = BrowserSettings.shared.currentThemeCustomization.url
+        guard style.colorRGB != nil || style.opacity != 1 else { return nil }
+        return (style.color ?? .primary).opacity(style.opacity)
     }
 
     static func adaptive(dark: NSColor, light: NSColor) -> Color {

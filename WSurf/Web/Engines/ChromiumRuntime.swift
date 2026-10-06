@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 wsagency
+// SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
 import AppKit
@@ -28,7 +28,9 @@ final class ChromiumRuntime {
     private(set) var currentProfile = Profile.original()
     private var contexts: [UUID: Context] = [:]
     private var privateContext: Context?
-    var hasPrivateContext: Bool { privateContext != nil }
+    var hasPrivateContext: Bool {
+        privateContext != nil
+    }
     var privateOrigins: [String: Date] = [:]
     private let pages = NSHashTable<ChromiumPage>.weakObjects()
     private var hasShutdown = false

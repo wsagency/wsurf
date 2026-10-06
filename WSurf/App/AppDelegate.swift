@@ -59,7 +59,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 coordinator.media.releaseControl()
                 let tabs = coordinator.browser.tabs
                 coordinator.browser.closeAllTabs(saving: false)
-                for tab in tabs { await tab.waitForRetirement() }
+                for tab in tabs {
+                    await tab.waitForRetirement()
+                }
                 await ChromiumRuntime.shared.shutdown()
                 NSApp.reply(toApplicationShouldTerminate: true)
             } catch {

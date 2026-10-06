@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 wsagency
+// SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
 import AppKit
@@ -12,7 +12,9 @@ final class BrowserPage: NSView {
     let chromium: ChromiumPage?
     let profileID: UUID
     let isPrivate: Bool
-    var nativeView: NSView { self }
+    var nativeView: NSView {
+        self
+    }
     var topBarInset: CGFloat = 0 {
         didSet {
             guard topBarInset != oldValue else { return }
@@ -49,7 +51,9 @@ final class BrowserPage: NSView {
     private static let scriptWorlds = NSMapTable<WKUserScript, WKContentWorld>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     private var handlers: [String: (BrowserScriptMessage) -> Void] = [:]
     private var closed = false
-    var isClosed: Bool { closed || chromium?.isClosed == true }
+    var isClosed: Bool {
+        closed || chromium?.isClosed == true
+    }
 
     init(webKit: WKWebView, profile: Profile? = nil) {
         engine = .webKit
@@ -75,17 +79,27 @@ final class BrowserPage: NSView {
         embed(chromium)
     }
 
-    required init?(coder: NSCoder) { nil }
-    override var isFlipped: Bool { true }
-    override var acceptsFirstResponder: Bool { !closed }
+    required init?(coder: NSCoder) {
+        nil
+    }
+    override var isFlipped: Bool {
+        true
+    }
+    override var acceptsFirstResponder: Bool {
+        !closed
+    }
 
     override func becomeFirstResponder() -> Bool {
         guard !closed else { return false }
-        if let webKit { return window?.makeFirstResponder(webKit) == true }
+        if let webKit {
+            return window?.makeFirstResponder(webKit) == true
+        }
         return chromium?.becomeFirstResponder() == true
     }
 
-    static func from(_ view: WKWebView) -> BrowserPage? { owners.object(forKey: view) }
+    static func from(_ view: WKWebView) -> BrowserPage? {
+        owners.object(forKey: view)
+    }
 
     private func embed(_ view: NSView) {
         autoresizingMask = [.width, .height]
@@ -130,7 +144,9 @@ final class BrowserPage: NSView {
 
     func navigation(for native: WKNavigation?) -> PageNavigation? {
         guard let native else { return nil }
-        if let existing = navigations.object(forKey: native) { return existing }
+        if let existing = navigations.object(forKey: native) {
+            return existing
+        }
         let wrapped = PageNavigation(webKit: native)
         navigations.setObject(wrapped, forKey: native)
         return wrapped
@@ -139,51 +155,67 @@ final class BrowserPage: NSView {
     @discardableResult
     func load(_ request: URLRequest) -> PageNavigation? {
         guard !closed else { return nil }
-        if let webKit { return navigation(for: webKit.load(request)) }
+        if let webKit {
+            return navigation(for: webKit.load(request))
+        }
         return chromium?.load(request)
     }
 
     @discardableResult
     func loadFileURL(_ url: URL, allowingReadAccessTo directory: URL) -> PageNavigation? {
         guard !closed else { return nil }
-        if let webKit { return navigation(for: webKit.loadFileURL(url, allowingReadAccessTo: directory)) }
+        if let webKit {
+            return navigation(for: webKit.loadFileURL(url, allowingReadAccessTo: directory))
+        }
         return chromium?.load(URLRequest(url: url))
     }
 
     @discardableResult
     func loadHTMLString(_ html: String, baseURL: URL?) -> PageNavigation? {
         guard !closed else { return nil }
-        if let webKit { return navigation(for: webKit.loadHTMLString(html, baseURL: baseURL)) }
+        if let webKit {
+            return navigation(for: webKit.loadHTMLString(html, baseURL: baseURL))
+        }
         return chromium?.loadHTML(html, baseURL: baseURL)
     }
 
     @discardableResult
     func reload() -> PageNavigation? {
-        if let webKit { return navigation(for: webKit.reload()) }
+        if let webKit {
+            return navigation(for: webKit.reload())
+        }
         return chromium?.reload()
     }
 
     @discardableResult
     func reloadFromOrigin() -> PageNavigation? {
-        if let webKit { return navigation(for: webKit.reloadFromOrigin()) }
+        if let webKit {
+            return navigation(for: webKit.reloadFromOrigin())
+        }
         return chromium?.reload(ignoreCache: true)
     }
 
     @discardableResult
     func goBack() -> PageNavigation? {
-        if let webKit { return navigation(for: webKit.goBack()) }
+        if let webKit {
+            return navigation(for: webKit.goBack())
+        }
         return chromium?.goBack()
     }
 
     @discardableResult
     func goForward() -> PageNavigation? {
-        if let webKit { return navigation(for: webKit.goForward()) }
+        if let webKit {
+            return navigation(for: webKit.goForward())
+        }
         return chromium?.goForward()
     }
 
     @discardableResult
     func go(to item: PageHistoryItem) -> PageNavigation? {
-        if let webKit, let native = item.webKit { return navigation(for: webKit.go(to: native)) }
+        if let webKit, let native = item.webKit {
+            return navigation(for: webKit.go(to: native))
+        }
         return chromium?.go(to: item)
     }
 
@@ -203,8 +235,11 @@ final class BrowserPage: NSView {
     var magnification: CGFloat {
         get { webKit?.magnification ?? 1 }
         set {
-            if let webKit { webKit.magnification = newValue }
-            else { pageZoom = newValue * pageZoom }
+            if let webKit {
+                webKit.magnification = newValue
+            } else {
+                pageZoom = newValue * pageZoom
+            }
         }
     }
 
@@ -262,7 +297,9 @@ final class BrowserPage: NSView {
     func evaluateJavaScript(_ script: String, in frame: BrowserFrame?, contentWorld: WKContentWorld) async throws -> Any {
         guard !closed else { throw ChromiumError.closed }
         if let webKit {
-            if let frame, frame.webKit == nil { throw ChromiumError.staleFrame }
+            if let frame, frame.webKit == nil {
+                throw ChromiumError.staleFrame
+            }
             var result: Result<Any, Error>!
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 webKit.evaluateJavaScript(script, in: frame?.webKit, in: contentWorld, completionHandler: {
@@ -280,7 +317,9 @@ final class BrowserPage: NSView {
     func callAsyncJavaScript(_ body: String, arguments: [String: Any] = [:], in frame: BrowserFrame?, contentWorld: WKContentWorld) async throws -> Any {
         guard !closed else { throw ChromiumError.closed }
         if let webKit {
-            if let frame, frame.webKit == nil { throw ChromiumError.staleFrame }
+            if let frame, frame.webKit == nil {
+                throw ChromiumError.staleFrame
+            }
             var result: Result<Any, Error>!
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 webKit.callAsyncJavaScript(body, arguments: arguments, in: frame?.webKit, in: contentWorld, completionHandler: {
@@ -299,13 +338,22 @@ final class BrowserPage: NSView {
         guard !closed else { throw ChromiumError.closed }
         if let webKit {
             let configuration = WKSnapshotConfiguration()
-            if let rect { configuration.rect = rect }
+            if let rect {
+                configuration.rect = rect
+            }
             configuration.snapshotWidth = width.map { NSNumber(value: Double($0)) }
             configuration.afterScreenUpdates = afterScreenUpdates
             return try await withCheckedThrowingContinuation { continuation in
                 webKit.takeSnapshot(with: configuration) { image, error in
-                    if let image { continuation.resume(returning: image) }
-                    else { continuation.resume(throwing: error ?? ChromiumError.unavailable(String(localized: "The page image is unavailable."))) }
+                    if let image {
+                        continuation.resume(returning: image)
+                    } else {
+                        continuation.resume(
+                            throwing: error ?? ChromiumError.unavailable(
+                                String(localized: "The page image is unavailable.")
+                            )
+                        )
+                    }
                 }
             }
         }
@@ -313,16 +361,32 @@ final class BrowserPage: NSView {
         return try await chromium.capture(rect: rect, width: width)
     }
 
+    func insertText(_ text: String) async throws {
+        guard !closed else { throw ChromiumError.closed }
+        if let webKit {
+            webKit.insertText(text)
+        } else {
+            try await chromium?.insertText(text)
+        }
+    }
+
     func sendKeyEvent(_ event: NSEvent) {
         if let webKit {
-            if event.type == .keyUp { webKit.keyUp(with: event) }
-            else { webKit.keyDown(with: event) }
-        } else { chromium?.sendKeyEvent(event) }
+            if event.type == .keyUp {
+                webKit.keyUp(with: event)
+            } else {
+                webKit.keyDown(with: event)
+            }
+        } else {
+            chromium?.sendKeyEvent(event)
+        }
     }
 
     private final class MessageAdapter: NSObject, WKScriptMessageHandler {
         let world: WKContentWorld
-        init(world: WKContentWorld) { self.world = world }
+        init(world: WKContentWorld) {
+            self.world = world
+        }
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
             guard let native = message.webView, let page = BrowserPage.from(native), !page.closed else { return }
             let key = BrowserPage.handlerKey(name: message.name, world: world)
@@ -374,7 +438,6 @@ final class BrowserPage: NSView {
             chromium?.devTools.installScript(source, in: world, injectionTime: injectionTime, forMainFrameOnly: forMainFrameOnly)
         }
     }
-
 
     func addScriptMessageHandler(name: String, in world: WKContentWorld, handler: @escaping (BrowserScriptMessage) -> Void) {
         handlers[Self.handlerKey(name: name, world: world)] = handler

@@ -218,11 +218,16 @@ struct AskRestingLine: View {
                 if let symbol = security.symbol {
                     Image(systemName: symbol)
                         .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(security.tint)
+                        .foregroundStyle(Theme.controlOverride ?? security.tint)
                 }
                 Text(verbatim: host)
                     .font(.system(size: placement.textSize))
-                    .foregroundStyle(security == .insecure ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(
+                        placement == .toolbar
+                            ? Theme.urlOverride.map { AnyShapeStyle($0) }
+                                ?? (security == .insecure ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                            : (security == .insecure ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                    )
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
