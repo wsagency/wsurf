@@ -7,16 +7,22 @@ import SwiftUI
 
 struct FaviconImage: View {
     let image: NSImage
+    var tint: Color?
 
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        let needsInk = FaviconContrast.needsInk(image, isDark: scheme == .dark)
         Image(nsImage: image)
-            .renderingMode(FaviconContrast.needsInk(image, isDark: scheme == .dark) ? .template : .original)
+            .renderingMode(needsInk ? .template : .original)
             .resizable()
             .interpolation(.high)
             .scaledToFit()
-            .foregroundStyle(scheme == .dark ? Color.white : Color.black)
+            .foregroundStyle(tint ?? (scheme == .dark ? Color.white : Color.black))
+            .colorEffect(
+                ShaderLibrary.wsurfFaviconTint(.color(tint ?? .white)),
+                isEnabled: tint != nil && !needsInk
+            )
     }
 }
 

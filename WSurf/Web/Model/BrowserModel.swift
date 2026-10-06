@@ -36,8 +36,12 @@ final class BrowserModel {
     }
     let sidebarSelection = SidebarSelection()
 
+    var hasNoActiveTab = false
     var activeTabID: UUID? {
         didSet {
+            if activeTabID != nil, hasNoActiveTab {
+                hasNoActiveTab = false
+            }
             guard oldValue != activeTabID else { return }
             sidebarSelection.dropMarks()
             if let activeTabID {
@@ -71,7 +75,7 @@ final class BrowserModel {
     var onPictureReturnExpected: ((BrowserTab) -> Void)?
 
     var activeTab: BrowserTab? {
-        guard let activeTabID else { return tabs.first }
+        guard let activeTabID else { return hasNoActiveTab ? nil : tabs.first }
         return tabsByID[activeTabID] ?? tabs.first
     }
     // MARK: - Tab management
@@ -299,11 +303,8 @@ final class BrowserModel {
         copy.pageTitle = tab.pageTitle
         copy.customTitle = tab.customTitle
         copy.urlString = tab.urlString
-        if let state = tab.webView.interactionState as? Data {
-            copy.webView.interactionState = state
-        } else if let url = URL(string: tab.urlString), !tab.urlString.isEmpty {
-            copy.load(url)
-        }
+        copy.deferRestore(state: tab.sessionState, url: URL(string: tab.urlString))
+        copy.realizeDeferredSession()
         copy.pinnedURL = tab.pinnedURL
         copy.pinnedTitle = tab.pinnedTitle
 

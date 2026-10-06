@@ -694,27 +694,34 @@ final class AppCoordinator {
         }
     }
 
-    func closeAskingIfPinned(_ tab: BrowserTab) {
-        guard tab.pinnedURL != nil else {
-            browser.close(tab)
-            return
+    func unloadTab(_ tab: BrowserTab) {
+        guard browser.tabs.contains(where: { $0 === tab }) else { return }
+        if !browser.unload(tab) {
+            let message: String
+            switch browser.protectionReason(for: tab) {
+            case .editedForm:
+                message = String(localized: "This tab has unsaved form changes.")
+            case .activeDownload:
+                message = String(localized: "This tab has an active download.")
+            case .deviceAccess:
+                message = String(localized: "This tab is using the camera or microphone.")
+            case .agentWorking:
+                message = String(localized: "The assistant is working in this tab.")
+            case .mediaPlayback:
+                message = String(localized: "This tab is playing media.")
+            case .visibleInSplit:
+                message = String(localized: "This tab is visible in a split.")
+            case .alwaysKeepActive:
+                message = String(localized: "This tab is kept active by a site setting.")
+            case .privateBrowsing:
+                message = String(localized: "Private tabs cannot be unloaded.")
+            case .extensionPage:
+                message = String(localized: "Extension tabs cannot be unloaded.")
+            case nil:
+                message = String(localized: "This tab cannot be unloaded right now.")
+            }
+            show(notice: message)
         }
-        Task {
-            guard await ConfirmAlert.destructive(
-                "Close this pinned tab?",
-                detail: "Closing this tab also removes its pin. You can pin the page again later.",
-                verb: "Close Tab"
-            ) else { return }
-            browser.close(tab)
-        }
-    }
-
-    func closeActiveTabAskingIfPinned() {
-        if closePeek() {
-            return
-        }
-        guard let tab = browser.activeTab else { return }
-        closeAskingIfPinned(tab)
     }
 
     func showHistory() {

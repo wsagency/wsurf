@@ -42,7 +42,7 @@ enum CommandPaletteAction: String, CaseIterable {
     case openLocation
     case privateBrowsing
     case leavePrivateBrowsing
-    case closeTab
+    case unloadTab
     case reopenTab
     case duplicateTab
     case togglePin
@@ -321,12 +321,12 @@ enum CommandPaletteCatalog {
                     isAvailable: context.hasActiveTab
                 ),
                 make(
-                    .closeTab,
+                    .unloadTab,
                     group: .tabs,
-                    title: "Close Tab",
-                    symbol: "xmark",
+                    title: "Unload Tab",
+                    symbol: "moon.zzz",
                     shortcut: "⌘W",
-                    aliases: ["close page"],
+                    aliases: ["close page", "sleep tab"],
                     isAvailable: context.hasActiveTab
                 ),
                 make(

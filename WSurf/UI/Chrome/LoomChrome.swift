@@ -37,7 +37,7 @@ enum LoomChrome {
         // A real page chooses the chrome's tonal family too. In particular,
         // black and grey headers carry useful appearance information; treating
         // them as "no colour" leaves a light Loom around dark sites.
-        let isLight = PageInk.isLight(color, scheme: scheme)
+        let isLight = Theme.isCalm ? fallbackIsLight : PageInk.isLight(color, scheme: scheme)
         let neutral = neutral(isLight: isLight)
 
         let floor: CGFloat = isLight ? 0.55 : 0.02
@@ -48,15 +48,24 @@ enum LoomChrome {
             brightness: min(max(color.brightnessComponent, floor), ceiling),
             alpha: 1
         )
-        return neutral.blended(withFraction: 0.85, of: tint) ?? neutral
+        let tintFraction: CGFloat = Theme.isCalm ? 0.18 : 0.85
+        return neutral.blended(withFraction: tintFraction, of: tint) ?? neutral
     }
 
     private static func neutral(isLight: Bool) -> NSColor {
-        if isLight {
-            NSColor(srgbRed: 0.94, green: 0.94, blue: 0.955, alpha: 1)
-        } else {
-            NSColor(srgbRed: 0.105, green: 0.105, blue: 0.125, alpha: 1)
+        if Theme.isCalm {
+            var themed: NSColor?
+            NSAppearance(named: isLight ? .aqua : .darkAqua)?.performAsCurrentDrawingAppearance {
+                themed = NSColor(Theme.windowBackground).usingColorSpace(.sRGB)
+            }
+            if let themed {
+                return themed
+            }
         }
+        if isLight {
+            return NSColor(srgbRed: 0.94, green: 0.94, blue: 0.955, alpha: 1)
+        }
+        return NSColor(srgbRed: 0.105, green: 0.105, blue: 0.125, alpha: 1)
     }
 }
 
@@ -194,6 +203,9 @@ private struct LoomTintedBackdrop: View {
     }
 
     private var washOpacity: CGFloat {
+        if Theme.isCalm {
+            return isFloating ? 0.92 : 0.96
+        }
         if sampledPageColor != nil {
             return isFloating ? 0.72 : 0.92
         }

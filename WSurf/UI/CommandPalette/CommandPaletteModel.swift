@@ -595,8 +595,10 @@ final class CommandPaletteModel {
             coordinator.enterPrivateBrowsing()
         case .leavePrivateBrowsing:
             coordinator.leavePrivateBrowsing()
-        case .closeTab:
-            coordinator.closeActiveTabAskingIfPinned()
+        case .unloadTab:
+            if !coordinator.closePeek(), let tab {
+                coordinator.unloadTab(tab)
+            }
         case .reopenTab:
             browser.reopenLastClosedTab()
         case .duplicateTab:

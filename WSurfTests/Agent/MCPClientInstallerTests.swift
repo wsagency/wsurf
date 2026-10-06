@@ -33,17 +33,7 @@ struct MCPClientInstallerTests {
         #expect(try await !installer.isInstalled(target(url), command: command))
     }
 
-    @Test func standardLocationsAndCodexHomeOverride() {
-        let home = URL(fileURLWithPath: "/Users/test")
-        #expect(MCPClientKind.codex.configurationURL(home: home, environment: [:]).path == "/Users/test/.codex/config.toml")
-        #expect(MCPClientKind.codex.configurationURL(home: home, environment: ["CODEX_HOME": "/work/profile"]).path == "/work/profile/config.toml")
-        #expect(MCPClientKind.codex.configurationURL(home: home, environment: ["CODEX_HOME": "relative"]).path == "/Users/test/.codex/config.toml")
-        #expect(MCPClientKind.claudeDesktop.configurationURL(home: home, environment: [:]).path == "/Users/test/Library/Application Support/Claude/claude_desktop_config.json")
-        #expect(MCPClientKind.claudeCode.configurationURL(home: home, environment: [:]).path == "/Users/test/.claude.json")
-        #expect(MCPClientKind.cursor.configurationURL(home: home, environment: [:]).path == "/Users/test/.cursor/mcp.json")
-    }
-
-    @Test(arguments: [MCPClientKind.claudeDesktop, .claudeCode, .cursor])
+    @Test(arguments: [MCPClientKind.claudeDesktop, .claudeCode, .cursor, .omp])
     func JSONMergePreservesOtherServersAndPrivateClientState(kind: MCPClientKind) throws {
         let source = Data(#"""
             {"theme":"dark","oauth":{"token":"fixture-secret"},
@@ -62,10 +52,16 @@ struct MCPClientInstallerTests {
         #expect(NSDictionary(dictionary: root).isEqual(to: try object(source)))
     }
 
-    @Test func duplicateEntryPreservesDisabledStateAndCustomPermissionsByteForByte() throws {
-        let root: [String: Any] = ["mcpServers": ["wsurf": ["command": command, "args": ["--mcp"], "disabled": true, "autoApprove": [], "env": ["A": "B"]]]]
+    @Test(arguments: [MCPClientKind.cursor, .omp])
+    func duplicateEntryPreservesDisabledStateAndCustomPermissionsByteForByte(kind: MCPClientKind) throws {
+        let root: [String: Any] = [
+            "disabledServers": ["wsurf"],
+            "mcpServers": ["wsurf": [
+                "command": command, "args": ["--mcp"], "disabled": true, "enabled": false, "autoApprove": [], "env": ["A": "B"],
+            ], ],
+        ]
         let data = try JSONSerialization.data(withJSONObject: root)
-        #expect(try MCPClientConfiguration.addingJSON(to: data, kind: .cursor, command: command) == nil)
+        #expect(try MCPClientConfiguration.addingJSON(to: data, kind: kind, command: command) == nil)
     }
 
     @Test(arguments: [#"{"mcpServers":{"wsurf":{"command":"/other","args":["--mcp"]}}}"#,

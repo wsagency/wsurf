@@ -99,7 +99,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(command("Private Browsing", #selector(newPrivateTab), key: "n", modifiers: [.command, .shift]))
         menu.addItem(command("Leave Private Browsing", #selector(leavePrivateBrowsing)))
         menu.addItem(command("Reopen Last Closed Tab", #selector(reopenClosedTab), key: "t", modifiers: [.command, .shift]))
-        menu.addItem(command("Close Tab", #selector(closeTab), key: "w"))
+        menu.addItem(command("Unload Tab", #selector(unloadTab), key: "w"))
         menu.addItem(.separator())
         menu.addItem(command("Pin This Page", #selector(pinPage), key: "d"))
         menu.addItem(command(
@@ -261,8 +261,12 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func leavePrivateBrowsing() {
         coordinator.leavePrivateBrowsing()
     }
-    @objc private func closeTab() {
-        coordinator.closeActiveTabAskingIfPinned()
+    @objc private func unloadTab() {
+        if coordinator.closePeek() {
+            return
+        }
+        guard let tab = coordinator.browser.activeTab else { return }
+        coordinator.unloadTab(tab)
     }
     @objc private func reopenClosedTab() {
         coordinator.browser.reopenLastClosedTab()
@@ -403,7 +407,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
              #selector(zoomIn), #selector(zoomOut), #selector(openFind), #selector(findNext),
              #selector(findPrevious), #selector(printPage):
             return coordinator.pageCommandTab != nil
-        case #selector(closeTab):
+        case #selector(unloadTab):
             return coordinator.browser.activeTab != nil
         case #selector(stopLoading):
             return coordinator.pageCommandTab?.isLoading ?? false
