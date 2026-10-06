@@ -59,15 +59,6 @@ final class TabWebView: WKWebView {
     var onContextDownload: ((WKDownload, URL?) -> Void)?
     var onPeekLink: ((URL) -> Void)?
     var onSummarizeLink: ((URL, CGPoint?) -> Void)?
-    var onPageActivity: ((PageActivitySignal) -> Void)?
-    var hasPageActivityMonitor = false
-    var onScrollPosition: ((Double, URL?) -> Void)?
-    var hasScrollPositionMonitor = false
-    var onFaviconDeclarationChange: (() -> Void)?
-    var hasFaviconWatcher = false
-    var hasClickWatcher = false
-    var hasSiteGuard = false
-    var onPopupBlocked: ((URL?) -> Void)?
 
     var onZoomChanged: (() -> Void)?
 
@@ -248,11 +239,13 @@ final class TabWebView: WKWebView {
     }
 
     @objc private func savePage() {
-        PageSaving.begin(for: self)
+        guard let page = BrowserPage.from(self) else { return }
+        PageSaving.begin(for: page)
     }
 
     @objc private func printPage() {
-        PagePrinting.begin(for: self)
+        guard let page = BrowserPage.from(self) else { return }
+        PagePrinting.begin(for: page)
     }
 
     @objc private func startContextDownload(_ sender: NSMenuItem) {
@@ -314,15 +307,7 @@ final class WebViewPool {
     private var refillTask: Task<Void, Never>?
     private var refillNotBefore: ContinuousClock.Instant?
 
-    private struct PooledScript {
-        let source: String
-        let injectionTime: WKUserScriptInjectionTime
-        let forMainFrameOnly: Bool
-        let handlerName: String
-        weak var handler: (any WKScriptMessageHandler & AnyObject)?
-    }
-
-    private var scripts: [PooledScript] = []
+    var configurePage: ((BrowserPage) -> Void)?
 
     private var extensionController: WKWebExtensionController?
 
@@ -337,6 +322,7 @@ final class WebViewPool {
         configuration.preferences = WKPreferences()
         configuration.defaultWebpagePreferences = WKWebpagePreferences()
         configuration.userContentController = WKUserContentController()
+        BrowserPage.installBridge(in: configuration.userContentController, world: PageAutomationGuard.world)
         PageFrameRegistry.install(in: configuration.userContentController)
         return configuration
     }
@@ -345,32 +331,6 @@ final class WebViewPool {
         guard store !== dataStore else { return }
         dataStore = store
         idle.removeAll()
-    }
-
-    func prepare(scriptSource: String, handlerName: String, handler: any WKScriptMessageHandler & AnyObject) {
-        addScript(
-            scriptSource,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: false,
-            handlerName: handlerName,
-            handler: handler
-        )
-    }
-
-    func addScript(
-        _ source: String,
-        injectionTime: WKUserScriptInjectionTime,
-        forMainFrameOnly: Bool,
-        handlerName: String,
-        handler: any WKScriptMessageHandler & AnyObject
-    ) {
-        scripts.append(PooledScript(
-            source: source,
-            injectionTime: injectionTime,
-            forMainFrameOnly: forMainFrameOnly,
-            handlerName: handlerName,
-            handler: handler
-        ))
     }
 
     func installExtensionController(_ controller: WKWebExtensionController?) {
@@ -465,16 +425,7 @@ final class WebViewPool {
         BrowserSettings.shared.apply(to: configuration)
         MediaCenter.enablePictureInPicture(on: configuration.preferences)
 
-        let contentController = WKUserContentController()
-        for script in scripts {
-            guard let handler = script.handler else { continue }
-            contentController.addUserScript(WKUserScript(
-                source: script.source,
-                injectionTime: script.injectionTime,
-                forMainFrameOnly: script.forMainFrameOnly
-            ))
-            contentController.add(handler, name: script.handlerName)
-        }
+        let contentController = configuration.userContentController
 
         ContentBlocker.shared.apply(to: contentController)
         if extensionController != nil {
@@ -487,8 +438,6 @@ final class WebViewPool {
             }
         }
 
-        configuration.userContentController = contentController
-        PageFrameRegistry.install(in: contentController)
         configuration.setURLSchemeHandler(SystemPageSchemeHandler(), forURLScheme: SystemPages.scheme)
 
         let view = TabWebView(

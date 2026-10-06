@@ -4,6 +4,7 @@
 
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 
 @testable import WSurf
 
@@ -51,5 +52,21 @@ struct PageDialogMessageTests {
         let shown = PageDialogs.capped(flood)
         #expect(shown.count == 1501)
         #expect(shown.hasSuffix("…"))
+    }
+}
+
+struct ChromiumFileDialogFilterTests {
+    @Test func convertsWildcardMimeAndExtensionExpansionsIntoContentTypes() {
+        let types = ChromiumInterop.fileDialogContentTypes(
+            filters: ["image/*", ".pdf", ".custom-wsurf-type"],
+            extensions: [";png;;jpg;", "", ""]
+        )
+
+        #expect(types.contains(.image))
+        #expect(types.contains(UTType(filenameExtension: "pdf", conformingTo: .data)!))
+        #expect(types.contains(UTType(filenameExtension: "png", conformingTo: .data)!))
+        #expect(types.contains(UTType(filenameExtension: "jpg", conformingTo: .data)!))
+        #expect(types.contains(UTType(filenameExtension: "custom-wsurf-type", conformingTo: .data)!))
+        #expect(types.count == 5)
     }
 }

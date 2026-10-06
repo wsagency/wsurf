@@ -4,7 +4,7 @@
 
 import Foundation
 
-enum TrackerList {
+nonisolated enum TrackerList {
     private static let advertising = [
         "doubleclick.net",
         "googlesyndication.com",
@@ -98,6 +98,7 @@ enum TrackerList {
 
     static let domains: [String] =
         advertising + analytics + sessionRecording + socialPixels + fingerprinting
+    private static let rules = domains.map(ruleParts)
 
     static func filter(for domain: String) -> String {
         let parts = domain.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
@@ -108,11 +109,33 @@ enum TrackerList {
         return "^https?://([^/]+\\.)?\(escapedHost)\(escapedPath)"
     }
 
+    /// Fast native equivalent of the WebKit third-party tracker rules.
+    static func matches(resourceURL: URL, topLevelURL: URL?, exemptHosts: Set<String>) -> Bool {
+        guard let scheme = resourceURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = resourceURL.host?.lowercased(),
+              let topLevelURL,
+              let topHost = topLevelURL.host?.lowercased(),
+              !isSameOrigin(resourceURL, topLevelURL)
+        else { return false }
+        let normalizedTopHost = normalized(topHost)
+        guard !exemptHosts.contains(where: {
+            normalizedTopHost == $0 || normalizedTopHost.hasSuffix(".\($0)")
+        }) else { return false }
+
+        for rule in rules {
+            guard host == rule.host || host.hasSuffix(".\(rule.host)") else { continue }
+            if rule.path.isEmpty || resourceURL.path.hasPrefix(rule.path) {
+                return true
+            }
+        }
+        return false
+    }
+
     static func matchingDomains(
         in resourceURLs: [String],
         topLevelURL: URL?
     ) -> [String] {
-        let rules = domains.map(ruleParts)
         var matches = Set<String>()
 
         for rawURL in resourceURLs {
@@ -131,6 +154,10 @@ enum TrackerList {
         }
 
         return matches.sorted()
+    }
+
+    private static func normalized(_ host: String) -> String {
+        host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
     private static func ruleParts(_ rule: String) -> (host: String, path: String) {

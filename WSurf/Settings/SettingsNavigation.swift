@@ -136,7 +136,9 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
              "omnibox", "address bar", "ask", "query",
              ]
         case .appearance:
-            ["theme", "dark", "light", "loom", "color", "zoom", "sidebar", "font size"]
+            ["theme", "dark", "light", "loom", "color", "zoom", "sidebar", "font size",
+             "font family", "font weight", "typeface", "row spacing", "folder tint", "compact",
+             ]
         case .provider:
             ["model", "api key", "openai", "anthropic", "ollama", "endpoint", "reasoning", "llm", "engine",
              "intelligence", "provider", "voice", "speech", "spoken", "push to talk", "microphone",

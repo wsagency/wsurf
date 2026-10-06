@@ -12,7 +12,7 @@ enum MediaScript {
       if (window.__wsurfMedia) { return; }
       window.__wsurfMedia = true;
       const post = function (message) {
-        try { window.webkit.messageHandlers.wsurfpip.postMessage(message); } catch (e) {}
+        try { globalThis.__wsurfSend?.('wsurfpip', message); } catch (e) {}
       };
       let video = null;
       let gestureAttempts = 0;
@@ -393,7 +393,11 @@ enum MediaScript {
       }
       if (window === window.top) { post('hello'); }
       scan();
-      setInterval(scan, 500);
+      const rescan = () => scan();
+      addEventListener('load', rescan, { once: true });
+      addEventListener('resize', rescan, { passive: true });
+      const observer = new MutationObserver(rescan);
+      observer.observe(document.documentElement || document, { childList: true, subtree: true });
     })();
     """
 }

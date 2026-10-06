@@ -10,11 +10,11 @@ import WebKit
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct AgentAuthoredTextTests {
-    private func makeWebView() -> WKWebView {
-        WKWebView(frame: .init(x: 0, y: 0, width: 400, height: 300), configuration: WebViewPool.makeConfiguration())
+    private func makeWebView() -> BrowserPage {
+        BrowserPage(webKit: WKWebView(frame: .init(x: 0, y: 0, width: 400, height: 300), configuration: WebViewPool.makeConfiguration()))
     }
 
-    private func load(_ webView: WKWebView, at url: URL) async {
+    private func load(_ webView: BrowserPage, at url: URL) async {
         webView.loadHTMLString("<!doctype html><html><body>page</body></html>", baseURL: url)
         #expect(await PageSettle.untilIdle(webView, timeout: .seconds(30)))
     }

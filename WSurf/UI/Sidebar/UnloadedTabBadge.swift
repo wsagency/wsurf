@@ -14,8 +14,8 @@ struct UnloadedTabBadge: View {
     )
 
     var body: some View {
-        let help = Text("Unloaded to save memory. It reloads when selected.")
-        Image(systemName: "moon.zzz.fill")
+        let help = Text("Unloaded. It reloads when selected.")
+        Image(systemName: "arrow.uturn.down")
             .font(.system(size: size, weight: .semibold))
             .foregroundStyle(Self.ink)
             .help(help)

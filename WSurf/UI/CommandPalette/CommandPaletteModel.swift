@@ -186,8 +186,9 @@ enum CommandPaletteProjection {
             return [askSection(prompt, agentName: agentName, ask: actions.ask)]
         }
 
-        let matched = actionsSection(CommandPaletteCatalog.matching(needle, in: commands))
-        let promoted = CommandPaletteCatalog.bestScore(needle, in: commands) >= CommandMatch.strong
+        let matching = CommandPaletteCatalog.matching(needle, in: commands)
+        let matched = actionsSection(matching)
+        let promoted = (matching.first.flatMap { CommandMatch.score($0, for: needle) } ?? 0) >= CommandMatch.strong
         let webItems = Omnibox.topSection(
             query: needle,
             symbol: OmniboxItem.Kind.newTab.defaultSymbol,
@@ -595,8 +596,10 @@ final class CommandPaletteModel {
             coordinator.enterPrivateBrowsing()
         case .leavePrivateBrowsing:
             coordinator.leavePrivateBrowsing()
-        case .closeTab:
-            coordinator.closeActiveTabAskingIfPinned()
+        case .unloadTab:
+            if !coordinator.closePeek(), let tab {
+                coordinator.unloadTab(tab)
+            }
         case .reopenTab:
             browser.reopenLastClosedTab()
         case .duplicateTab:
@@ -624,7 +627,7 @@ final class CommandPaletteModel {
         case .reload:
             page?.reload()
         case .hardReload:
-            page?.webView.reloadFromOrigin()
+            page?.page.reloadFromOrigin()
         case .stopLoading:
             page?.stopLoading()
         case .goBack:

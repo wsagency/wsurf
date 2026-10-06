@@ -9,6 +9,7 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let coordinator = AppCoordinator()
+    private var terminationPending = false
 
     private var isRunningTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
@@ -46,18 +47,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !isRunningTests else { return .terminateNow }
+        guard !terminationPending else { return .terminateLater }
+        terminationPending = true
         coordinator.mcpServer.stop()
-        guard coordinator.settings.clearsDataOnQuit else { return .terminateNow }
+        coordinator.browser.saveBlocking()
         Task {
-            await coordinator.clearDataOnQuitIfNeeded()
-            NSApp.reply(toApplicationShouldTerminate: true)
+            do {
+                try await coordinator.clearDataOnQuitIfNeeded()
+                coordinator.agentTurns.cancel()
+                coordinator.media.releaseControl()
+                let tabs = coordinator.browser.tabs
+                coordinator.browser.closeAllTabs(saving: false)
+                for tab in tabs {
+                    await tab.waitForRetirement()
+                }
+                await ChromiumRuntime.shared.shutdown()
+                NSApp.reply(toApplicationShouldTerminate: true)
+            } catch {
+                terminationPending = false
+                coordinator.mcpServer.resume()
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = String(localized: "Browsing data could not be cleared. WSurf will stay open.")
+                alert.informativeText = error.localizedDescription
+                alert.runModal()
+                NSApp.reply(toApplicationShouldTerminate: false)
+            }
         }
         return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         guard !isRunningTests else { return }
-        coordinator.browser.saveBlocking()
         coordinator.conversationLog.saveBlocking()
         coordinator.browser.downloads.clearOnQuitIfNeeded(coordinator.settings.downloadRetention)
     }

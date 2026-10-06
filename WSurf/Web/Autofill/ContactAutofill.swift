@@ -5,43 +5,29 @@
 import Observation
 import WebKit
 
+@MainActor
 @Observable
-final class ContactAutofill: NSObject, WKScriptMessageHandler {
+final class ContactAutofill {
     static let shared = ContactAutofill()
     static let world = AutofillPage.world
     private static let handlerName = "wsurfContactAutofill"
-
     private(set) var profileID = Profile.originalID
     var isPrivate: Bool {
         profileID == Profile.privateID
     }
-    @ObservationIgnored private let controllers = NSHashTable<WKUserContentController>.weakObjects()
-    @ObservationIgnored private let owners = NSMapTable<WKWebView, NSUUID>.weakToStrongObjects()
 
     func use(profile: Profile) {
-        self.profileID = profile.id
+        profileID = profile.id
         AutofillSuggestions.shared.reset()
     }
-
-    func install(in webView: WKWebView) {
-        owners.setObject(profileID as NSUUID, forKey: webView)
-        let controller = webView.configuration.userContentController
-        guard !controllers.contains(controller) else { return }
-        controllers.add(controller)
-        AutofillPage.install(in: controller)
-        controller.addUserScript(WKUserScript(
-            source: ContactAutofillScript.clientSource, injectionTime: .atDocumentStart,
-            forMainFrameOnly: false, in: Self.world
-        ))
-        controller.add(self, contentWorld: Self.world, name: Self.handlerName)
+    func install(in page: BrowserPage) {
+        page.installScript(AutofillFormScript.source + AutofillSuggestionScript.source, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        page.installScript(ContactAutofillScript.clientSource, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        page.addScriptMessageHandler(name: Self.handlerName, in: Self.world) { [weak self] message in
+            guard let self, self.profileID == message.page.profileID else { return }
+            AutofillSuggestions.shared.receive(message, kind: .contact, profileID: self.profileID, world: Self.world, bridge: "__wsurfContactAutofill")
+        }
     }
-
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let webView = message.webView, owners.object(forKey: webView) as UUID? == profileID else { return }
-        AutofillSuggestions.shared.receive(message, kind: .contact, profileID: profileID,
-                                            world: Self.world, bridge: "__wsurfContactAutofill")
-    }
-
     static func isSecure(_ url: URL) -> Bool {
         SavedPassword.origin(for: url) != nil
     }

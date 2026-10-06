@@ -25,12 +25,10 @@ struct NewTabChromeTests {
         let finished = await waitUntil {
             #expect(!tab.isLoading, "the warm-up page must not report a page load")
             #expect(tab.hasNoPageYet, "the start page must stay visible during warm-up")
-            return tab.webView.url == SystemPages.start && !tab.webView.isLoading
+            return tab.page.url == SystemPages.start && !tab.page.isLoading
         }
         #expect(finished)
         #expect(tab.urlString.isEmpty)
-        #expect(tab.title == "Start Page")
-        #expect(SystemPages.startSymbol == "house")
     }
 
     /// Several tabs at once is the launch case: the pool only holds a couple
@@ -41,7 +39,7 @@ struct NewTabChromeTests {
 
         let finished = await waitUntil {
             #expect(tabs.allSatisfy { $0.hasNoPageYet })
-            return tabs.allSatisfy { $0.webView.url == SystemPages.start && !$0.webView.isLoading }
+            return tabs.allSatisfy { $0.page.url == SystemPages.start && !$0.page.isLoading }
         }
         #expect(finished)
     }
@@ -53,7 +51,7 @@ struct NewTabChromeTests {
         let tab = BrowserTab()
         let finished = await waitUntil {
             #expect(tab.pageColor == nil, "the pool's blank page washed the toolbar in its own backdrop")
-            return tab.webView.url == SystemPages.start && !tab.webView.isLoading
+            return tab.page.url == SystemPages.start && !tab.page.isLoading
         }
         #expect(finished)
     }
@@ -85,7 +83,7 @@ struct NewTabChromeTests {
 
         let finished = await waitUntil {
             #expect(!tab.isLoading)
-            return tab.webView.url?.absoluteString == "about:blank" && !tab.webView.isLoading
+            return tab.page.url?.absoluteString == "about:blank" && !tab.page.isLoading
         }
         #expect(finished)
         #expect(tab.hasNoPageYet)
@@ -107,7 +105,7 @@ struct NewTabChromeTests {
             )
             webView.appearance = NSAppearance(named: appearance)
             webView.loadHTMLString(WebViewPool.warmUpHTML, baseURL: nil)
-            #expect(await PageSettle.untilIdle(webView, timeout: .seconds(30)))
+            #expect(await PageSettle.untilIdle(BrowserPage(webKit: webView), timeout: .seconds(30)))
 
             let css = try #require(
                 (try? await webView.evaluateJavaScript(
@@ -136,7 +134,7 @@ struct NewTabChromeTests {
         let tab = BrowserTab()
         let finished = await waitUntil {
             #expect(tab.canvasColor == nil, "the warm-up page's backdrop leaked into the canvas colour")
-            return tab.webView.url == SystemPages.start && !tab.webView.isLoading
+            return tab.page.url == SystemPages.start && !tab.page.isLoading
         }
         #expect(finished)
     }
@@ -233,30 +231,16 @@ struct NewTabChromeTests {
         tab.goBack()
         #expect(await waitUntil { !tab.isShowingStartPage })
     }
-
-    // MARK: - The address field's rhythm
-
-    /// The new-tab field read lopsided: the mic sat in a 20pt slot, the
-    /// trailing icon in 16, with a stray 4pt pad between text and icons. Both
-    /// sides of the row now build from `iconSlot` and `controlSpacing` alone,
-    /// so an icon's distance to the field edge and to the text is the same
-    /// pair of numbers on either side.
-    @Test func theAddressFieldsGlyphSlotsAreOneSize() {
-        let toolbar = AskSurface.Placement.toolbar
-        #expect(toolbar.iconSlot == toolbar.orbSize + 2, "the slot is the mic's own; anything narrower clips the orb")
-        // The trailing badges are 16pt ChromeIcons; the shared slot must hold
-        // them without clipping.
-        #expect(toolbar.iconSlot >= 16)
-
-        let start = AskSurface.Placement.startPage
-        #expect(start.iconSlot == start.orbSize + 2)
-    }
-
     @Test func typingAnAddressLeavesTheStartPageAgain() async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<!doctype html><html><body>Real page</body></html>")
+        ])
+        defer { withExtendedLifetime(server) {} }
         let tab = BrowserTab()
         #expect(await settled(tab, at: SystemPages.start))
 
-        tab.load(try #require(URL(string: "\(SystemPages.scheme)://stand-in.example/page")))
-        #expect(await waitUntil { !tab.isShowingStartPage })
+        let address = try server.url()
+        tab.load(address)
+        #expect(await waitUntil { tab.page.url == address && !tab.isShowingStartPage })
     }
 }

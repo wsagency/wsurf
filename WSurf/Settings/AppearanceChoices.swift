@@ -8,6 +8,8 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
     case system
     case light
     case dark
+    case lightCalm
+    case darkCalm
 
     var id: String {
         rawValue
@@ -21,6 +23,10 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
             "Light"
         case .dark:
             "Dark"
+        case .lightCalm:
+            "Light Calm"
+        case .darkCalm:
+            "Dark Calm"
         }
     }
 
@@ -28,9 +34,9 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
         switch self {
         case .system:
             nil
-        case .light:
+        case .light, .lightCalm:
             NSAppearance(named: .aqua)
-        case .dark:
+        case .dark, .darkCalm:
             NSAppearance(named: .darkAqua)
         }
     }
@@ -50,6 +56,56 @@ enum LoomStyle: String, CaseIterable, Identifiable {
             "Standard"
         case .transparent:
             "Transparent"
+        }
+    }
+}
+
+enum SidebarFontWeight: String, CaseIterable, Identifiable {
+    case regular
+    case medium
+    case semibold
+    case bold
+
+    var id: String {
+        rawValue
+    }
+
+    var label: String {
+        switch self {
+        case .regular:
+            String(localized: "Regular")
+        case .medium:
+            String(localized: "Medium")
+        case .semibold:
+            String(localized: "Semibold")
+        case .bold:
+            String(localized: "Bold")
+        }
+    }
+
+    var nativeWeight: NSFont.Weight {
+        switch self {
+        case .regular:
+            .regular
+        case .medium:
+            .medium
+        case .semibold:
+            .semibold
+        case .bold:
+            .bold
+        }
+    }
+
+    var appKitWeight: Int {
+        switch self {
+        case .regular:
+            5
+        case .medium:
+            6
+        case .semibold:
+            8
+        case .bold:
+            9
         }
     }
 }

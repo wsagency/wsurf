@@ -7,74 +7,65 @@ import WebKit
 
 extension BrowserTab {
     var isShowingRealPage: Bool {
-        guard let scheme = webView.url?.scheme else { return false }
+        guard let scheme = page.url?.scheme else { return false }
         return scheme != "about" && scheme != SystemPages.scheme
     }
 
-    var backList: [WKBackForwardListItem] {
+    var backList: [PageHistoryItem] {
         guard isMaterialised else { return [] }
-        return webView.backForwardList.backList
+        return page.backForwardList.backList
     }
 
     func goBack() {
-        webView.stopLoading()
-        webView.goBack()
+        page.stopLoading()
+        page.goBack()
     }
 
     func goForward() {
-        webView.stopLoading()
-        webView.goForward()
+        page.stopLoading()
+        page.goForward()
     }
 
     var zoomLevel: CGFloat {
         _ = zoomChanges
-        return webView.pageZoom
+        return page.pageZoom
     }
 
     var isZoomed: Bool {
         _ = zoomChanges
-        return abs(webView.pageZoom - BrowserSettings.shared.pageZoom) > 0.005
-            || abs(webView.magnification - 1) > 0.005
+        return abs(page.pageZoom - BrowserSettings.shared.pageZoom) > 0.005
+            || abs(page.magnification - 1) > 0.005
     }
 
     func zoomIn() {
-        setPageZoom(webView.pageZoom + TabWebView.zoomStep)
+        setPageZoom(page.pageZoom + TabWebView.zoomStep)
     }
 
     func zoomOut() {
-        setPageZoom(webView.pageZoom - TabWebView.zoomStep)
+        setPageZoom(page.pageZoom - TabWebView.zoomStep)
     }
 
     func resetZoom() {
-        webView.magnification = 1
-        webView.pageZoom = BrowserSettings.shared.pageZoom
+        page.magnification = 1
+        page.pageZoom = BrowserSettings.shared.pageZoom
         zoomDidChange()
     }
 
     private func setPageZoom(_ value: CGFloat) {
-        webView.pageZoom = min(
+        page.pageZoom = min(
             max(value, TabWebView.zoomRange.lowerBound),
             TabWebView.zoomRange.upperBound
         )
         zoomDidChange()
     }
 
-    static func applyObscuredInsets(
-        to webView: WKWebView,
-        isUnderTopBar: Bool = false
-    ) {
-        let isFullscreen = switch webView.fullscreenState {
-        case .enteringFullscreen, .inFullscreen:
-            true
-        default:
-            false
+    static func applyObscuredInsets(to page: BrowserPage, isUnderTopBar: Bool = false) {
+        let top: CGFloat = page.isFullscreen || !isUnderTopBar ? 0 : Theme.topBarHeight
+        if let native = page.webKit {
+            native.obscuredContentInsets = NSEdgeInsets(top: top, left: 0, bottom: 0, right: 0)
+        } else {
+            page.topBarInset = top
         }
-        webView.obscuredContentInsets = NSEdgeInsets(
-            top: isFullscreen || !isUnderTopBar ? 0 : Theme.topBarHeight,
-            left: 0,
-            bottom: 0,
-            right: 0
-        )
     }
 
     static func restoreScrollScript(to y: Double) -> String {

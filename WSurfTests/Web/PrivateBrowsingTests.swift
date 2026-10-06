@@ -106,26 +106,30 @@ struct PrivateBrowsingTests {
     /// Every tab in the session shares one store, so signing in and following
     /// a link from that page stays signed in. It falls out of the store
     /// belonging to the profile rather than to each tab.
-    @Test func everyTabInAPrivateSessionSharesItsStore() {
+    @Test func everyTabInAPrivateSessionSharesItsStore() throws {
         let model = makePrivateModel()
         let first = model.newTab()
         let second = model.newTab()
+        let firstView = try #require(first.page.webKit)
+        let secondView = try #require(second.page.webKit)
 
-        #expect(first.webView.configuration.websiteDataStore
-            === second.webView.configuration.websiteDataStore)
+        #expect(firstView.configuration.websiteDataStore
+            === secondView.configuration.websiteDataStore)
     }
 
     /// Closing tabs is not leaving. Ending the session when the last tab shut
     /// meant closing everything while still inside private browsing signed you
     /// out of what you were doing.
-    @Test func closingEveryTabDoesNotEndTheSession() {
+    @Test func closingEveryTabDoesNotEndTheSession() throws {
         let model = makePrivateModel()
         let first = model.newTab()
-        let store = first.webView.configuration.websiteDataStore
+        let firstView = try #require(first.page.webKit)
+        let store = firstView.configuration.websiteDataStore
         model.close(first)
 
         let later = model.newTab()
-        #expect(later.webView.configuration.websiteDataStore === store)
+        let laterView = try #require(later.page.webKit)
+        #expect(laterView.configuration.websiteDataStore === store)
         #expect(later.isPrivate)
     }
 
@@ -400,19 +404,21 @@ struct PrivateBrowsingTests {
     /// `window.open`, ⌘-click, "Open Link in New Tab": WebKit builds the new
     /// view from the opener's configuration and the model adopts it. The
     /// child must be private and must share the opener's store.
-    @Test func aTabAdoptedFromAPrivateOpenerIsPrivateAndSharesItsStore() {
+    @Test func aTabAdoptedFromAPrivateOpenerIsPrivateAndSharesItsStore() throws {
         let model = makePrivateModel()
         let opener = model.newTab()
-        let openerStore = opener.webView.configuration.websiteDataStore
+        let openerView = try #require(opener.page.webKit)
+        let openerStore = openerView.configuration.websiteDataStore
 
         let adopted = TabWebView(
             frame: .zero,
-            configuration: opener.webView.configuration
+            configuration: openerView.configuration
         )
         let child = model.newTab(activate: true, adopting: adopted)
 
         #expect(child.isPrivate)
-        #expect(child.webView.configuration.websiteDataStore === openerStore)
+        let childView = try #require(child.page.webKit)
+        #expect(childView.configuration.websiteDataStore === openerStore)
     }
 
     // MARK: - Ending the session

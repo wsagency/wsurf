@@ -103,8 +103,6 @@ extension AppCoordinator {
 
     func closeOtherPanes() {
         guard let tab = browser.activeTab, browser.isVisibleInSplit(tab) else { return }
-        for pane in browser.splitOthers(of: tab) {
-            browser.close(pane)
-        }
+        browser.close(browser.splitOthers(of: tab).map { .tab($0.id) })
     }
 }

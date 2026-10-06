@@ -37,7 +37,7 @@ nonisolated final class MemoryAutofillStorage: AutofillSecureStorage {
 struct SecureAutofillVaultTests {
     @Test func passwordFillAuthenticationReusesOnlyTheSamePageAndOriginForFiveMinutes() async throws {
         let cache = PasswordFillAuthenticationCache()
-        let view = WKWebView()
+        let view = BrowserPage(webKit: WKWebView())
         let profileID = UUID()
         let start = Date(timeIntervalSince1970: 1_000)
         var created = 0

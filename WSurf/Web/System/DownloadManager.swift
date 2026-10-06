@@ -3,9 +3,27 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import AppKit
+import CefKit
 import Observation
 import os
 import WebKit
+
+struct ChromiumDownloadControls {
+    let pageID: ObjectIdentifier
+    let isLive: () -> Bool
+    let cancel: (UInt32) -> Void
+    let pause: (UInt32) -> Void
+    let resume: (UInt32) -> Void
+}
+
+struct ChromiumDownloadRequest {
+    let download: CefDownload
+    let suggestedName: String
+    let sourceTabID: UUID?
+    let isPrivate: Bool
+    let window: NSWindow?
+    let controls: ChromiumDownloadControls
+}
 
 @Observable
 final class DownloadManager: NSObject {
@@ -64,6 +82,10 @@ final class DownloadManager: NSObject {
     @ObservationIgnored var onFinished: ((String) -> Void)?
 
     @ObservationIgnored private var live: [UUID: WKDownload] = [:]
+    @ObservationIgnored private var chromiumIDs: [UInt32: UUID] = [:]
+    @ObservationIgnored private var chromiumControls: [UInt32: ChromiumDownloadControls] = [:]
+    @ObservationIgnored private var chromiumPaused: Set<UUID> = []
+    @ObservationIgnored private var retiredChromiumPages: Set<ObjectIdentifier> = []
     @ObservationIgnored private var identifiers: [ObjectIdentifier: UUID] = [:]
     @ObservationIgnored private var observations: [UUID: NSKeyValueObservation] = [:]
     @ObservationIgnored private var origins: [UUID: URL] = [:]
@@ -186,6 +208,159 @@ final class DownloadManager: NSObject {
         attach(download, to: id)
     }
 
+    /// Accepts the native CEF request callback. The completion is passed
+    /// directly to CEF; no WebKit resume data is synthesized for Chromium.
+    func decideChromiumDownload(
+        _ request: ChromiumDownloadRequest,
+        completion: @escaping (CefDownloadDecision) -> Void
+    ) {
+        let id = chromiumIDs[request.download.id] ?? beginItem(
+            source: request.download.url,
+            sourceTabID: request.sourceTabID,
+            privately: request.isPrivate
+        )
+        chromiumIDs[request.download.id] = id
+        chromiumControls[request.download.id] = request.controls
+        if request.controls.isLive() {
+            retiredChromiumPages.remove(request.controls.pageID)
+        }
+        let name = request.suggestedName.isEmpty ? "Download" : request.suggestedName
+        update(id) { $0.filename = Self.safeFilename(name) }
+        guard !retiredChromiumPages.contains(request.controls.pageID), request.controls.isLive() else {
+            update(id) { $0.state = .interrupted("The page closed before this download could start") }
+            finish(id)
+            completion(.deny)
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let settings = BrowserSettings.shared
+            let folder = destinationFolderOverride ?? settings.downloadFolder
+            let asksWhereToSave = asksWhereToSaveOverride ?? settings.asksWhereToSave
+            let destination = asksWhereToSave
+                ? await askWhereToSave(name, in: folder, on: request.window)
+                : uniqueDestination(for: name, in: folder)
+            guard !Task.isCancelled,
+                  !retiredChromiumPages.contains(request.controls.pageID),
+                  request.controls.isLive(),
+                  chromiumIDs[request.download.id] == id
+            else {
+                if items.contains(where: { $0.id == id && $0.isRunning }) {
+                    update(id) { $0.state = .interrupted("The page closed before this download could start") }
+                    finish(id)
+                }
+                completion(.deny)
+                return
+            }
+            guard let destination else {
+                update(id) { $0.state = .cancelled }
+                finish(id)
+                completion(.deny)
+                return
+            }
+            noteDestination(destination, expectedLength: request.download.totalBytes, for: id)
+            completion(.allow(destination: destination))
+        }
+    }
+
+    /// Consumes snapshots from the native CEF page and maps them to its row.
+    func noteChromiumDownload(_ download: CefDownload, from page: BrowserPage? = nil) {
+        guard let id = chromiumIDs[download.id] else { return }
+        if let page {
+            guard let chromium = page.chromium,
+                  chromiumControls[download.id]?.pageID == ObjectIdentifier(chromium)
+            else { return }
+        }
+        if let path = download.fullPath, items.first(where: { $0.id == id })?.destination == nil {
+            noteDestination(path, expectedLength: download.totalBytes, for: id)
+        }
+        noteProgress(received: download.receivedBytes, expected: download.totalBytes, for: id)
+        if download.isComplete {
+            var filename = ""
+            var destination: URL?
+            update(id) {
+                $0.state = .finished
+                filename = $0.filename
+                destination = $0.destination
+            }
+            if let destination {
+                Self.quarantine(destination, from: origins[id])
+            }
+            finish(id)
+            onFinished?(filename)
+        } else if download.isCanceled {
+            update(id) { $0.state = .interrupted("Chromium download interrupted") }
+            finish(id)
+        }
+    }
+
+    func retireChromiumPage(_ page: BrowserPage) {
+        guard let chromium = page.chromium else { return }
+        let pageID = ObjectIdentifier(chromium)
+        retiredChromiumPages.insert(pageID)
+        let ids = chromiumControls.compactMap { nativeID, controls in
+            controls.pageID == pageID ? nativeID : nil
+        }
+        for nativeID in ids {
+            guard let id = chromiumIDs[nativeID] else { continue }
+            update(id) { item in
+                guard item.isRunning else { return }
+                item.state = .interrupted("Download stopped because its page closed")
+            }
+            finish(id)
+        }
+    }
+
+    func pause(_ item: Item) {
+        guard let nativeID = chromiumIDs.first(where: { $0.value == item.id }),
+              let controls = chromiumControls[nativeID.key],
+              controls.isLive()
+        else { return }
+        chromiumPaused.insert(item.id)
+        update(item.id) { $0.state = .interrupted("Download paused") }
+        controls.pause(nativeID.key)
+    }
+
+    func cancel(_ item: Item) {
+        if let nativeID = chromiumIDs.first(where: { $0.value == item.id }) {
+            guard let controls = chromiumControls[nativeID.key], controls.isLive() else {
+                update(item.id) { $0.state = .interrupted("Chromium download stopped with its page") }
+                finish(item.id)
+                return
+            }
+            noteCancelRequested(item.id)
+            controls.cancel(nativeID.key)
+            finish(item.id)
+            return
+        }
+        guard let download = live[item.id] else { return }
+        let id = item.id
+        noteCancelRequested(id)
+        download.cancel { [weak self] data in
+            Task { @MainActor [weak self] in
+                self?.noteCancellation(id, resumeData: data)
+            }
+        }
+    }
+
+    func resume(_ item: Item) {
+        if let nativeID = chromiumIDs.first(where: { $0.value == item.id }),
+           let controls = chromiumControls[nativeID.key],
+           chromiumPaused.contains(item.id),
+           controls.isLive() {
+            chromiumPaused.remove(item.id)
+            noteResumeStarted(item.id)
+            controls.resume(nativeID.key)
+            return
+        }
+        guard let data = resumeData[item.id], let webView = webViewProvider?() else { return }
+        let id = item.id
+        noteResumeStarted(id)
+        webView.resumeDownload(fromResumeData: data) { [weak self] download in
+            self?.attach(download, to: id)
+        }
+    }
+
     @ObservationIgnored var onBegin: (() -> Void)?
 
     @discardableResult
@@ -243,28 +418,6 @@ final class DownloadManager: NSObject {
             let expected = progress.totalUnitCount
             Task { @MainActor [weak self] in
                 self?.noteProgress(received: received, expected: expected, for: id)
-            }
-        }
-    }
-
-    func cancel(_ item: Item) {
-        guard let download = live[item.id] else { return }
-        let id = item.id
-        noteCancelRequested(id)
-        download.cancel { [weak self] data in
-            Task { @MainActor [weak self] in
-                self?.noteCancellation(id, resumeData: data)
-            }
-        }
-    }
-
-    func resume(_ item: Item) {
-        guard let data = resumeData[item.id], let webView = webViewProvider?() else { return }
-        let id = item.id
-        noteResumeStarted(id)
-        webView.resumeDownload(fromResumeData: data) { [weak self] download in
-            Task { @MainActor [weak self] in
-                self?.attach(download, to: id)
             }
         }
     }
@@ -330,7 +483,14 @@ final class DownloadManager: NSObject {
     }
 
     func canResume(_ item: Item) -> Bool {
-        item.isResumable && resumeData[item.id] != nil && webViewProvider?() != nil
+        if let nativeID = chromiumIDs.first(where: { $0.value == item.id })?.key {
+            guard case .interrupted = item.state, chromiumPaused.contains(item.id),
+                  let controls = chromiumControls[nativeID],
+                  controls.isLive()
+            else { return false }
+            return true
+        }
+        return item.isResumable && resumeData[item.id] != nil && webViewProvider?() != nil
     }
 
     func remove(_ item: Item) {
@@ -377,6 +537,10 @@ final class DownloadManager: NSObject {
         if let download = live.removeValue(forKey: id) {
             identifiers.removeValue(forKey: ObjectIdentifier(download))
         }
+        let nativeIDs = chromiumIDs.filter { $0.value == id }.map(\.key)
+        nativeIDs.forEach { chromiumControls.removeValue(forKey: $0) }
+        chromiumIDs = chromiumIDs.filter { $0.value != id }
+        chromiumPaused.remove(id)
         observations.removeValue(forKey: id)?.invalidate()
         guard !keepingResumeState else { return }
         origins.removeValue(forKey: id)

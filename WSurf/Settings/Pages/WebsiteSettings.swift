@@ -9,10 +9,16 @@ struct WebsiteSettings: View {
     @Bindable var settings: BrowserSettings
 
     let permissions: SitePermissions
+    let browser: BrowserModel
 
-    init(settings: BrowserSettings, permissions: SitePermissions = .shared) {
+    init(
+        settings: BrowserSettings,
+        permissions: SitePermissions = .shared,
+        browser: BrowserModel
+    ) {
         self.settings = settings
         self.permissions = permissions
+        self.browser = browser
     }
 
     @State private var destination: Destination?
@@ -60,6 +66,7 @@ struct WebsiteSettings: View {
                 origin: origin,
                 settings: settings,
                 permissions: permissions,
+                browser: browser,
                 onBack: { destination = nil }
             )
         case nil:
@@ -255,6 +262,7 @@ private struct SiteDetailPage: View {
     let origin: String
     let settings: BrowserSettings
     let permissions: SitePermissions
+    let browser: BrowserModel
     let onBack: () -> Void
 
     @State private var confirmingReset = false
@@ -334,8 +342,10 @@ private struct SiteDetailPage: View {
                 isPresented: $confirmingReset
             ) {
                 Button("Reset website", role: .destructive) {
-                    reset()
-                    onBack()
+                    Task {
+                        guard await reset() else { return }
+                        onBack()
+                    }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -349,6 +359,24 @@ private struct SiteDetailPage: View {
         )
 
         SettingsCard {
+            DetailRow(
+                title: "Browser engine",
+                caption: "Changing this reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL."
+            ) {
+                SettingsMenu(
+                    options: BrowserEngine.allCases.map {
+                        .init(value: $0, label: String(localized: $0.label))
+                    },
+                    selection: Binding(
+                        get: { permissions.engine(for: origin) },
+                        set: { next in
+                            Task { _ = await browser.setEngine(next, for: origin) }
+                        }
+                    )
+                )
+            }
+            .settingsAnchor("websites.engine")
+            RowSeparator()
             DetailRow(title: "Assistant access") {
                 SettingsMenu(
                     options: AssistantAccessPolicy.allCases.map {
@@ -486,7 +514,8 @@ private struct SiteDetailPage: View {
 
     }
 
-    private func reset() {
+    private func reset() async -> Bool {
+        guard await browser.setEngine(.webKit, for: origin) else { return false }
         for permission in WebPermission.allCases {
             permissions.set(.ask, for: origin, permission)
         }
@@ -496,5 +525,6 @@ private struct SiteDetailPage: View {
         permissions.setAutoplay(nil, for: origin)
         permissions.setPopups(nil, for: origin)
         blocker.setExempt(false, for: host)
+        return true
     }
 }

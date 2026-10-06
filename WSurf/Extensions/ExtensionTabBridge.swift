@@ -30,9 +30,8 @@ final class ExtensionTabAdapter: NSObject, WKWebExtensionTab {
 
     func webView(for context: WKWebExtensionContext) -> WKWebView? {
         guard let tab, tab.isMaterialised else { return nil }
-        return tab.webView
+        return tab.page.webKit
     }
-
     func url(for context: WKWebExtensionContext) -> URL? {
         guard let tab else { return nil }
         if let url = tab.committedURL {

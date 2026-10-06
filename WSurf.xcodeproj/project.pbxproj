@@ -14,6 +14,7 @@
 		EEAC00043027B875008F6668 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = EEAC00053027B875008F6668 /* GRDB */; };
 		EEAD00013027B875008F6668 /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = EEAD00033027B875008F6668 /* MCP */; };
 		EEAE00013027B875008F6668 /* Logging in Frameworks */ = {isa = PBXBuildFile; productRef = EEAE00033027B875008F6668 /* Logging */; };
+		EEAF00013027B875008F6668 /* CefKit in Frameworks */ = {isa = PBXBuildFile; productRef = EEAF00033027B875008F6668 /* CefKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -66,6 +67,7 @@
 				EEAE00013027B875008F6668 /* Logging in Frameworks */,
 				EEAA00013027B875008F6668 /* Sparkle in Frameworks */,
 				EEAC00013027B875008F6668 /* GRDB in Frameworks */,
+				EEAF00013027B875008F6668 /* CefKit in Frameworks */,
 			);
 		};
 		EEC0DE100000000000000005 /* Frameworks */ = {
@@ -105,6 +107,7 @@
 				EE41BFDE3027B875008F6668 /* Sources */,
 				EE41BFDF3027B875008F6668 /* Frameworks */,
 				EE41BFE03027B875008F6668 /* Resources */,
+				EEAF00043027B875008F6668 /* Embed Chromium */,
 			);
 			buildRules = (
 			);
@@ -118,6 +121,7 @@
 				EEAE00033027B875008F6668 /* Logging */,
 				EEAA00033027B875008F6668 /* Sparkle */,
 				EEAC00033027B875008F6668 /* GRDB */,
+				EEAF00033027B875008F6668 /* CefKit */,
 			);
 			productName = WSurf;
 			productReference = EE41BFE23027B875008F6668 /* WSurf.app */;
@@ -181,6 +185,7 @@
 				EEAE00023027B875008F6668 /* XCRemoteSwiftPackageReference "swift-log" */,
 				EEAA00023027B875008F6668 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				EEAC00023027B875008F6668 /* XCRemoteSwiftPackageReference "GRDB" */,
+				EEAF00023027B875008F6668 /* XCRemoteSwiftPackageReference "CefSwift" */,
 			);
 			preferredProjectObjectVersion = 100;
 			productRefGroup = EE41BFE33027B875008F6668 /* Products */;
@@ -205,6 +210,21 @@
 			);
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		EEAF00043027B875008F6668 /* Embed Chromium */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ();
+			name = "Embed Chromium";
+			outputPaths = ();
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"$SRCROOT/Tools/embed-chromium.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		EE41BFDE3027B875008F6668 /* Sources */ = {
@@ -373,6 +393,7 @@
 				ENABLE_ENHANCED_SECURITY = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
@@ -418,6 +439,7 @@
 				ENABLE_ENHANCED_SECURITY = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
@@ -563,6 +585,14 @@
 				minimumVersion = 1.5.0;
 			};
 		};
+		EEAF00023027B875008F6668 /* XCRemoteSwiftPackageReference "CefSwift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Rajaniraiyn/CefSwift.git";
+			requirement = {
+				kind = revision;
+				revision = 59cad64e124b8efdb6b2ee811963097bb6e689e8;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -595,6 +625,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = EEAE00023027B875008F6668 /* XCRemoteSwiftPackageReference "swift-log" */;
 			productName = Logging;
+		};
+		EEAF00033027B875008F6668 /* CefKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EEAF00023027B875008F6668 /* XCRemoteSwiftPackageReference "CefSwift" */;
+			productName = CefKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

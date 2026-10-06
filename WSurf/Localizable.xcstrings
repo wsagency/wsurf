@@ -1,6 +1,141 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "System Default" : {
+      "comment" : "Sidebar font choice that uses the macOS system font."
+    },
+    "Semibold" : {
+      "comment" : "Font weight choice for sidebar tab and folder titles."
+    },
+    "Bold" : {
+      "comment" : "Font weight choice for sidebar tab and folder titles."
+    },
+    "Sidebar font" : {
+      "comment" : "Appearance setting for the installed font family used by sidebar tab and folder titles."
+    },
+    "Choose an installed font family for tab and folder names." : {
+      "comment" : "Caption for the Sidebar font setting."
+    },
+    "Font weight" : {
+      "comment" : "Appearance setting for the weight of sidebar tab and folder titles."
+    },
+    "Font size" : {
+      "comment" : "Appearance setting for the point size of sidebar tab and folder titles."
+    },
+    "Adjust the text size without reducing the row’s usable target." : {
+      "comment" : "Caption for the sidebar font size setting."
+    },
+    "Sidebar font size" : {
+      "comment" : "Accessibility label of the sidebar font size slider."
+    },
+    "Row spacing" : {
+      "comment" : "Appearance setting for vertical spacing of sidebar tab and folder rows."
+    },
+    "Add vertical breathing room between sidebar rows." : {
+      "comment" : "Caption for the sidebar row spacing setting."
+    },
+    "Sidebar row spacing" : {
+      "comment" : "Accessibility label of the sidebar row spacing slider."
+    },
+    "Folder tint" : {
+      "comment" : "Appearance setting and slider label for the strength of expanded sidebar folders' background colors."
+    },
+    "Set the background tint for expanded folders, including none." : {
+      "comment" : "Caption for the folder tint slider; its lowest value removes the background color."
+    },
+    "Load Tab" : {
+      "comment" : "Sidebar Play-button action that reloads an unloaded tab without changing its saved link, pin, or folder."
+    },
+    "Unload Tab" : {
+      "comment" : "Releases a tab's web content without removing its sidebar link or pin. Menu command and tooltip for sidebar minus/X controls."
+    },
+    "Unload Folder Tabs" : {
+      "comment" : "Tooltip and accessibility label for the X beside a sidebar folder's item count. Unloads its nested tabs while retaining links, pins and the folder."
+    },
+    "Light Calm" : {
+      "comment" : "Appearance theme with a light pastel pink and peach browser chrome palette."
+    },
+    "Dark Calm" : {
+      "comment" : "Appearance theme with a dark pastel plum browser chrome palette."
+    },
+    "Loaded tab color" : {
+      "comment" : "Appearance sidebar setting for the current theme's loaded-tab text and favicon color."
+    },
+    "Unloaded tab color" : {
+      "comment" : "Appearance sidebar setting for the current theme's unloaded-tab text and favicon color."
+    },
+    "Loaded tab opacity" : {
+      "comment" : "Accessibility label for the current theme's loaded-tab text and favicon opacity slider."
+    },
+    "Unloaded tab opacity" : {
+      "comment" : "Accessibility label for the current theme's unloaded-tab text and favicon opacity slider."
+    },
+    "Text and icon color and opacity are saved separately for each theme." : {
+      "comment" : "Caption beneath loaded/unloaded sidebar color settings; each appearance theme keeps its own values."
+    },
+    "Unloaded tab action" : {
+      "comment" : "Appearance sidebar setting choosing how an unloaded tab can be removed."
+    },
+    "For unloaded tab rows only: hold ⌘ to remove, or show an X next to Play." : {
+      "comment" : "Caption for unloaded-tab controls; X removes the saved link while Play reloads it."
+    },
+    "Hold ⌘" : {
+      "comment" : "Choice requiring the Command modifier to remove an unloaded tab."
+    },
+    "X next to Play" : {
+      "comment" : "Choice showing a separate remove X immediately left of the unloaded-tab Play button."
+    },
+    "Choose light, dark, pastel Calm, or match your Mac." : {
+      "comment" : "Search result description for Appearance theme choices, including the two pastel Calm presets."
+    },
+    "Remove Tab" : {
+      "comment" : "Explicit destructive sidebar context-menu command that removes the tab and its saved link."
+    },
+    "Remove Other Tabs" : {
+      "comment" : "Destructive tab context-menu command that removes other tabs."
+    },
+    "Remove Tabs" : {
+      "comment" : "Confirmation button for explicitly removing selected tabs and their saved sidebar links."
+    },
+    "Remove %lld Tabs" : {
+      "comment" : "Destructive sidebar context-menu command. The integer is the number of selected tabs to remove."
+    },
+    "Remove %lld tabs?" : {
+      "comment" : "Confirmation title for removing selected tabs. The integer is the number of tabs."
+    },
+    "Unload %lld Tabs" : {
+      "comment" : "Sidebar context-menu command that unloads selected tabs without removing their links or pins."
+    },
+    "This tab has unsaved form changes." : {
+      "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "This tab has an active download." : {
+      "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "This tab is using the camera or microphone." : {
+      "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "The assistant is working in this tab." : {
+      "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "This tab is playing media." : {
+      "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "This tab is visible in a split." : {
+      "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "This tab is kept active by a site setting." : {
+      "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "Private tabs cannot be unloaded." : {
+      "comment" : "Notice explaining why private browsing tabs are not eligible for unloading."
+    },
+    "Extension tabs cannot be unloaded." : {
+      "comment" : "Notice explaining why an extension page is not eligible for unloading."
+    },
+    "This tab cannot be unloaded right now." : {
+      "comment" : "Fallback notice when a tab cannot safely be unloaded."
+    },
     "" : {
       "comment" : "Not shown to anyone: the empty branch of a conditional tooltip on the sidebar's New Tab and Settings rows, used when the sidebar is wide enough to show the row's own title. Leave the translation empty."
     },
@@ -3563,7 +3698,7 @@
       "comment" : "Tooltip on the button that floats the video in a system Picture in Picture window. It is used twice: beside the address field, left of the speaker, for the tab you are looking at, and on the media player in the sidebar. Apple feature name; use the platform glossary. Title Case."
     },
     "Pin" : {
-      "comment" : "Two surfaces share it: the small button in the extensions overflow popover that puts the extension’s button back on the toolbar, and the label in the gap a dragged sidebar row will drop into when the drop pins the tab. Imperative verb, in the sense of fixing something in place. Very tight space — a chip only a few characters wide."
+      "comment" : "Pins a sidebar folder or dragged row to the upper pinned section, or puts an extension button back on the toolbar. Imperative verb, one word."
     },
     "Pin This Page" : {
       "comment" : "Command that fixes the page to the tab, so the tab can always return to it and sits in the pinned rows at the top of the sidebar. Three surfaces share it: the context menu of a tab row in the sidebar, the search palette, and the File menu on ⌘D. Title Case. “Pin” is the browser's verb for that anchor; there is no separate bookmarks list."
@@ -5231,9 +5366,6 @@
     "unknown" : {
       "comment" : "Lowercase word used as the provider’s error message when the server’s reply carried none; it is then inserted after the colon in a line such as Provider error 500: unknown. Deliberately lowercase because it sits mid-sentence."
     },
-    "Unloaded to save memory. It reloads when selected." : {
-      "comment" : "Tooltip on a background tab after its web process was released. Two short sentences."
-    },
     "Unlock Cards" : {
 
     },
@@ -5256,7 +5388,7 @@
       "comment" : "Tooltip on the toolbar's speaker button once the current tab has been silenced. Title Case."
     },
     "Unpin" : {
-      "comment" : "Label in the gap a dragged sidebar row will drop into, saying the drop takes the row out of the pinned section. Imperative verb, one word, the same sense as Unpin Tab. Very tight space."
+      "comment" : "Folder context-menu command or drag label that takes a row out of the pinned section. Imperative verb, one word."
     },
     "Unpin Tab" : {
       "comment" : "Command that takes the pin off a tab, which then drops out of the pinned rows. Four surfaces share it: the context menu of a pinned tab row, the minus button on that row, the toolbar button while the pinned page is on screen, and the search palette. Title Case."
@@ -5617,6 +5749,141 @@
     },
     "Zoom Out" : {
       "comment" : "Menu bar command under View, shortcut ⌘-, and the same command in the site controls menu; it makes the web page smaller. Title Case, imperative verb."
+    },
+    "System Default" : {
+      "comment" : "Sidebar font choice that uses the macOS system font."
+    },
+    "Semibold" : {
+      "comment" : "Font weight choice for sidebar tab and folder titles."
+    },
+    "Bold" : {
+      "comment" : "Font weight choice for sidebar tab and folder titles."
+    },
+    "Sidebar font" : {
+      "comment" : "Appearance setting for the installed font family used by sidebar tab and folder titles."
+    },
+    "Choose an installed font family for tab and folder names." : {
+      "comment" : "Caption for the Sidebar font setting."
+    },
+    "Font weight" : {
+      "comment" : "Appearance setting for the weight of sidebar tab and folder titles."
+    },
+    "Font size" : {
+      "comment" : "Appearance setting for the point size of sidebar tab and folder titles."
+    },
+    "Adjust the text size without reducing the row’s usable target." : {
+      "comment" : "Caption for the sidebar font size setting."
+    },
+    "Sidebar font size" : {
+      "comment" : "Accessibility label of the sidebar font size slider."
+    },
+    "Row spacing" : {
+      "comment" : "Appearance setting for vertical spacing of sidebar tab and folder rows."
+    },
+    "Add vertical breathing room between sidebar rows." : {
+      "comment" : "Caption for the sidebar row spacing setting."
+    },
+    "Sidebar row spacing" : {
+      "comment" : "Accessibility label of the sidebar row spacing slider."
+    },
+    "Folder tint" : {
+      "comment" : "Appearance setting and slider label for the strength of expanded sidebar folders' background colors."
+    },
+    "Set the background tint for expanded folders, including none." : {
+      "comment" : "Caption for the folder tint slider; its lowest value removes the background color."
+    },
+    "Load Tab" : {
+      "comment" : "Sidebar Play-button action that reloads an unloaded tab without changing its saved link, pin, or folder."
+    },
+    "Unload Tab" : {
+      "comment" : "Releases a tab's web content without removing its sidebar link or pin. Menu command and tooltip for sidebar minus/X controls."
+    },
+    "Unload Folder Tabs" : {
+      "comment" : "Tooltip and accessibility label for the X beside a sidebar folder's item count. Unloads its nested tabs while retaining links, pins and the folder."
+    },
+    "Light Calm" : {
+      "comment" : "Appearance theme with a light pastel pink and peach browser chrome palette."
+    },
+    "Dark Calm" : {
+      "comment" : "Appearance theme with a dark pastel plum browser chrome palette."
+    },
+    "Loaded tab color" : {
+      "comment" : "Appearance sidebar setting for the current theme's loaded-tab text and favicon color."
+    },
+    "Unloaded tab color" : {
+      "comment" : "Appearance sidebar setting for the current theme's unloaded-tab text and favicon color."
+    },
+    "Loaded tab opacity" : {
+      "comment" : "Accessibility label for the current theme's loaded-tab text and favicon opacity slider."
+    },
+    "Unloaded tab opacity" : {
+      "comment" : "Accessibility label for the current theme's unloaded-tab text and favicon opacity slider."
+    },
+    "Text and icon color and opacity are saved separately for each theme." : {
+      "comment" : "Caption beneath loaded/unloaded sidebar color settings; each appearance theme keeps its own values."
+    },
+    "Unloaded tab action" : {
+      "comment" : "Appearance sidebar setting choosing how an unloaded tab can be removed."
+    },
+    "For unloaded tab rows only: hold ⌘ to remove, or show an X next to Play." : {
+      "comment" : "Caption for unloaded-tab controls; X removes the saved link while Play reloads it."
+    },
+    "Hold ⌘" : {
+      "comment" : "Choice requiring the Command modifier to remove an unloaded tab."
+    },
+    "X next to Play" : {
+      "comment" : "Choice showing a separate remove X immediately left of the unloaded-tab Play button."
+    },
+    "Choose light, dark, pastel Calm, or match your Mac." : {
+      "comment" : "Search result description for Appearance theme choices, including the two pastel Calm presets."
+    },
+    "Remove Tab" : {
+      "comment" : "Explicit destructive sidebar context-menu command that removes the tab and its saved link."
+    },
+    "Remove Other Tabs" : {
+      "comment" : "Destructive tab context-menu command that removes other tabs."
+    },
+    "Remove Tabs" : {
+      "comment" : "Confirmation button for explicitly removing selected tabs and their saved sidebar links."
+    },
+    "Remove %lld Tabs" : {
+      "comment" : "Destructive sidebar context-menu command. The integer is the number of selected tabs to remove."
+    },
+    "Remove %lld tabs?" : {
+      "comment" : "Confirmation title for removing selected tabs. The integer is the number of tabs."
+    },
+    "Unload %lld Tabs" : {
+      "comment" : "Sidebar context-menu command that unloads selected tabs without removing their links or pins."
+    },
+    "This tab has unsaved form changes." : {
+      "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "This tab has an active download." : {
+      "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "This tab is using the camera or microphone." : {
+      "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "The assistant is working in this tab." : {
+      "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "This tab is playing media." : {
+      "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "This tab is visible in a split." : {
+      "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "This tab is kept active by a site setting." : {
+      "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "Private tabs cannot be unloaded." : {
+      "comment" : "Notice explaining why private browsing tabs are not eligible for unloading."
+    },
+    "Extension tabs cannot be unloaded." : {
+      "comment" : "Notice explaining why an extension page is not eligible for unloading."
+    },
+    "This tab cannot be unloaded right now." : {
+      "comment" : "Fallback notice when a tab cannot safely be unloaded."
     }
   },
   "version" : "1.0"

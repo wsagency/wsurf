@@ -37,14 +37,14 @@ struct PageActivityMonitorTests {
             """,
             baseURL: URL(string: "https://example.com/profile")
         )
-        #expect(await PageSettle.untilIdle(webView, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
         return tab
     }
 
     @Test func editingAndResettingAFormUpdatesProtection() async throws {
         let tab = await loadedTab()
 
-        try await tab.webView.evaluateJavaScript(
+        try await tab.page.evaluateJavaScript(
             """
             const field = document.getElementById('name');
             field.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
@@ -56,7 +56,7 @@ struct PageActivityMonitorTests {
         #expect(tab.hasEditedForm)
         #expect(!tab.canDiscardWebContent)
 
-        try await tab.webView.evaluateJavaScript("document.getElementById('profile').reset()")
+        try await tab.page.evaluateJavaScript("document.getElementById('profile').reset()")
         #expect(await waitUntil { !tab.hasEditedForm })
         #expect(!tab.hasEditedForm)
     }
@@ -64,7 +64,7 @@ struct PageActivityMonitorTests {
     @Test func returningAFieldToItsOriginalValueClearsProtection() async throws {
         let tab = await loadedTab()
 
-        try await tab.webView.evaluateJavaScript(
+        try await tab.page.evaluateJavaScript(
             """
             const field = document.getElementById('name');
             field.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
@@ -74,7 +74,7 @@ struct PageActivityMonitorTests {
         )
         #expect(await waitUntil { tab.hasEditedForm })
 
-        try await tab.webView.evaluateJavaScript(
+        try await tab.page.evaluateJavaScript(
             """
             const restoredField = document.getElementById('name');
             restoredField.value = 'Ada';

@@ -209,6 +209,23 @@ nonisolated struct SidebarTree: Equatable, Sendable {
         return next
     }
 
+    func keepingPinsAtRootTop(_ isKept: (SidebarItem) -> Bool) -> SidebarTree {
+        var kept: [SidebarItem] = []
+        var loose: [SidebarItem] = []
+        kept.reserveCapacity(root.count)
+        for item in root {
+            if isKept(item) {
+                kept.append(item)
+            } else {
+                loose.append(item)
+            }
+        }
+        kept.append(contentsOf: loose)
+        var next = self
+        next.root = kept
+        return next
+    }
+
     func normalized(_ items: [SidebarItem]) -> [SidebarItem] {
         guard !items.isEmpty else { return [] }
         var listedFolders: Set<UUID> = []

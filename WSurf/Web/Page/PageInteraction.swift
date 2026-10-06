@@ -7,7 +7,7 @@ import Foundation
 import WebKit
 
 extension PageDriver {
-    static func verifyControl(ref: Int, value: String?, checked: Bool?, in view: WKWebView) async -> Bool {
+    static func verifyControl(ref: Int, value: String?, checked: Bool?, in view: BrowserPage) async -> Bool {
         guard await validateObservation(in: view, ref: ref), let encoded = jsonString(value ?? "") else { return false }
         let result = await evaluateJSON(scripted("""
             const el = window.__wsurfRefs[\(ref) - 1];
@@ -19,7 +19,7 @@ extension PageDriver {
         return result?["matched"] as? Bool == true
     }
 
-    static func inspectControl(ref: Int, offset: Int = 0, in view: WKWebView) async -> String {
+    static func inspectControl(ref: Int, offset: Int = 0, in view: BrowserPage) async -> String {
         guard await validateObservation(in: view, ref: ref) else { return staleMessage }
         let start = max(0, offset)
         let script = scripted(
@@ -50,7 +50,7 @@ extension PageDriver {
             + "\nobservationID: " + (observation(in: view)?.id ?? "")
     }
 
-    static func setChecked(ref: Int, checked: Bool, in view: WKWebView, announced: Bool = false) async -> String {
+    static func setChecked(ref: Int, checked: Bool, in view: BrowserPage, announced: Bool = false) async -> String {
         guard await validateObservation(in: view, ref: ref) else { return staleMessage }
         let state = await evaluateJSON(
             scripted(
@@ -78,7 +78,7 @@ extension PageDriver {
         return "Set checked state to \(checked).\n" + output
     }
 
-    static func waitForPage(condition: String, value: String, timeout: Int = 5, in view: WKWebView) async -> String {
+    static func waitForPage(condition: String, value: String, timeout: Int = 5, in view: BrowserPage) async -> String {
         guard ["text", "textAbsent", "url", "ready"].contains(condition),
             condition == "ready" || !value.isEmpty,
             let encoded = jsonString(value)
@@ -116,7 +116,7 @@ extension PageDriver {
         return "Timed out waiting for \(condition).\n" + (await PageAutomationGuard.withCurrentDocument(in: view) { await snapshot(view, lookingFor: value) })
     }
 
-    static func screenshot(in view: WKWebView) async -> Data? {
+    static func screenshot(in view: BrowserPage) async -> Data? {
         guard PageAutomationGuard.allowsExecution else { return nil }
         let document = view.url
         let safetyCheck = scripted(
@@ -126,10 +126,9 @@ extension PageDriver {
             """)
         let safe = await evaluateJSON(safetyCheck, in: view)
         guard safe?["safe"] as? Bool == true else { return nil }
-        let config = WKSnapshotConfiguration()
-        config.snapshotWidth = NSNumber(value: min(1280, max(1, view.bounds.width)))
-        guard let image = try? await view.takeSnapshot(configuration: config), PageAutomationGuard.allowsExecution, view.url == document,
-            let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff)
+        guard let image = try? await view.capture(width: min(1280, max(1, view.bounds.width))),
+              PageAutomationGuard.allowsExecution, view.url == document,
+              let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff)
         else { return nil }
         let after = await evaluateJSON(safetyCheck, in: view)
         guard after?["safe"] as? Bool == true, after?["document"] as? String == safe?["document"] as? String else { return nil }

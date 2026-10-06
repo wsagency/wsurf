@@ -33,12 +33,20 @@ extension AppCoordinator {
         media.releaseControl()
         statusMessage = nil
         closePalette()
+        if let held = peek.take(quietly: true) {
+            browser.dismissPeekTab(held)
+            await held.waitForRetirement()
+        }
         timing.mark("quiesce")
 
         browser.saveBlocking()
         timing.mark("save session")
 
+        let closingTabs = browser.tabs
         browser.closeAllTabs(saving: false)
+        for tab in closingTabs {
+            await tab.waitForRetirement()
+        }
         timing.mark("close tabs")
 
         let database = profile.isPrivate ? nil : profile.makeDatabase()
@@ -82,6 +90,7 @@ extension AppCoordinator {
     }
 
     func applyProfileStores(_ profile: Profile, database prepared: AppDatabase? = nil) {
+        ChromiumRuntime.shared.use(profile: profile)
         PaymentCardAutofill.shared.use(profileID: profile.id)
         ContactAutofill.shared.use(profile: profile)
         PasswordAutofill.shared.use(profileID: profile.id)
@@ -113,7 +122,7 @@ extension AppCoordinator {
     }
 
     private func applyProfileSettings(_ profile: Profile) {
-        let owner = profile.isPrivate ? profiles.profileToReturnTo : profile
+        let owner = profile
         let defaults = ProfileSettingsStore.defaults(for: owner)
 
         settings.useSessionDefaults(defaults)
@@ -126,6 +135,7 @@ extension AppCoordinator {
 
     private func endPrivateSession() async {
         guard privateSession != nil else { return }
+        ChromiumRuntime.shared.endPrivateSession()
         privateSession = nil
         browser.downloads.forgetPrivateDownloads()
         FaviconLoader.shared.forgetSessionOnlyIcons()

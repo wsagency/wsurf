@@ -69,6 +69,34 @@ struct SidebarPinMenuItems: View {
     }
 }
 
+struct SidebarFavoriteMenuItems: View {
+    let tabs: [BrowserTab]
+    let browser: BrowserModel
+
+    var body: some View {
+        if tabs.contains(where: { !$0.isFavorite }) {
+            Button {
+                for tab in tabs where !tab.isFavorite {
+                    browser.addFavorite(tab)
+                }
+            } label: {
+                Label("Add Favorite", systemImage: "star")
+            }
+            .disabled(tabs.allSatisfy { $0.urlString.isEmpty && $0.pinnedURL == nil })
+        }
+        if tabs.contains(where: \.isFavorite) {
+            Button {
+                for tab in tabs where tab.isFavorite {
+                    browser.removeFavorite(tab)
+                }
+            } label: {
+                Label("Remove Favorite", systemImage: "star.slash")
+            }
+        }
+        Divider()
+    }
+}
+
 struct SidebarUnpinButton: View {
     let tab: BrowserTab
     let browser: BrowserModel
@@ -123,7 +151,7 @@ struct SidebarFolderMenuItems: View {
                 Divider()
             }
             Button {
-                browser.createFolder(containing: items)
+                browser.createFolderForRenaming(containing: items)
             } label: {
                 Label("New Folder…", systemImage: "folder.badge.plus")
             }
@@ -183,27 +211,47 @@ struct SidebarSelectionMenuItems: View {
 
     var body: some View {
         SidebarLinkMenuItems(tabs: tabs, coordinator: coordinator)
+        SidebarFavoriteMenuItems(tabs: tabs, browser: browser)
         SidebarFolderMenuItems(items: items, browser: browser)
-        SidebarCloseTabsButton(items: items, browser: browser)
+        SidebarTabActions(items: items, browser: browser, coordinator: coordinator)
     }
 }
 
-struct SidebarCloseTabsButton: View {
+struct SidebarTabActions: View {
     let items: [SidebarItem]
     let browser: BrowserModel
+    let coordinator: AppCoordinator
+
+    private var tabs: [BrowserTab] {
+        browser.tabs(under: items)
+    }
 
     var body: some View {
-        let count = browser.tabCount(in: items)
+        let count = tabs.count
+        let loadedCount = tabs.filter { !$0.isDeferred }.count
+        let unloadLabel = count == 1 ? String(localized: "Unload Tab") : String(localized: "Unload \(count) Tabs")
+        let removeLabel = count == 1 ? String(localized: "Remove Tab") : String(localized: "Remove \(count) Tabs")
+        Button {
+            let selected = tabs
+            browser.unload(items)
+            for tab in selected where tab.isMaterialised {
+                coordinator.unloadTab(tab)
+            }
+        } label: {
+            Label(unloadLabel, systemImage: "arrow.uturn.down")
+        }
+        .disabled(loadedCount == 0)
+
         Button(role: .destructive) {
             Task {
                 guard await ConfirmAlert.destructive(
-                    "Close \(count) tabs?",
-                    verb: "Close Tabs"
+                    "Remove \(count) tabs?",
+                    verb: "Remove Tabs"
                 ) else { return }
                 browser.close(items)
             }
         } label: {
-            Label("Close \(count) Tabs", systemImage: "xmark")
+            Label(removeLabel, systemImage: "xmark")
         }
         .disabled(count == 0)
     }

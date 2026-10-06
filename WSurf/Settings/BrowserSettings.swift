@@ -4,6 +4,7 @@
 
 import AppKit
 import Observation
+import SwiftUI
 import WebKit
 
 @Observable
@@ -20,8 +21,15 @@ final class BrowserSettings {
         static let websiteColor = "appearance.websiteColor"
         static let loomStyle = "appearance.loomStyle"
         static let transparency = "appearance.transparency"
-        static let pageZoom = "content.defaultZoom"
+        static let sidebarFontFamily = "appearance.sidebar.fontFamily"
+        static let sidebarFontSize = "appearance.sidebar.fontSize"
+        static let sidebarFontWeight = "appearance.sidebar.fontWeight"
+        static let sidebarRowSpacing = "appearance.sidebar.rowSpacing"
+        static let sidebarFolderTint = "appearance.sidebar.folderTint"
+        static let sidebarTextStyles = "appearance.sidebar.textStyles"
+        static let themeCustomizations = "appearance.themeCustomizations"
         static let sleepsInactiveTabs = "tabs.sleep"
+        static let pageZoom = "content.defaultZoom"
         static let linkPreview = "content.linkPreview"
         static let linkPeek = "content.linkPeek"
         static let searchEngine = "search.engine"
@@ -77,6 +85,8 @@ final class BrowserSettings {
     @ObservationIgnored var onMediaPlayerChanged: ((Bool) -> Void)?
     @ObservationIgnored var onAutomaticPictureInPictureChanged: ((Bool) -> Void)?
     @ObservationIgnored var onVideoInPlayerChanged: ((Bool) -> Void)?
+    @ObservationIgnored private var sidebarFontCache: Font?
+    @ObservationIgnored private var sidebarLineHeightCache: CGFloat = 0
 
     private func store(for key: String) -> UserDefaults {
         Self.sessionKeySet.contains(key) ? sessionDefaults : appDefaults
@@ -132,6 +142,109 @@ final class BrowserSettings {
             guard transparency != oldValue else { return }
             write(transparency, forKey: Key.transparency)
         }
+    }
+    var sidebarFontFamily: String {
+        didSet {
+            guard sidebarFontFamily != oldValue else { return }
+            sidebarFontCache = nil
+            write(sidebarFontFamily, forKey: Key.sidebarFontFamily)
+        }
+    }
+
+    var sidebarFontSize: Double {
+        didSet {
+            let clamped = sidebarFontSize.isFinite
+                ? min(max(sidebarFontSize, 10), 20)
+                : 12
+            if sidebarFontSize != clamped {
+                sidebarFontSize = clamped
+            }
+            guard sidebarFontSize != oldValue else { return }
+            sidebarFontCache = nil
+            write(sidebarFontSize, forKey: Key.sidebarFontSize)
+        }
+    }
+
+    var sidebarFontWeight: SidebarFontWeight {
+        didSet {
+            guard sidebarFontWeight != oldValue else { return }
+            sidebarFontCache = nil
+            write(sidebarFontWeight.rawValue, forKey: Key.sidebarFontWeight)
+        }
+    }
+
+    var sidebarRowSpacing: Double {
+        didSet {
+            let clamped = sidebarRowSpacing.isFinite
+                ? min(max(sidebarRowSpacing, 0), 8)
+                : 1
+            if sidebarRowSpacing != clamped {
+                sidebarRowSpacing = clamped
+            }
+            guard sidebarRowSpacing != oldValue else { return }
+            write(sidebarRowSpacing, forKey: Key.sidebarRowSpacing)
+        }
+    }
+
+    var sidebarFolderTint: Double {
+        didSet {
+            let clamped = sidebarFolderTint.isFinite
+                ? min(max(sidebarFolderTint, 0), 1)
+                : 0.35
+            if sidebarFolderTint != clamped {
+                sidebarFolderTint = clamped
+            }
+            guard sidebarFolderTint != oldValue else { return }
+            write(sidebarFolderTint, forKey: Key.sidebarFolderTint)
+        }
+    }
+
+    var sidebarTextStyles: [String: SidebarTextStyle] {
+        didSet {
+            guard sidebarTextStyles != oldValue,
+                  let data = try? JSONEncoder().encode(sidebarTextStyles)
+            else { return }
+            write(data, forKey: Key.sidebarTextStyles)
+        }
+    }
+
+    var themeCustomizations: [String: ThemeCustomization] {
+        didSet {
+            guard themeCustomizations != oldValue,
+                  let data = try? JSONEncoder().encode(themeCustomizations)
+            else { return }
+            write(data, forKey: Key.themeCustomizations)
+        }
+    }
+
+    var sidebarFont: Font {
+        let family = sidebarFontFamily
+        let size = CGFloat(sidebarFontSize)
+        let weight = sidebarFontWeight
+        if let sidebarFontCache {
+            return sidebarFontCache
+        }
+
+        let native: NSFont
+        if family.isEmpty {
+            native = .systemFont(ofSize: size, weight: weight.nativeWeight)
+        } else {
+            native = NSFontManager.shared.font(
+                withFamily: family,
+                traits: [],
+                weight: weight.appKitWeight,
+                size: size
+            ) ?? .systemFont(ofSize: size, weight: weight.nativeWeight)
+        }
+        let resolved = Font(native)
+        sidebarFontCache = resolved
+        sidebarLineHeightCache = (native.ascender - native.descender + native.leading).rounded(.up)
+        return resolved
+    }
+
+    var sidebarLineHeight: CGFloat {
+        _ = sidebarFont
+        return sidebarLineHeightCache
     }
 
     var matchesWebsiteColor: Bool {
@@ -296,6 +409,7 @@ final class BrowserSettings {
             guard blocksTrackers != oldValue else { return }
             write(blocksTrackers, forKey: Key.blockTrackers)
             ContentBlocker.shared.refresh()
+            onWebPreferencesChanged?()
         }
     }
 
@@ -492,6 +606,12 @@ final class BrowserSettings {
         func double(_ key: String) -> Double {
             pick(key).double(forKey: key)
         }
+        func finiteNumber(_ key: String) -> Double? {
+            guard let value = object(key) as? NSNumber, value.doubleValue.isFinite else {
+                return nil
+            }
+            return value.doubleValue
+        }
         func stringArray(_ key: String) -> [String]? {
             pick(key).stringArray(forKey: key)
         }
@@ -512,6 +632,18 @@ final class BrowserSettings {
         transparency = object(Key.transparency) == nil
             ? 0.5
             : min(max(double(Key.transparency), 0), 1)
+        sidebarFontFamily = string(Key.sidebarFontFamily) ?? ""
+        sidebarFontSize = min(max(finiteNumber(Key.sidebarFontSize) ?? 12, 10), 20)
+        sidebarFontWeight = string(Key.sidebarFontWeight)
+            .flatMap(SidebarFontWeight.init(rawValue:)) ?? .medium
+        sidebarRowSpacing = min(max(finiteNumber(Key.sidebarRowSpacing) ?? 1, 0), 8)
+        sidebarFolderTint = min(max(finiteNumber(Key.sidebarFolderTint) ?? 0.35, 0), 1)
+        let storedThemes = defaults.data(forKey: Key.themeCustomizations)
+            .flatMap { try? JSONDecoder().decode([String: ThemeCustomization].self, from: $0) } ?? [:]
+        themeCustomizations = storedThemes.mapValues { $0.bounded() }
+        defaults.removeObject(forKey: "appearance.sidebar.directRemoveUnloadedTabs")
+        sidebarTextStyles = Self.decodeSidebarTextStyles(defaults.data(forKey: Key.sidebarTextStyles))
+
         showsMediaPlayer = object(Key.mediaPlayer) as? Bool ?? true
         showsLyrics = object(Key.lyrics) as? Bool ?? true
         refractsTabColor = object(Key.tabColorRefraction) as? Bool ?? true
@@ -617,27 +749,6 @@ final class BrowserSettings {
             : appearance.nsAppearance
     }
 
-    func apply(to configuration: WKWebViewConfiguration) {
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = javaScriptEnabled
-        configuration.preferences.javaScriptCanOpenWindowsAutomatically = !blocksPopups
-        configuration.mediaTypesRequiringUserActionForPlayback = javaScriptEnabled ? [] : autoplay.mediaTypes
-        configuration.preferences.isElementFullscreenEnabled = true
-        // `isInspectable` only lets an external inspector attach. This private
-        // preference enables the page's own Inspect Element item.
-        configuration.preferences.setValue(webInspectorEnabled, forKey: "developerExtrasEnabled")
-        WebKitFeatures.apply(to: configuration.preferences)
-        NativeApplePay.apply(to: configuration.preferences)
-    }
-
-    func apply(to webView: WKWebView) {
-        apply(to: webView.configuration)
-        if webView.pageZoom != pageZoom {
-            webView.pageZoom = pageZoom
-        }
-        webView.customUserAgent = userAgentString
-        webView.isInspectable = webInspectorEnabled
-    }
-
     func resetToDefaults() {
         fillsPasswords = true
         passwordExtensionID = ""
@@ -647,7 +758,14 @@ final class BrowserSettings {
         loomStyle = .standard
         matchesWebsiteColor = true
         transparency = 0.5
+        sidebarFontFamily = ""
+        sidebarFontSize = 12
+        sidebarFontWeight = .medium
+        sidebarRowSpacing = 1
+        sidebarFolderTint = 0.35
+        sidebarTextStyles = [:]
         refractsTabColor = true
+        themeCustomizations = [:]
         pageZoom = 1
         searchEngineID = SearchEngine.duckDuckGo.id
         customSearchName = ""

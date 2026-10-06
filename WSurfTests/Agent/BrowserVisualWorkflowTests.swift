@@ -27,8 +27,8 @@ struct BrowserVisualWorkflowTests {
         ])
 
         #expect(result.contains("CONTROL: Browser action completed."))
-        #expect(try await fixture.tab.webView.evaluateJavaScript("window.chosen || 0") as? Int == 1)
+        #expect(try await fixture.tab.page.evaluateJavaScript("window.chosen || 0") as? Int == 1)
         #expect(fixture.toolkit.takePendingScreenshot() != nil)
-        #expect(fixture.tab.webView.subviews.contains { $0.identifier?.rawValue == "assistant-pointer" })
+        #expect(fixture.tab.page.subviews.contains { $0.identifier?.rawValue == "assistant-pointer" })
     }
 }

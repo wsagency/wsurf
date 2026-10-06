@@ -6,7 +6,7 @@ import Foundation
 import WebKit
 
 extension PageDriver {
-    static func valueState(ref: Int, documentID: String?, in view: WKWebView) async -> String {
+    static func valueState(ref: Int, documentID: String?, in view: BrowserPage) async -> String {
         guard let documentID, let encoded = jsonString(documentID) else { return "unverified" }
         let object = await evaluateJSON(scripted("""
             if (R.documentID !== \(encoded)) return JSON.stringify({ state: 'unverified' });
@@ -17,7 +17,7 @@ extension PageDriver {
 
     static func finishValueAction(
         status: String, ref: Int, documentID: String?, submissionRequested: Bool = false,
-        refreshControls: Bool, in view: WKWebView
+        refreshControls: Bool, in view: BrowserPage
     ) async -> String {
         if refreshControls {
             await PageSettle.afterInteraction(view)

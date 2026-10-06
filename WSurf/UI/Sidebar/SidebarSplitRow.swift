@@ -34,7 +34,9 @@ struct SidebarSplitRow: View {
         .tab(leading.id)
     }
 
-    private static let lineHeight: CGFloat = 28
+    private var lineHeight: CGFloat {
+        SidebarMetrics.rowHeight(settings: coordinator.settings)
+    }
 
     private var isLifted: Bool {
         context.isLifted(item)
@@ -70,7 +72,9 @@ struct SidebarSplitRow: View {
     }
 
     private var height: CGFloat {
-        lineCount > 1 ? Self.lineHeight * CGFloat(lineCount) + CGFloat(lineCount - 1) : 32
+        lineCount > 1
+            ? lineHeight * CGFloat(lineCount) + SidebarMetrics.rowVerticalSpacing(settings: coordinator.settings) * CGFloat(lineCount - 1)
+            : lineHeight
     }
 
     private var carried: [SidebarItem] {
@@ -79,7 +83,11 @@ struct SidebarSplitRow: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let layout = SplitLayout(grid: shape, size: proxy.size, gutter: 1)
+            let layout = SplitLayout(
+                grid: shape,
+                size: proxy.size,
+                gutter: SidebarMetrics.rowVerticalSpacing(settings: coordinator.settings)
+            )
             ZStack(alignment: .topLeading) {
                 ForEach(split.tabs, id: \.self) { id in
                     if let tab = browser.tab(id: id), let rect = layout.slot(of: id) {
@@ -175,6 +183,7 @@ struct SidebarSplitRow: View {
                 coordinator.openTab(opened)
             }
         }
+        context.selection.excludeFavorites(browser.favorites)
     }
 
     private var panes: [BrowserTab] {
@@ -184,6 +193,7 @@ struct SidebarSplitRow: View {
     @ViewBuilder
     private var menu: some View {
         SidebarLinkMenuItems(tabs: panes, coordinator: coordinator)
+        SidebarFavoriteMenuItems(tabs: panes, browser: browser)
 
         if let axis = split.axis {
             Button {
@@ -205,12 +215,17 @@ struct SidebarSplitRow: View {
 
         SidebarFolderMenuItems(items: carried, browser: browser)
 
-        Button(role: .destructive) {
-            for tab in panes.reversed() {
-                browser.close(tab)
+        if panes.contains(where: { !$0.isDeferred }) {
+            Button {
+                FolderContextMenu.unloadTabs(carried, coordinator: coordinator, browser: browser)
+            } label: {
+                Label("Unload Tabs", systemImage: "arrow.uturn.down")
             }
+        }
+        Button(role: .destructive) {
+            browser.close(panes.map { .tab($0.id) })
         } label: {
-            Label("Close These Tabs", systemImage: "xmark")
+            Label("Remove Tabs", systemImage: "xmark")
         }
     }
 }
@@ -224,6 +239,7 @@ private struct SplitRowCell: View {
     let onTap: (BrowserTab) -> Void
 
     @Environment(\.sidebarStyle) private var sidebarStyle
+    @Environment(\.colorScheme) private var windowColorScheme
     @State private var hovering = false
     @State private var controlsWidth: CGFloat = 0
     @State private var windowFrame: CGRect = .zero
@@ -261,7 +277,10 @@ private struct SplitRowCell: View {
                     browser.returnToPin(tab)
                 }
             } else {
-                TabIcon(tab: tab)
+                TabIcon(tab: tab, tint: coordinator.settings.sidebarTextColor(
+                    isDeferred: tab.isDeferred,
+                    scheme: windowColorScheme
+                ))
             }
 
             if sidebarStyle == .full, tab.isPlayingAudio || tab.isMuted {
@@ -272,8 +291,11 @@ private struct SplitRowCell: View {
 
             if sidebarStyle == .full, !isNarrow {
                 Text(verbatim: tab.title)
-                    .font(Theme.Font.control)
-                    .foregroundStyle(isFocused ? Color.primary : Color.secondary)
+                    .font(coordinator.settings.sidebarFont)
+                    .foregroundStyle(coordinator.settings.sidebarTextColor(
+                        isDeferred: tab.isDeferred,
+                        scheme: windowColorScheme
+                    ))
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .mask(alignment: .leading) { titleMask }
@@ -281,9 +303,9 @@ private struct SplitRowCell: View {
         }
         .overlay(alignment: .trailing) {
             if sidebarStyle == .full, answersAlone {
-                CloseButton { browser.close(tab) }
+                SidebarTabActionButton(tab: tab, coordinator: coordinator)
                     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
-                        controlsWidth = min($0, 20)
+                        controlsWidth = $0
                     }
                     .opacity(hovering ? 1 : 0)
                     .allowsHitTesting(hovering)
@@ -296,7 +318,7 @@ private struct SplitRowCell: View {
         .onTapGesture { onTap(tab) }
         .onMiddleClick {
             coordinator.tabPreview.dismiss()
-            coordinator.closeAskingIfPinned(tab)
+            coordinator.unloadTab(tab)
         }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
             windowFrame = frame

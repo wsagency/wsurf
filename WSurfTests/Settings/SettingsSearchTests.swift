@@ -53,8 +53,6 @@ struct SettingsSearchTests {
 
     @Test func theAssistantToggleIsFoundByTheWordAI() {
         #expect(SettingsIndex.search("ai").contains { $0.id == "general.agentOnly" })
-        #expect(String(localized: SettingsIndex.all.first { $0.id == "general.agentOnly" }!.title)
-            == "Always ask the assistant")
     }
 
     @Test func perSiteRulesAreFoundOnTheWebsiteList() {

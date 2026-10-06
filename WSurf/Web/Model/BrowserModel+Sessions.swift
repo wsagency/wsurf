@@ -23,6 +23,7 @@ extension BrowserModel {
         var pinnedTitle: String?
         var internalPage: BrowserTab.InternalPage?
         var isActive: Bool
+        var isFavorite: Bool
     }
 
     private nonisolated struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -33,6 +34,7 @@ extension BrowserModel {
         var name: String
         var color: TabFolderColor
         var isExpanded: Bool
+        var isPinned: Bool
     }
 
     private nonisolated struct ItemRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -166,7 +168,8 @@ extension BrowserModel {
                 pinnedURL: tab.pinnedURL,
                 pinnedTitle: tab.pinnedTitle.isEmpty ? nil : tab.pinnedTitle,
                 internalPage: tab.internalPage,
-                isActive: tab.id == activeTabID
+                isActive: tab.id == activeTabID,
+                isFavorite: tab.isFavorite
             )
         }
         writtenStateGeneration = writtenStateGeneration.filter { id, _ in
@@ -179,7 +182,8 @@ extension BrowserModel {
                 position: position,
                 name: folder.name,
                 color: folder.color,
-                isExpanded: folder.isExpanded
+                isExpanded: folder.isExpanded,
+                isPinned: folder.isPinned
             )
         }
         let known = Set(persisted.map(\.id))
@@ -237,8 +241,8 @@ extension BrowserModel {
                 sql: """
                     INSERT INTO sessionTab
                         (id, title, customTitle, url, state, pinnedURL, pinnedTitle,
-                         internalPage, isActive)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         internalPage, isActive, isFavorite)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         title = excluded.title,
                         customTitle = excluded.customTitle,
@@ -247,12 +251,13 @@ extension BrowserModel {
                         pinnedURL = excluded.pinnedURL,
                         pinnedTitle = excluded.pinnedTitle,
                         internalPage = excluded.internalPage,
-                        isActive = excluded.isActive
+                        isActive = excluded.isActive,
+                        isFavorite = excluded.isFavorite
                     """,
                 arguments: [
                     tab.id, tab.title, tab.customTitle, tab.url, tab.state,
                     tab.pinnedURL, tab.pinnedTitle,
-                    tab.internalPage?.rawValue, tab.isActive,
+                    tab.internalPage?.rawValue, tab.isActive, tab.isFavorite,
                 ]
             )
         }
@@ -295,7 +300,7 @@ extension BrowserModel {
     }
 
     func restoreSession() {
-        guard tabs.isEmpty else { return }
+        guard tabs.isEmpty, folders.isEmpty else { return }
 
         let stored = try? database.writer.read { db in
             (
@@ -304,7 +309,7 @@ extension BrowserModel {
                 items: try ItemRecord.order(Column("position")).fetchAll(db)
             )
         }
-        guard let stored, !stored.tabs.isEmpty else { return }
+        guard let stored else { return }
 
         let storedTrees = (try? database.writer.read { db in
             try SplitTreeRecord.order(Column("position")).fetchAll(db)
@@ -328,12 +333,11 @@ extension BrowserModel {
             ordered.append(record)
         }
 
-        let activeIndex = ordered.firstIndex { $0.isActive } ?? 0
-        let activeID = ordered[activeIndex].id
+        let activeID = (ordered.first { $0.isActive } ?? ordered.first)?.id
         let grids = Self.grids(from: storedTrees) + Self.grids(fromFlat: storedPanes)
-        let onScreen = Set(
-            [activeID] + (grids.first { $0.contains(activeID) }?.tabs ?? [])
-        )
+        let onScreen = Set(activeID.map { id in
+            [id] + (grids.first { $0.contains(id) }?.tabs ?? [])
+        } ?? [])
 
         for record in ordered {
             let restoredURL = record.url.isEmpty
@@ -351,6 +355,7 @@ extension BrowserModel {
             tab.urlString = restoredURL.map(\.absoluteString) ?? record.url
             tab.pinnedURL = record.pinnedURL
             tab.pinnedTitle = record.pinnedTitle ?? ""
+            tab.isFavorite = record.isFavorite
             tab.deferRestore(state: record.state, url: restoredURL)
             if let host = URL(string: record.url)?.host() {
                 dressRow(tab, fromHost: host)
@@ -358,6 +363,9 @@ extension BrowserModel {
             tabs.append(tab)
             writtenStateGeneration[tab.id] = tab.sessionStateGeneration
             onTabOpened?(tab)
+            if tab.isFavorite {
+                tab.realizeDeferredSession()
+            }
         }
 
         var foldersByStoredID: [UUID: TabFolder] = [:]
@@ -365,6 +373,7 @@ extension BrowserModel {
             let folder = TabFolder(name: record.name)
             folder.color = record.color
             folder.isExpanded = record.isExpanded
+            folder.isPinned = record.isPinned
             foldersByStoredID[record.id] = folder
             folders.append(folder)
         }
@@ -391,7 +400,7 @@ extension BrowserModel {
         splits = TabSplits(grids)
         sidebarDidChange()
 
-        activeTabID = tabs[min(activeIndex, tabs.count - 1)].id
+        activeTabID = activeID
         for pane in activeTab.map({ splitOthers(of: $0) }) ?? [] {
             pane.realizeDeferredSession()
         }
@@ -457,10 +466,6 @@ extension BrowserModel {
             saveBlocking()
         }
         for tab in tabs {
-            if tab.isMaterialised {
-                tab.webView.stopLoading()
-                tab.webView.removeFromSuperview()
-            }
             tab.detach()
         }
         tabs = []
@@ -469,6 +474,8 @@ extension BrowserModel {
         splits = TabSplits()
         activeTabID = nil
         closedTabs = []
+        sidebarUndoManager.removeAllActions()
+        folderRenameID = nil
         lastVisitID = [:]
         recentlyActive = []
         writtenStateGeneration = [:]

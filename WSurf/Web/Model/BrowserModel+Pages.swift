@@ -16,6 +16,7 @@ extension BrowserModel {
         let spared = Set([activeTabID].compactMap { $0 } + recentlyActive.prefix(keep))
         var discarded = 0
         for tab in tabs where !spared.contains(tab.id)
+            && !tab.isFavorite
             && tab.canDiscardWebContent
             && protectionReason(for: tab) == nil {
             tab.discardWebContent()
@@ -24,18 +25,72 @@ extension BrowserModel {
         return discarded
     }
 
+    @discardableResult
+    func unload(_ tab: BrowserTab) -> Bool {
+        guard tabsByID[tab.id] === tab else { return false }
+        guard tab.isMaterialised else { return true }
+        guard !tab.isDeferred, !tab.urlString.isEmpty else { return true }
+
+        let splitReplacement = activeTabID == tab.id
+            ? activeSplit?.tabs.compactMap { tabsByID[$0] }.first { $0 !== tab }
+            : nil
+        guard tab.intrinsicProtectionReason == nil,
+              !downloads.hasActiveDownload(for: tab.id),
+              !keepsActive(tab)
+        else { return false }
+        if protectionReason(for: tab) == .visibleInSplit {
+            removeFromSplit(tab)
+        }
+        guard tab.canDiscardWebContent else { return true }
+
+        if activeTabID == tab.id {
+            let replacement = splitReplacement
+                ?? tabs.first { $0 !== tab && $0.isMaterialised && !$0.isDeferred }
+            if let replacement {
+                activeTabID = replacement.id
+            } else {
+                hasNoActiveTab = true
+                activeTabID = nil
+            }
+        }
+        tab.discardWebContent()
+        scheduleSave()
+        return !tab.isMaterialised
+    }
+
+    func unload(_ items: [SidebarItem]) {
+        let selected = tabs(under: items)
+        let selectedIDs = Set(selected.map(\.id))
+        if let active = activeTab, selectedIDs.contains(active.id),
+           active.intrinsicProtectionReason == nil,
+           !downloads.hasActiveDownload(for: active.id),
+           !keepsActive(active) {
+            if let replacement = tabs.first(where: {
+                !selectedIDs.contains($0.id) && $0.isMaterialised && !$0.isDeferred
+            }) {
+                activate(replacement)
+            } else {
+                hasNoActiveTab = true
+                activeTabID = nil
+            }
+        }
+        for tab in selected {
+            _ = unload(tab)
+        }
+    }
+
     func protectionReason(for tab: BrowserTab) -> TabProtectionReason? {
         if let reason = tab.intrinsicProtectionReason {
             return reason
-        }
-        if isVisibleInSplit(tab) {
-            return .visibleInSplit
         }
         if downloads.hasActiveDownload(for: tab.id) {
             return .activeDownload
         }
         if keepsActive(tab) {
             return .alwaysKeepActive
+        }
+        if isVisibleInSplit(tab) {
+            return .visibleInSplit
         }
         return nil
     }
@@ -46,6 +101,43 @@ extension BrowserModel {
               scheme == "http" || scheme == "https"
         else { return "" }
         return SitePermissions.origin(for: url)
+    }
+    func setEngine(_ engine: BrowserEngine, for origin: String) async -> Bool {
+        let permissions = sitePermissions
+        let canonical = SitePermissions.origin(for: URL(string: origin))
+        guard let scheme = URL(string: canonical)?.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else { return false }
+        guard sitePermissions.engine(for: canonical) != engine else { return true }
+
+        let affected = tabs.filter { siteOrigin(for: $0) == canonical && $0.isMaterialised }
+        let protected = affected.contains {
+            $0.intrinsicProtectionReason != nil || downloads.hasActiveDownload(for: $0.id)
+        }
+        if protected {
+            guard await ConfirmAlert.destructive(
+                "Switch rendering engine?",
+                detail: "This reloads the website and may end active work, media, or downloads.",
+                verb: "Switch Engine"
+            ) else { return false }
+        }
+        guard sitePermissions === permissions else { return false }
+
+        sitePermissions.setEngine(engine, for: canonical)
+        await applyStoredEngine(to: canonical)
+        return true
+    }
+
+    func engine(for tab: BrowserTab) -> BrowserEngine {
+        sitePermissions.engine(for: siteOrigin(for: tab))
+    }
+
+    func applyStoredEngine(to origin: String) async {
+        let engine = sitePermissions.engine(for: origin)
+        for tab in tabs where siteOrigin(for: tab) == origin && tab.isMaterialised {
+            guard tab.page.engine != engine else { continue }
+            _ = await tab.switchEngine(to: engine)
+        }
     }
 
     func keepsActive(_ tab: BrowserTab) -> Bool {
@@ -82,7 +174,7 @@ extension BrowserModel {
     func applyWebSettings() {
         let settings = BrowserSettings.shared
         for tab in tabs where tab.isMaterialised {
-            settings.apply(to: tab.webView)
+            settings.apply(to: tab.page)
             tab.refreshPopupPolicy()
         }
         WebViewPool.shared.discardIdle()

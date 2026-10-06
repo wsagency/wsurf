@@ -365,7 +365,7 @@ struct ExtensionPageAssetsTests {
             pageWorldScripts: [ExtensionPageAssets.script, ExtensionExternalConnect.pageScript],
             url: harness.pageURL
         )
-        await waitForMessages(collector, count: 2, limit: .seconds(30))
+        try #require(await waitUntil(timeout: .seconds(30)) { collector.messages.contains("barrier") })
         window.orderOut(nil)
         _ = webView
 
@@ -384,7 +384,7 @@ struct ExtensionPageAssetsTests {
             pageWorldScripts: scripts,
             url: harness.pageURL
         )
-        await waitForMessages(first.1, count: 2, limit: .seconds(30))
+        try #require(await waitUntil(timeout: .seconds(30)) { first.1.messages.contains("barrier") })
         first.2.orderOut(nil)
         first.0.loadHTMLString("<html></html>", baseURL: nil)
         #expect(first.1.messages.contains { $0.hasPrefix("port:") }, "\(first.1.messages)")
@@ -397,7 +397,7 @@ struct ExtensionPageAssetsTests {
             pageWorldScripts: scripts,
             url: harness.pageURL
         )
-        await waitForMessages(second.1, count: 2, limit: .seconds(30))
+        try #require(await waitUntil(timeout: .seconds(30)) { second.1.messages.contains("barrier") })
         second.2.orderOut(nil)
         _ = second.0
 
@@ -420,8 +420,7 @@ struct ExtensionPageAssetsTests {
             pageWorldScripts: [ExtensionPageAssets.script, ExtensionExternalConnect.pageScript],
             url: harness.pageURL
         )
-        await waitForMessages(collector, count: 2, limit: .seconds(30))
-        try #require(await waitUntil { collector.messages.contains("barrier") })
+        try #require(await waitUntil(timeout: .seconds(30)) { collector.messages.contains("barrier") })
         window.orderOut(nil)
         _ = webView
 

@@ -16,23 +16,24 @@ import WebKit
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct PageDriverTests {
-    private static let stage: WKWebView = {
+    private static let stage: BrowserPage = {
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        return WKWebView(
+        let view = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 500, height: 400),
             configuration: configuration
         )
+        return BrowserPage(webKit: view)
     }()
 
-    private func loadedWebView(_ body: String) async -> WKWebView {
+    private func loadedWebView(_ body: String) async -> BrowserPage {
         let webView = Self.stage
         webView.loadHTMLString("<!doctype html><html><body>\(body)</body></html>", baseURL: nil)
         #expect(await PageSettle.untilIdle(webView, timeout: .seconds(30)))
         return webView
     }
 
-    private func js(_ webView: WKWebView, _ script: String) async -> Any? {
+    private func js(_ webView: BrowserPage, _ script: String) async -> Any? {
         try? await webView.evaluateJavaScript(script)
     }
 
@@ -242,14 +243,17 @@ struct PageDriverTests {
         ])
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        let webView = WKWebView(
-            frame: NSRect(x: 0, y: 0, width: 500, height: 400),
-            configuration: configuration
+        let page = BrowserPage(
+            webKit: WKWebView(
+                frame: NSRect(x: 0, y: 0, width: 500, height: 400),
+                configuration: configuration
+            ),
+            profile: Profile.privateBrowsing()
         )
-        webView.load(URLRequest(url: try top.url()))
-        #expect(await PageSettle.untilIdle(webView, timeout: .seconds(30)))
+        page.load(URLRequest(url: try top.url()))
+        #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
 
-        let observation = await PageDriver.readRenderedPage(webView)
+        let observation = await PageDriver.readRenderedPage(page)
         #expect(observation.contains("Top-level text"))
         #expect(!observation.contains("Cross-origin secret"))
         #expect(!observation.contains("Hidden action"))
@@ -327,14 +331,14 @@ struct PageDriverTests {
     }
 
     @Test func aDisabledControlIsMarkedAndNotClicked() async throws {
-        let webView = await loadedWebView(#"<button disabled onclick="window.__hit=1">Continue</button>"#)
+        let webView = await loadedWebView(#"<script>window.__hit=0</script><button disabled onclick="window.__hit++">Continue</button>"#)
         let observation = await PageDriver.readRenderedPage(webView)
         #expect(observation.contains("(disabled)"))
 
         let ref = try #require(refs(in: observation, matching: "Continue").first)
         let result = await PageDriver.click(ref: ref, label: "", in: webView)
         #expect(result.contains("disabled"))
-        #expect(await js(webView, "window.__hit") == nil)
+        #expect(await js(webView, "window.__hit") as? Int == 0)
     }
 
     // MARK: - Typing
@@ -481,20 +485,23 @@ struct PageDriverTests {
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct AgentConsentGateTests {
-    private func loadedWebView(_ body: String) async -> WKWebView {
+    private func loadedWebView(_ body: String) async -> BrowserPage {
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        let webView = WKWebView(
-            frame: NSRect(x: 0, y: 0, width: 500, height: 400),
-            configuration: configuration
+        let page = BrowserPage(
+            webKit: WKWebView(
+                frame: NSRect(x: 0, y: 0, width: 500, height: 400),
+                configuration: configuration
+            ),
+            profile: Profile.privateBrowsing()
         )
-        webView.loadHTMLString("<!doctype html><html><body>\(body)</body></html>", baseURL: nil)
-        #expect(await PageSettle.untilIdle(webView, timeout: .seconds(30)))
-        return webView
+        page.loadHTMLString("<!doctype html><html><body>\(body)</body></html>", baseURL: nil)
+        #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+        return page
     }
 
-    private func js(_ webView: WKWebView, _ script: String) async -> Any? {
-        try? await webView.evaluateJavaScript(script)
+    private func js(_ page: BrowserPage, _ script: String) async -> Any? {
+        try? await page.evaluateJavaScript(script)
     }
 
     private func refs(in observation: String, matching needle: String) -> [Int] {
@@ -531,7 +538,7 @@ struct AgentConsentGateTests {
         #expect(asked?.category == .purchase)
         #expect(result.contains("declined"))
         #expect(result.contains("do not try another way"))
-        #expect(await js(webView, "window.__paid") == nil)
+        #expect(await js(webView, "typeof window.__paid === 'undefined'") as? Bool == true)
     }
 
     /// And the user saying yes is equally final: the click proceeds exactly
@@ -569,7 +576,7 @@ struct AgentConsentGateTests {
         #expect(asked?.label == "Continue")
         #expect(asked?.category == .purchase)
         #expect(result.contains("declined"))
-        #expect(await js(webView, "window.__paid") == nil)
+        #expect(await js(webView, "typeof window.__paid === 'undefined'") as? Bool == true)
     }
 
     @Test func anOrdinaryContinueButtonDoesNotTriggerConsequentialConsent() async throws {

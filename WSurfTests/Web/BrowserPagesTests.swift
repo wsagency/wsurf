@@ -356,8 +356,8 @@ struct BrowserPagesTests {
 
         // Busy the view without touching the address, which is the shape the
         // tab is in: showing History, WebKit part-way into something else.
-        tab.webView.load(URLRequest(url: try server.url("/slow")))
-        #expect(await waitUntil { tab.webView.isLoading })
+        tab.page.load(URLRequest(url: try server.url("/slow")))
+        #expect(await waitUntil { tab.page.isLoading })
 
         model.dismissInternalPage(.history)
 
@@ -402,8 +402,8 @@ struct BrowserPagesTests {
 
         tab.goBack()
 
-        #expect(await waitUntil { !tab.webView.isLoading })
-        #expect(tab.committedURL == tab.webView.url, "the list may lag; the view does not")
+        #expect(await waitUntil { !tab.page.isLoading })
+        #expect(tab.committedURL == tab.page.url, "the list may lag; the view does not")
         #expect(tab.committedURL == BrowserTab.InternalPage.history.url)
     }
 
@@ -432,7 +432,7 @@ struct BrowserPagesTests {
     @Test(.boundedWebViews) func backFromAPageReturnsTheTabToWhatItWasShowing() async {
         let model = makeModel()
         let tab = model.ensureActiveTab()
-        _ = tab.webView
+        _ = tab.page
         #expect(await waitUntil { tab.isShowingStartPage })
 
         let history = model.showHistory()
@@ -456,7 +456,7 @@ struct BrowserPagesTests {
 
         let fromHome = makeModel()
         let home = fromHome.ensureActiveTab()
-        _ = home.webView
+        _ = home.page
         #expect(await waitUntil { home.isShowingStartPage })
         _ = fromHome.showHistory()
         #expect(await settled(home, at: BrowserTab.InternalPage.history.url))
@@ -499,7 +499,7 @@ struct BrowserPagesTests {
     @Test(.boundedWebViews) func aSecondPageOpensItsOwnTabToo() async {
         let model = makeModel()
         let tab = model.ensureActiveTab()
-        _ = tab.webView
+        _ = tab.page
         #expect(await waitUntil { tab.isShowingStartPage })
 
         let history = model.showHistory()

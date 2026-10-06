@@ -10,7 +10,7 @@ struct HistoryView: View {
 
     @State private var query = ""
     @State private var hoveredURL: String?
-
+    @State private var error: String?
     var body: some View {
         DestinationPage {
             toolbar
@@ -45,6 +45,14 @@ struct HistoryView: View {
             LinkPreview(address: hoveredURL, delay: .zero, obeysSetting: false)
         }
         .onChange(of: query) { hoveredURL = nil }
+        .alert(
+            "Couldn’t clear history",
+            isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(error ?? String(localized: "Try again."))
+        }
     }
 
     private func noteHover(of url: String, _ inside: Bool) {
@@ -87,8 +95,22 @@ struct HistoryView: View {
 
     private func clear() async {
         guard let choice = await ConfirmAlert.clear(.history()) else { return }
-        await BrowsingData.clear(choice.kinds, range: choice.range, history: browser.history)
-        query = ""
+        let profile = ProfileStore.shared.current
+        let store = BrowsingData.store
+        let history = browser.history
+        do {
+            try await BrowsingData.clear(
+                choice.kinds,
+                range: choice.range,
+                history: history,
+                profile: profile,
+                store: store
+            )
+            guard ProfileStore.shared.current.id == profile.id else { return }
+            query = ""
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     private func dayHeader(_ day: Day) -> some View {

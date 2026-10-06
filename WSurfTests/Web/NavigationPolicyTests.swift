@@ -63,9 +63,10 @@ struct NavigationPolicyTests {
         _ delegate: TabNavigationDelegate,
         _ tab: BrowserTab,
         _ action: StubAction
-    ) -> WKNavigationActionPolicy? {
+    ) throws -> WKNavigationActionPolicy? {
+        let webKit = try #require(tab.page.webKit)
         var decided: WKNavigationActionPolicy?
-        delegate.webView(tab.webView, decidePolicyFor: action) { decided = $0 }
+        delegate.webView(webKit, decidePolicyFor: action) { decided = $0 }
         return decided
     }
 
@@ -88,48 +89,48 @@ struct NavigationPolicyTests {
 
     // MARK: - Ordinary navigation
 
-    @Test func anOrdinaryWebPageIsAllowed() {
+    @Test func anOrdinaryWebPageIsAllowed() throws {
         let (tab, delegate) = subject()
-        #expect(decide(delegate, tab, action("https://example.com/page")) == .allow)
+        #expect(try decide(delegate, tab, action("https://example.com/page")) == .allow)
     }
 
-    @Test func aPlainHTTPPageIsStillTheWebAndIsAllowed() {
+    @Test func aPlainHTTPPageIsStillTheWebAndIsAllowed() throws {
         let (tab, delegate) = subject()
-        #expect(decide(delegate, tab, action("http://example.com/page")) == .allow)
+        #expect(try decide(delegate, tab, action("http://example.com/page")) == .allow)
     }
 
-    @Test func aRequestThatAsksToBeDownloadedIsNotNavigatedTo() {
+    @Test func aRequestThatAsksToBeDownloadedIsNotNavigatedTo() throws {
         let (tab, delegate) = subject()
         let stub = action("https://example.com/archive.zip")
         stub.stubbedDownload = true
 
-        #expect(decide(delegate, tab, stub) == .download)
+        #expect(try decide(delegate, tab, stub) == .download)
     }
 
     // MARK: - Links that leave the browser
 
-    @Test func aLinkForAnotherAppNeverNavigates() {
+    @Test func aLinkForAnotherAppNeverNavigates() throws {
         let (tab, delegate) = subject()
         for address in ["mailto:someone@example.com", "tel:+15550100", "zoommtg://zoom.us/join?confno=1"] {
-            #expect(decide(delegate, tab, action(address)) == .cancel, "\(address)")
+            #expect(try decide(delegate, tab, action(address)) == .cancel, "\(address)")
         }
     }
 
-    @Test func theSchemesThePageIsAllowedToDriveItselfWith() {
+    @Test func theSchemesThePageIsAllowedToDriveItselfWith() throws {
         let (tab, delegate) = subject()
         for address in ["about:blank", "data:text/html,hi", "blob:https://example.com/x"] {
-            #expect(decide(delegate, tab, action(address)) == .allow, "\(address)")
+            #expect(try decide(delegate, tab, action(address)) == .allow, "\(address)")
         }
     }
 
     // MARK: - Modifier clicks
 
-    @Test func commandClickingALinkOpensATabInsteadOfNavigating() {
+    @Test func commandClickingALinkOpensATabInsteadOfNavigating() throws {
         let (tab, delegate) = subject()
         var opened: (URL, Bool)?
         tab.onOpenInNewTab = { opened = ($0, $1) }
 
-        let policy = decide(delegate, tab, action(
+        let policy = try decide(delegate, tab, action(
             "https://example.com/target", type: .linkActivated, modifiers: [.command]
         ))
 
@@ -138,12 +139,12 @@ struct NavigationPolicyTests {
         #expect(opened?.1 == false)
     }
 
-    @Test func commandShiftClickingAsksForTheTabToBeActivated() {
+    @Test func commandShiftClickingAsksForTheTabToBeActivated() throws {
         let (tab, delegate) = subject()
         var opened: (URL, Bool)?
         tab.onOpenInNewTab = { opened = ($0, $1) }
 
-        let policy = decide(delegate, tab, action(
+        let policy = try decide(delegate, tab, action(
             "https://example.com/target", type: .linkActivated, modifiers: [.command, .shift]
         ))
 
@@ -151,13 +152,13 @@ struct NavigationPolicyTests {
         #expect(opened?.1 == true)
     }
 
-    @Test func shiftClickingALinkPeeksAtIt() {
+    @Test func shiftClickingALinkPeeksAtIt() throws {
         let (tab, delegate) = subject()
         var peeked: URL?
         tab.onOpenInPeek = { url, _ in peeked = url }
         tab.onOpenInNewTab = { _, _ in Issue.record("shift alone must not open a tab") }
 
-        let policy = decide(delegate, tab, action(
+        let policy = try decide(delegate, tab, action(
             "https://example.com/target", type: .linkActivated, modifiers: [.shift]
         ))
 
@@ -165,22 +166,22 @@ struct NavigationPolicyTests {
         #expect(peeked?.absoluteString == "https://example.com/target")
     }
 
-    @Test func commandShiftIsATabRatherThanAPeek() {
+    @Test func commandShiftIsATabRatherThanAPeek() throws {
         let (tab, delegate) = subject()
         tab.onOpenInNewTab = { _, _ in }
         tab.onOpenInPeek = { _, _ in Issue.record("command-shift must not peek") }
 
-        _ = decide(delegate, tab, action(
+        _ = try decide(delegate, tab, action(
             "https://example.com/target", type: .linkActivated, modifiers: [.command, .shift]
         ))
     }
 
-    @Test func middleClickingALinkOpensATabInTheBackground() {
+    @Test func middleClickingALinkOpensATabInTheBackground() throws {
         let (tab, delegate) = subject()
         var opened: (URL, Bool)?
         tab.onOpenInNewTab = { opened = ($0, $1) }
 
-        let policy = decide(delegate, tab, action(
+        let policy = try decide(delegate, tab, action(
             "https://example.com/target", type: .linkActivated, button: Self.middleButton
         ))
 
@@ -189,13 +190,13 @@ struct NavigationPolicyTests {
         #expect(opened?.1 == false)
     }
 
-    @Test func shiftMiddleClickingAsksForTheTabToBeActivated() {
+    @Test func shiftMiddleClickingAsksForTheTabToBeActivated() throws {
         let (tab, delegate) = subject()
         var opened: (URL, Bool)?
         tab.onOpenInNewTab = { opened = ($0, $1) }
         tab.onOpenInPeek = { _, _ in Issue.record("shift with the middle button must not peek") }
 
-        let policy = decide(delegate, tab, action(
+        let policy = try decide(delegate, tab, action(
             "https://example.com/target",
             type: .linkActivated,
             modifiers: [.shift],
@@ -206,34 +207,34 @@ struct NavigationPolicyTests {
         #expect(opened?.1 == true)
     }
 
-    @Test func theMiddleButtonIsIgnoredWhenThePageNavigatesItself() {
+    @Test func theMiddleButtonIsIgnoredWhenThePageNavigatesItself() throws {
         let (tab, delegate) = subject()
         tab.onOpenInNewTab = { _, _ in Issue.record("a redirect must not open a tab") }
 
-        let policy = decide(delegate, tab, action(
+        let policy = try decide(delegate, tab, action(
             "https://example.com/target", type: .other, button: Self.middleButton
         ))
 
         #expect(policy == .allow)
     }
 
-    @Test func modifiersAreIgnoredWhenThePageNavigatesItself() {
+    @Test func modifiersAreIgnoredWhenThePageNavigatesItself() throws {
         let (tab, delegate) = subject()
         tab.onOpenInNewTab = { _, _ in Issue.record("a redirect must not open a tab") }
         tab.onOpenInPeek = { _, _ in Issue.record("a redirect must not peek") }
 
-        let policy = decide(delegate, tab, action(
+        let policy = try decide(delegate, tab, action(
             "https://example.com/target", type: .other, modifiers: [.command, .shift]
         ))
 
         #expect(policy == .allow)
     }
 
-    @Test func aPlainClickJustNavigates() {
+    @Test func aPlainClickJustNavigates() throws {
         let (tab, delegate) = subject()
         tab.onOpenInNewTab = { _, _ in Issue.record("a plain click must not open a tab") }
 
-        let policy = decide(delegate, tab, action(
+        let policy = try decide(delegate, tab, action(
             "https://example.com/target", type: .linkActivated
         ))
 
@@ -250,11 +251,12 @@ struct NavigationPolicyTests {
         }
     }
 
-    @Test func hoveringALinkNamesItsDestination() {
+    @Test func hoveringALinkNamesItsDestination() throws {
         let (tab, delegate) = subject()
+        let webKit = try #require(tab.page.webKit)
 
         delegate.webView(
-            tab.webView,
+            webKit,
             mouseDidMoveOverElement: StubHit(URL(string: "https://example.com/target")),
             withFlags: [],
             userInfo: nil
@@ -263,69 +265,72 @@ struct NavigationPolicyTests {
         #expect(tab.hoveredLink?.absoluteString == "https://example.com/target")
     }
 
-    @Test func movingOffTheLinkClearsTheDestination() {
+    @Test func movingOffTheLinkClearsTheDestination() throws {
         let (tab, delegate) = subject()
+        let webKit = try #require(tab.page.webKit)
         delegate.webView(
-            tab.webView,
+            webKit,
             mouseDidMoveOverElement: StubHit(URL(string: "https://example.com/target")),
             withFlags: [],
             userInfo: nil
         )
 
-        delegate.webView(tab.webView, mouseDidMoveOverElement: StubHit(nil), withFlags: [], userInfo: nil)
+        delegate.webView(webKit, mouseDidMoveOverElement: StubHit(nil), withFlags: [], userInfo: nil)
 
         #expect(tab.hoveredLink == nil)
     }
 
     /// The hit test result is a private WebKit class read by key; anything
     /// that does not answer for the key means no link, never a crash.
-    @Test func aResultWithoutTheLinkKeyReadsAsNoLink() {
+    @Test func aResultWithoutTheLinkKeyReadsAsNoLink() throws {
         let (tab, delegate) = subject()
+        let webKit = try #require(tab.page.webKit)
 
-        delegate.webView(tab.webView, mouseDidMoveOverElement: NSObject(), withFlags: [], userInfo: nil)
+        delegate.webView(webKit, mouseDidMoveOverElement: NSObject(), withFlags: [], userInfo: nil)
 
         #expect(tab.hoveredLink == nil)
     }
 
-    @Test func aNavigationDropsTheHoveredLink() {
+    @Test func aNavigationDropsTheHoveredLink() throws {
         let (tab, delegate) = subject()
+        let webKit = try #require(tab.page.webKit)
         delegate.webView(
-            tab.webView,
+            webKit,
             mouseDidMoveOverElement: StubHit(URL(string: "https://example.com/target")),
             withFlags: [],
             userInfo: nil
         )
 
-        delegate.webView(tab.webView, didCommit: nil)
+        delegate.webView(webKit, didCommit: nil)
 
         #expect(tab.hoveredLink == nil)
     }
 
     // MARK: - How the visit is recorded
 
-    @Test func aClickedLinkIsRecordedAsALink() {
+    @Test func aClickedLinkIsRecordedAsALink() throws {
         let (tab, delegate) = subject()
-        _ = decide(delegate, tab, action("https://example.com/a", type: .linkActivated))
+        _ = try decide(delegate, tab, action("https://example.com/a", type: .linkActivated))
         #expect(tab.pendingTransition == .link)
     }
 
-    @Test func goingBackIsRecordedAsGoingBack() {
+    @Test func goingBackIsRecordedAsGoingBack() throws {
         let (tab, delegate) = subject()
-        _ = decide(delegate, tab, action("https://example.com/a", type: .backForward))
+        _ = try decide(delegate, tab, action("https://example.com/a", type: .backForward))
         #expect(tab.pendingTransition == .backForward)
     }
 
-    @Test func aReloadIsRecordedAsAReload() {
+    @Test func aReloadIsRecordedAsAReload() throws {
         let (tab, delegate) = subject()
-        _ = decide(delegate, tab, action("https://example.com/a", type: .reload))
+        _ = try decide(delegate, tab, action("https://example.com/a", type: .reload))
         #expect(tab.pendingTransition == .reload)
     }
 
-    @Test func anUnattributableNavigationKeepsTheReasonAlreadyRecorded() {
+    @Test func anUnattributableNavigationKeepsTheReasonAlreadyRecorded() throws {
         let (tab, delegate) = subject()
-        _ = decide(delegate, tab, action("https://example.com/a", type: .linkActivated))
+        _ = try decide(delegate, tab, action("https://example.com/a", type: .linkActivated))
 
-        _ = decide(delegate, tab, action("https://example.com/b", type: .other))
+        _ = try decide(delegate, tab, action("https://example.com/b", type: .other))
 
         #expect(tab.pendingTransition == .link)
     }
@@ -334,46 +339,46 @@ struct NavigationPolicyTests {
 
     private static let base = URL(string: "webkit-extension://abcdef/popup.html")!
 
-    @Test func anExtensionPageMayMoveAroundItsOwnOrigin() {
+    @Test func anExtensionPageMayMoveAroundItsOwnOrigin() throws {
         let (tab, delegate) = subject(extensionBase: Self.base)
         tab.onNavigationOutsideExtension = { _ in Issue.record("its own origin is not outside") }
 
-        #expect(decide(delegate, tab, action("webkit-extension://abcdef/options.html")) == .allow)
+        #expect(try decide(delegate, tab, action("webkit-extension://abcdef/options.html")) == .allow)
     }
 
-    @Test func anExtensionPageLeavingItsOriginIsHandedBackToTheBrowser() {
+    @Test func anExtensionPageLeavingItsOriginIsHandedBackToTheBrowser() throws {
         let (tab, delegate) = subject(extensionBase: Self.base)
         var handedBack: URL?
         tab.onNavigationOutsideExtension = { handedBack = $0 }
 
-        let policy = decide(delegate, tab, action("https://example.com/page"))
+        let policy = try decide(delegate, tab, action("https://example.com/page"))
 
         #expect(policy == .cancel)
         #expect(handedBack?.absoluteString == "https://example.com/page")
     }
 
-    @Test func anotherExtensionsOriginIsAlsoOutside() {
+    @Test func anotherExtensionsOriginIsAlsoOutside() throws {
         let (tab, delegate) = subject(extensionBase: Self.base)
         var handedBack: URL?
         tab.onNavigationOutsideExtension = { handedBack = $0 }
 
-        let policy = decide(delegate, tab, action("webkit-extension://ffffff/popup.html"))
+        let policy = try decide(delegate, tab, action("webkit-extension://ffffff/popup.html"))
 
         #expect(policy == .cancel)
         #expect(handedBack != nil)
     }
 
-    @Test func anExtensionPageKeepsItsBlankFrames() {
+    @Test func anExtensionPageKeepsItsBlankFrames() throws {
         let (tab, delegate) = subject(extensionBase: Self.base)
         tab.onNavigationOutsideExtension = { _ in Issue.record("about: is not a destination") }
 
-        #expect(decide(delegate, tab, action("about:blank")) == .allow)
+        #expect(try decide(delegate, tab, action("about:blank")) == .allow)
     }
 
-    @Test func anOrdinaryTabHasNoExtensionBoundaryToCross() {
+    @Test func anOrdinaryTabHasNoExtensionBoundaryToCross() throws {
         let (tab, delegate) = subject()
         tab.onNavigationOutsideExtension = { _ in Issue.record("a web tab has no extension origin") }
 
-        #expect(decide(delegate, tab, action("https://example.com/page")) == .allow)
+        #expect(try decide(delegate, tab, action("https://example.com/page")) == .allow)
     }
 }

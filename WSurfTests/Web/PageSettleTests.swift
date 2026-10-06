@@ -11,10 +11,10 @@ import WebKit
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct PageSettleTests {
-    private func makeWebView() -> WKWebView {
+    private func makeWebView() -> BrowserPage {
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        return WKWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: configuration)
+        return BrowserPage(webKit: WKWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: configuration))
     }
 
     private static let page = """

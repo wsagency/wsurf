@@ -42,7 +42,7 @@ enum CommandPaletteAction: String, CaseIterable {
     case openLocation
     case privateBrowsing
     case leavePrivateBrowsing
-    case closeTab
+    case unloadTab
     case reopenTab
     case duplicateTab
     case togglePin
@@ -244,10 +244,6 @@ enum CommandPaletteCatalog {
             .map(\.command)
     }
 
-    static func bestScore(_ query: String, in commands: [CommandPaletteCommand]) -> Int {
-        commands.compactMap { CommandMatch.score($0, for: query) }.max() ?? 0
-    }
-
     private struct Builder {
         let context: CommandPaletteContext
         let perform: (CommandPaletteAction) -> Void
@@ -321,12 +317,12 @@ enum CommandPaletteCatalog {
                     isAvailable: context.hasActiveTab
                 ),
                 make(
-                    .closeTab,
+                    .unloadTab,
                     group: .tabs,
-                    title: "Close Tab",
-                    symbol: "xmark",
+                    title: "Unload Tab",
+                    symbol: "moon.zzz",
                     shortcut: "⌘W",
-                    aliases: ["close page"],
+                    aliases: ["close page", "sleep tab", "release memory"],
                     isAvailable: context.hasActiveTab
                 ),
                 make(

@@ -51,6 +51,39 @@ versions.
 
 - **Browse:** tabs, folders, pins, split view, history, resumable downloads, and
   bookmark import. Play media in Picture in Picture and view synced lyrics.
+- **Choose a website engine:** Website Settings › Browser Engine selects
+  WebKit (default) or embedded Chromium. Changing engines reloads the website
+  and resets its Back/Forward history; cookies, storage, and sign-ins are separate.
+- **Choose a theme:** Settings › Appearance offers Auto, Light, Dark, pastel
+  Light Calm, and Dark Calm. Theme customization previews brightness, hue, and
+  a primary-derived palette live. Control icons and URL text have independent
+  colors and opacity, saved per theme; Reset restores that theme's defaults.
+- **Tune the sidebar:** Settings › Appearance › Sidebar controls the installed
+  font family, text size and weight, row spacing, and folder tint (including none).
+  Loaded and unloaded text/icon colors and opacity are saved separately for each
+  theme. Original favicons remain recognizable in monochrome. Click a tab title
+  to activate it; use Right-click › Rename to edit its name.
+- **Close or unload:** X removes an unpinned tab and its link; ⌘-click its
+  control to unload instead. Pinned tabs unload with the curved-down arrow or
+  reload with Play; ⌘-click their control to remove the pin and tab.
+  Right-click › Unload Tab retains the link, pin, and folder membership.
+  Middle-click and ⌘W also unload. A folder's curved-down arrow unloads all
+  descendant tabs; X is reserved for removal. Existing unload protections remain.
+- **Keep favorites:** Right-click a tab › Add to Favorites promotes its existing
+  link into the icon-only strip above the sidebar without a duplicate row.
+  Favorites belong to the current profile and never sleep automatically.
+  Their context menu can unload them manually or return them to ordinary pins.
+- **Create and restore folders:** New Folder and Move to Folder › New Folder
+  reveal the new folder and focus its inline name editor, including in icons-only
+  mode. Undo, ⌘Z, or Ctrl-Z restores deleted folders and removed links with their
+  names, hierarchy, pins, and positions. Text editors retain their own Undo.
+- **Pin folders independently:** Right-click a folder › Pin moves it into the
+  top pinned section; Unpin moves it below the remaining pins. Folder pinning
+  does not change its tabs' bookmarked URLs. Empty folders can be pinned, and
+  folder pin state and order survive a restart.
+  Reordering tabs inside the same folder preserves their bookmarks.
+  Deleting a folder or moving its children out keeps root pins above ordinary
+  rows without changing child bookmarks.
 - **Ask the assistant:** type in the address field or hold ⌥Space to speak.
   Use `@` to include a tab, attach files, and review actions in Agent Activity.
 - **Preview links:** hold Shift over a link for a summary, or Shift-click to
@@ -58,9 +91,26 @@ versions.
 - **Fill forms:** use macOS Passwords-compatible password autofill, save
   payment cards, and contact details in Settings › Autofill. Passwords and
   cards require system authentication. Passkeys use macOS.
-- **Add extensions:** install from the Chrome Web Store or Firefox Add-ons.
+- **Add WebKit extensions:** install from the Chrome Web Store or Firefox Add-ons.
 - **Separate browsing:** profiles keep cookies, history, tabs, permissions, and
   extensions separate. Press ⇧⌘N for private browsing.
+- **Choose a theme:** Settings › Appearance offers Auto, Light, Dark, pastel
+  Light Calm, and Dark Calm.
+- **Tune the sidebar:** Settings › Appearance › Sidebar controls the installed
+  font family, text size and weight, row spacing, and folder tint.
+  Loaded and unloaded text/icon colors and opacity are saved separately for each
+  theme. Original favicons remain recognizable in monochrome. Click a tab title
+  to activate it; use Right-click › Rename to edit its name.
+- **Unload without losing links:** sidebar X/minus, middle-click, and ⌘W unload
+  page content while retaining the link, pin, and folder membership. Unloaded
+  tabs show Play to load them again; selecting the link also reloads it.
+  Settings › Appearance lets you show a removal X beside Play or reveal it
+  while holding ⌘. Remove Tab permanently removes the tab and its link.
+  Hover a folder while holding ⌘ to show its X immediately left of the far-right
+  count. It unloads descendant tabs; existing unload protections still apply.
+- **Pin a folder:** Right-click › Pin keeps the folder above unpinned rows without
+  changing its child bookmarks. Pin/Unpin and folder order survive a restart,
+  including empty folders.
 
 The Apple Passwords compatibility work preserves Apple's official Chrome
 extension identity, public key, authentication, PIN, and native protocol
@@ -101,6 +151,10 @@ Report vulnerabilities privately through [Security](SECURITY.md).
   an HTML export in Settings › General; history is not imported.
 - Website notifications require WSurf to be running. There is no background web
   push.
+- Chromium is loaded only when needed, but its runtime remains initialized
+  until quit. Adding it does not guarantee lower RAM, CPU, or faster websites.
+  Unloaded Chromium tabs restore their URL, not a WebKit history stack.
+- Extension integration and native WebKit Picture in Picture remain WebKit-only.
 - The managed browser public-key-credential entitlement requires Apple's
   organization Account Holder review. A local build may need that entitlement
   removed, which disables passkeys; see [Releasing](RELEASING.md).
@@ -109,6 +163,10 @@ WSurf keeps its own data in `~/Library/Application Support/WSurf` and uses
 separate WSurf defaults, stage, native-host, MCP, logger, and `WSURF_*`
 configuration namespaces. It does not alias or automatically copy personal data
 from another browser.
+
+Chromium errors remain visible on standard error; WSurf does not keep a CEF
+debug log file. Inspect captured native diagnostics before sharing them: they
+can contain local paths and website details.
 
 ## Building
 
@@ -122,6 +180,11 @@ open WSurf.xcodeproj
 
 Select the `WSurf` target, set your team in **Signing & Capabilities**, then
 build and run the `WSurf` scheme. Dependencies resolve automatically.
+
+The pinned CefSwift package supplies Chromium. `Tools/embed-chromium.sh` embeds
+the CEF framework, helper apps, and licenses and signs them with the build's
+identity. A production distribution requires proper signing; an ad-hoc debug
+build is not a verified release.
 
 For a local team without the passkey entitlement, remove this entry from
 `WSurf/WSurf.entitlements`. Passkeys will be unavailable in that build:

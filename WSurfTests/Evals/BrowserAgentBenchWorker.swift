@@ -77,7 +77,7 @@ struct BrowserAgentBenchWorker {
         turn.use(agent)
         let tab = browser.newTab(url: start.url)
         window.update(browser)
-        try #require(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
+        try #require(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
         tab.assistantAccess.persistsAnswers = false
         tab.assistantAccess.pageChanged(url: start.url)
         tab.assistantAccess.set(.control)
@@ -160,7 +160,7 @@ struct BrowserAgentBenchWorker {
         questions.abandon()
         agent.discardAllSessions()
         for tab in browser.tabs {
-            tab.webView.stopLoading()
+            tab.page.stopLoading()
         }
     }
 }

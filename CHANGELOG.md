@@ -22,6 +22,8 @@ release notes will be added above this provenance record.
 - Builds extension ZIP test fixtures on the concurrent executor, avoiding
   MainActor Process run-loop reentrancy during WebKit teardown while retaining
   invalid-package and cleanup assertions.
+- Extension package extraction also runs off MainActor, with per-library
+  serialization so installs cannot overlap writes to the same staging paths.
 - Extension controller web views now reuse the browser's pooled configuration,
   preserving the controller's website data store while avoiding process-pool
   destruction during pending IPC callbacks.
@@ -29,6 +31,37 @@ release notes will be added above this provenance record.
   WebKit query is cold; stale, disabled, animated and permission checks remain.
 - Repeated or late handoffs of the same native download no longer create
   duplicate transfers. Separate requests for the same URL remain independent.
+- Sidebar appearance now includes installed font families, size, weight,
+  compact row spacing, and adjustable folder tint. Folder and link labels use
+  primary text contrast; expanded folders no longer stack tinted glass.
+- Unpinned sidebar X now removes the tab and link; ⌘-click unloads instead.
+  Pinned controls unload or load by default and remove with ⌘. Removed the
+  obsolete unloaded-tab-action preference; context menus retain explicit actions.
+- Added per-profile, icon-only Favorites without duplicate sidebar rows.
+  Favorites never auto-sleep, support manual unload, and return to ordinary pins
+  when removed from Favorites.
+- New Folder and Move to Folder › New Folder reveal and focus inline rename,
+  including icons-only mode.
+- Native sidebar Undo/Redo restores deleted folders and removed links, including
+  names, tree positions, pins, and split panes. ⌘Z and Ctrl-Z preserve text Undo.
+- Themes now preview brightness, hue, and a primary-derived palette live, with
+  independent control-icon and URL-text colors/opacity, per-theme storage and reset.
+- Folder context menus now offer independent Pin/Unpin, including empty
+  folders. Pin state and sidebar order persist without changing child bookmarks.
+  Fixed context-menu hit testing for folder rows away from the top.
+  Child reordering preserves each bookmark; Delete Folder and Move Out keep
+  the root pinned section contiguous without changing child bookmarks.
+- Initial icon markup no longer invalidates locally cached favicons on every
+  navigation. The icon watcher starts after the initial DOM is ready and still
+  refreshes icons when the page changes them later.
+- Added pastel Light Calm and Dark Calm themes. Light Calm uses a deeper muted
+  palette; Calm chrome stays light or dark independently of the website.
+- Loaded and unloaded sidebar text/icon colors and opacity persist separately
+  for each theme, defaulting to black on light surfaces and white on dark ones.
+  Favicons keep their original glyph in monochrome without an unloaded badge.
+- Sidebar and folder controls use X only for removal, the curved-down arrow
+  only for unload, and Play only for load. Folder unload retains descendant
+  links, pins, hierarchy, and existing unload protections.
 - Added the dependency-free `wsurf.app/` website and public `webcredentials`
   association for the configured WSurf release identity. Includes responsive
   source/build links, upstream attribution, and deployment requirements;
@@ -43,6 +76,35 @@ release notes will be added above this provenance record.
   successful CI on the exact PR-merged main SHA and skips superseded commits;
   no PR/fork/tag deploy, account-wide token, DNS grant, native Workers Builds
   connection, or GitHub App grant.
+- Added omp.sh to external MCP clients, with automatic CLI detection and setup
+  in `~/.omp/agent/mcp.json` using the existing safe JSON merge and backup.
+- Added per-website WebKit/Chromium selection with lazy embedded CEF startup,
+  separate engine website data, and profile-specific preferences.
+- Fixed native Chromium initial navigation, IO-thread tracker policy isolation,
+  canonical cache paths, and child-view teardown without closing the app window.
+  Native accessibility is enabled; CEF errors remain on standard error without
+  a persistent debug log file.
+- Engine changes reload rather than replaying submitted requests. Chromium
+  unloads restore the URL; WebKit extensions and native Picture in Picture remain
+  WebKit-only.
+- The WebKit autofill navigation adapter reads the source frame only for a form
+  submission, rather than eagerly reading it for unrelated navigation kinds.
+- Existing folder pins migrate without changing child bookmark identities.
+- Assistant input now targets the verified native page responder. Chromium text
+  uses browser-native input; trusted event receipts and sensitive-field checks
+  remain in force.
+- Engine replacement releases the old page's media-dock ownership. Native
+  Picture in Picture return guards and hover shielding remain engine-aware.
+- Chromium file dialogs use native content types for MIME and extension filters,
+  and request-handler ownership is synchronized with in-flight shutdown.
+- WebKit download callbacks acquire their delegates before yielding, including
+  resumed transfers. Assistant key presses finish their native press/release
+  pair before awaiting the select-all fallback.
+- Assistant input makes a final fresh trusted-event receipt check at the polling
+  deadline, so a wait or delayed IPC reply does not discard a delivered event.
+- Command-palette projection reuses its ranked command matches for promotion
+  instead of scoring the full catalog twice; ordering and performance budgets
+  remain unchanged.
 
 No signed WSurf release has been published yet. Apple Passwords compatibility
 changes are present in source and fixtures, but real PIN, fill, save, OTP,

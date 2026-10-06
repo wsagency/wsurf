@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import AppKit
 import SwiftUI
 
 enum AppearanceThumbnailMetrics {
@@ -18,6 +19,8 @@ struct ThemeThumbnailPalette: Equatable {
     enum Identifier: Hashable {
         case light
         case dark
+        case lightCalm
+        case darkCalm
     }
 
     let id: Identifier
@@ -51,6 +54,28 @@ struct ThemeThumbnailPalette: Equatable {
         accent: Color(red: 0.26, green: 0.57, blue: 1.0)
     )
 
+    static let lightCalm = ThemeThumbnailPalette(
+        id: .lightCalm,
+        backdrop: Color(red: 0.80, green: 0.73, blue: 0.75),
+        chrome: Color(red: 0.86, green: 0.80, blue: 0.79),
+        canvas: Color(red: 0.91, green: 0.85, blue: 0.85),
+        surface: Color(red: 0.78, green: 0.70, blue: 0.74),
+        primary: Color(red: 0.36, green: 0.26, blue: 0.34),
+        secondary: Color(red: 0.62, green: 0.49, blue: 0.56),
+        accent: Color(red: 0.70, green: 0.40, blue: 0.55)
+    )
+
+    static let darkCalm = ThemeThumbnailPalette(
+        id: .darkCalm,
+        backdrop: Color(red: 0.12, green: 0.11, blue: 0.17),
+        chrome: Color(red: 0.18, green: 0.16, blue: 0.24),
+        canvas: Color(red: 0.15, green: 0.14, blue: 0.21),
+        surface: Color(red: 0.28, green: 0.24, blue: 0.33),
+        primary: Color(red: 0.86, green: 0.75, blue: 0.82),
+        secondary: Color(red: 0.59, green: 0.51, blue: 0.63),
+        accent: Color(red: 0.82, green: 0.57, blue: 0.72)
+    )
+
     static func palettes(for mode: AppearanceMode) -> [ThemeThumbnailPalette] {
         switch mode {
         case .system:
@@ -59,7 +84,25 @@ struct ThemeThumbnailPalette: Equatable {
             [.light]
         case .dark:
             [.dark]
+        case .lightCalm:
+            [.lightCalm]
+        case .darkCalm:
+            [.darkCalm]
         }
+    }
+
+    func customized(for theme: AppearanceMode) -> Self {
+        let customization = BrowserSettings.shared.themeCustomization(theme: theme)
+        func adjusted(_ color: Color, accent: Bool = false) -> Color {
+            Color(nsColor: Theme.customized(NSColor(color), customization: customization, isAccent: accent))
+        }
+        return Self(
+            id: id, backdrop: adjusted(backdrop), chrome: adjusted(chrome),
+            canvas: canvas, surface: adjusted(surface),
+            primary: (customization.controls.color ?? primary).opacity(customization.controls.opacity),
+            secondary: (customization.url.color ?? secondary).opacity(customization.url.opacity),
+            accent: adjusted(accent, accent: true)
+        )
     }
 }
 
@@ -107,7 +150,9 @@ private struct ThemeThumbnailCard: View {
     }
 
     private var thumbnail: some View {
-        let palettes = ThemeThumbnailPalette.palettes(for: mode)
+        let palettes = ThemeThumbnailPalette.palettes(for: mode).map {
+            $0.customized(for: mode == .system ? ($0.id == .dark ? .dark : .light) : mode)
+        }
         return ZStack(alignment: .leading) {
             ForEach(Array(palettes.enumerated()), id: \.element.id) { index, palette in
                 ThemeThumbnailWindow(palette: palette)
@@ -183,6 +228,9 @@ struct AppearanceBrowserThumbnail<Backdrop: View>: View {
     var body: some View {
         ZStack {
             backdrop
+            palette.chrome
+                .frame(maxWidth: .infinity)
+                .frame(height: 14, alignment: .top)
 
             AppearanceBrowserPage(palette: palette)
                 .padding(.top, 14)

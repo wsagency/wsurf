@@ -37,6 +37,7 @@ struct SidebarTabRow: View {
     }
 
     @Environment(\.sidebarStyle) private var sidebarStyle
+    @Environment(\.colorScheme) private var windowColorScheme
     @State private var hovering = false
     @State private var returnHovering = false
     @State private var isRenaming = false
@@ -57,11 +58,16 @@ struct SidebarTabRow: View {
         sidebarStyle == .full && (tab.isPlayingAudio || tab.isMuted)
     }
 
+    private var textColor: Color {
+        coordinator.settings.sidebarTextColor(isDeferred: tab.isDeferred, scheme: windowColorScheme)
+    }
+
     private var returnHelp: String {
         String(localized: "Back to \(pinnedPageName(of: tab))")
     }
 
     private func tapped() {
+        guard !isRenaming else { return }
         let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if modifiers.contains(.shift) {
             context.selection.hold(context.activeItem)
@@ -75,19 +81,12 @@ struct SidebarTabRow: View {
             context.selection.anchor(on: item)
             activate()
         }
-    }
-
-    private func titleTapped() {
-        let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard isActive, modifiers.isEmpty else {
-            tapped()
-            return
-        }
-        beginRename()
+        context.selection.excludeFavorites(browser.favorites)
     }
 
     private func beginRename() {
         coordinator.tabPreview.dismiss()
+        context.selection.clear()
         draftTitle = tab.title
         isRenaming = true
         renameFocused = true
@@ -114,25 +113,11 @@ struct SidebarTabRow: View {
         return Array(context.selection.items)
     }
 
-    @ViewBuilder
     private var trailingControls: some View {
-        Group {
-            if tab.pinnedURL == nil {
-                CloseButton {
-                    coordinator.closeAskingIfPinned(tab)
-                }
-            } else {
-                ChromeIcon.rowControl(
-                    symbol: "minus",
-                    help: String(localized: "Unpin Tab")
-                ) {
-                    browser.unpin(tab)
-                }
-            }
-        }
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { controlsWidth = min($0, 20) }
-        .opacity(showsTrailingControls ? 1 : 0)
-        .allowsHitTesting(showsTrailingControls)
+        SidebarTabActionButton(tab: tab, coordinator: coordinator)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { controlsWidth = $0 }
+            .opacity(showsTrailingControls ? 1 : 0)
+            .allowsHitTesting(showsTrailingControls)
     }
 
     private var peekedTab: BrowserTab? {
@@ -154,10 +139,10 @@ struct SidebarTabRow: View {
 
     @ViewBuilder private var leadingIcon: some View {
         if sidebarStyle == .full {
-            TabIcon(tab: tab)
+            TabIcon(tab: tab, tint: textColor)
                 .frame(width: SidebarMetrics.rowIconSize)
         } else {
-            TabIcon(tab: tab)
+            TabIcon(tab: tab, tint: textColor)
         }
     }
 
@@ -166,9 +151,11 @@ struct SidebarTabRow: View {
             if isRenaming {
                 TextField("", text: $draftTitle)
                     .textFieldStyle(.plain)
-                    .font(Theme.Font.title)
+                    .font(coordinator.settings.sidebarFont)
+                    .foregroundStyle(textColor)
                     .focused($renameFocused)
                     .onSubmit(commitRename)
+                    .onAppear { renameFocused = true }
                     .onKeyPress(.escape) {
                         isRenaming = false
                         renameFocused = false
@@ -187,11 +174,9 @@ struct SidebarTabRow: View {
             } else {
                 HStack(spacing: 0) {
                     Text(verbatim: tab.title)
-                        .font(Theme.Font.title)
-                        .foregroundStyle(isActive ? Color.primary : Color.secondary)
+                        .font(coordinator.settings.sidebarFont)
+                        .foregroundStyle(textColor)
                         .lineLimit(1)
-                        .contentShape(Rectangle())
-                        .onTapGesture { titleTapped() }
                     Spacer(minLength: 0)
                 }
             }
@@ -210,7 +195,7 @@ struct SidebarTabRow: View {
     var body: some View {
         HStack(spacing: 0) {
             if showsPinSegment {
-                PinReturnSegment(tab: tab, help: returnHelp, isHovering: $returnHovering) {
+                PinReturnSegment(tab: tab, help: returnHelp, tint: textColor, isHovering: $returnHovering) {
                     coordinator.tabPreview.dismiss()
                     browser.returnToPin(tab)
                 }
@@ -241,13 +226,16 @@ struct SidebarTabRow: View {
                             PeekRowBadge(tab: peekedTab, coordinator: coordinator)
                         }
                     }
-                    .padding(.trailing, SidebarMetrics.rowControlEdgeOffset(style: sidebarStyle))
+                    .padding(.trailing, SidebarMetrics.rowControlEdgeOffset(
+                        style: sidebarStyle,
+                        settings: coordinator.settings
+                    ))
                 }
             }
             .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
             .frame(maxWidth: .infinity)
         }
-        .frame(height: SidebarMetrics.rowHeight)
+        .frame(height: SidebarMetrics.rowHeight(settings: coordinator.settings))
         .environment(\.chromeIconExtent, SidebarMetrics.rowControlExtent)
         .sidebarRowSelectionEffect(
             isSelected: (isActive && !coordinator.isNewTabPaletteOpen) || isSelected,
@@ -269,7 +257,7 @@ struct SidebarTabRow: View {
         .onTapGesture { tapped() }
         .onMiddleClick {
             coordinator.tabPreview.dismiss()
-            coordinator.closeAskingIfPinned(tab)
+            coordinator.unloadTab(tab)
         }
         .onHover { over in
             withAnimation(Theme.Motion.quick) { hovering = over }
@@ -280,6 +268,15 @@ struct SidebarTabRow: View {
             }
         }
         .onDisappear { coordinator.tabPreview.unhover(tab.id) }
+        .help(sidebarStyle == .icons ? Text(verbatim: tab.title) : Text(verbatim: ""))
+        .popover(isPresented: Binding(
+            get: { isRenaming && sidebarStyle == .icons },
+            set: { if !$0 { commitRename() } }
+        )) {
+            titleColumn
+                .frame(width: 220, height: 24)
+                .padding(12)
+        }
         .contextMenu {
             if selected.isEmpty {
                 menu
@@ -320,30 +317,38 @@ struct SidebarTabRow: View {
         Divider()
 
         SidebarPinMenuItems(tab: tab, browser: browser)
+        SidebarFavoriteMenuItems(tabs: [tab], browser: browser)
         SidebarAudioMenuItems(tab: tab, coordinator: coordinator)
         SidebarFolderMenuItems(items: [item], browser: browser)
 
         if tab.pinnedURL != nil {
             SidebarUnpinButton(tab: tab, browser: browser)
-        } else {
-            Button(role: .destructive) {
-                browser.close(tab)
+        }
+        if !tab.isDeferred {
+            Button {
+                coordinator.tabPreview.dismiss()
+                coordinator.unloadTab(tab)
             } label: {
-                Label("Close Tab", systemImage: "xmark")
+                Label("Unload Tab", systemImage: "arrow.uturn.down")
             }
-            if browser.tabs.count > 1 {
-                Button(role: .destructive) {
-                    let count = browser.tabs.count - 1
-                    Task {
-                        guard await ConfirmAlert.destructive(
-                            "Close \(count) tabs?",
-                            verb: "Close Tabs"
-                        ) else { return }
-                        browser.closeOthers(tab)
-                    }
-                } label: {
-                    Label("Close Other Tabs", systemImage: "xmark.square")
+        }
+        Button(role: .destructive) {
+            browser.close([.tab(tab.id)])
+        } label: {
+            Label("Remove Tab", systemImage: "xmark")
+        }
+        if tab.pinnedURL == nil, browser.tabs.count > 1 {
+            Button(role: .destructive) {
+                let count = browser.tabs.count - 1
+                Task {
+                    guard await ConfirmAlert.destructive(
+                        "Remove \(count) tabs?",
+                        verb: "Remove Tabs"
+                    ) else { return }
+                    browser.closeOthers(tab)
                 }
+            } label: {
+                Label("Remove Other Tabs", systemImage: "trash")
             }
         }
     }
@@ -352,6 +357,7 @@ struct SidebarTabRow: View {
 private struct PinReturnSegment: View {
     let tab: BrowserTab
     let help: String
+    let tint: Color
     @Binding var isHovering: Bool
     let action: () -> Void
 
@@ -367,7 +373,7 @@ private struct PinReturnSegment: View {
         Button(action: action) {
             ZStack {
                 if let pinnedFavicon, !isSameSite {
-                    FaviconImage(image: pinnedFavicon)
+                    FaviconImage(image: pinnedFavicon, tint: tint)
                         .frame(width: 14, height: 14)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.tight, style: .continuous))
                         .opacity(hovering ? 0 : 1)
@@ -404,6 +410,74 @@ private struct PinReturnSegment: View {
                 pinnedFavicon = await FaviconLoader.shared.load(forHost: host)
             }
         }
+    }
+}
+
+nonisolated enum SidebarTabAction: Equatable {
+    case close
+    case unload
+    case load
+
+    static func resolve(isPinned: Bool, isDeferred: Bool, command: Bool) -> Self {
+        if isPinned {
+            return command ? .close : (isDeferred ? .load : .unload)
+        }
+        return command ? .unload : .close
+    }
+
+    var symbol: String {
+        switch self {
+        case .close:
+            "xmark"
+        case .unload:
+            "arrow.uturn.down"
+        case .load:
+            "play.fill"
+        }
+    }
+
+    var label: LocalizedStringResource {
+        switch self {
+        case .close:
+            "Remove Tab"
+        case .unload:
+            "Unload Tab"
+        case .load:
+            "Load Tab"
+        }
+    }
+}
+
+struct SidebarTabActionButton: View {
+    let tab: BrowserTab
+    let coordinator: AppCoordinator
+
+    var body: some View {
+        let action = SidebarTabAction.resolve(
+            isPinned: tab.pinnedURL != nil,
+            isDeferred: tab.isDeferred,
+            command: coordinator.linkModifiers.contains(.command)
+        )
+        ChromeIcon.rowControl(symbol: action.symbol, help: String(localized: action.label)) {
+            coordinator.tabPreview.dismiss()
+            let modifiers = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
+            switch SidebarTabAction.resolve(
+                isPinned: tab.pinnedURL != nil,
+                isDeferred: tab.isDeferred,
+                command: modifiers.contains(.command)
+            ) {
+            case .close:
+                coordinator.browser.close([.tab(tab.id)])
+            case .unload:
+                if !tab.isDeferred {
+                    coordinator.unloadTab(tab)
+                }
+            case .load:
+                coordinator.openTab(tab)
+            }
+        }
+        .disabled(action == .unload && tab.isDeferred)
+        .accessibilityLabel(Text(action.label))
     }
 }
 
@@ -477,49 +551,32 @@ struct PinBadge: View {
 struct TabIcon: View {
     let tab: BrowserTab
     var size: CGFloat = SidebarMetrics.rowIconSize
+    var tint: Color?
     var loadingColor: Color = .secondary
-
-    static func isAsleep(_ state: TabReclaimState) -> Bool {
-        state == .unloaded
-    }
-
-    static let asleepDim: Double = 0.4
-
-    private var isAsleep: Bool {
-        Self.isAsleep(tab.reclaimState)
-    }
 
     var body: some View {
         Group {
             if let internalPage = tab.internalPage {
                 Image(systemName: internalPage.symbol)
                     .font(.system(size: size * 0.72, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(tint ?? .secondary)
             } else if tab.isLoading, !tab.isRestoring {
                 Spinner(size: size * 0.8)
-                    .foregroundStyle(loadingColor)
+                    .foregroundStyle(tint ?? loadingColor)
             } else if SystemPages.showsStartFace(tab) {
                 Image(systemName: SystemPages.startSymbol)
                     .font(.system(size: size * 0.66, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(tint ?? .secondary)
             } else if let favicon = tab.favicon {
-                FaviconImage(image: favicon)
+                FaviconImage(image: favicon, tint: tint ?? (tab.isDeferred ? .secondary : nil))
                     .frame(width: size - 1, height: size - 1)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.tight, style: .continuous))
             } else {
                 Image(systemName: "globe")
                     .font(.system(size: size * 0.69))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(tint ?? .secondary)
             }
         }
         .frame(width: size, height: size)
-        .saturation(isAsleep ? 0 : 1)
-        .opacity(isAsleep ? Self.asleepDim : 1)
-        .overlay(alignment: .bottomTrailing) {
-            if isAsleep {
-                UnloadedTabBadge(size: size * 0.56)
-                    .offset(x: size * 0.12, y: size * 0.12)
-            }
-        }
     }
 }
