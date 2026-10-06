@@ -116,6 +116,10 @@ enum SettingsIndex {
 
         SettingsEntry("appearance.theme", .appearance, "Theme", "Choose light, dark, pastel Calm, or match your Mac.",
                       ["dark mode", "light mode", "calm", "pastel", "theme", "appearance", "colour", "color", "night"]),
+        SettingsEntry("appearance.themeCustomization", .appearance, "Theme customization",
+                      "Adjust brightness, hue, main color, control icons, and URL color and opacity.",
+                      ["theme", "brightness", "darker", "lighter", "hue", "color", "colour", "controls",
+                       "icons", "url", "opacity", "reset", "palette"]),
         SettingsEntry("appearance.windowStyle", .appearance, "Window style", "Choose Standard or Transparent.",
                       ["loom", "window", "standard", "liquid glass", "clear", "opacity",
                        "transparency", "transparent", "translucent", "contrast", "toolbar",
@@ -151,11 +155,7 @@ enum SettingsIndex {
         SettingsEntry("appearance.sidebarUnloadedColor", .appearance, "Unloaded tab color",
                       "Text and icon color and opacity are saved separately for each theme.",
                       ["sidebar", "font", "text", "color", "colour", "opacity", "unloaded", "sleep", "theme"]),
-        SettingsEntry("appearance.sidebar.unloadedTabAction", .appearance,
-                      "Unloaded tab action",
-                      "For unloaded tab rows only: hold ⌘ to remove, or show an X next to Play.",
-                      ["sidebar", "tab", "tabs", "unloaded", "deferred", "sleeping", "remove", "close",
-                       "delete", "x", "play", "command", "cmd", "keyboard shortcut", ]),
+
         SettingsEntry("appearance.sidebarRowSpacing", .appearance, "Sidebar row spacing",
                       "Add vertical breathing room between sidebar rows.",
                       ["sidebar", "spacing", "padding", "compact", "rows"]),

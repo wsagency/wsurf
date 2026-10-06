@@ -21,13 +21,11 @@ struct AppearanceSettingsTests {
         settings.sidebarFontWeight = .bold
         settings.sidebarRowSpacing = 4.5
         settings.sidebarFolderTint = 0.8
-        settings.showsDirectRemoveForUnloadedTabs = true
         let restored = BrowserSettings(defaults: defaults)
         #expect(restored.sidebarFontFamily == "Menlo")
         #expect(restored.sidebarFontSize == 18.5)
         #expect(restored.sidebarFontWeight == .bold)
         #expect(restored.sidebarRowSpacing == 4.5)
-        #expect(restored.showsDirectRemoveForUnloadedTabs)
         #expect(restored.sidebarFolderTint == 0.8)
 
         defaults.set(Double.nan, forKey: "appearance.sidebar.fontSize")
@@ -152,5 +150,116 @@ struct AppearanceSettingsTests {
         #expect(restored.sidebarFontWeight == initial.weight)
         #expect(restored.sidebarRowSpacing == initial.spacing)
         #expect(restored.sidebarFolderTint == initial.tint)
+    }
+
+    @Test func themeCustomizationPersistsSeparatelyAndResetsOnlySelectedTheme() throws {
+        let suite = "ThemeCustomization-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = BrowserSettings(defaults: defaults)
+        settings.setThemeCustomization(ThemeCustomization(
+            brightness: 0.2, hue: 0.15, primary: SidebarTextStyle(colorRGB: 0xCC3300),
+            controls: SidebarTextStyle(colorRGB: 0x0033CC, opacity: 0.4),
+            url: SidebarTextStyle(colorRGB: 0x33CC00, opacity: 0.7)
+        ), theme: .light)
+        settings.setThemeCustomization(ThemeCustomization(brightness: -0.1), theme: .dark)
+        let restored = BrowserSettings(defaults: defaults)
+        #expect(restored.themeCustomization(theme: .light).controls.colorRGB == 0x0033CC)
+        #expect(restored.themeCustomization(theme: .light).url.opacity == 0.7)
+        #expect(restored.themeCustomization(theme: .light).primary.colorRGB == 0xCC3300)
+        restored.appearance = .system
+        #expect(restored.themeCustomization(theme: restored.sidebarAppearance(scheme: .light)).brightness == 0.2)
+        #expect(restored.themeCustomization(theme: restored.sidebarAppearance(scheme: .dark)).brightness == -0.1)
+        restored.resetThemeCustomization(theme: .light)
+        #expect(BrowserSettings(defaults: defaults).themeCustomization(theme: .light) == ThemeCustomization())
+        #expect(restored.themeCustomization(theme: .dark).brightness == -0.1)
+    }
+
+    @Test func paletteDefaultsStayUnchangedAndCustomTintDerivesSurfaces() throws {
+        let base = NSColor(srgbRed: 0.2, green: 0.25, blue: 0.3, alpha: 1)
+        let unchanged = Theme.customized(base, customization: ThemeCustomization(), isAccent: false)
+        #expect(unchanged == base)
+        let tint = ThemeCustomization(primary: SidebarTextStyle(colorRGB: 0xFF0000))
+        let surface = try #require(Theme.customized(base, customization: tint, isAccent: false).usingColorSpace(.sRGB))
+        let accent = try #require(Theme.customized(base, customization: tint, isAccent: true).usingColorSpace(.sRGB))
+        #expect(surface.redComponent > surface.greenComponent)
+        #expect(abs(surface.brightnessComponent - base.brightnessComponent) < 0.01)
+        #expect(accent.redComponent > 0.99 && accent.greenComponent < 0.01)
+        let brighter = Theme.customized(base, customization: ThemeCustomization(brightness: 0.2), isAccent: false)
+        #expect(brighter.brightnessComponent > base.brightnessComponent)
+        let bounded = ThemeCustomization(brightness: .infinity, hue: 9,
+            controls: SidebarTextStyle(colorRGB: 0xFFFFFFFF, opacity: -1)).bounded()
+        #expect(bounded.brightness == 0 && bounded.hue == 0.5)
+        #expect(bounded.controls.colorRGB == nil && bounded.controls.opacity == 0)
+    }
+
+    @MainActor
+    @Test func editedAddressKeepsCustomColorWhenPastedStylesAreStripped() {
+        let color = NSColor(srgbRed: 0.2, green: 0.4, blue: 0.8, alpha: 0.6)
+        let rendered = MentionFieldRendering.attributed(
+            text: "example.com", chips: [], fontSize: 13, isDark: false, textColor: color
+        )
+        #expect(rendered.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == color)
+        let editor = NSTextView()
+        editor.textStorage?.setAttributedString(NSAttributedString(
+            string: "example.com", attributes: [.foregroundColor: NSColor.red, .underlineStyle: 1]
+        ))
+        MentionFieldRendering.stripPastedStyles(in: editor, fontSize: 13, textColor: color)
+        #expect(editor.textStorage?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == color)
+    }
+
+    @MainActor
+    @Test func changingAddressColorPreservesTheNativeTextSelection() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 40),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        window.contentView?.addSubview(field)
+        defer { window.makeFirstResponder(nil) }
+        let coordinator = MentionField.Coordinator(text: .constant("example.com"))
+        coordinator.apply(text: "example.com", chips: [], isDark: false, to: field)
+        field.selectText(nil)
+        let editor = try #require(field.currentEditor() as? NSTextView)
+        let selected = NSRange(location: 2, length: 5)
+        editor.setSelectedRange(selected)
+        field.textColor = .systemRed
+        coordinator.apply(text: "example.com", chips: [], isDark: false, to: field)
+        #expect(editor.selectedRange() == selected)
+        #expect(editor.string == "example.com")
+    }
+
+    @MainActor
+    @Test func explicitChromeColorsWinOverWebsiteTintAndResetRestoresSampling() throws {
+        let settings = BrowserSettings.shared
+        let savedAppearance = settings.appearance
+        let savedThemes = settings.themeCustomizations
+        let savedForcedDark = settings.forcesDarkAppearance
+        let savedNativeAppearance = NSApp.appearance
+        defer {
+            settings.themeCustomizations = savedThemes
+            settings.appearance = savedAppearance
+            settings.forcesDarkAppearance = savedForcedDark
+            NSApp.appearance = savedNativeAppearance
+        }
+        settings.appearance = .light
+        settings.forcesDarkAppearance = false
+        settings.themeCustomizations = [:]
+        let page = NSColor(srgbRed: 0, green: 0.2, blue: 1, alpha: 1)
+        let sampled = LoomChrome.sampledColor(page, scheme: .light)
+        settings.setThemeCustomization(ThemeCustomization(
+            primary: SidebarTextStyle(colorRGB: 0xFF0000),
+            controls: SidebarTextStyle(colorRGB: 0x00FF00, opacity: 0.4),
+            url: SidebarTextStyle(colorRGB: 0x0000FF, opacity: 0.7)
+        ), theme: .light)
+        let chrome = try #require(LoomChrome.sampledColor(page, scheme: .light).usingColorSpace(.sRGB))
+        #expect(chrome.redComponent > chrome.blueComponent)
+        let controls = try #require(Theme.controlOverride.flatMap { NSColor($0).usingColorSpace(.sRGB) })
+        let url = try #require(Theme.urlOverride.flatMap { NSColor($0).usingColorSpace(.sRGB) })
+        #expect(controls.greenComponent > 0.99 && abs(controls.alphaComponent - 0.4) < 0.01)
+        #expect(url.blueComponent > 0.99 && abs(url.alphaComponent - 0.7) < 0.01)
+        settings.resetThemeCustomization(theme: .light)
+        #expect(Theme.controlOverride == nil && Theme.urlOverride == nil)
+        #expect(LoomChrome.sampledColor(page, scheme: .light) == sampled)
     }
 }

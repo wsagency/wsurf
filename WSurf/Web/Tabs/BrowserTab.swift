@@ -41,6 +41,7 @@ final class BrowserTab: Identifiable {
     }
     var urlString = ""
     var isLoading = false
+    var isFavorite = false
     var favicon: NSImage?
     private var faviconHost = ""
     var progress: Double = 0

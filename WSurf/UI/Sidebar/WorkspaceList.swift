@@ -102,7 +102,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         }
 
         Button {
-            _ = browser.createFolder(containing: [] as [SidebarItem])
+            _ = browser.createFolderForRenaming(containing: [])
         } label: {
             Label("New Folder…", systemImage: "folder.badge.plus")
         }
@@ -119,6 +119,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: coordinator.settings)) {
                 let sections = sections
@@ -138,6 +139,13 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             }
             .padding(.leading, contentInsets.leading)
             .padding(.trailing, contentInsets.trailing)
+        }
+        .onChange(of: browser.folderRenameID, initial: true) { _, id in
+            guard let id else { return }
+            Task { @MainActor in
+                await Task.yield()
+                proxy.scrollTo(SidebarItem.folder(id), anchor: .center)
+            }
         }
         .scrollIndicators(.never)
         .scrollEdgeEffectHidden(true, for: .bottom)
@@ -168,12 +176,22 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         .background {
             SidebarKeyCatcher(
                 isActive: selection.ownsKeyboard,
-                onSelectAll: { selection.selectAll(in: browser.sidebarTree, isExpanded: isExpanded) },
+                requestID: selection.keyboardRequestID,
+                history: browser.sidebarUndoManager,
+                onSelectAll: {
+                    selection.selectAll(in: browser.sidebarTree, isExpanded: isExpanded)
+                    selection.excludeFavorites(browser.favorites)
+                },
                 onClear: { selection.clear() }
             )
         }
         .onChange(of: browser.sidebarTree) { _, tree in
             selection.prune(to: Set(tree.walk()))
+            selection.excludeFavorites(browser.favorites)
+        }
+        .onChange(of: browser.favorites.map(\.id)) { _, _ in
+            selection.excludeFavorites(browser.favorites)
+        }
         }
     }
 
@@ -283,7 +301,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             coordinator.dropOnPage(tab, onto: model.targetPaneID, zone: model.zone)
             selection.clear()
         } else if newFolderDrop.isArmed {
-            browser.createFolder(containing: drag.items)
+            browser.createFolderForRenaming(containing: drag.items)
             selection.clear()
             settled = true
         } else if pinDrop.isArmed {
@@ -563,8 +581,10 @@ struct SidebarDragChip: View {
     }
 }
 
-private struct SidebarKeyCatcher: NSViewRepresentable {
+struct SidebarKeyCatcher: NSViewRepresentable {
     let isActive: Bool
+    let requestID: Int
+    let history: UndoManager
     let onSelectAll: () -> Void
     let onClear: () -> Void
 
@@ -575,19 +595,47 @@ private struct SidebarKeyCatcher: NSViewRepresentable {
     func updateNSView(_ nsView: CatcherView, context: Context) {
         nsView.onSelectAll = onSelectAll
         nsView.onClear = onClear
+        nsView.history = history
         guard let window = nsView.window else { return }
-        if isActive {
-            if window.firstResponder !== nsView {
-                window.makeFirstResponder(nsView)
-            }
-        } else if window.firstResponder === nsView {
+        if isActive && (!nsView.wasActive || nsView.lastRequestID != requestID) {
+            window.makeFirstResponder(nsView)
+        } else if !isActive && window.firstResponder === nsView {
             window.makeFirstResponder(nil)
         }
+        nsView.wasActive = isActive
+        nsView.lastRequestID = requestID
     }
 
     final class CatcherView: NSView {
         var onSelectAll: (() -> Void)?
         var onClear: (() -> Void)?
+        var history: UndoManager?
+        var wasActive = false
+        var lastRequestID: Int?
+
+        override var undoManager: UndoManager? { history }
+
+        @objc func undo(_ sender: Any?) {
+            history?.undo()
+        }
+
+        @objc func redo(_ sender: Any?) {
+            history?.redo()
+        }
+
+        override func keyDown(with event: NSEvent) {
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if event.charactersIgnoringModifiers?.lowercased() == "z",
+               modifiers.contains(.control), !modifiers.contains(.command), !modifiers.contains(.option) {
+                if modifiers.contains(.shift) {
+                    history?.redo()
+                } else {
+                    history?.undo()
+                }
+                return
+            }
+            super.keyDown(with: event)
+        }
 
         override var acceptsFirstResponder: Bool {
             true

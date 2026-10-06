@@ -23,6 +23,9 @@ enum ChromeInk {
     }
 
     static func glyph(onLight: Bool, enabled: Bool = true, hovering: Bool = false, subdued: Bool = false) -> AnyShapeStyle {
+        if let override = Theme.controlOverride {
+            return AnyShapeStyle(override.opacity(enabled ? 1 : 0.35))
+        }
         let base: Color = onLight ? .black : .white
         let opacity = glyphOpacity(onLight: onLight, enabled: enabled, hovering: hovering, subdued: subdued)
         return AnyShapeStyle(base.opacity(opacity))
@@ -265,6 +268,9 @@ struct ChromeIcon: View {
     }
 
     private var style: AnyShapeStyle {
+        if let override = Theme.controlOverride {
+            return AnyShapeStyle(override.opacity(isEnabled ? 1 : 0.35))
+        }
         if let tint {
             return AnyShapeStyle(chromeIsLight ? tint.deepened(by: 0.28) : tint)
         }

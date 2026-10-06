@@ -29,6 +29,14 @@ enum LoomChrome {
     }
 
     static func sampledColor(_ color: NSColor?, scheme: ColorScheme) -> NSColor {
+        let settings = BrowserSettings.shared
+        if settings.themeCustomization(theme: settings.sidebarAppearance(scheme: scheme)).changesPalette {
+            var resolved = NSColor(Theme.windowBackground)
+            NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
+                resolved = NSColor(Theme.windowBackground).usingColorSpace(.sRGB) ?? resolved
+            }
+            return resolved
+        }
         let fallbackIsLight = scheme == .light
         guard let color = color?.usingColorSpace(.sRGB), color.alphaComponent > 0.05 else {
             return neutral(isLight: fallbackIsLight)

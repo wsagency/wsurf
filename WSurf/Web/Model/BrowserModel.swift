@@ -25,6 +25,14 @@ final class BrowserModel {
         }
     }
     let downloads: DownloadManager
+    let sidebarUndoManager = UndoManager()
+    var folderRenameID: UUID? {
+        didSet {
+            guard folderRenameID != oldValue, let id = folderRenameID else { return }
+            folder(id: id)?.nameRevision += 1
+        }
+    }
+
     private let webViewFactory: (@MainActor () -> WKWebView)?
 
     init(
@@ -40,6 +48,8 @@ final class BrowserModel {
         self.sitePermissions = sitePermissions
         self.downloads = downloads
         followEnginePreferences()
+        sidebarUndoManager.groupsByEvent = false
+        sidebarUndoManager.levelsOfUndo = 20
     }
 
     private func followEnginePreferences() {

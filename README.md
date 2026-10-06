@@ -55,22 +55,28 @@ versions.
   WebKit (default) or embedded Chromium. Changing engines reloads the website
   and resets its Back/Forward history; cookies, storage, and sign-ins are separate.
 - **Choose a theme:** Settings › Appearance offers Auto, Light, Dark, pastel
-  Light Calm, and Dark Calm.
+  Light Calm, and Dark Calm. Theme customization previews brightness, hue, and
+  a primary-derived palette live. Control icons and URL text have independent
+  colors and opacity, saved per theme; Reset restores that theme's defaults.
 - **Tune the sidebar:** Settings › Appearance › Sidebar controls the installed
   font family, text size and weight, row spacing, and folder tint (including none).
   Loaded and unloaded text/icon colors and opacity are saved separately for each
   theme. Original favicons remain recognizable in monochrome. Click a tab title
   to activate it; use Right-click › Rename to edit its name.
-- **Unload without losing links:** sidebar X/minus, middle-click, and ⌘W unload
-  page content while retaining the link, pin, and folder membership. Unloaded
-  tabs show Play to load them again; selecting the link also reloads it.
-  Settings › Appearance › Sidebar › Unloaded tab action chooses between
-  holding ⌘ to remove and a separate X immediately left of Play.
-  In the separate-X mode, Play reloads even with ⌘ held. Right-click › Remove Tab
-  is available in either mode.
-  Hover a folder while holding ⌘ to show its X immediately left of the far-right
-  count. Click that X to unload every descendant tab without removing links.
-  Tabs with unsaved forms, active downloads, or other protections stay loaded.
+- **Close or unload:** X removes an unpinned tab and its link; ⌘-click its
+  control to unload instead. Pinned tabs unload with the curved-down arrow or
+  reload with Play; ⌘-click their control to remove the pin and tab.
+  Right-click › Unload Tab retains the link, pin, and folder membership.
+  Middle-click and ⌘W also unload. A folder's curved-down arrow unloads all
+  descendant tabs; X is reserved for removal. Existing unload protections remain.
+- **Keep favorites:** Right-click a tab › Add to Favorites promotes its existing
+  link into the icon-only strip above the sidebar without a duplicate row.
+  Favorites belong to the current profile and never sleep automatically.
+  Their context menu can unload them manually or return them to ordinary pins.
+- **Create and restore folders:** New Folder and Move to Folder › New Folder
+  reveal the new folder and focus its inline name editor, including in icons-only
+  mode. Undo, ⌘Z, or Ctrl-Z restores deleted folders and removed links with their
+  names, hierarchy, pins, and positions. Text editors retain their own Undo.
 - **Pin folders independently:** Right-click a folder › Pin moves it into the
   top pinned section; Unpin moves it below the remaining pins. Folder pinning
   does not change its tabs' bookmarked URLs. Empty folders can be pinned, and

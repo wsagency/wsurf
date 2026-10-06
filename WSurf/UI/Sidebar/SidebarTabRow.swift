@@ -67,6 +67,7 @@ struct SidebarTabRow: View {
     }
 
     private func tapped() {
+        guard !isRenaming else { return }
         let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if modifiers.contains(.shift) {
             context.selection.hold(context.activeItem)
@@ -80,10 +81,12 @@ struct SidebarTabRow: View {
             context.selection.anchor(on: item)
             activate()
         }
+        context.selection.excludeFavorites(browser.favorites)
     }
 
     private func beginRename() {
         coordinator.tabPreview.dismiss()
+        context.selection.clear()
         draftTitle = tab.title
         isRenaming = true
         renameFocused = true
@@ -152,6 +155,7 @@ struct SidebarTabRow: View {
                     .foregroundStyle(textColor)
                     .focused($renameFocused)
                     .onSubmit(commitRename)
+                    .onAppear { renameFocused = true }
                     .onKeyPress(.escape) {
                         isRenaming = false
                         renameFocused = false
@@ -264,6 +268,15 @@ struct SidebarTabRow: View {
             }
         }
         .onDisappear { coordinator.tabPreview.unhover(tab.id) }
+        .help(sidebarStyle == .icons ? Text(verbatim: tab.title) : Text(verbatim: ""))
+        .popover(isPresented: Binding(
+            get: { isRenaming && sidebarStyle == .icons },
+            set: { if !$0 { commitRename() } }
+        )) {
+            titleColumn
+                .frame(width: 220, height: 24)
+                .padding(12)
+        }
         .contextMenu {
             if selected.isEmpty {
                 menu
@@ -304,16 +317,25 @@ struct SidebarTabRow: View {
         Divider()
 
         SidebarPinMenuItems(tab: tab, browser: browser)
+        SidebarFavoriteMenuItems(tabs: [tab], browser: browser)
         SidebarAudioMenuItems(tab: tab, coordinator: coordinator)
         SidebarFolderMenuItems(items: [item], browser: browser)
 
         if tab.pinnedURL != nil {
             SidebarUnpinButton(tab: tab, browser: browser)
         }
+        if !tab.isDeferred {
+            Button {
+                coordinator.tabPreview.dismiss()
+                coordinator.unloadTab(tab)
+            } label: {
+                Label("Unload Tab", systemImage: "arrow.uturn.down")
+            }
+        }
         Button(role: .destructive) {
-            browser.close(tab)
+            browser.close([.tab(tab.id)])
         } label: {
-            Label("Remove Tab", systemImage: "trash")
+            Label("Remove Tab", systemImage: "xmark")
         }
         if tab.pinnedURL == nil, browser.tabs.count > 1 {
             Button(role: .destructive) {
@@ -391,43 +413,65 @@ private struct PinReturnSegment: View {
     }
 }
 
+nonisolated enum SidebarTabAction: Equatable {
+    case close
+    case unload
+    case load
+
+    static func resolve(isPinned: Bool, isDeferred: Bool, command: Bool) -> Self {
+        if isPinned {
+            return command ? .close : (isDeferred ? .load : .unload)
+        }
+        return command ? .unload : .close
+    }
+
+    var symbol: String {
+        switch self {
+        case .close: "xmark"
+        case .unload: "arrow.uturn.down"
+        case .load: "play.fill"
+        }
+    }
+
+    var label: LocalizedStringResource {
+        switch self {
+        case .close: "Remove Tab"
+        case .unload: "Unload Tab"
+        case .load: "Load Tab"
+        }
+    }
+}
+
 struct SidebarTabActionButton: View {
     let tab: BrowserTab
     let coordinator: AppCoordinator
 
     var body: some View {
-        if tab.isDeferred && coordinator.settings.showsDirectRemoveForUnloadedTabs {
-            HStack(spacing: 0) {
-                ChromeIcon.rowControl(symbol: "xmark", help: String(localized: "Remove Tab")) {
-                    coordinator.tabPreview.dismiss()
-                    coordinator.browser.close(tab)
-                }
-                .accessibilityLabel(Text("Remove Tab"))
-                ChromeIcon.rowControl(symbol: "play.fill", help: String(localized: "Load Tab")) {
-                    coordinator.tabPreview.dismiss()
-                    coordinator.openTab(tab)
-                }
-                .accessibilityLabel(Text("Load Tab"))
-            }
-        } else {
-            let removing = coordinator.linkModifiers.contains(.command)
-            let help: LocalizedStringResource = removing ? "Remove Tab" : (tab.isDeferred ? "Load Tab" : "Unload Tab")
-            ChromeIcon.rowControl(
-                symbol: removing ? "xmark" : (tab.isDeferred ? "play.fill" : (tab.pinnedURL == nil ? "xmark" : "minus")),
-                help: String(localized: help)
+        let action = SidebarTabAction.resolve(
+            isPinned: tab.pinnedURL != nil,
+            isDeferred: tab.isDeferred,
+            command: coordinator.linkModifiers.contains(.command)
+        )
+        ChromeIcon.rowControl(symbol: action.symbol, help: String(localized: action.label)) {
+            coordinator.tabPreview.dismiss()
+            let modifiers = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
+            switch SidebarTabAction.resolve(
+                isPinned: tab.pinnedURL != nil,
+                isDeferred: tab.isDeferred,
+                command: modifiers.contains(.command)
             ) {
-                coordinator.tabPreview.dismiss()
-                let modifiers = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
-                if modifiers.contains(.command) {
-                    coordinator.browser.close(tab)
-                } else if tab.isDeferred {
-                    coordinator.openTab(tab)
-                } else {
+            case .close:
+                coordinator.browser.close([.tab(tab.id)])
+            case .unload:
+                if !tab.isDeferred {
                     coordinator.unloadTab(tab)
                 }
+            case .load:
+                coordinator.openTab(tab)
             }
-            .accessibilityLabel(Text(help))
         }
+        .disabled(action == .unload && tab.isDeferred)
+        .accessibilityLabel(Text(action.label))
     }
 }
 

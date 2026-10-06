@@ -386,11 +386,57 @@ struct SidebarPeekShieldTests {
     }
 }
 
-/// The row says its key out loud, the way the palette does.
 @MainActor
-struct NewTabShortcutHintTests {
-    @Test func theHintIsCommandT() {
-        #expect(NewTabRow.shortcutHint == "⌘T")
+struct SidebarTabActionTests {
+    @Test func unpinnedTabsCloseByDefaultEvenWhenUnloaded() {
+        #expect(SidebarTabAction.resolve(isPinned: false, isDeferred: false, command: false) == .close)
+        #expect(SidebarTabAction.resolve(isPinned: false, isDeferred: true, command: false) == .close)
+        #expect(SidebarTabAction.resolve(isPinned: false, isDeferred: false, command: true) == .unload)
+        #expect(SidebarTabAction.resolve(isPinned: false, isDeferred: true, command: true) == .unload)
+    }
+
+    @Test func pinnedTabsToggleLoadingAndCommandAlwaysRemoves() {
+        #expect(SidebarTabAction.resolve(isPinned: true, isDeferred: false, command: false) == .unload)
+        #expect(SidebarTabAction.resolve(isPinned: true, isDeferred: true, command: false) == .load)
+        #expect(SidebarTabAction.resolve(isPinned: true, isDeferred: false, command: true) == .close)
+        #expect(SidebarTabAction.resolve(isPinned: true, isDeferred: true, command: true) == .close)
+    }
+
+    @Test func hiddenFavoritesCannotJoinSidebarBulkSelection() {
+        let browser = BrowserModel(database: .temporary())
+        let favorite = browser.newTab(url: URL(string: "https://favorite.example/"))
+        let ordinary = browser.newTab()
+        browser.addFavorite(favorite)
+        let selection = browser.sidebarSelection
+        selection.selectAll(in: browser.sidebarTree, isExpanded: { _ in true })
+        selection.excludeFavorites(browser.favorites)
+        #expect(selection.items == [.tab(ordinary.id)])
+    }
+}
+
+@MainActor
+struct SidebarUndoKeyTests {
+    @Test func controlZRestoresADeletedFolderAndControlShiftZRedoesDeletion() throws {
+        let browser = BrowserModel(database: .temporary())
+        let folder = browser.createFolder(named: "Work")
+        browser.deleteFolder(folder)
+        let catcher = SidebarKeyCatcher.CatcherView()
+        catcher.history = browser.sidebarUndoManager
+        let undo = try #require(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: .control,
+            timestamp: 0, windowNumber: 0, context: nil,
+            characters: "z", charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6
+        ))
+        catcher.keyDown(with: undo)
+        #expect(browser.folder(id: folder.id)?.name == "Work")
+
+        let redo = try #require(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [.control, .shift],
+            timestamp: 0, windowNumber: 0, context: nil,
+            characters: "Z", charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6
+        ))
+        catcher.keyDown(with: redo)
+        #expect(browser.folder(id: folder.id) == nil)
     }
 }
 
