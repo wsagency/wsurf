@@ -3,8 +3,50 @@
 
 import CCef
 import Foundation
+import UniformTypeIdentifiers
 
 nonisolated enum ChromiumInterop {
+    static func fileDialogContentTypes(filters: [String], extensions: [String]) -> [UTType] {
+        var contentTypes: [UTType] = []
+        for (index, filter) in filters.enumerated() {
+            let value = filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if value.hasPrefix("."),
+               let type = UTType(filenameExtension: String(value.dropFirst()), conformingTo: .data),
+               !contentTypes.contains(type) {
+                contentTypes.append(type)
+            } else if value.hasSuffix("/*") {
+                let type: UTType? = switch value {
+                case "image/*":
+                    .image
+                case "audio/*":
+                    .audio
+                case "video/*":
+                    .movie
+                case "text/*":
+                    .text
+                default:
+                    nil
+                }
+                if let type, !contentTypes.contains(type) {
+                    contentTypes.append(type)
+                }
+            } else if let type = UTType(mimeType: value), !contentTypes.contains(type) {
+                contentTypes.append(type)
+            }
+
+            guard extensions.indices.contains(index) else { continue }
+            for ext in extensions[index].split(separator: ";") {
+                let ext = ext.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+                guard !ext.isEmpty,
+                      let type = UTType(filenameExtension: ext, conformingTo: .data),
+                      !contentTypes.contains(type) else { continue }
+                contentTypes.append(type)
+            }
+        }
+        return contentTypes
+    }
+
     static func retain(_ pointer: UnsafeMutableRawPointer?) {
         guard let base = pointer?.assumingMemoryBound(to: cef_base_ref_counted_t.self) else { return }
         base.pointee.add_ref?(base)

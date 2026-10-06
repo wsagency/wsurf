@@ -484,7 +484,7 @@ final class MediaCenter {
         pipGesturePoint = nil
     }
 
-    private func forgetPicture(_ page: BrowserPage) {
+    func forgetPicture(_ page: BrowserPage) {
         guard nativePiPPage === page else { return }
         nativePiPPage = nil
         if pipTargetPage === page {

@@ -85,6 +85,7 @@ final class BrowserModel {
     var onActiveTabChanged: ((BrowserTab?, BrowserTab?) -> Void)?
     var onSpaceAnchorChanged: ((UUID, UUID) -> Void)?
     var onContentProcessTerminated: ((BrowserTab) -> Void)?
+    var onPageRetired: ((BrowserTab, BrowserPage) -> Void)?
     var onPictureInPictureChanged: ((BrowserTab, Bool) -> Void)?
     var onLinkHovered: ((BrowserTab, URL?, NSEvent.ModifierFlags, CGPoint) -> Void)?
     var onOpenInPeek: ((BrowserTab?, URL, CGPoint) -> Void)?
@@ -204,8 +205,10 @@ final class BrowserModel {
         tab.onChromiumDownloadProgress = { [weak self] page, download in
             self?.downloads.noteChromiumDownload(download, from: page)
         }
-        tab.onPageRetired = { [weak self] page in
+        tab.onPageRetired = { [weak self, weak tab] page in
             self?.downloads.retireChromiumPage(page)
+            guard let tab else { return }
+            self?.onPageRetired?(tab, page)
         }
         tab.hasActiveDownload = { [weak self, weak tab] in
             guard let self, let tab else { return false }

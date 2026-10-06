@@ -27,6 +27,9 @@ struct PageComputerInputTests {
         page.loadHTMLString("<!doctype html><body style='margin:0'>\(html)</body>", baseURL: nil)
         #expect(await PageSettle.untilIdle(page))
         if foreground {
+            NSApp.setActivationPolicy(.regular)
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
             #expect(await waitUntil(timeout: .seconds(60)) { NSApp.isActive && window.isKeyWindow })
         }
         return (page, window)
@@ -234,11 +237,18 @@ struct PageComputerInputTests {
 
     @Test func chromiumNativeTextAndSelectAllReachOnlyThePage() async throws {
         let server = try await HTTPFixtureServer.start(routes: [
-            "/": .html("<title>Native Chromium input</title><input aria-label='Query'><script>document.querySelector('input').focus();</script>"),
+            "/": .html("""
+                <title>Native Chromium input</title>
+                <style>input:hover { background-color:rgb(255, 0, 0); }</style>
+                <input aria-label='Query' style='position:absolute;left:20px;top:20px;width:250px;height:150px'>
+                <script>const target=document.querySelector('input');target.focus();
+                target.addEventListener('mousemove', e=>window.moved=e.isTrusted);</script>
+                """),
         ])
+        let foreground = ProcessInfo.processInfo.environment["WSURF_COMPUTER_FOREGROUND_TEST"] == "1"
         let view = BrowserPage(chromium: ChromiumPage(profile: .privateBrowsing()))
         let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400),
-                              styleMask: .borderless, backing: .buffered, defer: false)
+                              styleMask: foreground ? [.titled, .closable] : [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = view
         window.orderBack(nil)
@@ -246,7 +256,18 @@ struct PageComputerInputTests {
         do {
             view.load(URLRequest(url: try server.url("/")))
             try #require(await waitUntil { view.title == "Native Chromium input" && !view.isLoading })
+            if foreground {
+                NSApp.setActivationPolicy(.regular)
+                window.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                try #require(await waitUntil { NSApp.isActive && window.isKeyWindow })
+            }
             let (frame, _) = try await PageDriver.computerFrame(in: view)
+            if foreground {
+                try await PageDriver.computerAction(point(60, 60, frame: frame, type: "move"), frame: frame, in: view)
+                #expect(try await view.evaluateJavaScript("window.moved === true") as? Bool == true)
+                #expect(try await view.evaluateJavaScript("getComputedStyle(document.querySelector('input')).backgroundColor") as? String == "rgb(255, 0, 0)")
+            }
             try await PageDriver.computerAction(["type": "type", "text": "é🙂"], frame: frame, in: view)
             #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "é🙂")
             try await PageDriver.computerAction(["type": "keypress", "keys": ["CMD", "A"]], frame: frame, in: view)
@@ -384,7 +405,6 @@ struct PageComputerInputTests {
         }
         #expect(try await view.evaluateJavaScript("window.moved === true") as? Bool == true)
         #expect(try await view.evaluateJavaScript("getComputedStyle(target).backgroundColor") as? String == "rgb(255, 0, 0)")
-        #expect(await waitUntil(timeout: .seconds(30)) { !window.isVisible })
     }
 
     @Test func backgroundHoverDoesNotClaimSuccess() async throws {

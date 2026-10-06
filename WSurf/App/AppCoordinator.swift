@@ -263,7 +263,7 @@ final class AppCoordinator {
             isPanelVisible: sidePanel.isVisible,
             isPanelExpanded: sidePanel.isVisible && sidePanel.isExpanded
         )
-        let peeked = shownPeek?.page.webKit
+        let peeked = shownPeek?.page
         for view in TabWebView.liveInstances.allObjects {
             guard view.window != nil else {
                 view.setHoverParked(false)
@@ -271,7 +271,7 @@ final class AppCoordinator {
             }
             // A page under the peek must not answer the pointer: hover reaches
             // it through its own tracking areas, whatever is drawn on top.
-            if let peeked, view !== peeked {
+            if let peeked, view !== peeked.webKit {
                 view.setHoverParked(true)
                 continue
             }

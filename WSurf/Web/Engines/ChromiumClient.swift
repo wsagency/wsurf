@@ -167,11 +167,27 @@ final class ChromiumClient {
         resourceStateLock.unlock()
         return resource
     }
+    nonisolated func acquireRequestHandler() -> UnsafeMutablePointer<cef_request_handler_t>? {
+        resourceStateLock.lock()
+        defer { resourceStateLock.unlock() }
+        guard let request = requestPointer else { return nil }
+        ChromiumInterop.retain(UnsafeMutableRawPointer(request))
+        return request
+    }
+
+    private nonisolated func detachRequestHandler() -> UnsafeMutablePointer<cef_request_handler_t>? {
+        resourceStateLock.lock()
+        let request = requestPointer
+        requestPointer = nil
+        resourceStateLock.unlock()
+        return request
+    }
 
     /// CEF owns the client reference while the browser is alive. Parent calls
     /// this after OnBeforeClose (or when materialization fails).
     func close() {
         guard !isClosed else { return }
+        let request = detachRequestHandler()
         let resource = detachResourceHandler()
         isClosed = true
         for key in certificateCallbacks {
@@ -203,11 +219,13 @@ final class ChromiumClient {
             contextMenuPointer.map(UnsafeMutableRawPointer.init),
             jsDialogPointer.map(UnsafeMutableRawPointer.init),
             permissionPointer.map(UnsafeMutableRawPointer.init),
-            requestPointer.map(UnsafeMutableRawPointer.init),
             clientPointer.map(UnsafeMutableRawPointer.init),
         ] { Self.release(pointer) }
         if let resource {
             Self.release(UnsafeMutableRawPointer(resource))
+        }
+        if let request {
+            Self.release(UnsafeMutableRawPointer(request))
         }
         lifeSpanPointer = nil
         loadPointer = nil
@@ -217,7 +235,6 @@ final class ChromiumClient {
         contextMenuPointer = nil
         jsDialogPointer = nil
         permissionPointer = nil
-        requestPointer = nil
         clientPointer = nil
     }
 
@@ -243,6 +260,7 @@ final class ChromiumClient {
                 Self.release(UnsafeMutableRawPointer(pointer))
             }
             let resource = detachResourceHandler()
+            let request = detachRequestHandler()
             for pointer in [
                 lifeSpanPointer.map(UnsafeMutableRawPointer.init),
                 loadPointer.map(UnsafeMutableRawPointer.init),
@@ -252,11 +270,13 @@ final class ChromiumClient {
                 contextMenuPointer.map(UnsafeMutableRawPointer.init),
                 jsDialogPointer.map(UnsafeMutableRawPointer.init),
                 permissionPointer.map(UnsafeMutableRawPointer.init),
-                requestPointer.map(UnsafeMutableRawPointer.init),
                 clientPointer.map(UnsafeMutableRawPointer.init),
             ] { Self.release(pointer) }
             if let resource {
                 Self.release(UnsafeMutableRawPointer(resource))
+            }
+            if let request {
+                Self.release(UnsafeMutableRawPointer(request))
             }
         }
     }
@@ -356,50 +376,7 @@ final class ChromiumClient {
 
     // MARK: File chooser
 
-    func makeDialogHandler() {
-        let handler = ChromiumInterop.allocate(cef_dialog_handler_t.self, owner: self)
-        handler.pointee.on_file_dialog = { handlerSelf, browser, mode, title, defaultPath, filters, _, _, callback in
-            ChromiumClient.releaseBrowser(browser)
-            guard let callback else { return 0 }
-            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else {
-                ChromiumClient.release(UnsafeMutableRawPointer(callback))
-                return 0
-            }
-            let raw = UnsafeMutableRawPointer(callback)
-            let accepted = ChromiumClient.stringList(filters)
-            let panel: NSSavePanel
-            if mode == FILE_DIALOG_SAVE {
-                panel = NSSavePanel()
-            } else {
-                let open = NSOpenPanel()
-                open.canChooseDirectories = mode == FILE_DIALOG_OPEN_FOLDER
-                open.canChooseFiles = mode != FILE_DIALOG_OPEN_FOLDER
-                open.allowsMultipleSelection = mode == FILE_DIALOG_OPEN_MULTIPLE
-                open.allowedFileTypes = accepted.map { $0.hasPrefix(".") ? String($0.dropFirst()) : $0 }
-                panel = open
-            }
-            panel.title = ChromiumClient.string(title)
-            let defaultValue = ChromiumClient.string(defaultPath)
-            if !defaultValue.isEmpty {
-                let url = URL(fileURLWithPath: defaultValue)
-                panel.directoryURL = url.deletingLastPathComponent()
-                if let save = panel as? NSSavePanel {
-                    save.nameFieldStringValue = url.lastPathComponent
-                }
-            }
-            let parameters = PageFileSelection.Parameters(
-                allowsMultipleSelection: mode == FILE_DIALOG_OPEN_MULTIPLE,
-                allowsDirectories: mode == FILE_DIALOG_OPEN_FOLDER
-            )
-            MainActor.assumeIsolated {
-                client.presentFileDialog(raw, panel: panel, parameters: parameters, planned: mode != FILE_DIALOG_SAVE)
-            }
-            return 1
-        }
-        dialogPointer = handler
-    }
-
-    private func presentFileDialog(
+    func presentFileDialog(
         _ raw: UnsafeMutableRawPointer,
         panel: NSSavePanel,
         parameters: PageFileSelection.Parameters,
@@ -500,19 +477,6 @@ final class ChromiumClient {
         callback.pointee.cont?(callback, list)
         cef_string_list_free(list)
         drop(raw)
-    }
-
-    private nonisolated static func stringList(_ list: cef_string_list_t?) -> [String] {
-        guard let list else { return [] }
-        var values: [String] = []
-        for index in 0..<cef_string_list_size(list) {
-            var value = cef_string_t()
-            if cef_string_list_value(list, index, &value) != 0 {
-                values.append(withUnsafePointer(to: &value) { ChromiumInterop.string($0) })
-                ccef_string_clear(&value)
-            }
-        }
-        return values
     }
 
     func makePermissionHandler() {
@@ -666,7 +630,7 @@ final class ChromiumClient {
         guard let url = URL(string: origin), let host = url.host(), let scheme = url.scheme else { return false }
         return scheme.caseInsensitiveCompare(trusted.protocol) == .orderedSame
             && host.caseInsensitiveCompare(trusted.host) == .orderedSame
-            && (url.port ?? (scheme.lowercased() == "https" ? 443 : 80)) == trusted.port
+            && PageFrameRegistry.portMatches(url: url, securityPort: trusted.port)
     }
 
     // MARK: Navigation, certificates and authentication
@@ -798,7 +762,9 @@ final class ChromiumClient {
             guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
             MainActor.assumeIsolated { client.page?.didTerminate() }
         }
+        resourceStateLock.lock()
         requestPointer = handler
+        resourceStateLock.unlock()
     }
 
     private func resolveCertificate(_ raw: UnsafeMutableRawPointer, requestURL: URL?, chain: [Data]) {

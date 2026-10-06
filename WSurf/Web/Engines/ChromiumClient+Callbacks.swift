@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
+import AppKit
 import CCef
 import CefKit
 import Foundation
@@ -425,10 +426,8 @@ extension ChromiumClient {
             return handler
         }
         client.pointee.get_request_handler = { clientSelf in
-            guard let me = ChromiumClient.owner(clientSelf.map(UnsafeMutableRawPointer.init)),
-                  let handler = me.requestPointer else { return nil }
-            ChromiumInterop.retain(UnsafeMutableRawPointer(handler))
-            return handler
+            guard let me = ChromiumClient.owner(clientSelf.map(UnsafeMutableRawPointer.init)) else { return nil }
+            return me.acquireRequestHandler()
         }
         client.pointee.get_context_menu_handler = { clientSelf in
             guard let me = ChromiumClient.owner(clientSelf.map(UnsafeMutableRawPointer.init)),
@@ -468,6 +467,64 @@ extension ChromiumClient {
             ChromiumClient.releaseFrame(frame)
         }
         contextMenuPointer = handler
+    }
+
+    func makeDialogHandler() {
+        let handler = ChromiumInterop.allocate(cef_dialog_handler_t.self, owner: self)
+        handler.pointee.on_file_dialog = { handlerSelf, browser, mode, title, defaultPath, filters, acceptExtensions, _, callback in
+            ChromiumClient.releaseBrowser(browser)
+            guard let callback else { return 0 }
+            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else {
+                ChromiumClient.release(UnsafeMutableRawPointer(callback))
+                return 0
+            }
+            let raw = UnsafeMutableRawPointer(callback)
+            let filters = ChromiumClient.stringList(filters)
+            let extensions = ChromiumClient.stringList(acceptExtensions)
+            let panel: NSSavePanel
+            if mode == FILE_DIALOG_SAVE {
+                panel = NSSavePanel()
+            } else {
+                let open = NSOpenPanel()
+                open.canChooseDirectories = mode == FILE_DIALOG_OPEN_FOLDER
+                open.canChooseFiles = mode != FILE_DIALOG_OPEN_FOLDER
+                open.allowsMultipleSelection = mode == FILE_DIALOG_OPEN_MULTIPLE
+                let contentTypes = ChromiumInterop.fileDialogContentTypes(filters: filters, extensions: extensions)
+                if !contentTypes.isEmpty {
+                    open.allowedContentTypes = contentTypes
+                }
+                panel = open
+            }
+            panel.title = ChromiumClient.string(title)
+            let defaultValue = ChromiumClient.string(defaultPath)
+            if !defaultValue.isEmpty {
+                let url = URL(fileURLWithPath: defaultValue)
+                panel.directoryURL = url.deletingLastPathComponent()
+                panel.nameFieldStringValue = url.lastPathComponent
+            }
+            let parameters = PageFileSelection.Parameters(
+                allowsMultipleSelection: mode == FILE_DIALOG_OPEN_MULTIPLE,
+                allowsDirectories: mode == FILE_DIALOG_OPEN_FOLDER
+            )
+            MainActor.assumeIsolated {
+                client.presentFileDialog(raw, panel: panel, parameters: parameters, planned: mode != FILE_DIALOG_SAVE)
+            }
+            return 1
+        }
+        dialogPointer = handler
+    }
+
+    private nonisolated static func stringList(_ list: cef_string_list_t?) -> [String] {
+        guard let list else { return [] }
+        var values: [String] = []
+        for index in 0..<cef_string_list_size(list) {
+            var value = cef_string_t()
+            if cef_string_list_value(list, index, &value) != 0 {
+                values.append(withUnsafePointer(to: &value) { ChromiumInterop.string($0) })
+                ccef_string_clear(&value)
+            }
+        }
+        return values
     }
 
 }

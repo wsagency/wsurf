@@ -82,6 +82,13 @@ release notes will be added above this provenance record.
 - The WebKit autofill navigation adapter reads the source frame only for a form
   submission, rather than eagerly reading it for unrelated navigation kinds.
 - Existing folder pins migrate without changing child bookmark identities.
+- Assistant input now targets the verified native page responder. Chromium text
+  uses browser-native input; trusted event receipts and sensitive-field checks
+  remain in force.
+- Engine replacement releases the old page's media-dock ownership. Native
+  Picture in Picture return guards and hover shielding remain engine-aware.
+- Chromium file dialogs use native content types for MIME and extension filters,
+  and request-handler ownership is synchronized with in-flight shutdown.
 
 No signed WSurf release has been published yet. Apple Passwords compatibility
 changes are present in source and fixtures, but real PIN, fill, save, OTP,

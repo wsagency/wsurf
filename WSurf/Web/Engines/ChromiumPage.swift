@@ -428,20 +428,13 @@ final class ChromiumPage: NSView {
         return image
     }
 
-    func insertText(_ text: String) {
-        withHost { host in
-            for character in text.utf16 {
-                var event = cef_key_event_t()
-                event.type = KEYEVENT_CHAR
-                event.character = character
-                event.unmodified_character = character
-                host.pointee.send_key_event?(host, &event)
-            }
-        }
+    func insertText(_ text: String) async throws {
+        _ = try await command("Input.insertText", params: ["text": text])
     }
 
     func selectAll() {
-        nativeView?.selectAll(nil)
+        guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return }
+        responder.selectAll(nil)
     }
 
     func ownsResponder(_ responder: NSResponder?) -> Bool {
@@ -449,10 +442,34 @@ final class ChromiumPage: NSView {
     }
 
     func sendKeyEvent(_ event: NSEvent) {
+        guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return }
         if event.type == .keyUp {
-            nativeView?.keyUp(with: event)
+            responder.keyUp(with: event)
         } else {
-            nativeView?.keyDown(with: event)
+            responder.keyDown(with: event)
+        }
+    }
+
+    func sendMouseMove(to point: CGPoint, modifiers: NSEvent.ModifierFlags) {
+        var flags: UInt32 = 0
+        if modifiers.contains(.shift) {
+            flags |= UInt32(EVENTFLAG_SHIFT_DOWN.rawValue)
+        }
+        if modifiers.contains(.control) {
+            flags |= UInt32(EVENTFLAG_CONTROL_DOWN.rawValue)
+        }
+        if modifiers.contains(.option) {
+            flags |= UInt32(EVENTFLAG_ALT_DOWN.rawValue)
+        }
+        if modifiers.contains(.command) {
+            flags |= UInt32(EVENTFLAG_COMMAND_DOWN.rawValue)
+        }
+        if modifiers.contains(.capsLock) {
+            flags |= UInt32(EVENTFLAG_CAPS_LOCK_ON.rawValue)
+        }
+        withHost { host in
+            var event = cef_mouse_event_t(x: Int32(point.x.rounded()), y: Int32(point.y.rounded()), modifiers: flags)
+            host.pointee.send_mouse_move_event?(host, &event, 0)
         }
     }
 

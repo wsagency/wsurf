@@ -136,14 +136,22 @@ extension AppCoordinator {
             tab.hasVideo = false
             self?.media.pageDidReset(tab.page)
         }
+        browser.onPageRetired = { [weak self] tab, page in
+            guard let self else { return }
+            media.forgetPicture(page)
+            if media.controlledTabID == tab.id {
+                media.releaseControl()
+                dockSuccessor(to: tab.id)
+            }
+        }
         browser.onPictureInPictureChanged = { [weak self] tab, isOut in
             Pipeline.log.notice("media: WebKit reports the picture \(isOut ? "out" : "home", privacy: .public)")
             self?.media.setPictureInPicture(isOut, for: tab.page)
         }
         browser.onPictureReturnExpected = { [weak self] tab in
             Pipeline.log.notice("media: the floating window wants to hand the video back")
-            self?.media.notePictureReturnAsk(for: tab.page)
-            self?.makeRoomForPicture(in: tab.page)
+            guard let self, media.notePictureReturnAsk(for: tab.page) else { return }
+            makeRoomForPicture(in: tab.page)
         }
         NotificationCenter.default.addObserver(
             forName: NSApplication.willResignActiveNotification,

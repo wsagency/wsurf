@@ -361,12 +361,12 @@ final class BrowserPage: NSView {
         return try await chromium.capture(rect: rect, width: width)
     }
 
-    func insertText(_ text: String) {
-        guard !closed else { return }
+    func insertText(_ text: String) async throws {
+        guard !closed else { throw ChromiumError.closed }
         if let webKit {
             webKit.insertText(text)
         } else {
-            chromium?.insertText(text)
+            try await chromium?.insertText(text)
         }
     }
 

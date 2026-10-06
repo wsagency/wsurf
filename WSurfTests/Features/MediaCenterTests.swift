@@ -16,6 +16,27 @@ struct MediaCenterTests {
         media.model.picturePage = webView
     }
 
+    @Test func switchingADockedTabsEngineReleasesPlaybackOwnership() async throws {
+        let coordinator = AppCoordinator()
+        coordinator.wireMedia()
+        let browser = coordinator.browser
+        defer {
+            browser.closeAllTabs()
+            browser.cancelPendingSave()
+        }
+        let tab = browser.newTab(adopting: WKWebView())
+        _ = browser.newTab()
+        coordinator.media.isEnabled = true
+        coordinator.controlPlayback(in: tab)
+        try #require(tab.isControlledByMediaDock)
+
+        try #require(await tab.switchEngine(to: .chromium))
+
+        #expect(!tab.isControlledByMediaDock)
+        #expect(coordinator.media.controlledTabID == nil)
+        #expect(!coordinator.media.model.isActive)
+    }
+
     @Test func takingOverAnotherTabDropsTheFirstPicture() {
         let media = MediaCenter()
         var changes: [[UUID?]] = []

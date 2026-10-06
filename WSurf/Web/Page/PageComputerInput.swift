@@ -354,7 +354,7 @@ extension PageDriver {
             guard current["editable"] as? Bool == true, window.makeFirstResponder(view), let text = action["text"].string else {
                 throw PageComputerFailure.unavailable
             }
-            view.insertText(text)
+            try await view.insertText(text)
             AgentAuthoredText.record(in: view)
         case "keypress":
             try await computerKey(action["keys"].array?.compactMap(\.string) ?? [], frame: frame, in: view, window: window)
@@ -438,11 +438,17 @@ extension PageDriver {
               let hit = content.hitTest(content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow),
               hit.isDescendant(of: view), window.attachedSheet == nil else { throw PageComputerFailure.unavailable }
         if phase == "move" {
+            if let chromium = view.chromium {
+                chromium.sendMouseMove(to: chromium.convert(local, from: view), modifiers: modifiers)
+                return
+            }
+            guard let webKit = view.webKit else { throw PageComputerFailure.unavailable }
+            let nativePoint = webKit.convert(local, from: view)
             let selector = #selector(NSResponder.mouseMoved(with:))
-            guard let owner = view.trackingAreas.first(where: {
+            guard let owner = webKit.trackingAreas.first(where: {
                 $0.options.contains([.mouseMoved, .mouseEnteredAndExited])
-                    && ($0.options.contains(.inVisibleRect) || $0.rect.contains(local))
-                    && ($0.owner as? NSObject) !== view
+                    && ($0.options.contains(.inVisibleRect) || $0.rect.contains(nativePoint))
+                    && ($0.owner as? NSObject) !== webKit
                     && ($0.owner as? NSObject)?.responds(to: selector) == true
             })?.owner as? NSObject else { throw PageComputerFailure.unavailable }
             owner.perform(selector, with: event)
