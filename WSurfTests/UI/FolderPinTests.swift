@@ -104,7 +104,6 @@ struct FolderPinTests {
         #expect(first.pinnedURL == nil && last.pinnedURL == nil)
         #expect(kept.pinnedURL?.absoluteString == "https://kept.example/")
     }
-
     @Test func folderPinsKeepOrderAcrossRestartWithoutChangingChildBookmarks() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("FolderPin-\(UUID().uuidString).sqlite")

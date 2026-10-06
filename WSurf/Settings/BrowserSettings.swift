@@ -28,6 +28,7 @@ final class BrowserSettings {
         static let sidebarFolderTint = "appearance.sidebar.folderTint"
         static let sidebarTextStyles = "appearance.sidebar.textStyles"
         static let directRemoveUnloadedTabs = "appearance.sidebar.directRemoveUnloadedTabs"
+
         static let sleepsInactiveTabs = "tabs.sleep"
         static let pageZoom = "content.defaultZoom"
         static let linkPreview = "content.linkPreview"
@@ -752,6 +753,11 @@ final class BrowserSettings {
         loomStyle = .standard
         matchesWebsiteColor = true
         transparency = 0.5
+        sidebarFontFamily = ""
+        sidebarFontSize = 12
+        sidebarFontWeight = .medium
+        sidebarRowSpacing = 1
+        sidebarFolderTint = 0.35
         sidebarTextStyles = [:]
         refractsTabColor = true
         showsDirectRemoveForUnloadedTabs = false

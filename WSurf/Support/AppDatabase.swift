@@ -139,6 +139,23 @@ struct AppDatabase: Sendable {
         return migrator
     }
 
+    private nonisolated static func defineSessionFolders(in db: Database) throws {
+        try db.create(table: "sessionFolder", options: .ifNotExists) {  t in
+            t.primaryKey("id", .blob)
+            t.column("position", .integer).notNull()
+            t.column("name", .text).notNull()
+            t.column("color", .text).notNull()
+            t.column("isExpanded", .boolean).notNull()
+            t.column("isPinned", .boolean).notNull().defaults(to: false)
+        }
+
+        if try !db.columns(in: "sessionFolder").contains(where: { $0.name == "isPinned" }) {
+            try db.alter(table: "sessionFolder") { t in
+                t.add(column: "isPinned", .boolean).notNull().defaults(to: false)
+            }
+        }
+    }
+
     private nonisolated static func defineSchema(in db: Database) throws {
         try db.create(table: "historyPage", options: .ifNotExists) {  t in
             t.primaryKey("url", .text)
@@ -246,21 +263,7 @@ struct AppDatabase: Sendable {
     }
 
     private nonisolated static func defineSessionSchema(in db: Database) throws {
-        try db.create(table: "sessionFolder", options: .ifNotExists) { t in
-            t.primaryKey("id", .blob)
-            t.column("position", .integer).notNull()
-            t.column("name", .text).notNull()
-            t.column("color", .text).notNull()
-            t.column("isExpanded", .boolean).notNull()
-            t.column("isPinned", .boolean).notNull().defaults(to: false)
-        }
-
-        if try !db.columns(in: "sessionFolder").contains(where: { $0.name == "isPinned" }) {
-            try db.alter(table: "sessionFolder") { t in
-                t.add(column: "isPinned", .boolean).notNull().defaults(to: false)
-            }
-        }
-
+        try defineSessionFolders(in: db)
         try db.create(table: "sessionTab", options: .ifNotExists) { t in
             t.primaryKey("id", .blob)
             t.column("title", .text).notNull()

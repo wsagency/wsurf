@@ -81,6 +81,7 @@ release notes will be added above this provenance record.
   WebKit-only.
 - The WebKit autofill navigation adapter reads the source frame only for a form
   submission, rather than eagerly reading it for unrelated navigation kinds.
+- Existing folder pins migrate without changing child bookmark identities.
 
 No signed WSurf release has been published yet. Apple Passwords compatibility
 changes are present in source and fixtures, but real PIN, fill, save, OTP,

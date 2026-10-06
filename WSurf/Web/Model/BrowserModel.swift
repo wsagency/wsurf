@@ -56,7 +56,7 @@ final class BrowserModel {
     var hasNoActiveTab = false
     var activeTabID: UUID? {
         didSet {
-            if activeTabID != nil {
+            if activeTabID != nil, hasNoActiveTab {
                 hasNoActiveTab = false
             }
             guard oldValue != activeTabID else { return }

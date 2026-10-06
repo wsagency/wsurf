@@ -429,7 +429,15 @@ final class ChromiumPage: NSView {
     }
 
     func insertText(_ text: String) {
-        nativeView?.insertText(text)
+        withHost { host in
+            for character in text.utf16 {
+                var event = cef_key_event_t()
+                event.type = KEYEVENT_CHAR
+                event.character = character
+                event.unmodified_character = character
+                host.pointee.send_key_event?(host, &event)
+            }
+        }
     }
 
     func selectAll() {

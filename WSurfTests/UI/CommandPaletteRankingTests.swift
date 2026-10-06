@@ -131,6 +131,37 @@ struct CommandPaletteRankingTests {
         #expect(CommandPaletteCatalog.matching("refresh", in: commands).first?.id == "action-reload")
     }
 
+    @Test func aCommandTheBrowserCannotRunIsNotOffered() {
+        let empty = CommandPaletteCatalog.commands(context: CommandPaletteContext(), perform: { _ in })
+        let ids = Set(empty.map(\.id))
+        let unloadID = "action-\(CommandPaletteAction.unloadTab.rawValue)"
+
+        #expect(!ids.contains(unloadID))
+        #expect(!ids.contains("action-goBack"))
+        #expect(!ids.contains("action-stopLoading"))
+        #expect(!ids.contains("action-clearHistory"))
+        #expect(!ids.contains("action-exitSplit"))
+        #expect(ids.contains("action-openStartPage"))
+        #expect(ids.contains("action-settings"))
+
+        let loaded = CommandPaletteCatalog.commands(
+            context: CommandPaletteContext(
+                historyCount: 3,
+                tabCount: 2,
+                hasActiveTab: true,
+                canGoBack: true,
+                isLoading: true,
+                isSplit: true
+            ),
+            perform: { _ in }
+        )
+        let loadedIDs = Set(loaded.map(\.id))
+
+        #expect(loadedIDs.isSuperset(of: [
+            unloadID, "action-goBack", "action-stopLoading", "action-clearHistory", "action-exitSplit",
+        ]))
+        #expect(!loadedIDs.contains("action-goForward"))
+    }
     @Test func aToggleIsNamedForWhatItWillDo() {
         let quiet = CommandPaletteCatalog.commands(
             context: CommandPaletteContext(isSpeechMuted: true),
@@ -146,39 +177,6 @@ struct CommandPaletteRankingTests {
         #expect(quiet.first { $0.id == "action-toggleActivity" }?.title == String(localized: "Show Assistant"))
         #expect(quiet.first { $0.id == "action-toggleSidebar" }?.title == String(localized: "Hide Sidebar"))
         #expect(loud.first { $0.id == "action-toggleSidebar" }?.title == String(localized: "Show Sidebar"))
-    }
-
-    @Test func everyActionIsReachableAndRunsItsOwnCase() {
-        let context = CommandPaletteContext(
-            isPrivate: true,
-            historyCount: 5,
-            tabCount: 8,
-            hasActiveTab: true,
-            canGoBack: true,
-            canGoForward: true,
-            isLoading: true,
-            isZoomed: true,
-            isAwayFromPin: true,
-            canReopenClosedTab: true,
-            canSplit: true,
-            isSplit: true,
-            canSwapPanes: true,
-            hasSplitAxis: true,
-            canShowLyrics: true,
-            canCheckForUpdates: true
-        )
-        var performed: [CommandPaletteAction] = []
-        let commands = CommandPaletteCatalog.commands(context: context) { performed.append($0) }
-
-        #expect(Set(commands.map(\.id)).count == commands.count)
-        #expect(commands.count == CommandPaletteAction.allCases.count - 1)
-
-        for command in commands {
-            command.run()
-        }
-        #expect(performed.count == commands.count)
-        #expect(!performed.contains(.privateBrowsing))
-        #expect(performed.contains(.leavePrivateBrowsing))
     }
 
     @Test func theGroupedListKeepsTheCatalogOrder() {

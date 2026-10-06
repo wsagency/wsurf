@@ -43,7 +43,6 @@ struct MCPClientInstallerTests {
         #expect(MCPClientKind.cursor.configurationURL(home: home, environment: [:]).path == "/Users/test/.cursor/mcp.json")
         #expect(MCPClientKind.omp.configurationURL(home: home, environment: [:]).path == "/Users/test/.omp/agent/mcp.json")
     }
-
     @Test(arguments: [MCPClientKind.claudeDesktop, .claudeCode, .cursor, .omp])
     func JSONMergePreservesOtherServersAndPrivateClientState(kind: MCPClientKind) throws {
         let source = Data(#"""

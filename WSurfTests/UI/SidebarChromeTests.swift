@@ -149,6 +149,25 @@ struct LoomChromeTests {
     }
 }
 
+/// Unloading a background tab remains observable without the retired moon badge.
+@MainActor
+struct SidebarSleepIndicatorTests {
+    @Test func discardingABackgroundTabMarksItUnloaded() {
+        let model = BrowserModel(
+            database: .temporary(),
+            sitePermissions: SitePermissions(
+                storageURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent("SidebarSleep-\(UUID().uuidString).json")
+            )
+        )
+        let background = model.newTab(url: URL(string: "https://example.com/a"))
+        _ = model.newTab(url: URL(string: "https://example.com/b"))
+
+        #expect(background.reclaimState != .unloaded)
+        model.discardBackgroundTabs()
+        #expect(background.reclaimState == .unloaded)
+    }
+}
 /// The sidebar toggle belongs to the window beam, never to the sidebar or a
 /// particular toolbar variant. Content controls only reserve its fixed slot.
 @MainActor

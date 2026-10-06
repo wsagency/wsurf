@@ -2,6 +2,8 @@
 
 These rules apply to all code, documentation, and configuration changes in this repository.
 
+- Use Superpowers for every task: start with `using-superpowers` and follow the relevant skills using native omp tools.
+
 - Use one dedicated Git worktree and a unique `feature/<short-name>` branch per task, based on the latest `origin/main`. Do not develop in the `main` checkout or switch branches in a shared checkout.
 - Leave other tasks' uncommitted changes alone. Never stash, discard, move, or commit them as part of your task.
 - Keep build output and DerivedData local to your worktree; do not reuse another worktree's build directory.
@@ -46,3 +48,4 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md#development-workflow) for the worktree 
   replace the user's installed app or use production browsing data.
 - Report component probes separately from whole-app builds and UI checks.
   Never claim the app is verified from a CEF probe or Swift syntax check alone.
+- Production app replacement is separate from stage verification and requires the user's deployment authorization.

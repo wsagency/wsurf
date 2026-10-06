@@ -121,4 +121,36 @@ struct AppearanceSettingsTests {
         #expect(bounded.redComponent > 0.95 && bounded.greenComponent > 0.95)
         #expect(bounded.alphaComponent.isFinite && bounded.alphaComponent > 0 && bounded.alphaComponent < 1)
     }
+
+    @MainActor
+    @Test func resettingAppearanceRestoresSidebarLayoutAfterRestart() throws {
+        let suiteName = "SidebarReset-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        let previousAppearance = NSApp.appearance
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            NSApp.appearance = previousAppearance
+        }
+        let settings = BrowserSettings(defaults: defaults)
+        let initial = (
+            family: settings.sidebarFontFamily,
+            size: settings.sidebarFontSize,
+            weight: settings.sidebarFontWeight,
+            spacing: settings.sidebarRowSpacing,
+            tint: settings.sidebarFolderTint
+        )
+        settings.sidebarFontFamily = "Menlo"
+        settings.sidebarFontSize = 19
+        settings.sidebarFontWeight = .bold
+        settings.sidebarRowSpacing = 6
+        settings.sidebarFolderTint = 0.8
+
+        settings.resetToDefaults()
+        let restored = BrowserSettings(defaults: defaults)
+        #expect(restored.sidebarFontFamily == initial.family)
+        #expect(restored.sidebarFontSize == initial.size)
+        #expect(restored.sidebarFontWeight == initial.weight)
+        #expect(restored.sidebarRowSpacing == initial.spacing)
+        #expect(restored.sidebarFolderTint == initial.tint)
+    }
 }
