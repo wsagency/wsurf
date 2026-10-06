@@ -11,7 +11,9 @@ struct ThemeCustomization: Codable, Equatable {
     var controls = SidebarTextStyle()
     var url = SidebarTextStyle()
 
-    var changesPalette: Bool { brightness != 0 || hue != 0 || primary.colorRGB != nil }
+    var changesPalette: Bool {
+        brightness != 0 || hue != 0 || primary.colorRGB != nil
+    }
 
     func bounded() -> Self {
         var result = self
@@ -48,7 +50,9 @@ extension SidebarTextStyle {
         guard let rgb = NSColor(color).usingColorSpace(.sRGB),
               rgb.redComponent.isFinite, rgb.greenComponent.isFinite, rgb.blueComponent.isFinite
         else { return }
-        func channel(_ value: CGFloat) -> UInt32 { UInt32((min(max(value, 0), 1) * 255).rounded()) }
+        func channel(_ value: CGFloat) -> UInt32 {
+            UInt32((min(max(value, 0), 1) * 255).rounded())
+        }
         colorRGB = channel(rgb.redComponent) << 16 | channel(rgb.greenComponent) << 8 | channel(rgb.blueComponent)
     }
 }

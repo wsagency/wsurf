@@ -613,7 +613,9 @@ struct SidebarKeyCatcher: NSViewRepresentable {
         var wasActive = false
         var lastRequestID: Int?
 
-        override var undoManager: UndoManager? { history }
+        override var undoManager: UndoManager? {
+            history
+        }
 
         @objc func undo(_ sender: Any?) {
             history?.undo()

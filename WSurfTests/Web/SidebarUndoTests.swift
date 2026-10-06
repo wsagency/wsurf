@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 wsagency
+// SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
