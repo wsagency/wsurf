@@ -486,7 +486,7 @@ final class ChromiumDevTools {
     private func setDocumentMarker(contextID: String, documentID: String) async throws {
         guard var context = contextsByUniqueID[contextID], !context.markerSet else { return }
         let response = try await command("Runtime.evaluate", params: [
-            "expression": "Object.defineProperty(globalThis, '__wsurfFrameDocumentID', {value: \(jsonLiteral(documentID)), writable: false, configurable: false, enumerable: false});",
+            "expression": "void Object.defineProperty(globalThis, '__wsurfFrameDocumentID', {value: \(jsonLiteral(documentID)), writable: false, configurable: false, enumerable: false});",
             "uniqueContextId": contextID, "returnByValue": true,
         ])
         _ = try runtimeValue(response)

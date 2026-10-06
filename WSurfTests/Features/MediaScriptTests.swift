@@ -62,6 +62,7 @@ struct MediaScriptTests {
         let collector = Collector()
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
+        BrowserPage.installBridge(in: configuration.userContentController, world: .page)
         configuration.userContentController.add(
             collector,
             name: MediaCenter.frameScriptHandlerName

@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import AppKit
+import CefKit
 import Foundation
+import os
+import WebKit
 
 extension BrowserTab {
     func changeChromiumCapture(in view: BrowserPage, permission: WebPermission, revoke: Bool) {

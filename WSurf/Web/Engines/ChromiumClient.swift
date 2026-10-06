@@ -8,7 +8,7 @@ import Foundation
 import Security
 import WebKit
 
-private nonisolated final class ChromiumTrackerPolicy: @unchecked Sendable {
+nonisolated final class ChromiumTrackerPolicy: @unchecked Sendable {
     private let lock = NSLock()
     private var blocksTrackers: Bool
     private var exemptHosts: Set<String>
@@ -68,7 +68,7 @@ final class ChromiumClient {
     nonisolated private let resourceStateLock = NSLock()
     nonisolated(unsafe) private var resourceHandlerClosed = false
 
-    nonisolated private let trackerPolicy: ChromiumTrackerPolicy
+    nonisolated let trackerPolicy: ChromiumTrackerPolicy
     private var pendingCallbacks: [UInt: UInt] = [:]
     private var certificateCallbacks: Set<UInt> = []
     var downloadCallbacks: [UInt32: UInt] = [:]

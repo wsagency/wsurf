@@ -232,6 +232,41 @@ struct PageComputerInputTests {
         #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "Replacemen")
     }
 
+    @Test func chromiumNativeTextAndSelectAllReachOnlyThePage() async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<title>Native Chromium input</title><input aria-label='Query'><script>document.querySelector('input').focus();</script>"),
+        ])
+        let view = BrowserPage(chromium: ChromiumPage(profile: .privateBrowsing()))
+        let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderBack(nil)
+        var failure: (any Error)?
+        do {
+            view.load(URLRequest(url: try server.url("/")))
+            try #require(await waitUntil { view.title == "Native Chromium input" && !view.isLoading })
+            let (frame, _) = try await PageDriver.computerFrame(in: view)
+            try await PageDriver.computerAction(["type": "type", "text": "é🙂"], frame: frame, in: view)
+            #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "é🙂")
+            try await PageDriver.computerAction(["type": "keypress", "keys": ["CMD", "A"]], frame: frame, in: view)
+            #expect(try await view.evaluateJavaScript("(()=>{const e=document.querySelector('input');return e.selectionStart===0&&e.selectionEnd===e.value.length;})()") as? Bool == true)
+            try await PageDriver.computerAction(["type": "type", "text": "Replacement"], frame: frame, in: view)
+            #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "Replacement")
+            await #expect(throws: PageComputerFailure.self) {
+                try await PageDriver.computerAction(["type": "keypress", "keys": ["CMD", "V"]], frame: frame, in: view)
+            }
+            #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "Replacement")
+        } catch {
+            failure = error
+        }
+        await view.close()
+        window.close()
+        if let failure {
+            throw failure
+        }
+    }
+
     @Test func unsupportedKeysAndSystemChordsEmitNoKeyboardEvents() async throws {
         let (view, window) = await page("""
             <input aria-label='Query' value='Untouched'><script>window.keys=0;

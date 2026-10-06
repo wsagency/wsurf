@@ -538,7 +538,7 @@ struct AgentConsentGateTests {
         #expect(asked?.category == .purchase)
         #expect(result.contains("declined"))
         #expect(result.contains("do not try another way"))
-        #expect(await js(webView, "window.__paid") == nil)
+        #expect(await js(webView, "typeof window.__paid === 'undefined'") as? Bool == true)
     }
 
     /// And the user saying yes is equally final: the click proceeds exactly
@@ -576,7 +576,7 @@ struct AgentConsentGateTests {
         #expect(asked?.label == "Continue")
         #expect(asked?.category == .purchase)
         #expect(result.contains("declined"))
-        #expect(await js(webView, "window.__paid") == nil)
+        #expect(await js(webView, "typeof window.__paid === 'undefined'") as? Bool == true)
     }
 
     @Test func anOrdinaryContinueButtonDoesNotTriggerConsequentialConsent() async throws {

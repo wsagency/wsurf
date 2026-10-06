@@ -22,6 +22,8 @@ release notes will be added above this provenance record.
 - Builds extension ZIP test fixtures on the concurrent executor, avoiding
   MainActor Process run-loop reentrancy during WebKit teardown while retaining
   invalid-package and cleanup assertions.
+- Extension package extraction also runs off MainActor, with per-library
+  serialization so installs cannot overlap writes to the same staging paths.
 - Extension controller web views now reuse the browser's pooled configuration,
   preserving the controller's website data store while avoiding process-pool
   destruction during pending IPC callbacks.

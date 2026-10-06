@@ -529,8 +529,21 @@ extension PageDriver {
                 if result?["prevented"] as? Bool != true {
                     _ = try await computerTarget(point: nil, in: view)
                     try await validateComputerFrame(frame, in: view, checkRevision: false)
-                    guard window.attachedSheet == nil, view.window === window, window.firstResponder === view else { throw PageComputerFailure.unavailable }
-                    view.selectAll(nil)
+                    let responder = window.firstResponder
+                    let ownsResponder: Bool
+                    if let webKit = view.webKit {
+                        ownsResponder = responder === webKit
+                    } else {
+                        ownsResponder = view.chromium?.ownsResponder(responder) == true
+                    }
+                    guard window.attachedSheet == nil, view.window === window, ownsResponder else { throw PageComputerFailure.unavailable }
+                    if let webKit = view.webKit {
+                        webKit.selectAll(nil)
+                    } else if let chromium = view.chromium {
+                        chromium.selectAll()
+                    } else {
+                        throw PageComputerFailure.unavailable
+                    }
                 }
                 return
             }

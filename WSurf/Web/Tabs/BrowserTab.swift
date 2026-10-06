@@ -880,7 +880,7 @@ final class BrowserTab: Identifiable {
         refreshCanvas(from: page)
     }
 
-    fileprivate func refreshSecurity() {
+    func refreshSecurity() {
         guard !isShowingError, let scheme = page.url?.scheme else {
             security = .none
             return

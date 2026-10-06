@@ -361,6 +361,15 @@ final class BrowserPage: NSView {
         return try await chromium.capture(rect: rect, width: width)
     }
 
+    func insertText(_ text: String) {
+        guard !closed else { return }
+        if let webKit {
+            webKit.insertText(text)
+        } else {
+            chromium?.insertText(text)
+        }
+    }
+
     func sendKeyEvent(_ event: NSEvent) {
         if let webKit {
             if event.type == .keyUp {

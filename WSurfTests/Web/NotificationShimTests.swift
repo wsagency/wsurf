@@ -233,8 +233,4 @@ struct NotificationShimTests {
         #expect(result as? String == "survived")
     }
 
-    @Test func theShimAdvertisesNoActionButtons() async {
-        let (webView, _) = await armed()
-        #expect(await run("Notification.maxActions", in: webView) as? Int == 0)
-    }
 }

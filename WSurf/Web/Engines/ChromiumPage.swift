@@ -17,6 +17,9 @@ final class ChromiumPage: NSView {
     var isPrivate: Bool {
         profile.isPrivate
     }
+    weak var owner: BrowserPage?
+    private(set) var browserID: Int32 = -1
+    private(set) var isClosed = false
     private var raw: UnsafeMutablePointer<cef_browser_t>?
     private(set) var client: ChromiumClient?
     private(set) lazy var devTools = ChromiumDevTools(page: self)
@@ -423,6 +426,18 @@ final class ChromiumPage: NSView {
             throw ChromiumError.protocolFailure(String(localized: "Chromium did not return a page image."))
         }
         return image
+    }
+
+    func insertText(_ text: String) {
+        nativeView?.insertText(text)
+    }
+
+    func selectAll() {
+        nativeView?.selectAll(nil)
+    }
+
+    func ownsResponder(_ responder: NSResponder?) -> Bool {
+        responder === self || (responder as? NSView)?.isDescendant(of: self) == true
     }
 
     func sendKeyEvent(_ event: NSEvent) {

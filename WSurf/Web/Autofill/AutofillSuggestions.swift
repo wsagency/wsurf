@@ -121,6 +121,7 @@ final class AutofillSuggestions {
               (message.frameInfo.securityOrigin.port == 0 ? 443 : message.frameInfo.securityOrigin.port) == (frameURL.port ?? 443),
               body["rect"] is [String: Double],
               Self.canPresent(in: page) else { return }
+        let rawRect = body["rect"]
         if let old = requests[key], old.token == token, old.documentID == documentID {
             return
         }

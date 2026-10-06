@@ -190,7 +190,7 @@ enum BrowsingData {
         profile: Profile,
         store: WKWebsiteDataStore
     ) async throws {
-        try await ChromiumRuntime.shared.preflightClearData(
+        try ChromiumRuntime.shared.preflightClearData(
             profile: profile,
             kinds: kinds,
             since: range.since

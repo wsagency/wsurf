@@ -132,7 +132,7 @@ struct LazyWebViewTests {
         #expect(first.isDeferred)
     }
 
-    @Test func aSleptTabComesBackWhenItIsOpenedAgain() {
+    @Test func aSleptTabComesBackWhenItIsOpenedAgain() async {
         let model = BrowserModel(database: .temporary())
         let first = model.newTab(url: URL(string: "https://a.example/"))
         let second = model.newTab(url: URL(string: "https://b.example/"))
@@ -143,7 +143,7 @@ struct LazyWebViewTests {
 
         model.activeTabID = first.id
 
-        #expect(first.isMaterialised)
+        #expect(await waitUntil { first.isMaterialised })
         #expect(first.page !== before)
         #expect(!first.isDeferred)
     }
