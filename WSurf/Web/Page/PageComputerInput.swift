@@ -505,19 +505,16 @@ extension PageDriver {
             flags.remove(.control); flags.insert(.command)
         }
         guard window.attachedSheet == nil, window.makeFirstResponder(view) else { throw PageComputerFailure.unavailable }
+        // Complete the native key pair before yielding to the editing fallback.
         for type in [NSEvent.EventType.keyDown, .keyUp] {
             guard PageAutomationGuard.allowsExecution,
                   let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                       windowNumber: window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
             else { throw PageComputerFailure.stale }
-            if type == .keyDown {
-                view.sendKeyEvent(event)
-                if flags.contains(.command) {
-                    try await computerSelectAll(frame: frame, in: view, window: window)
-                }
-            } else {
-                view.sendKeyEvent(event)
-            }
+            view.sendKeyEvent(event)
+        }
+        if flags.contains(.command) {
+            try await computerSelectAll(frame: frame, in: view, window: window)
         }
     }
 

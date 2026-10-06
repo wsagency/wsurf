@@ -357,9 +357,7 @@ final class DownloadManager: NSObject {
         let id = item.id
         noteResumeStarted(id)
         webView.resumeDownload(fromResumeData: data) { [weak self] download in
-            Task { @MainActor [weak self] in
-                self?.attach(download, to: id)
-            }
+            self?.attach(download, to: id)
         }
     }
 

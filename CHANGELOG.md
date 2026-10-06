@@ -89,6 +89,9 @@ release notes will be added above this provenance record.
   Picture in Picture return guards and hover shielding remain engine-aware.
 - Chromium file dialogs use native content types for MIME and extension filters,
   and request-handler ownership is synchronized with in-flight shutdown.
+- WebKit download callbacks acquire their delegates before yielding, including
+  resumed transfers. Assistant key presses finish their native press/release
+  pair before awaiting the select-all fallback.
 
 No signed WSurf release has been published yet. Apple Passwords compatibility
 changes are present in source and fixtures, but real PIN, fill, save, OTP,
