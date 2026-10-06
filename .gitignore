@@ -45,3 +45,6 @@ DerivedData/
 # Python cache files
 __pycache__/
 *.py[cod]
+
+# Isolated development worktrees
+/.worktrees/

@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-05-profile-credential-manager-design.md`
 
-**Status:** Draft for human review and execution-method selection. Writing this plan does not authorize its probes or implementation.
+**Status:** Approved on 2026-10-06 for Subagent-driven execution. Consequential external actions still require exact interactive approval at their point of risk.
 
 ## Global Constraints
 
@@ -460,4 +460,4 @@ Before each task's commit, review its observable result and exact diff, and upda
 
 Author self-review: spec sections 1–2 map to Tasks 1/4/5, password/TOTP to 6–8, website passkeys to 2/9–11, exchange to 3/12/13, and all permanent/native acceptance criteria to the owning tests and Task 14. The review corrected dependencies, encrypted save policy, post-await OTP timing, actor-local expiry checks, authenticated wrapper-set integrity, verified remaining unlock paths, per-credential transfer decisions and production-app routing; all five Review Focus cases have named tests. This plan contains interface/fixture/assertion decisions rather than implementation bodies.
 
-Human review must confirm the full approved scope and choose **Subagent-driven** or **Native** before any task runs. Recommend **Subagent-driven**: vault commit/lock, engine-origin trust and transfer fidelity are independently reviewable security contracts whose mistakes can expose credentials or make the only vault copy unusable. Signed Apple gates remain unproved; this document makes no integration-success claim.
+Human review approved the full plan and selected **Subagent-driven** on 2026-10-06. Vault commit/lock, engine-origin trust and transfer fidelity remain independently reviewable security contracts whose mistakes can expose credentials or make the only vault copy unusable. Signed Apple gates remain unproved; approval is not an integration-success claim or permission to bypass provider safety prompts.
