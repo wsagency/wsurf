@@ -11,6 +11,10 @@ worktree and a unique `feature/<short-name>` branch based on the latest
 `main` checkout, switch branches in a shared checkout, or stash, discard, move,
 or commit another task's uncommitted changes.
 
+Store task worktrees under `.worktrees/` in the project folder; this directory
+is gitignored. OMP creates the isolated worktree automatically. Reuse its
+`feature/<short-name>` branch and worktree rather than creating a second one.
+
 Keep build output and DerivedData inside your worktree; do not reuse another
 worktree's build directory. Local development builds, tests, and PR validation
 builds are allowed before merge.
@@ -33,8 +37,8 @@ You need macOS 26 or later, Apple silicon, and Xcode 26.5 or later.
 git clone https://github.com/wsagency/wsurf.git
 cd wsurf
 git fetch origin main
-git worktree add -b feature/my-change ../wsurf-worktrees/my-change origin/main
-cd ../wsurf-worktrees/my-change
+git worktree add -b feature/my-change .worktrees/my-change origin/main
+cd .worktrees/my-change
 xcodebuild test \
   -project WSurf.xcodeproj \
   -scheme WSurf \
@@ -46,8 +50,10 @@ xcodebuild test \
   CODE_SIGN_ENTITLEMENTS=
 ```
 
-Replace `my-change` with a unique name for your task. Run development commands
-from that worktree, not from the original `main` checkout.
+The worktree creation commands above are for manual setup without OMP. When OMP
+has already supplied a worktree, skip them. Replace `my-change` with a unique
+name for your task and run development commands from that worktree, not from
+the original `main` checkout.
 
 The `WSurf` scheme runs the `WSurfTests` target from `WSurf.xctestplan`.
 
