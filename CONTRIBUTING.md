@@ -62,8 +62,10 @@ the original `main` checkout.
 
 The `WSurf` scheme runs the `WSurfTests` target from `WSurf.xctestplan`.
 
-Hosted CI uses `macos-26` and requires `/Applications/Xcode_27.0.app`; its
-preflight fails if that toolchain is unavailable. Native Pro builds use
+Hosted native workflows use GitHub's documented `xcode-27` ARM64 runner
+([currently public preview](https://github.com/actions/runner-images/issues/14404))
+and require `/Applications/Xcode_27.0.app`; preflight fails if that toolchain is
+unavailable. The `macos-26` image contains only Xcode 26.x. Native Pro builds use
 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` without changing the
 machine's selected developer directory. Keep the resolved package graph frozen
 for build/test runs; dependency updates must explicitly update the lockfile and

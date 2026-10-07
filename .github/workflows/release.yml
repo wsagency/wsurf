@@ -78,7 +78,7 @@ jobs:
 
   release:
     needs: gate
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 60
 
     # Every signing secret belongs to this environment, not to the repository.

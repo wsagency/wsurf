@@ -413,3 +413,26 @@ settings type. No obsolete global-accessor forwarding file is retained.
   Air stage/old-app rollback remain unavailable; PR/CI, main integration and
   installation have not occurred.
 
+### Hosted runner correction and draft PR — 2026-10-07
+
+- Published source and its following attribution commit
+  `465ce6dd3f9d43374c6e8dbff5853a011318343e` in
+  [draft PR #8](https://github.com/wsagency/wsurf/pull/8). A fresh main fetch
+  still resolved to the recorded `9606f9d` base; no main merge occurred.
+- [CI run 37591047023](https://github.com/wsagency/wsurf/actions/runs/37591047023)
+  failed before building: its `macos-26-arm64` image
+  `20260907.0351.1` lacks `/Applications/Xcode_27.0.app`.
+  Its [published inventory](https://github.com/actions/runner-images/blob/macos-26-arm64/20260907.0351/images/macos/macos-26-arm64-Readme.md)
+  lists only Xcode 26.x. This is an observed runner mismatch, not an app failure.
+- GitHub [documents `xcode-27`](https://github.com/actions/runner-images/issues/14404)
+  as the ARM64 Xcode 27 runner. Its
+  [image inventory](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md)
+  `20260928.0222.1` includes stable Xcode **27.0 (`27A266a`)** and the required
+  `/Applications/Xcode_27.0.app` alias. CI/release/tip now use this verified label,
+  correcting the earlier unverified-label concern; the runner is still public
+  preview, with its documented stability/capacity risk.
+- Exact Xcode selection, package pins, Metal installation, test/OCR scope,
+  coverage/performance/watchdog budgets and release authorization gates remain
+  unchanged. No Xcode downgrade, fallback compiler, additional test exclusion
+  or release/deployment execution was introduced.
+
