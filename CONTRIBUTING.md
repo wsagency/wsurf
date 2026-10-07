@@ -31,7 +31,7 @@ preview gates.
 
 ## Set up the project
 
-You need macOS 26 or later, Apple silicon, and Xcode 26.5 or later.
+You need macOS 26 or later, Apple silicon, and Xcode 27.0 or later.
 
 ```bash
 git clone https://github.com/wsagency/wsurf.git
@@ -39,11 +39,16 @@ cd wsurf
 git fetch origin main
 git worktree add -b feature/my-change .worktrees/my-change origin/main
 cd .worktrees/my-change
+xcodebuild -downloadComponent MetalToolchain
+xcodebuild -resolvePackageDependencies \
+  -project WSurf.xcodeproj -scheme WSurf \
+  -derivedDataPath build/DD -onlyUsePackageVersionsFromResolvedFile
 xcodebuild test \
   -project WSurf.xcodeproj \
   -scheme WSurf \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath build/DD \
+  -disableAutomaticPackageResolution \
   CODE_SIGN_STYLE=Manual \
   CODE_SIGN_IDENTITY=- \
   CODE_SIGNING_REQUIRED=NO \
@@ -56,6 +61,13 @@ name for your task and run development commands from that worktree, not from
 the original `main` checkout.
 
 The `WSurf` scheme runs the `WSurfTests` target from `WSurf.xctestplan`.
+
+Hosted CI uses `macos-26` and requires `/Applications/Xcode_27.0.app`; its
+preflight fails if that toolchain is unavailable. Native Pro builds use
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` without changing the
+machine's selected developer directory. Keep the resolved package graph frozen
+for build/test runs; dependency updates must explicitly update the lockfile and
+regenerate `WSurf/Support/Acknowledgements.json`.
 
 The command removes the entitlements. The keychain access group and the passkey
 entitlement both need a provisioning profile. CI runs the same command. To build the app in Xcode,
@@ -115,8 +127,8 @@ identify a real format, service, import source, or compatibility contract.
 
 Run the full suite before opening a pull request. CI also measures app-target
 line coverage and rejects regressions below the repository floor. CI runs
-`Tools/check-format.sh`, which fails on SwiftLint violations (`brew install
-swiftlint` to run it locally). The configuration is `.swiftlint.yml`. Put a
+`Tools/check-format.sh`, which fails on SwiftLint violations. CI pins SwiftLint
+**0.65.1**; use the same version locally. The configuration is `.swiftlint.yml`. Put a
 switch case’s body on the line after the label. Do not write a declaration or
 control-flow body inside single-line braces; short closures, `guard … else
 { return }` and accessor lists (`{ get set }`) stay inline. Coverage thresholds

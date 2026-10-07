@@ -17,13 +17,13 @@ final class SearchSuggestions {
     private static let limit = 6
     private static let cacheCapacity = 80
 
-    func update(for raw: String) {
+    func update(for raw: String, settings: BrowserSettings) {
         let query = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         fetchTask?.cancel()
 
-        let engine = SearchURLBuilder.engine
-        guard BrowserSettings.shared.showsSearchSuggestions,
-              !Omnibox.isAgentOnly,
+        let engine = SearchURLBuilder.engine(settings: settings)
+        guard settings.showsSearchSuggestions,
+              !Omnibox.isAgentOnly(settings: settings),
               engine.suggestTemplate != nil
         else {
             phrases = []

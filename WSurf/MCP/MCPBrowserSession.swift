@@ -32,6 +32,7 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored private let consent: (String, [MCPAccessConsent.Page]) async -> MCPAccessConsent.Access?
     @ObservationIgnored private let openConsent: (String, URL) async -> Bool
     @ObservationIgnored private let actionPolicy = AgentActionPolicy(storage: MCPActionGrantStorage())
+    @ObservationIgnored private let consentWindow: ExtensionWindowAdapter?
     @ObservationIgnored private var observations: [UUID: PageObservation] = [:]
     @ObservationIgnored private var destinations: Set<String> = []
     @ObservationIgnored private var hasReadContent = false
@@ -49,13 +50,21 @@ final class MCPBrowserSession: Identifiable {
     init(
         browser: BrowserModel,
         available: @escaping () -> Bool,
-        consent: @escaping (String, [MCPAccessConsent.Page]) async -> MCPAccessConsent.Access? = MCPAccessConsent.share,
-        openConsent: @escaping (String, URL) async -> Bool = MCPAccessConsent.open
+        consent: @escaping (String, [MCPAccessConsent.Page]) async -> MCPAccessConsent.Access? = { client, pages in
+            await MCPAccessConsent.share(client: client, pages: pages, in: nil)
+        },
+        openConsent: @escaping (String, URL) async -> Bool = { client, url in
+            await MCPAccessConsent.open(client: client, url: url, in: nil)
+        }
     ) {
         self.browser = browser
         self.available = available
         self.consent = consent
         self.openConsent = openConsent
+        consentWindow = browser.context.extensions.adapter(for: browser)
+    }
+    func isBound(to browser: BrowserModel) -> Bool {
+        self.browser === browser
     }
 
     func revoke() {
@@ -83,7 +92,9 @@ final class MCPBrowserSession: Identifiable {
         }
         return await AgentActionConsent.$scopedPolicy.withValue(actionPolicy) {
             await AgentActionConsent.$externalClientName.withValue(clientName) {
-                await execute(name: name, arguments: arguments)
+                await AgentActionConsent.$scopedWindow.withValue(consentWindow) {
+                    await execute(name: name, arguments: arguments)
+                }
             }
         }
     }
@@ -222,9 +233,9 @@ final class MCPBrowserSession: Identifiable {
                     "PAGE TEXT:", "Clicked", "Typed", "Selected", "Scrolled", "Already at", "Went back.",
                     "CONTROL:", "Condition met.", "Set checked", "Checked state", "Screenshot captured.", "Dispatched hover", "Sent ",
                 ]
-                let filledCount = arguments["fields"]?.arrayValue?.count ?? 0
                 let succeeded =
-                    prefixes.contains { output.hasPrefix($0) } || (name == "fillFields" && output.hasPrefix("Filled \(filledCount) of \(filledCount) fields."))
+                    prefixes.contains { output.hasPrefix($0) }
+                    || (name == "fillFields" && output.hasPrefix("Filled "))
                 var content: [String: Value] = ["tabID": .string(tab.id.uuidString), "content": .string(AgentToolkit.untrusted(output))]
                 if let current = PageDriver.observation(in: view), current.url == webURL(of: tab)?.absoluteString,
                     output.contains("observationID: " + current.id) {

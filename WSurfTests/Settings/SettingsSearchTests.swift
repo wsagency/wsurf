@@ -29,6 +29,16 @@ struct SettingsSearchTests {
         #expect(SettingsIndex.search("activation").contains { $0.id == "voice.talk" })
     }
 
+    @Test func openingDownloadsIsFoundWithoutLosingRecentFilesSearch() throws {
+        let entry = try #require(SettingsIndex.search("open downloads").first)
+        #expect(entry.id == "downloads.list")
+        #expect(entry.category == .downloads)
+        #expect(entry.targetAnchor == "downloads.list")
+        for query in ["recent", "files", "saved locations"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "downloads.list" })
+        }
+    }
+
     @Test func theVoiceRowsLiveOnTheAssistantPage() {
         let voice = SettingsIndex.all.filter { $0.id.hasPrefix("voice.") }
         #expect(voice.count == 2)

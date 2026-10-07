@@ -39,7 +39,7 @@ final class TabAssistantAccessCenter {
         sessionPolicy ?? store.assistantAccess(for: origin)
     }
 
-    init(store: SitePermissions = .shared) {
+    init(store: SitePermissions) {
         self.store = store
     }
 
@@ -50,9 +50,17 @@ final class TabAssistantAccessCenter {
         return access
     }
 
-    func authorize(_ capability: AssistantPageCapability) async -> Bool {
+    func authorize(
+        _ capability: AssistantPageCapability,
+        in page: BrowserPage? = nil,
+        pageOrigin: String? = nil
+    ) async -> Bool {
         let requestedOrigin = origin
-        guard !requestedOrigin.isEmpty else { return false }
+        guard !Task.isCancelled, !requestedOrigin.isEmpty else { return false }
+
+        let owner = AgentActionConsent.scopedWindow
+        guard Self.isRunningTests || owner != nil,
+              owner.map({ Self.owns($0, page: page, origin: pageOrigin) }) ?? true else { return false }
 
         let current = effectivePolicy
         if current != .ask {
@@ -63,14 +71,30 @@ final class TabAssistantAccessCenter {
         if let stub = Self.decisionForTesting {
             answer = stub.decide(capability, requestedOrigin)
         } else {
-            answer = await Self.ask(capability: capability, origin: requestedOrigin)
+            guard let window = owner?.nativeWindow else { return false }
+            answer = await Self.ask(capability: capability, origin: requestedOrigin, in: window)
         }
 
-        guard origin == requestedOrigin else { return false }
+        guard !Task.isCancelled, origin == requestedOrigin,
+              owner.map({ Self.owns($0, page: page, origin: pageOrigin) }) ?? Self.isRunningTests else { return false }
         if answer != .ask {
             set(answer)
         }
         return answer.allows(capability)
+    }
+
+    private static func owns(
+        _ owner: ExtensionWindowAdapter,
+        page: BrowserPage?,
+        origin: String?
+    ) -> Bool {
+        guard let browser = owner.browser, owner.nativeWindow != nil,
+              browser.sessionClosedAt == nil, browser.context.isRegistered(browser),
+              browser.context.extensions.adapter(for: browser) === owner else { return false }
+        guard let page else { return origin == nil }
+        guard browser.tabs.contains(where: { $0.page === page }) else { return false }
+        guard let origin else { return true }
+        return SitePermissions.origin(for: page.url) == origin
     }
 
     func set(_ policy: AssistantAccessPolicy) {
@@ -121,6 +145,7 @@ final class TabAssistantAccessCenter {
     }
 
     @TaskLocal static var decisionForTesting: Stub?
+    @TaskLocal static var presentsNativeSheetForTesting = false
 
     private static var isRunningTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
@@ -128,9 +153,10 @@ final class TabAssistantAccessCenter {
 
     private static func ask(
         capability: AssistantPageCapability,
-        origin: String
+        origin: String,
+        in window: NSWindow
     ) async -> AssistantAccessPolicy {
-        guard !isRunningTests else { return .ask }
+        guard !isRunningTests || presentsNativeSheetForTesting else { return .ask }
 
         let site = SitePermissions.displayName(for: origin)
         let alert = NSAlert()
@@ -148,18 +174,8 @@ final class TabAssistantAccessCenter {
         }
         alert.buttons.last?.keyEquivalent = "\u{1b}"
 
-        let window = NSApp.keyWindow ?? NSApp.mainWindow
-        if window == nil {
-            NSApp.activate(ignoringOtherApps: true)
-        }
-
-        let response: NSApplication.ModalResponse
-        if let window {
-            response = await withCheckedContinuation { continuation in
-                alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
-            }
-        } else {
-            response = alert.runModal()
+        let response = await withCheckedContinuation { continuation in
+            alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
         }
 
         return switch response {

@@ -17,7 +17,7 @@ struct AgentVisibilityTests {
         let webView = BrowserPage(webKit: WKWebView(
             frame: NSRect(x: 0, y: 0, width: 500, height: 400),
             configuration: configuration
-        ))
+        ), context: BrowserProfileContext(profile: .privateBrowsing()))
         webView.loadHTMLString("<!doctype html><html><body>\(body)</body></html>", baseURL: nil)
         #expect(await PageSettle.untilIdle(webView, timeout: .seconds(30)))
         return webView

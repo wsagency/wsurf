@@ -176,7 +176,7 @@ enum Theme {
     }
 
     static var isCalm: Bool {
-        switch BrowserSettings.shared.appearance {
+        switch BrowserSettings.application.appearance {
         case .lightCalm, .darkCalm:
             true
         case .system, .light, .dark:
@@ -200,7 +200,7 @@ enum Theme {
     }
 
     static func palette(_ base: Color, isAccent: Bool = false) -> Color {
-        let settings = BrowserSettings.shared
+        let settings = BrowserSettings.application
         let light = settings.themeCustomization(theme: settings.sidebarAppearance(scheme: .light))
         let dark = settings.themeCustomization(theme: settings.sidebarAppearance(scheme: .dark))
         guard light.changesPalette || dark.changesPalette else { return base }
@@ -215,13 +215,13 @@ enum Theme {
     }
 
     static var controlOverride: Color? {
-        let style = BrowserSettings.shared.currentThemeCustomization.controls
+        let style = BrowserSettings.application.currentThemeCustomization.controls
         guard style.colorRGB != nil || style.opacity != 1 else { return nil }
         return (style.color ?? .primary).opacity(style.opacity)
     }
 
     static var urlOverride: Color? {
-        let style = BrowserSettings.shared.currentThemeCustomization.url
+        let style = BrowserSettings.application.currentThemeCustomization.url
         guard style.colorRGB != nil || style.opacity != 1 else { return nil }
         return (style.color ?? .primary).opacity(style.opacity)
     }

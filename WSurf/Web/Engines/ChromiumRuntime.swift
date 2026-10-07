@@ -14,9 +14,11 @@ final class ChromiumRuntime {
 
     private final class Context {
         nonisolated(unsafe) let raw: UnsafeMutablePointer<cef_request_context_t>
+        let profileID: UUID
 
-        init(_ raw: UnsafeMutablePointer<cef_request_context_t>) {
+        init(_ raw: UnsafeMutablePointer<cef_request_context_t>, profileID: UUID) {
             self.raw = raw
+            self.profileID = profileID
         }
 
         deinit {
@@ -25,13 +27,8 @@ final class ChromiumRuntime {
     }
 
     private(set) var rootDirectory: URL
-    private(set) var currentProfile = Profile.original()
     private var contexts: [UUID: Context] = [:]
-    private var privateContext: Context?
-    var hasPrivateContext: Bool {
-        privateContext != nil
-    }
-    var privateOrigins: [String: Date] = [:]
+    var privateOrigins: [UUID: [String: Date]] = [:]
     private let pages = NSHashTable<ChromiumPage>.weakObjects()
     private var hasShutdown = false
 
@@ -48,10 +45,6 @@ final class ChromiumRuntime {
 
     var hasLivePages: Bool {
         pages.allObjects.contains { !$0.isClosed }
-    }
-
-    func use(profile: Profile) {
-        currentProfile = profile
     }
 
     func cacheDirectory(profileID: UUID) -> URL {
@@ -71,7 +64,8 @@ final class ChromiumRuntime {
         rootDirectory = URL(filePath: String(cString: canonical), directoryHint: .isDirectory)
         var configuration = CefConfiguration()
         configuration.noSandbox = false
-        configuration.safeStorage = .keychain
+        // Test profiles are disposable and must not request the user's keychain.
+        configuration.safeStorage = AppDatabase.isRunningTests ? .mockKeychain : .keychain
         configuration.rootCachePath = rootDirectory
         configuration.cachePath = rootDirectory.appendingPathComponent("Global", isDirectory: true)
         configuration.persistSessionCookies = true
@@ -85,26 +79,30 @@ final class ChromiumRuntime {
         // ponytail: CEF stays initialized until quit; a separate engine process is the upgrade if its idle RAM proves material.
     }
 
-    func withContext<T>(for profile: Profile, _ body: (UnsafeMutablePointer<cef_request_context_t>) throws -> T) throws -> T {
+    func withContext<T>(
+        for owner: BrowserProfileContext,
+        _ body: (UnsafeMutablePointer<cef_request_context_t>) throws -> T
+    ) throws -> T {
+        guard !owner.privateSessionEnded else { throw ChromiumError.closed }
         try ensureInitialized()
         let context: Context
-        if profile.isPrivate {
-            if let privateContext {
-                context = privateContext
-            } else {
-                context = try makeContext(cacheDirectory: nil)
-                privateContext = context
-            }
-        } else if let existing = contexts[profile.id] {
+        if let existing = contexts[owner.contextID] {
             context = existing
         } else {
-            context = try makeContext(cacheDirectory: cacheDirectory(profileID: profile.id))
-            contexts[profile.id] = context
+            context = try makeContext(
+                profileID: owner.profile.id,
+                cacheDirectory: owner.profile.isPrivate ? nil : cacheDirectory(profileID: owner.profile.id)
+            )
+            contexts[owner.contextID] = context
         }
         return try body(context.raw)
     }
 
-    private func makeContext(cacheDirectory: URL?) throws -> Context {
+    func hasContext(contextID: UUID) -> Bool {
+        contexts[contextID] != nil
+    }
+
+    private func makeContext(profileID: UUID, cacheDirectory: URL?) throws -> Context {
         var settings = cef_request_context_settings_t()
         settings.size = MemoryLayout<cef_request_context_settings_t>.stride
         if let cacheDirectory {
@@ -116,7 +114,7 @@ final class ChromiumRuntime {
         guard let raw = cef_request_context_create_context(&settings, nil) else {
             throw ChromiumError.unavailable(String(localized: "Chromium could not create this browsing profile."))
         }
-        return Context(raw)
+        return Context(raw, profileID: profileID)
     }
 
     func register(_ page: ChromiumPage) {
@@ -127,34 +125,35 @@ final class ChromiumRuntime {
         pages.remove(page)
     }
 
-    func endPrivateSession() {
-        precondition(!pages.allObjects.contains { $0.isPrivate && !$0.isClosed })
-        privateContext = nil
-        privateOrigins.removeAll()
-    }
-
-    func releaseContext(profileID: UUID) async {
-        for page in pages.allObjects where page.profileID == profileID {
+    func releaseContext(contextID: UUID) async {
+        for page in pages.allObjects where page.context.contextID == contextID {
             await page.close()
         }
-        contexts[profileID] = nil
-        if profileID == Profile.privateID {
-            privateContext = nil
-            privateOrigins.removeAll()
+        contexts[contextID] = nil
+        privateOrigins[contextID] = nil
+    }
+
+    func releaseContexts(profileID: UUID) async {
+        let matching = contexts.compactMap { id, context in
+            context.profileID == profileID ? id : nil
+        }
+        for id in matching {
+            await releaseContext(contextID: id)
         }
     }
 
-    func command(profile: Profile, method: String, params: [String: Any] = [:]) async throws -> [String: Any] {
+    func command(context: BrowserProfileContext, method: String, params: [String: Any] = [:]) async throws -> [String: Any] {
+        guard !context.privateSessionEnded else { throw ChromiumError.closed }
         try ensureInitialized()
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1, height: 1),
             styleMask: [.borderless], backing: .buffered, defer: false
         )
         window.isReleasedWhenClosed = false
-        let page = ChromiumPage(profile: profile)
+        let page = ChromiumPage(context: context)
         window.contentView = page
-        try page.materialize()
         do {
+            try page.materialize()
             let result = try await page.command(method, params: params)
             await page.close()
             window.close()
@@ -171,7 +170,6 @@ final class ChromiumRuntime {
         for page in pages.allObjects {
             await page.close()
         }
-        privateContext = nil
         privateOrigins.removeAll()
         contexts.removeAll()
         CefRuntime.shared.shutdown()

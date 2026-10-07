@@ -83,7 +83,7 @@ Remembered external-app approval is keyed by canonical HTTP(S) **source** origin
 
 Port all fixture maintenance: active headless WebKit configuration, stable context-fixture titles/server lifetimes, real external WKNavigationActions, ranking without page loads, and replies from the expected extension page. Keep meaningful behavior tests; do not import or re-pin incidental wording/source/wiring assertions.
 
-Port CPU OCR fallback when no Neural Engine is available. Hosted CI exclusions are limited to the four upstream AttachmentTests OCR integrations; all four remain enabled on native Pro. Metal installation is already present in deployed WSurf's three workflows: record verified baseline equivalence, retain it, and do not add duplicates.
+Port CPU OCR fallback when no Neural Engine is available. Hosted CI exclusions are limited to the four upstream AttachmentTests OCR integrations; all four remain enabled on native Pro. Execution corrected the original Metal baseline inference: installation was present only in CI, not release/tip. Retain the CI step without duplication and port the two missing steps; the journal preserves the correction and actual evidence.
 
 Use supported WSurf `macos-26` hosted runner plus explicit Xcode 27.0 preflight instead of blindly copying the unverified upstream `xcode-27` runner label. Missing image/toolchain fails that gate; it does not justify lowering the toolchain or widening exclusions. Preserve pinned checkout/cache/upload-action upgrades and locked resolution semantics. Port speech preparation, URL-aware favicon fallback/cache behavior, privacy-safe DEBUG autofill diagnostics and full resource-lifetime coverage from the mixed idle/startup commit.
 

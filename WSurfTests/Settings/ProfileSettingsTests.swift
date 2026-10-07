@@ -18,52 +18,39 @@ struct ProfileSettingsTests {
         suite.removePersistentDomain(forName: suite.description)
     }
 
-    @Test func theSessionAndAppHalvesAreDisjoint() {
-        let session = Set(BrowserSettings.sessionKeys)
-        for key in ["appearance.mode", "content.defaultZoom", "downloads.folder",
-                    "advanced.userAgent", "advanced.webInspector",
-        ] {
-            #expect(!session.contains(key))
-        }
-        for key in ["search.engine", "content.javaScript",
-                    "privacy.clearOnQuit", "content.autoplay", "startPage.order",
-        ] {
-            #expect(session.contains(key))
-        }
-    }
-
-    @Test func aSessionSettingFollowsTheProfileAndAnAppSettingDoesNot() throws {
+    @Test func eachSettingsInstanceStaysBoundToItsProfile() throws {
         let app = try suite()
         let work = try suite()
         let personal = try suite()
         defer { [app, work, personal].forEach(forget) }
 
-        let settings = BrowserSettings(defaults: app, sessionDefaults: work)
-        settings.searchEngineID = "kagi"
-        settings.appearance = .dark
+        let appSettings = BrowserSettings(defaults: app)
+        let workSettings = BrowserSettings(sessionDefaults: work, application: appSettings)
+        let personalSettings = BrowserSettings(sessionDefaults: personal, application: appSettings)
+        workSettings.searchEngineID = "kagi"
+        personalSettings.searchEngineID = "brave"
+        workSettings.appearance = .dark
 
-        settings.useSessionDefaults(personal)
-        #expect(settings.searchEngineID == SearchEngine.duckDuckGo.id)
-        #expect(settings.appearance == .dark)
-
-        settings.useSessionDefaults(work)
-        #expect(settings.searchEngineID == "kagi")
+        #expect(workSettings.searchEngineID == "kagi")
+        #expect(personalSettings.searchEngineID == "brave")
+        #expect(BrowserSettings(defaults: app, sessionDefaults: work).searchEngineID == "kagi")
+        #expect(BrowserSettings(defaults: app, sessionDefaults: personal).searchEngineID == "brave")
+        #expect(personalSettings.appearance == .dark)
     }
 
-    @Test func switchingBackFindsWhatWasLeftBehind() throws {
+    @Test func profileSettingsChangesPersistWithoutRetargetingOtherWindows() throws {
         let app = try suite()
         let work = try suite()
         let personal = try suite()
         defer { [app, work, personal].forEach(forget) }
 
-        let settings = BrowserSettings(defaults: app, sessionDefaults: work)
-        settings.javaScriptEnabled = false
+        let workSettings = BrowserSettings(defaults: app, sessionDefaults: work)
+        let personalSettings = BrowserSettings(defaults: app, sessionDefaults: personal)
+        workSettings.javaScriptEnabled = false
+        personalSettings.javaScriptEnabled = true
 
-        settings.useSessionDefaults(personal)
-        #expect(settings.javaScriptEnabled)
-
-        settings.useSessionDefaults(work)
-        #expect(!settings.javaScriptEnabled)
+        #expect(!BrowserSettings(defaults: app, sessionDefaults: work).javaScriptEnabled)
+        #expect(BrowserSettings(defaults: app, sessionDefaults: personal).javaScriptEnabled)
     }
 
     @Test func privateSettingsDisappearWithoutChangingTheInheritedProfile() throws {
@@ -88,22 +75,28 @@ struct ProfileSettingsTests {
         #expect(!nextPrivateSession.javaScriptEnabled)
     }
 
-    @Test func theProviderAndModelAreWrittenWhereTheProfilePointsThem() throws {
+    @Test func providerSelectionAndModelChoicesBelongToEachProfile() throws {
         let work = try suite()
-        defer {
-            LLMSettings.defaults = .standard
-            forget(work)
-        }
+        let personal = try suite()
+        defer { [work, personal].forEach(forget) }
 
-        LLMSettings.defaults = work
-        LLMSettings.providerID = "anthropic"
-        LLMSettings.reasoningEffort = .high
-        LLMSettings.setModel("claude-sonnet-5", for: ProviderCatalog.openAI)
+        let workSettings = LLMSettings(defaults: work)
+        let personalSettings = LLMSettings(defaults: personal)
+        let workProviders = ProfileProviderCatalog(settings: workSettings)
+        let personalProviders = ProfileProviderCatalog(settings: personalSettings)
+        let anthropic = try #require(workProviders.provider(id: "anthropic"))
+        workProviders.select(anthropic)
+        workSettings.reasoningEffort = .high
+        workSettings.setModel("claude-sonnet-5", for: ProviderCatalog.openAI)
 
+        #expect(workProviders.selected.id == "anthropic")
+        #expect(personalProviders.selected.id == ProviderCatalog.openAI.id)
+        #expect(workProviders.all.map(\.id) == personalProviders.all.map(\.id))
+        #expect(workSettings.model(for: ProviderCatalog.openAI) == "claude-sonnet-5")
         #expect(work.string(forKey: "llm.provider") == "anthropic")
         #expect(work.string(forKey: "llm.reasoningEffort") == "high")
         #expect(work.string(forKey: "llm.model.\(ProviderCatalog.openAI.id)") == "claude-sonnet-5")
-        #expect(UserDefaults.standard.string(forKey: "llm.provider") != "anthropic")
+        #expect(personal.string(forKey: "llm.provider") != "anthropic")
     }
 
     @Test func eachProfileGetsItsOwnSuiteAndIconFolder() {

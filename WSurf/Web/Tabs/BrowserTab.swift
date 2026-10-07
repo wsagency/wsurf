@@ -28,12 +28,13 @@ enum PageSecurity: Equatable {
 @MainActor
 @Observable
 final class BrowserTab: Identifiable {
-    static let placeholderTitle = String(localized: "Start Page")
+    static let placeholderTitle = String(localized: "New Page")
 
     let id: UUID
     let autofillSave = AutofillSaveSession()
     var pageTitle = BrowserTab.placeholderTitle
     var customTitle = ""
+    private var documentTitles: [URL: String] = [:]
 
     var title: String {
         get { customTitle.isEmpty ? pageTitle : customTitle }
@@ -207,7 +208,7 @@ final class BrowserTab: Identifiable {
     private var retirementGeneration = 0
     private var pageGeneration = 0
     let sitePermissions: SitePermissions
-    private let profile: Profile
+    let context: BrowserProfileContext
     private let dataStore: WKWebsiteDataStore
     var engine: BrowserEngine = .webKit
     @ObservationIgnored private var pendingNavigationTask: Task<PageNavigation?, Never>?
@@ -243,9 +244,9 @@ final class BrowserTab: Identifiable {
     private func makePage(engine: BrowserEngine) -> BrowserPage {
         switch engine {
         case .webKit:
-            BrowserPage(webKit: WebViewPool.shared.makeColdView(dataStore: dataStore), profile: profile)
+            BrowserPage(webKit: context.webViewPool.makeColdView(dataStore: dataStore), context: context)
         case .chromium:
-            BrowserPage(chromium: ChromiumPage(profile: profile))
+            BrowserPage(chromium: ChromiumPage(context: context))
         }
     }
     var onNavigationStarted: ((URL) -> Void)?
@@ -253,12 +254,14 @@ final class BrowserTab: Identifiable {
     var onNavigationOutsideExtension: ((URL) -> Void)?
     var onNewWindow: ((WKWebView, Bool) -> Void)?
     var onOpenInNewTab: ((URL, Bool) -> Void)?
+    var onOpenInNewWindow: ((URL, Bool) -> Void)?
     var onOpenInPeek: ((URL, CGPoint) -> Void)?
     var onSummarizeLink: ((URL, CGPoint) -> Void)?
     var onCloseRequested: (() -> Void)?
     var onPictureInPictureChanged: ((Bool) -> Void)?
     var onPictureReturnExpected: (() -> Void)?
     var onDownload: ((WKDownload, URL?) -> Void)?
+    var onSaveDocument: ((Data, String, URL?, Bool) async -> Void)?
     var onChromiumDownload: ((BrowserPage, CefDownload, String, @escaping (CefDownloadDecision) -> Void) -> Void)?
     var onChromiumDownloadProgress: ((BrowserPage, CefDownload) -> Void)?
     var onPageRetired: ((BrowserPage) -> Void)?
@@ -266,6 +269,7 @@ final class BrowserTab: Identifiable {
 
     let extensionBaseURL: URL?
     let popups: TabPopupPolicy
+    let externalApps: TabExternalAppPolicy
 
     var navigationDelegate: TabNavigationDelegate?
     let permissions: TabPermissionCenter
@@ -296,31 +300,39 @@ final class BrowserTab: Identifiable {
         restoring: Bool = false,
         opensBlank: Bool = true,
         privately: Bool = false,
-        sitePermissions: SitePermissions = .shared
+        sitePermissions: SitePermissions? = nil,
+        context: BrowserProfileContext? = nil
     ) {
+        let context = context ?? .shared(for: privately ? .privateBrowsing() : .original())
+        precondition(!privately || context.profile.isPrivate)
+        let sitePermissions = sitePermissions ?? context.sitePermissions
         self.id = id
         self.sitePermissions = sitePermissions
-        profile = privately ? .privateBrowsing() : ChromiumRuntime.shared.currentProfile
+        self.context = context
         dataStore = adopting?.configuration.websiteDataStore
-            ?? extensionHost?.configuration.websiteDataStore ?? WebViewPool.shared.dataStore
-        isPrivate = privately
-        popups = TabPopupPolicy(store: sitePermissions)
+            ?? extensionHost?.configuration.websiteDataStore ?? context.dataStore
+        isPrivate = context.profile.isPrivate
+        popups = TabPopupPolicy(store: sitePermissions, settings: context.settings)
+        externalApps = TabExternalAppPolicy(store: sitePermissions, isPrivate: isPrivate)
         permissions = TabPermissionCenter(store: sitePermissions)
         assistantAccess = TabAssistantAccessCenter(store: sitePermissions)
-        permissions.persistsAnswers = !privately
-        assistantAccess.persistsAnswers = !privately
+        permissions.persistsAnswers = !isPrivate
+        assistantAccess.persistsAnswers = !isPrivate
         let opensStartPage = opensBlank && adopting == nil && extensionHost == nil && !restoring
+        if opensStartPage {
+            pageTitle = SystemPages.startTitle
+        }
         if let adopting {
             // WebKit requires this exact view, with the opener's configuration attached.
-            liveView = BrowserPage(webKit: adopting, profile: profile)
+            liveView = BrowserPage(webKit: adopting, context: context)
             extensionBaseURL = nil
         } else if let extensionHost {
-            liveView = BrowserPage(webKit: WebViewPool.shared.makeView(configuration: extensionHost.configuration), profile: profile)
+            liveView = BrowserPage(webKit: context.webViewPool.makeView(configuration: extensionHost.configuration), context: context)
             extensionBaseURL = extensionHost.baseURL
             pageTitle = extensionHost.name
             favicon = extensionHost.icon
         } else {
-            liveView = opensStartPage ? BrowserPage(webKit: WebViewPool.shared.acquire(), profile: profile) : nil
+            liveView = opensStartPage ? BrowserPage(webKit: context.webViewPool.acquire(), context: context) : nil
             extensionBaseURL = nil
         }
         if let liveView {
@@ -402,6 +414,7 @@ final class BrowserTab: Identifiable {
         outgoing.onNavigationStarted = nil
         outgoing.onNavigationCommitted = nil
         outgoing.onNavigationFinished = nil
+        outgoing.onMainFrameResponse = nil
         outgoing.onNavigationFailed = nil
         outgoing.onContentProcessTerminated = nil
         outgoing.onHistoryChanged = nil
@@ -412,6 +425,8 @@ final class BrowserTab: Identifiable {
             if let tabView = native as? TabWebView {
                 tabView.onZoomChanged = nil
                 tabView.onContextDownload = nil
+                tabView.onOpenLinkInNewWindow = nil
+                tabView.profileContext = nil
                 tabView.onPeekLink = nil
                 tabView.onSummarizeLink = nil
             }
@@ -580,12 +595,14 @@ final class BrowserTab: Identifiable {
         onNavigationOutsideExtension = nil
         onNewWindow = nil
         onOpenInNewTab = nil
+        onOpenInNewWindow = nil
         onOpenInPeek = nil
         onSummarizeLink = nil
         onCloseRequested = nil
         onPictureInPictureChanged = nil
         onPictureReturnExpected = nil
         onDownload = nil
+        onSaveDocument = nil
         onLinkHovered = nil
         onSameDocumentNavigation = nil
         onContentProcessTerminated = nil
@@ -621,14 +638,14 @@ final class BrowserTab: Identifiable {
             : page.url?.host()?.lowercased() ?? ""
         guard host != zoomHost else { return }
         zoomHost = host
-        let remembered = host.isEmpty ? nil : PageZoomStore.shared.level(for: host)
-        page.pageZoom = remembered ?? BrowserSettings.shared.pageZoom
+        let remembered = host.isEmpty ? nil : context.pageZoom.level(for: host)
+        page.pageZoom = remembered ?? context.settings.pageZoom
         zoomChanges &+= 1
     }
 
     fileprivate func recordSiteZoom() {
         guard !isPrivate, !zoomHost.isEmpty else { return }
-        PageZoomStore.shared.set(page.pageZoom, for: zoomHost)
+        context.pageZoom.set(page.pageZoom, for: zoomHost, defaultZoom: context.settings.pageZoom)
     }
 
     // MARK: - Scroll return
@@ -840,10 +857,35 @@ final class BrowserTab: Identifiable {
         processState.finishReload()
     }
 
+    var isShowingError = false
+    var isLoadingErrorPage = false
+}
+
+extension BrowserTab {
     func refreshCanvas(from page: BrowserPage) {
         canvasColor = isShowingRealPage && hasPresentedContent
             ? page.underPageBackgroundColor
             : nil
+    }
+
+    func documentFilename(for url: URL?) -> String? {
+        url.flatMap { documentTitles[Self.documentURL($0)] }
+    }
+
+    func noteMainFrameResponse(_ response: URLResponse) {
+        guard let url = response.url.map(Self.documentURL) else { return }
+        if response.mimeType?.lowercased() == "application/pdf",
+           let filename = response.suggestedFilename, !filename.isEmpty {
+            documentTitles[url] = filename
+        } else {
+            documentTitles[url] = nil
+        }
+    }
+
+    private static func documentURL(_ url: URL) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        components.fragment = nil
+        return components.url ?? url
     }
 
     func refreshChrome() {
@@ -855,18 +897,18 @@ final class BrowserTab: Identifiable {
         let url = page.url
         if url?.absoluteString == "about:blank" {
             urlString = ""
-            title = Self.placeholderTitle
+            title = SystemPages.startTitle
             favicon = nil
         } else if let page = InternalPage(url: url) {
             urlString = url?.absoluteString ?? page.url.absoluteString
             title = page.title
             favicon = nil
         } else if SystemPages.isStart(url) {
-            // The start page takes the row's name back only over a page that had one.
+            // Do not replace the title of a failed navigation still covering the start page.
             let leftOwnPage = InternalPage(url: URL(string: urlString)) != nil
-            if leftOwnPage || (displaced != nil && displaced != committedURL) {
+            if urlString.isEmpty || leftOwnPage || (displaced != nil && displaced != committedURL) {
                 urlString = ""
-                title = Self.placeholderTitle
+                title = SystemPages.startTitle
                 favicon = nil
             }
         } else {
@@ -875,6 +917,8 @@ final class BrowserTab: Identifiable {
             }
             if let pageTitle = page.title, !pageTitle.isEmpty {
                 title = pageTitle
+            } else if isShowingRealPage, extensionBaseURL == nil, !isRestoring {
+                title = documentFilename(for: url) ?? Self.placeholderTitle
             }
         }
         refreshSecurity()
@@ -900,13 +944,10 @@ final class BrowserTab: Identifiable {
         }
     }
 
-    var isShowingError = false
-    var isLoadingErrorPage = false
-
     func declaredFaviconChanged() {
         guard extensionBaseURL == nil, !isPrivate, !isShowingSystemPage else { return }
         guard let host = page.url?.host()?.lowercased() else { return }
-        FaviconLoader.shared.forget(host: host)
+        context.favicons.forget(host: host)
         refreshFavicon()
     }
 
@@ -918,14 +959,15 @@ final class BrowserTab: Identifiable {
             faviconHost = host
             favicon = nil
         }
-        if let cached = FaviconLoader.shared.cached(for: host) {
+        if let cached = context.favicons.cached(for: host) {
             favicon = cached
-            guard FaviconLoader.shared.isGuessedIcon(for: host) else { return }
+            guard context.favicons.isGuessedIcon(for: host) else { return }
         }
         Task { [weak self] in
             guard let self else { return }
-            let icon = await FaviconLoader.shared.load(for: page)
-            guard let icon, page.url?.host()?.lowercased() == host else { return }
+            let view = page
+            let icon = await context.favicons.load(for: view)
+            guard !isClosed, liveView === view, let icon, view.url?.host()?.lowercased() == host else { return }
             favicon = icon
         }
     }

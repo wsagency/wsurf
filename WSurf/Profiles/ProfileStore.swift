@@ -10,18 +10,59 @@ import Observation
 final class ProfileStore {
     static let shared = ProfileStore()
 
-    private(set) var profiles: [Profile]
+    @ObservationIgnored private var catalog: ProfileStore?
+    private var storedProfiles: [Profile]
+    private(set) var profiles: [Profile] {
+        get { catalog?.profiles ?? storedProfiles }
+        set {
+            if let catalog {
+                catalog.profiles = newValue
+            } else {
+                storedProfiles = newValue
+            }
+        }
+    }
+
+    static func selection(profile: Profile, catalog: ProfileStore = .shared) -> ProfileStore {
+        let selection = ProfileStore(file: catalog.file)
+        selection.catalog = catalog
+        selection.markCurrent(profile)
+        return selection
+    }
+
     private(set) var currentID: UUID
-
     private let file: URL
-
     let privateBrowsing = Profile.privateBrowsing()
-
     private(set) var lastPersistentID: UUID
 
-    private(set) var launchProfileID: UUID?
+    private var storedLaunchProfileID: UUID?
+    private(set) var launchProfileID: UUID? {
+        get {
+            if let catalog {
+                return catalog.launchProfileID
+            }
+            return storedLaunchProfileID
+        }
+        set {
+            if let catalog {
+                catalog.launchProfileID = newValue
+            } else {
+                storedLaunchProfileID = newValue
+            }
+        }
+    }
 
-    private(set) var lastUsed: [UUID: Date] = [:]
+    private var storedLastUsed: [UUID: Date] = [:]
+    private(set) var lastUsed: [UUID: Date] {
+        get { catalog?.lastUsed ?? storedLastUsed }
+        set {
+            if let catalog {
+                catalog.lastUsed = newValue
+            } else {
+                storedLastUsed = newValue
+            }
+        }
+    }
 
     var current: Profile {
         if currentID == Profile.privateID {
@@ -50,7 +91,7 @@ final class ProfileStore {
         if !loaded.contains(where: { $0.isOriginal }) {
             loaded.insert(.original(), at: 0)
         }
-        profiles = loaded
+        storedProfiles = loaded
         let remembered = stored.map(\.currentID).flatMap { id in
             loaded.contains { $0.id == id } ? id : nil
         }
@@ -58,15 +99,11 @@ final class ProfileStore {
             loaded.contains { $0.id == id } ? id : nil
         }
         let opening = pinned ?? remembered ?? Profile.originalID
-        launchProfileID = pinned
+        storedLaunchProfileID = pinned
         currentID = opening
         lastPersistentID = opening
-        lastUsed = (stored?.lastUsed ?? [:]).filter { id, _ in
-            loaded.contains { $0.id == id }
-        }
+        storedLastUsed = (stored?.lastUsed ?? [:]).filter { id, _ in loaded.contains { $0.id == id } }
     }
-
-    // MARK: - Changing the list
 
     @discardableResult
     func add(name: String, symbol: String = "person", color: TabFolderColor = .gray) -> Profile {
@@ -106,9 +143,7 @@ final class ProfileStore {
     }
 
     func setLaunchProfile(_ id: UUID?) {
-        let resolved = id.flatMap { candidate in
-            profiles.contains { $0.id == candidate } ? candidate : nil
-        }
+        let resolved = id.flatMap { candidate in profiles.contains { $0.id == candidate } ? candidate : nil }
         guard resolved != launchProfileID else { return }
         launchProfileID = resolved
         save()
@@ -121,13 +156,16 @@ final class ProfileStore {
     func remove(_ profile: Profile) async {
         guard !profile.isOriginal, let index = index(of: profile) else { return }
         profiles.remove(at: index)
+        var dates = lastUsed
+        dates[profile.id] = nil
+        lastUsed = dates
         if currentID == profile.id {
             currentID = Profile.originalID
         }
         if launchProfileID == profile.id {
             launchProfileID = nil
         }
-        lastUsed[profile.id] = nil
+        BrowserProfileContext.forget(profile.id)
         save()
         await Profile.erase(profile)
     }
@@ -144,8 +182,6 @@ final class ProfileStore {
         save()
     }
 
-    // MARK: - Storage
-
     private func index(of profile: Profile) -> Int? {
         profiles.firstIndex { $0.id == profile.id }
     }
@@ -158,18 +194,20 @@ final class ProfileStore {
     }
 
     private func save() {
+        if let catalog {
+            if !isPrivate {
+                catalog.currentID = currentID
+                catalog.lastPersistentID = lastPersistentID
+            }
+            catalog.save()
+            return
+        }
         JSONFileStore.encodeAndWrite(
-            Stored(
-                profiles: profiles,
-                currentID: currentID,
-                launchProfileID: launchProfileID,
-                lastUsed: lastUsed
-            ),
+            Stored(profiles: profiles, currentID: currentID, launchProfileID: launchProfileID, lastUsed: lastUsed),
             to: file,
             sortedKeys: true
         )
     }
-
     private static var defaultFile: URL {
         AppDatabase.supportDirectory.appendingPathComponent("profiles.json")
     }

@@ -22,7 +22,7 @@ final class AutofillSaveSession: NSObject {
     private(set) var isBusy = false
     private(set) var error: String?
     var isPopoverPresented = false
-    private(set) var profileID = Profile.privateID
+    private(set) var context: BrowserProfileContext?
     @ObservationIgnored weak var page: BrowserPage?
     @ObservationIgnored private var revision = 0
     @ObservationIgnored private var dismissed: [AutofillSaveKind: Set<String>] = [:]
@@ -36,8 +36,8 @@ final class AutofillSaveSession: NSObject {
         offers.first
     }
 
-    func attach(to page: BrowserPage, profileID: UUID) {
-        clear(); self.page = page; self.profileID = profileID; submissions.attach(to: self); dismissed = [:]
+    func attach(to page: BrowserPage, context: BrowserProfileContext) {
+        clear(); self.page = page; self.context = context; submissions.attach(to: self); dismissed = [:]
     }
     func clear() {
         revision += 1; offers = []; isPopoverPresented = false; username = nil; submissions.clear(); error = nil
@@ -45,11 +45,17 @@ final class AutofillSaveSession: NSObject {
     }
     func refreshPolicy() {
         revision += 1; submissions.clear()
-        offers.removeAll { !AutofillSaveCoordinator.shared.isEnabled($0.candidate.kind, profileID: profileID) }
+        guard let context else {
+            offers = []
+            username = nil
+            isPopoverPresented = false
+            return
+        }
+        offers.removeAll { !AutofillSaveCoordinator.shared.isEnabled($0.candidate.kind, context: context) }
         if offers.isEmpty {
             isPopoverPresented = false
         }
-        if !AutofillSaveCoordinator.shared.isEnabled(.password, profileID: profileID) {
+        if !AutofillSaveCoordinator.shared.isEnabled(.password, context: context) {
             username = nil
         }
     }
@@ -71,16 +77,16 @@ final class AutofillSaveSession: NSObject {
         }
     }
     func offer(_ candidate: AutofillSaveCandidate, origin: String, documentID: String = "") async {
-        guard AutofillSaveCoordinator.shared.isEnabled(candidate.kind, profileID: profileID) else { return }
+        guard let context, AutofillSaveCoordinator.shared.isEnabled(candidate.kind, context: context) else { return }
         let bytes = (try? JSONEncoder().encode([origin, candidate.kind.rawValue] + candidate.values)) ?? Data()
         let fingerprint = Data(HMAC<SHA256>.authenticationCode(for: bytes, using: fingerprintKey)).base64EncodedString()
         guard dismissed[candidate.kind]?.contains(fingerprint) != true, !offers.contains(where: { $0.fingerprint == fingerprint }) else { return }
-        let revision = revision, profileID = profileID
+        let revision = revision, profileID = context.profile.id
         let decision = await Task.detached { (try? AutofillSaveIndex.decision(for: candidate, origin: origin, profileID: profileID)) ?? .new }.value
-        guard revision == self.revision, let page, page.profileID == profileID, !page.isPrivate,
+        guard revision == self.revision, self.context === context, let page, page.context === context, !context.profile.isPrivate,
               page.url.flatMap(SavedPassword.origin(for:)) != nil,
               documentID.isEmpty ? true : await AutofillSaveCoordinator.shared.isLive(page: page, documentID: documentID, origin: origin),
-              AutofillSaveCoordinator.shared.isEnabled(candidate.kind, profileID: profileID),
+              AutofillSaveCoordinator.shared.isEnabled(candidate.kind, context: context),
               dismissed[candidate.kind]?.contains(fingerprint) != true, !offers.contains(where: { $0.fingerprint == fingerprint }),
               decision != .unchanged, decision != .blocked else { return }
         let previous = current?.id
@@ -104,28 +110,30 @@ final class AutofillSaveSession: NSObject {
         offers.removeAll { $0.id == offer.id }; isPopoverPresented = !offers.isEmpty; error = nil
     }
     func never(_ offer: Offer) async {
-        guard !isBusy, current?.id == offer.id else { return }
-        isBusy = true; let profileID = profileID; defer { isBusy = false }
+        guard !isBusy, current?.id == offer.id, let context else { return }
+        isBusy = true; let profileID = context.profile.id; defer { isBusy = false }
         do {
             try await Task.detached { try AutofillSaveIndex.block(kind: offer.candidate.kind, origin: offer.origin, profileID: profileID) }.value
-            if self.profileID == profileID && current?.id == offer.id {
+            if self.context === context && current?.id == offer.id {
                 dismiss(offer)
             }
         } catch {
-            if self.profileID == profileID && current?.id == offer.id {
+            if self.context === context && current?.id == offer.id {
                 self.error = String(localized: "Couldn’t remember this choice. Try again.")
             }
         }
     }
     func save(_ offer: Offer, replacement: AutofillSaveCandidate? = nil) async {
-        guard !isBusy, current?.id == offer.id, AutofillSaveCoordinator.shared.isEnabled(offer.candidate.kind, profileID: profileID),
-              let page, page.window != nil, await AutofillSaveCoordinator.shared.isLive(page: page, documentID: offer.documentID, origin: offer.origin) else { return }
+        guard !isBusy, current?.id == offer.id, let context,
+              AutofillSaveCoordinator.shared.isEnabled(offer.candidate.kind, context: context),
+              let page, page.context === context, page.window != nil,
+              await AutofillSaveCoordinator.shared.isLive(page: page, documentID: offer.documentID, origin: offer.origin) else { return }
         let candidate = replacement ?? offer.candidate
         guard candidate.kind == offer.candidate.kind else { return }
         if case .password(let password) = candidate, password.origin != offer.origin {
             return
         }
-        isBusy = true; error = nil; let profileID = profileID; defer { isBusy = false }
+        isBusy = true; error = nil; let profileID = context.profile.id; defer { isBusy = false }
         do {
             switch candidate {
             case .password(let login):
@@ -139,11 +147,12 @@ final class AutofillSaveSession: NSObject {
                     return contacts + [contact]
                 }
             }
-            guard await AutofillSaveCoordinator.shared.isLive(page: page, documentID: offer.documentID, origin: offer.origin),
-                  self.profileID == profileID, current?.id == offer.id else { return }
+            guard self.context === context, page.context === context,
+                  await AutofillSaveCoordinator.shared.isLive(page: page, documentID: offer.documentID, origin: offer.origin),
+                  current?.id == offer.id else { return }
             dismiss(offer, rememberingChoice: false)
         } catch {
-            if self.profileID == profileID && current?.id == offer.id {
+            if self.context === context && current?.id == offer.id {
                 self.error = String(localized: "Couldn’t save these details. Try again.")
             }
         }
@@ -159,7 +168,6 @@ final class AutofillSaveCoordinator {
     private var observers: [NSObjectProtocol] = []
     private var sessionIsActive = true
     private var screenIsLocked = false
-    private(set) var profileID = Profile.originalID
 
     private final class FrameList {
         var values: [String: BrowserFrame] = [:]
@@ -196,43 +204,42 @@ final class AutofillSaveCoordinator {
             MainActor.assumeIsolated { self?.screenIsLocked = false; self?.refreshPolicy() }
         })
     }
-    func use(profileID: UUID) {
-        clear(); self.profileID = profileID; refreshPolicy()
-    }
     private func clear() {
         AutofillSuggestions.shared.reset(); frames.removeAll()
         for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? [] {
             session.clear()
         }
     }
-    func resetDismissals(kind: AutofillSaveKind, profileID: UUID) {
+    func resetDismissals(kind: AutofillSaveKind, context: BrowserProfileContext) {
         for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? []
-        where session.profileID == profileID {
+        where session.context === context {
             session.resetDismissals(kind: kind)
         }
     }
     func rememberFilledUsername(_ value: String, origin: String, documentID: String, in page: BrowserPage) {
-        guard !value.isEmpty, value.count <= 500, isEnabled(.password, profileID: page.profileID), let session = sessions.object(forKey: page) else { return }
+        guard !value.isEmpty, value.count <= 500, isEnabled(.password, context: page.context),
+              let session = sessions.object(forKey: page), session.context === page.context else { return }
         var step = AutofillSaveSession.UsernameStep(origin: origin, value: value, documentID: documentID, attemptID: UUID()); step.completed = true; session.username = step
     }
-    func isEnabled(_ kind: AutofillSaveKind, profileID: UUID) -> Bool {
-        guard sessionIsActive, !screenIsLocked, profileID == self.profileID, profileID != Profile.privateID else { return false }
+    func isEnabled(_ kind: AutofillSaveKind, context: BrowserProfileContext) -> Bool {
+        guard sessionIsActive, !screenIsLocked, !context.profile.isPrivate else { return false }
         switch kind {
         case .password:
-            return PasswordAutofill.shared.isEnabled
+            return PasswordAutofill.shared.isEnabled(in: context)
         case .card:
-            return BrowserSettings.shared.fillsPaymentCards
+            return context.settings.fillsPaymentCards
         case .contact:
-            return BrowserSettings.shared.fillsContacts
+            return context.settings.fillsContacts
         }
     }
 
     func install(in page: BrowserPage, session: AutofillSaveSession) {
-        session.attach(to: page, profileID: profileID); sessions.setObject(session, forKey: page)
+        session.attach(to: page, context: page.context); sessions.setObject(session, forKey: page)
         page.installScript(AutofillFormScript.source + AutofillSuggestionScript.source, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.installScript(AutofillSaveScript.clientSource, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.addScriptMessageHandler(name: "wsurfAutofillSave", in: Self.world) { [weak self] message in self?.receive(message) }
     }
+
     func refreshPolicy() {
         AutofillSuggestions.shared.reset()
         for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? [] {
@@ -247,19 +254,30 @@ final class AutofillSaveCoordinator {
         }
     }
     private func applyPolicy(in page: BrowserPage, frame: BrowserFrame) {
-        guard let session = sessions.object(forKey: page), session.page === page else { return }
+        let context = page.context
+        guard let session = sessions.object(forKey: page), session.page === page, session.context === context else { return }
         let origin = frame.securityOrigin, topURL = page.url
         let secure = origin.protocol == "https" && !origin.host.isEmpty && topURL.flatMap(SavedPassword.origin(for:)) != nil
-        let policy = Dictionary(uniqueKeysWithValues: AutofillSaveKind.allCases.map { ($0.rawValue, secure && isEnabled($0, profileID: session.profileID)) })
-        Task { _ = try? await page.callAsyncJavaScript("globalThis.__wsurfAutofillSave?.setPolicy(policy);", arguments: ["policy": policy], in: frame, contentWorld: Self.world) }
+        let policy = Dictionary(uniqueKeysWithValues: AutofillSaveKind.allCases.map { ($0.rawValue, secure && isEnabled($0, context: context)) })
+        Task {
+            do {
+                guard page.context === context, session.context === context else { return }
+                _ = try await page.callAsyncJavaScript("globalThis.__wsurfAutofillSave?.setPolicy(policy);", arguments: ["policy": policy], in: frame, contentWorld: Self.world)
+            } catch {
+                AutofillDiagnostics.policyFailed(.save, error: error, isMainFrame: frame.isMainFrame)
+            }
+        }
     }
     func pageStates(in page: BrowserPage) async -> [AutofillSubmissionTracker.PageState]? {
-        guard let list = frames[ObjectIdentifier(page)], let mainID = list.mainDocumentID, list.values[mainID] != nil else { return nil }
+        let context = page.context
+        guard let session = sessions.object(forKey: page), session.context === context,
+              let list = frames[ObjectIdentifier(page)], let mainID = list.mainDocumentID, list.values[mainID] != nil else { return nil }
         let entries = [(mainID, list.values[mainID]!)] + list.values.filter { $0.key != mainID }
         var result: [AutofillSubmissionTracker.PageState] = []
         for (id, frame) in entries {
             let raw = try? await page.callAsyncJavaScript("return globalThis.__wsurfAutofillForms?.summary();", arguments: [:], in: frame, contentWorld: Self.world)
-            guard frames[ObjectIdentifier(page)] === list, list.mainDocumentID == mainID else { return nil }
+            guard page.context === context, session.context === context,
+                  frames[ObjectIdentifier(page)] === list, list.mainDocumentID == mainID else { return nil }
             guard let state = AutofillSubmissionTracker.PageState(raw), state.documentID == id,
                   frame.securityOrigin.protocol == state.url.scheme, frame.securityOrigin.host == state.url.host?.lowercased(),
                   (frame.securityOrigin.port == 0 ? 443 : frame.securityOrigin.port) == (state.url.port ?? 443) else { if id == mainID { return nil }; list.values[id] = nil; continue }
@@ -268,7 +286,9 @@ final class AutofillSaveCoordinator {
         return result
     }
     func isLive(page: BrowserPage, documentID: String, origin: String) async -> Bool {
-        guard page.profileID == profileID, !page.isPrivate, page.hasOnlySecureContent,
+        let context = page.context
+        guard let session = sessions.object(forKey: page), session.context === context,
+              !context.profile.isPrivate, page.hasOnlySecureContent,
               page.url.flatMap(SavedPassword.origin(for:)) != nil,
               let expected = URL(string: origin), SavedPassword.origin(for: expected) == origin else { return false }
         func matches(_ frame: BrowserFrame) -> Bool {
@@ -278,13 +298,14 @@ final class AutofillSaveCoordinator {
         }
         guard let list = frames[ObjectIdentifier(page)], let frame = list.values[documentID], matches(frame) else { return false }
         if let chromium = page.chromium {
-            return (try? await chromium.isLive(frame: frame)) == true
+            let live = (try? await chromium.isLive(frame: frame)) == true
+            return live && page.context === context && session.context === context && frames[ObjectIdentifier(page)] === list
         }
         let current = try? await page.callAsyncJavaScript("return globalThis.__wsurfAutofillForms?.documentID;", arguments: [:], in: frame.isMainFrame ? nil : frame, contentWorld: Self.world)
-        return current as? String == documentID
+        return page.context === context && session.context === context && frames[ObjectIdentifier(page)] === list && current as? String == documentID
     }
     private func receive(_ message: BrowserScriptMessage) {
-        guard let session = sessions.object(forKey: message.page), session.profileID == profileID,
+        guard let session = sessions.object(forKey: message.page), let context = session.context, context === message.page.context,
               let body = message.body as? [String: Any], let action = body["action"] as? String else { return }
         let page = message.page, key = ObjectIdentifier(page)
         if action == "ready" {
@@ -329,7 +350,7 @@ final class AutofillSaveCoordinator {
         }
         guard action == "stage", let source = body["source"] as? String,
               ["submit", "interaction", "automatic", "pagehide"].contains(source) else { return }
-        if source != "pagehide", isEnabled(.password, profileID: session.profileID),
+        if source != "pagehide", isEnabled(.password, context: context),
            let value = body["username"] as? String, !value.isEmpty, value.count <= 500 {
             session.username = AutofillSaveSession.UsernameStep(
                 origin: origin,
@@ -339,7 +360,7 @@ final class AutofillSaveCoordinator {
             )
         }
         var candidates: [AutofillSaveCandidate] = []
-        if isEnabled(.password, profileID: session.profileID), let login = body["password"] as? [String: String], let password = login["password"] {
+        if isEnabled(.password, context: context), let login = body["password"] as? [String: String], let password = login["password"] {
             var username = login["username"] ?? ""
             if username.isEmpty, let remembered = session.username, remembered.origin == origin,
                remembered.completed || remembered.documentID != documentID,
@@ -350,7 +371,7 @@ final class AutofillSaveCoordinator {
                 candidates.append(.password(record))
             }
         }
-        if isEnabled(.card, profileID: session.profileID),
+        if isEnabled(.card, context: context),
            let values = body["card"] as? [String: String], values["cc-number"]?.count ?? 0 <= 32,
            let number = values["cc-number"], let month = values["cc-exp-month"].flatMap(Int.init),
            let year = values["cc-exp-year"].flatMap(Int.init),
@@ -363,7 +384,7 @@ final class AutofillSaveCoordinator {
            ), !card.isExpired() {
             candidates.append(.card(card))
         }
-        if isEnabled(.contact, profileID: session.profileID),
+        if isEnabled(.contact, context: context),
            let values = body["contact"] as? [String: String],
            values.count <= 16, values.values.allSatisfy({ $0.count <= 500 }) {
             var contact = AutofillContact()

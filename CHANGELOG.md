@@ -7,6 +7,22 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+- Integrated the pinned 31-change Linen migration: profile-aware windows and
+  live same-profile tab transfer, isolated private sessions on WebKit and CEF,
+  owner-bound assistant/MCP/extension actions, 32-control form filling without
+  submission, safe rate-limit pause/Continue, and Tab-to-search palette chips.
+  Preserves WSurf Favorites, pins, folders, sidebar Undo and engine choice.
+  Includes PDF titles/saves, revocable external-app approvals, bounded scroll
+  restoration, idle media/lyrics work, native input/autofill fixes, startup
+  speech preparation and URL-correct favicons. Native builds use Xcode 27,
+  AnyLanguageModel 0.15.1 and swift-collections 1.7.1 with pinned CefSwift;
+  locked builds install Metal and OCR supports CPU fallback. MCP accepts
+  compatible initialize payloads and both Codex bundle layouts, with event-driven
+  stdio. External-app decisions remain bound to live source documents; ambiguous
+  or opaque sources receive only one-time consent. History clearing removes only
+  the owning profile's conversation log, and link previews retain that profile's
+  JavaScript settings. See [the migration journal](docs/upstream-migrations.md)
+  for provenance and observed verification; this entry is not a deployment record.
 - Added repository-local omp worktree placement and documented feature-branch,
   PR-only changes to `main`.
 - Independent WSurf product, app/project/module and `io.wsagency.wsurf`

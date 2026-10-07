@@ -166,7 +166,7 @@ struct SidebarRowContext {
     let frames: SidebarFrames
 
     var refractsTabColor: Bool {
-        coordinator.settings.refractsTabColor
+        BrowserSettings.application.refractsTabColor
     }
 
     func isLifted(_ item: SidebarItem) -> Bool {
@@ -216,7 +216,6 @@ struct SidebarDropMark: View {
     var isArmed = false
 
     @Environment(\.sidebarStyle) private var sidebarStyle
-    @Environment(\.windowColorScheme) private var windowColorScheme
 
     private static let dash: [CGFloat] = [4, 3]
 
@@ -259,7 +258,7 @@ struct SidebarDropMark: View {
                 .frame(width: SidebarMetrics.rowIconSize)
             if sidebarStyle == .full {
                 label
-                    .font(BrowserSettings.shared.sidebarFont)
+                    .font(BrowserSettings.application.sidebarFont)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -274,7 +273,6 @@ struct SidebarDropMark: View {
                 style: StrokeStyle(lineWidth: 1, dash: isArmed && calls ? [] : Self.dash)
             )
         }
-        .environment(\.colorScheme, windowColorScheme)
         .allowsHitTesting(false)
     }
 }
@@ -285,7 +283,7 @@ struct SidebarRows: View {
     let context: SidebarRowContext
 
     var body: some View {
-        VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: context.coordinator.settings)) {
+        VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
             ForEach(Array(items.enumerated()), id: \.element) { _, item in
                 row(item)
                     .overlay {

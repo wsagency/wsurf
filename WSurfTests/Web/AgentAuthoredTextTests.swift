@@ -11,7 +11,7 @@ import WebKit
 @Suite(.serialized, .boundedWebViews)
 struct AgentAuthoredTextTests {
     private func makeWebView() -> BrowserPage {
-        BrowserPage(webKit: WKWebView(frame: .init(x: 0, y: 0, width: 400, height: 300), configuration: WebViewPool.makeConfiguration()))
+        BrowserPage(webKit: WKWebView(frame: .init(x: 0, y: 0, width: 400, height: 300), configuration: WebViewPool.makeConfiguration()), context: BrowserProfileContext(profile: .privateBrowsing()))
     }
 
     private func load(_ webView: BrowserPage, at url: URL) async {

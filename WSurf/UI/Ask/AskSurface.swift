@@ -92,6 +92,7 @@ struct AskSurface: View {
 
                 OmniboxList(
                     sections: sections,
+                    settings: model.coordinator.context.settings,
                     query: model.resultQuery,
                     selection: model.interaction.selection,
                     density: .compact,

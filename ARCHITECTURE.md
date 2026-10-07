@@ -8,7 +8,10 @@ through CEF. Swift 6 strict concurrency and Main Actor default isolation are ena
 
 ```mermaid
 flowchart LR
-    App["AppDelegate"] --> Coordinator["AppCoordinator"]
+    App["AppDelegate"] --> Application["BrowserApplication"]
+    Application --> Coordinator["AppCoordinator per window"]
+    Application --> MCP["App-wide MCP listener"]
+    Coordinator --> Context["BrowserProfileContext"]
     Coordinator --> Browser["BrowserModel"]
     Coordinator --> Turns["AgentTurnModel"]
     Turns --> Agent["AgentRunner"]
@@ -24,17 +27,17 @@ flowchart LR
     Toolkit --> Access
     Access --> Driver["PageDriver"]
     Driver --> Page
-    Browser --> Stores["Profile stores"]
+    Context --> Stores["Profile stores"]
     Turns --> Log["ConversationLog"]
     Stores --> Database["AppDatabase / GRDB"]
     Log --> Database
     Coordinator --> Views["SwiftUI views"]
 ```
 
-`AppCoordinator` owns and connects the runtime models and services. Views observe
-the coordinator and its focused models; they should not contain persistence, networking or
-WebKit policy. New work should prefer a narrow model or protocol over another
-coordinator responsibility.
+`BrowserApplication` owns the window registry, startup/restoration, external-link
+routing and MCP listener. Each `AppCoordinator` owns one window's browser,
+selection, assistant task, voice input and presentation. Views use their owning
+coordinator, never the application's currently focused window as a service locator.
 
 `VoiceInputModel` owns microphone and transcription state. `AgentTurnModel`
 owns one turn’s task, reply, tab activity and durable completion state. Both
@@ -56,25 +59,44 @@ content. WebKit can restore native interaction state; Chromium restores only
 the URL. An engine switch reloads without replaying submitted requests and
 awaits the old browser's actual close acknowledgment before installing its replacement.
 
-Each profile has its own WebKit data store, Chromium request context and cache,
-database, permission records and extension directory. Engine choices belong to
-that profile's canonical HTTP(S) origins. Private browsing uses non-persistent
-website stores and an in-memory database. Never add profile identity as a column
-to a shared persistent store.
+`BrowserProfileContext` owns the profile's database, permissions, WebKit data store,
+pool, extensions, downloads, history, favicons, model settings and assistant grants.
+Regular windows of a profile share one context. Each private window gets a distinct
+context ID, non-persistent WebKit store, CEF request context and in-memory database,
+even though private Profile UUIDs are equal. Never add profile identity as a column
+to a shared persistent store. Private teardown waits for only that context's CEF
+pages to acknowledge closure.
 
-`BrowserModel` owns the active profile’s permission store and gives that exact
-store to every new `BrowserTab`. A profile switch writes the outgoing session,
-drops its tabs without the bookkeeping a single close needs, replaces the
-database and permission store together, swaps the extension controller, and
-restores the next session. The extensions themselves load afterwards, so the
-window is usable first. Each phase logs its own duration under `profile:
-switched`.
+Profile selection belongs to the window. Switching it revokes that window's MCP
+connections and extension registration before replacing its browser context; other
+windows continue using their existing context. Context-owned engine-preference
+notifications reach every registered browser in the same context. Appearance and
+provider definitions remain application-wide; website settings, selected models
+and assistant approvals are profile-local.
+
+Window sessions use window IDs, composite item keys, revisions and retirement
+guards. Legacy profile sessions migrate transactionally, preserving Favorites,
+pins, folders, splits and native WebKit state. A live transfer requires the same
+context and session writer and open registered owners. It moves the same tab/page/
+native view without navigation, cancels source assistant/voice/media/Peek activity,
+rebinds callbacks, invalidates both sidebar Undo histories and saves both windows
+atomically. Closed or superseded owners cannot resurrect tabs with queued saves.
 
 `ChromiumRuntime` initializes CEF only for the first Chromium page and stays
 initialized until quit because CEF cannot be restarted in-process. Its AppKit
 application subclass is installed at startup without loading Chromium.
 The native child host view must be released to receive `on_before_close`; a
 tab closes that child, never the containing WSurf window.
+
+External-app approvals require a proven requesting origin and app identity.
+Ambiguous, inherited or opaque sources may request one-time consent but cannot
+reuse or persist an origin grant. WebKit binds suspended offers to its document
+and main-frame navigation generation. CEF binds them to native frame/document
+epochs plus cached DevTools document/origin identity: renderer RPCs cannot
+validate a handoff while an unrelated top-level navigation suspends those RPCs.
+Native detach, replacement, non-aborted load failure, termination and close invalidate the offer;
+CEF frame IDs are not DevTools frame IDs. Ordinary JavaScript and permission
+operations retain their asynchronous live-document checks.
 
 ## Agent trust boundaries
 
@@ -100,15 +122,16 @@ authorize access, protect credentials or confirm an irreversible action.
 External MCP clients use a separate `MCPBrowserSession`, with explicit tab-and-
 origin grants and connection-local consequential-action approvals. The session
 uses `PageDriver` through a revocable `PageAutomationGuard`; it does not enter
-`AgentTurnModel` or write assistant conversation history. Private browsing and
-profile switches stop the server synchronously before replacing stores. The
-bundled `--mcp` process relays stdio to a user-only Unix socket without opening a
-second browser session. See [MCP.md](MCP.md) for the tool contract and boundaries.
+`AgentTurnModel` or write assistant conversation history. Each connection binds to
+one regular window when it connects. Focus changes do not retarget it; closing or
+switching that owner revokes its connections without disrupting another window.
+Consent sheets attach to the originating registered native window.
 
-MCP enablement is an app-level preference. Runtime shutdown clears connections
-and grants without changing that preference. Bootstrap and profile-switch
-completion resume the listener in normal profiles; private browsing keeps it
-paused and presents the toggle as unavailable.
+MCP enablement and the listener are application-wide. New connections are refused
+while the focused window is private; existing regular-window connections remain
+bound. Shutdown clears connections and grants without changing the preference.
+The bundled `--mcp` process relays event-driven stdio to a user-only Unix socket
+without opening another browser session. See [MCP.md](MCP.md) for its boundaries.
 
 `MCPClientInstaller` handles optional client setup on its own actor. It merges
 standard JSON configs and uses the installed Codex CLI on a staged TOML copy.
@@ -121,9 +144,14 @@ Providers propose actions. WSurf checks permissions, runs each action once, and
 saves its result in a checkpoint. Resuming an interrupted task preserves user
 answers and requires verification before retrying an action with an unknown outcome.
 Repeated failures or unchanged results eventually pause the task.
+Rate-limit recovery retries only safe model generation within the request budget,
+not completed or uncertain browser actions. Exhaustion saves a resumable checkpoint
+without requesting another summary. Visual no-progress detection ignores pointer
+coordinates and screenshot variation on an unchanged page.
 
-Conversation messages, attachments, and checkpoints belong to the active profile.
-They are private conversation data, not diagnostic exports. Deleting a turn also
+Conversation messages, attachments and checkpoints belong to the originating
+profile, which stays task-local across awaits and focus changes. They are private
+conversation data, not diagnostic exports. Deleting a turn also
 invalidates checkpoints that may contain it. `AgentRunDiagnostics` exports only
 approved event names, counts, timings, and status values. It excludes prompts,
 answers, page content, URLs, tool arguments, credentials, and raw provider errors.

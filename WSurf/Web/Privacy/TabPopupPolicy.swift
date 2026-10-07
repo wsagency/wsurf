@@ -10,9 +10,11 @@ import WebKit
 @Observable
 final class TabPopupPolicy {
     private let store: SitePermissions
+    private let settings: BrowserSettings
 
-    init(store: SitePermissions = .shared) {
+    init(store: SitePermissions, settings: BrowserSettings) {
         self.store = store
+        self.settings = settings
     }
 
     private(set) var origin = ""
@@ -23,7 +25,7 @@ final class TabPopupPolicy {
         if !origin.isEmpty, let recorded = store.popups(for: origin) {
             return recorded
         }
-        return BrowserSettings.shared.blocksPopups ? .blockAndNotify : .allow
+        return settings.blocksPopups ? .blockAndNotify : .allow
     }
 
     func pageChanged(url: URL?) -> Bool {

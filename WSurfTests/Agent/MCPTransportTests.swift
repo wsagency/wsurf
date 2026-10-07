@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import AppKit
 import Darwin
 import Foundation
 import MCP
@@ -13,6 +14,120 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct MCPTransportTests {
+    private final class RetainedWindows {
+        var values: [ObjectIdentifier: NSWindow] = [:]
+    }
+
+    private let retainedWindows = RetainedWindows()
+
+    private func registerNativeWindow(for browser: BrowserModel) {
+        let window = NSWindow(
+            contentRect: NSRect(x: 20, y: 20, width: 700, height: 500),
+            styleMask: [], backing: .buffered, defer: true
+        )
+        window.isReleasedWhenClosed = false
+        browser.context.extensions.register(browser: browser, window: window)
+        retainedWindows.values[ObjectIdentifier(browser)] = window
+    }
+
+    @Test func initializationIgnoresUnsupportedExtensionsAndPreservesStandardFields() throws {
+        let request = Data(#"""
+            {"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{
+              "protocolVersion":"2025-06-18","capabilities":{
+                "experimental":{"codex/auth-change":{},"future":{"enabled":true}},
+                "elicitation":{"form":{},"url":{}},"roots":{"listChanged":true}},
+              "clientInfo":{"name":"Codex","title":"Codex CLI","version":"1"},"_meta":{"fixture":true}}}
+            """#.utf8)
+        let expected = Data(#"""
+            {"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{
+              "protocolVersion":"2025-06-18","capabilities":{
+                "elicitation":{"form":{},"url":{}},"roots":{"listChanged":true}},
+              "clientInfo":{"name":"Codex","title":"Codex CLI","version":"1"},"_meta":{"fixture":true}}}
+            """#.utf8)
+        let actual = try JSONSerialization.jsonObject(with: MCPInitializationCompatibility.normalize(request))
+        #expect((actual as? NSDictionary) == (try JSONSerialization.jsonObject(with: expected) as? NSDictionary))
+    }
+
+    @Test(arguments: [
+        #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"initialize","capabilities":{"experimental":{"extension":{}}}}}"#,
+        #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"experimental":[]}}}"#,
+        #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"experimental":null}}}"#,
+        #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"experimental":"extension"}}}"#,
+        #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}"#,
+        #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":null}"#,
+        #"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+        "[]", "invalid JSON",
+    ])
+    func initializationCompatibilityLeavesOtherMessagesUnchanged(_ request: String) {
+        let message = Data(request.utf8)
+        #expect(MCPInitializationCompatibility.normalize(message) == message)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func localSocketAcceptsObjectValuedInitializationCapabilities() async throws {
+        let directory = "/tmp/wsurf-mcp-test-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let endpoint = directory + "/browser.sock"
+        let server = MCP.Server(name: "WSurf fixture", version: "1")
+        let listener = try LocalMCPListener(path: endpoint) { connection in
+            Task {
+                do {
+                    try await server.start(transport: LocalMCPTransport(connection: connection))
+                } catch {
+                    Issue.record(error)
+                }
+            }
+        }
+        defer {
+            listener.stop()
+            Task { await server.stop() }
+        }
+        try await listener.start()
+        let transport = LocalMCPTransport(connection: NWConnection(to: .unix(path: endpoint), using: .tcp))
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+        try await transport.send(Self.initializationRequest)
+        var replies = await transport.receive().makeAsyncIterator()
+        let reply = try #require(await replies.next())
+        let object = try #require(JSONSerialization.jsonObject(with: reply) as? [String: Any])
+        #expect(object["id"] as? Int == 1)
+        let result = try #require(object["result"] as? [String: Any])
+        #expect(result["protocolVersion"] as? String == "2025-06-18")
+        let info = try #require(result["serverInfo"] as? [String: Any])
+        #expect(info["name"] as? String == "WSurf fixture")
+    }
+
+    @Test(.timeLimit(.minutes(1))) func relayAcceptsObjectValuedInitializationWithoutBrowserAccess() async throws {
+        let directory = "/tmp/wsurf-mcp-test-\(UUID().uuidString)"
+        let pair = await InMemoryTransport.createConnectedPair()
+        try await pair.server.connect()
+        try await pair.client.connect()
+        let relay = MCPStdioRelay(socketPath: directory + "/browser.sock")
+        let running = Task { try await relay.run(transport: pair.server) }
+        defer { Task { await pair.client.disconnect() } }
+        try await pair.client.send(Self.initializationRequest)
+        var replies = await pair.client.receive().makeAsyncIterator()
+        let reply = try #require(await replies.next())
+        let initialized = try #require(JSONSerialization.jsonObject(with: reply) as? [String: Any])
+        #expect(initialized["id"] as? Int == 1)
+        #expect(initialized["result"] != nil)
+        try await pair.client.send(Data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.utf8))
+        try await pair.client.send(Data(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#.utf8))
+        let listing = try #require(await replies.next())
+        let object = try #require(JSONSerialization.jsonObject(with: listing) as? [String: Any])
+        let result = try #require(object["result"] as? [String: Any])
+        let tools = try #require(result["tools"] as? [[String: Any]])
+        #expect(Set(tools.compactMap { $0["name"] as? String }) == Set(MCPToolCatalog.entries.map(\.name)))
+        #expect(!FileManager.default.fileExists(atPath: directory))
+        await pair.client.disconnect()
+        try await running.value
+    }
+
+    private static var initializationRequest: Data {
+        Data((#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","#
+            + #""capabilities":{"experimental":{"codex/auth-change":{}},"elicitation":{"form":{},"url":{}},"roots":{"listChanged":true}},"#
+            + #""clientInfo":{"name":"Stdio integration","title":"Codex","version":"1"}}}"#).utf8)
+    }
+
     @Test(.timeLimit(.minutes(1))) func relayCanStartBeforeBrowserAndRecoverAfterItLaunches() async throws {
         let directory = "/tmp/wsurf-mcp-test-\(UUID().uuidString)"
         defer { try? FileManager.default.removeItem(atPath: directory) }
@@ -28,7 +143,9 @@ struct MCPTransportTests {
         #expect(!tools.isEmpty)
         let (_, offline) = try await client.callTool(name: "listTabs")
         #expect(offline == true)
-        let server = BrowserMCPServer(browser: BrowserModel(database: .temporary()), endpoint: endpoint, available: { true })
+        let browser = BrowserModel(database: .temporary())
+        registerNativeWindow(for: browser)
+        let server = BrowserMCPServer(endpoint: endpoint, target: { browser }, available: { _ in true })
         defer { server.stop() }
         server.setEnabled(true)
         #expect(await waitUntil { server.isListening })
@@ -94,7 +211,7 @@ struct MCPTransportTests {
             try? FileManager.default.removeItem(atPath: directory)
         }
         let browser = BrowserModel(database: .temporary())
-        let server = BrowserMCPServer(browser: browser, endpoint: directory + "/browser.sock", defaults: defaults, available: { true })
+        let server = BrowserMCPServer(endpoint: directory + "/browser.sock", defaults: defaults, target: { browser }, available: { _ in true })
         #expect(!server.isEnabled)
         server.setEnabled(true)
         #expect(await waitUntil { server.isListening })
@@ -102,21 +219,29 @@ struct MCPTransportTests {
         #expect(server.isEnabled)
         #expect(!server.isListening)
 
-        let relaunched = BrowserMCPServer(browser: browser, endpoint: directory + "/browser.sock", defaults: defaults, available: { true })
+        let relaunched = BrowserMCPServer(endpoint: directory + "/browser.sock", defaults: defaults, target: { browser }, available: { _ in true })
         defer { relaunched.stop() }
         #expect(relaunched.isEnabled)
         relaunched.resume()
         #expect(await waitUntil { relaunched.isListening })
         relaunched.setEnabled(false)
-        let disabled = BrowserMCPServer(browser: browser, defaults: defaults, available: { true })
+        let disabled = BrowserMCPServer(defaults: defaults, target: { browser }, available: { _ in true })
         #expect(!disabled.isEnabled)
     }
 
-    @Test func privateBrowsingPausesWithoutDisablingAndRevokesConnections() async throws {
+    @Test func privateFocusDeniesNewConnectionsWithoutRetargetingExistingOnes() async throws {
         let directory = "/tmp/wsurf-mcp-test-\(UUID().uuidString)"
         defer { try? FileManager.default.removeItem(atPath: directory) }
-        var isPrivate = false
-        let server = BrowserMCPServer(browser: BrowserModel(database: .temporary()), endpoint: directory + "/browser.sock") { !isPrivate }
+        let browser = BrowserModel(database: .temporary())
+        let privateBrowser = BrowserModel(context: .shared(for: .privateBrowsing()), windowID: UUID())
+        registerNativeWindow(for: browser)
+        registerNativeWindow(for: privateBrowser)
+        var target = browser
+        let server = BrowserMCPServer(
+            endpoint: directory + "/browser.sock",
+            target: { target },
+            available: { !$0.opensPrivately }
+        )
         defer { server.stop() }
         server.setEnabled(true)
         #expect(await waitUntil { server.isListening })
@@ -125,22 +250,20 @@ struct MCPTransportTests {
         _ = try await client.connect(transport: transport)
         let session = try #require(server.sessions.first)
 
-        isPrivate = true
-        server.stop()
-        server.resume()
-        #expect(server.isEnabled)
-        #expect(server.isPaused)
-        #expect(!server.isListening)
-        #expect(!session.isConnected)
-        #expect(server.sessions.isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: directory + "/browser.sock"))
+        target = privateBrowser
 
-        isPrivate = false
-        server.resume()
-        #expect(await waitUntil { server.isListening })
+        #expect(server.makeSessionForConnection() == nil)
         #expect(server.isEnabled)
         #expect(!server.isPaused)
+        #expect(server.isListening)
+        #expect(session.isConnected)
+        #expect((try await session.call(name: "listTabs", arguments: [:])).isError == false)
+
+        server.disconnect(browser: browser)
+        #expect(!session.isConnected)
         #expect(server.sessions.isEmpty)
+        target = browser
+        #expect(server.makeSessionForConnection()?.isBound(to: browser) == true)
         await transport.disconnect()
     }
 
@@ -174,6 +297,37 @@ struct MCPTransportTests {
             try click.validate(["tabID": "tab", "observationID": "observation", "ref": 0])
         }
     }
+    @Test func fillFieldsContractAcceptsThirtyTwoControlsAndRejectsThirtyThree() throws {
+        let fill = try #require(MCPToolCatalog.entries.first { $0.name == "fillFields" })
+        let arguments: (Int) -> [String: Value] = { count in
+            [
+                "tabID": "tab", "observationID": "observation",
+                "fields": .array((1...count).map {
+                    .object(["ref": .int($0), "value": .string("value"), "select": .bool(false)])
+                }),
+            ]
+        }
+        try fill.validate(arguments(32))
+        #expect(throws: (any Error).self) { try fill.validate(arguments(33)) }
+        #expect(throws: (any Error).self) {
+            try fill.validate([
+                "tabID": "tab", "observationID": "observation",
+                "fields": .array([.object(["ref": .int(1), "value": .string("v"), "select": .string("true")])]),
+            ])
+        }
+    }
+    @Test func fillFieldsSchemaKeepsSelectionBooleanAndCapsThirtyTwo() throws {
+        let fill = try #require(MCPToolCatalog.entries.first { $0.name == "fillFields" })
+        let data = try JSONEncoder().encode(fill.tool.inputSchema)
+        let schema = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        let fields = try #require(properties["fields"] as? [String: Any])
+        #expect(fields["maxItems"] as? Int == 32)
+        let items = try #require(fields["items"] as? [String: Any])
+        let itemProperties = try #require(items["properties"] as? [String: Any])
+        let select = try #require(itemProperties["select"] as? [String: Any])
+        #expect(select["type"] as? String == "boolean")
+    }
 
     @Test func endpointRejectsInsecureDirectoriesAndCompetingListeners() throws {
         let directory = "/tmp/wsurf-mcp-test-\(UUID().uuidString)"
@@ -195,7 +349,8 @@ struct MCPTransportTests {
         let endpoint = directory + "/browser.sock"
         defer { try? FileManager.default.removeItem(atPath: directory) }
         let browser = BrowserModel(database: .temporary())
-        let server = BrowserMCPServer(browser: browser, endpoint: endpoint, available: { true })
+        registerNativeWindow(for: browser)
+        let server = BrowserMCPServer(endpoint: endpoint, target: { browser }, available: { _ in true })
         defer { server.stop() }
         server.setEnabled(true)
         #expect(await waitUntil { server.isListening || server.status != nil })
@@ -226,7 +381,9 @@ struct MCPTransportTests {
         let directory = "/tmp/wsurf-mcp-test-\(UUID().uuidString)"
         let endpoint = directory + "/browser.sock"
         defer { try? FileManager.default.removeItem(atPath: directory) }
-        let server = BrowserMCPServer(browser: BrowserModel(database: .temporary()), endpoint: endpoint, available: { true })
+        let browser = BrowserModel(database: .temporary())
+        registerNativeWindow(for: browser)
+        let server = BrowserMCPServer(endpoint: endpoint, target: { browser }, available: { _ in true })
         defer { server.stop() }
         server.setEnabled(true)
         #expect(await waitUntil { server.isListening || server.status != nil })
@@ -245,8 +402,9 @@ struct MCPTransportTests {
                 process.terminate()
             }
         }
-        let request = #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"Stdio integration","version":"1"}}}"#
-        try input.fileHandleForWriting.write(contentsOf: Data((request + "\n").utf8))
+        let request = Self.initializationRequest
+        try input.fileHandleForWriting.write(contentsOf: request.prefix(37))
+        try input.fileHandleForWriting.write(contentsOf: request.dropFirst(37) + Data([10]))
         let (lines, continuation) = AsyncThrowingStream<Data, any Error>.makeStream()
         let read = Task.detached {
             var line = Data()
@@ -270,7 +428,16 @@ struct MCPTransportTests {
         let object = try #require(JSONSerialization.jsonObject(with: reply) as? [String: Any])
         #expect(object["id"] as? Int == 1)
         #expect(object["result"] != nil)
-        try input.fileHandleForWriting.write(contentsOf: Data((#"{"jsonrpc":"2.0","method":"notifications/initialized"}"# + "\n").utf8))
+        let initialized = #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#
+        let list = #"{"jsonrpc":"2.0","id":10,"method":"tools/list"}"#
+        try input.fileHandleForWriting.write(contentsOf: Data((initialized + "\n" + list + "\n").utf8))
+        let listing = try #require(await replies.next())
+        let listingObject = try #require(JSONSerialization.jsonObject(with: listing) as? [String: Any])
+        #expect(listingObject["id"] as? Int == 10)
+        let listingResult = try #require(listingObject["result"] as? [String: Any])
+        let tools = try #require(listingResult["tools"] as? [[String: Any]])
+        #expect(Set(tools.compactMap { $0["name"] as? String }) == Set(MCPToolCatalog.entries.map(\.name)))
+        #expect(server.sessions.isEmpty)
         func send(_ id: Int, _ tool: String) throws {
             let data = try JSONSerialization.data(withJSONObject: [
                 "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": ["name": tool],
@@ -303,6 +470,8 @@ struct MCPTransportTests {
         #expect(freshSession.id != originalSession.id)
         #expect(freshSession.grants.isEmpty)
         #expect(freshSession.clientName == "Stdio integration")
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(process.isRunning)
         try input.fileHandleForWriting.close()
         #expect(await waitUntil { !process.isRunning })
         #expect(process.terminationStatus == 0)

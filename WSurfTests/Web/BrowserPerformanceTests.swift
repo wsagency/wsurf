@@ -84,13 +84,16 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                     )
                 }
                 let tabs = (0..<100).map { index in
-                    let tab = BrowserTab()
+                    // Ranking reads metadata only; page loads are unrelated work.
+                    let tab = BrowserTab(restoring: true)
                     tab.title = "Project tab \(index)"
                     tab.urlString = "https://tabs.example/project/\(index)"
                     return tab
                 }
+                let phrases = (0..<10).map { "project suggestion \($0)" }
                 let actions = CommandPaletteActions()
                 var projected: [OmniboxSection] = []
+                XCTAssertTrue(tabs.allSatisfy { !$0.isMaterialised })
 
                 measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
                     projected = CommandPaletteProjection.sections(
@@ -98,13 +101,14 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                         agentName: "Assistant",
                         history: history,
                         tabs: tabs,
-                        phrases: (0..<10).map { "project suggestion \($0)" },
+                        phrases: phrases,
                         actions: actions
                     )
                 }
 
                 XCTAssertEqual(projected.map(\.id), ["top", "suggestions", "tabs", "history"])
                 XCTAssertEqual(projected.flattened.count, CommandPaletteBudget.typing)
+                XCTAssertTrue(tabs.allSatisfy { !$0.isMaterialised })
             }
         }
     }
@@ -129,10 +133,12 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                 )
             }
 
+            let settings = BrowserSettings(defaults: UserDefaults(suiteName: "BrowserPerformanceTests.\(UUID())")!)
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
                 let sites = StartPageSnapshot.frequentSites(
                     from: visits,
                     hiddenHosts: [],
+                    settings: settings,
                     calendar: calendar
                 )
                 XCTAssertEqual(sites.count, 10)
@@ -153,11 +159,12 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                         fromVisit: nil
                     )
                 }
-                let tab = BrowserTab()
+                let tab = BrowserTab(restoring: true)
                 tab.title = "Project documentation"
                 tab.urlString = "https://docs.example/project/open"
                 let phrases = (0..<12).map { "project documentation \($0)" }
                 var projected: [OmniboxSection] = []
+                XCTAssertFalse(tab.isMaterialised)
 
                 measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
                     projected = AskSurfaceResults.sections(
@@ -167,6 +174,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                         isListening: false,
                         currentURL: "",
                         agentOnly: false,
+                        settings: .application,
                         agentName: "Assistant",
                         history: history,
                         tabs: [tab],
@@ -179,6 +187,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
 
                 XCTAssertEqual(projected.map(\.id), ["top", "suggestions", "history", "ask"])
                 XCTAssertLessThanOrEqual(projected.flattened.count, 10)
+                XCTAssertFalse(tab.isMaterialised)
             }
         }
     }

@@ -10,7 +10,6 @@ import WebKit
 @MainActor
 @Observable
 final class ContentBlocker {
-    static let shared = ContentBlocker()
 
     @ObservationIgnored private(set) var ruleList: WKContentRuleList?
 
@@ -20,46 +19,93 @@ final class ContentBlocker {
 
     @ObservationIgnored private var compileTask: Task<Void, Never>?
 
-    private static let identifier = "WSurf.trackers"
+    private let identifier = "WSurf.trackers." + UUID().uuidString
     private static let exemptDefaultsKey = "content.blockerExceptions"
+    private let settings: BrowserSettings
+    private let persists: Bool
+    private let ruleStore: WKContentRuleListStore?
+    private let temporaryDirectory: URL?
+    private var sessionEnded = false
+    private(set) var isCompiling = false
+    @ObservationIgnored private var defaults: UserDefaults
 
-    @ObservationIgnored private var defaults: UserDefaults = .standard
-
-    func use(defaults: UserDefaults) {
-        guard defaults !== self.defaults else { return }
+    init(
+        defaults: UserDefaults,
+        settings: BrowserSettings,
+        persists: Bool = true,
+        ruleStore: WKContentRuleListStore? = nil
+    ) {
         self.defaults = defaults
-        exemptHosts = Set(
-            (defaults.stringArray(forKey: Self.exemptDefaultsKey) ?? []).map(Self.normalized)
-        )
-        refresh()
-        BrowserSettings.shared.onWebPreferencesChanged?()
-    }
-
-    private init() {
-        exemptHosts = Set(
-            defaults.stringArray(forKey: Self.exemptDefaultsKey) ?? []
-        )
+        self.settings = settings
+        self.persists = persists
+        if let ruleStore {
+            self.ruleStore = ruleStore
+            temporaryDirectory = nil
+        } else if persists {
+            self.ruleStore = .default()
+            temporaryDirectory = nil
+        } else {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("WSurf-private-rules-" + UUID().uuidString, isDirectory: true)
+            temporaryDirectory = directory
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            self.ruleStore = WKContentRuleListStore(url: directory)
+        }
+        exemptHosts = Set((defaults.stringArray(forKey: Self.exemptDefaultsKey) ?? []).map(Self.normalized))
     }
 
     // MARK: - Compiling
 
     func refresh() {
-        compileTask?.cancel()
-        guard BrowserSettings.shared.blocksTrackers else {
+        guard !sessionEnded else { return }
+        let previous = compileTask
+        previous?.cancel()
+        guard settings.blocksTrackers else {
             removeFromAll()
             return
         }
         compileTask = Task { [weak self] in
+            await previous?.value
+            guard !Task.isCancelled else { return }
             await self?.compile()
         }
     }
 
+    func waitForPendingCompilation() async {
+        await compileTask?.value
+    }
+
+    func endPrivateSession() async {
+        guard !persists else { return }
+        sessionEnded = true
+        compileTask?.cancel()
+        await compileTask?.value
+        compileTask = nil
+        removeFromAll()
+        ruleList = nil
+        exemptHosts = []
+        if let ruleStore {
+            try? await ruleStore.removeContentRuleList(forIdentifier: identifier)
+        }
+        if let temporaryDirectory {
+            try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+    }
+
     private func compile() async {
-        guard let json = Self.rulesJSON(exemptHosts: exemptHosts) else { return }
+        guard let ruleStore, !sessionEnded,
+              let json = Self.rulesJSON(exemptHosts: exemptHosts)
+        else { return }
+        isCompiling = true
+        defer { isCompiling = false }
         do {
-            let compiled = try await WKContentRuleListStore.default()?
-                .compileContentRuleList(forIdentifier: Self.identifier, encodedContentRuleList: json)
-            guard !Task.isCancelled, let compiled else { return }
+            let compiled = try await ruleStore.compileContentRuleList(
+                forIdentifier: identifier, encodedContentRuleList: json
+            )
+            if !persists {
+                try await ruleStore.removeContentRuleList(forIdentifier: identifier)
+            }
+            guard !Task.isCancelled, !sessionEnded, let compiled else { return }
             ruleList = compiled
             for controller in controllers.allObjects {
                 controller.remove(compiled)
@@ -67,13 +113,16 @@ final class ContentBlocker {
             }
             Pipeline.log.notice("content blocking: \(TrackerList.domains.count, privacy: .public) rules compiled")
         } catch {
+            if !persists {
+                try? await ruleStore.removeContentRuleList(forIdentifier: identifier)
+            }
             Pipeline.log.error("content blocking: compile failed")
         }
     }
 
     func apply(to controller: WKUserContentController) {
         controllers.add(controller)
-        guard BrowserSettings.shared.blocksTrackers, let ruleList else { return }
+        guard settings.blocksTrackers, let ruleList else { return }
         controller.add(ruleList)
     }
 
@@ -95,17 +144,21 @@ final class ContentBlocker {
         guard !host.isEmpty else { return }
         let changed = exempt ? exemptHosts.insert(host).inserted : exemptHosts.remove(host) != nil
         guard changed else { return }
-        defaults.set(Array(exemptHosts).sorted(), forKey: Self.exemptDefaultsKey)
+        if persists {
+            defaults.set(Array(exemptHosts).sorted(), forKey: Self.exemptDefaultsKey)
+        }
         refresh()
-        BrowserSettings.shared.onWebPreferencesChanged?()
+        settings.onWebPreferencesChanged?()
     }
 
     func forgetExceptions() {
         guard !exemptHosts.isEmpty else { return }
         exemptHosts = []
-        defaults.removeObject(forKey: Self.exemptDefaultsKey)
+        if persists {
+            defaults.removeObject(forKey: Self.exemptDefaultsKey)
+        }
         refresh()
-        BrowserSettings.shared.onWebPreferencesChanged?()
+        settings.onWebPreferencesChanged?()
     }
 
     static func normalized(_ host: String) -> String {

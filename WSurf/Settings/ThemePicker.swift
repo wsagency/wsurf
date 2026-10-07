@@ -92,7 +92,7 @@ struct ThemeThumbnailPalette: Equatable {
     }
 
     func customized(for theme: AppearanceMode) -> Self {
-        let customization = BrowserSettings.shared.themeCustomization(theme: theme)
+        let customization = BrowserSettings.application.themeCustomization(theme: theme)
         func adjusted(_ color: Color, accent: Bool = false) -> Color {
             Color(nsColor: Theme.customized(NSColor(color), customization: customization, isAccent: accent))
         }

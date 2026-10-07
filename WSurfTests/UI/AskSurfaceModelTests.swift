@@ -52,6 +52,50 @@ struct AskSurfaceModelTests {
         )
     }
 
+    @Test(arguments: [AskSurface.Placement.toolbar, .startPage], [true, false])
+    func questionsAppearOnlyWhereTheRequestStarted(
+        placement: AskSurface.Placement, showsInChrome: Bool
+    ) throws {
+        let model = model(placement: placement)
+        defer { model.coordinator.closeWindow() }
+        model.browser.newTab()
+        let spaceID = try #require(model.activeSpaceID)
+        let coordinator = model.coordinator
+        coordinator.agentReply.bind(toSpace: spaceID, showsInChrome: showsInChrome)
+        let question = coordinator.agentQuestions.present(
+            [.init(text: "Which color?", options: [])], inSpace: spaceID
+        )
+
+        #expect(model.pendingQuestion == (showsInChrome ? question : nil))
+        #expect(coordinator.pendingAgentQuestion(inChrome: false) == (showsInChrome ? nil : question))
+
+        coordinator.agentQuestions.answer("Red")
+        #expect(model.pendingQuestion == nil)
+        #expect(coordinator.pendingAgentQuestion(inChrome: false) == nil)
+    }
+
+    @Test(arguments: [true, false])
+    func questionsFromAnotherSpaceStayHidden(showsInChrome: Bool) throws {
+        let model = model()
+        defer { model.coordinator.closeWindow() }
+        let origin = model.browser.newTab()
+        let spaceID = try #require(model.activeSpaceID)
+        let coordinator = model.coordinator
+        coordinator.agentReply.bind(toSpace: spaceID, showsInChrome: showsInChrome)
+        let question = coordinator.agentQuestions.present(
+            [.init(text: "Which color?", options: [])], inSpace: spaceID
+        )
+        model.browser.newTab()
+
+        #expect(model.pendingQuestion == nil)
+        #expect(coordinator.pendingAgentQuestion(inChrome: false) == nil)
+        model.browser.activate(origin)
+        #expect(coordinator.pendingAgentQuestion(inChrome: showsInChrome) == question)
+        coordinator.agentQuestions.answer("Red")
+        #expect(model.pendingQuestion == nil)
+        #expect(coordinator.pendingAgentQuestion(inChrome: false) == nil)
+    }
+
     @Test func theToolbarFieldRestsOnThePageAddress() {
         Omnibox.$agentOnlyForTesting.withValue(true) {
             let model = model()

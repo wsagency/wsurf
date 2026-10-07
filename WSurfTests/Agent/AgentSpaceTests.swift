@@ -122,7 +122,12 @@ struct AgentSpaceTests {
         model.activate(right)
 
         let log = SpaceLog()
-        let turns = AgentTurnModel(browser: model, log: log, speech: SilentSpeech())
+        let turns = AgentTurnModel(
+            browser: model,
+            log: log,
+            speech: SilentSpeech(),
+            actionPolicy: AgentActionPolicy(storage: SessionAgentGrantStorage())
+        )
         turns.use(SpaceRunner())
 
         #expect(turns.run(utterance: "compare these two pages"))
@@ -205,7 +210,12 @@ struct AgentSpaceTests {
         let log = SpaceLog()
         let runner = SpaceRunner()
         runner.waitsForRelease = true
-        let turns = AgentTurnModel(browser: model, log: log, speech: SilentSpeech())
+        let turns = AgentTurnModel(
+            browser: model,
+            log: log,
+            speech: SilentSpeech(),
+            actionPolicy: AgentActionPolicy(storage: SessionAgentGrantStorage())
+        )
         turns.use(runner)
         #expect(turns.run(utterance: "compare them"))
         let task = try #require(turns.activeTask)

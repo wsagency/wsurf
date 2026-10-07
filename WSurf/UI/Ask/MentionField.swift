@@ -119,8 +119,11 @@ struct MentionField: NSViewRepresentable {
     var onCommandSubmit: () -> Void = {}
     var onCancel: () -> Void = {}
     var onMove: (Int, Bool) -> Void = { _, _ in }
+    var onTab: () -> Bool = { false }
+    var onDeleteBackward: () -> Bool = { false }
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.profileFavicons) private var profileFavicons
 
     func makeNSView(context: Context) -> MentionTextField {
         let field = MentionTextField()
@@ -150,7 +153,10 @@ struct MentionField: NSViewRepresentable {
         coordinator.onCommandSubmit = onCommandSubmit
         coordinator.onCancel = onCancel
         coordinator.onMove = onMove
+        coordinator.onTab = onTab
+        coordinator.onDeleteBackward = onDeleteBackward
 
+        coordinator.favicons = profileFavicons
         let isDark = colorScheme == .dark
         let appearance: NSAppearance.Name = isDark ? .darkAqua : .aqua
         if field.appearance?.name != appearance {
@@ -161,8 +167,8 @@ struct MentionField: NSViewRepresentable {
         }
         field.setAccessibilityLabel(accessibilityLabel.isEmpty ? nil : accessibilityLabel)
         field.textColor = textColor ?? .labelColor
-        coordinator.applyPlaceholder(placeholder, fontSize: fontSize, to: field)
         coordinator.apply(text: text, chips: chips, isDark: isDark, to: field)
+        coordinator.applyPlaceholder(placeholder, fontSize: fontSize, to: field)
         coordinator.syncFocus(isFocused, in: field)
         coordinator.selectAll(token: selectAllToken, in: field)
     }
@@ -191,6 +197,8 @@ struct MentionField: NSViewRepresentable {
         var onCommandSubmit: () -> Void = {}
         var onCancel: () -> Void = {}
         var onMove: (Int, Bool) -> Void = { _, _ in }
+        var onTab: () -> Bool = { false }
+        var onDeleteBackward: () -> Bool = { false }
 
         private var renderedText: String?
         private var renderedChips: [UUID] = []
@@ -199,9 +207,11 @@ struct MentionField: NSViewRepresentable {
         private var renderedColor: NSColor?
         private var renderedPlaceholder: String?
         private var isSyncingFocus = false
-        private var pendingFocus: Bool?
         private var isReportingFocus = false
         private var selectionToken = 0
+        var favicons: FaviconLoader?
+        private var requestedFaviconsID: ObjectIdentifier?
+        private var renderedFaviconsID: ObjectIdentifier?
         private var requestedHosts: Set<String> = []
         private var needsRefresh = false
 
@@ -224,10 +234,15 @@ struct MentionField: NSViewRepresentable {
         func apply(text value: String, chips: [MentionChip], isDark: Bool, to field: NSTextField) {
             loadMissingIcons(for: chips, in: field)
             let ids = chips.map(\.id)
+            let faviconsID = favicons.map { ObjectIdentifier($0) }
             let holdsContent = renderedText == value && renderedChips == ids
-            guard !(holdsContent && renderedDark == isDark && renderedColor == field.textColor) || needsRefresh else { return }
+            guard !(holdsContent
+                && renderedDark == isDark
+                && renderedColor == field.textColor
+                && renderedFaviconsID == faviconsID) || needsRefresh else { return }
             let editor = field.currentEditor() as? NSTextView
             guard editor?.hasMarkedText() != true else { return }
+
             needsRefresh = false
 
             let selection = editor?.selectedRange()
@@ -236,12 +251,14 @@ struct MentionField: NSViewRepresentable {
                 chips: chips,
                 fontSize: field.font?.pointSize ?? 13,
                 isDark: isDark,
-                textColor: field.textColor ?? .labelColor
+                textColor: field.textColor ?? .labelColor,
+                favicons: favicons
             )
             renderedText = value
             renderedChips = ids
             renderedDark = isDark
             renderedColor = field.textColor
+            renderedFaviconsID = faviconsID
             lastChips = chips
             field.attributedStringValue = attributed
 
@@ -256,16 +273,24 @@ struct MentionField: NSViewRepresentable {
         }
 
         private func loadMissingIcons(for chips: [MentionChip], in field: NSTextField) {
+            let faviconsID = favicons.map { ObjectIdentifier($0) }
+            if requestedFaviconsID != faviconsID {
+                requestedFaviconsID = faviconsID
+                requestedHosts.removeAll()
+            }
+            guard let favicons else { return }
             let hosts = chips.compactMap(\.host).filter {
-                FaviconLoader.shared.cached(for: $0) == nil && !requestedHosts.contains($0)
+                favicons.cached(for: $0) == nil && !requestedHosts.contains($0)
             }
             guard !hosts.isEmpty else { return }
             requestedHosts.formUnion(hosts)
             Task { [weak self, weak field] in
                 for host in hosts {
-                    _ = await FaviconLoader.shared.load(forHost: host)
+                    _ = await favicons.load(forHost: host)
                 }
-                guard let self, let field else { return }
+                guard let self,
+                      let field,
+                      self.favicons === favicons else { return }
                 needsRefresh = true
                 if let text = renderedText, let dark = renderedDark {
                     apply(text: text, chips: lastChips, isDark: dark, to: field)
@@ -274,10 +299,6 @@ struct MentionField: NSViewRepresentable {
         }
 
         func syncFocus(_ isFocused: Bool, in field: NSTextField) {
-            // A focus report is one runloop behind the field itself.
-            if let pendingFocus, pendingFocus != isFocused {
-                return
-            }
             guard holdsFocus(field) != isFocused, !isSyncingFocus else { return }
             isSyncingFocus = true
             DispatchQueue.main.async { [weak field] in
@@ -328,30 +349,34 @@ struct MentionField: NSViewRepresentable {
         }
 
         func controlTextDidBeginEditing(_ notification: Notification) {
-            reportFocus(true)
+            guard let field = notification.object as? NSTextField else { return }
+            reportFocus(in: field)
         }
 
         func controlTextDidEndEditing(_ notification: Notification) {
-            reportFocus(false)
+            guard let field = notification.object as? NSTextField else { return }
+            reportFocus(in: field)
         }
 
-        /// Rewriting the field's string ends editing and begins it again, and
-        /// AppKit posts both from inside a SwiftUI update.
-        private func reportFocus(_ focused: Bool) {
-            pendingFocus = focused
+        /// Content and placeholder updates can end editing without moving focus.
+        /// Check the actual responder after AppKit finishes the update.
+        private func reportFocus(in field: NSTextField) {
             guard !isReportingFocus else { return }
             isReportingFocus = true
-            DispatchQueue.main.async { [weak self] in
+            DispatchQueue.main.async { [weak self, weak field] in
                 guard let self else { return }
                 isReportingFocus = false
-                guard let settled = pendingFocus else { return }
-                pendingFocus = nil
-                onFocusChange(settled)
+                guard let field else { return }
+                onFocusChange(holdsFocus(field))
             }
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             switch selector {
+            case #selector(NSResponder.insertTab(_:)):
+                return !textView.hasMarkedText() && onTab()
+            case #selector(NSResponder.deleteBackward(_:)):
+                return !textView.hasMarkedText() && textView.string.isEmpty && onDeleteBackward()
             case #selector(NSResponder.insertNewline(_:)):
                 onSubmit()
             case #selector(NSResponder.insertLineBreak(_:)),
@@ -436,7 +461,8 @@ enum MentionFieldRendering {
         chips: [MentionChip],
         fontSize: CGFloat,
         isDark: Bool,
-        textColor: NSColor = .labelColor
+        textColor: NSColor = .labelColor,
+        favicons: FaviconLoader?
     ) -> NSAttributedString {
         let font = NSFont.systemFont(ofSize: fontSize)
         let result = NSMutableAttributedString()
@@ -451,13 +477,18 @@ enum MentionFieldRendering {
             }
             defer { index += 1 }
             guard chips.indices.contains(index) else { continue }
-            result.append(chip(chips[index], font: font, isDark: isDark))
+            result.append(chip(chips[index], font: font, isDark: isDark, favicons: favicons))
         }
         return result
     }
 
-    private static func chip(_ chip: MentionChip, font: NSFont, isDark: Bool) -> NSAttributedString {
-        let image = chipImage(chip, fontSize: font.pointSize, isDark: isDark)
+    private static func chip(
+        _ chip: MentionChip,
+        font: NSFont,
+        isDark: Bool,
+        favicons: FaviconLoader?
+    ) -> NSAttributedString {
+        let image = chipImage(chip, fontSize: font.pointSize, isDark: isDark, favicons: favicons)
         let attachment = NSTextAttachment()
         attachment.image = image
         attachment.bounds = CGRect(
@@ -474,9 +505,15 @@ enum MentionFieldRendering {
         return piece
     }
 
-    private static func chipImage(_ chip: MentionChip, fontSize: CGFloat, isDark: Bool) -> NSImage {
-        let icon = chip.host.flatMap { FaviconLoader.shared.cached(for: $0) }
-        let key = "\(chip.title)|\(chip.host ?? "")|\(icon == nil ? 0 : 1)|\(fontSize)|\(isDark)"
+    private static func chipImage(
+        _ chip: MentionChip,
+        fontSize: CGFloat,
+        isDark: Bool,
+        favicons: FaviconLoader?
+    ) -> NSImage {
+        let icon = chip.host.flatMap { favicons?.cached(for: $0) }
+        let loaderID = favicons.map { String(describing: ObjectIdentifier($0)) } ?? ""
+        let key = "\(loaderID)|\(chip.title)|\(chip.host ?? "")|\(icon == nil ? 0 : 1)|\(fontSize)|\(isDark)"
         if let cached = cache[key] {
             return cached
         }

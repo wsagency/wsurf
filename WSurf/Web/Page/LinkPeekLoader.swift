@@ -28,6 +28,7 @@ final class LinkPeekLoader {
     private static let quietCeiling: Duration = .milliseconds(700)
     private static let snapshotWidth: CGFloat = 640
 
+    private var context: BrowserProfileContext?
     private var page: BrowserPage?
 
     static func canPeek(_ url: URL) -> Bool {
@@ -36,9 +37,9 @@ final class LinkPeekLoader {
         return url.host() != nil && !SystemPages.isSystem(url)
     }
 
-    func load(_ url: URL) async throws -> LinkPeekPage {
-        let page = surface()
-        page.load(URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 8))
+    func load(_ url: URL, context: BrowserProfileContext) async throws -> LinkPeekPage {
+        let page = surface(context: context)
+        page.load(URLRequest(url: url))
 
         let finished = await PageSettle.untilIdle(page, timeout: Self.loadCeiling)
         try Task.checkCancellation()
@@ -70,30 +71,32 @@ final class LinkPeekLoader {
     func release() {
         stop()
         page = nil
+        context = nil
     }
 
-    private func surface() -> BrowserPage {
-        if let page {
+    private func surface(context: BrowserProfileContext) -> BrowserPage {
+        if let page, self.context === context {
             return page
         }
-        let configuration = Self.configuration()
+        release()
+        let configuration = Self.configuration(context: context)
         let view = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 1000, height: 720),
             configuration: configuration
         )
-        BrowserSettings.shared.apply(to: view)
+        context.settings.apply(to: view)
         view.customUserAgent = WebViewPool.safariUserAgent
-        let page = BrowserPage(webKit: view)
+        let page = BrowserPage(webKit: view, context: context)
+        self.context = context
         self.page = page
         return page
     }
 
-    static func configuration() -> WKWebViewConfiguration {
+    static func configuration(context: BrowserProfileContext) -> WKWebViewConfiguration {
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        BrowserSettings.shared.apply(to: configuration)
+        context.settings.apply(to: configuration)
         configuration.mediaTypesRequiringUserActionForPlayback = .all
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.preferences.inactiveSchedulingPolicy = .none
         return configuration
     }

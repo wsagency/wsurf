@@ -188,8 +188,9 @@ struct AgentToolkitAccessTests {
         #expect(!output.contains("<page-content"))
     }
 
-    @Test func linkPeekUsesAnEphemeralDataStore() {
-        let configuration = LinkPeekLoader.configuration()
+    @Test @MainActor func linkPeekUsesAnEphemeralDataStore() {
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let configuration = LinkPeekLoader.configuration(context: context)
         #expect(!configuration.websiteDataStore.isPersistent)
     }
 

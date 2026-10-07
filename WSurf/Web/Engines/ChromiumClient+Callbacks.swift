@@ -7,9 +7,103 @@ import CefKit
 import Foundation
 
 extension ChromiumClient {
+    // MARK: JavaScript dialogs
+
+    func makeJSDialogHandler() {
+        let handler = ChromiumInterop.allocate(cef_jsdialog_handler_t.self, owner: self)
+        handler.pointee.on_jsdialog = { handlerSelf, browser, origin, type, message, defaultText, callback, suppress in
+            ChromiumClient.releaseBrowser(browser)
+            guard let callback else { return 0 }
+            suppress?.pointee = 0
+            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else {
+                ChromiumClient.release(UnsafeMutableRawPointer(callback)); return 0
+            }
+            let raw = UnsafeMutableRawPointer(callback)
+            let kind = type == JSDIALOGTYPE_ALERT ? 0 : (type == JSDIALOGTYPE_CONFIRM ? 1 : 2)
+            let originText = ChromiumClient.string(origin)
+            let messageText = ChromiumClient.string(message)
+            let prompt = ChromiumClient.string(defaultText)
+            MainActor.assumeIsolated { client.presentJSDialog(raw, kind: kind, origin: originText, message: messageText, prompt: prompt) }
+            return 1
+        }
+        handler.pointee.on_before_unload_dialog = { handlerSelf, browser, message, isReload, callback in
+            ChromiumClient.releaseBrowser(browser)
+            guard let callback else { return 0 }
+            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else {
+                ChromiumClient.release(UnsafeMutableRawPointer(callback)); return 0
+            }
+            let raw = UnsafeMutableRawPointer(callback)
+            MainActor.assumeIsolated { client.presentBeforeUnload(raw, message: ChromiumClient.string(message), isReload: isReload != 0) }
+            return 1
+        }
+        handler.pointee.on_reset_dialog_state = { _, browser in ChromiumClient.releaseBrowser(browser) }
+        handler.pointee.on_dialog_closed = { _, browser in ChromiumClient.releaseBrowser(browser) }
+        jsDialogPointer = handler
+    }
+
+    private func presentJSDialog(_ raw: UnsafeMutableRawPointer, kind: Int, origin: String, message: String, prompt: String) {
+        guard !isClosed else { Self.release(raw); return }
+        hold(raw)
+        guard let window = page?.window else {
+            guard finish(raw) else { return }
+            let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
+            callback.pointee.cont?(callback, 0, nil)
+            drop(raw)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = origin.isEmpty ? "JavaScript" : origin
+        alert.informativeText = message
+        switch kind {
+        case 0:
+            alert.addButton(withTitle: String(localized: "OK"))
+        case 1:
+            alert.addButton(withTitle: String(localized: "OK"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
+        default:
+            let field = NSSecureTextField(string: prompt)
+            field.frame.size = NSSize(width: 260, height: 24)
+            alert.accessoryView = field
+            alert.addButton(withTitle: String(localized: "OK"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
+        }
+        alert.beginSheetModal(for: window) { [weak self, weak alert] response in
+            guard let self, self.finish(raw), !self.isClosed else { return }
+            let success = response == .alertFirstButtonReturn
+            let input = (alert?.accessoryView as? NSSecureTextField)?.stringValue
+            let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
+            ChromiumInterop.withString(input ?? "") { value in callback.pointee.cont?(callback, success ? 1 : 0, value) }
+            self.drop(raw)
+        }
+    }
+
+    private func presentBeforeUnload(_ raw: UnsafeMutableRawPointer, message: String, isReload: Bool) {
+        guard !isClosed else { Self.release(raw); return }
+        hold(raw)
+        guard let window = page?.window else {
+            guard finish(raw) else { return }
+            let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
+            callback.pointee.cont?(callback, 0, nil)
+            drop(raw)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = isReload ? String(localized: "Reload page?") : String(localized: "Leave page?")
+        alert.informativeText = message
+        alert.addButton(withTitle: String(localized: "Leave"))
+        alert.addButton(withTitle: String(localized: "Stay"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, self.finish(raw), !self.isClosed else { return }
+            let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
+            callback.pointee.cont?(callback, response == .alertFirstButtonReturn ? 1 : 0, nil)
+            self.drop(raw)
+        }
+    }
+
     func makeClient() -> UnsafeMutablePointer<cef_client_t> {
         makeLifeSpanHandler()
         makeLoadHandler()
+        makeFrameHandler()
         makeDisplayHandler()
         makeDownloadHandler()
         makeJSDialogHandler()
@@ -216,16 +310,41 @@ extension ChromiumClient {
         }
         life.pointee.on_before_popup = { handlerSelf, browser, frame, _, targetURL, _, _, userGesture, _, _, _, _, _, _ in
             ChromiumClient.releaseBrowser(browser)
+            let sourceURL = frame?.pointee.is_valid?(frame) == 1
+                ? URL(string: ChromiumInterop.takeString(frame?.pointee.get_url?(frame))) : nil
             ChromiumClient.releaseFrame(frame)
             let url = URL(string: ChromiumClient.string(targetURL))
             guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return 1 }
             return MainActor.assumeIsolated {
                 guard let page = client.page, !client.isClosed, let url else { return 1 }
-                page.openWindow?(url, userGesture != 0)
+                let sourceFrame = page.sourceFrame(for: sourceURL)
+                page.openWindow?(url, userGesture != 0, sourceURL, sourceFrame)
                 return 1
             }
         }
         lifeSpanPointer = life
+    }
+
+    private func makeFrameHandler() {
+        let handler = ChromiumInterop.allocate(cef_frame_handler_t.self, owner: self)
+        handler.pointee.on_frame_attached = { handlerSelf, browser, frame, _ in
+            defer {
+                ChromiumClient.releaseBrowser(browser)
+                ChromiumClient.releaseFrame(frame)
+            }
+            guard let frame, let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
+            MainActor.assumeIsolated { client.advanceDocument(frame, attached: true) }
+        }
+        handler.pointee.on_frame_detached = { handlerSelf, browser, frame in
+            defer {
+                ChromiumClient.releaseBrowser(browser)
+                ChromiumClient.releaseFrame(frame)
+            }
+            guard let frame, let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
+            MainActor.assumeIsolated { client.retireDocument(frame) }
+        }
+        handler.pointee.on_frame_destroyed = handler.pointee.on_frame_detached
+        framePointer = handler
     }
 
     private func makeLoadHandler() {
@@ -240,9 +359,14 @@ extension ChromiumClient {
         load.pointee.on_load_start = { handlerSelf, browser, frame, _ in
             ChromiumClient.releaseBrowser(browser)
             defer { ChromiumClient.releaseFrame(frame) }
-            guard let frame, frame.pointee.is_main?(frame) != 0,
+            guard let frame,
                   let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
-            MainActor.assumeIsolated { client.page?.didStartLoad() }
+            MainActor.assumeIsolated {
+                client.advanceDocument(frame)
+                if frame.pointee.is_main?(frame) == 1 {
+                    client.page?.didStartLoad()
+                }
+            }
         }
         load.pointee.on_load_end = { handlerSelf, browser, frame, status in
             ChromiumClient.releaseBrowser(browser)
@@ -254,11 +378,17 @@ extension ChromiumClient {
         load.pointee.on_load_error = { handlerSelf, browser, frame, code, text, failedURL in
             ChromiumClient.releaseBrowser(browser)
             defer { ChromiumClient.releaseFrame(frame) }
-            guard let frame, frame.pointee.is_main?(frame) != 0,
+            guard let frame,
                   let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
-            let errorText = ChromiumClient.string(text)
-            let url = ChromiumClient.string(failedURL)
-            MainActor.assumeIsolated { client.page?.didFailLoad(code: Int(code.rawValue), text: errorText, url: url) }
+            MainActor.assumeIsolated {
+                if code != ERR_ABORTED {
+                    client.advanceDocument(frame)
+                }
+                if frame.pointee.is_main?(frame) == 1 {
+                    client.page?.didFailLoad(code: Int(code.rawValue),
+                                            text: ChromiumClient.string(text), url: ChromiumClient.string(failedURL))
+                }
+            }
         }
         loadPointer = load
     }
@@ -274,10 +404,10 @@ extension ChromiumClient {
             client.trackerPolicy.updateTopLevelURL(resolved)
             MainActor.assumeIsolated { client.page?.didChangeURL(resolved) }
         }
-        display.pointee.on_title_change = { handlerSelf, browser, title in
+        display.pointee.on_title_change = { handlerSelf, browser, _ in
             ChromiumClient.releaseBrowser(browser)
             guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
-            MainActor.assumeIsolated { client.page?.didChangeTitle(ChromiumClient.string(title)) }
+            MainActor.assumeIsolated { client.page?.didChangeTitle() }
         }
         display.pointee.on_fullscreen_mode_change = { handlerSelf, browser, fullscreen in
             ChromiumClient.releaseBrowser(browser)
@@ -392,6 +522,12 @@ extension ChromiumClient {
         client.pointee.get_load_handler = { clientSelf in
             guard let me = ChromiumClient.owner(clientSelf.map(UnsafeMutableRawPointer.init)),
                   let handler = me.loadPointer else { return nil }
+            ChromiumInterop.retain(UnsafeMutableRawPointer(handler))
+            return handler
+        }
+        client.pointee.get_frame_handler = { clientSelf in
+            guard let me = ChromiumClient.owner(clientSelf.map(UnsafeMutableRawPointer.init)),
+                  let handler = me.framePointer else { return nil }
             ChromiumInterop.retain(UnsafeMutableRawPointer(handler))
             return handler
         }

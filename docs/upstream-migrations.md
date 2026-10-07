@@ -22,7 +22,7 @@ Use full-SHA `Upstream-Commit:` and `Migration-Task:` trailers on code commits. 
 
 ## Complete source manifest
 
-At initialization: **30 PLANNED; 1 ALREADY_EQUIVALENT**. No migration implementation, new application verification, PR, merge or deployment is claimed by this journal.
+At initialization: **30 PLANNED; 1 ALREADY_EQUIVALENT**. Execution corrected the Metal item to **PLANNED** because only CI was equivalent, not release/tip; the baseline finding and correction are preserved below. Implementation, verification, merge and deployment remain separate recorded events.
 
 | # | Full upstream commit | Original subject | Task(s) | WSurf adaptation | Status |
 |---|---|---|---|---|---|
@@ -45,7 +45,7 @@ At initialization: **30 PLANNED; 1 ALREADY_EQUIVALENT**. No migration implementa
 | 17 | [`2fe08fe3b63a1162d600298eba15577647298357`](https://github.com/kavoye/linen-browser/commit/2fe08fe3b63a1162d600298eba15577647298357) | fix(agent): Verify keypress delivery on trusted keydown | T03 | Trusted keydown delivery acknowledgement, no retry for absent/consumed keyup; retain engine adapters. | PLANNED |
 | 18 | [`53fbb4c23337aeadc6e4c795cbbb0f6539e5c1bf`](https://github.com/kavoye/linen-browser/commit/53fbb4c23337aeadc6e4c795cbbb0f6539e5c1bf) | Update CI to Xcode 27 and upgrade stable dependencies | T01 | Xcode27/SwiftLint/actions/locked resolution/ALM+collections and API changes; retain CefSwift/release gates, use supported WSurf runner with explicit preflight. | PLANNED |
 | 19 | [`f46c5917d55d1b0a96d43fa378dce3d87b6ca51c`](https://github.com/kavoye/linen-browser/commit/f46c5917d55d1b0a96d43fa378dce3d87b6ca51c) | chore: update README.md | T16 | README clarity/privacy updates in WSurf terminology; final multiwindow state supersedes historical one-window copy. | PLANNED |
-| 20 | [`853ce9b56f760d8ac1e7abbb63e2de339c8a6951`](https://github.com/kavoye/linen-browser/commit/853ce9b56f760d8ac1e7abbb63e2de339c8a6951) | Install Metal toolchain before CI builds | T01 | Same MetalToolchain installation/version probe already exists in all three deployed WSurf workflows; retain, do not duplicate. | ALREADY_EQUIVALENT |
+| 20 | [`853ce9b56f760d8ac1e7abbb63e2de339c8a6951`](https://github.com/kavoye/linen-browser/commit/853ce9b56f760d8ac1e7abbb63e2de339c8a6951) | Install Metal toolchain before CI builds | T01 | CI install/version probe already equivalent; port missing release/tip steps without duplicating CI. Corrected during execution. | PLANNED |
 | 21 | [`231d2ece0c2cb75d4f10a8c92c9709276edb743e`](https://github.com/kavoye/linen-browser/commit/231d2ece0c2cb75d4f10a8c92c9709276edb743e) | Fix OCR and autofill tests on virtual macOS runners | T01 | CoreML CPU OCR fallback and active autofill fixtures; real OCR remains enabled on native Pro. | PLANNED |
 | 22 | [`4367b14443831e114a30aa719efa6f1c16a3c984`](https://github.com/kavoye/linen-browser/commit/4367b14443831e114a30aa719efa6f1c16a3c984) | Exclude unsupported Vision OCR tests from hosted CI | T01 | Only four unsupported hosted Vision OCR integrations excluded; no native Pro exclusions or lowered coverage. | PLANNED |
 | 23 | [`c616faf5ab6974040570173a5cfba2dcf8baa1c8`](https://github.com/kavoye/linen-browser/commit/c616faf5ab6974040570173a5cfba2dcf8baa1c8) | fix: Improve folder preview icon contrast in dark mode | T08 | Gray folder preview secondary tint; preserve colored previews and WSurf sidebar layout. | PLANNED |
@@ -60,11 +60,11 @@ At initialization: **30 PLANNED; 1 ALREADY_EQUIVALENT**. No migration implementa
 
 ## Baseline equivalence evidence — 853ce9b
 
-**Disposition:** ALREADY_EQUIVALENT at WSurf baseline `4d33cb93ed22a92ffa2db0d5fc8109b5e4a78557`; do not attribute a new port commit.
+**Corrected disposition:** partial baseline equivalence, not an aggregate ALREADY_EQUIVALENT item.
 
-- `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.github/workflows/tip.yml` already run `xcodebuild -downloadComponent MetalToolchain` then `xcrun metal --version` before builds.
-- Evidence: direct deployed-source workflow inspection; CI workflow lines 38–41 contain the exact commands. This proves configured equivalent behavior, **not** a new green hosted workflow run.
-- T01 keeps the steps, documents native/toolchain setup and rechecks workflow integration after upgrades. Record its later runtime result separately.
+- Initial planning inferred equivalence in all three workflows from CI's exact commands at lines 38–41. That inference was incorrect.
+- Execution inspected canonical `9606f9d` workflow sources: CI had `xcodebuild -downloadComponent MetalToolchain` and `xcrun metal --version`; release/tip selected Xcode then proceeded directly to package caching. Neither contained Metal installation.
+- T01 retains the existing CI step and ports the missing release/tip steps. Their implementation commit and actual workflow verification are recorded separately; this correction does not claim a green hosted run.
 
 ## Mixed-commit evidence requirements
 
@@ -108,6 +108,15 @@ They remain enabled in `WSurf.xctestplan` and native Pro checks. Upstream attrib
 All **125 changed upstream paths** below are accounted for in the atomic cutover. Actions are relative to the deployed `4d33cb9` tree: **19 Create, 106 Modify**. The mapping changes only `Linen/`, `LinenTests/` and project prefixes; it is an inventory, **not an instruction to overwrite WSurf files**. T09's fork-only CEF/SidebarUndo/lifetime paths are additional and listed in the plan. Code scopes/caller ownership/field adaptations are defined by T09 and the spec.
 
 `LLMSettings+Scoped.swift` adoption retains task-local/profile-provider behavior, not obsolete global getter aliases; migrate callers explicitly. All 125 paths must be reviewed, including downstream UI/settings/autofill/extension callers and changed tests/docs.
+
+Execution adaptation: the mapped upstream
+`WSurfTests/Features/ProfileWindowSelectionTests.swift` lives in WSurf's existing
+`WSurfTests/Settings/` test grouping. The historical mapping below is retained;
+this is the implemented path, not an omitted test.
+The mapped `WSurf/Agent/Providers/LLMSettings+Scoped.swift` behavior is consolidated
+in WSurf's existing `WSurf/Agent/Providers/Provider.swift`: `LLMSettings.scoped`,
+`LLMSettings.current` and `ProfileProviderCatalog` live beside the instance-backed
+settings type. No obsolete global-accessor forwarding file is retained.
 
 | Action | Exact WSurf path | Role |
 |---|---|---|
@@ -257,3 +266,134 @@ All **125 changed upstream paths** below are accounted for in the atomic cutover
 - Owned Pro snapshot: `/tmp/wsurf-linen-pdU0S7Ye/source`; reserved DerivedData: `/tmp/wsurf-linen-pdU0S7Ye/DD`. Initial source sync completed, excluding Git/worktrees/build output and execution scratch. Existing Pro source and builds are unchanged.
 - Native toolchain rechecked on `PRO.local`: `/Applications/Xcode.app/Contents/Developer`, Xcode **27.0 (`27A266a`)**, Apple Swift **6.4 (`swiftlang-6.4.0.34.1`)**, arm64.
 - No upstream implementation, app test, new build, merge or deployment is claimed by this preflight event.
+
+### T01 native package/toolchain preparation — 2026-10-06
+
+- Locked native resolution succeeded in the owned Pro snapshot with `xcodebuild -resolvePackageDependencies -project WSurf.xcodeproj -scheme WSurf -derivedDataPath /tmp/wsurf-linen-pdU0S7Ye/DD -onlyUsePackageVersionsFromResolvedFile -skipMacroValidation -skipPackagePluginValidation`.
+- Observed resolved graph includes AnyLanguageModel **0.15.1**, swift-collections **1.7.1**, CefSwift **59cad64e124b8efdb6b2ee811963097bb6e689e8**, MCP SDK **0.12.1**, GRDB **7.11.1** and all other required packages. No origin hash was fabricated.
+- Pro's `xcrun metal --version` succeeded: Apple metal **32023.921**. The real acknowledgement generator produced **14 packages** from the resolved checkout directory, and only its generated `WSurf/Support/Acknowledgements.json` was copied back.
+- The release/tip Metal baseline correction above was confirmed against canonical main. T01 also restores the missing `if [ -z "${!name:-}" ]; then` in tip's existing credential loop; the original unmatched `fi` is not a valid release gate. No signing/publishing action was run.
+- These are package/toolchain/generation results, **not** an application build, native test result, stage verification or deployment.
+
+### Compatibility wave native integration — 2026-10-06
+
+- T01–T08 source ports and fork adaptations are present in the execution worktree, not yet committed or marked verified. T01/T03 and T08 scoped source reviews found no actionable defect. T02 review identified a bundled-Codex fixture that incorrectly assumed no global executable; the bundled lookup is now tested independently without changing production search precedence.
+- Synchronized the complete source wave into the owned Pro snapshot. Native commands use Xcode 27, the frozen package graph, existing watchdog, disabled parallel tests, ad-hoc signing and 39 selected compatibility suites, including native OCR. `CFFIXED_USER_HOME` and `TEST_RUNNER_CFFIXED_USER_HOME` point to `/tmp/wsurf-linen-pdU0S7Ye/test-home`.
+- First attempt, `compatibility-wave1.xcresult`: app compilation failed on an ambiguous `NSWorkspace` configuration initializer. The call now selects `NSWorkspace.OpenConfiguration` and the completion-handler API explicitly.
+- Second attempt, `compatibility-wave2.xcresult`: app and test source compilation completed, but test-bundle linking failed on direct `cef_request_create` / `cef_response_create` calls. Those factories are not trampolined by the pinned CCef shim. The fixture now resolves the real factories from the already-loaded CEF framework, preserving actual native-object ownership and post-release assertions.
+- Third attempt, `compatibility-wave3.xcresult`, is running after those corrections. **No native test pass, complete application verification, stage smoke, PR/merge or deployment is claimed by this event.**
+
+### Compatibility wave result and dependent cutover — 2026-10-07
+
+- `compatibility-wave9.xcresult` completed with **531 Swift Testing cases across
+  38 suites and 6 BrowserPerformance XCTest cases, zero failures**. Earlier
+  compile/runtime failures were corrected without lowering coverage or performance
+  budgets. This selected compatibility result predates the atomic window cutover;
+  it is not a current full-suite or stage-GUI pass.
+- The built compatibility app was copied to an owned Air stage bundle and passed
+  code-signature validation. Its real `--mcp` entrypoint passed split/coalesced
+  initialize, object-valued experimental capabilities, tools/list, idle input and
+  EOF with exit 0 and empty stderr. It used isolated stage paths, not production
+  browsing data. Desktop control did not receive live approval, so no GUI launch
+  or stage interaction is claimed.
+- Native indexed references and the pinned upstream window inventory drove the
+  T09–T15 source cutover. Window gates 1–19 stopped during compilation; their
+  failures do not constitute runtime test passes. The current integrated source
+  still needs its selected native gate, full suite, stage smoke and review closure.
+  Implementation commits, PR, merge and deployment have not occurred.
+- Fresh source review found queued transfer-state loss, background-window palette
+  shortcut handling, stacked rate-limit retries, visual progress identity and
+  form authorization/eligibility boundaries. These have focused regressions and
+  are being resolved before any verification transition. Source review is not
+  runtime reproduction.
+
+### T16 catalog and documentation adaptation — 2026-10-07
+
+- Merged the pinned per-commit catalog additions and two English positional
+  translations rather than replacing WSurf's catalog. Removed obsolete entries
+  only after checking live Swift consumers. Kept `Search with %@ in current tab`:
+  WSurf's `OmniboxResults` still uses it, unlike the upstream palette.
+- Rate-limit catalog keys follow the actual WSurf retry/pause strings; site-search
+  accessibility keys and the Advanced reset's `are not affected` key are included.
+  WSurf-only strings, branding and external Apple identity contracts remain intact.
+- README/MCP/architecture now describe profile-owned windows, private context
+  isolation, live same-context transfer, originating-window consent, guarded
+  32-control batches, rate-limit pause, site-search keys and engine limitations.
+  Removed superseded one-window and duplicate sidebar descriptions. One focused
+  changelog entry links this journal rather than claiming 31 separate releases.
+- Catalog/plist/link validation and actual stage presentation remain pending;
+  these source edits do not advance the 31 manifest statuses.
+
+### Integrated fork-boundary evidence — 2026-10-07
+
+- Reconciled all **31 full upstream SHAs**, the **125-file T09 inventory** and
+  every slice of the two mixed commits against the source ports. Compatibility,
+  window-feature, profile-repair and native handoff-lifetime reviews are complete;
+  their history/peek, ownership and origin findings were corrected. This records
+  source-review coverage, not a substitute for the remaining runtime gates.
+- Catalog validation observed **1,729 keys**. The existing local-document check
+  resolved **27 links with zero missing targets**. Stage presentation of these
+  strings remains unverified; the earlier T16 pending event is retained above.
+- `FullSuite-wave40.xcresult` compiled the app and tests, but the suite failed.
+  Its coverage gate passed at **50.97%** against the unchanged **24.0%** floor,
+  all four native OCR integrations passed, and the six performance cases passed
+  all twelve existing budgets through `Tools/check-performance.sh`. These are
+  component results from that failed run, not a full-suite pass for current code.
+- Subsequent native regressions cover WebKit/CEF document replacement,
+  cancellation and grant revocation, live POST-backed tab transfer without
+  reload, both owners' undo/session boundaries, and actual assistant/MCP
+  mixed-control filling and owner retirement. The eight form consumers and
+  automation/transfer suites passed in wave56; no authorization or sandbox
+  guard was relaxed.
+- `native-frame-lifetime-wave51.xcresult` exercised the CEF pending-navigation
+  handoff fix: native frame/document epochs avoid renderer RPCs that Chromium
+  suspends during pending top-level navigation. Shared asynchronous liveness
+  still refreshes the frame tree. Source validation remains bound to the
+  original tab, page, document epochs and requesting origin; ambiguous and
+  opaque sources cannot obtain durable approval.
+- Wave48 passed **64 tests across five MCP suites**, including two real accepted
+  Unix-socket sessions and owning-window close/profile-switch revocation.
+  A separate bundled `WSurf --mcp --mcp-socket <owned-unused-path>` smoke passed
+  split initialize, object-valued experimental capabilities, coalesced
+  initialized/tools-list messages, all **19 tools**, idle-input survival and
+  EOF exit **0** with empty stderr. It did not use the production endpoint.
+- `FullSuite-wave60.xcresult` passed strict lint and compilation but reached the
+  unchanged twenty-minute watchdog while progressing. Its five issues were
+  opaque CEF input, palette focus, an incorrect upstream close-tab expectation
+  for WSurf's existing Unload Tab command, and two native consent-focus checks.
+  The menu regression now exercises the real local page and native shortcut,
+  requiring the retained unloaded row and an untouched other window.
+- Waves62–64 each passed the complete palette-shortcut, native-menu,
+  site-access-window and theme-picker suites. Wave64 still failed the opaque
+  CEF fixture's **foreground/key-window prerequisite before any click**:
+  test-host active false, hidden false, key false, frontmost bundle
+  `io.wsagency.wsurf`. Native process/window diagnostics are in progress;
+  no current full-suite, opaque-input or stage-UI pass is claimed.
+- The user made Pro available but not Air desktop control. The current Air stage
+  bundle therefore remains unlaunched. An independently signed old-app stage
+  copy is prepared with an owned home, but it has not seeded a deployed-schema
+  session or proved backup/old-app rollback. Installed app and production
+  browsing data remain untouched.
+- Implementation commits, PR/CI/merge and deployment are still absent. Manifest
+  statuses remain `PLANNED` until real code commits are recorded, then advance
+  independently from verification. Full native, Air stage/rollback and reviewed
+  green-PR gates remain mandatory before integration; installation requires
+  separate deployment approval.
+
+### Opaque-frame native input verification — 2026-10-07
+
+- `native-opaque-frame-focus-wave73.xcresult` passed strict lint, native app/test
+  compilation and all **16 AppHandoffTests**, including all five unattributed
+  source cases. The opaque case requires three independent trusted,
+  user-activated link events from origin `null`; cancellation, one-time launch,
+  rejection of unrelated remembered grants and empty persisted grants passed.
+- The fixture focuses its real sandboxed child link through its existing
+  postMessage channel, then sends the existing native Enter key pair. This
+  avoids background-window mouse hit targeting and does not depend on the root
+  DevTools frame tree exposing out-of-process children. Failed mouse attempts
+  had reached the parent iframe element, before the permission path.
+- Removed temporary input diagnostics and screenshot/native-mouse experiments.
+  No production authorization, cross-origin automation guard, sandbox flag,
+  input retry, timeout or CI budget was changed. Full-suite and Air stage/rollback
+  verification remain separate gates; this is not a merge or deployment record.
+

@@ -10,8 +10,13 @@ final class BrowserPage: NSView {
     let engine: BrowserEngine
     let webKit: WKWebView?
     let chromium: ChromiumPage?
-    let profileID: UUID
-    let isPrivate: Bool
+    let context: BrowserProfileContext
+    var profileID: UUID {
+        context.profile.id
+    }
+    var isPrivate: Bool {
+        context.profile.isPrivate
+    }
     var nativeView: NSView {
         self
     }
@@ -40,6 +45,7 @@ final class BrowserPage: NSView {
     var onNavigationCommitted: ((PageNavigation?) -> Void)?
     var onNavigationFinished: ((PageNavigation?) -> Void)?
     var onNavigationFailed: ((PageNavigation?, Error) -> Void)?
+    var onMainFrameResponse: ((URLResponse) -> Void)?
     var onContentProcessTerminated: (() -> Void)?
     var onHistoryChanged: (() -> Void)?
     var onLinkHovered: ((URL?) -> Void)?
@@ -55,13 +61,11 @@ final class BrowserPage: NSView {
         closed || chromium?.isClosed == true
     }
 
-    init(webKit: WKWebView, profile: Profile? = nil) {
+    init(webKit: WKWebView, context: BrowserProfileContext) {
         engine = .webKit
         self.webKit = webKit
         chromium = nil
-        let profile = profile ?? ChromiumRuntime.shared.currentProfile
-        profileID = profile.id
-        isPrivate = profile.isPrivate
+        self.context = context
         super.init(frame: webKit.frame)
         embed(webKit)
         Self.owners.setObject(self, forKey: webKit)
@@ -72,8 +76,7 @@ final class BrowserPage: NSView {
         engine = .chromium
         webKit = nil
         self.chromium = chromium
-        profileID = chromium.profileID
-        isPrivate = chromium.isPrivate
+        context = chromium.context
         super.init(frame: chromium.frame)
         chromium.owner = self
         embed(chromium)
@@ -302,10 +305,23 @@ final class BrowserPage: NSView {
             }
             var result: Result<Any, Error>!
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                webKit.evaluateJavaScript(script, in: frame?.webKit, in: contentWorld, completionHandler: {
-                    result = $0
+                do {
+                    try Task.checkCancellation()
+                    guard PageAutomationGuard.allowsExecution else { throw ChromiumError.staleFrame }
+                    if let selected = PageDriver.selectedFrame {
+                        guard let frame, selected.frame === frame,
+                              PageFrameRegistry.shared.isCurrent(selected.frame, in: self) else {
+                            throw ChromiumError.staleFrame
+                        }
+                    }
+                    webKit.evaluateJavaScript(script, in: frame?.webKit, in: contentWorld, completionHandler: {
+                        result = $0
+                        continuation.resume()
+                    })
+                } catch {
+                    result = .failure(error)
                     continuation.resume()
-                })
+                }
             }
             return try result.get()
         }
@@ -322,10 +338,23 @@ final class BrowserPage: NSView {
             }
             var result: Result<Any, Error>!
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                webKit.callAsyncJavaScript(body, arguments: arguments, in: frame?.webKit, in: contentWorld, completionHandler: {
-                    result = $0
+                do {
+                    try Task.checkCancellation()
+                    guard PageAutomationGuard.allowsExecution else { throw ChromiumError.staleFrame }
+                    if let selected = PageDriver.selectedFrame {
+                        guard let frame, selected.frame === frame,
+                              PageFrameRegistry.shared.isCurrent(selected.frame, in: self) else {
+                            throw ChromiumError.staleFrame
+                        }
+                    }
+                    webKit.callAsyncJavaScript(body, arguments: arguments, in: frame?.webKit, in: contentWorld, completionHandler: {
+                        result = $0
+                        continuation.resume()
+                    })
+                } catch {
+                    result = .failure(error)
                     continuation.resume()
-                })
+                }
             }
             return try result.get()
         }

@@ -7,7 +7,6 @@ import Foundation
 struct CommandPaletteContext {
     var isSpeechMuted = false
     var isListening = false
-    var isPrivate = false
     var historyCount = 0
     var tabCount = 0
     var hasActiveTab = false
@@ -38,10 +37,10 @@ enum CommandPaletteAction: String, CaseIterable {
     ]
 
     case newTab
+    case newWindow
     case openStartPage
     case openLocation
     case privateBrowsing
-    case leavePrivateBrowsing
     case unloadTab
     case reopenTab
     case duplicateTab
@@ -280,23 +279,19 @@ enum CommandPaletteCatalog {
                     isSuggested: true
                 ),
                 make(
-                    .privateBrowsing,
+                    .newWindow,
                     group: .tabs,
-                    title: "Private Browsing",
-                    detail: "nothing is kept",
-                    symbol: "eyeglasses",
-                    shortcut: "⇧⌘N",
-                    aliases: ["incognito", "private window", "anonymous"],
-                    isAvailable: !context.isPrivate
+                    title: "New Window",
+                    symbol: "macwindow.badge.plus",
+                    shortcut: "⌘N"
                 ),
                 make(
-                    .leavePrivateBrowsing,
+                    .privateBrowsing,
                     group: .tabs,
-                    title: "Leave Private Browsing",
+                    title: "New Private Window",
                     symbol: "eyeglasses",
-                    aliases: ["exit incognito", "normal browsing"],
-                    isAvailable: context.isPrivate,
-                    isSuggested: true
+                    shortcut: "⇧⌘N",
+                    aliases: ["incognito", "private window"]
                 ),
                 make(
                     .reopenTab,

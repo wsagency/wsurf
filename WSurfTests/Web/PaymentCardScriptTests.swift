@@ -19,7 +19,7 @@ struct PaymentCardScriptTests {
     }
 
     private func load(_ html: String) async throws -> (BrowserPage, Sink) {
-        let configuration = WebViewPool.makeConfiguration()
+        let configuration = interactiveWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let sink = Sink()
         configuration.userContentController.add(sink, contentWorld: PaymentCardAutofill.world, name: "wsurfCardAutofill")
@@ -28,7 +28,8 @@ struct PaymentCardScriptTests {
             source: PaymentCardScript.source, injectionTime: .atDocumentStart,
             forMainFrameOnly: false, in: PaymentCardAutofill.world
         ))
-        let view = BrowserPage(webKit: WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration))
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let view = BrowserPage(webKit: WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration), context: context)
         view.loadHTMLString("<!doctype html>" + html, baseURL: URL(string: "https://checkout.example/"))
         #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
         return (view, sink)

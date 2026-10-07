@@ -19,31 +19,33 @@ struct TabPopupPolicyTests {
         )
     }
 
-    private func withPopupsBlocked(_ blocked: Bool, _ body: () -> Void) {
-        let previous = BrowserSettings.shared.blocksPopups
-        BrowserSettings.shared.blocksPopups = blocked
-        defer { BrowserSettings.shared.blocksPopups = previous }
+    private func withPopupsBlocked(_ blocked: Bool, settings: BrowserSettings, _ body: () -> Void) {
+        let previous = settings.blocksPopups
+        settings.blocksPopups = blocked
+        defer { settings.blocksPopups = previous }
         body()
     }
 
     @Test func aTabOnNoWebsiteIsUnderTheSetting() {
-        let policy = TabPopupPolicy(store: store())
+        let settings = BrowserSettings()
+        let policy = TabPopupPolicy(store: store(), settings: settings)
 
-        withPopupsBlocked(true) { #expect(policy.effective == .blockAndNotify) }
-        withPopupsBlocked(false) { #expect(policy.effective == .allow) }
+        withPopupsBlocked(true, settings: settings) { #expect(policy.effective == .blockAndNotify) }
+        withPopupsBlocked(false, settings: settings) { #expect(policy.effective == .allow) }
     }
 
     @Test func aWebsiteWithItsOwnAnswerIsNotUnderTheSetting() {
+        let settings = BrowserSettings()
         let permissions = store()
         permissions.setPopups(.allow, for: "https://example.com")
-        let policy = TabPopupPolicy(store: permissions)
+        let policy = TabPopupPolicy(store: permissions, settings: settings)
         _ = policy.pageChanged(url: URL(string: "https://example.com/page"))
 
-        withPopupsBlocked(true) { #expect(policy.effective == .allow) }
+        withPopupsBlocked(true, settings: settings) { #expect(policy.effective == .allow) }
     }
 
     @Test func aTabTakesTheOriginOfThePageItIsOn() {
-        let policy = TabPopupPolicy(store: store())
+        let policy = TabPopupPolicy(store: store(), settings: BrowserSettings())
 
         #expect(policy.pageChanged(url: URL(string: "https://example.com/one")))
         #expect(policy.origin == "https://example.com")
@@ -56,20 +58,21 @@ struct TabPopupPolicyTests {
     }
 
     @Test func aPageOfTheBrowsersOwnIsNoWebsite() {
-        let policy = TabPopupPolicy(store: store())
-        _ = policy.pageChanged(url: URL(string: "https://example.com/one"))
+        let policy = TabPopupPolicy(store: store(), settings: BrowserSettings())
 
+        #expect(policy.pageChanged(url: URL(string: "https://example.com/")))
         #expect(policy.pageChanged(url: SystemPages.start))
         #expect(policy.origin.isEmpty)
     }
 
     @Test func onlyABlockWorthTellingAboutIsRemembered() {
+        let settings = BrowserSettings()
         let permissions = store()
-        let policy = TabPopupPolicy(store: permissions)
+        let policy = TabPopupPolicy(store: permissions, settings: settings)
         _ = policy.pageChanged(url: URL(string: "https://example.com/one"))
         let wanted = URL(string: "https://example.com/popup")
 
-        withPopupsBlocked(true) {
+        withPopupsBlocked(true, settings: settings) {
             policy.note(wanted)
             #expect(policy.blocked == wanted)
         }
@@ -78,23 +81,24 @@ struct TabPopupPolicyTests {
         #expect(policy.blocked == nil)
 
         permissions.setPopups(.block, for: "https://example.com")
-        withPopupsBlocked(true) {
+        withPopupsBlocked(true, settings: settings) {
             policy.note(wanted)
             #expect(policy.blocked == nil, "a silent block has nothing to report")
         }
 
         permissions.setPopups(.allow, for: "https://example.com")
-        withPopupsBlocked(true) {
+        withPopupsBlocked(true, settings: settings) {
             policy.note(wanted)
             #expect(policy.blocked == nil)
         }
     }
 
     @Test func leavingTheWebsiteForgetsWhatItWasRefused() {
-        let policy = TabPopupPolicy(store: store())
+        let settings = BrowserSettings()
+        let policy = TabPopupPolicy(store: store(), settings: settings)
         _ = policy.pageChanged(url: URL(string: "https://example.com/one"))
 
-        withPopupsBlocked(true) {
+        withPopupsBlocked(true, settings: settings) {
             policy.note(URL(string: "https://example.com/popup"))
             #expect(policy.blocked != nil)
             _ = policy.pageChanged(url: URL(string: "https://other.example.com/"))

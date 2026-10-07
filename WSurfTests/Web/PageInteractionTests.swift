@@ -13,10 +13,10 @@ import WebKit
 @Suite(.serialized, .boundedWebViews)
 struct PageInteractionTests {
     private func page(_ body: String) async -> BrowserPage {
-        let configuration = WebViewPool.makeConfiguration()
+        let configuration = interactiveWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 500, height: 400), configuration: configuration)
-        let page = BrowserPage(webKit: view)
+        let page = BrowserPage(webKit: view, context: BrowserProfileContext(profile: .privateBrowsing()))
         page.loadHTMLString("<!doctype html><body>\(body)</body>", baseURL: nil)
         #expect(await PageSettle.untilIdle(page, timeout: .seconds(20)))
         return page
@@ -144,7 +144,7 @@ struct PageInteractionTests {
             .init(ref: 1, value: "first", select: false), .init(ref: 2, value: "second", select: false),
         ], in: view)
         #expect(result.hasPrefix("Filled 1 of 2 fields."), "\(result)")
-        #expect(result.contains("earlier values changed"))
+        #expect(result.contains("[1] not verified"))
     }
 
     @Test func queriesReachDeepTextAndControlPaginationPreservesRefs() async throws {
@@ -369,5 +369,162 @@ struct PageInteractionTests {
         #expect(key.hasPrefix("Sent ArrowDown"), "\(key)")
         #expect(await js(view, "window.lastKey") as? String == "ArrowDown")
         #expect(await PageDriver.screenshot(in: view) != nil)
+    }
+}
+
+extension PageInteractionTests {
+    private func withPage(
+        engine: BrowserEngine, url: URL,
+        configure: (BrowserPage) -> Void = { _ in },
+        body: (BrowserPage) async throws -> Void
+    ) async throws {
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let view: BrowserPage
+        if engine == .webKit {
+            let configuration = interactiveWebViewConfiguration()
+            configuration.websiteDataStore = .nonPersistent()
+            view = BrowserPage(
+                webKit: WKWebView(frame: NSRect(x: 0, y: 0, width: 500, height: 400), configuration: configuration),
+                context: context
+            )
+        } else {
+            try ChromiumRuntime.shared.ensureInitialized()
+            view = BrowserPage(chromium: ChromiumPage(context: context))
+        }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderBack(nil)
+        defer { window.contentView = nil; window.close() }
+        do {
+            configure(view)
+            view.load(URLRequest(url: url))
+            try #require(await waitUntil { view.url == url && !view.isLoading })
+            try await body(view)
+        } catch {
+            await view.close()
+            await context.endPrivateSession()
+            throw error
+        }
+        await view.close()
+        await context.endPrivateSession()
+    }
+
+    private func observedFields(in view: BrowserPage, firstValue: String) async throws -> [PageDriver.FieldValue] {
+        _ = await PageDriver.readRenderedPage(view)
+        let refs = try #require(PageDriver.observation(in: view)?.refs.sorted())
+        try #require(refs.count == 2)
+        return [
+            .init(ref: refs[0], value: firstValue, select: false),
+            .init(ref: refs[1], value: "must-not-write", select: false),
+        ]
+    }
+
+    @Test(arguments: BrowserEngine.allCases)
+    func formFillStopsAtDocumentOrGrantBoundary(engine: BrowserEngine) async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/start": .html("""
+                <input aria-label="First" oninput="window.__wsurfSend('formWrite', 'first');location.href='/replacement'">
+                <input aria-label="Second">
+                """),
+            "/replacement": .html("""
+                <input aria-label="Replacement" oninput="window.replacementWrites=(window.replacementWrites||0)+1">
+                <input aria-label="Replacement second">
+                """),
+        ])
+        defer { withExtendedLifetime(server) {} }
+        var firstWrites = 0
+        let replacementURL = try server.url("/replacement")
+        try await withPage(engine: engine, url: server.url("/start"), configure: { view in
+            view.addScriptMessageHandler(name: "formWrite", in: .page) { _ in firstWrites += 1 }
+        }) { view in
+            let fields = try await observedFields(in: view, firstValue: "navigate")
+            _ = await PageDriver.fillFields(fields, in: view)
+            try #require(await waitUntil { view.url == replacementURL && !view.isLoading })
+            #expect(firstWrites == 1)
+            #expect(try await view.evaluateJavaScript("window.replacementWrites || 0") as? Int == 0)
+            #expect(try await view.evaluateJavaScript("document.querySelectorAll('input')[1].value") as? String == "")
+        }
+    }
+
+    @Test(arguments: BrowserEngine.allCases)
+    func formFillStopsAfterCancellation(engine: BrowserEngine) async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("""
+                <input aria-label="First" oninput="window.firstWrites=(window.firstWrites||0)+1;window.__wsurfSend('formWrite', 'first')">
+                <input aria-label="Second">
+                """),
+        ])
+        defer { withExtendedLifetime(server) {} }
+        var task: Task<String, Never>?
+        try await withPage(engine: engine, url: server.url(), configure: { view in
+            view.addScriptMessageHandler(name: "formWrite", in: .page) { _ in task?.cancel() }
+        }) { view in
+            let fields = try await observedFields(in: view, firstValue: "write-once")
+            let batch = Task { await PageDriver.fillFields(fields, in: view) }
+            task = batch
+            _ = await batch.value
+            #expect(batch.isCancelled)
+            #expect(try await view.evaluateJavaScript("window.firstWrites") as? Int == 1)
+            #expect(try await view.evaluateJavaScript("document.querySelectorAll('input')[1].value") as? String == "")
+        }
+    }
+
+    @Test(arguments: BrowserEngine.allCases)
+    func formFillStopsAfterApprovalRevocation(engine: BrowserEngine) async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("""
+                <input aria-label="First" oninput="window.firstWrites=(window.firstWrites||0)+1;window.__wsurfSend('formWrite', 'first')">
+                <input aria-label="Second">
+                """),
+        ])
+        defer { withExtendedLifetime(server) {} }
+        var permission: TabAssistantAccessCenter?
+        try await withPage(engine: engine, url: server.url(), configure: { view in
+            let access = TabAssistantAccessCenter(store: view.context.sitePermissions)
+            permission = access
+            view.addScriptMessageHandler(name: "formWrite", in: .page) { _ in access.set(.deny) }
+        }) { view in
+            let access = try #require(permission)
+            access.pageChanged(url: view.url)
+            access.set(.control)
+            let fields = try await observedFields(in: view, firstValue: "write-once")
+            let observation = try #require(PageDriver.observation(in: view))
+            let scope = PageAutomationGuard(
+                documentURL: observation.url, snapshot: observation.id,
+                validate: { access.effectivePolicy.allows(.control) }
+            )
+            _ = await PageAutomationGuard.$current.withValue(scope) {
+                await PageDriver.fillFields(fields, in: view)
+            }
+            #expect(access.effectivePolicy == .deny)
+            #expect(try await view.evaluateJavaScript("window.firstWrites") as? Int == 1)
+            #expect(try await view.evaluateJavaScript("document.querySelectorAll('input')[1].value") as? String == "")
+        }
+    }
+
+    @Test(arguments: ["checkbox", "select"], ["aria-readonly", "data-wsurf-payment-card"])
+    func formEligibilityIsRecheckedAfterAnnouncement(kind: String, attribute: String) async throws {
+        let control = kind == "checkbox"
+            ? "<input id='target' aria-label='Choice' type='checkbox'>"
+            : "<select id='target' aria-label='Choice'><option>A</option><option>B</option></select>"
+        let view = await page(control + """
+            <script>window.changes=0;document.addEventListener('change',()=>window.changes++);</script>
+            """)
+        _ = await PageDriver.readRenderedPage(view)
+        _ = await PageDriver.$pauseSleeper.withValue({ @MainActor _ in
+            _ = try? await view.evaluateJavaScript("document.querySelector('#target').setAttribute('\(attribute)', 'true')")
+        }) {
+            await PageDriver.fillFields([
+                .init(ref: 1, value: kind == "checkbox" ? "true" : "B", select: kind == "select"),
+            ], in: view, announced: true)
+        }
+        #expect(await js(view, "window.changes") as? Int == 0)
+        if kind == "checkbox" {
+            #expect(await js(view, "document.querySelector('#target').checked") as? Bool == false)
+        } else {
+            #expect(await js(view, "document.querySelector('#target').value") as? String == "A")
+        }
     }
 }

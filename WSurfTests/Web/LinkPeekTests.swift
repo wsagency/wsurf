@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import AnyLanguageModel
 import AppKit
 import Foundation
 import Testing
@@ -95,19 +96,47 @@ struct LinkPeekTests {
 
     @Test @MainActor func pointingWithoutTheTriggerShowsNothing() {
         let peek = LinkPeek()
+        let context = BrowserProfileContext(profile: .privateBrowsing())
         peek.hovered(
             URL(string: "https://example.com"),
             flags: [],
             tabID: UUID(),
-            anchor: CGPoint(x: 10, y: 10)
+            anchor: CGPoint(x: 10, y: 10),
+            context: context
         )
         #expect(peek.shown == nil)
     }
 
     @Test @MainActor func leavingTheLinkTakesTheCardAway() {
         let peek = LinkPeek()
-        peek.hovered(nil, flags: LinkPeek.trigger, tabID: UUID(), anchor: .zero)
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        peek.hovered(nil, flags: LinkPeek.trigger, tabID: UUID(), anchor: .zero, context: context)
         #expect(peek.shown == nil)
+    }
+
+    @Test @MainActor func repeatedHoverPresentsWithoutRestartingTheHoldDelay() async throws {
+        let peek = LinkPeek()
+        let first = BrowserProfileContext(profile: .privateBrowsing())
+        let second = BrowserProfileContext(profile: .privateBrowsing())
+        let previous = first.settings.peeksAtLinks
+        first.settings.peeksAtLinks = true
+        defer {
+            peek.end()
+            first.settings.peeksAtLinks = previous
+        }
+        let url = URL(string: "https://peek.example.test/article")!
+        peek.remember(summary("First profile"), snapshot: nil, for: url, context: first)
+        peek.remember(summary("Second profile"), snapshot: nil, for: url, context: second)
+        try await UtilityModelSource.$make.withValue({ SystemLanguageModel.default }) {
+            for (context, gist) in [(first, "First profile"), (second, "Second profile")] {
+                let tabID = UUID()
+                try #require(await waitUntil {
+                    peek.hovered(url, flags: LinkPeek.trigger, tabID: tabID, anchor: .zero, context: context)
+                    guard let shown = peek.shown, case .ready(let summary) = shown.phase else { return false }
+                    return shown.tabID == tabID && summary.gist == gist
+                })
+            }
+        }
     }
 
     // MARK: - What a peek is worth keeping
@@ -122,60 +151,76 @@ struct LinkPeekTests {
 
     @Test @MainActor func theOldestPeekIsLetGoOnceTheMemoryIsFull() {
         let peek = LinkPeek()
+        let context = BrowserProfileContext(profile: .privateBrowsing())
         let urls = addresses(25)
         for url in urls.prefix(24) {
-            peek.remember(summary(url.lastPathComponent), snapshot: nil, for: url)
+            peek.remember(summary(url.lastPathComponent), snapshot: nil, for: url, context: context)
         }
-        #expect(peek.keptSummary(for: urls[0])?.gist == "0")
+        #expect(peek.keptSummary(for: urls[0], context: context)?.gist == "0")
 
-        peek.remember(summary("24"), snapshot: nil, for: urls[24])
+        peek.remember(summary("24"), snapshot: nil, for: urls[24], context: context)
 
-        #expect(peek.keptSummary(for: urls[0]) == nil)
-        #expect(peek.keptSummary(for: urls[1])?.gist == "1")
-        #expect(peek.keptSummary(for: urls[24])?.gist == "24")
+        #expect(peek.keptSummary(for: urls[0], context: context) == nil)
+        #expect(peek.keptSummary(for: urls[1], context: context)?.gist == "1")
+        #expect(peek.keptSummary(for: urls[24], context: context)?.gist == "24")
+    }
+    @Test @MainActor func rememberedSummariesStayInTheirInitiatingContext() {
+        let peek = LinkPeek()
+        let first = BrowserProfileContext(profile: .privateBrowsing())
+        let second = BrowserProfileContext(profile: .privateBrowsing())
+        let url = URL(string: "https://example.com/article")!
+        peek.remember(summary("first"), snapshot: nil, for: url, context: first)
+
+        #expect(peek.keptSummary(for: url, context: first)?.gist == "first")
+        #expect(peek.keptSummary(for: url, context: second) == nil)
     }
 
     /// A snapshot is a few megabytes and the words beside it are not, so the
     /// pictures are let go long before the summaries are.
     @Test @MainActor func onlyTheRecentPeeksKeepTheirPicture() {
         let peek = LinkPeek()
+        let context = BrowserProfileContext(profile: .privateBrowsing())
         let urls = addresses(8)
         for url in urls {
             peek.remember(
                 summary(url.lastPathComponent),
                 snapshot: NSImage(size: NSSize(width: 2, height: 2)),
-                for: url
+                for: url,
+                context: context
             )
         }
 
-        #expect(peek.keptSnapshot(for: urls[0]) == nil)
-        #expect(peek.keptSnapshot(for: urls[1]) == nil)
-        #expect(peek.keptSnapshot(for: urls[2]) != nil)
-        #expect(peek.keptSnapshot(for: urls[7]) != nil)
-        #expect(peek.keptSummary(for: urls[0])?.gist == "0", "the words are cheap enough to keep")
+        #expect(peek.keptSnapshot(for: urls[0], context: context) == nil)
+        #expect(peek.keptSnapshot(for: urls[1], context: context) == nil)
+        #expect(peek.keptSnapshot(for: urls[2], context: context) != nil)
+        #expect(peek.keptSnapshot(for: urls[7], context: context) != nil)
+        #expect(peek.keptSummary(for: urls[0], context: context)?.gist == "0", "the words are cheap enough to keep")
     }
 
     @Test @MainActor func peekingAPageAgainIsNotASecondThingToRemember() {
         let peek = LinkPeek()
+        let context = BrowserProfileContext(profile: .privateBrowsing())
         let urls = addresses(24)
         for url in urls {
-            peek.remember(summary(url.lastPathComponent), snapshot: nil, for: url)
+            peek.remember(summary(url.lastPathComponent), snapshot: nil, for: url, context: context)
         }
 
-        peek.remember(summary("again"), snapshot: nil, for: urls[0])
+        peek.remember(summary("again"), snapshot: nil, for: urls[0], context: context)
 
-        #expect(peek.keptSummary(for: urls[0])?.gist == "again")
-        #expect(peek.keptSummary(for: urls[1])?.gist == "1", "nothing was pushed out to make room")
+        #expect(peek.keptSummary(for: urls[0], context: context)?.gist == "again")
+        #expect(peek.keptSummary(for: urls[1], context: context)?.gist == "1", "nothing was pushed out to make room")
     }
 
     @Test @MainActor func aCardBelongsToTheTabItWasHoveredIn() {
         let peek = LinkPeek()
+        let context = BrowserProfileContext(profile: .privateBrowsing())
         peek.suppress()
         peek.hovered(
             URL(string: "https://example.com"),
             flags: LinkPeek.trigger,
             tabID: UUID(),
-            anchor: .zero
+            anchor: .zero,
+            context: context
         )
         #expect(peek.shown == nil)
     }

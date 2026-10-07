@@ -51,11 +51,11 @@ private nonisolated final class ChromiumDeleteCookiesCompletion {
 }
 
 extension ChromiumRuntime {
-    private func originCatalog(for profile: Profile) -> ChromiumOriginCatalog {
-        if profile.isPrivate {
-            return ChromiumOriginCatalog(origins: privateOrigins)
+    private func originCatalog(for context: BrowserProfileContext) -> ChromiumOriginCatalog {
+        if context.profile.isPrivate {
+            return ChromiumOriginCatalog(origins: privateOrigins[context.contextID] ?? [:])
         }
-        let url = cacheDirectory(profileID: profile.id).appendingPathComponent("origins.json")
+        let url = cacheDirectory(profileID: context.profile.id).appendingPathComponent("origins.json")
         guard let data = try? Data(contentsOf: url),
               let catalog = try? JSONDecoder().decode(ChromiumOriginCatalog.self, from: data) else {
             return ChromiumOriginCatalog()
@@ -63,38 +63,39 @@ extension ChromiumRuntime {
         return catalog
     }
 
-    private func saveOriginCatalog(_ catalog: ChromiumOriginCatalog, for profile: Profile) {
-        if profile.isPrivate {
-            privateOrigins = catalog.origins
+    private func saveOriginCatalog(_ catalog: ChromiumOriginCatalog, for context: BrowserProfileContext) {
+        guard !context.privateSessionEnded else { return }
+        if context.profile.isPrivate {
+            privateOrigins[context.contextID] = catalog.origins
             return
         }
-        let directory = cacheDirectory(profileID: profile.id)
+        let directory = cacheDirectory(profileID: context.profile.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         guard let data = try? JSONEncoder().encode(catalog) else { return }
         try? data.write(to: directory.appendingPathComponent("origins.json"), options: .atomic)
     }
 
-    private func hasStoredData(for profile: Profile) -> Bool {
-        if profile.isPrivate {
-            return hasPrivateContext || !privateOrigins.isEmpty
+    private func hasStoredData(for context: BrowserProfileContext) -> Bool {
+        if context.profile.isPrivate {
+            return hasContext(contextID: context.contextID) || privateOrigins[context.contextID]?.isEmpty == false
         }
-        let directory = cacheDirectory(profileID: profile.id)
+        let directory = cacheDirectory(profileID: context.profile.id)
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: nil
         ) else {
             return false
         }
-        return !originCatalog(for: profile).origins.isEmpty
+        return !originCatalog(for: context).origins.isEmpty
             || files.contains { $0.lastPathComponent != "origins.json" }
     }
 
     func preflightClearData(
-        profile: Profile,
+        context: BrowserProfileContext,
         kinds: Set<BrowsingData.Kind>,
         since: Date
     ) throws {
-        guard hasStoredData(for: profile) else { return }
+        guard hasStoredData(for: context) else { return }
         guard (kinds.contains(.cookies) || kinds.contains(.cache))
                 && since > Date(timeIntervalSince1970: 0) else { return }
         throw ChromiumError.unavailable(
@@ -104,37 +105,31 @@ extension ChromiumRuntime {
 
     /// Records only navigated HTTP(S) origins. Private contexts stay in memory
     /// and are discarded with the private session.
-    func recordOrigin(_ url: URL, profileID: UUID, isPrivate: Bool) {
-        guard ["http", "https"].contains(url.scheme?.lowercased()) else { return }
-        let profile = Profile(
-            id: profileID,
-            name: profileID.uuidString,
-            symbol: "person",
-            color: .gray
-        )
-        var catalog = originCatalog(for: profile)
+    func recordOrigin(_ url: URL, context: BrowserProfileContext) {
+        guard !context.privateSessionEnded, ["http", "https"].contains(url.scheme?.lowercased()) else { return }
+        var catalog = originCatalog(for: context)
         catalog.origins[url.originString] = Date()
-        saveOriginCatalog(catalog, for: profile)
+        saveOriginCatalog(catalog, for: context)
     }
 
     func erase(profile: Profile) async throws {
-        guard !profile.isOriginal else { return }
-        await releaseContext(profileID: profile.id)
+        guard !profile.isOriginal, !profile.isPrivate else { return }
+        await releaseContexts(profileID: profile.id)
         try FileManager.default.removeItem(at: cacheDirectory(profileID: profile.id))
     }
 
-    func clearData(profile: Profile, kinds: Set<BrowsingData.Kind>, since: Date) async throws {
-        try preflightClearData(profile: profile, kinds: kinds, since: since)
-        guard hasStoredData(for: profile) else { return }
+    func clearData(context: BrowserProfileContext, kinds: Set<BrowsingData.Kind>, since: Date) async throws {
+        try preflightClearData(context: context, kinds: kinds, since: since)
+        guard hasStoredData(for: context) else { return }
         guard kinds.contains(.cache) || kinds.contains(.cookies) else { return }
 
         if kinds.contains(.cookies) {
-            try await clearCookies(profile: profile)
+            try await clearCookies(context: context)
         }
-        let originalCatalog = originCatalog(for: profile)
+        let originalCatalog = originCatalog(for: context)
         let origins = originalCatalog.origins.keys.sorted()
         if kinds.contains(.cache) {
-            _ = try await command(profile: profile, method: "Network.clearBrowserCache")
+            _ = try await command(context: context, method: "Network.clearBrowserCache")
         }
         let storageTypes: String = {
             switch (kinds.contains(.cookies), kinds.contains(.cache)) {
@@ -148,28 +143,28 @@ extension ChromiumRuntime {
         }()
         for origin in origins {
             _ = try await command(
-                profile: profile,
+                context: context,
                 method: "Storage.clearDataForOrigin",
                 params: ["origin": origin, "storageTypes": storageTypes]
             )
         }
         if kinds.contains(.cookies), kinds.contains(.cache) {
-            var catalog = originCatalog(for: profile)
+            var catalog = originCatalog(for: context)
             for origin in origins where catalog.origins[origin] == originalCatalog.origins[origin] {
                 catalog.origins[origin] = nil
             }
-            saveOriginCatalog(catalog, for: profile)
+            saveOriginCatalog(catalog, for: context)
         }
 
     }
 
-    func websiteDataEntries(profile: Profile) async throws -> [WebsiteData.Entry] {
-        guard hasStoredData(for: profile) else { return [] }
-        let catalog = originCatalog(for: profile)
+    func websiteDataEntries(context: BrowserProfileContext) async throws -> [WebsiteData.Entry] {
+        guard hasStoredData(for: context) else { return [] }
+        let catalog = originCatalog(for: context)
         var entries: [WebsiteData.Entry] = []
         for origin in catalog.origins.keys.sorted() {
             _ = try await command(
-                profile: profile,
+                context: context,
                 method: "Storage.getUsageAndQuota",
                 params: ["origin": origin]
             )
@@ -178,13 +173,13 @@ extension ChromiumRuntime {
         return entries
     }
 
-    func removeWebsiteData(names: Set<String>, profile: Profile) async throws {
-        guard !names.isEmpty, hasStoredData(for: profile) else { return }
+    func removeWebsiteData(names: Set<String>, context: BrowserProfileContext) async throws {
+        guard !names.isEmpty, hasStoredData(for: context) else { return }
         for origin in names {
             guard let scheme = URL(string: origin)?.scheme?.lowercased(),
                   ["http", "https"].contains(scheme) else { continue }
             _ = try await command(
-                profile: profile,
+                context: context,
                 method: "Storage.clearDataForOrigin",
                 params: [
                     "origin": origin,
@@ -192,15 +187,15 @@ extension ChromiumRuntime {
                 ]
             )
         }
-        var catalog = originCatalog(for: profile)
+        var catalog = originCatalog(for: context)
         for name in names {
             catalog.origins[name] = nil
         }
-        saveOriginCatalog(catalog, for: profile)
+        saveOriginCatalog(catalog, for: context)
     }
 
-    private func clearCookies(profile: Profile) async throws {
-        let manager = try withContext(for: profile) { context -> UnsafeMutablePointer<cef_cookie_manager_t> in
+    private func clearCookies(context: BrowserProfileContext) async throws {
+        let manager = try withContext(for: context) { context -> UnsafeMutablePointer<cef_cookie_manager_t> in
             guard let manager = context.pointee.get_cookie_manager?(context, nil) else {
                 throw ChromiumError.unavailable(String(localized: "Chromium cookies are unavailable."))
             }

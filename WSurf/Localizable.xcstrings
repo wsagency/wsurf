@@ -1,6 +1,125 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@" : {
+
+    },
+    "%@ — %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ — %2$@"
+          }
+        }
+      }
+    },
+    "%@ — Private Browsing" : {
+
+    },
+    "%@ wants to open %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ wants to open %2$@."
+          }
+        }
+      }
+    },
+    "Allow for this private tab" : {
+
+    },
+    "Always allow for this website" : {
+
+    },
+    "Ask before opening %@" : {
+
+    },
+    "Ask next time" : {
+
+    },
+    "Developer" : {
+
+    },
+    "Fill form controls together without submitting." : {
+
+    },
+    "Move Tab to Window" : {
+
+    },
+    "New Page" : {
+      "comment" : "Fallback title for a browser tab whose website has no title, including while a new website is loading. Title Case."
+    },
+    "New Private Window" : {
+
+    },
+    "New Window" : {
+
+    },
+    "No app installed on this Mac handles %@ links." : {
+
+    },
+    "Open %@" : {
+
+    },
+    "Open %@?" : {
+
+    },
+    "Open downloads" : {
+      "comment" : "Settings row that opens the Downloads page."
+    },
+    "Open Link in New Private Window" : {
+
+    },
+    "Open Link in New Window" : {
+
+    },
+    "Opening apps" : {
+
+    },
+    "opens %@ without asking" : {
+
+    },
+    "Paused because the provider is rate limited. Your progress is saved; wait, then choose Continue." : {
+
+    },
+    "Press Tab to search this site" : {
+      "comment" : "Accessibility hint for the command palette's site search suggestion. Tab is the keyboard key."
+    },
+    "Remove %@ search" : {
+      "comment" : "Accessibility label and tooltip for removing the active site search chip. %@ is the website's name and should not be translated."
+    },
+    "Reopen Last Closed Window" : {
+
+    },
+    "Restart Page" : {
+
+    },
+    "Search %@" : {
+      "comment" : "Command palette site search hint, placeholder, and result detail. %@ is the website's name and should not be translated. Search is a verb."
+    },
+    "Search in current tab" : {
+
+    },
+    "Tabs cannot move between profiles or private sessions." : {
+
+    },
+    "The browser could not create the requested window." : {
+
+    },
+    "The browser window is no longer available." : {
+
+    },
+    "The model is rate limited. Retrying shortly without repeating browser actions." : {
+
+    },
+    "This page wants to open %@." : {
+
+    },
+    "This website can open this app without asking." : {
+
+    },
     "System Default" : {
       "comment" : "Sidebar font choice that uses the macOS system font."
     },
@@ -902,9 +1021,6 @@
     "Allow %@ to Access This Tab?" : {
 
     },
-    "Allow a hosted shell to run commands and create files." : {
-
-    },
     "Allow a hosted shell to run commands and create files. Extra charges may apply." : {
 
     },
@@ -1006,7 +1122,7 @@
     "Appearance" : {
       "comment" : "Name of the Appearance page in the Settings sidebar and the heading at the top of that page."
     },
-    "Appearance, search, privacy, websites, and downloads go back to their defaults. Tabs, history, shortcuts, and your provider aren’t affected." : {
+    "Appearance, search, privacy, websites, and downloads go back to their defaults. Tabs, history, shortcuts, and your provider are not affected." : {
 
     },
     "Apple Intelligence" : {
@@ -1252,9 +1368,6 @@
     "Browsing history" : {
       "comment" : "Name of one of the three kinds of data listed with tick boxes on the Privacy settings page. A noun phrase at the head of a row; a separate lowercase variant exists for use inside sentences, so this one may take the language's normal capitalization."
     },
-    "Browsing now" : {
-      "comment" : "Caption under the profile you are currently in, in the profile switcher — also under Private Browsing while it is the active session. A status, not a command."
-    },
     "By default, the assistant works until it finishes. Set a limit to pause and resume with Continue. The final summary may use one more request." : {
 
     },
@@ -1498,9 +1611,6 @@
     "Clear History…" : {
       "comment" : "Command that raises the confirmation for deleting all browsing history: an item in the History menu and an action in the command palette. Title Case; the real ellipsis (…) promises a dialog rather than an immediate wipe, so keep it."
     },
-    "Clear list" : {
-
-    },
     "Clear List" : {
       "comment" : "The destructive confirming button in the sheet that empties the list of finished downloads. Title Case; “Clear” is a verb and “List” is the downloads list, not the files."
     },
@@ -1669,10 +1779,7 @@
       "comment" : "Caption under the Custom endpoint heading in Settings > Provider. “OpenAI” is a vendor name and “/v1” is a literal URL path — leave both exactly as they are."
     },
     "Connect external assistants to tabs you choose. Private tabs are never shared." : {
-      "comment" : "MCP settings: private browsing pauses access without changing the saved enabled preference."
-    },
-    "Connect MCP services your assistant can use." : {
-
+      "comment" : "MCP settings: private windows refuse new connections; existing connections stay bound to their regular window."
     },
     "Connect services your assistant can use." : {
 
@@ -1959,9 +2066,6 @@
     "Dismiss Error" : {
 
     },
-    "Do you want to allow this page to open “%@”?" : {
-      "comment" : "Heading of the alert asking whether a web page may launch another app on the Mac. %@ is that app's name as macOS displays it, inside curly quotes."
-    },
     "Don’t Allow" : {
       "comment" : "Button in the permission panel that refuses the website's request, beside “Allow Once” and “Always Allow”. Keep the curly apostrophe. Title Case, and the three buttons share one narrow row."
     },
@@ -2049,9 +2153,6 @@
 
     },
     "Edit additional parameters and hosted tool definitions." : {
-
-    },
-    "Edit additional response parameters and hosted tool definitions." : {
 
     },
     "Edit connection" : {
@@ -2287,9 +2388,6 @@
       "comment" : "Caption for the Type tool in assistant settings."
     },
     "Fill Multiple Fields" : {
-
-    },
-    "Fill several text fields or dropdowns together without submitting." : {
 
     },
     "Find" : {
@@ -2750,9 +2848,6 @@
     "Leave empty to use the system default." : {
       "comment" : "Caption under the custom user agent field on the Advanced settings page."
     },
-    "Leave Private Browsing" : {
-
-    },
     "left ⇧" : {
       "comment" : "Name of one physical modifier key in the shortcut recorder in Settings, where the two sides of the keyboard have to be told apart because the assistant is activated by holding one of them. Only the side word is translated — the symbol is the glyph macOS prints on the key, so keep it exactly and keep it beside the word. Very tight: this is a key cap. The glyph is Shift."
     },
@@ -3085,9 +3180,6 @@
     "Move left for more transparency or right for more contrast." : {
 
     },
-    "Move left for more transparency or right for more contrast. Available with Transparent window style." : {
-
-    },
     "Move WSurf to the Applications folder?" : {
       "comment" : "Title of the alert WSurf shows at launch when it runs from anywhere other than an Applications folder. Sentence case, and the question mark is the only closing punctuation macOS dialog titles take."
     },
@@ -3352,12 +3444,6 @@
     "Not specified" : {
 
     },
-    "Nothing installed on this Mac handles “%@” links." : {
-      "comment" : "Explanatory text in the alert shown when no app can open a link. %@ is the link's scheme, e.g. mailto or tel, inside curly quotes — a technical token, never translated."
-    },
-    "nothing is kept" : {
-      "comment" : "Caption under the Private Browsing command in the command palette: no history, cookie or cache survives the session. Sentence fragment, lower case."
-    },
     "Nothing is playing" : {
       "comment" : "Title of the empty state in the lyrics view when the media player holds no track. Sentence case with no final full stop."
     },
@@ -3423,9 +3509,6 @@
     },
     "Only images and video on this page." : {
 
-    },
-    "Open" : {
-      "comment" : "Button beside a finished download in Settings that opens the downloaded file. Imperative verb, not the adjective, and space is tight next to a file name."
     },
     "Open %@ in a new tab" : {
       "comment" : "Shown at the bottom of the page while the pointer rests on a link and Command is held: Command-clicking opens the link in a new tab. %@ is the link's address, which is shown in a lighter ink than the rest of the sentence. Sentence case, no full stop."
@@ -3570,9 +3653,6 @@
     },
     "Other websites" : {
       "comment" : "Label of the row that sets the answer for every website not listed individually below it, in the Websites permissions section. A noun phrase, not a heading."
-    },
-    "Override models used for dictation, read aloud, and conversation." : {
-
     },
     "Override the models used for listening and speech." : {
 
@@ -3903,12 +3983,6 @@
     },
     "Reasoning summary" : {
 
-    },
-    "Recent" : {
-      "comment" : "Title of the Downloads settings section listing recently downloaded files. A short heading beside an icon, so keep it brief."
-    },
-    "Recent downloads" : {
-      "comment" : "Sentence case title of the same downloads list as it is indexed for the Settings search. Downloads means downloaded files."
     },
     "Recent files" : {
       "comment" : "Description of the Downloads section in the start page editor. No final full stop."
@@ -4272,9 +4346,6 @@
     "Save an extra copy for retrieval through the OpenAI API. You don’t need this for WSurf’s chat history." : {
 
     },
-    "Save and fill cards at checkout." : {
-
-    },
     "Save and fill contact details." : {
 
     },
@@ -4485,13 +4556,7 @@
     "Services" : {
       "comment" : "Standard macOS submenu inside the application menu. Use Apple’s own translation of the system Services menu."
     },
-    "Session waiting" : {
-      "comment" : "Caption under Private Browsing in the profile switcher when a private session is still running while the browser is in another profile. Two short words; the space is tight."
-    },
     "Set a checkbox or radio selection." : {
-
-    },
-    "Set a model request limit for long assistant tasks." : {
 
     },
     "Set as Default" : {
@@ -4507,9 +4572,6 @@
 
     },
     "Set defaults for websites and review the settings you changed." : {
-
-    },
-    "Set how the assistant speaks in conversations." : {
 
     },
     "Set the default zoom for websites. You can also zoom individual tabs." : {

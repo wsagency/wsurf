@@ -8,7 +8,7 @@ import AppKit
 /// during launch and discards the shortcuts set before it.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let coordinator = AppCoordinator()
+    let application = BrowserApplication.shared
     private var terminationPending = false
 
     private var isRunningTests: Bool {
@@ -16,25 +16,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppleSpeechVoiceCatalog.shared.prepare()
         guard !isRunningTests else { return }
         NSApp.setActivationPolicy(.regular)
         guard MoveToApplications.offerIfNeeded() != .relaunching else { return }
-        Task { await coordinator.bootstrap() }
-        #if DEBUG
-        AnimationProbe.runIfRequested(coordinator: coordinator)
-        AnimationProbe.runSplitProbeIfRequested(coordinator: coordinator)
-        StageRun.startIfRequested(coordinator: coordinator)
-        #endif
+        Task {
+            await application.bootstrap()
+            #if DEBUG
+            if let coordinator = application.activeCoordinator {
+                AnimationProbe.runIfRequested(coordinator: coordinator)
+                AnimationProbe.runSplitProbeIfRequested(coordinator: coordinator)
+                StageRun.startIfRequested(coordinator: coordinator)
+            }
+            #endif
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
         guard !isRunningTests else { return }
-        coordinator.openFromAnotherApp(urls)
+        self.application.openFromAnotherApp(urls)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         guard !isRunningTests else { return true }
-        coordinator.showBrowser()
+        application.showBrowser()
         return true
     }
 
@@ -50,23 +55,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isRunningTests else { return .terminateNow }
         guard !terminationPending else { return .terminateLater }
         terminationPending = true
-        coordinator.mcpServer.stop()
-        coordinator.browser.saveBlocking()
+        application.prepareToTerminate()
         Task {
             do {
-                try await coordinator.clearDataOnQuitIfNeeded()
-                coordinator.agentTurns.cancel()
-                coordinator.media.releaseControl()
-                let tabs = coordinator.browser.tabs
-                coordinator.browser.closeAllTabs(saving: false)
-                for tab in tabs {
-                    await tab.waitForRetirement()
-                }
-                await ChromiumRuntime.shared.shutdown()
+                try await application.clearDataOnQuitIfNeeded()
+                await application.closePagesForTermination()
                 NSApp.reply(toApplicationShouldTerminate: true)
             } catch {
                 terminationPending = false
-                coordinator.mcpServer.resume()
+                application.cancelTermination()
                 let alert = NSAlert()
                 alert.alertStyle = .warning
                 alert.messageText = String(localized: "Browsing data could not be cleared. WSurf will stay open.")
@@ -80,7 +77,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         guard !isRunningTests else { return }
-        coordinator.conversationLog.saveBlocking()
-        coordinator.browser.downloads.clearOnQuitIfNeeded(coordinator.settings.downloadRetention)
+        application.finishTermination()
     }
 }

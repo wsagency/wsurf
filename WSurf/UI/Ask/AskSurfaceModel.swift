@@ -17,7 +17,10 @@ final class AskSurfaceModel {
         didSet {
             if oldValue.text != interaction.text, !isPreviewingSelection {
                 suggestionPreview.clear()
-                suggestions.update(for: MentionText.stripped(interaction.text))
+                suggestions.update(
+                    for: MentionText.stripped(interaction.text),
+                    settings: coordinator.context.settings
+                )
             }
         }
     }
@@ -50,7 +53,7 @@ final class AskSurfaceModel {
         coordinator.state == .listening
     }
     var agentOnly: Bool {
-        Omnibox.isAgentOnly
+        Omnibox.isAgentOnly(settings: coordinator.context.settings)
     }
     var placeholder: String {
         agentOnly ? Omnibox.agentOnlyPlaceholder : placement.placeholder
@@ -127,6 +130,7 @@ final class AskSurfaceModel {
             isListening: isListening,
             currentURL: currentURL,
             agentOnly: agentOnly,
+            settings: coordinator.context.settings,
             agentName: coordinator.agentDisplayName,
             history: browser.history,
             tabs: browser.tabs,
@@ -285,7 +289,7 @@ final class AskSurfaceModel {
     }
 
     var pendingQuestion: AgentQuestionModel.Ask? {
-        coordinator.agentQuestions.ask(inSpace: activeSpaceID)
+        coordinator.pendingAgentQuestion(inChrome: true)
     }
 
     func answer(_ text: String) {
