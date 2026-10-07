@@ -66,8 +66,11 @@ struct CommandPaletteShortcutTests {
         editor.setSelectedRange(NSRange(location: 6, length: 0))
         destinationWindow.contentView = editor
         destinationWindow.makeKeyAndOrderFront(nil)
-        #expect(await waitUntil { NSApp.isActive && destinationWindow.isKeyWindow },
-                "Frontmost app: \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none")")
+        #expect(await waitUntil { NSApp.isActive && destinationWindow.isKeyWindow }, """
+        active=\(NSApp.isActive), selfPID=\(ProcessInfo.processInfo.processIdentifier), \
+        frontPID=\(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0), \
+        key=\(NSApp.keyWindow?.windowNumber ?? 0), destination=\(destinationWindow.windowNumber)
+        """)
         try #require(destinationWindow.makeFirstResponder(editor))
 
         let optionReturn = try #require(NSEvent.keyEvent(

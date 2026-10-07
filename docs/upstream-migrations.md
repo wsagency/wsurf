@@ -436,3 +436,90 @@ settings type. No obsolete global-accessor forwarding file is retained.
   unchanged. No Xcode downgrade, fallback compiler, additional test exclusion
   or release/deployment execution was introduced.
 
+### Native full-run evidence and remaining focus failure — 2026-10-07
+
+- Runner correction commit **`568d8446f60f2dc1a07c447ab53571ac0d2363c6`**
+  records `53fbb4c23337aeadc6e4c795cbbb0f6539e5c1bf` / T01 and changes only
+  CI/release/tip runner labels plus their documentation. In
+  [CI run 37591545970](https://github.com/wsagency/wsurf/actions/runs/37591545970),
+  Xcode 27 selection, Metal, SwiftLint/format, package resolution and
+  acknowledgements passed. A GitHub API read timeout interrupted the observer,
+  not the CI job; observation resumed without rerunning the workflow.
+- Native `FullSuite-wave74.xcresult` completed in **828.77 s** wall time with
+  strict lint and compilation successful. Device-level results contain
+  **3,015 passed, one failed and 12 existing disabled cases**; the invocation
+  added no test exclusions. All four native OCR integrations and all
+  `AppHandoffTests` passed, including the opaque-origin consent boundary.
+- The sole failure was
+  `CommandPaletteShortcutTests.backgroundPaletteCannotConsumeAnotherWindowsKeyboardEvents`
+  at its active/key-window precondition. The subsequent keyboard-routing and
+  source-palette assertions passed. The reported frontmost bundle identifier
+  alone does not distinguish activation timing, window ownership or another
+  process; instrumented diagnosis is in progress, not a claimed product fix.
+- The actual coverage gate passed at **51.41%** against **24.0%**.
+  `Tools/check-performance.sh` passed all 12 unchanged time/memory budgets from
+  the six recorded native benchmarks. The run also recorded a non-failing
+  QoS priority-inversion warning in `AppHandoffTests`; it was not suppressed.
+- The full-suite gate remains **failed**, all manifest entries remain
+  **APPLIED**, and Air stage/backup rollback, green CI and main integration
+  are still required. No production app or browsing data was changed.
+
+### Passing native/CI gates and isolated backup recovery — 2026-10-07
+
+- Instrumented diagnosis run 75 passed all 39 tests in five suites;
+  the observed application/frontmost PID and key-window transition matched.
+  `FullSuite-wave76.xcresult` then passed: **2,700 Swift Testing cases in
+  322 suites**, device-level **3,016 passed, zero failed, 12 existing disabled**,
+  **724.54 s** wall time. Coverage was **51.36%** and all 12 unchanged
+  performance budgets passed. The intermittent wave74 foreground precondition
+  is not claimed fixed. Temporary logging was removed; failure-only PID/window
+  details remain without weakening the original assertions.
+- [CI run 37591545970](https://github.com/wsagency/wsurf/actions/runs/37591545970)
+  passed every gate on `568d8446f60f2dc1a07c447ab53571ac0d2363c6` in
+  **15m 4s**. The subsequent stage-seeding guard and diagnostic-only test change
+  passed `FullSuite-wave79.xcresult`: **3,016 passed, zero failed, 12 existing
+  disabled cases**, **851.11 s** wall time; no additional exclusions. Strict
+  lint passed, coverage was **51.36%** against **24.0%**, and all 12 actual
+  performance budgets passed. The same non-failing AppHandoff QoS warning
+  remains visible. A fresh CI run is required for these final source changes.
+- On the user's now-available Air, the actual old stage app created a local
+  `WSurf Migration Marker` page, Favorite and pin. After native Quit, its
+  consistent owned backup contained 12 tabs, one folder, 13 hierarchy items,
+  18 history pages and 24 visits. No production browsing data was copied.
+  Backup database SHA-256:
+  `2e96884c16791c7d4bde90a6db2c9da33c2a2aab3e52088adc148c368552a423`.
+- Initial upgraded-stage launch exposed a verification-harness defect:
+  `StageRun` always replaced restored data after its delayed sample seeding.
+  A DEBUG-only `WSURF_STAGE_SEED=0` opt-out preserves stage isolation and the
+  default demo behavior. Native **StageSeed-build77** passed strict lint and
+  whole-app build. Its complete copied/signed Air bundle retained the real
+  Favorite, pin and marker page through launch, Quit and relaunch; fresh
+  screenshots/AX confirmed them after the seeding deadline.
+- Actual rollback used a separate copy of the **pre-upgrade** backup, never
+  the upgraded database. **LegacyStage-build78** built exact old product/storage
+  source `4d33cb93ed22a92ffa2db0d5fc8109b5e4a78557` with its original package pins
+  and **only the same DEBUG sample-seeding opt-out**. This is an explicitly
+  adapted old-version verification harness, not the unchanged installed binary.
+  Its native Air launch displayed the restored marker/Favorite/pin.
+- Read-only comparison confirmed all old tab IDs, titles, Favorites/pins,
+  folder properties, hierarchy/order, history pages/visits and agent-table
+  contents in both upgraded and restored-old homes. Comparison accounts for
+  the existing old/new folder-ID remapping and native page-state reserialization.
+  `Downloads.json` remained byte-identical in all three homes, SHA-256
+  `31d8a97881d9e2c2af16124520ce6ec17cd72271ced627bc1cb4ec83a8cb726a`.
+  The new home has window tables; the old home retains the old schema.
+- Air native smoke verified `abc` → `ab` from exactly one trusted Backspace
+  despite consumed keyup in both WebKit and Chromium, first focus on the
+  animated WebKit login fixture, and actual HTTP-port favicon rendering.
+  The CEF helper rendered the same fixture with Chrome 154 and played the
+  owned silent audio fixture. Synced lyrics visibly advanced; pause, hide,
+  Back and Forward retained paused playback. No credentials were accessed.
+- Both native PDF viewers displayed the response filename
+  `Owned Stage Document.pdf` from a URL without a PDF extension. Chromium's
+  native Download saved into the selected owned stage home and appeared in the
+  shared-profile second window's Downloads list. Its Downloads header Back
+  action returned to the original Settings category. WebKit edited Save/Preview
+  and the rest of the window matrix are still being exercised.
+- The complete Air feature/window matrix and final clean-source/CI gate remain
+  open. PR #8 is still draft; nothing has been merged or deployed.
+

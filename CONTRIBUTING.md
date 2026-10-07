@@ -196,12 +196,20 @@ banners and region prompts on first use.
 1. Launch with `WSURF_STAGE=1`.
 2. Dismiss every banner on every staged tab.
 3. Add a model API key in Settings if a recording needs an agent turn.
-4. Quit. Your choices are saved in the stage data store for the next launch.
+4. Quit. Your choices are saved in the stage data store.
+5. Relaunch with `WSURF_STAGE=1 WSURF_STAGE_SEED=0` to retain the existing
+   session instead of replacing tabs, history and downloads with sample data.
 
 A stage run writes to its own support directory, its own website data store and
 its own preference domain. It cannot change the real installation’s history,
 cookies, tabs or settings. Delete `$TMPDIR/wsurf-stage` to reset it, or set
 `WSURF_STAGE_HOME` to keep more than one staged session.
+
+For migration and rollback checks, keep `WSURF_STAGE=1`, set an owned
+`WSURF_STAGE_HOME`, and set `WSURF_STAGE_SEED=0` before launching. Disabling
+sample seeding does not disable stage isolation. Restore a consistent
+pre-upgrade backup into a separate owned home for the old app; never open an
+upgraded database with the old version.
 
 ## Write commit messages
 

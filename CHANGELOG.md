@@ -21,8 +21,10 @@ release notes will be added above this provenance record.
   stdio. External-app decisions remain bound to live source documents; ambiguous
   or opaque sources receive only one-time consent. History clearing removes only
   the owning profile's conversation log, and link previews retain that profile's
-  JavaScript settings. See [the migration journal](docs/upstream-migrations.md)
-  for provenance and observed verification; this entry is not a deployment record.
+  JavaScript settings. Isolated stage verification can retain restored sessions
+  with `WSURF_STAGE_SEED=0` instead of replacing them with sample data.
+  See [the migration journal](docs/upstream-migrations.md) for provenance and
+  observed verification; this entry is not a deployment record.
 - Added repository-local omp worktree placement and documented feature-branch,
   PR-only changes to `main`.
 - Independent WSurf product, app/project/module and `io.wsagency.wsurf`
