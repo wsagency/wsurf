@@ -37,7 +37,7 @@ Integrated all 31 changes from the pinned upstream range through
 13. Measure result-ranking performance independently of WebKit page loading,
     retaining WSurf performance budgets.
 14. Restore saved scroll positions after late WebKit resets; stop restoration
-    when the user scrolls, the page moves itself or navigation ends.
+    when the user scrolls, the page moves itself or the document is left.
 15. Wait for extension test replies from the expected page instead of accepting
     unrelated responses.
 16. Keep headless automation fixtures active without changing production page
