@@ -2,7 +2,7 @@
 
 Date: 2026-10-08
 
-Status: Conversational contract approved, including WebKit/device/network limitations. This written specification awaits user review. Product implementation starts only after written-spec approval, implementation-plan review, and selection of an execution method.
+Status: Conversational contract approved, including WebKit/device/network limitations. The user additionally approved real hover, element-state waits, and element/region screenshots, and required checking existing MCP behavior on both engines. This revised written specification awaits user review. Product implementation starts only after written-spec approval, implementation-plan review, and selection of an execution method.
 
 ## Intent and agreed scope
 
@@ -14,6 +14,8 @@ The user accepted a deliberately narrower network view: bounded method, sanitize
 
 ### Required outcomes
 
+- Existing MCP operations have one public contract across WebKit and Chromium; repair adapter gaps before layering new development tools on them.
+- Real CSS hover, condition-based element waits, and element/region screenshots extend the existing tools rather than creating engine-specific alternatives.
 - Explicit native **Allow Development** consent, limited by existing tab/domain grants and website restrictions.
 - Actual, measured CSS viewport changes; screenshots and input geometry follow the same page layout.
 - Device profiles declare their required axes; all required axes are supported before any changes occur.
@@ -33,7 +35,7 @@ The user accepted a deliberately narrower network view: bounded method, sanitize
 
 ## Existing boundaries and integration
 
-Reuse `PageDriver` for MCP authorization and page operations, `PageRuntime` for DOM observations and references, and `BrowserPage` for engine-specific page behavior. Existing click/type/select/scroll/wait/screenshot tools remain the common interaction surface.
+Reuse `MCPBrowserSession` for connection authorization, `PageDriver` for shared page-operation policy and dispatch, `PageRuntime` for DOM observations and references, and `BrowserPage` for engine-specific page behavior. Existing click/type/select/scroll/wait/screenshot tools remain the common interaction surface.
 
 `WebViewContainer` currently derives and reapplies native frames from host layout. A one-time assignment to `BrowserPage.frame` will not implement persistent responsive sizing. Temporary viewport sizing must participate in that layout path, including page zoom, insets, split views, input coordinate conversion, and capture geometry.
 
@@ -50,6 +52,26 @@ WebKit script installation and message routing must respect shared content contr
 - Page/native presentation owns actual layout and reversible overrides. Engine adapters supply supported emulation and diagnostic sources through the existing page boundary.
 
 Use direct extensions of these boundaries. No new general-purpose automation framework or duplicate engine abstraction is needed. The engine session has not confirmed a shared implementation interface; this spec does not claim that coordination occurred or modify its worktree.
+
+### Cross-engine parity comes first
+
+The 2026-10-08 source review used the task branch updated from `origin/main` at `30069a1`, including the Linen migration. This review found adapter/result-contract risks, not a completed native parity test. In particular, the current batch form limit is 32 fields; do not reintroduce the earlier eight-field limit.
+
+| Existing tools | Required shared behavior and source-review findings |
+|---|---|
+| `requestAccess`, `listTabs`, `newTab`, `switchTab`, `closeTab` | Same tab/window/origin grant and private-page rules. These route through shared browser/session logic; that does not prove the page engine is ready after a tab transition. |
+| `readPage`, `clickOnPage`, `typeOnPage`, `selectOption`, `fillFields`, `inspectControl`, `setChecked`, `waitForPage`, `scrollPage` | Shared runtime through WebKit isolated-world evaluation or Chromium CDP isolated contexts. Verify actual DOM effects and observation freshness on both. Synthetic value/click events and inaccessible cross-origin frames are shared limitations, not evidence of a Chromium-only defect. |
+| `pressKey`, `hoverOnPage`, `screenshotPage` | Native implementations differ. Chromium key forwarding can return without delivery while the driver reports “Sent”; hover currently only dispatches DOM events on both engines; WebKit snapshots and Chromium CDP capture need common geometry and explicit failure outcomes. |
+| `navigate`, `goBack` | Preserve origin consent and report the actual navigation outcome. Chromium history refresh is asynchronous and suppresses fetch failure; stale cached history must not authorize a different current back destination. The shared back driver ignores a nil navigation result before reporting “Went back”. |
+
+Root-cause anchors: `PageNativeInput.swift` (`hover`, `pressKey`), `ChromiumPage.swift` (`becomeFirstResponder`, `sendKeyEvent`, `capture`, `refreshHistory`), `BrowserPage.swift` (native forwarding, history, capture), and `PageDriver.swift` (`goBack`). Do not fix each MCP caller separately or suppress failures. Confirm affected native behavior with fixtures, then repair the shared operation boundary and the deficient engine adapter.
+
+Native dispatch must expose whether it actually accepted/delivered an event; a dropped event is an error, not successful text. Accepted delivery does not prove a page-level effect: return a fresh observation, and acceptance fixtures must assert focus, key events, and resulting page state. Refresh and validate a trusted navigation target before authorizing history traversal; guard document/engine changes through the transition.
+
+The common baseline and the three approved tool upgrades are required on both engines. `getDevelopmentInfo` reports the actual engine/runtime and operation capabilities for the granted tab, with supported, limited, or unsupported status and a concrete reason where needed. Capability metadata is operational data, not a grant. Keep one stable public tool catalog; never switch engines silently or use “unsupported” to hide an unfinished common adapter. Legitimate differences remain explicit for advanced device axes and diagnostic coverage.
+
+Engine replacement invalidates observations, in-flight work, and capability snapshots even if the URL is unchanged. Engine-specific capability discovery must not weaken existing grant, frame, private-browsing, or action-consent checks.
+
 
 ## 1. Permission contract
 
@@ -81,6 +103,17 @@ Parameters retain existing tab ID and MCP error conventions. Results distinguish
 | `resetDevelopment(tabID)` | Stop capture, clear buffers, and remove only this connection's current overrides. An already-reset state is an explicit idempotent result; another client's state is never reset. |
 
 DOM reads need development consent but do not acquire an exclusive lease. Exclusive ownership covers development mutations, capture, and reading the owner's capture buffers. Existing permitted interactions are not a new global tab lock.
+
+### Extensions to existing tools
+
+Retain the existing permissions: hover requires control and an on-screen tab; waits and screenshots require read access. Development consent is still required when an operation uses an arbitrary DOM-inspection reference rather than an existing ordinary control reference.
+
+- `hoverOnPage(tabID, observationID, ref)` must use real engine pointer movement/hit-testing so CSS `:hover` can change. Reuse native input facilities behind `BrowserPage`, validate the observed target and its current geometry immediately before dispatch, and return a fresh observation. Do not substitute `dispatchEvent`, a CSS class, or forced styling. Offscreen, covered, detached, or denied targets fail explicitly. No claim that moving the pointer necessarily opened an application tooltip.
+- `waitForPage` retains existing conditions and adds `elementVisible`, `elementHidden`, and `elementEnabled`. These conditions use the existing `value` parameter as a bounded CSS selector. Require an unambiguous match; hidden also succeeds when no matching element remains. “Visible” uses shared rendered-element geometry/visibility rules, not absence of occlusion; “enabled” additionally checks disabled/inert/ARIA-disabled state. Preserve the bounded timeout and cancellation. Permission/document changes terminate the wait rather than matching a new unauthorized document; success returns a fresh observation. No arbitrary JavaScript predicate.
+- `screenshotPage` retains viewport capture by default and accepts either an element target (`observationID`, `ref`) or a viewport-relative CSS-pixel `region` (`x`, `y`, `width`, `height`), never both. Require finite coordinates, positive dimensions, and a nonempty area fully inside the current viewport; do not silently scroll, stitch, or change viewport. Offscreen elements are rejected so the client can explicitly scroll and obtain a fresh observation. Normalize CSS/view/backing-pixel geometry through the engine boundary, retain image-size budgets, and return capture bounds and scale. Keep the existing whole-page sensitive-field refusal before and after capture even for a crop; cropping must not bypass it. Invalid geometry, stale target, privacy denial, and native capture failure remain distinguishable.
+
+All three extensions use the same semantics on WebKit and Chromium. Their fixture cases and native input/capture proof are prerequisites for declaring baseline parity.
+
 
 ### Bounded inputs and output
 
@@ -176,6 +209,10 @@ This document describes acceptance work; no product implementation, native build
 
 Build/test the full app on Pro with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`, using an owned isolated source/build snapshot. Preserve Pro's established checkout/builds. Copy the result to an owned stage app on Air, using `WSURF_STAGE=1` and a separate `WSURF_STAGE_HOME`. Use a real external MCP client and fresh stage UI evidence.
 
+Stage isolation must include the MCP endpoint, not just browsing storage. Current `LocalMCPEndpoint.path` is `/tmp/wsurf-mcp-<uid>/browser.sock` regardless of `WSURF_STAGE_HOME`; a second app can conflict with, or a relay can connect to, the normal app. Runtime inspection on 2026-10-08 found the normal running WSurf process owning this socket and another task's stage app running. Neither was stopped, granted access, nor used for parity actions. Pro's Xcode 27.0/Swift 6.4 toolchain was reachable; no whole-app parity result is claimed from that check.
+
+Before a real MCP stage run, isolate the stage server and relay to the same owned endpoint derived from the stage home, preserving owner-only directory/socket permissions and lock checks. Keep the production endpoint unchanged. Stage preferences and website storage must also be task-scoped rather than shared with another stage; the current fixed stage preference suite is not adequate evidence of that isolation. This is verification infrastructure for the requested feature, not authorization to connect a probe to production tabs.
+
 Local fixture pages provide responsive breakpoints, ordinary/non-interactive elements, nested/open-shadow content, replaceable elements, secret fields, controlled console/error events, and successful/404/failed requests. Exercise actual behavior, not only capability strings or mocked event forwarding.
 
 Required scenarios:
@@ -188,6 +225,10 @@ Required scenarios:
 6. Exercise pagination, eviction, truncation, stale/foreign cursors, reload/document transition, and late old-generation events. Unknown HTTP data and coverage gaps stay explicit rather than becoming fake successes.
 7. Use two clients to prove ownership conflicts and buffer isolation. Reset/disconnect/revoke/profile/engine/tab teardown release capture and overrides. A subsequent manual zoom/layout/wrapper change is not overwritten by cleanup.
 8. With capture disabled, no diagnostic subscriptions/hooks remain active. Verify bounded memory under sustained events and absence of diagnostic disk/history persistence.
+9. Run every existing tool from the parity table against the same local fixture contract on WebKit and Chromium before testing the new development tools. Record app commit, actual engine/runtime, observed result, and failure reason; tool discovery, shared source code, or a capability flag alone is not a pass.
+10. For `pressKey`, check actual focus, delivered keydown/up, and resulting DOM state, including focus loss and missing native responder. For `goBack`, check completed destination, same-document history, absent history, and a changed/foreign-origin back destination; no false “Sent”/“Went back” result after a rejected operation.
+11. Open a CSS-only hover menu, wait for an asynchronously visible/enabled element and for removal, and capture a known element/region on each engine. Verify image bounds/content with zoom, scroll, insets and split panes; ambiguous selectors, stale observations, invalid/offscreen crops, sensitive fields, and navigation during capture must fail safely.
+12. Prove that stage relay discovery and actions reach only the owned stage server while the normal app remains running and untouched. Changing engine with an unchanged URL rejects old refs/capabilities and late operation results.
 
 Keep permanent tests for plausible consumer-visible permission, stale-reference, lifecycle, cursor, and bound violations. Use real stage smoke scenarios for native layout, engine axes, and coverage; source-text, copied-value, or mock-forwarding assertions are not substitutes. Update affected MCP documentation/schema examples with the implementation, without adding compatibility shims or a second convention.
 
