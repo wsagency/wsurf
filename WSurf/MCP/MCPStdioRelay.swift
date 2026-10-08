@@ -146,7 +146,7 @@ private actor MCPRelayInput: Transport {
                     guard message.count <= MCPMessageFramer.maximumBytes else {
                         throw MCPError.invalidRequest("Message is too large.")
                     }
-                    if case .dropped = continuation.yield(message) {
+                    if case .dropped = continuation.yield(MCPInitializationCompatibility.normalize(message)) {
                         throw MCPError.invalidRequest("Too many pending messages.")
                     }
                 }

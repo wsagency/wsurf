@@ -15,7 +15,7 @@ struct OpenAILiveValidationTests {
         let path = try #require(ProcessInfo.processInfo.environment["WSURF_OPENAI_LIVE_CONFIG"])
         let config = try OpenAIJSON.decode(Data(contentsOf: URL(fileURLWithPath: path)))
         let reportURL = URL(fileURLWithPath: try #require(config["report_path"].string))
-        let model = config["model"].string ?? LLMSettings.model(for: ProviderCatalog.openAI)
+        let model = config["model"].string ?? LLMSettings.current.model(for: ProviderCatalog.openAI)
         let key = ProcessInfo.processInfo.environment["WSURF_OPENAI_LIVE_KEY"] ?? CredentialStore.key(for: ProviderCatalog.openAI)
         let hostedOnly = config["hosted_only"].bool == true
         let requestLimit = hostedOnly ? 10 : (config["hosted_tools"].bool == true ? 32 : 20)

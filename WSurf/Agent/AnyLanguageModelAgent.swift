@@ -180,7 +180,7 @@ final class AnyLanguageModelAgent: AgentRunner {
     ) async -> Bool {
         var finalText = text
         if let reason = stop {
-            if !Task.isCancelled, reason != .contextLimit, finalText == nil {
+            if !Task.isCancelled, reason != .contextLimit, reason != .providerError, reason != .rateLimited, finalText == nil {
                 event("generation", [:])
                 finalText = try? await progressSummary(session, nativeState: nativeState, event: event)
             }
@@ -654,14 +654,7 @@ final class AnyLanguageModelAgent: AgentRunner {
     }
 
     static func isContextWindowError(_ error: any Error) -> Bool {
-        if let error = error as? LanguageModelSession.GenerationError,
-           case .exceededContextWindowSize = error {
-            return true
-        }
-        if let error = error as? OpenAIFailure {
-            return error.kind == .contextLimit
-        }
-        return SystemModelFailure.isContextOverflow(error)
+        AgentContextCompactor.isContextWindowError(error)
     }
 }
 

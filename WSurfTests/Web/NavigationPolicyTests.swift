@@ -109,11 +109,36 @@ struct NavigationPolicyTests {
 
     // MARK: - Links that leave the browser
 
-    @Test func aLinkForAnotherAppNeverNavigates() throws {
-        let (tab, delegate) = subject()
-        for address in ["mailto:someone@example.com", "tel:+15550100", "zoommtg://zoom.us/join?confno=1"] {
-            #expect(try decide(delegate, tab, action(address)) == .cancel, "\(address)")
+    @Test(arguments: ["mailto:someone@example.com", "tel:+15550100", "zoommtg://zoom.us/join?confno=1"])
+    func aLinkForAnotherAppNeverNavigates(address: String) async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<title>Source page</title><a id='external'>Open app</a>"),
+        ])
+        let source = try server.url()
+        let tab = BrowserTab(opensBlank: false)
+        var requestedURL: URL?
+        var requestedOrigin: String?
+        ExternalApp.requestObserverForTesting = { url, origin in
+            requestedURL = url
+            requestedOrigin = origin
         }
+        defer {
+            ExternalApp.requestObserverForTesting = nil
+            tab.detach()
+            withExtendedLifetime(server) {}
+        }
+        tab.load(source)
+        try #require(await settled(tab, at: source))
+        _ = try await tab.page.callAsyncJavaScript(
+            "const link = document.getElementById('external'); link.href = address; link.click();",
+            arguments: ["address": address], in: nil, contentWorld: .page
+        )
+        try #require(await waitUntil { requestedURL != nil })
+        #expect(requestedURL == URL(string: address))
+        #expect(requestedOrigin == SitePermissions.origin(for: source))
+        #expect(tab.page.url == source)
+        #expect(tab.title == "Source page")
+        #expect(!tab.page.canGoBack)
     }
 
     @Test func theSchemesThePageIsAllowedToDriveItselfWith() throws {

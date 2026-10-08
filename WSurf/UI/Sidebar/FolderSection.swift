@@ -67,7 +67,7 @@ struct FolderSection: View {
         let rows = browser.rows(in: folder)
         let audible = audibleTab
         let showsOutline = folder.isExpanded && !rows.isEmpty
-        VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: context.coordinator.settings)) {
+        VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
             HStack(spacing: 7) {
                 Image(systemName: audible == nil
                     ? (folder.isExpanded ? "folder" : "folder.fill")
@@ -82,8 +82,8 @@ struct FolderSection: View {
                     renameField
                 } else if sidebarStyle == .full {
                     Text(verbatim: folder.name)
-                        .font(context.coordinator.settings.sidebarFont)
-                        .foregroundStyle(context.coordinator.settings.sidebarTextColor(scheme: colorScheme))
+                        .font(BrowserSettings.application.sidebarFont)
+                        .foregroundStyle(BrowserSettings.application.sidebarTextColor(scheme: colorScheme))
                         .lineLimit(1)
                 }
 
@@ -106,7 +106,7 @@ struct FolderSection: View {
                     }
 
                     countBadge(rows.count)
-                        .font(context.coordinator.settings.sidebarFont)
+                        .font(BrowserSettings.application.sidebarFont)
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1.5)
@@ -115,7 +115,7 @@ struct FolderSection: View {
             }
             .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: SidebarMetrics.rowHeight(settings: context.coordinator.settings))
+            .frame(height: SidebarMetrics.rowHeight(settings: BrowserSettings.application))
             .sidebarRowSelectionEffect(
                 isSelected: isSelected,
                 isHovering: hovering,
@@ -177,12 +177,12 @@ struct FolderSection: View {
                 let shape = RoundedRectangle(cornerRadius: outlineRadius, style: .continuous)
                 shape
                     .fill(folder.color.tint.opacity(
-                        Self.fillOpacity * context.coordinator.settings.sidebarFolderTint
+                        Self.fillOpacity * BrowserSettings.application.sidebarFolderTint
                     ))
                     .overlay {
                         shape.strokeBorder(
                             folder.color.tint.opacity(
-                                Self.edgeOpacity * context.coordinator.settings.sidebarFolderTint
+                                Self.edgeOpacity * BrowserSettings.application.sidebarFolderTint
                             ),
                             lineWidth: 1
                         )
@@ -201,7 +201,7 @@ struct FolderSection: View {
     private var renameField: some View {
         SidebarFolderNameField(
             text: $draftName,
-            fontSize: context.coordinator.settings.sidebarFontSize,
+            fontSize: BrowserSettings.application.sidebarFontSize,
             onCommit: commitRename,
             onCancel: cancelRename
         )

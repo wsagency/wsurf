@@ -56,11 +56,13 @@ struct StartPageSnapshot {
         downloads: [DownloadManager.Item],
         tasks: [ConversationLog.TaskTrace],
         hiddenFrequentHosts: Set<String>,
+        settings: BrowserSettings,
         calendar: Calendar = .current
     ) {
         frequentSites = Self.frequentSites(
             from: historyVisits,
             hiddenHosts: hiddenFrequentHosts,
+            settings: settings,
             calendar: calendar
         )
         recentHistory = Array(historyEntries.prefix(6))
@@ -111,6 +113,7 @@ struct StartPageSnapshot {
     static func frequentSites(
         from visits: [HistoryStore.VisitedPage],
         hiddenHosts: Set<String>,
+        settings: BrowserSettings,
         calendar: Calendar = .current
     ) -> [StartPageSite] {
         var statistics: [String: SiteTally] = [:]
@@ -126,7 +129,7 @@ struct StartPageSnapshot {
                 domain = cached
             } else {
                 domain = SiteName.domain(forHost: host)
-                guard !hiddenHosts.contains(domain), !SearchEngineHosts.isSearchEngine(host) else {
+                guard !hiddenHosts.contains(domain), !SearchEngineHosts.isSearchEngine(host, settings: settings) else {
                     excludedHosts.insert(host)
                     continue
                 }

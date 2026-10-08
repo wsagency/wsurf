@@ -18,7 +18,7 @@ struct AssistantComposerToolbar: View {
 
     private var contextModel: String {
         contextProvider.id == coordinator.selectedProvider.id
-            ? coordinator.selectedModel : LLMSettings.model(for: contextProvider)
+            ? coordinator.selectedModel : coordinator.modelSettings.model(for: contextProvider)
     }
 
     private var modelLabel: String {

@@ -42,12 +42,17 @@ struct CommandPalette: View {
                 onMoveSelection: model.moveSelection,
                 onMoveSection: model.moveSection,
                 onChipsChange: model.mentionsDidChange,
-                onDismiss: model.dismiss
+                onDismiss: model.dismiss,
+                searchSite: model.searchSite,
+                suggestedSite: model.suggestedSite,
+                onActivateSite: model.activateSiteSearch,
+                onRemoveSite: model.removeSearchSite
             )
             .frame(height: CommandPaletteLayout.fieldHeight)
 
             CommandPaletteResultsView(
                 sections: model.sections,
+                settings: model.coordinator.context.settings,
                 query: model.resultQuery,
                 selection: model.interaction.selection,
                 optionHeld: optionHeld,
@@ -60,7 +65,9 @@ struct CommandPalette: View {
             AskContextStrip(pages: model.contextPages)
         }
         .frame(width: layout.panelWidth)
-        .glassEffect(.regular, in: .rect(cornerRadius: Theme.Radius.panel, style: .continuous))
+        .background {
+            CommandPaletteGlass(referenceHeight: CommandPaletteLayout.fieldHeight + layout.maxListHeight)
+        }
         .shadow(color: .black.opacity(0.4), radius: 44, y: 18)
         .padding(.top, layout.topInset)
         .onAppear {
@@ -92,6 +99,10 @@ struct CommandPalette: View {
     private func watchForShortcuts(model: CommandPaletteModel) {
         guard shortcutMonitor == nil else { return }
         shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+            guard MainActor.assumeIsolated({
+                guard let window = model.coordinator.nativeWindow else { return false }
+                return window.isKeyWindow && event.window === window
+            }) else { return event }
             if event.type == .flagsChanged {
                 MainActor.assumeIsolated {
                     optionHeld = CommandPaletteShortcutPolicy.showsCurrentTab(modifiers: event.modifierFlags)
@@ -103,7 +114,7 @@ struct CommandPalette: View {
                 MainActor.assumeIsolated { model.submitInCurrentTab() }
                 return nil
             }
-            if CommandPaletteShortcutPolicy.shouldDismiss(modifiers: event.modifierFlags, key: key) {
+            if CommandPaletteShortcutPolicy.shouldDismiss(event) {
                 MainActor.assumeIsolated { model.dismiss() }
             }
             return event

@@ -294,7 +294,7 @@ struct ExtensionShimRuntimeTests {
         configuration.websiteDataStore = .nonPersistent()
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.loadHTMLString("<!doctype html><title>Shim test</title>", baseURL: nil)
-        try #require(await PageSettle.untilIdle(BrowserPage(webKit: view), timeout: .seconds(20)))
+        try #require(await PageSettle.untilIdle(BrowserPage(webKit: view, context: BrowserProfileContext(profile: .privateBrowsing())), timeout: .seconds(20)))
         let result = try await view.callAsyncJavaScript(
             setup + "\n" + ExtensionShims.source + "\n" + body,
             arguments: [:], in: nil, contentWorld: .page

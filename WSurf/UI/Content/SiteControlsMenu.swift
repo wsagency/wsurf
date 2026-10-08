@@ -61,7 +61,7 @@ private struct SiteControlsPanel: View {
     }
 
     private var blockableHost: String? {
-        guard BrowserSettings.shared.blocksTrackers,
+        guard tab.context.settings.blocksTrackers,
               let host = URL(string: tab.urlString)?.host(),
               !host.isEmpty
         else { return nil }
@@ -275,7 +275,7 @@ private struct SiteHandlingSection: View {
                 }
             }
 
-            if BrowserSettings.shared.sleepsInactiveTabs, !siteOrigin.isEmpty {
+            if BrowserSettings.application.sleepsInactiveTabs, !siteOrigin.isEmpty {
                 SiteControlRow(symbol: "bolt", title: "Keep Website Loaded") {
                     SiteControlToggle(
                         isOn: browser.keepsActive(tab),
@@ -311,7 +311,7 @@ private struct SiteMediaSection: View {
                 }
             }
 
-            if BrowserSettings.shared.automaticPictureInPicture {
+            if BrowserSettings.application.automaticPictureInPicture {
                 SiteControlRow(symbol: "pip", title: "Auto Picture in Picture") {
                     SiteControlToggle(
                         isOn: browser.allowsAutomaticPicture(tab),
@@ -343,9 +343,9 @@ private struct SiteSafetySection: View {
                         TrackerInfoButton(tab: tab, host: blockableHost)
 
                         SiteControlToggle(
-                            isOn: !ContentBlocker.shared.isExempt(blockableHost),
+                            isOn: !tab.context.contentBlocker.isExempt(blockableHost),
                             set: { blocks in
-                                ContentBlocker.shared.setExempt(!blocks, for: blockableHost)
+                                tab.context.contentBlocker.setExempt(!blocks, for: blockableHost)
                                 tab.page.reload()
                             }
                         )
@@ -444,7 +444,7 @@ private struct TrackerInfoButton: View {
     @State private var isPresented = false
 
     private var isBlocking: Bool {
-        !ContentBlocker.shared.isExempt(host)
+        !tab.context.contentBlocker.isExempt(host)
     }
 
     var body: some View {

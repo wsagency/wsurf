@@ -35,7 +35,7 @@ struct SidebarSplitRow: View {
     }
 
     private var lineHeight: CGFloat {
-        SidebarMetrics.rowHeight(settings: coordinator.settings)
+        SidebarMetrics.rowHeight(settings: BrowserSettings.application)
     }
 
     private var isLifted: Bool {
@@ -73,7 +73,7 @@ struct SidebarSplitRow: View {
 
     private var height: CGFloat {
         lineCount > 1
-            ? lineHeight * CGFloat(lineCount) + SidebarMetrics.rowVerticalSpacing(settings: coordinator.settings) * CGFloat(lineCount - 1)
+            ? lineHeight * CGFloat(lineCount) + SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application) * CGFloat(lineCount - 1)
             : lineHeight
     }
 
@@ -86,7 +86,7 @@ struct SidebarSplitRow: View {
             let layout = SplitLayout(
                 grid: shape,
                 size: proxy.size,
-                gutter: SidebarMetrics.rowVerticalSpacing(settings: coordinator.settings)
+                gutter: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)
             )
             ZStack(alignment: .topLeading) {
                 ForEach(split.tabs, id: \.self) { id in
@@ -277,7 +277,7 @@ private struct SplitRowCell: View {
                     browser.returnToPin(tab)
                 }
             } else {
-                TabIcon(tab: tab, tint: coordinator.settings.sidebarTextColor(
+                TabIcon(tab: tab, tint: BrowserSettings.application.sidebarTextColor(
                     isDeferred: tab.isDeferred,
                     scheme: windowColorScheme
                 ))
@@ -291,8 +291,8 @@ private struct SplitRowCell: View {
 
             if sidebarStyle == .full, !isNarrow {
                 Text(verbatim: tab.title)
-                    .font(coordinator.settings.sidebarFont)
-                    .foregroundStyle(coordinator.settings.sidebarTextColor(
+                    .font(BrowserSettings.application.sidebarFont)
+                    .foregroundStyle(BrowserSettings.application.sidebarTextColor(
                         isDeferred: tab.isDeferred,
                         scheme: windowColorScheme
                     ))

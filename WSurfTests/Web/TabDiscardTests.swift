@@ -208,11 +208,11 @@ struct TabDiscardTests {
     /// Critical means the app is about to be killed, so recency stops earning
     /// anything.
     @Test func criticalPressureTakesEveryBackgroundTab() {
-        let previousSleepSetting = BrowserSettings.shared.sleepsInactiveTabs
-        BrowserSettings.shared.sleepsInactiveTabs = true
-        defer { BrowserSettings.shared.sleepsInactiveTabs = previousSleepSetting }
-
         let model = makeModel()
+        let previousSleepSetting = model.context.settings.sleepsInactiveTabs
+        model.context.settings.sleepsInactiveTabs = true
+        defer { model.context.settings.sleepsInactiveTabs = previousSleepSetting }
+
         let first = model.newTab(url: URL(string: "https://example.com/1"))
         let second = model.newTab(url: URL(string: "https://example.com/2"))
         let active = model.newTab(url: URL(string: "https://example.com/3"))

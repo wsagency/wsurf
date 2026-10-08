@@ -15,11 +15,9 @@ import WebKit
 @Suite(.boundedWebViews)
 struct PageSavingTests {
     private func page(title: String?, at address: String?) async -> BrowserPage {
-        let webView = WKWebView(
-            frame: NSRect(x: 0, y: 0, width: 300, height: 200),
-            configuration: WebViewPool.makeConfiguration()
-        )
-        let page = BrowserPage(webKit: webView)
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let webView = context.webViewPool.makeColdView()
+        let page = BrowserPage(webKit: webView, context: context)
         let head = title.map { "<title>\($0)</title>" } ?? ""
         if let address, let url = URL(string: address) {
             webView.loadHTMLString("<!doctype html>\(head)<body>hi</body>", baseURL: url)

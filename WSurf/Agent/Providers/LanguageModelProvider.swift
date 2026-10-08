@@ -136,10 +136,12 @@ private struct AnyLanguageModelProvider: ModelProvider {
         log: ConversationLog
     ) -> any AgentRunner {
         let reasoningEffort = ReasoningCatalog.resolve(reasoningEffort, for: configuration, model: model)
-        let window = ContextWindow.tokens(for: configuration, model: model)
+        let settings = LLMSettings.current
+        let window = ContextWindow.tokens(for: configuration, model: model, settings: settings)
         let toolIDs = AgentToolCatalog.resolvedIDs(
             for: configuration,
-            tier: ContextBudget.toolTier(forWindow: window)
+            tier: ContextBudget.toolTier(forWindow: window),
+            settings: settings
         )
         let budget = ContextBudget.resolve(
             windowTokens: window,
@@ -173,8 +175,8 @@ private struct AnyLanguageModelProvider: ModelProvider {
             options: runtime.options,
             answerOptions: runtime.answerOptions,
             budget: budget,
-            acceptsImages: ModelImageSupport.acceptsImages(for: configuration, model: model),
-            onImageInputUnsupported: { ModelImageSupport.record(false, for: configuration, model: model) },
+            acceptsImages: ModelImageSupport.acceptsImages(for: configuration, model: model, settings: settings),
+            onImageInputUnsupported: { ModelImageSupport.record(false, for: configuration, model: model, settings: settings) },
             enabledToolIDs: toolIDs,
             toolkit: toolkit,
             log: log
@@ -187,8 +189,9 @@ private struct AnyLanguageModelProvider: ModelProvider {
             let client = OpenAIResponsesClient(endpoint: endpoint, apiKey: credentials.key(for: configuration) ?? "", model: model)
             return OpenAIUtilityModel(client: client, maxTokens: 4_096)
         }
+        let settings = LLMSettings.current
         let budget = ContextBudget.resolve(
-            windowTokens: ContextWindow.tokens(for: configuration, model: model),
+            windowTokens: ContextWindow.tokens(for: configuration, model: model, settings: settings),
             desiredResponseTokens: LanguageModelRuntimeFactory.desiredResponseTokens(
                 for: .low,
                 adapter: configuration.adapter
@@ -446,5 +449,3 @@ protocol ProviderCatalogProtocol: AnyObject {
     func save(_ provider: Provider)
     func remove(_ provider: Provider)
 }
-
-extension ProviderCatalog: ProviderCatalogProtocol {}

@@ -32,6 +32,7 @@ struct ProfileHandoffTests {
         #expect(tab.isClosed)
         #expect(tab.onNavigationFinished == nil)
         #expect(tab.onDownload == nil)
+        #expect(tab.onSaveDocument == nil)
         #expect(webKit.navigationDelegate == nil)
         #expect(webKit.uiDelegate == nil)
     }

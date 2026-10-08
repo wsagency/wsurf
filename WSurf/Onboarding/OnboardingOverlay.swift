@@ -71,8 +71,8 @@ enum OnboardingUI {
     private static func applyModelChoice(model: OnboardingModel, coordinator: AppCoordinator) {
         switch model.modelChoice {
         case .onDevice:
-            LLMSettings.providerID = ProviderCatalog.appleOnDevice.id
-            coordinator.configureEngines()
+            coordinator.modelSettings.providerID = ProviderCatalog.appleOnDevice.id
+            coordinator.reloadAssistantConfiguration()
         case .remote:
             coordinator.openSettings(.provider)
         }

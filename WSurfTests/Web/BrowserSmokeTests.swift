@@ -227,8 +227,10 @@ struct BrowserSmokeTests {
 
         let library = ExtensionLibrary(baseDirectory: directory)
         library.recordInstall(id: id)
-        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions("ExtensionSmoke"))
-        let manager = ExtensionManager(browser: browser, library: library)
+        let browser = BrowserModel(database: .temporary())
+        let manager = ExtensionManager(profile: .original(), library: library)
+        manager.register(browser: browser)
+        defer { manager.unregister(browser: browser) }
 
         await manager.start()
         #expect(manager.installed.first?.displayName == "Smoke Extension")

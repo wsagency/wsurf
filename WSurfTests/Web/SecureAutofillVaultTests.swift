@@ -37,41 +37,42 @@ nonisolated final class MemoryAutofillStorage: AutofillSecureStorage {
 struct SecureAutofillVaultTests {
     @Test func passwordFillAuthenticationReusesOnlyTheSamePageAndOriginForFiveMinutes() async throws {
         let cache = PasswordFillAuthenticationCache()
-        let view = BrowserPage(webKit: WKWebView())
-        let profileID = UUID()
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let otherContext = BrowserProfileContext(profile: .privateBrowsing())
+        let view = BrowserPage(webKit: WKWebView(), context: context)
+        let otherView = BrowserPage(webKit: WKWebView(), context: otherContext)
         let start = Date(timeIntervalSince1970: 1_000)
         var created = 0
-        func session(_ documentID: String, _ origin: String, _ profile: UUID, _ now: Date) async throws -> AutofillAuthenticationSession {
-            try await cache.session(for: view, profileID: profile, documentID: documentID, origin: origin, now: now) {
+        func session(_ page: BrowserPage, _ documentID: String, _ origin: String, _ now: Date) async throws -> AutofillAuthenticationSession {
+            try await cache.session(for: page, contextID: page.context.contextID, documentID: documentID, origin: origin, now: now) {
                 created += 1
                 return AutofillAuthenticationSession(service: "test", reason: "Test")
             }
         }
 
-        let first = try await session("page-1", "https://example.test", profileID, start)
-        let authenticated = try await session("page-1", "https://example.test", profileID, start)
+        let first = try await session(view, "page-1", "https://example.test", start)
+        let authenticated = try await session(view, "page-1", "https://example.test", start)
         #expect(authenticated !== first)
         cache.markAuthenticated(authenticated, in: view, now: start)
-        #expect(try await session("page-1", "https://example.test", profileID, start.addingTimeInterval(299)) === authenticated)
+        #expect(try await session(view, "page-1", "https://example.test", start.addingTimeInterval(299)) === authenticated)
         cache.markAuthenticated(authenticated, in: view, now: start.addingTimeInterval(299))
-        let timedOut = try await session("page-1", "https://example.test", profileID, start.addingTimeInterval(300))
+        let timedOut = try await session(view, "page-1", "https://example.test", start.addingTimeInterval(300))
         #expect(timedOut !== authenticated)
-        let otherOrigin = try await session("page-1", "https://other.test", profileID, start)
+        let otherOrigin = try await session(view, "page-1", "https://other.test", start)
         #expect(otherOrigin !== timedOut)
         cache.markAuthenticated(otherOrigin, in: view, now: start)
-        let otherPage = try await session("page-2", "https://other.test", profileID, start)
+        let otherPage = try await session(otherView, "page-2", "https://other.test", start)
         #expect(otherPage !== otherOrigin)
-        cache.markAuthenticated(otherPage, in: view, now: start)
-        let otherProfileID = UUID()
-        let otherProfile = try await session("page-2", "https://other.test", otherProfileID, start)
-        #expect(otherProfile !== otherPage)
-        cache.markAuthenticated(otherProfile, in: view, now: start)
-        let expired = try await session("page-2", "https://other.test", otherProfileID, start.addingTimeInterval(300))
-        #expect(expired !== otherProfile)
-        cache.markAuthenticated(expired, in: view, now: start)
+        cache.markAuthenticated(otherPage, in: otherView, now: start)
+        let otherContextSession = try await session(otherView, "page-2", "https://other.test", start)
+        #expect(otherContextSession === otherPage)
+        cache.markAuthenticated(otherPage, in: otherView, now: start)
+        let expired = try await session(otherView, "page-2", "https://other.test", start.addingTimeInterval(300))
+        #expect(expired !== otherContextSession)
+        cache.markAuthenticated(expired, in: otherView, now: start)
         cache.clear()
-        #expect(try await session("page-2", "https://other.test", otherProfileID, start) !== expired)
-        #expect(created == 8)
+        #expect(try await session(otherView, "page-2", "https://other.test", start) !== expired)
+        #expect(created == 7)
     }
 
     @Test func passwordsStayInSecureStorageAndAreIsolatedByProfile() async throws {

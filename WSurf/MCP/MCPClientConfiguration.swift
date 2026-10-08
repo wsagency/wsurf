@@ -66,11 +66,10 @@ enum MCPClientDiscovery {
             NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)
         }
         let appRoots = [URL(fileURLWithPath: "/Applications"), home.appending(path: "Applications")]
-        let bundled = (codexApps + appRoots.flatMap { root in
+        let applications = codexApps + appRoots.flatMap { root in
             [root.appending(path: "Codex.app"), root.appending(path: "ChatGPT.app")]
-        }).map { $0.appending(path: "Contents/Resources/codex") }
-        let codex = executable(named: "codex", home: home, environment: environment)
-            ?? bundled.first { FileManager.default.isExecutableFile(atPath: $0.path) }
+        }
+        let codex = codexExecutable(home: home, environment: environment, applications: applications)
 
         return MCPClientKind.allCases.map { kind in
             let url = kind.configurationURL(home: home, environment: environment)
@@ -94,7 +93,24 @@ enum MCPClientDiscovery {
         }
     }
 
-    private static func executable(named name: String, home: URL, environment: [String: String]) -> URL? {
+    nonisolated static func codexExecutable(home: URL, environment: [String: String], applications: [URL]) -> URL? {
+        executable(named: "codex", home: home, environment: environment)
+            ?? bundledCodexExecutable(in: applications)
+    }
+
+    nonisolated static func bundledCodexExecutable(in applications: [URL]) -> URL? {
+        for application in applications {
+            for path in ["Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "Contents/Resources/codex"] {
+                let candidate = application.appending(path: path)
+                if FileManager.default.isExecutableFile(atPath: candidate.path) {
+                    return candidate
+                }
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func executable(named name: String, home: URL, environment: [String: String]) -> URL? {
         let paths = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
             + [home.appending(path: ".local/bin").path, home.appending(path: ".npm-global/bin").path,
                "/opt/homebrew/bin", "/usr/local/bin", ]

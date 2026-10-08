@@ -331,6 +331,8 @@ struct SiteNameTests {
 /// real destination.
 @MainActor
 struct SearchEngineHostTests {
+    private let settings = BrowserSettings(defaults: UserDefaults(suiteName: "SearchEngineHostTests.\(UUID())")!)
+
     @Test(arguments: [
         "duckduckgo.com",
         "html.duckduckgo.com",
@@ -340,7 +342,7 @@ struct SearchEngineHostTests {
         "google.co.uk",
     ])
     func recognisesASearchBox(_ host: String) {
-        #expect(SearchEngineHosts.isSearchEngine(host))
+        #expect(SearchEngineHosts.isSearchEngine(host, settings: settings))
     }
 
     /// Google is a domain that does everything; only its search host counts.
@@ -351,7 +353,7 @@ struct SearchEngineHostTests {
         "news.ycombinator.com",
     ])
     func leavesDestinationsAlone(_ host: String) {
-        #expect(!SearchEngineHosts.isSearchEngine(host))
+        #expect(!SearchEngineHosts.isSearchEngine(host, settings: settings))
     }
 }
 

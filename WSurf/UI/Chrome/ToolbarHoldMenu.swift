@@ -50,7 +50,7 @@ enum NavigationHoldMenu {
         guard !items.isEmpty else { return nil }
         let menu = NSMenu()
         for item in items.prefix(maximumEntries) {
-            menu.addItem(title: label(for: item), image: icon(for: item)) { [weak tab] in
+            menu.addItem(title: label(for: item), image: icon(for: item, favicons: coordinator.context.favicons)) { [weak tab] in
                 tab?.page.go(to: item)
             }
         }
@@ -69,7 +69,7 @@ enum NavigationHoldMenu {
             return "\(page.title) — \(String(localized: category.title))"
         }
         if SystemPages.isStart(item.url) {
-            return BrowserTab.placeholderTitle
+            return SystemPages.startTitle
         }
         var title = item.title ?? ""
         if title.isEmpty {
@@ -79,7 +79,7 @@ enum NavigationHoldMenu {
         return title.prefix(maximumTitleLength).trimmingCharacters(in: .whitespaces) + "…"
     }
 
-    private static func icon(for item: PageHistoryItem) -> NSImage? {
+    private static func icon(for item: PageHistoryItem, favicons: FaviconLoader) -> NSImage? {
         if let page = BrowserTab.InternalPage(url: item.url) {
             return symbol(page.symbol)
         }
@@ -87,7 +87,7 @@ enum NavigationHoldMenu {
             return symbol(SystemPages.startSymbol)
         }
         guard let host = item.url.host(),
-              let cached = FaviconLoader.shared.cached(for: host),
+              let cached = favicons.cached(for: host),
               let sized = cached.copy() as? NSImage
         else { return symbol("globe") }
         sized.size = NSSize(width: 16, height: 16)

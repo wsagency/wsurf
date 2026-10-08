@@ -13,10 +13,10 @@ import WebKit
 @Suite(.serialized, .boundedWebViews)
 struct PageComputerInputTests {
     private func page(_ html: String) async -> (BrowserPage, NSWindow) {
-        let config = WebViewPool.makeConfiguration()
+        let config = interactiveWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 500, height: 400), configuration: config)
-        let page = BrowserPage(webKit: view)
+        let page = BrowserPage(webKit: view, context: BrowserProfileContext(profile: .privateBrowsing()))
         let foreground = ProcessInfo.processInfo.environment["WSURF_COMPUTER_FOREGROUND_TEST"] == "1"
         let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400),
                               styleMask: foreground ? [.titled, .closable] : [.borderless], backing: .buffered, defer: false)
@@ -204,6 +204,10 @@ struct PageComputerInputTests {
                            frame: PageComputerFrame, in view: BrowserPage) async throws {
         _ = try await view.evaluateJavaScript("window.keys=[]")
         try await PageDriver.computerAction(["type": "keypress", "keys": .array(keys.map(OpenAIJSON.string))], frame: frame, in: view)
+        try #require(await waitUntil {
+            let count = try? await view.evaluateJavaScript("window.keys.length") as? Int
+            return (count ?? 0) >= 2
+        })
         let events = try #require(try await view.evaluateJavaScript("window.keys") as? [[String: Any]])
         #expect(events.compactMap { $0["type"] as? String } == ["keydown", "keyup"])
         for event in events {
@@ -252,6 +256,44 @@ struct PageComputerInputTests {
         #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "Replacemen")
     }
 
+    @Test func keypressAcknowledgesKeyDownWhenPageConsumesKeyUp() async throws {
+        let (view, window) = await page("""
+            <input aria-label='Query' value='abc'><script>
+              const input = document.querySelector('input');
+              input.focus();
+              input.setSelectionRange(3, 3);
+              window.downs = 0;
+              input.addEventListener('keydown', event => { if (event.isTrusted) window.downs++; });
+              window.addEventListener('keyup', event => event.stopImmediatePropagation(), true);
+            </script>
+            """)
+        defer { window.close() }
+        let (frame, _) = try await PageDriver.computerFrame(in: view)
+        try await PageDriver.computerAction(["type": "keypress", "keys": ["BACKSPACE"]], frame: frame, in: view)
+        #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "ab")
+        #expect(try await view.evaluateJavaScript("window.downs") as? Int == 1)
+    }
+
+    @Test func syntheticKeyDownCannotAcknowledgeNativeDelivery() async throws {
+        let (view, window) = await page("""
+            <input aria-label='Query' value='abc'><script>
+              const input = document.querySelector('input');
+              input.focus(); input.setSelectionRange(3, 3);
+              window.addEventListener('keydown', event => {
+                if (!event.isTrusted) return;
+                event.preventDefault(); event.stopImmediatePropagation();
+                input.dispatchEvent(new KeyboardEvent('keydown', {key:'Backspace', code:'Backspace', bubbles:true}));
+              }, true);
+            </script>
+            """)
+        defer { window.close() }
+        let (frame, _) = try await PageDriver.computerFrame(in: view)
+        await #expect(throws: PageComputerFailure.unverified) {
+            try await PageDriver.computerAction(["type": "keypress", "keys": ["BACKSPACE"]], frame: frame, in: view)
+        }
+        #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "abc")
+    }
+
     @Test func chromiumNativeTextAndSelectAllReachOnlyThePage() async throws {
         let server = try await HTTPFixtureServer.start(routes: [
             "/": .html("""
@@ -263,7 +305,7 @@ struct PageComputerInputTests {
                 """),
         ])
         let foreground = ProcessInfo.processInfo.environment["WSURF_COMPUTER_FOREGROUND_TEST"] == "1"
-        let view = BrowserPage(chromium: ChromiumPage(profile: .privateBrowsing()))
+        let view = BrowserPage(chromium: ChromiumPage(context: BrowserProfileContext(profile: .privateBrowsing())))
         let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400),
                               styleMask: foreground ? [.titled, .closable] : [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -295,6 +337,23 @@ struct PageComputerInputTests {
                 try await PageDriver.computerAction(["type": "keypress", "keys": ["CMD", "V"]], frame: frame, in: view)
             }
             #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "Replacement")
+            _ = try await view.evaluateJavaScript("""
+                const input = document.querySelector('input');
+                input.value = 'abc'; input.focus(); input.setSelectionRange(3, 3);
+                window.downs = 0;
+                input.addEventListener('keydown', event => { if (event.isTrusted) window.downs++; });
+                window.addEventListener('keyup', event => event.stopImmediatePropagation(), true);
+                """)
+            try await PageDriver.computerAction(["type": "keypress", "keys": ["BACKSPACE"]], frame: frame, in: view)
+            #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "ab")
+            #expect(try await view.evaluateJavaScript("window.downs") as? Int == 1)
+            for keys: [OpenAIJSON] in [["F99"], ["CMD", "V"], ["CTRL", "L"]] {
+                await #expect(throws: PageComputerFailure.self) {
+                    try await PageDriver.computerAction(["type": "keypress", "keys": .array(keys)], frame: frame, in: view)
+                }
+            }
+            #expect(try await view.evaluateJavaScript("window.downs") as? Int == 1)
+            #expect(try await view.evaluateJavaScript("document.querySelector('input').value") as? String == "ab")
         } catch {
             failure = error
         }
@@ -341,6 +400,10 @@ struct PageComputerInputTests {
         for modifier: OpenAIJSON in ["CMD", "CTRL"] {
             _ = try await view.evaluateJavaScript("window.keys=[]")
             try await PageDriver.computerAction(["type": "keypress", "keys": [modifier, "A"]], frame: frame, in: view)
+            try #require(await waitUntil {
+                let count = try? await view.evaluateJavaScript("window.keys.length") as? Int
+                return (count ?? 0) >= 2
+            })
             #expect(try await view.evaluateJavaScript("JSON.stringify(window.keys)") as? String
                     == "[[\"keydown\",\"a\",\"KeyA\",true,false,true],[\"keyup\",\"a\",\"KeyA\",true,false,true]]")
             #expect(try await view.evaluateJavaScript("input.selectionStart===2&&input.selectionEnd===2&&input.value==='Original'") as? Bool == true)
@@ -445,7 +508,7 @@ struct PageComputerInputTests {
         _ = try await view.evaluateJavaScript("document.querySelector('input').focus()")
         let (frame, _) = try await PageDriver.computerFrame(in: view)
         var confirmations = 0
-        try await AgentActionConsent.$decisionForTesting.withValue(.init { _, _, _ in
+        try await AgentActionConsent.$decisionForTesting.withValue(.init { _, _, _, _ in
             confirmations += 1
             return .decline
         }) {
@@ -517,7 +580,7 @@ struct PageComputerInputTests {
         let (view, window) = await page("<button style='position:absolute;left:20px;top:20px;width:120px;height:40px' onclick='window.sent=true'>Send message</button><input>")
         defer { window.close() }
         let (frame, _) = try await PageDriver.computerFrame(in: view)
-        await AgentActionConsent.$decisionForTesting.withValue(.init { _, _, _ in .decline }) {
+        await AgentActionConsent.$decisionForTesting.withValue(.init { _, _, _, _ in .decline }) {
             await #expect(throws: PageComputerFailure.self) {
                 try await PageDriver.computerAction(point(60, 40, frame: frame), frame: frame, in: view)
             }

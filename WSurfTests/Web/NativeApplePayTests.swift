@@ -22,9 +22,8 @@ struct NativeApplePayTests {
         settings.fillsPaymentCards = false
         let restored = BrowserSettings(defaults: app, sessionDefaults: work)
         #expect(!restored.fillsPaymentCards)
-        settings.useSessionDefaults(personal)
-        #expect(settings.fillsPaymentCards)
-        settings.useSessionDefaults(work)
+        let personalSettings = BrowserSettings(defaults: app, sessionDefaults: personal)
+        #expect(personalSettings.fillsPaymentCards)
         #expect(!settings.fillsPaymentCards)
     }
 
@@ -38,7 +37,7 @@ struct NativeApplePayTests {
             NativeApplePay.apply(to: configuration.preferences)
             let page = BrowserPage(
                 webKit: WKWebView(frame: .zero, configuration: configuration),
-                profile: Profile.privateBrowsing()
+                context: BrowserProfileContext(profile: .privateBrowsing())
             )
             page.loadHTMLString("<!doctype html><p>Payment capability test</p>", baseURL: URL(string: "https://checkout.example/"))
             #expect(await PageSettle.untilIdle(page, timeout: .seconds(20)))

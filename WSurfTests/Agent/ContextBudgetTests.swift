@@ -82,42 +82,39 @@ struct ContextBudgetTests {
 @Suite(.serialized)
 struct ContextWindowOverrideTests {
     @Test func discoveredLimitsAreScopedToTheModelAndEndpoint() {
-        let previous = LLMSettings.defaults
         let suiteName = UUID().uuidString
         let defaults = UserDefaults(suiteName: suiteName)!
-        LLMSettings.defaults = defaults
-        defer {
-            defaults.removePersistentDomain(forName: suiteName)
-            LLMSettings.defaults = previous
-        }
-        var provider = ProviderCatalog.openAI
-        #expect(ContextWindow.resolve(for: provider, model: "gpt-6-luna").source == .fallback)
-        #expect(ContextWindow.resolve(for: provider, model: "gpt-6-sol").source == .fallback)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = LLMSettings(defaults: defaults)
 
-        LLMSettings.setDiscoveredContextWindow(500_000, for: provider, model: "gpt-6-luna")
-        #expect(ContextWindow.resolve(for: provider, model: "gpt-6-luna").source == .discovered)
-        #expect(ContextWindow.tokens(for: provider, model: "gpt-6-luna") == 500_000)
-        #expect(ContextWindow.resolve(for: provider, model: "gpt-6-sol").source == .fallback)
-        let cacheKey = "llm.discoveredContextWindow.\(provider.id).\(provider.baseURL!.absoluteString).gpt-6-luna.checkedAt"
-        defaults.set(Date().timeIntervalSince1970 - 86_401, forKey: cacheKey)
-        #expect(ContextWindow.resolve(for: provider, model: "gpt-6-luna").source == .fallback)
-        LLMSettings.setDiscoveredContextWindow(500_000, for: provider, model: "gpt-6-luna")
-        LLMSettings.setContextWindow(250_000, for: provider)
-        #expect(ContextWindow.tokens(for: provider, model: "gpt-6-luna") == 250_000)
-        #expect(ContextWindow.resolve(for: provider, model: "gpt-6-luna").source == .configured)
-        LLMSettings.setContextWindow(nil, for: provider)
-        provider.baseURL = URL(string: "https://example.com/v1")
-        #expect(ContextWindow.resolve(for: provider, model: "gpt-6-luna").source == .fallback)
+        LLMSettings.$scoped.withValue(settings) {
+            var provider = ProviderCatalog.openAI
+            #expect(ContextWindow.resolve(for: provider, model: "gpt-6-luna").source == .fallback)
+            #expect(ContextWindow.resolve(for: provider, model: "gpt-6-sol").source == .fallback)
+
+            settings.setDiscoveredContextWindow(500_000, for: provider, model: "gpt-6-luna")
+            #expect(ContextWindow.resolve(for: provider, model: "gpt-6-luna").source == .discovered)
+            #expect(ContextWindow.tokens(for: provider, model: "gpt-6-luna") == 500_000)
+            #expect(ContextWindow.resolve(for: provider, model: "gpt-6-sol").source == .fallback)
+            let cacheKey = "llm.discoveredContextWindow.\(provider.id).\(provider.baseURL!.absoluteString).gpt-6-luna.checkedAt"
+            defaults.set(Date().timeIntervalSince1970 - 86_401, forKey: cacheKey)
+            #expect(ContextWindow.resolve(for: provider, model: "gpt-6-luna").source == .fallback)
+            settings.setDiscoveredContextWindow(500_000, for: provider, model: "gpt-6-luna")
+            settings.setContextWindow(250_000, for: provider)
+            #expect(ContextWindow.tokens(for: provider, model: "gpt-6-luna") == 250_000)
+            #expect(ContextWindow.resolve(for: provider, model: "gpt-6-luna").source == .configured)
+            settings.setContextWindow(nil, for: provider)
+            provider.baseURL = URL(string: "https://example.com/v1")
+            #expect(ContextWindow.resolve(for: provider, model: "gpt-6-luna").source == .fallback)
+        }
     }
 
     @Test func aStoredOverrideWinsOverTheDefaultWindow() {
-        let previous = LLMSettings.defaults
-        let suiteName = "context-window-override-tests"
-        let defaults = UserDefaults(suiteName: suiteName)
-        defaults?.removePersistentDomain(forName: suiteName)
-        LLMSettings.defaults = defaults ?? .standard
-        defer { LLMSettings.defaults = previous }
-
+        let suiteName = "context-window-override-tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = LLMSettings(defaults: defaults)
         let local = Provider(
             id: "override-test",
             name: "Override Test",
@@ -129,23 +126,25 @@ struct ContextWindowOverrideTests {
             isLocal: true
         )
 
-        #expect(ContextWindow.tokens(for: local, model: "qwen3.5") == 4_096)
+        LLMSettings.$scoped.withValue(settings) {
+            #expect(ContextWindow.tokens(for: local, model: "qwen3.5") == 4_096)
 
-        LLMSettings.setDiscoveredContextWindow(16_384, for: local, model: "qwen3.5")
-        #expect(ContextWindow.tokens(for: local, model: "qwen3.5") == 16_384)
-        #expect(ContextWindow.tokens(for: local, model: "other-model") == 4_096)
+            settings.setDiscoveredContextWindow(16_384, for: local, model: "qwen3.5")
+            #expect(ContextWindow.tokens(for: local, model: "qwen3.5") == 16_384)
+            #expect(ContextWindow.tokens(for: local, model: "other-model") == 4_096)
 
-        LLMSettings.setContextWindow(32_768, for: local)
-        #expect(ContextWindow.tokens(for: local, model: "qwen3.5") == 32_768)
-        #expect(
-            ContextBudget.resolve(
-                windowTokens: ContextWindow.tokens(for: local, model: "qwen3.5"),
-                desiredResponseTokens: 2_000
-            ).instructionTier == .full
-        )
+            settings.setContextWindow(32_768, for: local)
+            #expect(ContextWindow.tokens(for: local, model: "qwen3.5") == 32_768)
+            #expect(
+                ContextBudget.resolve(
+                    windowTokens: ContextWindow.tokens(for: local, model: "qwen3.5"),
+                    desiredResponseTokens: 2_000
+                ).instructionTier == .full
+            )
 
-        LLMSettings.setContextWindow(nil, for: local)
-        LLMSettings.setDiscoveredContextWindow(nil, for: local, model: "qwen3.5")
-        #expect(ContextWindow.tokens(for: local, model: "qwen3.5") == 4_096)
+            settings.setContextWindow(nil, for: local)
+            settings.setDiscoveredContextWindow(nil, for: local, model: "qwen3.5")
+            #expect(ContextWindow.tokens(for: local, model: "qwen3.5") == 4_096)
+        }
     }
 }

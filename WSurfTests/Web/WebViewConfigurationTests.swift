@@ -42,19 +42,16 @@ struct WebViewConfigurationTests {
         #expect(second.defaultWebpagePreferences.allowsContentJavaScript)
     }
 
-    @Test(.boundedWebViews) func theLinkPreviewLeavesEveryTabsSettingsAlone() {
-        let settings = BrowserSettings.shared
-        let wasEnabled = settings.javaScriptEnabled
-        settings.javaScriptEnabled = false
-        defer { settings.javaScriptEnabled = wasEnabled }
+    @Test(.boundedWebViews) func theLinkPreviewUsesItsInitiatingContextSettings() async throws {
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        context.settings.javaScriptEnabled = false
 
-        let tab = WebViewPool.shared.makeColdView()
-        _ = LinkPeekLoader.configuration()
+        let tab = context.webViewPool.makeColdView()
+        let configuration = LinkPeekLoader.configuration(context: context)
 
-        #expect(
-            !tab.configuration.defaultWebpagePreferences.allowsContentJavaScript,
-            "the tab keeps the setting it was built with"
-        )
+        #expect(!tab.configuration.defaultWebpagePreferences.allowsContentJavaScript)
+        #expect(!configuration.defaultWebpagePreferences.allowsContentJavaScript)
+        #expect(!configuration.websiteDataStore.isPersistent)
     }
 
     /// A user script belongs to the page it was put in. The copy shares its
@@ -74,8 +71,9 @@ struct WebViewConfigurationTests {
     }
 
     @Test(.boundedWebViews) func aBuiltViewKeepsItsOwnPreferences() {
-        let first = WebViewPool.shared.makeColdView()
-        let second = WebViewPool.shared.makeColdView()
+        let pool = BrowserProfileContext.shared(for: .original()).webViewPool
+        let first = pool.makeColdView()
+        let second = pool.makeColdView()
 
         #expect(first.configuration.preferences !== second.configuration.preferences)
     }

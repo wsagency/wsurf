@@ -22,8 +22,7 @@ struct PrivacySettings: View {
     var body: some View {
         if showingWebsiteData {
             WebsiteDataPage(
-                profile: coordinator.profiles.current,
-                store: BrowsingData.store,
+                context: coordinator.context,
                 onBack: { showingWebsiteData = false }
             )
         } else {
@@ -105,16 +104,15 @@ struct PrivacySettings: View {
             .disabled((siteCount ?? 0) == 0)
             .settingsAnchor("privacy.storage")
         }
-        .task(id: coordinator.profiles.current.id) {
+        .task(id: coordinator.context.contextID) {
             siteCount = nil
-            let profile = coordinator.profiles.current
-            let store = BrowsingData.store
+            let context = coordinator.context
             do {
-                let count = try await BrowsingData.siteCount(profile: profile, store: store)
-                guard coordinator.profiles.current.id == profile.id else { return }
+                let count = try await BrowsingData.siteCount(context: context)
+                guard coordinator.context.contextID == context.contextID else { return }
                 siteCount = count
             } catch {
-                guard coordinator.profiles.current.id == profile.id else { return }
+                guard coordinator.context.contextID == context.contextID else { return }
                 siteCount = nil
                 self.error = error.localizedDescription
             }
@@ -147,11 +145,14 @@ struct PrivacySettings: View {
     }
 
     private func clear() async {
-        guard let choice = await ConfirmAlert.clear(.privacy()) else { return }
-        let profile = coordinator.profiles.current
-        let store = BrowsingData.store
-        let history = coordinator.browser.history
+        let context = coordinator.context
         let tabs = coordinator.browser.tabs
+        guard let owner = context.extensions.adapter(for: coordinator.browser),
+              let window = owner.nativeWindow, context.isRegistered(coordinator.browser),
+              let choice = await ConfirmAlert.clear(.privacy(), in: window),
+              coordinator.context === context, context.isRegistered(coordinator.browser),
+              context.extensions.adapter(for: coordinator.browser) === owner,
+              owner.nativeWindow === window else { return }
         isClearing = true
         cleared = false
         defer { isClearing = false }
@@ -159,17 +160,15 @@ struct PrivacySettings: View {
             try await BrowsingData.clear(
                 choice.kinds,
                 range: choice.range,
-                history: history,
-                agent: coordinator.conversationLog,
+                history: context.history,
                 tabs: tabs,
-                profile: profile,
-                store: store
+                context: context
             )
-            guard coordinator.profiles.current.id == profile.id else { return }
-            siteCount = try await BrowsingData.siteCount(profile: profile, store: store)
+            guard coordinator.context.contextID == context.contextID else { return }
+            siteCount = try await BrowsingData.siteCount(context: context)
             cleared = true
         } catch {
-            guard coordinator.profiles.current.id == profile.id else { return }
+            guard coordinator.context.contextID == context.contextID else { return }
             self.error = error.localizedDescription
         }
     }

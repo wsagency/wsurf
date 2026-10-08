@@ -17,7 +17,9 @@ enum MediaScript {
       let video = null;
       let gestureAttempts = 0;
       let muteAll = false;
-      const attached = new WeakSet();
+      let scanTimer = null;
+      let pendingScan = null;
+      let pageHidden = false;
       function media() {
         return Array.prototype.slice.call(document.querySelectorAll('video, audio'));
       }
@@ -195,6 +197,7 @@ enum MediaScript {
           sendState();
           reportAudio();
           reportVideo();
+          updatePolling();
           return;
         }
         const video = primary();
@@ -341,8 +344,8 @@ enum MediaScript {
         if (!found.__wsurfBound) {
           found.__wsurfBound = true;
           if (muteAll) { found.muted = true; }
-          ['play', 'pause', 'timeupdate', 'volumechange', 'durationchange', 'seeked', 'ended']
-            .forEach(function (name) { found.addEventListener(name, sendState); });
+          ['play', 'pause', 'timeupdate', 'volumechange', 'durationchange', 'seeked', 'ended', 'loadedmetadata', 'emptied', 'resize']
+            .forEach(function (name) { found.addEventListener(name, mediaChanged); });
           ['play', 'pause', 'ended', 'emptied', 'volumechange']
             .forEach(function (name) { found.addEventListener(name, reportAudio); });
           found.addEventListener('volumechange', function () {
@@ -359,25 +362,36 @@ enum MediaScript {
         sendState();
         reportAudio();
       }
+      function mediaChanged(event) {
+        sendState();
+        if (!pageHidden && !document.hidden) { sendMeta(); }
+        if (['loadedmetadata', 'emptied', 'resize'].includes(event.type)) { reportVideo(); }
+        if (['play', 'pause', 'ended', 'emptied'].includes(event.type)) { updatePolling(); }
+      }
       function allowPiP(v) {
         if (v.disablePictureInPicture) { v.disablePictureInPicture = false; }
         if (v.hasAttribute('disablepictureinpicture')) {
           v.removeAttribute('disablepictureinpicture');
         }
       }
-      function mainVideo() {
+      function mainVideo(visible) {
         let best = null;
         let bestScore = 0;
         Array.prototype.forEach.call(document.querySelectorAll('video'), function (v) {
-          const box = v.getBoundingClientRect();
-          let score = Math.max(box.width * box.height, 1);
+          let score = 1;
+          if (visible) {
+            const box = v.getBoundingClientRect();
+            score = Math.max(box.width * box.height, 1);
+          }
           if (!v.paused && !v.ended) { score *= 4; }
           if (score > bestScore) { bestScore = score; best = v; }
         });
         return best;
       }
       function scan() {
-        const main = mainVideo();
+        if (pageHidden) { return; }
+        const visible = !document.hidden;
+        const main = mainVideo(visible);
         if (main && main !== video) {
           forgetDuration();
           bind(main, true);
@@ -386,18 +400,77 @@ enum MediaScript {
           if (m.tagName === 'VIDEO') { allowPiP(m); }
           if (!m.__wsurfBound) { bind(m, false); }
         });
-        sendMeta();
+        if (visible) { sendMeta(); reportRect(); }
         reportAudio();
         reportVideo();
-        reportRect();
+        updatePolling();
       }
+      // Poll only visible playback; mutations and geometry events cover idle pages.
+      function updatePolling() {
+        const needsPolling = !pageHidden && !document.hidden && media().some(function (m) {
+          return !m.paused && !m.ended;
+        });
+        if (needsPolling && scanTimer === null) { scanTimer = setInterval(scan, 500); }
+        else if (!needsPolling && scanTimer !== null) {
+          clearInterval(scanTimer);
+          scanTimer = null;
+        }
+      }
+      function scheduleScan(includeHidden) {
+        if (pageHidden || (document.hidden && includeHidden !== true) || pendingScan !== null) { return; }
+        pendingScan = setTimeout(function () {
+          pendingScan = null;
+          scan();
+        }, 80);
+      }
+      const relevant = 'video,audio,iframe,meta,link,title';
+      function containsRelevant(node, selector) {
+        return node.nodeType === 1 && (node.matches(selector) || node.querySelector(selector) !== null);
+      }
+      const changes = new MutationObserver(function (records) {
+        const selector = document.hidden ? 'video,audio' : relevant;
+        const needsScan = records.some(function (record) {
+          if (record.type === 'attributes') { return record.target.matches(selector); }
+          if (record.target.nodeType === 1 && record.target.matches('title')) { return !document.hidden; }
+          if (record.type === 'characterData') { return !document.hidden && record.target.parentElement?.matches('title'); }
+          if (record.type === 'childList' && !document.hidden && video && video.isConnected) { return true; }
+          return Array.from(record.addedNodes).some(node => containsRelevant(node, selector)) ||
+            Array.from(record.removedNodes).some(node => containsRelevant(node, selector));
+        });
+        if (needsScan) { scheduleScan(true); }
+      });
+      function observeChanges() {
+        changes.observe(document.documentElement || document, {
+          childList: true, subtree: true, characterData: true, attributes: true,
+          attributeFilter: ['src', 'poster', 'content', 'href', 'rel', 'style', 'class', 'disablepictureinpicture']
+        });
+      }
+      addEventListener('load', scheduleScan, { once: true });
+      document.addEventListener('scroll', scheduleScan, { capture: true, passive: true });
+      window.addEventListener('resize', scheduleScan);
+      document.addEventListener('visibilitychange', function () {
+        updatePolling();
+        if (!document.hidden) { scheduleScan(); }
+        else {
+          if (pendingScan !== null) { clearTimeout(pendingScan); pendingScan = null; }
+          scan();
+        }
+      });
+      window.addEventListener('pagehide', function () {
+        pageHidden = true;
+        changes.disconnect();
+        updatePolling();
+        if (pendingScan !== null) { clearTimeout(pendingScan); pendingScan = null; }
+      });
+      window.addEventListener('pageshow', function () {
+        if (!pageHidden) { return; }
+        pageHidden = false;
+        observeChanges();
+        scheduleScan();
+      });
       if (window === window.top) { post('hello'); }
       scan();
-      const rescan = () => scan();
-      addEventListener('load', rescan, { once: true });
-      addEventListener('resize', rescan, { passive: true });
-      const observer = new MutationObserver(rescan);
-      observer.observe(document.documentElement || document, { childList: true, subtree: true });
+      observeChanges();
     })();
     """
 }

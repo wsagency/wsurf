@@ -3,11 +3,9 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import SwiftUI
-import WebKit
 
 struct WebsiteDataPage: View {
-    let profile: Profile
-    let store: WKWebsiteDataStore
+    let context: BrowserProfileContext
     let onBack: () -> Void
 
     @State private var entries: [WebsiteData.Entry] = []
@@ -16,6 +14,7 @@ struct WebsiteDataPage: View {
     @State private var removingEntry: WebsiteData.Entry?
     @State private var confirmingRemoveAll = false
     @State private var error: String?
+    @State private var activeContextID: UUID?
     @FocusState private var searchFocused: Bool
 
     private var shown: [WebsiteData.Entry] {
@@ -79,7 +78,8 @@ struct WebsiteDataPage: View {
                 }
             }
         })
-        .task(id: profile.id) {
+        .task(id: context.contextID) {
+            activeContextID = context.contextID
             isLoading = true
             entries = []
             await reload()
@@ -132,39 +132,41 @@ struct WebsiteDataPage: View {
     }
 
     private func reload() async {
-        guard ProfileStore.shared.current.id == profile.id else { return }
+        let contextID = context.contextID
         do {
-            let loaded = try await WebsiteData.entries(in: store, profile: profile)
-            guard ProfileStore.shared.current.id == profile.id else { return }
+            let loaded = try await WebsiteData.entries(context: context)
+            guard activeContextID == contextID else { return }
             entries = loaded
         } catch {
-            guard ProfileStore.shared.current.id == profile.id else { return }
+            guard activeContextID == contextID else { return }
             self.error = error.localizedDescription
         }
-        if ProfileStore.shared.current.id == profile.id {
+        if activeContextID == contextID {
             isLoading = false
         }
     }
 
     private func remove(_ selected: Set<WebsiteData.Entry>) async {
+        let contextID = context.contextID
         do {
-            try await WebsiteData.remove(selected, from: store, profile: profile)
-            guard ProfileStore.shared.current.id == profile.id else { return }
+            try await WebsiteData.remove(selected, context: context)
+            guard activeContextID == contextID else { return }
             removingEntry = nil
             await reload()
         } catch {
-            guard ProfileStore.shared.current.id == profile.id else { return }
+            guard activeContextID == contextID else { return }
             self.error = error.localizedDescription
         }
     }
 
     private func removeAll() async {
+        let contextID = context.contextID
         do {
-            try await WebsiteData.removeAll(from: store, profile: profile)
-            guard ProfileStore.shared.current.id == profile.id else { return }
+            try await WebsiteData.removeAll(context: context)
+            guard activeContextID == contextID else { return }
             await reload()
         } catch {
-            guard ProfileStore.shared.current.id == profile.id else { return }
+            guard activeContextID == contextID else { return }
             self.error = error.localizedDescription
         }
     }

@@ -33,7 +33,7 @@ extension BrowserTab {
 
     var isZoomed: Bool {
         _ = zoomChanges
-        return abs(page.pageZoom - BrowserSettings.shared.pageZoom) > 0.005
+        return abs(page.pageZoom - context.settings.pageZoom) > 0.005
             || abs(page.magnification - 1) > 0.005
     }
 
@@ -47,7 +47,7 @@ extension BrowserTab {
 
     func resetZoom() {
         page.magnification = 1
-        page.pageZoom = BrowserSettings.shared.pageZoom
+        page.pageZoom = context.settings.pageZoom
         zoomDidChange()
     }
 
@@ -72,16 +72,32 @@ extension BrowserTab {
         """
         (() => {
           const target = \(y);
-          if (window.scrollY > 1) return;
+          if (window.scrollY > 1 && Math.abs(window.scrollY - target) > 1) return;
           let expected = window.scrollY;
           let tries = 20;
-          const step = () => {
-            if (Math.abs(window.scrollY - expected) > 1) return;
-            window.scrollTo(0, target);
-            expected = window.scrollY;
-            if (Math.abs(expected - target) <= 1 || --tries <= 0) return;
-            setTimeout(step, 60);
+          let timer;
+          const events = ['wheel', 'keydown', 'pointerdown', 'touchstart', 'pagehide'];
+          const stop = () => {
+            clearTimeout(timer);
+            for (const event of events) removeEventListener(event, stop, true);
           };
+          const step = () => {
+            // A process swap can reset to zero after didFinish, even after a
+            // successful scrollTo. Keep watching briefly, but yield to input
+            // or a page choosing another nonzero position.
+            if (window.scrollY > 1 && Math.abs(window.scrollY - expected) > 1) {
+              stop();
+              return;
+            }
+            if (Math.abs(window.scrollY - target) > 1) window.scrollTo(0, target);
+            expected = window.scrollY;
+            if (--tries <= 0) {
+              stop();
+              return;
+            }
+            timer = setTimeout(step, 60);
+          };
+          for (const event of events) addEventListener(event, stop, { capture: true, passive: true });
           step();
         })();
         """

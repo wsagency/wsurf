@@ -12,13 +12,15 @@ import Testing
 @Suite(.serialized)
 struct AnyLanguageModelAgentTests {
     @Test(arguments: [false, true])
-    func visualProgressUsesScreenshotContent(changing: Bool) async throws {
+    func visualProgressUsesResolvedDocumentNotScreenshot(changingDocument: Bool) async throws {
         let state = HarnessToolState()
         let fixture = HarnessFixture(
             Array(repeating: .calls(["clickAtPoint"]), count: 8) + [.text("Finished the pages.")], state: state
         )
         state.output = { index in
-            fixture.agent.toolkit.setComputerScreenshot(Data("screenshot-\(changing ? index : 0)".utf8))
+            fixture.agent.toolkit.setComputerScreenshot(Data("screenshot-\(index)".utf8))
+            fixture.agent.toolkit.visualProgressPage = fixture.tabID.uuidString
+            fixture.agent.toolkit.visualProgressDocument = changingDocument ? "document-\(index)" : "same-document"
             return "CONTROL: Browser action completed. Updated screenshot captured."
         }
         defer { state.output = { "Observed state \($0)" } }
@@ -26,9 +28,9 @@ struct AnyLanguageModelAgentTests {
         await fixture.run("Go through the pages")
 
         let trace = try #require(fixture.log.latestTrace(forTab: fixture.tabID))
-        #expect(state.calls == (changing ? 8 : 6))
-        #expect(trace.stopReason == (changing ? nil : .noProgress))
-        #expect(trace.state == (changing ? .completed : .paused))
+        #expect(state.calls == (changingDocument ? 8 : 6))
+        #expect(trace.stopReason == (changingDocument ? nil : .noProgress))
+        #expect(trace.state == (changingDocument ? .completed : .paused))
     }
 
     @Test func successfulAnswerCompletesTheTraceBeforeCoordinatorCleanup() async throws {
