@@ -35,8 +35,16 @@ final class AutofillSubmissionTracker {
     }
     enum NavigationKind { case linkActivated, backForward, reload, formSubmitted, formResubmitted, other }
     private struct Attempt {
-        let id: UUID; let documentID: String; let formID: String; let origin: String; let candidates: [AutofillSaveCandidate]; let frame: BrowserFrame
-        let created = Date.now; var completionDocumentID: String?; var completionObservedAt: Date?
+        let id: UUID
+        let context: BrowserProfileContext
+        let documentID: String
+        let formID: String
+        let origin: String
+        let candidates: [AutofillSaveCandidate]
+        let frame: BrowserFrame
+        let created = Date.now
+        var completionDocumentID: String?
+        var completionObservedAt: Date?
     }
     private weak var session: AutofillSaveSession?
     private var attempts: [UUID: Attempt] = [:]
@@ -94,7 +102,8 @@ final class AutofillSubmissionTracker {
     }
 
     func stage(id: UUID, documentID: String, formID: String, origin: String, candidates: [AutofillSaveCandidate], frame: BrowserFrame, source: String) {
-        guard !candidates.isEmpty, ["submit", "interaction", "automatic", "pagehide"].contains(source) else { return }
+        guard let context = session?.context, !candidates.isEmpty,
+              ["submit", "interaction", "automatic", "pagehide"].contains(source) else { return }
         if source == "pagehide" { guard let date = formDepartures[origin], Date.now.timeIntervalSince(date) < 5 else { return } }
         attempts = attempts.filter { $0.value.documentID != documentID || $0.value.formID != formID }
         if attempts.count >= 12, let oldest = attempts.values.min(by: { $0.created < $1.created }) {
@@ -106,7 +115,7 @@ final class AutofillSubmissionTracker {
         }
         let pending = source == "submit" ? candidates.filter { $0.kind != .contact } : candidates
         guard !pending.isEmpty else { return }
-        attempts[id] = Attempt(id: id, documentID: documentID, formID: formID, origin: origin, candidates: pending, frame: frame)
+        attempts[id] = Attempt(id: id, context: context, documentID: documentID, formID: formID, origin: origin, candidates: pending, frame: frame)
         AutofillDiagnostics.note(.submissionPending, kind: candidates[0].kind); startPolling()
     }
     func discard(id: UUID, documentID: String, formID: String) {
@@ -120,7 +129,7 @@ final class AutofillSubmissionTracker {
     }
     private func finish(_ attempt: Attempt) {
         attempts[attempt.id] = nil
-        guard let session else { return }
+        guard let session, session.context === attempt.context, session.page?.context === attempt.context else { return }
         AutofillDiagnostics.note(.submissionCompleted, kind: attempt.candidates[0].kind)
         session.receive(attempt.candidates, origin: attempt.origin, documentID: attempt.documentID)
     }
@@ -143,15 +152,25 @@ final class AutofillSubmissionTracker {
     }
     private func inspectTransitions(generation: Int) async {
         attempts = attempts.filter { Date.now.timeIntervalSince($0.value.created) < 120 }
-        guard let page = session?.page, !page.isLoading, page.window != nil, !page.isHiddenOrHasHiddenAncestor, page.hasOnlySecureContent,
+        guard let session, let page = session.page, session.context === page.context,
+              !page.isLoading, page.window != nil, !page.isHiddenOrHasHiddenAncestor, page.hasOnlySecureContent,
               let topURL = page.url, SavedPassword.origin(for: topURL) != nil else { return }
         for attempt in Array(attempts.values) {
-            if let chromium = page.chromium, (try? await chromium.isLive(frame: attempt.frame)) != true {
+            guard attempt.context === page.context, session.context === attempt.context else {
                 attempts[attempt.id] = nil
                 continue
             }
+            if let chromium = page.chromium {
+                let live = (try? await chromium.isLive(frame: attempt.frame)) == true
+                guard generation == self.generation, session.context === attempt.context, page.context === attempt.context else { return }
+                if !live {
+                    attempts[attempt.id] = nil
+                    continue
+                }
+            }
             let value = try? await page.callAsyncJavaScript("return globalThis.__wsurfAutofillForms?.summary();", arguments: [:], in: attempt.frame, contentWorld: AutofillPage.world)
-            guard generation == self.generation, attempts[attempt.id] != nil, page.url == topURL, !page.isLoading else { return }
+            guard generation == self.generation, session.context === attempt.context, page.context === attempt.context,
+                  attempts[attempt.id] != nil, page.url == topURL, !page.isLoading else { return }
             let state = PageState(value)
             if let state, state.documentID == attempt.documentID {
                 continue
@@ -159,11 +178,13 @@ final class AutofillSubmissionTracker {
             if attempt.frame.isMainFrame && state == nil {
                 continue
             }
-            guard let pages = await AutofillSaveCoordinator.shared.pageStates(in: page), let main = pages.first, pages.allSatisfy(\.ready),
+            guard let pages = await AutofillSaveCoordinator.shared.pageStates(in: page), session.context === attempt.context,
+                  page.context === attempt.context, let main = pages.first, pages.allSatisfy(\.ready),
                   !pages.contains(where: { $0.documentID == attempt.documentID }), attempt.candidates.allSatisfy({ candidate in !pages.contains { $0.stillContains(candidate.kind) } }) else {
                 attempts[attempt.id]?.completionDocumentID = nil; attempts[attempt.id]?.completionObservedAt = nil; continue
             }
-            guard generation == self.generation, attempts[attempt.id] != nil, page.url == topURL, !page.isLoading, page.hasOnlySecureContent else { return }
+            guard generation == self.generation, attempts[attempt.id] != nil, session.context === attempt.context,
+                  page.context === attempt.context, page.url == topURL, !page.isLoading, page.hasOnlySecureContent else { return }
             let completionID = state?.documentID ?? main.documentID
             if let recorded = attempts[attempt.id], recorded.completionDocumentID == completionID,
                let first = recorded.completionObservedAt, Date.now.timeIntervalSince(first) >= 1 {

@@ -66,10 +66,11 @@ private struct OptionPickerLabel: View {
 struct SiteIcon: View {
     let host: String
     var size: CGFloat = 16
+    @Environment(\.profileFavicons) private var profileFavicons
 
     var body: some View {
         Group {
-            if let favicon = FaviconLoader.shared.cached(for: host) {
+            if let favicon = profileFavicons?.cached(for: host) {
                 Image(nsImage: favicon)
                     .resizable()
                     .interpolation(.high)

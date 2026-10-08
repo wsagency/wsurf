@@ -102,7 +102,7 @@ extension AgentToolkit {
             guard let target, await PageFrameRegistry.shared.isLive(target, in: view),
                   let access = embeddedAccess(for: target.url, in: view) else { return "Frame unavailable. List frames again." }
             let capability: AssistantPageCapability = readOnly ? .read : .control
-            guard await access.authorize(capability) else { return access.denialMessage(for: capability) }
+            guard await access.authorize(capability, in: view) else { return access.denialMessage(for: capability) }
             guard await PageFrameRegistry.shared.isLive(target, in: view), let parent = PageAutomationGuard.current,
                   parent.validate() else { return PageDriver.staleMessage }
             let guardScope = PageAutomationGuard(documentURL: target.url.absoluteString, snapshot: nil) {

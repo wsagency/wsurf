@@ -185,19 +185,14 @@ enum BrowsingData {
         _ kinds: Set<Kind>,
         range: Range,
         history: HistoryStore,
-        agent: ConversationLog? = nil,
         tabs: [BrowserTab] = [],
-        profile: Profile,
-        store: WKWebsiteDataStore
+        context: BrowserProfileContext
     ) async throws {
         try ChromiumRuntime.shared.preflightClearData(
-            profile: profile,
+            context: context,
             kinds: kinds,
             since: range.since
         )
-        guard ChromiumRuntime.shared.currentProfile.id == profile.id else {
-            throw ChromiumError.unavailable(String(localized: "The profile changed before its browsing data could be cleared."))
-        }
 
         if kinds.contains(.history) {
             if range == .everything {
@@ -205,11 +200,11 @@ enum BrowsingData {
             } else {
                 history.removeEntries(since: range.since)
             }
-            agent?.clearAll()
+            context.conversationLog.clearAll()
         }
 
         if kinds.contains(.cookies) {
-            SitePermissions.shared.removeEverything()
+            context.sitePermissions.removeEverything()
             for tab in tabs {
                 tab.permissions.siteDataCleared()
                 tab.assistantAccess.siteDataCleared()
@@ -217,45 +212,33 @@ enum BrowsingData {
         }
 
         if kinds.contains(.cache) {
-            FaviconLoader.shared.clear(modifiedSince: range.since)
+            context.favicons.clear(modifiedSince: range.since)
         }
 
         let types = kinds.reduce(into: Set<String>()) { $0.formUnion($1.dataTypes) }
         if !types.isEmpty {
-            await store.removeData(ofTypes: types, modifiedSince: range.since)
+            await context.dataStore.removeData(ofTypes: types, modifiedSince: range.since)
         }
-        try await ChromiumRuntime.shared.clearData(profile: profile, kinds: kinds, since: range.since)
+        try await ChromiumRuntime.shared.clearData(context: context, kinds: kinds, since: range.since)
     }
 
-    @MainActor
-    static var store: WKWebsiteDataStore {
-        WebViewPool.shared.dataStore
-    }
-
-    static func siteCount(profile: Profile, store: WKWebsiteDataStore) async throws -> Int {
-        try await WebsiteData.entries(in: store, profile: profile).count
+    static func siteCount(context: BrowserProfileContext) async throws -> Int {
+        try await WebsiteData.entries(context: context).count
     }
 
     static func clearEverything(
         history: HistoryStore,
-        agent: ConversationLog? = nil,
         tabs: [BrowserTab] = [],
-        profile: Profile,
-        store: WKWebsiteDataStore
+        context: BrowserProfileContext
     ) async throws {
         try await clear(
             [.cookies, .cache],
             range: .everything,
             history: history,
-            agent: agent,
             tabs: tabs,
-            profile: profile,
-            store: store
+            context: context
         )
-        guard ChromiumRuntime.shared.currentProfile.id == profile.id else {
-            throw ChromiumError.unavailable(String(localized: "The profile changed before its conversations could be cleared."))
-        }
-        agent?.clearAll()
+        context.conversationLog.clearAll()
     }
 
 }

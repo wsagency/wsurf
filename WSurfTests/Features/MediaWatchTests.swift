@@ -20,7 +20,7 @@ struct MediaWatchTests {
 
     @Test func aWatchedTabReportsItsOwnTimeAndTrack() {
         let media = MediaCenter()
-        let page = BrowserPage(webKit: WKWebView())
+        let page = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
 
         media.watch(page: page, title: "Adele - Easy On Me", tabID: UUID(), artwork: nil)
         media.receiveScriptMessage(state(time: 128, duration: 331), from: page, isMainFrame: true)
@@ -41,7 +41,7 @@ struct MediaWatchTests {
 
     @Test func theDockedModelIsLeftAloneByAWatchedTab() {
         let media = MediaCenter()
-        let page = BrowserPage(webKit: WKWebView())
+        let page = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
 
         media.watch(page: page, title: "Adele", tabID: UUID(), artwork: nil)
         media.receiveScriptMessage(state(time: 128, duration: 331), from: page, isMainFrame: true)
@@ -53,7 +53,7 @@ struct MediaWatchTests {
 
     @Test func aReleasedTabStopsBeingRead() {
         let media = MediaCenter()
-        let page = BrowserPage(webKit: WKWebView())
+        let page = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
         media.watch(page: page, title: "Adele", tabID: UUID(), artwork: nil)
         media.receiveScriptMessage(state(time: 30, duration: 331), from: page, isMainFrame: true)
 
@@ -66,8 +66,8 @@ struct MediaWatchTests {
 
     @Test func anotherTabIsNeverMistakenForTheWatchedOne() {
         let media = MediaCenter()
-        let page = BrowserPage(webKit: WKWebView())
-        let other = BrowserPage(webKit: WKWebView())
+        let page = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
+        let other = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
         media.watch(page: page, title: "Adele", tabID: UUID(), artwork: nil)
 
         media.receiveScriptMessage(state(time: 90, duration: 331), from: other, isMainFrame: true)
@@ -77,7 +77,7 @@ struct MediaWatchTests {
 
     @Test func aSubframeNeverMovesTheClock() {
         let media = MediaCenter()
-        let page = BrowserPage(webKit: WKWebView())
+        let page = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
         media.watch(page: page, title: "Adele", tabID: UUID(), artwork: nil)
 
         media.receiveScriptMessage(state(time: 90, duration: 331), from: page, isMainFrame: false)
@@ -87,8 +87,8 @@ struct MediaWatchTests {
 
     @Test func watchingASecondTabForgetsTheFirst() {
         let media = MediaCenter()
-        let first = BrowserPage(webKit: WKWebView())
-        let second = BrowserPage(webKit: WKWebView())
+        let first = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
+        let second = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
         media.watch(page: first, title: "One", tabID: UUID(), artwork: nil)
         media.receiveScriptMessage(state(time: 30, duration: 331), from: first, isMainFrame: true)
 

@@ -8,7 +8,7 @@ import WebKit
 final class PageClickWatcher {
     static let shared = PageClickWatcher()
 
-    @MainActor var onClick: ((CGPoint) -> Void)?
+    @MainActor var onClick: ((BrowserPage, CGPoint) -> Void)?
 
     private static let handlerName = "wsurfClick"
 

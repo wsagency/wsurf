@@ -23,7 +23,7 @@ struct NotificationShimTests {
                 frame: .init(x: 0, y: 0, width: 400, height: 300),
                 configuration: configuration
             ),
-            profile: Profile.privateBrowsing()
+            context: BrowserProfileContext(profile: .privateBrowsing())
         )
         page.loadHTMLString("<!doctype html><html><body>page</body></html>", baseURL: nil)
         #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))

@@ -19,7 +19,7 @@ struct WebKeyEchoTests {
             frame: NSRect(x: 0, y: 0, width: 100, height: 100),
             configuration: WebViewPool.makeConfiguration()
         )
-        let page = BrowserPage(webKit: webView)
+        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
         #expect(WebKeyEcho.shouldSilenceUnhandledKey(from: page.webKit))
     }
 
@@ -30,7 +30,7 @@ struct WebKeyEchoTests {
             frame: NSRect(x: 0, y: 0, width: 100, height: 100),
             configuration: WebViewPool.makeConfiguration()
         )
-        let page = BrowserPage(webKit: webView)
+        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
         let inner = NSView(frame: .zero)
         page.webKit?.addSubview(inner)
         #expect(WebKeyEcho.shouldSilenceUnhandledKey(from: inner))
@@ -64,7 +64,7 @@ struct WebKeyEchoTests {
             frame: NSRect(x: 0, y: 0, width: 150, height: 200),
             configuration: WebViewPool.makeConfiguration()
         )
-        let page = BrowserPage(webKit: webView)
+        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
         let sidebar = NSView(frame: NSRect(x: 150, y: 0, width: 150, height: 200))
         container.addSubview(page)
         container.addSubview(sidebar)

@@ -43,7 +43,7 @@ nonisolated enum LocalMCPEndpoint {
         Task.detached {
             let relay = MCPStdioRelay(socketPath: socketPath)
             do {
-                try await relay.run(transport: StdioTransport())
+                try await relay.run(transport: MCPStdioTransport())
                 exit(EXIT_SUCCESS)
             } catch {
                 let message = "WSurf MCP client connection closed.\n"

@@ -7,16 +7,18 @@ import SwiftUI
 struct PasswordSettings: View {
     @Bindable var settings: BrowserSettings
     let extensions: ExtensionManager
+    let context: BrowserProfileContext
     @State private var model: PasswordSettingsModel
     @State private var editing: SavedPassword?
     @State private var showsAdd = false
     @State private var removing: SavedPassword.Summary?
     @State private var query = ""
 
-    init(settings: BrowserSettings, extensions: ExtensionManager, profileID: UUID) {
-        self.settings = settings
-        self.extensions = extensions
-        _model = State(initialValue: PasswordSettingsModel(profileID: profileID))
+    init(context: BrowserProfileContext) {
+        self.context = context
+        self.settings = context.settings
+        self.extensions = context.extensions
+        _model = State(initialValue: PasswordSettingsModel(profileID: context.profile.id))
     }
 
     private var provider: InstalledExtension? {
@@ -67,7 +69,7 @@ struct PasswordSettings: View {
                     .padding(.top, 1)
             }
         }
-        AutofillSavePromptReset(kind: .password, profileID: model.profileID)
+        AutofillSavePromptReset(kind: .password, context: context)
         SettingsSection(title: "Saved passwords", symbol: "key", footnote: "WSurf encrypts saved passwords. macOS manages passkeys.", accessory: {
             HStack(spacing: 10) {
                 if model.isLoaded, !model.entries.isEmpty {

@@ -14,6 +14,7 @@ final class TabWebView: WKWebView {
     ]
 
     static let liveInstances = NSHashTable<TabWebView>.weakObjects()
+    weak var profileContext: BrowserProfileContext?
 
     static var refreshHoverShield: (() -> Void)?
 
@@ -57,6 +58,7 @@ final class TabWebView: WKWebView {
     }
 
     var onContextDownload: ((WKDownload, URL?) -> Void)?
+    var onOpenLinkInNewWindow: ((URL, Bool) -> Void)?
     var onPeekLink: ((URL) -> Void)?
     var onSummarizeLink: ((URL, CGPoint?) -> Void)?
 
@@ -207,7 +209,15 @@ final class TabWebView: WKWebView {
         )
         summary.target = self
         summary.image = NSImage(systemSymbolName: "text.line.first.and.arrowtriangle.forward", accessibilityDescription: nil)
-        return [peek, summary]
+        return TabContextMenu.linkWindowItems(
+            opensPrivately: profileContext?.profile.isPrivate == true,
+            target: self, action: #selector(openContextLinkInNewWindow(_:))
+        ) + [peek, summary]
+    }
+
+    @objc private func openContextLinkInNewWindow(_ sender: NSMenuItem) {
+        guard let url = contextLinkURL else { return }
+        onOpenLinkInNewWindow?(url, sender.tag == 1)
     }
 
     @objc private func peekAtContextLink() {
@@ -278,7 +288,9 @@ final class TabWebView: WKWebView {
 
 @MainActor
 final class WebViewPool {
-    static let shared = WebViewPool()
+
+    private let settings: BrowserSettings
+    private let contentBlocker: ContentBlocker
 
     nonisolated static let warmUpHTML = """
         <!doctype html><html><head>
@@ -311,7 +323,13 @@ final class WebViewPool {
 
     private var extensionController: WKWebExtensionController?
 
-    private(set) var dataStore: WKWebsiteDataStore = .default()
+    let dataStore: WKWebsiteDataStore
+
+    init(dataStore: WKWebsiteDataStore, settings: BrowserSettings, contentBlocker: ContentBlocker) {
+        self.dataStore = dataStore
+        self.settings = settings
+        self.contentBlocker = contentBlocker
+    }
 
     private static let configurationTemplate = WKWebViewConfiguration()
 
@@ -325,12 +343,6 @@ final class WebViewPool {
         BrowserPage.installBridge(in: configuration.userContentController, world: PageAutomationGuard.world)
         PageFrameRegistry.install(in: configuration.userContentController)
         return configuration
-    }
-
-    func useDataStore(_ store: WKWebsiteDataStore) {
-        guard store !== dataStore else { return }
-        dataStore = store
-        idle.removeAll()
     }
 
     func installExtensionController(_ controller: WKWebExtensionController?) {
@@ -394,7 +406,7 @@ final class WebViewPool {
         defer { scheduleRefill() }
         while let view = idle.popLast() {
             if view.configuration.websiteDataStore === dataStore {
-                BrowserSettings.shared.apply(to: view)
+                settings.apply(to: view)
                 return view
             }
         }
@@ -422,12 +434,12 @@ final class WebViewPool {
         let configuration = Self.makeConfiguration()
         configuration.websiteDataStore = dataStore ?? self.dataStore
         configuration.webExtensionController = extensionController
-        BrowserSettings.shared.apply(to: configuration)
+        settings.apply(to: configuration)
         MediaCenter.enablePictureInPicture(on: configuration.preferences)
 
         let contentController = configuration.userContentController
 
-        ContentBlocker.shared.apply(to: contentController)
+        contentBlocker.apply(to: contentController)
         if extensionController != nil {
             for source in [ExtensionPageAssets.script, ExtensionExternalConnect.pageScript] {
                 contentController.addUserScript(WKUserScript(
@@ -444,7 +456,7 @@ final class WebViewPool {
             frame: NSRect(x: 0, y: 0, width: 800, height: 600),
             configuration: configuration
         )
-        BrowserSettings.shared.apply(to: view)
+        settings.apply(to: view)
         view.allowsBackForwardNavigationGestures = true
         view.allowsMagnification = true
         return view

@@ -112,12 +112,12 @@ enum WebsiteData {
         }
     }
 
-    static func entries(in store: WKWebsiteDataStore, profile: Profile) async throws -> [Entry] {
-        let records = await store.dataRecords(ofTypes: allTypes)
+    static func entries(context: BrowserProfileContext) async throws -> [Entry] {
+        let records = await context.dataStore.dataRecords(ofTypes: allTypes)
         let webKit = records
             .map { Entry(displayName: $0.displayName, types: $0.dataTypes) }
             .filter { !$0.facets.isEmpty }
-        let chromium = try await ChromiumRuntime.shared.websiteDataEntries(profile: profile)
+        let chromium = try await ChromiumRuntime.shared.websiteDataEntries(context: context)
         return (webKit + chromium).sorted {
             if $0.displayName == $1.displayName {
                 return $0.engine.rawValue < $1.engine.rawValue
@@ -126,34 +126,27 @@ enum WebsiteData {
         }
     }
 
-    static func remove(
-        _ entries: Set<Entry>,
-        from store: WKWebsiteDataStore,
-        profile: Profile
-    ) async throws {
+    static func remove(_ entries: Set<Entry>, context: BrowserProfileContext) async throws {
         guard !entries.isEmpty else { return }
         let webKitNames = Set(entries.lazy.filter { $0.engine.rawValue == BrowserEngine.webKit.rawValue }.map(\.displayName))
         if !webKitNames.isEmpty {
-            let records = await store.dataRecords(ofTypes: allTypes)
+            let records = await context.dataStore.dataRecords(ofTypes: allTypes)
                 .filter { webKitNames.contains($0.displayName) }
             if !records.isEmpty {
-                await store.removeData(ofTypes: allTypes, for: records)
+                await context.dataStore.removeData(ofTypes: allTypes, for: records)
             }
         }
         let chromiumNames = Set(entries.lazy.filter { $0.engine.rawValue == BrowserEngine.chromium.rawValue }.map(\.displayName))
-        try await ChromiumRuntime.shared.removeWebsiteData(names: chromiumNames, profile: profile)
+        try await ChromiumRuntime.shared.removeWebsiteData(names: chromiumNames, context: context)
     }
 
-    static func removeAll(
-        from store: WKWebsiteDataStore,
-        profile: Profile
-    ) async throws {
-        let records = await store.dataRecords(ofTypes: allTypes)
+    static func removeAll(context: BrowserProfileContext) async throws {
+        let records = await context.dataStore.dataRecords(ofTypes: allTypes)
         if !records.isEmpty {
-            await store.removeData(ofTypes: allTypes, for: records)
+            await context.dataStore.removeData(ofTypes: allTypes, for: records)
         }
         try await ChromiumRuntime.shared.clearData(
-            profile: profile,
+            context: context,
             kinds: [.cookies, .cache],
             since: Date(timeIntervalSince1970: 0)
         )

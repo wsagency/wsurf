@@ -54,8 +54,10 @@ nonisolated struct OpenAIAPI: Sendable {
             }
             guard failure.kind == .http else { return false }
             if let code = failure.code {
-                return ["server_error", "server_is_overloaded", "service_unavailable", "rate_limit_exceeded", "slow_down",
-                        "previous_response_not_found", "websocket_connection_limit_reached", ].contains(code)
+                return [
+                    "server_error", "server_is_overloaded", "service_unavailable", "slow_down",
+                    "previous_response_not_found", "websocket_connection_limit_reached",
+                ].contains(code)
             }
             return failure.status.map { (500...599).contains($0) } ?? true
         }

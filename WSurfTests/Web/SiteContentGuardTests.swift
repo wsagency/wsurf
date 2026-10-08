@@ -49,7 +49,7 @@ final class SiteContentGuardTests {
         let view = BrowserPage(webKit: TabWebView(
             frame: NSRect(x: 0, y: 0, width: 800, height: 600),
             configuration: configuration
-        ))
+        ), context: BrowserProfileContext(profile: .privateBrowsing()))
         SiteContentGuard.shared.install(in: view, permissions: permissions, settings: settings) {
             reports?.url = $0
             reports?.count += 1

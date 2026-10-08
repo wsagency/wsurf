@@ -18,7 +18,7 @@ enum PageSaving {
         panel.title = String(localized: "Save Page As")
         panel.allowedContentTypes = [page.engine == .webKit ? archiveType : mhtmlType]
         panel.nameFieldStringValue = filename(for: page)
-        panel.directoryURL = BrowserSettings.shared.downloadFolder
+        panel.directoryURL = page.context.settings.downloadFolder
         panel.canCreateDirectories = true
 
         panel.beginSheetModal(for: window) { response in

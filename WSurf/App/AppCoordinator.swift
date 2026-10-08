@@ -52,24 +52,46 @@ final class AppCoordinator {
 
     var selectedProvider = ProviderCatalog.openAI
     var selectedModel = ""
-    var selectedEffort = LLMSettings.reasoningEffort
+    var selectedEffort: LLMSettings.ReasoningEffort = .low
     var supportsReasoningEffort = false
 
-    let browser = BrowserModel()
-    let extensions: ExtensionManager
+    let browser: BrowserModel
+    var context: BrowserProfileContext {
+        browser.context
+    }
+    var extensions: ExtensionManager {
+        context.extensions
+    }
+    weak var application: BrowserApplication?
+    var windowID: UUID {
+        browser.windowID
+    }
+    var nativeWindow: NSWindow? {
+        host?.nativeWindow
+    }
+    var isKeyWindow: Bool {
+        nativeWindow?.isKeyWindow == true
+    }
+    var isBootstrapped = false
+    private(set) var isClosed = false
     let media: MediaCenter
     #if DEBUG
     let lyrics = LyricsModel(defaults: StageMode.defaults)
     #else
     let lyrics = LyricsModel()
     #endif
-    let conversationLog = ConversationLog()
+    var conversationLog: ConversationLog {
+        context.conversationLog
+    }
     let downloadFlights = DownloadFlights()
     let agentQuestions = AgentQuestionModel()
     var agentReply: AgentReplyModel {
         agentTurns.reply
     }
-    let updates = UpdateController()
+    private let standaloneUpdates = UpdateController()
+    var updates: UpdateController {
+        application?.updates ?? standaloneUpdates
+    }
     let releaseNotes = ReleaseNotesModel()
     #if DEBUG
     let onboarding = OnboardingModel(defaults: StageMode.defaults)
@@ -86,18 +108,29 @@ final class AppCoordinator {
     let linkPeek = LinkPeek()
     let peek = PeekPanel()
     let sidebarDrag = SidebarDragModel()
-    let settings = BrowserSettings.shared
-
-    @ObservationIgnored lazy var mcpServer = BrowserMCPServer(
-        browser: browser, defaults: BrowserMCPServer.appDefaults,
-        canListen: { [weak self] in
-            guard let self else { return false }
-            return !profiles.isPrivate && !isSwitchingProfile
-        }
-    ) { [weak self] in
-        guard let self else { return false }
-        return !profiles.isPrivate && !isSwitchingProfile && !agentTurns.isRunning
+    var settings: BrowserSettings {
+        context.settings
     }
+    var modelSettings: LLMSettings {
+        context.modelSettings
+    }
+
+    var mcpServer: BrowserMCPServer {
+        application?.mcpServer ?? standaloneMCPServer
+    }
+    @ObservationIgnored private lazy var standaloneMCPServer = BrowserMCPServer(
+        defaults: BrowserMCPServer.appDefaults,
+        target: { [weak self] in
+            guard let self, !isClosed, !profiles.isPrivate, !isSwitchingProfile,
+                  nativeWindow != nil else { return nil }
+            return browser
+        },
+        available: { [weak self] browser in
+            guard let self else { return false }
+            return self.browser === browser && !isClosed && !profiles.isPrivate
+                && !isSwitchingProfile && !agentTurns.isRunning && nativeWindow != nil
+        }
+    )
 
     var conversationVoice: OpenAIRealtimeConversation?
     var isVoiceConversationPresented = false
@@ -124,7 +157,7 @@ final class AppCoordinator {
     @ObservationIgnored private var isAskingForMicrophone = false
     @ObservationIgnored private var shellFrameInWindow: CGRect = .zero
     @ObservationIgnored private var appearanceObservation: NSKeyValueObservation?
-    @ObservationIgnored private var iconScheme = FaviconLoader.shared.scheme
+    @ObservationIgnored private var iconScheme: FaviconLoader.IconScheme?
 
     private var queuedExternalURLs: [URL] = []
     private var readyForExternalLinks = false
@@ -148,28 +181,29 @@ final class AppCoordinator {
     private static let speechMutedKey = "speech.muted"
     private(set) var isAgentSpeaking = false
 
-    init(modelProviders: any ModelProviderResolving = ModelProviderRegistry()) {
+    init(
+        browser: BrowserModel = BrowserModel(),
+        profiles: ProfileStore? = nil,
+        modelProviders: any ModelProviderResolving = ModelProviderRegistry()
+    ) {
+        self.browser = browser
+        self.profiles = profiles ?? ProfileStore.selection(profile: browser.context.profile)
         self.modelProviders = modelProviders
-        let extensions = ExtensionManager(browser: browser)
-        self.extensions = extensions
-        PasswordAutofill.shared.extensions = { [weak extensions] in
-            guard let extensions else { return [] }
-            return extensions.installed + extensions.systemExtensions
-        }
         media = MediaCenter()
 
         voiceInput = VoiceInputModel()
         speech = ProviderSpeechOutput()
         agentTurns = AgentTurnModel(
             browser: browser,
-            log: conversationLog,
-            speech: speech
+            log: browser.context.conversationLog,
+            speech: speech,
+            modelSettings: browser.context.modelSettings,
+            actionPolicy: browser.context.actionPolicy
         )
         isSpeechMuted = Self.initialSpeechMuted(
             stored: UserDefaults.standard.object(forKey: Self.speechMutedKey)
         )
         speech.isMuted = isSpeechMuted
-        AutofillSuggestions.shared.openSettings = { [weak self] in self?.openSettings(.autofill) }
         speech.onSpeakingChange = { [weak self] speaking in
             self?.isAgentSpeaking = speaking
         }
@@ -194,16 +228,8 @@ final class AppCoordinator {
             self?.voiceInput.clearTranscript()
             self?.statusMessage = nil
         }
-        browser.downloads.webViewProvider = { [weak self] in
-            guard let tab = self?.browser.activeTab, tab.isMaterialised else { return nil }
-            return tab.page.webKit
-        }
-
-        let extensionTabClosed = browser.onTabClosed
-        browser.onTabClosed = { [weak self] tab in
-            extensionTabClosed?(tab)
-            self?.tabDidClose(tab)
-        }
+        configureWindowCallbacks()
+        configureWindowAgentTransfer()
 
         sidebarDrag.planSource = { [weak self] in
             guard let self else { return SplitDropPlan() }
@@ -225,18 +251,17 @@ final class AppCoordinator {
 
         sidebar.onShowingChange = { [weak self] in self?.applyHoverShield() }
         sidePanel.onFootprintChange = { [weak self] in self?.applyHoverShield() }
-        TabWebView.refreshHoverShield = { [weak self] in self?.applyHoverShield() }
         observeAppearance()
     }
 
     private func observeAppearance() {
         appearanceObservation = NSApp?.observe(\.effectiveAppearance) { @Sendable [weak self] _, _ in
-            Task { @MainActor [weak self] in self?.reloadFaviconsIfSchemeChanged() }
+            Task { @MainActor [weak self] in self?.updateWindowAppearance() }
         }
     }
 
     func reloadFaviconsIfSchemeChanged() {
-        let scheme = FaviconLoader.shared.scheme
+        let scheme = context.favicons.scheme
         guard scheme != iconScheme else { return }
         iconScheme = scheme
         for tab in browser.tabs {
@@ -265,6 +290,7 @@ final class AppCoordinator {
         )
         let peeked = shownPeek?.page
         for view in TabWebView.liveInstances.allObjects {
+            guard view.window === nativeWindow else { continue }
             guard view.window != nil else {
                 view.setHoverParked(false)
                 continue
@@ -320,6 +346,12 @@ final class AppCoordinator {
         agentReply.isStreaming && agentReply.showsInChrome(inSpace: browser.activeSpaceID)
     }
 
+    func pendingAgentQuestion(inChrome: Bool) -> AgentQuestionModel.Ask? {
+        let spaceID = browser.activeSpaceID
+        guard agentReply.showsInChrome(inSpace: spaceID) == inChrome else { return nil }
+        return agentQuestions.ask(inSpace: spaceID)
+    }
+
     func readAloud(_ text: String) {
         endVoiceConversation()
         guard !text.isEmpty else { return }
@@ -331,19 +363,6 @@ final class AppCoordinator {
         speech.isMuted = false
         speech.speak(text)
         speech.isMuted = muted
-    }
-
-    func clearDataOnQuitIfNeeded() async throws {
-        guard settings.clearsDataOnQuit else { return }
-        let profile = profiles.current
-        let store = BrowsingData.store
-        try await BrowsingData.clearEverything(
-            history: browser.history,
-            agent: conversationLog,
-            tabs: browser.tabs,
-            profile: profile,
-            store: store
-        )
     }
 
     func reloadActivation() {
@@ -361,6 +380,8 @@ final class AppCoordinator {
     // MARK: - Tab switching
 
     var tabSwitchMonitor: Any?
+    var resignActiveObserver: NSObjectProtocol?
+    var becomeActiveObserver: NSObjectProtocol?
 
     var controlDownAt: TimeInterval?
 
@@ -371,7 +392,7 @@ final class AppCoordinator {
 
     // MARK: - Profiles
 
-    let profiles = ProfileStore.shared
+    let profiles: ProfileStore
 
     var switchingTo: Profile?
 
@@ -381,20 +402,19 @@ final class AppCoordinator {
 
     var privateSession: PrivateBrowsingSession?
 
-    var hasPrivateSession: Bool {
-        privateSession != nil
-    }
-
     let profileSwitches = SerialTasks()
 
     // MARK: - Presentation
 
     var browserIsFrontmost: Bool {
-        browserVisible && NSApp.isActive
+        isKeyWindow && NSApp.isActive
     }
 
-    func showBrowser() {
-        ensureHost().show()
+    func showBrowser(activate: Bool = true) {
+        guard !isClosed else { return }
+        prepareWindowHost()
+        host?.show(activate: activate)
+        updateWindowAppearance()
     }
 
     func openFromAnotherApp(_ urls: [URL]) {
@@ -488,18 +508,16 @@ final class AppCoordinator {
         applyHoverShield()
     }
 
-    /// The panel is still on screen while it shrinks back into its link.
-    private static let peekDeparture: Duration = .milliseconds(260)
-
     @discardableResult
     func closePeek() -> Bool {
-        guard let held = peek.take() else { return false }
+        guard peek.dismiss(using: browser) else { return false }
         applyHoverShield()
-        Task { [browser] in
-            try? await Task.sleep(for: Self.peekDeparture)
-            browser.dismissPeekTab(held)
-        }
         return true
+    }
+
+    func closePeekImmediately() {
+        peek.dismissImmediately(using: browser)
+        applyHoverShield()
     }
 
     func keepPeek() {
@@ -531,7 +549,7 @@ final class AppCoordinator {
     }
 
     func toggleFullScreen() {
-        (NSApp.keyWindow ?? NSApp.mainWindow)?.toggleFullScreen(nil)
+        nativeWindow?.toggleFullScreen(nil)
     }
 
     func copyCurrentURL() {
@@ -632,65 +650,25 @@ final class AppCoordinator {
 
     func confirmClearHistory() {
         guard browser.history.count > 0 else { return }
-        Task {
-            guard let choice = await ConfirmAlert.clear(.history()) else { return }
-            let profile = profiles.current
-            let store = BrowsingData.store
-            let history = browser.history
+        let context = context
+        guard let owner = context.extensions.adapter(for: browser),
+              let window = owner.nativeWindow, context.isRegistered(browser) else { return }
+        Task { [weak self] in
+            guard let self, !isClosed, self.context === context,
+                  context.extensions.adapter(for: browser) === owner,
+                  owner.nativeWindow === window, context.isRegistered(browser) else { return }
+            guard let choice = await ConfirmAlert.clear(.history(), in: window),
+                  !isClosed, self.context === context,
+                  context.extensions.adapter(for: browser) === owner,
+                  owner.nativeWindow === window, context.isRegistered(browser) else { return }
             do {
                 try await BrowsingData.clear(
-                    choice.kinds,
-                    range: choice.range,
-                    history: history,
-                    profile: profile,
-                    store: store
+                    choice.kinds, range: choice.range,
+                    history: context.history, context: context
                 )
             } catch {
+                guard !isClosed, self.context === context else { return }
                 statusMessage = error.localizedDescription
-            }
-        }
-    }
-
-    func organizeTabs() {
-        guard TabOrganizer.isAvailable else {
-            statusMessage = String(localized: "Organizing tabs needs a model: add a provider key or enable Apple Intelligence.")
-            return
-        }
-        let loose = browser.tabs.filter {
-            browser.folder(containing: $0) == nil && $0.pinnedURL == nil
-        }
-        guard loose.count >= 4 else {
-            statusMessage = String(localized: "Not enough loose tabs to organize.")
-            return
-        }
-        statusMessage = String(localized: "Looking for related tabs…")
-        Task { [weak self] in
-            let outcome = await TabOrganizer.propose(for: loose.map { ($0.id, $0.title) })
-            guard let self else { return }
-            statusMessage = nil
-            let plan: TabOrganizer.Plan
-            switch outcome {
-            case .plan(let proposed):
-                plan = proposed
-            case .empty:
-                statusMessage = String(localized: "No related tabs to group.")
-                return
-            case .failed:
-                statusMessage = String(localized: "The model couldn’t group the tabs. Try again.")
-                return
-            }
-            let proposed = plan.folders.map { ($0.name, $0.tabIDs.count) }
-            guard await ConfirmAlert.organize(folders: proposed) else { return }
-            for folder in plan.folders {
-                let members = folder.tabIDs
-                    .compactMap { id in browser.tabs.first { $0.id == id } }
-                    .filter { browser.folder(containing: $0) == nil && $0.pinnedURL == nil }
-                guard members.count >= 2 else { continue }
-                let made = browser.createFolder(named: folder.name, containing: members)
-                if browser.tabs(in: made).count < 2 {
-                    Pipeline.log.error("organized folder arrived empty; removing it")
-                    browser.deleteFolder(made)
-                }
             }
         }
     }
@@ -756,8 +734,8 @@ final class AppCoordinator {
 
     func useProvider(_ provider: Provider) {
         guard provider.id != selectedProvider.id else { return }
-        ProviderCatalog.shared.select(provider)
-        configureEngines()
+        modelSettings.providerID = provider.id
+        reloadAssistantConfiguration()
     }
 
     func stopAgent() {
@@ -794,6 +772,25 @@ final class AppCoordinator {
         let created = BrowserHost(coordinator: self)
         host = created
         return created
+    }
+
+    func prepareWindowHost() {
+        let needsCallbacks = extensions.adapter(for: browser) == nil
+        let window = ensureHost().nativeWindow
+        extensions.register(browser: browser, window: window)
+        if needsCallbacks {
+            configureWindowCallbacks()
+        }
+    }
+
+    func releaseWindowHost() {
+        host = nil
+    }
+
+    func beginClosingWindow() -> Bool {
+        guard !isClosed else { return false }
+        isClosed = true
+        return true
     }
 
     // MARK: - Voice input
@@ -869,7 +866,7 @@ final class AppCoordinator {
             showsInChrome: showsInChrome
         )
         guard started else {
-            statusMessage = "Add an API key for \(ProviderCatalog.shared.selected.name) in Settings, or enable Apple Intelligence."
+            statusMessage = "Add an API key for \(selectedProvider.name) in Settings, or enable Apple Intelligence."
             voiceInput.clearTranscript()
             return false
         }
@@ -894,12 +891,14 @@ final class AppCoordinator {
         showsInChrome: Bool = true
     ) async -> Bool {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachmentTextOnly = !ModelImageSupport.acceptsImages(for: selectedProvider, model: selectedModel)
+        let attachmentTextOnly = !ModelImageSupport.acceptsImages(
+            for: selectedProvider, model: selectedModel, settings: modelSettings
+        )
         guard !text.isEmpty || !attachments.isEmpty else { return false }
         do {
             try AttachmentRequest.validate(
                 attachments, message: text, textOnly: attachmentTextOnly,
-                windowTokens: ContextWindow.tokens(for: selectedProvider, model: selectedModel)
+                windowTokens: ContextWindow.tokens(for: selectedProvider, model: selectedModel, settings: modelSettings)
             )
         } catch {
             statusMessage = error.localizedDescription

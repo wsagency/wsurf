@@ -49,7 +49,7 @@ final class TabPermissionCenter {
     var onRevoke: ((WebPermission) -> Void)?
     var onPolicyChanged: ((WebPermission, PermissionPolicy) -> Void)?
 
-    init(store: SitePermissions = .shared) {
+    init(store: SitePermissions) {
         self.store = store
     }
 

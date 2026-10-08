@@ -21,7 +21,7 @@ struct OpenAIToolSearchLiveTests {
         let path = try #require(ProcessInfo.processInfo.environment["WSURF_OPENAI_LIVE_CONFIG"])
         let config = try OpenAIJSON.decode(Data(contentsOf: URL(fileURLWithPath: path)))
         guard config["tool_search_only"] == true, config["live"] == true else { return }
-        let model = config["model"].string ?? LLMSettings.model(for: ProviderCatalog.openAI)
+        let model = config["model"].string ?? LLMSettings.current.model(for: ProviderCatalog.openAI)
         let reportURL = URL(fileURLWithPath: try #require(config["report_path"].string))
         let recorder = OpenAILiveRecorder(requestLimit: 12)
         var report: OpenAIJSON = [

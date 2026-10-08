@@ -147,9 +147,10 @@ struct TabContextMenuTests {
         ])
         view.willOpenMenu(menu, with: event)
 
-        #expect(menu.items.first?.title == "Open Link in New Tab")
         #expect(marks(menu) == [
             "WKMenuItemIdentifierOpenLinkInNewWindow",
+            "WSurfOpenLinkInNewWindow",
+            "WSurfOpenLinkInNewPrivateWindow",
             "peekAtContextLink",
             "summarizeContextLink",
             "—",

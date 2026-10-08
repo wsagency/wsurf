@@ -10,6 +10,57 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct AgentTurnModelTests {
+    @Test func turnKeepsItsSelectedModelAndToolGrantsAcrossSuspension() async throws {
+        let firstSuite = "turn-settings.first.\(UUID().uuidString)"
+        let secondSuite = "turn-settings.second.\(UUID().uuidString)"
+        let firstDefaults = UserDefaults(suiteName: firstSuite)!
+        let secondDefaults = UserDefaults(suiteName: secondSuite)!
+        defer {
+            firstDefaults.removePersistentDomain(forName: firstSuite)
+            secondDefaults.removePersistentDomain(forName: secondSuite)
+        }
+        let provider = ProviderCatalog.openAI
+        let firstSettings = LLMSettings(defaults: firstDefaults)
+        firstSettings.setModel("first-window-model", for: provider)
+        firstSettings.setEnabledAgentTools(["readPage"], for: provider)
+        let secondSettings = LLMSettings(defaults: secondDefaults)
+        secondSettings.setModel("second-window-model", for: provider)
+        secondSettings.setEnabledAgentTools(["searchWeb"], for: provider)
+        let fixture = Fixture(modelSettings: firstSettings)
+        fixture.runner.waitsForRelease = true
+        fixture.model.use(fixture.runner)
+
+        #expect(fixture.model.run(utterance: "Read the page"))
+        try #require(await waitUntil { fixture.runner.runs.count == 1 })
+        let taskID = try #require(fixture.model.activeTask?.id)
+        await LLMSettings.$scoped.withValue(secondSettings) {
+            fixture.runner.release(taskID)
+            _ = await waitUntil { !fixture.model.isRunning }
+        }
+
+        #expect(fixture.runner.settingsObserved == [
+            .init(model: "first-window-model", tools: ["readPage"]),
+            .init(model: "first-window-model", tools: ["readPage"]),
+        ])
+    }
+    @Test func adoptingAnotherLogCancelsAndReleasesTheOldConversation() async throws {
+        let fixture = Fixture()
+        fixture.runner.waitsForRelease = true
+        fixture.model.use(fixture.runner)
+        #expect(fixture.model.run(utterance: "Work"))
+        try #require(await waitUntil { fixture.runner.runs.count == 1 })
+        let oldTask = try #require(fixture.model.activeTask)
+        let nextLog = FakeAgentTurnLog()
+
+        fixture.model.adopt(log: nextLog)
+
+        #expect(fixture.log.cancelled == [oldTask.id])
+        #expect(nextLog.cancelled.isEmpty)
+        #expect(fixture.runner.discardedEverything)
+        #expect(!fixture.model.isRunning)
+        fixture.runner.release(oldTask.id)
+    }
+
     @Test func awaitedTurnReturnsItsLoggedResult() async throws {
         let fixture = Fixture()
         fixture.model.use(fixture.runner)
@@ -237,6 +288,47 @@ struct AgentTurnModelTests {
         #expect(fixture.log.completed.isEmpty)
     }
 
+    @Test func movingATabCancelsWorkWithoutDeletingItsConversation() async throws {
+        let fixture = Fixture()
+        fixture.runner.waitsForRelease = true
+        fixture.model.use(fixture.runner)
+        fixture.model.run(utterance: "research")
+        try #require(await waitUntil { fixture.runner.runs.count == 1 })
+        let task = try #require(fixture.model.activeTask)
+
+        fixture.model.detachTab(task.tabID, inSpace: task.spaceID)
+        #expect(!fixture.model.isRunning)
+        #expect(fixture.log.cancelled == [task.id])
+        #expect(fixture.log.removedTabs.isEmpty)
+        #expect(fixture.runner.discardedTabs == [task.tabID])
+        fixture.runner.release(task.id)
+        #expect(await waitUntil { fixture.runner.released.contains(task.id) })
+        #expect(fixture.log.completed.isEmpty)
+    }
+
+    @Test func switchingLogsCancelsTheOldTurnBeforeAdoptingTheNewProfile() async throws {
+        let fixture = Fixture()
+        fixture.runner.waitsForRelease = true
+        fixture.model.use(fixture.runner)
+        fixture.model.run(utterance: "old profile")
+        try #require(await waitUntil { fixture.runner.runs.count == 1 })
+        let oldTask = try #require(fixture.model.activeTask)
+        let newLog = FakeAgentTurnLog()
+
+        fixture.model.adopt(log: newLog)
+        #expect(fixture.log.cancelled == [oldTask.id])
+        #expect(newLog.cancelled.isEmpty)
+        #expect(fixture.runner.discardedEverything)
+        fixture.runner.release(oldTask.id)
+        #expect(await waitUntil { fixture.runner.released.contains(oldTask.id) })
+        fixture.runner.waitsForRelease = false
+        fixture.model.run(utterance: "new profile")
+        #expect(await waitUntil { !fixture.model.isRunning })
+        #expect(fixture.log.begun.count == 1)
+        #expect(newLog.begun.first?.prompt == "new profile")
+        #expect(newLog.completed.count == 1)
+    }
+
     @Test func closingAnotherTabLeavesTheCurrentTurnRunning() async throws {
         let fixture = Fixture()
         fixture.runner.waitsForRelease = true
@@ -266,9 +358,15 @@ private struct Fixture {
     let runner = FakeAgentRunner()
     let model: AgentTurnModel
 
-    init(context: String? = nil) {
+    init(context: String? = nil, modelSettings: LLMSettings = .current) {
         browser = FakeAgentTurnBrowser(context: context)
-        model = AgentTurnModel(browser: browser, log: log, speech: speech)
+        model = AgentTurnModel(
+            browser: browser,
+            log: log,
+            speech: speech,
+            modelSettings: modelSettings,
+            actionPolicy: AgentActionPolicy(storage: SessionAgentGrantStorage())
+        )
     }
 }
 
@@ -379,6 +477,11 @@ private final class FakeAgentRunner: AgentRunner {
         let task: AgentTaskContext
     }
 
+    struct SettingsObservation: Equatable {
+        let model: String
+        let tools: Set<String>?
+    }
+
     let name = "Test runner"
     var speechWasMuted: [Bool] = []
     var waitsForRelease = false
@@ -387,6 +490,7 @@ private final class FakeAgentRunner: AgentRunner {
     private(set) var discardedTabs: [UUID] = []
     private(set) var discardedEverything = false
     private(set) var transferred: [FakeAgentTurnLog.Moved] = []
+    private(set) var settingsObserved: [SettingsObservation] = []
     private var continuations: [UUID: CheckedContinuation<Void, Never>] = [:]
 
     func prepare() {}
@@ -409,6 +513,7 @@ private final class FakeAgentRunner: AgentRunner {
         into reply: AgentReplyModel,
         speech: any SpeechOutput
     ) async {
+        settingsObserved.append(observeSettings())
         speechWasMuted.append(speech.isMuted)
         let runNumber = runs.count + 1
         runs.append(.init(utterance: utterance, task: task))
@@ -417,9 +522,17 @@ private final class FakeAgentRunner: AgentRunner {
         if waitsForRelease {
             await withCheckedContinuation { continuations[task.id] = $0 }
         }
+        settingsObserved.append(observeSettings())
         reply.update(text: "Run \(runNumber) finished")
         released.insert(task.id)
         reply.endStream(retainFor: 60)
+    }
+    private func observeSettings() -> SettingsObservation {
+        let provider = ProviderCatalog.openAI
+        return SettingsObservation(
+            model: LLMSettings.current.model(for: provider),
+            tools: LLMSettings.current.enabledAgentTools(for: provider)
+        )
     }
 
     func release(_ taskID: UUID) {

@@ -15,16 +15,20 @@ import WebKit
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct TabZoomTests {
+    private func makeTab() -> BrowserTab {
+        BrowserTab(context: BrowserProfileContext(profile: .privateBrowsing()))
+    }
+
     /// Actual Size must greet a new tab disabled - including when the user's
     /// default zoom isn't 100%, which is exactly the case "compare against
     /// 1" would get wrong.
     @Test func aFreshTabIsNotZoomed() {
-        let tab = BrowserTab()
+        let tab = makeTab()
         #expect(!tab.isZoomed)
     }
 
     @Test func zoomingEnablesActualSizeAndResetPutsEverythingBack() throws {
-        let tab = BrowserTab()
+        let tab = makeTab()
         let before = tab.page.pageZoom
         let webKit = try #require(tab.page.webKit)
 
@@ -34,13 +38,13 @@ struct TabZoomTests {
 
         tab.resetZoom()
         #expect(!tab.isZoomed)
-        #expect(abs(tab.page.pageZoom - BrowserSettings.shared.pageZoom) < 0.005)
+        #expect(abs(tab.page.pageZoom - tab.context.settings.pageZoom) < 0.005)
         #expect(webKit.magnification == 1)
     }
 
     /// A leftover pinch counts as zoomed too - Actual Size answers for the
     @Test func aPinchAloneCountsAsZoomed() throws {
-        let tab = BrowserTab()
+        let tab = makeTab()
         let webKit = try #require(tab.page.webKit)
         webKit.magnification = 1.6
         #expect(tab.isZoomed)
@@ -53,7 +57,7 @@ struct TabZoomTests {
     /// that changes one has to say so, or a menu goes on showing the answer
     /// it was built with - which is how Actual Size came to ignore a zoom.
     @Test func everyZoomPathAnnouncesItself() throws {
-        let tab = BrowserTab()
+        let tab = makeTab()
         var seen = tab.zoomChanges
 
         tab.zoomIn()
@@ -107,7 +111,7 @@ struct TabZoomTests {
     }
 
     @Test func zoomStopsAtTheEndsOfTheRange() {
-        let tab = BrowserTab()
+        let tab = makeTab()
 
         for _ in 0..<40 {
             tab.zoomIn()

@@ -25,7 +25,7 @@ struct AssistantSettings: View {
             case .tools:
                 AgentToolsPage(model: model)
             case .grants:
-                AssistantGrantsPage(onBack: { model.showOverview() })
+                AssistantGrantsPage(policy: model.actionPolicy, onBack: { model.showOverview() })
             }
         }
         .task { await model.onAppear() }
@@ -84,7 +84,8 @@ private struct AssistantOverview: View {
         SettingsSection(title: "Acting on websites", symbol: "hand.raised") {
             DrillInRow(
                 title: "Allowed without asking",
-                detail: AssistantGrantsPage.summary
+                detail: model.actionPolicy.grantsByHost.isEmpty
+                    ? "None" : "\(model.actionPolicy.grantsByHost.count) websites"
             ) {
                 model.showGrants()
             }
@@ -145,7 +146,7 @@ private struct AnsweringNotice: View {
 private struct BehaviourSection: View {
     let coordinator: AppCoordinator
 
-    @Bindable private var settings = BrowserSettings.shared
+    @Bindable private var settings = BrowserSettings.application
 
     @State private var talk = ActivationSettings.talk
     @State private var recording: String?

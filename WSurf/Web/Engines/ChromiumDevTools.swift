@@ -66,6 +66,7 @@ final class ChromiumDevTools {
     private typealias Handler = (BrowserScriptMessage) -> Void
 
     private var framesByID: [String: FrameState] = [:]
+    private var frameRevision = 0
     private var contextsByUniqueID: [String: ContextState] = [:]
     private var uniqueIDByExecutionID: [Int: String] = [:]
     private var scripts: [Script] = []
@@ -116,6 +117,10 @@ final class ChromiumDevTools {
                                                     of: UnsafeMutableRawPointer(observerSelf)) else { return }
             MainActor.assumeIsolated {
                 owner.failAll(ChromiumError.unavailable("Chromium DevTools detached."))
+                owner.frameRevision &+= 1
+                owner.framesByID.removeAll()
+                owner.contextsByUniqueID.removeAll()
+                owner.uniqueIDByExecutionID.removeAll()
             }
         }
 
@@ -197,6 +202,12 @@ final class ChromiumDevTools {
                     guard let self else { return }
                     self.finishFailure(id: id, error: ChromiumError.unavailable("Chromium DevTools command timed out."))
                 }
+                if method == "Runtime.evaluate" {
+                    guard !Task.isCancelled, PageAutomationGuard.allowsExecution else {
+                        self.finishFailure(id: id, error: Task.isCancelled ? CancellationError() : ChromiumError.staleFrame)
+                        return
+                    }
+                }
                 let accepted = data.withUnsafeBytes { bytes in
                     host.pointee.send_dev_tools_message?(host, bytes.baseAddress, data.count) ?? 0
                 }
@@ -240,7 +251,20 @@ final class ChromiumDevTools {
     }
 
     func frames() async throws -> [BrowserFrame] {
+        try await refreshFrames()
+        return framesByID.values.sorted { $0.id < $1.id }.map(\.browserFrame)
+    }
+
+    func frameSnapshot() -> [BrowserFrame] {
+        framesByID.values.map(\.browserFrame)
+    }
+
+    private func refreshFrames() async throws {
+        let revision = frameRevision
         let response = try await command("Page.getFrameTree")
+        guard !closed else { throw ChromiumError.closed }
+        // Events can deliver a newer document before this command's continuation resumes.
+        guard frameRevision == revision else { return }
         guard let tree = response["frameTree"] as? [String: Any] else {
             throw ChromiumError.protocolFailure("Page.getFrameTree returned no frame tree.")
         }
@@ -250,13 +274,36 @@ final class ChromiumDevTools {
             throw ChromiumError.protocolFailure("Page.getFrameTree returned no frames.")
         }
         updateFrames(parsed)
-        return parsed.values.sorted { $0.id < $1.id }.map(\.browserFrame)
+    }
+
+    func sourceFrame(for referrer: URL?) -> BrowserFrame? {
+        let origin = SitePermissions.webOrigin(for: referrer)
+        guard !origin.isEmpty else { return nil }
+        var match: FrameState?
+        // Origin-only referrers and inherited documents cannot identify a unique URL.
+        for frame in framesByID.values where !frame.documentID.isEmpty {
+            if SitePermissions.webOrigin(for: frame.url) == origin
+                || ChromiumClient.sameOrigin(origin, frame.securityOrigin) {
+                guard match == nil else { return nil }
+                match = frame
+            }
+        }
+        return match?.browserFrame
     }
 
     func isLive(frame: BrowserFrame) async throws -> Bool {
-        guard !closed, let id = frame.chromiumID, !frame.documentID.isEmpty else { return false }
-        _ = try await frames()
-        guard let current = framesByID[id], !current.documentID.isEmpty else { return false }
+        guard !closed, frame.chromiumID != nil, !frame.documentID.isEmpty else { return false }
+        try await refreshFrames()
+        return frameIsCurrent(frame)
+    }
+
+    func isCurrent(snapshot: [BrowserFrame]) -> Bool {
+        !closed && !snapshot.isEmpty && snapshot.allSatisfy(frameIsCurrent)
+    }
+
+    private func frameIsCurrent(_ frame: BrowserFrame) -> Bool {
+        guard let id = frame.chromiumID, !frame.documentID.isEmpty,
+              let current = framesByID[id] else { return false }
         return current.documentID == frame.documentID
             && current.securityOrigin == frame.securityOrigin
     }
@@ -265,7 +312,20 @@ final class ChromiumDevTools {
         let target = try await targetFrame(frame)
         let context = try await context(for: target, world: world)
         let snapshot = context
-        if snapshot.worldName != "" { try await setDocumentMarker(contextID: snapshot.uniqueID, documentID: snapshot.documentID) }
+        if snapshot.worldName != "" {
+            try Task.checkCancellation()
+            guard PageAutomationGuard.allowsExecution else { throw ChromiumError.staleFrame }
+            try await setDocumentMarker(contextID: snapshot.uniqueID, documentID: snapshot.documentID)
+        }
+        try Task.checkCancellation()
+        guard PageAutomationGuard.allowsExecution,
+              let frameID = target.chromiumID,
+              let currentFrame = framesByID[frameID],
+              currentFrame.documentID == target.documentID,
+              currentFrame.securityOrigin == target.securityOrigin,
+              contextIsLive(snapshot) else {
+            throw ChromiumError.staleFrame
+        }
         let response = try await command("Runtime.evaluate", params: [
             "expression": script,
             "uniqueContextId": snapshot.uniqueID,
@@ -372,6 +432,8 @@ final class ChromiumDevTools {
             frameNavigated(params)
         case "Page.frameDetached":
             frameDetached(params)
+        case "Network.responseReceived":
+            documentResponseReceived(params)
         case "Security.securityStateChanged":
             if let state = params["securityState"] as? String {
                 page?.didChangeSecurity(state == "secure")
@@ -384,6 +446,26 @@ final class ChromiumDevTools {
         default:
             break
         }
+    }
+
+    private func documentResponseReceived(_ params: [String: Any]) {
+        guard params["type"] as? String == "Document",
+              let frameID = params["frameId"] as? String,
+              let loaderID = params["loaderId"] as? String,
+              let response = params["response"] as? [String: Any],
+              let address = response["url"] as? String, let url = URL(string: address),
+              let status = response["status"] as? Int,
+              let fields = response["headers"] as? [String: Any] else { return }
+        var headers = fields.reduce(into: [String: String]()) { headers, field in
+            headers[field.key.lowercased()] = String(describing: field.value)
+        }
+        if headers["content-type"] == nil, let mime = response["mimeType"] as? String, !mime.isEmpty {
+            headers["content-type"] = mime
+        }
+        guard let confirmation = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: headers),
+              let current = page?.client?.documentResponses.confirm(confirmation, frameID: frameID, loaderID: loaderID)
+        else { return }
+        page?.didReceiveMainFrameResponse(current)
     }
 
     private func contextCreated(_ params: [String: Any]) {
@@ -422,6 +504,7 @@ final class ChromiumDevTools {
     private func frameNavigated(_ params: [String: Any]) {
         guard let frame = params["frame"] as? [String: Any], let parsed = parseFrame(frame, parentID: frame["parentId"] as? String) else { return }
         let oldDocument = framesByID[parsed.id]?.documentID
+        frameRevision &+= 1
         framesByID[parsed.id] = parsed
         if oldDocument != nil, oldDocument != parsed.documentID {
             retireDescendants(parentID: parsed.id)
@@ -434,6 +517,7 @@ final class ChromiumDevTools {
 
     private func frameDetached(_ params: [String: Any]) {
         guard let frameID = params["frameId"] as? String else { return }
+        frameRevision &+= 1
         var removed = Set([frameID])
         var changed = true
         while changed {
@@ -519,6 +603,7 @@ final class ChromiumDevTools {
     }
 
     private func updateFrames(_ parsed: [String: FrameState]) {
+        frameRevision &+= 1
         framesByID = parsed
         let staleContexts = contextsByUniqueID.compactMap { uniqueID, context -> (String, Int)? in
             guard let frame = parsed[context.frameID] else { return (uniqueID, context.executionID) }

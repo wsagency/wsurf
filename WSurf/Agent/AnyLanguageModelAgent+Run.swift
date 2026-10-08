@@ -92,10 +92,12 @@ extension AnyLanguageModelAgent {
                 ?? (error as? OpenAIMCPFailure)?.errorDescription ?? state.finalText
             if error is AgentRequestLimitReached {
                 state.stop = .requestLimit
+            } else if (error as? OpenAIFailure)?.isRateLimited == true {
+                state.stop = .rateLimited
             } else {
                 state.stop = Self.isContextWindowError(error) || error is AgentCompactionFailure ? .contextLimit : .providerError
             }
-            if state.stop == .providerError {
+            if state.stop == .providerError || state.stop == .rateLimited {
                 let failure = error as? OpenAIFailure
                 event("provider_failure", [
                     "failure_kind": failure?.kind.rawValue ?? (error is URLError ? "network" : "other"),
@@ -233,7 +235,7 @@ extension AnyLanguageModelAgent {
                     return nil
                 }
                 state.providerRetries += 1
-                callbacks.publishProgress(String(localized: "The model request failed temporarily. Retrying without repeating browser actions."))
+                callbacks.publishProgress(String(localized: "The model is rate limited. Retrying shortly without repeating browser actions."))
                 try await retrySleep(delay)
                 return nil
             }
@@ -254,6 +256,7 @@ extension AnyLanguageModelAgent {
             guard Self.isContextWindowError(error), !state.overflowRecovered else { throw error }
             state.overflowRecovered = true
             callbacks.event("overflow_recovery", [:])
+            callbacks.event("context_compaction", ["reason": "overflow"])
             try await compact(state, event: callbacks.event)
             callbacks.save()
             state.prompt = Self.continuationPrompt
@@ -351,10 +354,7 @@ extension AnyLanguageModelAgent {
             callbacks.save()
             let progress = inspectProgress(state.monitor.observe(
                 name: call.toolName, arguments: call.arguments.jsonString, output: text, failed: failed,
-                images: output.segments.compactMap { segment in
-                    guard case .image(let image) = segment, case .data(let data, _) = image.source else { return nil }
-                    return data
-                }
+                visualPage: toolkit.visualProgressPage, visualDocument: toolkit.visualProgressDocument
             ), event: callbacks.event)
             needsRecovery = progress.recovery
             state.stop = progress.stop ?? state.stop

@@ -163,8 +163,7 @@ struct TabOrderingTests {
     }
 
     @Test func aPrivateTabIsNeverRecordedForReopening() {
-        let model = makeModel()
-        model.opensPrivately = true
+        let model = BrowserModel(context: .shared(for: .privateBrowsing()))
         let secret = model.newTab(url: URL(string: "https://example.com/secret")!)
 
         model.close(secret)
@@ -188,10 +187,13 @@ struct TabOrderingTests {
 
     @Test func reopeningTakesTheMostRecentlyClosedFirst() {
         let model = makeModel()
-        let older = model.newTab()
+        let older = model.makeTab(restoring: true)
         older.title = "older"
-        let newer = model.newTab()
+        model.insert(older, after: nil)
+        let newer = model.makeTab(restoring: true)
         newer.title = "newer"
+        model.insert(newer, after: nil)
+        model.activate(newer)
         model.close(older)
         model.close(newer)
 

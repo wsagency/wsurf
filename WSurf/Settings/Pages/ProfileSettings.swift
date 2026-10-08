@@ -392,16 +392,13 @@ private struct ProfileDetailPage: View {
         clearing = false
         let targetIsCurrent = store.current.id == profile.id
         if targetIsCurrent {
-            let history = coordinator.browser.history
-            let selectedStore = BrowsingData.store
+            let context = coordinator.context
             do {
                 try await BrowsingData.clear(
                     [.history],
                     range: .everything,
-                    history: history,
-                    agent: coordinator.conversationLog,
-                    profile: profile,
-                    store: selectedStore
+                    history: context.history,
+                    context: context
                 )
             } catch {
                 coordinator.statusMessage = error.localizedDescription

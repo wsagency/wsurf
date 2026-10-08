@@ -12,7 +12,13 @@ final class BrowserHost: NSObject, NSWindowDelegate {
 
     static let topBarHeight: CGFloat = 44
 
-    private static let frameKey = "wsurf.browser.window"
+    private var frameKey: String {
+        guard let coordinator else { return "wsurf.browser.window" }
+        return "wsurf.browser.window.\(coordinator.windowID.uuidString)"
+    }
+    var nativeWindow: NSWindow? {
+        window
+    }
 
     private weak var coordinator: AppCoordinator?
     private let content: NSHostingView<BrowserRootView>
@@ -38,8 +44,15 @@ final class BrowserHost: NSObject, NSWindowDelegate {
 
     // MARK: - Visibility
 
-    func show() {
+    func show(activate: Bool = true) {
         let window = ensureWindow()
+        if !activate {
+            window.orderFront(nil)
+            window.alignWindowControls()
+            isVisible = true
+            publish()
+            return
+        }
 
         Pipeline.log.notice("""
         window: asked to show, in the Dock \(window.isMiniaturized), \
@@ -58,8 +71,6 @@ final class BrowserHost: NSObject, NSWindowDelegate {
                 )
             }
         }
-        // `makeKeyAndOrderFront` leaves a window that is in the Dock in the Dock,
-        // and a miniaturized window cannot be made key.
         if window.isMiniaturized {
             window.deminiaturize(nil)
         }
@@ -98,14 +109,16 @@ final class BrowserHost: NSObject, NSWindowDelegate {
             context.duration = 0.8
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
             window.animator().setFrame(bloom.target, display: true)
-        } completionHandler: { [weak window] in
+        } completionHandler: { [weak self, weak window] in
             MainActor.assumeIsolated {
                 window?.minSize = bloom.minSize
-                window?.setFrameAutosaveName(Self.frameKey)
+                if let self, self.coordinator?.profiles.isPrivate == false {
+                    window?.setFrameAutosaveName(self.frameKey)
+                }
             }
         }
-    }
 
+    }
     private struct Bloom {
         let target: NSRect
         let minSize: NSSize
@@ -150,9 +163,11 @@ final class BrowserHost: NSObject, NSWindowDelegate {
             }
         }
         created.delegate = self
-        Self.dropSavedTilingState()
-        created.setFrameAutosaveName(Self.frameKey)
-        if !created.setFrameUsingName(Self.frameKey) {
+        dropSavedTilingState()
+        if coordinator?.profiles.isPrivate == false {
+            created.setFrameAutosaveName(frameKey)
+        }
+        if coordinator?.profiles.isPrivate == true || !created.setFrameUsingName(frameKey) {
             created.setFrame(Self.openingFrame(for: created), display: false)
         }
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 1280, height: 820))
@@ -166,6 +181,9 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         Self.hideTitlebarDecoration(of: created)
 
         window = created
+        if let coordinator {
+            coordinator.extensions.register(browser: coordinator.browser, window: created)
+        }
         return created
     }
 
@@ -197,7 +215,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
 
     /// Removes the tiling slot from the autosaved frame. macOS 26 replays it
     /// and reopens the window tiled, ignoring the frame saved beside it.
-    private static func dropSavedTilingState() {
+    private func dropSavedTilingState() {
         let key = "NSWindow Frame \(frameKey)"
         let defaults = UserDefaults.standard
         guard let saved = defaults.string(forKey: key),
@@ -221,11 +239,19 @@ final class BrowserHost: NSObject, NSWindowDelegate {
 
     // MARK: - Window delegate
 
+    func windowDidBecomeKey(_ notification: Notification) {
+        coordinator?.windowDidBecomeKey()
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        coordinator?.windowDidResignKey()
+    }
+
     func windowWillClose(_ notification: Notification) {
         isVisible = false
         publish()
         guard let coordinator else { return }
-        Task { await coordinator.windowDidClose() }
+        coordinator.windowDidClose()
     }
 
     func windowWillMiniaturize(_ notification: Notification) {
@@ -383,9 +409,13 @@ struct BrowserRootView: View {
             .disclosureGroupStyle(ClickableDisclosureStyle())
             .writingToolsAffordanceVisibility(.hidden)
             .environment(\.windowControlsInset, coordinator.windowControlsInset)
+            .environment(\.profileFavicons, coordinator.browser.context.favicons)
+            .environment(\.assistantProviderID, coordinator.selectedProvider.id)
+            .onChange(of: coordinator.windowTitle) { _, _ in
+                coordinator.updateWindowAppearance()
+            }
     }
 }
-
 extension EnvironmentValues {
     @Entry var windowControlsInset: CGFloat = 0
 }

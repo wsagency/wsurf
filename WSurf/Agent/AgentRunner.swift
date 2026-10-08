@@ -83,6 +83,12 @@ enum AgentInstructions {
         and observationID. Frame access requires separate origin permission. Use doubleClickAtPoint or \
         dragOnPage for visual controls. chooseFilesOnPage lets the user select files; inspect the upload \
         result afterward. inspectDownloads verifies a finished task download without reading local files. \
+        For fillFields, batch up to 32 independent text, textarea, contenteditable, select, date, color, \
+        range, checkbox, and radio controls. Use each date field's format, #RRGGBB for colors, numeric \
+        values for ranges, and true/false for checkbox or radio; set only the desired radio true. Never \
+        submit through fillFields or use a native color picker; set color values directly. Skip sensitive, \
+        disabled, read-only, and file controls. Use chooseFilesOnPage only when the user selects files. \
+        Do not retry with alternate tools; use the exact observationID and report verified refs only. \
         Keep the user informed during multi-step work. Use updateProgress before your first browser \
         action to say what you will do, then after a meaningful finding, a change of approach, or \
         several actions without an update. Use one or two natural sentences about the work and \

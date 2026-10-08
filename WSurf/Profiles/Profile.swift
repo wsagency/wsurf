@@ -73,6 +73,10 @@ extension Profile {
         return AppDatabase(at: databaseURL)
     }
 
+    var downloadsFile: URL {
+        supportDirectory.appendingPathComponent("Downloads.json")
+    }
+
     var zoomFile: URL {
         supportDirectory.appendingPathComponent("page-zoom.json")
     }

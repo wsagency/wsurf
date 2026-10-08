@@ -101,6 +101,41 @@ struct FaviconLoaderTests {
         #expect(reopened.cached(for: "example.com") == nil)
     }
 
+    @Test(arguments: [false, true])
+    func privateCacheClearingCannotDeleteRegularProfileIcons(clearAll: Bool) throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let saved = try iconData()
+        let regular = FaviconLoader(cacheDirectory: directory)
+        try #require(regular.store(saved, forHost: "example.com") != nil)
+        let file = try #require(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
+        let privateLoader = FaviconLoader(cacheDirectory: directory)
+        privateLoader.persistsToDisk = false
+        #expect(privateLoader.cached(for: "example.com") != nil)
+        if clearAll {
+            privateLoader.clear(modifiedSince: .distantPast)
+        } else {
+            privateLoader.forget(host: "example.com")
+        }
+        #expect(try Data(contentsOf: file) == saved)
+    }
+
+    @Test func clearingWhileAnIconLoadsDoesNotRestoreClearedData() async throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fixture = StubIconProtocol.fixture(payload: try iconData(), held: true)
+        defer { fixture.close() }
+        let loader = FaviconLoader(cacheDirectory: directory, session: fixture.session)
+        let pending = Task { await loader.load(forHost: "example.com") }
+        defer { pending.cancel() }
+        try #require(await waitUntil { fixture.responses.requestCount == 1 })
+        loader.clear(modifiedSince: .distantPast)
+        fixture.responses.open()
+        #expect(await pending.value == nil)
+        #expect(loader.cached(for: "example.com") == nil)
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+    }
+
     private func makeDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("wsurf-favicons-\(UUID().uuidString)", isDirectory: true)
@@ -175,6 +210,42 @@ struct FaviconLoaderTests {
 
         let reopened = FaviconLoader(cacheDirectory: directory)
         #expect(reopened.cached(for: "example.com") == nil)
+    }
+
+    @Test(arguments: [
+        "http://127.0.0.1:43127/deep/page?test=1#section",
+        "https://localhost:8443/page",
+        "http://[::1]:43127/page",
+        "http://user:secret@dev.localhost:8080/path?token=private#section",
+    ])
+    func pageFallbackPreservesSchemeAndPort(_ address: String) async throws {
+        let page = try #require(URL(string: address))
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var expected = try #require(URLComponents(url: page, resolvingAgainstBaseURL: false))
+        expected.path = "/favicon.ico"
+        expected.query = nil
+        expected.fragment = nil
+        expected.user = nil
+        expected.password = nil
+        let stub = StubIconProtocol.fixture(routes: [try #require(expected.url).absoluteString: try iconData()])
+        defer { stub.close() }
+        let loader = FaviconLoader(cacheDirectory: directory, session: stub.session)
+
+        #expect(await loader.load(forPageURL: page)?.size.width == 16)
+        #expect(stub.responses.requestCount == 1)
+    }
+
+    @Test(arguments: ["127.0.0.1", "localhost", "dev.localhost", "[::1]"])
+    func bareLocalHostDoesNotGuessHTTPS(_ host: String) async throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stub = StubIconProtocol.fixture(payload: try iconData())
+        defer { stub.close() }
+        let loader = FaviconLoader(cacheDirectory: directory, session: stub.session)
+
+        #expect(await loader.load(forHost: host) == nil)
+        #expect(stub.responses.requestCount == 0)
     }
 
     /// Restoring a session reopens every tab at once. Two of them on the same
@@ -277,7 +348,7 @@ struct FaviconNavigationTests {
         return BrowserPage(webKit: WKWebView(
             frame: NSRect(x: 0, y: 0, width: 500, height: 400),
             configuration: configuration
-        ))
+        ), context: BrowserProfileContext(profile: .privateBrowsing()))
     }
 
     private func localhost(_ url: URL) throws -> URL {
@@ -300,7 +371,7 @@ struct FaviconNavigationTests {
         let webView = BrowserPage(webKit: TabWebView(
             frame: NSRect(x: 0, y: 0, width: 500, height: 400),
             configuration: configuration
-        ))
+        ), context: BrowserProfileContext(profile: .privateBrowsing()))
         FaviconWatcher.shared.install(in: webView) { loader.forget(host: host) }
         webView.load(URLRequest(url: try server.url("/page")))
         #expect(await PageSettle.untilIdle(webView, timeout: .seconds(30)))
@@ -398,9 +469,7 @@ struct FaviconNavigationTests {
         let server = try await HTTPFixtureServer.start(routes: [
             "/page": .html(#"<link rel="icon" href="/declared.png"><h1>Page</h1>"#),
         ])
-        // The guess is built as `https://<host>/favicon.ico`, with no port, so
-        // it can never reach the fixture server. Both icon fetches go through
-        // the stub instead; the page itself still comes from the server.
+        // Stub both icon responses; the document comes from the fixture server.
         let stub = StubIconProtocol.fixture(routes: [
             "/favicon.ico": try iconData(side: 16),
             "/declared.png": try iconData(side: 24),
@@ -413,8 +482,8 @@ struct FaviconNavigationTests {
         )
         let host = try #require(server.url("/page").host())
 
-        // No page yet: the bare guess is all there is, and it dresses the row.
-        let guessed = await loader.load(forHost: host)
+        // The saved URL can supply a fallback before the web view loads.
+        let guessed = await loader.load(forPageURL: try server.url("/page"))
         #expect(guessed?.size.width == 16)
 
         let webView = makeWebView()
@@ -535,7 +604,7 @@ private nonisolated final class StubIconProtocol: URLProtocol, @unchecked Sendab
         guard let id = request.value(forHTTPHeaderField: Self.header),
               let reply = Self.fixtures.withLock({ $0[id] }),
               let url = request.url,
-              let data = reply.routes.isEmpty ? reply.payload : reply.routes[url.path()] else {
+              let data = reply.routes.isEmpty ? reply.payload : (reply.routes[url.absoluteString] ?? reply.routes[url.path()]) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return
         }

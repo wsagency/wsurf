@@ -46,7 +46,7 @@ struct WebViewParkingTests {
             frame: NSRect(x: 0, y: 0, width: 600, height: 400),
             configuration: WebViewPool.makeConfiguration()
         )
-        let page = BrowserPage(webKit: webView)
+        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
         let container = host(page, in: window)
         #expect(page.window === window)
 
@@ -64,7 +64,7 @@ struct WebViewParkingTests {
             frame: NSRect(x: 0, y: 0, width: 600, height: 400),
             configuration: WebViewPool.makeConfiguration()
         )
-        let page = BrowserPage(webKit: webView)
+        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
         host(page, in: window).removeFromSuperview()
 
         let second = host(page, in: window)
@@ -88,7 +88,7 @@ struct WebViewParkingTests {
             frame: NSRect(x: 0, y: 0, width: 600, height: 400),
             configuration: WebViewPool.makeConfiguration()
         )
-        let page = BrowserPage(webKit: webView)
+        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
         let container = WebViewContainer(page: page)
         container.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
         window.contentView?.addSubview(container)

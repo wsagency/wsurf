@@ -486,44 +486,18 @@ struct PageZoomStoreTests {
     }
 }
 
-/// The pool pre-warms views against one data store at a time. A view built
-/// for a persistent profile must never be handed to a private tab, nor the
-/// other way round.
+/// A private window's warmed and newly acquired views stay in its own ephemeral store.
 @MainActor
 struct WebViewPoolPrivacyTests {
-    @Test func swappingTheStoreRetiresEveryWarmedView() {
-        let pool = WebViewPool()
-        pool.warmUp()
-
-        let ephemeral = WKWebsiteDataStore.nonPersistent()
-        pool.useDataStore(ephemeral)
-
-        let view = pool.acquire()
-        #expect(view.configuration.websiteDataStore === ephemeral)
-        #expect(!view.configuration.websiteDataStore.isPersistent)
-    }
-
-    @Test func swappingBackHandsOutPersistentViewsAgain() {
-        let pool = WebViewPool()
-        let ephemeral = WKWebsiteDataStore.nonPersistent()
-        pool.useDataStore(ephemeral)
-        pool.warmUp()
-
-        pool.useDataStore(.default())
-        let view = pool.acquire()
-        #expect(view.configuration.websiteDataStore === WKWebsiteDataStore.default())
-        #expect(view.configuration.websiteDataStore.isPersistent)
-    }
-
-    @Test func everyViewAcquiredWhilePrivateSharesTheOneEphemeralStore() {
-        let pool = WebViewPool()
-        let ephemeral = WKWebsiteDataStore.nonPersistent()
-        pool.useDataStore(ephemeral)
-
-        let first = pool.acquire()
-        let second = pool.acquire()
-        #expect(first.configuration.websiteDataStore === second.configuration.websiteDataStore)
-        #expect(first.configuration.websiteDataStore === ephemeral)
+    @Test(.boundedWebViews) func everyPrivateViewUsesItsOwningContextsStore() async {
+        let context = BrowserProfileContext.shared(for: .privateBrowsing())
+        context.webViewPool.warmUp()
+        let first = context.webViewPool.acquire()
+        let second = context.webViewPool.acquire()
+        #expect(first.configuration.websiteDataStore === context.dataStore)
+        #expect(second.configuration.websiteDataStore === context.dataStore)
+        #expect(!first.configuration.websiteDataStore.isPersistent)
+        await context.endPrivateSession()
     }
 }
 

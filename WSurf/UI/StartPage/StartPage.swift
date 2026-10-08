@@ -60,7 +60,8 @@ private struct StartPageOverview: View {
             historyVisits: browser.history.visits,
             downloads: browser.downloads.items,
             tasks: coordinator.conversationLog.traces,
-            hiddenFrequentHosts: coordinator.settings.hiddenFrequentHosts
+            hiddenFrequentHosts: coordinator.settings.hiddenFrequentHosts,
+            settings: coordinator.settings
         )
         let sections = snapshot.visibleSections(
             in: coordinator.settings.startPageOrder,

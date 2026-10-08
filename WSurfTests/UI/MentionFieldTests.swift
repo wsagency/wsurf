@@ -77,7 +77,8 @@ struct MentionFieldTests {
             text: "compare \(MentionText.marker)",
             chips: [chip],
             fontSize: 13,
-            isDark: false
+            isDark: false,
+            favicons: FaviconLoader()
         )
 
         #expect(attributed.string == "compare \(MentionText.marker)")
@@ -170,6 +171,131 @@ struct MentionFieldTests {
 
         #expect(!harness.field.performKeyEquivalent(with: try returnKey(.command, in: harness)))
         #expect(asked == 0)
+    }
+    @Test func tabIsHandledOnlyWhenASiteCanBeActivated() {
+        let harness = harness()
+        let editor = NSTextView()
+        let tab = #selector(NSResponder.insertTab(_:))
+        #expect(!harness.coordinator.control(harness.field, textView: editor, doCommandBy: tab))
+        harness.coordinator.onTab = { true }
+        #expect(harness.coordinator.control(harness.field, textView: editor, doCommandBy: tab))
+        #expect(!harness.coordinator.control(
+            harness.field, textView: editor, doCommandBy: #selector(NSResponder.insertBacktab(_:))
+        ))
+        editor.setMarkedText("よ", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: 0, length: 0))
+        #expect(!harness.coordinator.control(harness.field, textView: editor, doCommandBy: tab))
+    }
+
+    @Test func deleteRemovesOnlyAnEmptyFieldChipOutsideComposition() {
+        let harness = harness()
+        let editor = NSTextView()
+        let delete = #selector(NSResponder.deleteBackward(_:))
+        var removed = 0
+        harness.coordinator.onDeleteBackward = { removed += 1; return true }
+        #expect(harness.coordinator.control(harness.field, textView: editor, doCommandBy: delete))
+        editor.string = "query"
+        #expect(!harness.coordinator.control(harness.field, textView: editor, doCommandBy: delete))
+        editor.string = ""
+        editor.setMarkedText("よ", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: 0, length: 0))
+        #expect(!harness.coordinator.control(harness.field, textView: editor, doCommandBy: delete))
+        #expect(removed == 1)
+    }
+
+    @Test func siteChipKeyboardChangesKeepThePaletteReadyForTyping() async throws {
+        let coordinator = AppCoordinator()
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 1000, height: 800),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let host = NSHostingView(rootView: CommandPalette(
+            browser: coordinator.browser, coordinator: coordinator,
+            containerSize: CGSize(width: 1000, height: 800), dismiss: {}
+        ))
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        #expect(await waitUntil { self.mentionField(in: host)?.currentEditor() != nil })
+        let field = try #require(mentionField(in: host))
+        let editor = try #require(field.currentEditor() as? NSTextView)
+        editor.insertText("you", replacementRange: NSRange(location: 0, length: 0))
+        host.layoutSubtreeIfNeeded()
+        editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        #expect(await waitUntil { field.placeholderAttributedString?.string == String(localized: "Search \("YouTube")") })
+        await settlePaletteLayout(host)
+        #expect(window.firstResponder === field.currentEditor())
+        let searchEditor = try #require(field.currentEditor() as? NSTextView)
+        searchEditor.insertText("music", replacementRange: NSRange(location: 0, length: 0))
+        #expect(field.stringValue == "music")
+
+        searchEditor.insertText("", replacementRange: NSRange(location: 0, length: searchEditor.string.utf16.count))
+        host.layoutSubtreeIfNeeded()
+        searchEditor.doCommand(by: #selector(NSResponder.deleteBackward(_:)))
+        #expect(await waitUntil { field.placeholderAttributedString?.string != String(localized: "Search \("YouTube")") })
+        await settlePaletteLayout(host)
+        #expect(window.firstResponder === field.currentEditor())
+        let normalEditor = try #require(field.currentEditor() as? NSTextView)
+        normalEditor.insertText("next query", replacementRange: NSRange(location: 0, length: 0))
+        #expect(field.stringValue == "next query")
+        window.makeFirstResponder(nil)
+        await settlePaletteLayout(host)
+        #expect(field.currentEditor() == nil)
+    }
+
+    @Test func sitePlaceholderUpdatesWhileClearingTheFocusedField() async throws {
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 500, height: 40),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let host = NSHostingView(rootView: MentionField(
+            text: .constant("you"), placeholder: "Search tabs, history, and actions",
+            fontSize: 19, isFocused: true
+        ))
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        let field = try #require(mentionField(in: host))
+        #expect(await waitUntil { field.currentEditor() != nil })
+        let editor = try #require(field.currentEditor())
+
+        host.rootView = MentionField(
+            text: .constant(""), placeholder: "Search YouTube", fontSize: 19, isFocused: true
+        )
+        host.layoutSubtreeIfNeeded()
+        #expect(await waitUntil {
+            field.placeholderAttributedString?.string == "Search YouTube" && editor.string.isEmpty
+        })
+        #expect(window.firstResponder === editor)
+        let updated = try placeholderImage(in: host)
+
+        window.makeFirstResponder(nil)
+        window.makeFirstResponder(field)
+        #expect(updated == (try placeholderImage(in: host)))
+    }
+
+    private func settlePaletteLayout(_ host: NSView) async {
+        host.layoutSubtreeIfNeeded()
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                host.layoutSubtreeIfNeeded()
+                DispatchQueue.main.async { continuation.resume() }
+            }
+        }
+    }
+
+    private func mentionField(in view: NSView) -> MentionTextField? {
+        if let field = view as? MentionTextField {
+            return field
+        }
+        return view.subviews.lazy.compactMap { mentionField(in: $0) }.first
+    }
+
+    private func placeholderImage(in view: NSView) throws -> Data {
+        view.displayIfNeeded()
+        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        return try #require(bitmap.representation(using: .png, properties: [:]))
     }
 
     private func returnKey(_ modifiers: NSEvent.ModifierFlags, in harness: Harness) throws -> NSEvent {

@@ -15,7 +15,6 @@ enum AutofillDestination: String {
 
 struct AutofillSettings: View {
     let coordinator: AppCoordinator
-    @Bindable var settings: BrowserSettings
     var highlight: String?
     @State private var destination: AutofillDestination?
 
@@ -25,11 +24,11 @@ struct AutofillSettings: View {
                 SubPageHeader(backTitle: "Autofill", onBack: { self.destination = nil }) {}
                 switch destination {
                 case .passwords:
-                    PasswordSettings(settings: settings, extensions: coordinator.extensions, profileID: coordinator.profiles.current.id)
+                    PasswordSettings(context: coordinator.context)
                 case .cards:
-                    PaymentCardSettings(settings: settings, profileID: coordinator.profiles.current.id)
+                    PaymentCardSettings(context: coordinator.context)
                 case .contacts:
-                    ContactAutofillSettings(settings: settings, profile: coordinator.profiles.current)
+                    ContactAutofillSettings(context: coordinator.context)
                 }
             } else {
                 SettingsPageHeader(title: "Autofill", caption: "WSurf stores saved details on this Mac.")
@@ -43,7 +42,7 @@ struct AutofillSettings: View {
             }
         }
         .environment(\.settingsDescriptionLineLimit, 1)
-        .id(coordinator.profiles.current.id)
+        .id(coordinator.context.contextID)
         .onChange(of: highlight, initial: true) { _, anchor in
             if let target = AutofillDestination(anchor: anchor) {
                 destination = target

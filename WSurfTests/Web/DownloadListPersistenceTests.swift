@@ -121,6 +121,19 @@ struct DownloadListPersistenceTests {
         #expect(relaunched.items.isEmpty)
     }
 
+    @Test func aNonpersistentContextNeverWritesItsDownloadList() {
+        let file = scratchFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let downloads = DownloadManager(file: file, persists: false)
+        let id = downloads.beginItem(source: URL(string: "https://example.com/report.pdf"))
+        downloads.noteCancelRequested(id)
+        downloads.noteCancellation(id, resumeData: nil)
+        downloads.writeNow()
+
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+    }
+
     @Test func clearingTheListClearsWhatIsOnDisk() {
         let file = scratchFile()
         defer { try? FileManager.default.removeItem(at: file) }

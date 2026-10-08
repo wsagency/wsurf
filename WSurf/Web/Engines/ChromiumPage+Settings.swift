@@ -11,7 +11,7 @@ extension ChromiumPage {
     /// the genuine engine user agent.
     static func configureBrowserSettings(
         _ native: inout cef_browser_settings_t,
-        settings: BrowserSettings = .shared
+        settings: BrowserSettings
     ) {
         native.javascript = settings.javaScriptEnabled ? STATE_ENABLED : STATE_DISABLED
     }
@@ -19,7 +19,7 @@ extension ChromiumPage {
     /// Applies settings that can be changed through the already-attached CEF
     /// DevTools transport. The caller may safely invoke this after
     /// `ensureReady`; retaining the guard here also makes direct callers safe.
-    func applySettings(_ settings: BrowserSettings = .shared) async throws {
+    func applySettings(_ settings: BrowserSettings) async throws {
         try await ensureReady()
         guard !isClosed, let client else { throw ChromiumError.closed }
         client.updateSettings(settings)
@@ -53,7 +53,7 @@ extension ChromiumPage {
         case .block:
             autoplayValue = CEF_CONTENT_SETTING_VALUE_BLOCK
         }
-        try ChromiumRuntime.shared.withContext(for: profile) { context in
+        try ChromiumRuntime.shared.withContext(for: context) { context in
             context.pointee.set_content_setting?(
                 context,
                 nil,

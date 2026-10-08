@@ -53,7 +53,12 @@ final class AgentToolkit {
 
     func resetToolOutcome() {
         lastToolFailed = false
+        visualProgressPage = nil
+        visualProgressDocument = nil
     }
+
+    var visualProgressPage: String?
+    var visualProgressDocument: String?
 
     var outputBudget = ContextBudget.ToolOutputBudget.standard
     @TaskLocal static var requestedPage: String?
@@ -734,7 +739,7 @@ final class AgentToolkit {
         }
         syncAssistantOrigin(of: tab, with: webView)
         let requestedOrigin = tab.assistantAccess.origin
-        let allowed = await tab.assistantAccess.authorize(capability)
+        let allowed = await tab.assistantAccess.authorize(capability, in: webView, pageOrigin: requestedOrigin)
         syncAssistantOrigin(of: tab, with: webView)
         guard tab.assistantAccess.origin == requestedOrigin else {
             return (nil, String(localized: "The page changed before the assistant could use it."))

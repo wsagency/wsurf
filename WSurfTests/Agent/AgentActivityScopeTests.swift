@@ -42,7 +42,12 @@ struct AgentActivityScopeTests {
     @Test func aTurnBindsItsReplyToTheSessionSpace() async throws {
         let browser = FakeScopeBrowser()
         let log = FakeScopeLog()
-        let model = AgentTurnModel(browser: browser, log: log, speech: FakeScopeSpeech())
+        let model = AgentTurnModel(
+            browser: browser,
+            log: log,
+            speech: FakeScopeSpeech(),
+            actionPolicy: AgentActionPolicy(storage: SessionAgentGrantStorage())
+        )
         model.use(FakeScopeRunner())
 
         #expect(model.run(utterance: "look this up"))

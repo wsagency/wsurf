@@ -57,7 +57,7 @@ extension PageDriver {
             guard
                 await AgentActionConsent.permit(
                     label: found.label, category: category, host: (selectedFrame?.url ?? view.url)?.host(),
-                    authoredByAI: AgentAuthoredText.isPresent(in: view))
+                    authoredByAI: AgentAuthoredText.isPresent(in: view), policy: view.context.actionPolicy)
             else {
                 return SensitiveAction.declined(found.label, category: category)
             }

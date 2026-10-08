@@ -343,7 +343,7 @@ struct SidebarPeekShieldTests {
             frame: NSRect(x: 0, y: 0, width: 600, height: 400),
             configuration: WebViewPool.makeConfiguration()
         )
-        let page = BrowserPage(webKit: web)
+        let page = BrowserPage(webKit: web, context: BrowserProfileContext(profile: .privateBrowsing()))
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
             styleMask: [.titled],

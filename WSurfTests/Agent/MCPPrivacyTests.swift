@@ -111,10 +111,12 @@ struct MCPPrivacyTests {
                 .object(["ref": 2, "value": "never-written", "select": false]),
             ]),
         ])
-        #expect(action.isError == true)
+        #expect(action.isError == false)
         #expect(text(action).contains("Filled 1 of 2"))
+        #expect(text(action).contains("sensitive field"))
         #expect(!text(action).contains("hidden-secret"))
         #expect(try await tab.page.evaluateJavaScript("document.querySelector('[type=password]').value") as? String == "hidden-secret")
+        #expect(try await tab.page.evaluateJavaScript("document.querySelector('[aria-label=Search]').value") as? String == "query")
     }
 
     @Test func connectingDoesNotRevealOrControlTabs() async throws {
@@ -295,7 +297,7 @@ struct MCPPrivacyTests {
         inherited.allowAlways(.publication, host: tab.page.url?.host())
         var asked = false
         let result = try await AgentActionConsent.$scopedPolicy.withValue(inherited) {
-            try await AgentActionConsent.$decisionForTesting.withValue(.init { _, _, _ in
+            try await AgentActionConsent.$decisionForTesting.withValue(.init { _, _, _, _ in
                 asked = true
                 return .decline
             }) {

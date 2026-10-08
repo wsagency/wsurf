@@ -274,7 +274,7 @@ extension BrowserModel {
     }
 
     func close(_ tab: BrowserTab, recordForReopening: Bool = true) {
-        guard tabsByID[tab.id] === tab else { return }
+        guard !tab.isClosed, tabsByID[tab.id] === tab else { return }
         if tab.isMaterialised {
             AutofillSuggestions.shared.dismiss(in: tab.page)
         }
@@ -451,13 +451,17 @@ extension BrowserModel {
 
     func autoName(_ folder: TabFolder) {
         guard folderRenameID != folder.id,
-              folder.name == Self.defaultFolderName, FolderNamer.isAvailable
+              folder.name == Self.defaultFolderName,
+              LLMSettings.$scoped.withValue(context.modelSettings, operation: { FolderNamer.isAvailable })
         else { return }
         let titles = tabs(in: folder).map(\.title)
         let revision = folder.nameRevision
+        let context = context
         Task { [weak self, weak folder] in
-            guard let suggestion = await FolderNamer.suggestName(forTitles: titles) else { return }
-            guard let self, let folder,
+            guard let suggestion = await LLMSettings.$scoped.withValue(context.modelSettings, operation: {
+                await FolderNamer.suggestName(forTitles: titles)
+            }) else { return }
+            guard let self, let folder, self.context === context, context.isRegistered(self),
                   folders.contains(where: { $0 === folder }),
                   folderRenameID != folder.id,
                   folder.nameRevision == revision,

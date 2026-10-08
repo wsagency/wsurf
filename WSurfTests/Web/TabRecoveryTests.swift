@@ -18,7 +18,7 @@ struct TabRecoveryTests {
         try Data("<title>Loaded</title>".utf8).write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
 
-        let tab = BrowserTab(opensBlank: false)
+        let tab = BrowserTab(opensBlank: false, context: BrowserProfileContext(profile: .privateBrowsing()))
         tab.urlString = url.absoluteString
         let webKit = try #require(tab.page.webKit)
         #expect(webKit.backForwardList.currentItem == nil)
@@ -40,12 +40,9 @@ struct TabRecoveryTests {
 
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        let page = WebViewPool.shared.makeView(configuration: configuration)
-        let tab = BrowserTab(
-            adopting: page,
-            opensBlank: false,
-            privately: true
-        )
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let page = context.webViewPool.makeView(configuration: configuration)
+        let tab = BrowserTab(adopting: page, opensBlank: false, context: context)
         let oldPage = tab.page
         let oldView = try #require(oldPage.webKit)
         tab.urlString = url.absoluteString
@@ -71,10 +68,11 @@ struct TabRecoveryTests {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("EngineRoundTrip-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: file) }
         let permissions = SitePermissions(storageURL: file)
+        let context = BrowserProfileContext(profile: .privateBrowsing())
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let webKit = WKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
-        let tab = BrowserTab(adopting: webKit, opensBlank: false, privately: true, sitePermissions: permissions)
+        let tab = BrowserTab(adopting: webKit, opensBlank: false, sitePermissions: permissions, context: context)
         let window = NSWindow(contentRect: webKit.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = tab.page
@@ -118,6 +116,8 @@ struct TabRecoveryTests {
             Profile(id: UUID(), name: "First", symbol: "person", color: .gray),
             Profile(id: UUID(), name: "Second", symbol: "person", color: .gray),
         ]
+        let contexts = profiles.map { BrowserProfileContext.shared(for: $0) }
+        var privateContext = BrowserProfileContext(profile: .privateBrowsing())
         let runtime = ChromiumRuntime.shared
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
                               styleMask: .borderless, backing: .buffered, defer: false)
@@ -125,8 +125,8 @@ struct TabRecoveryTests {
         window.orderFront(nil)
         var activePage: BrowserPage?
 
-        func inspect(_ profile: Profile, expected: String, write: String? = nil) async throws {
-            let page = BrowserPage(chromium: ChromiumPage(profile: profile))
+        func inspect(_ context: BrowserProfileContext, expected: String, write: String? = nil) async throws {
+            let page = BrowserPage(chromium: ChromiumPage(context: context))
             activePage = page
             window.contentView = page
             page.load(URLRequest(url: url))
@@ -144,24 +144,26 @@ struct TabRecoveryTests {
 
         var failure: (any Error)?
         do {
-            try await inspect(profiles[0], expected: "|", write: "first")
-            try await inspect(profiles[1], expected: "|", write: "second")
-            try await inspect(profiles[0], expected: "first|profileToken=first")
-            try await inspect(.privateBrowsing(), expected: "|", write: "private")
-            try await inspect(.privateBrowsing(), expected: "private|profileToken=private")
-            runtime.endPrivateSession()
-            try await inspect(.privateBrowsing(), expected: "|")
-            try await inspect(profiles[0], expected: "first|profileToken=first")
-            try await inspect(profiles[1], expected: "second|profileToken=second")
+            try await inspect(contexts[0], expected: "|", write: "first")
+            try await inspect(contexts[1], expected: "|", write: "second")
+            try await inspect(contexts[0], expected: "first|profileToken=first")
+            try await inspect(privateContext, expected: "|", write: "private")
+            try await inspect(privateContext, expected: "private|profileToken=private")
+            await privateContext.endPrivateSession()
+            privateContext = BrowserProfileContext(profile: .privateBrowsing())
+            try await inspect(privateContext, expected: "|")
+            try await inspect(contexts[0], expected: "first|profileToken=first")
+            try await inspect(contexts[1], expected: "second|profileToken=second")
         } catch {
             failure = error
         }
         await activePage?.close()
-        runtime.endPrivateSession()
+        await privateContext.endPrivateSession()
         window.close()
-        for profile in profiles {
-            await runtime.releaseContext(profileID: profile.id)
+        for (profile, context) in zip(profiles, contexts) {
+            await runtime.releaseContext(contextID: context.contextID)
             try? FileManager.default.removeItem(at: runtime.cacheDirectory(profileID: profile.id))
+            BrowserProfileContext.forget(profile.id)
         }
         if let failure {
             throw failure
@@ -169,10 +171,22 @@ struct TabRecoveryTests {
     }
 
     @Test func htmlLoadDuringRetirementReplacesTheRetiredDocument() async throws {
-        let tab = BrowserTab(opensBlank: false)
-        tab.urlString = "https://retired.invalid/"
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/retired": .html("<title>Retired</title><p>Original document</p>"),
+        ])
+        defer { withExtendedLifetime(server) {} }
+        let url = try server.url("/retired")
+        let tab = BrowserTab(opensBlank: false, context: BrowserProfileContext(profile: .original()))
+        defer { tab.detach() }
+        tab.load(url)
+        try #require(await waitUntil {
+            tab.committedURL == url && tab.page.title == "Retired" && !tab.page.isLoading
+        })
+
         let retired = tab.page
+        #expect(tab.canDiscardWebContent)
         tab.discardWebContent()
+        #expect(!tab.isMaterialised)
 
         tab.loadHTML("<!doctype html><title>Replacement</title><p>New document</p>", baseURL: nil)
         _ = await tab.waitForPendingNavigation()

@@ -5,13 +5,13 @@
 import Foundation
 
 enum SearchURLBuilder {
-    static var engine: SearchEngine {
-        let chosen = BrowserSettings.shared.searchEngine
+    static func engine(settings: BrowserSettings) -> SearchEngine {
+        let chosen = settings.searchEngine
         return chosen.searchURL(for: "test") == nil ? SearchEngine.duckDuckGo : chosen
     }
 
-    static func searchURL(for query: String) -> URL {
-        engine.searchURL(for: query) ?? SearchEngine.duckDuckGo.searchURL(for: query)!
+    static func searchURL(for query: String, settings: BrowserSettings) -> URL {
+        engine(settings: settings).searchURL(for: query) ?? SearchEngine.duckDuckGo.searchURL(for: query)!
     }
 
 }
@@ -39,7 +39,7 @@ enum SearchEngineHosts {
         "search.marginalia.nu",
     ]
 
-    static func isSearchEngine(_ host: String) -> Bool {
+    static func isSearchEngine(_ host: String, settings: BrowserSettings) -> Bool {
         let host = host.lowercased()
         let bare = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
         if hosts.contains(bare) {
@@ -51,7 +51,7 @@ enum SearchEngineHosts {
         if bare.split(separator: ".").first == "google" {
             return true
         }
-        if let engineHost = SearchURLBuilder.engine.host?.lowercased() {
+        if let engineHost = SearchURLBuilder.engine(settings: settings).host?.lowercased() {
             let bareEngine = engineHost.hasPrefix("www.") ? String(engineHost.dropFirst(4)) : engineHost
             if bare == bareEngine {
                 return true

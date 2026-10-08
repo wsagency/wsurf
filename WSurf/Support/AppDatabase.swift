@@ -260,6 +260,8 @@ struct AppDatabase: Sendable {
             t.column("rowFraction", .double).notNull()
             t.column("columnFraction", .double).notNull()
         }
+
+        try defineWindowSessions(in: db)
     }
 
     private nonisolated static func defineSessionSchema(in db: Database) throws {
@@ -295,6 +297,49 @@ struct AppDatabase: Sendable {
             t.column("folderID", .blob).references("sessionFolder", onDelete: .cascade)
             t.column("parentID", .blob).references("sessionFolder", onDelete: .cascade)
         }
+    }
+
+    private nonisolated static func defineWindowSessions(in db: Database) throws {
+        let legacyID = Data(repeating: 0, count: 16)
+        try db.create(table: "sessionWindow", options: .ifNotExists) { t in
+            t.primaryKey("id", .blob)
+            t.column("lastActiveAt", .datetime).notNull()
+            t.column("closedAt", .datetime)
+            t.column("revision", .integer).notNull().defaults(to: 0)
+        }
+        try db.create(table: "sessionWindowRetirement", options: .ifNotExists) { t in
+            t.primaryKey("id", .blob)
+            t.column("revision", .integer).notNull()
+        }
+        for table in ["sessionTab", "sessionFolder", "sessionSplitTree", "sessionSplitPane"] {
+            guard try !db.columns(in: table).contains(where: { $0.name == "windowID" }) else { continue }
+            try db.alter(table: table) { t in
+                t.add(column: "windowID", .blob).notNull().defaults(to: legacyID).indexed()
+            }
+        }
+        if try !db.columns(in: "sessionItem").contains(where: { $0.name == "windowID" }) {
+            try db.create(table: "sessionWindowItem") { t in
+                t.column("windowID", .blob).notNull().defaults(to: legacyID)
+                t.column("position", .integer).notNull()
+                t.column("tabID", .blob).references("sessionTab", onDelete: .cascade)
+                t.column("folderID", .blob).references("sessionFolder", onDelete: .cascade)
+                t.column("parentID", .blob).references("sessionFolder", onDelete: .cascade)
+                t.primaryKey(["windowID", "position"])
+            }
+            try db.execute(sql: """
+                INSERT INTO sessionWindowItem (position, tabID, folderID, parentID)
+                    SELECT position, tabID, folderID, parentID FROM sessionItem;
+                DROP TABLE sessionItem;
+                ALTER TABLE sessionWindowItem RENAME TO sessionItem;
+                """)
+        }
+        try db.execute(sql: """
+            INSERT OR IGNORE INTO sessionWindow (id, lastActiveAt, revision)
+                SELECT windowID, ?, 0 FROM (
+                    SELECT windowID FROM sessionTab
+                    UNION SELECT windowID FROM sessionFolder
+                )
+            """, arguments: [Date()])
     }
 }
 

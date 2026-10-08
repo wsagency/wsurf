@@ -7,7 +7,7 @@ import SwiftUI
 
 struct HistoryView: View {
     let browser: BrowserModel
-
+    let coordinator: AppCoordinator
     @State private var query = ""
     @State private var hoveredURL: String?
     @State private var error: String?
@@ -31,6 +31,11 @@ struct HistoryView: View {
                                     action: { open(row.entry.url) },
                                     onRemove: { remove(row) },
                                     onOpenInNewTab: { openInNewTab(row.entry.url, activate: $0) },
+                                    onOpenInNewWindow: { isPrivate in
+                                        guard let url = URL(string: row.entry.url) else { return }
+                                        coordinator.openLinkInNewWindow(url, isPrivate: isPrivate)
+                                    },
+                                    isPrivate: browser.opensPrivately,
                                     onHoverChanged: { noteHover(of: row.entry.url, $0) }
                                 )
                             }
@@ -94,21 +99,24 @@ struct HistoryView: View {
     }
 
     private func clear() async {
-        guard let choice = await ConfirmAlert.clear(.history()) else { return }
-        let profile = ProfileStore.shared.current
-        let store = BrowsingData.store
-        let history = browser.history
+        let context = browser.context
+        guard let owner = context.extensions.adapter(for: browser),
+              let window = owner.nativeWindow, context.isRegistered(browser),
+              let choice = await ConfirmAlert.clear(.history(), in: window),
+              browser.context === context, context.isRegistered(browser),
+              context.extensions.adapter(for: browser) === owner,
+              owner.nativeWindow === window else { return }
         do {
             try await BrowsingData.clear(
                 choice.kinds,
                 range: choice.range,
-                history: history,
-                profile: profile,
-                store: store
+                history: context.history,
+                context: context
             )
-            guard ProfileStore.shared.current.id == profile.id else { return }
+            guard browser.context === context else { return }
             query = ""
         } catch {
+            guard browser.context === context else { return }
             self.error = error.localizedDescription
         }
     }

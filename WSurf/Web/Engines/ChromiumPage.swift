@@ -10,12 +10,12 @@ import WebKit
 
 @MainActor
 final class ChromiumPage: NSView {
-    let profile: Profile
+    let context: BrowserProfileContext
     var profileID: UUID {
-        profile.id
+        context.profile.id
     }
     var isPrivate: Bool {
-        profile.isPrivate
+        context.profile.isPrivate
     }
     weak var owner: BrowserPage?
     private(set) var browserID: Int32 = -1
@@ -35,7 +35,9 @@ final class ChromiumPage: NSView {
         } ?? nil
     }
 
-    private(set) var navigation: PageNavigation?
+    private(set) var navigation: PageNavigation? {
+        didSet { client?.documentResponses.reset() }
+    }
     private(set) var history = PageHistoryList()
     private var requestedURL: URL?
     private var awaitingNativeNavigation = false
@@ -44,16 +46,16 @@ final class ChromiumPage: NSView {
     private(set) var htmlDocumentURL: URL?
     private var hasAppliedInitialSettings = false
     private var zoom: CGFloat = 1
-    var navigationDecision: ((URLRequest, Bool, Bool, Bool, WKNavigationType, URL?) -> Bool)?
-    var openWindow: ((URL, Bool) -> Void)?
+    var navigationDecision: ((URLRequest, Bool, Bool, Bool, WKNavigationType, URL?, BrowserFrame?) -> Bool)?
+    var openWindow: ((URL, Bool, URL?, BrowserFrame?) -> Void)?
     var captureChanged: ((Bool, Bool) -> Void)?
     var onCloseRequested: (() -> Void)?
     var permissionDecision: ((BrowserFrame, [WebPermission]) async -> Bool)?
     var downloadDecision: ((CefDownload, String, @escaping (CefDownloadDecision) -> Void) -> Void)?
     var downloadProgress: ((CefDownload) -> Void)?
 
-    init(profile: Profile) {
-        self.profile = profile
+    init(context: BrowserProfileContext) {
+        self.context = context
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         autoresizingMask = [.width, .height]
     }
@@ -116,8 +118,8 @@ final class ChromiumPage: NSView {
         info.runtime_style = CEF_RUNTIME_STYLE_ALLOY
         var settings = cef_browser_settings_t()
         settings.size = MemoryLayout<cef_browser_settings_t>.stride
-        Self.configureBrowserSettings(&settings)
-        let created = try ChromiumRuntime.shared.withContext(for: profile) { context in
+        Self.configureBrowserSettings(&settings, settings: context.settings)
+        let created = try ChromiumRuntime.shared.withContext(for: context) { context in
             ChromiumInterop.retain(UnsafeMutableRawPointer(pointer))
             ChromiumInterop.retain(UnsafeMutableRawPointer(context))
             return ChromiumInterop.withString("about:blank") { url in
@@ -174,6 +176,9 @@ final class ChromiumPage: NSView {
     func command(_ method: String, params: [String: Any] = [:]) async throws -> [String: Any] {
         try await devTools.command(method, params: params)
     }
+    func sourceFrame(for referrer: URL?) -> BrowserFrame? {
+        devTools.sourceFrame(for: referrer)
+    }
 
     @discardableResult
     func load(_ request: URLRequest) -> PageNavigation? {
@@ -200,7 +205,7 @@ final class ChromiumPage: NSView {
                 try await ensureReady()
                 guard !Task.isCancelled, navigation === next else { return }
                 if !hasAppliedInitialSettings {
-                    try await applySettings()
+                    try await applySettings(context.settings)
                     hasAppliedInitialSettings = true
                 }
                 guard !Task.isCancelled, navigation === next else { return }
@@ -382,6 +387,7 @@ final class ChromiumPage: NSView {
 
     func stopLoading() {
         pendingLoad?.cancel()
+        client?.documentResponses.reset()
         withBrowser { $0.pointee.stop_load?($0) }
     }
 
@@ -484,6 +490,9 @@ final class ChromiumPage: NSView {
         if navigation == nil {
             navigation = PageNavigation()
         }
+        if !isRedirect {
+            client?.documentResponses.reset()
+        }
         awaitingNativeNavigation = false
         requestedURL = url
         owner?.isLoading = true
@@ -492,6 +501,11 @@ final class ChromiumPage: NSView {
             navigationStarted = true
             owner?.onNavigationStarted?(navigation, url)
         }
+    }
+
+    func didReceiveMainFrameResponse(_ response: URLResponse) {
+        guard !closing, !isClosed, let owner, !owner.isClosed else { return }
+        owner.onMainFrameResponse?(response)
     }
 
     func didStartLoad() {
@@ -503,12 +517,16 @@ final class ChromiumPage: NSView {
     func didNavigate(frame: BrowserFrame) {
         guard !closing, !isClosed else { return }
         if let url = frame.request.url {
-            ChromiumRuntime.shared.recordOrigin(url, profileID: profileID, isPrivate: isPrivate)
+            ChromiumRuntime.shared.recordOrigin(url, context: context)
         }
         guard frame.isMainFrame else { return }
         guard !initialDocument,
               frame.request.url?.absoluteString != "about:blank" || requestedURL?.absoluteString == "about:blank" else { return }
         owner?.url = frame.request.url
+        if let frameID = frame.chromiumID,
+           let response = client?.documentResponses.commit(frameID: frameID, loaderID: frame.documentID) {
+            didReceiveMainFrameResponse(response)
+        }
         updateNativeSecurity()
         owner?.onNavigationCommitted?(navigation)
         refreshHistory()
@@ -518,6 +536,7 @@ final class ChromiumPage: NSView {
         guard !closing, !isClosed else { return }
         guard !initialDocument, navigationStarted, !awaitingNativeNavigation else { return }
         updateNativeSecurity()
+        didChangeTitle()
         owner?.estimatedProgress = 1
         refreshHistory()
         owner?.onNavigationFinished?(navigation)
@@ -536,8 +555,15 @@ final class ChromiumPage: NSView {
     func didTerminate() {
         owner?.onContentProcessTerminated?()
     }
-    func didChangeTitle(_ title: String) {
-        owner?.title = title
+    func didChangeTitle() {
+        guard !closing, !isClosed else { return }
+        // The display callback substitutes a URL for an untitled document.
+        // The navigation entry retains its actual (possibly empty) title.
+        owner?.title = withHost { host in
+            guard let entry = host.pointee.get_visible_navigation_entry?(host) else { return "" }
+            defer { ChromiumInterop.release(UnsafeMutableRawPointer(entry)) }
+            return ChromiumInterop.takeString(entry.pointee.get_title?(entry))
+        }
     }
     func didChangeURL(_ url: URL?) {
         guard !initialDocument || url?.absoluteString != "about:blank" else { return }
@@ -601,6 +627,7 @@ final class ChromiumPage: NSView {
 
     func close() async {
         guard !isClosed else { return }
+        client?.documentResponses.reset()
         if raw == nil {
             didClose()
             return

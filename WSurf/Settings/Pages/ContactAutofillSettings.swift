@@ -7,14 +7,16 @@ import SwiftUI
 
 struct ContactAutofillSettings: View {
     @Bindable var settings: BrowserSettings
+    let context: BrowserProfileContext
     @State private var store: AutofillContactStore
     @State private var editing: AutofillContact?
     @State private var removing: AutofillContact?
     @State private var saveError: String?
 
-    init(settings: BrowserSettings, profile: Profile) {
-        self.settings = settings
-        _store = State(initialValue: AutofillContactStore(profile: profile))
+    init(context: BrowserProfileContext) {
+        self.context = context
+        self.settings = context.settings
+        _store = State(initialValue: AutofillContactStore(profile: context.profile))
     }
 
     var body: some View {
@@ -26,7 +28,7 @@ struct ContactAutofillSettings: View {
         }
         .disabled(store.profile.isPrivate)
         .settingsAnchor("autofill.contacts")
-        AutofillSavePromptReset(kind: .contact, profileID: store.profile.id)
+        AutofillSavePromptReset(kind: .contact, context: context)
         SettingsSection(title: "Saved addresses", symbol: "person.crop.rectangle", footnote: "WSurf encrypts saved contacts. Imported copies don’t sync.", accessory: {
             SettingsButton(title: "Add Address", symbol: "plus") { editing = AutofillContact() }
                 .disabled(!store.isLoaded || store.isBusy || store.contacts.count >= 100)

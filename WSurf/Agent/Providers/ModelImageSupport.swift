@@ -6,13 +6,17 @@ import AnyLanguageModel
 import Foundation
 
 nonisolated enum ModelImageSupport {
-    static func acceptsImages(for provider: Provider, model: String) -> Bool {
+    static func acceptsImages(
+        for provider: Provider,
+        model: String,
+        settings: LLMSettings = .current
+    ) -> Bool {
         guard !provider.isOnDevice else { return false }
-        return LLMSettings.defaults.object(forKey: key(provider, model)) as? Bool ?? true
+        return settings.defaults.object(forKey: key(provider, model)) as? Bool ?? true
     }
 
-    static func record(_ supported: Bool, for provider: Provider, model: String) {
-        LLMSettings.defaults.set(supported, forKey: key(provider, model))
+    static func record(_ supported: Bool, for provider: Provider, model: String, settings: LLMSettings = .current) {
+        settings.defaults.set(supported, forKey: key(provider, model))
     }
 
     private static func key(_ provider: Provider, _ model: String) -> String {

@@ -112,7 +112,7 @@ struct Sidebar: View {
                             browser: browser,
                             coordinator: coordinator
                         ),
-                        settings: coordinator.settings
+                        settings: BrowserSettings.application
                     )
                 }
                 WindowDragArea()

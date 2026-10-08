@@ -64,7 +64,7 @@ struct BrowserView: View {
                     browser: browser,
                     coordinator: coordinator
                 ),
-                settings: coordinator.settings
+                settings: BrowserSettings.application
             )
 
             ContentArea(
@@ -224,6 +224,11 @@ struct BrowserView: View {
             coordinator.noteShellFrame(frame)
         }
         .background(Color.clear)
+        .onChange(of: ObjectIdentifier(browser.context)) { _, _ in
+            settingsWorkspace.adoptProfile(coordinator: coordinator)
+        }
+        .environment(\.profileFavicons, coordinator.context.favicons)
+        .environment(\.assistantProviderID, coordinator.selectedProvider.id)
         .environment(\.chromeIsLight, scheme == .light)
         .environment(\.chromeWash, .of(nil, isLight: scheme == .light))
         .animation(chromeMotion, value: sidebar.isVisible)

@@ -16,6 +16,7 @@ struct SiteSettingsEntry: Identifiable, Equatable {
     var popups: PopupPolicy?
     var engine: BrowserEngine = .webKit
     var hasEngineSetting = false
+    var externalApps: [ExternalAppPermission] = []
     var assistantGrants: [SensitiveAction.Category] = []
 
     var id: String {
@@ -35,6 +36,7 @@ struct SiteSettingsEntry: Identifiable, Equatable {
             && autoplay == nil
             && popups == nil
             && !hasEngineSetting
+            && externalApps.isEmpty
             && assistantGrants.isEmpty
     }
 
@@ -106,6 +108,11 @@ struct SiteSettingsEntry: Identifiable, Equatable {
             phrases.append(String(localized: engine.label))
         }
 
+        if !externalApps.isEmpty {
+            let names = externalApps.map(\.name).formatted(.list(type: .and, width: .narrow))
+            phrases.append(String(localized: "opens \(names) without asking"))
+        }
+
         return phrases
     }
 
@@ -172,6 +179,12 @@ enum SiteSettingsIndex {
             var found = entry(for: origin)
             found.engine = permissions.engine(for: origin)
             found.hasEngineSetting = permissions.hasEngineSetting(for: origin)
+            byOrigin[origin] = found
+        }
+
+        for origin in permissions.externalAppRecords.keys {
+            var found = entry(for: origin)
+            found.externalApps = permissions.externalApps(for: origin)
             byOrigin[origin] = found
         }
 

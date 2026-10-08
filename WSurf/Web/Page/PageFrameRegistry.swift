@@ -33,6 +33,7 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandler {
 
     private final class Store {
         var root = ""
+        var mainFrame: BrowserFrame?
         var frames: [String: Target] = [:]
     }
     private let stores = NSMapTable<BrowserPage, Store>(keyOptions: .weakMemory, valueOptions: .strongMemory)
@@ -51,6 +52,7 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandler {
         let frame = BrowserFrame(webKit: message.frameInfo, documentID: token)
         if message.frameInfo.isMainFrame {
             store.root = token
+            store.mainFrame = frame
             store.frames = [:]
             return
         }
@@ -60,6 +62,14 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandler {
               url.scheme?.lowercased() == message.frameInfo.securityOrigin.protocol.lowercased(),
               Self.portMatches(url: url, securityPort: message.frameInfo.securityOrigin.port),
               store.frames.count < 256 else { return }
+        let previousDocuments = store.frames.filter {
+            $0.key != token
+                && ($0.value.frame.webKit === message.frameInfo
+                    || $0.value.frame.webKit?.isEqual(message.frameInfo) == true)
+        }.map { $0.key }
+        for id in previousDocuments {
+            store.frames[id] = nil
+        }
         store.frames[token] = Target(id: token, root: store.root, frame: frame, url: url)
     }
 
@@ -77,6 +87,43 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandler {
     nonisolated static func portMatches(url: URL, securityPort: Int) -> Bool {
         let standard = url.scheme?.lowercased() == "https" ? 443 : 80
         return (url.port ?? standard) == (securityPort == 0 ? standard : securityPort)
+    }
+    func sourceFrame(_ source: WKFrameInfo, in view: BrowserPage) -> BrowserFrame? {
+        guard let store = stores.object(forKey: view) else { return nil }
+        var registered: [BrowserFrame] = []
+        if let mainFrame = store.mainFrame {
+            registered.append(mainFrame)
+        }
+        registered.append(contentsOf: store.frames.values.map { $0.frame })
+        if let exact = registered.first(where: {
+            $0.webKit === source || $0.webKit?.isEqual(source) == true
+        }) { return exact }
+        let request = BrowserFrame(webKit: source)
+        let candidates = registered.filter {
+            $0.isMainFrame == request.isMainFrame
+                && $0.request.url == request.request.url
+                && $0.securityOrigin == request.securityOrigin
+        }
+        return candidates.count == 1 ? candidates[0] : nil
+    }
+
+    func isCurrent(_ frame: BrowserFrame, in view: BrowserPage) -> Bool {
+        guard let store = stores.object(forKey: view), !frame.documentID.isEmpty else { return false }
+        if store.mainFrame === frame {
+            return store.root == frame.documentID
+        }
+        return store.frames[frame.documentID]?.frame === frame && store.root != ""
+    }
+
+    func isLive(_ frame: BrowserFrame, in view: BrowserPage) async -> Bool {
+        if let chromium = view.chromium {
+            return (try? await chromium.isLive(frame: frame)) == true
+        }
+        guard isCurrent(frame, in: view) else { return false }
+        guard let token = try? await view.evaluateJavaScript(
+            "window.__wsurfFrameToken", in: frame, contentWorld: PageAutomationGuard.world
+        ) as? String else { return false }
+        return token == frame.documentID && isCurrent(frame, in: view)
     }
 
     func target(_ id: String, in view: BrowserPage) -> Target? {

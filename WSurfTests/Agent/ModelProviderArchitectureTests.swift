@@ -136,8 +136,14 @@ struct ModelProviderArchitectureTests {
         let registry = ModelProviderRegistry(credentials: credentials, factories: [provider.id: { configuration in
             TestModelProvider(configuration: configuration, capabilities: [.toolCalling], availability: .available, models: [])
         }, ])
-        return IntelligenceViewModel(catalog: TestProviderCatalog(providers: [provider], selectedID: provider.id),
-            credentials: credentials, modelProviders: registry, onConfigurationChanged: {})
+        return IntelligenceViewModel(
+            settings: LLMSettings(defaults: UserDefaults(suiteName: UUID().uuidString)!),
+            actionPolicy: AgentActionPolicy(storage: SessionAgentGrantStorage()),
+            catalog: TestProviderCatalog(providers: [provider], selectedID: provider.id),
+            credentials: credentials,
+            modelProviders: registry,
+            onConfigurationChanged: {}
+        )
     }
 
     @Test func registeredMockProviderDrivesSettingsWithoutNetwork() async {
@@ -170,6 +176,8 @@ struct ModelProviderArchitectureTests {
         )
         var configurationChanges = 0
         let model = IntelligenceViewModel(
+            settings: LLMSettings(defaults: UserDefaults(suiteName: UUID().uuidString)!),
+            actionPolicy: AgentActionPolicy(storage: SessionAgentGrantStorage()),
             catalog: catalog,
             credentials: credentials,
             modelProviders: registry,

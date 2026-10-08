@@ -30,7 +30,7 @@ nonisolated enum MCPToolCatalog {
         var schema: Value {
             if type == "array" {
                 return .object([
-                    "type": "array", "minItems": 1, "maxItems": 8, "description": .string(description),
+                    "type": "array", "minItems": 1, "maxItems": 32, "description": .string(description),
                     "items": .object([
                         "type": "object", "additionalProperties": false,
                         "required": ["ref", "value", "select"],
@@ -89,7 +89,7 @@ nonisolated enum MCPToolCatalog {
                     case ("integer", .int(let number)):
                         number >= parameter.minimum && number <= 100_000
                     case ("array", .array(let fields)):
-                        (1...8).contains(fields.count)
+                        (1...32).contains(fields.count)
                             && fields.allSatisfy { field in
                                 guard case .object(let object) = field, Set(object.keys) == ["ref", "value", "select"],
                                     let ref = object["ref"]?.intValue, ref > 0, ref <= 100_000,
@@ -158,9 +158,10 @@ nonisolated enum MCPToolCatalog {
                     description: "Enter, Tab, Escape, Space, ArrowLeft, ArrowRight, ArrowDown, ArrowUp, Home, End, Backspace, or Delete"),
             ]),
         Entry(
-            name: "fillFields", description: "Fill up to eight independent fields without submitting. Stops on page changes; check the completed count.",
+            name: "fillFields", description: AgentToolkit.Descriptions.fillFields,
             parameters: [
-                tab, snapshot, Parameter(name: "fields", type: "array", description: "Fields with ref, value, and select."),
+                tab, snapshot, Parameter(name: "fields", type: "array",
+                                         description: "One to 32 controls with ref, value, and select. Use true/false for checkbox/radio states, #RRGGBB for colors, and numbers for ranges."),
             ]),
         Entry(
             name: "inspectControl", description: "Inspect control state and up to twelve dropdown options.",

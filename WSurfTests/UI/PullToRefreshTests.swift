@@ -153,7 +153,7 @@ struct PullToRefreshProbeTests {
             "<!doctype html><html><body style=\"margin:0\">\(body)</body></html>",
             baseURL: nil
         )
-        #expect(await PageSettle.untilIdle(BrowserPage(webKit: webView), timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing())), timeout: .seconds(30)))
         return webView
     }
 

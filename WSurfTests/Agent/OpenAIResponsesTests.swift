@@ -207,12 +207,29 @@ struct OpenAIResponsesTests {
     @Test func failedResponseRetainsProviderCodeInDiagnostics() async throws {
         var response = OpenAITransportFixture.response([], status: "failed")
         response["error"] = ["code": "server_error", "message": "Private provider detail"]
-        let wire = OpenAITransportFixture([response, OpenAITransportFixture.response([OpenAITransportFixture.message("Paused")])])
+        let wire = OpenAITransportFixture([response, OpenAITransportFixture.response([OpenAITransportFixture.message("Must not summarize")])])
         let fixture = HarnessFixture([], openAI: client(wire))
         await fixture.run()
         let trace = try #require(fixture.log.latestTrace(forTab: fixture.tabID))
         #expect(trace.stopReason == .providerError)
+        #expect(wire.requests.count == 1)
         #expect(trace.diagnostics.events.contains { $0.kind == "provider_failure" && $0.values["api_code"] == "server_error" })
+        #expect(trace.diagnostics.inputTokens == 100)
+        #expect(!trace.diagnostics.exported().contains("Private provider detail"))
+    }
+
+    @Test func failedRateLimitedResponseShowsSpecificReasonWithoutSummaryRequest() async throws {
+        var response = OpenAITransportFixture.response([], status: "failed")
+        response["error"] = ["code": "rate_limit_exceeded", "message": "Private provider detail"]
+        let wire = OpenAITransportFixture([response])
+        let fixture = HarnessFixture([], openAI: client(wire))
+        await fixture.run()
+        let trace = try #require(fixture.log.latestTrace(forTab: fixture.tabID))
+        #expect(trace.stopReason == .rateLimited)
+        #expect(trace.state == .paused)
+        #expect(wire.requests.count == 1)
+        #expect(trace.diagnostics.events.contains { $0.kind == "provider_failure" && $0.values["api_code"] == "rate_limit_exceeded" })
+        #expect(trace.response.contains("rate limit"))
         #expect(!trace.diagnostics.exported().contains("Private provider detail"))
     }
 
@@ -273,16 +290,29 @@ struct OpenAIResponsesTests {
         #expect(resumed["input"].array?.contains(where: { $0["phase"] == "final_answer" }) == true)
     }
 
+    @Test func exhaustedNativeRateLimitUsesOnlyBudgetedRequests() async throws {
+        let wire = OpenAITransportFixture([], eventErrorsBeforeSuccess: 3, eventErrorCode: "rate_limit_exceeded")
+        let fixture = HarnessFixture([], openAI: client(wire))
+        await fixture.run()
+        let trace = try #require(fixture.log.latestTrace(forTab: fixture.tabID))
+        #expect(wire.requests.count == 3)
+        #expect(fixture.state.calls == 0)
+        #expect(trace.stopReason == .rateLimited)
+        #expect(trace.diagnostics.modelRequests == 3)
+        #expect(trace.diagnostics.events.filter { $0.kind == "generation" }.count == 3)
+    }
+
     @Test func incompleteToolResponseNeverExecutesAnAction() async throws {
         let wire = OpenAITransportFixture([
             OpenAITransportFixture.response([OpenAITransportFixture.call], status: "incomplete"),
-            OpenAITransportFixture.response([OpenAITransportFixture.message("No action was completed.")]),
         ])
         let fixture = HarnessFixture([], openAI: client(wire))
         await fixture.run()
+        let trace = try #require(fixture.log.latestTrace(forTab: fixture.tabID))
+        #expect(wire.requests.count == 1)
         #expect(fixture.state.calls == 0)
-        #expect(fixture.log.latestTrace(forTab: fixture.tabID)?.stopReason == .providerError)
-        #expect(fixture.log.latestTrace(forTab: fixture.tabID)?.diagnostics.inputTokens == 200)
+        #expect(trace.stopReason == .providerError)
+        #expect(trace.diagnostics.inputTokens == 100)
     }
 
     @Test func compactionPreservesTheCanonicalWindowAndUsage() async throws {

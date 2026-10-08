@@ -206,7 +206,8 @@ extension PageDriver {
         if activates || submitsKey,
            let category = SensitiveAction.category(of: target["label"] as? String ?? "", context: target["context"] as? String ?? "") {
             guard await AgentActionConsent.permit(label: target["label"] as? String ?? "Browser action", category: category,
-                                                  host: view.url?.host(), authoredByAI: AgentAuthoredText.isPresent(in: view)) else { throw PageComputerFailure.declined }
+                host: view.url?.host(), authoredByAI: AgentAuthoredText.isPresent(in: view),
+                policy: view.context.actionPolicy) else { throw PageComputerFailure.declined }
         }
         try await validateComputerFrame(frame, in: view, checkRevision: false)
         let current = try await computerTarget(point: point, in: view)
@@ -245,7 +246,9 @@ extension PageDriver {
         case "move":
             return "mousemove"
         case "keypress":
-            return "keyup"
+            // Keydown proves delivery, not page completion. A page can consume keyup,
+            // and inactive windows may omit it after an editing command has run.
+            return "keydown"
         case "type":
             return action["text"] == "" ? nil : "input"
         default:
@@ -259,14 +262,16 @@ extension PageDriver {
             window.__wsurfComputerAck?.dispose();
             const type = \(encoded), docs = new Set([document, ...Array.from(R.walk(document.body)).map(el => el.ownerDocument)]);
             const state = { received: false };
-            const handler = event => { if (event.isTrusted) state.received = true; };
-            const keyHandler = event => { if (event.isTrusted) state.keyDown = event; };
+            const handler = event => {
+              if (!event.isTrusted) return;
+              state.received = true;
+              if (type === 'keydown') state.keyDown = event;
+            };
             for (const doc of docs) {
               doc.addEventListener(type, handler, true);
-              if (type === 'keyup') doc.addEventListener('keydown', keyHandler, true);
             }
             state.dispose = () => {
-              for (const doc of docs) { doc.removeEventListener(type, handler, true); doc.removeEventListener('keydown', keyHandler, true); }
+              for (const doc of docs) doc.removeEventListener(type, handler, true);
               state.keyDown = null;
             };
             window.__wsurfComputerAck = state;
@@ -325,7 +330,8 @@ extension PageDriver {
             let destination = try await computerTarget(point: end, in: view)
             if let category = SensitiveAction.category(of: destination["label"] as? String ?? "", context: destination["context"] as? String ?? "") {
                 guard await AgentActionConsent.permit(label: destination["label"] as? String ?? "Drop target", category: category,
-                    host: view.url?.host(), authoredByAI: AgentAuthoredText.isPresent(in: view)) else { throw PageComputerFailure.declined }
+                    host: view.url?.host(), authoredByAI: AgentAuthoredText.isPresent(in: view),
+                    policy: view.context.actionPolicy) else { throw PageComputerFailure.declined }
             }
             try await validateComputerFrame(frame, in: view, checkRevision: true)
             try await dispatchDrag(path: path, modifiers: modifiers, in: view)

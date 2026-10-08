@@ -4,7 +4,7 @@
 
 import Foundation
 
-nonisolated final class InMemoryUserDefaults: UserDefaults, @unchecked Sendable {
+nonisolated final class InMemoryUserDefaults: UserDefaults {
     private var values: [String: Any]
     private let lock = NSLock()
 
@@ -77,23 +77,13 @@ nonisolated final class InMemoryUserDefaults: UserDefaults, @unchecked Sendable 
 
 @MainActor
 enum ProfileSettingsStore {
-    private static var privateDefaults: InMemoryUserDefaults?
 
     static func suiteName(for id: UUID) -> String {
         "io.wsagency.wsurf.profile.\(id.uuidString)"
     }
 
     static func defaults(for profile: Profile) -> UserDefaults {
-        if profile.isPrivate {
-            if let privateDefaults {
-                return privateDefaults
-            }
-            let persistentProfile = ProfileStore.shared.profileToReturnTo
-            let inherited = defaults(for: persistentProfile)
-            let fresh = InMemoryUserDefaults(inheriting: inherited)
-            privateDefaults = fresh
-            return fresh
-        }
+        precondition(!profile.isPrivate, "Private contexts must create their own in-memory settings")
         #if DEBUG
         if StageMode.isActive {
             return StageMode.defaults
@@ -104,10 +94,7 @@ enum ProfileSettingsStore {
     }
 
     static func forget(_ id: UUID) {
-        if id == Profile.privateID {
-            privateDefaults = nil
-            return
-        }
+        guard id != Profile.privateID else { return }
         UserDefaults.standard.removePersistentDomain(forName: suiteName(for: id))
     }
 }

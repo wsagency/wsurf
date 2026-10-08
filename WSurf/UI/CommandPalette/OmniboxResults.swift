@@ -39,6 +39,7 @@ struct OmniboxList: View {
     }
 
     let sections: [OmniboxSection]
+    let settings: BrowserSettings
     let query: String
     let selection: Int
     var optionHeld = false
@@ -76,7 +77,11 @@ struct OmniboxList: View {
             ForEach(groups, id: \.section.id) { group in
                 ForEach(group.section.items.enumerated(), id: \.element.id) { offset, item in
                     let index = group.start + offset
-                    let presentation = OmniboxRowPresentation(item: item, optionHeld: optionHeld)
+                    let presentation = OmniboxRowPresentation(
+                        item: item,
+                        optionHeld: optionHeld,
+                        settings: settings
+                    )
                     VStack(alignment: .leading, spacing: 0) {
                         if offset == 0 {
                             heading(group.section, isFirst: group.start == 0)
@@ -162,7 +167,7 @@ struct OmniboxRowPresentation {
     let detail: String
     let replacesFavicon: Bool
 
-    init(item: OmniboxItem, optionHeld: Bool) {
+    init(item: OmniboxItem, optionHeld: Bool, settings: BrowserSettings) {
         guard optionHeld, item.alternate != nil else {
             symbol = item.symbol
             detail = item.detail
@@ -174,7 +179,7 @@ struct OmniboxRowPresentation {
         case .go:
             detail = String(localized: "Open website in current tab")
         case .search, .phrase:
-            detail = String(localized: "Search with \(Omnibox.engineName) in current tab")
+            detail = String(localized: "Search with \(Omnibox.engineName(settings: settings)) in current tab")
         case .history:
             detail = "\(item.detail) · \(String(localized: "Open in current tab"))"
         case .newTab, .tab, .ask, .action:
@@ -195,6 +200,7 @@ struct OmniboxFavicon: View {
     let isSelected: Bool
 
     @State private var image: NSImage?
+    @Environment(\.profileFavicons) private var profileFavicons
 
     var body: some View {
         Group {
@@ -207,12 +213,15 @@ struct OmniboxFavicon: View {
             }
         }
         .frame(width: size, height: size)
-        .task(id: host) {
-            if let hit = FaviconLoader.shared.cached(for: host) {
+        .task(id: "\(host)|\(profileFavicons.map { String(describing: ObjectIdentifier($0)) } ?? "")") {
+            guard let favicons = profileFavicons else { return }
+            if let hit = favicons.cached(for: host) {
                 image = hit
                 return
             }
-            image = await FaviconLoader.shared.load(forHost: host)
+            let loaded = await favicons.load(forHost: host)
+            guard profileFavicons === favicons else { return }
+            image = loaded
         }
     }
 }
@@ -224,6 +233,7 @@ private struct OmniboxRow: View {
     let isSelected: Bool
     let density: OmniboxList.Density
     let cornerRadius: CGFloat
+    @Environment(\.assistantProviderID) private var assistantProviderID
 
     private var iconWidth: CGFloat {
         density == .compact ? 16 : 20
@@ -280,11 +290,15 @@ private struct OmniboxRow: View {
     @ViewBuilder
     private var icon: some View {
         if item.kind == .ask {
-            ProviderBrandIcon(
-                providerID: ProviderCatalog.shared.selected.id,
-                size: density == .compact ? 13 : 16
-            )
-            .frame(width: iconWidth)
+            if let assistantProviderID {
+                ProviderBrandIcon(
+                    providerID: assistantProviderID,
+                    size: density == .compact ? 13 : 16
+                )
+                .frame(width: iconWidth)
+            } else {
+                symbolIcon
+            }
         } else if let host = item.iconHost, !presentation.replacesFavicon {
             OmniboxFavicon(
                 host: host,

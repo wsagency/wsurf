@@ -5,33 +5,18 @@
 import AppKit
 import CryptoKit
 import Foundation
+import Network
 
 @MainActor
 final class FaviconLoader {
-    static let shared = FaviconLoader()
-
     private var cache: [String: NSImage] = [:]
     private var inFlight: [String: Task<NSImage?, Never>] = [:]
-    private var cacheDirectory: URL
+    private let cacheDirectory: URL
     private let session: URLSession
 
     var persistsToDisk = true
 
-    func use(cacheDirectory: URL) {
-        guard cacheDirectory != self.cacheDirectory else { return }
-        self.cacheDirectory = cacheDirectory
-        profileGeneration &+= 1
-        cache.removeAll()
-        for task in inFlight.values {
-            task.cancel()
-        }
-        inFlight.removeAll()
-        sessionOnly.removeAll()
-        guessed.removeAll()
-        try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-    }
-
-    private var profileGeneration = 0
+    private var cacheGeneration = 0
 
     static func cacheDirectory(for profile: Profile) -> URL {
         let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -72,6 +57,11 @@ final class FaviconLoader {
     }
 
     func forgetSessionOnlyIcons() {
+        cacheGeneration &+= 1
+        for task in inFlight.values {
+            task.cancel()
+        }
+        inFlight.removeAll()
         sessionOnly.removeAll()
     }
 
@@ -104,6 +94,9 @@ final class FaviconLoader {
         cache[key] = nil
         sessionOnly[key] = nil
         guessed.remove(key)
+        inFlight[key]?.cancel()
+        inFlight[key] = nil
+        guard persistsToDisk else { return }
         try? FileManager.default.removeItem(at: cacheFile(for: key))
         try? FileManager.default.removeItem(at: cacheFile(for: key, isGuess: true))
     }
@@ -113,11 +106,33 @@ final class FaviconLoader {
         if let hit = cached(for: host) {
             return hit
         }
-        guard let url = URL(string: "https://\(host)/favicon.ico") else { return nil }
+        // A bare local host cannot identify the page's scheme or development-server port.
+        let address = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        guard host != "localhost", !host.hasSuffix(".localhost"),
+              IPv4Address(address) == nil, IPv6Address(address) == nil,
+              let pageURL = URL(string: "https://\(host)") else { return nil }
+        return await load(forPageURL: pageURL)
+    }
+
+    func load(forPageURL pageURL: URL) async -> NSImage? {
+        guard let url = Self.fallbackURL(for: pageURL), let host = url.host()?.lowercased() else { return nil }
+        if let hit = cached(for: host) {
+            return hit
+        }
 
         return await coalesced(key: key(host)) { [weak self] in
             await self?.fetchAndCache(url, forHost: host, isGuess: true)
         }
+    }
+
+    nonisolated private static func fallbackURL(for pageURL: URL) -> URL? {
+        guard isFetchable(pageURL), var components = URLComponents(url: pageURL, resolvingAgainstBaseURL: false) else { return nil }
+        components.path = "/favicon.ico"
+        components.query = nil
+        components.fragment = nil
+        components.user = nil
+        components.password = nil
+        return components.url
     }
 
     func load(for webView: BrowserPage) async -> NSImage? {
@@ -136,7 +151,7 @@ final class FaviconLoader {
 
     private func fetchDeclared(from webView: BrowserPage, pageURL: URL, host: String) async -> NSImage? {
         let beganPrivately = !persistsToDisk
-        let beganInGeneration = profileGeneration
+        let beganInGeneration = cacheGeneration
         var candidates: [URL] = []
         var mask: URL?
         let script = """
@@ -193,21 +208,18 @@ final class FaviconLoader {
             candidates.append(answered)
             mask = Self.declaredMaskURL(fromAnswer: answer, requestedHost: host, pageURL: pageURL)
         }
-        if var components = URLComponents(url: pageURL, resolvingAgainstBaseURL: false) {
-            components.path = "/favicon.ico"
-            components.query = nil
-            components.fragment = nil
-            if let fallback = components.url {
-                candidates.append(fallback)
-            }
+        if let fallback = Self.fallbackURL(for: pageURL) {
+            candidates.append(fallback)
         }
 
         for candidate in candidates {
             guard let data = await fetch(candidate) else { continue }
-            guard beganInGeneration == profileGeneration else { return nil }
+            guard beganInGeneration == cacheGeneration, !Task.isCancelled else { return nil }
             let sessionOnly = beganPrivately || !persistsToDisk
-            if let inked = await inked(data, mask: mask),
-               let image = store(inked, forHost: host, sessionOnly: sessionOnly, isGuess: false) {
+            let inkedData = await inked(data, mask: mask)
+            guard beganInGeneration == cacheGeneration, !Task.isCancelled else { return nil }
+            if let inkedData,
+               let image = store(inkedData, forHost: host, sessionOnly: sessionOnly, isGuess: false) {
                 return image
             }
             if let image = store(data, forHost: host, sessionOnly: sessionOnly, isGuess: false) {
@@ -232,6 +244,7 @@ final class FaviconLoader {
         guard Self.isFetchable(url) else { return nil }
         let session = persistsToDisk ? session : ephemeralSession
         guard let (data, response) = try? await session.data(from: url),
+              !Task.isCancelled,
               (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true
         else { return nil }
         return data
@@ -239,8 +252,9 @@ final class FaviconLoader {
 
     func clear(modifiedSince cutoff: Date) {
         cache.removeAll()
-        sessionOnly.removeAll()
+        forgetSessionOnlyIcons()
         guessed.removeAll()
+        guard persistsToDisk else { return }
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: cacheDirectory,
             includingPropertiesForKeys: [.contentModificationDateKey],
@@ -308,10 +322,13 @@ final class FaviconLoader {
             return await existing.value
         }
 
+        let generation = cacheGeneration
         let task = Task { @MainActor in await work() }
         inFlight[key] = task
         let image = await task.value
-        inFlight[key] = nil
+        if !task.isCancelled && generation == cacheGeneration {
+            inFlight[key] = nil
+        }
         return image
     }
 
@@ -352,9 +369,9 @@ final class FaviconLoader {
 
     private func fetchAndCache(_ url: URL, forHost host: String, isGuess: Bool = false) async -> NSImage? {
         let beganPrivately = !persistsToDisk
-        let beganInGeneration = profileGeneration
+        let beganInGeneration = cacheGeneration
         guard let data = await fetch(url) else { return nil }
-        guard beganInGeneration == profileGeneration else { return nil }
+        guard beganInGeneration == cacheGeneration, !Task.isCancelled else { return nil }
         return store(
             data,
             forHost: host,

@@ -187,4 +187,38 @@ struct AgentQuestionTests {
         model.answer("Lisbon")
         #expect(model.ask == nil)
     }
+
+    @Test func answeringOneWindowsQuestionDoesNotConsumeAnotherWindowsRequest() async throws {
+        let app = BrowserApplication()
+        let first = AppCoordinator(browser: BrowserModel(context: .shared(for: .original()), windowID: UUID()))
+        let second = AppCoordinator(browser: BrowserModel(context: .shared(for: .privateBrowsing()), windowID: UUID()))
+        app.register(first)
+        app.register(second)
+        defer {
+            first.closeWindow()
+            second.closeWindow()
+        }
+        first.browser.newTab()
+        second.browser.newTab()
+        let firstSpace = try #require(first.browser.activeSpaceID)
+        let secondSpace = try #require(second.browser.activeSpaceID)
+        first.agentReply.bind(toSpace: firstSpace, showsInChrome: true)
+        second.agentReply.bind(toSpace: secondSpace, showsInChrome: false)
+        let firstAsk = first.agentQuestions.present(questions(["Which city?"]), inSpace: firstSpace)
+        let secondAsk = second.agentQuestions.present(questions(["Which day?"]), inSpace: secondSpace)
+        app.focus(second)
+
+        #expect(first.pendingAgentQuestion(inChrome: true) == firstAsk)
+        #expect(first.pendingAgentQuestion(inChrome: false) == nil)
+        #expect(second.pendingAgentQuestion(inChrome: false) == secondAsk)
+        #expect(second.pendingAgentQuestion(inChrome: true) == nil)
+        first.agentQuestions.answer("Lisbon")
+        #expect(await first.agentQuestions.result(for: firstAsk) == "Q: Which city?\nA: Lisbon")
+        #expect(first.pendingAgentQuestion(inChrome: true) == nil)
+        #expect(first.pendingAgentQuestion(inChrome: false) == nil)
+        #expect(second.pendingAgentQuestion(inChrome: false) == secondAsk)
+        second.agentQuestions.answer("Friday")
+        #expect(await second.agentQuestions.result(for: secondAsk) == "Q: Which day?\nA: Friday")
+        #expect(second.pendingAgentQuestion(inChrome: false) == nil)
+    }
 }

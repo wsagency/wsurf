@@ -11,6 +11,7 @@ import Testing
 /// the address bar and the start page's ask all draw from these.
 @MainActor
 struct OmniboxTests {
+    private let settings = BrowserSettings()
     /// The mode, pinned for the length of one test. Every test that cares
     /// states which side it is on, "off" included - that is not something to
     /// assume just because it is the default.
@@ -37,7 +38,7 @@ struct OmniboxTests {
 
     @Test func returnGoesToAPlace() throws {
         var opened: URL?
-        let item = try #require(Omnibox.searchItem(for: "example.com") { opened = $0 })
+        let item = try #require(Omnibox.searchItem(for: "example.com", settings: settings) { opened = $0 })
 
         #expect(item.kind == .go)
         item.run()
@@ -47,19 +48,19 @@ struct OmniboxTests {
     @Test func returnSearchesProse() throws {
         try agentOnly(false) {
             var opened: URL?
-            let item = try #require(Omnibox.searchItem(for: "weather tomorrow") { opened = $0 })
+            let item = try #require(Omnibox.searchItem(for: "weather tomorrow", settings: settings) { opened = $0 })
 
             #expect(item.kind == .search)
-            #expect(item.detail.contains(Omnibox.engineName))
+            #expect(item.detail.contains(Omnibox.engineName(settings: settings)))
             item.run()
             let url = try #require(opened)
-            #expect(url == SearchURLBuilder.searchURL(for: "weather tomorrow"))
+            #expect(url == SearchURLBuilder.searchURL(for: "weather tomorrow", settings: settings))
         }
     }
 
     @Test func anEmptyQueryOffersNoSuggestions() {
-        #expect(Omnibox.topSection(query: "   ") { _ in } == nil)
-        #expect(Omnibox.phrasesSection(query: "   ", phrases: ["weather"], limit: 3) { _ in } == nil)
+        #expect(Omnibox.topSection(query: "   ", settings: settings) { _ in } == nil)
+        #expect(Omnibox.phrasesSection(query: "   ", phrases: ["weather"], limit: 3, settings: settings) { _ in } == nil)
     }
 
     @Test func phrasesBecomeRowsUnderTheEnginesHeader() {
@@ -67,11 +68,12 @@ struct OmniboxTests {
             let section = Omnibox.phrasesSection(
                 query: "weath",
                 phrases: ["weather", "weather tomorrow"],
-                limit: 3
+                limit: 3,
+                settings: settings
             ) { _ in }
 
             #expect(section?.items.count == 2)
-            #expect(section?.title.contains(Omnibox.engineName) == true)
+            #expect(section?.title.contains(Omnibox.engineName(settings: settings)) == true)
             #expect(section?.items.allSatisfy { $0.kind == .phrase } == true)
         }
     }
@@ -81,12 +83,13 @@ struct OmniboxTests {
             let section = Omnibox.phrasesSection(
                 query: "weath",
                 phrases: (0..<9).map { "weather \($0)" },
-                limit: 3
+                limit: 3,
+                settings: settings
             ) { _ in }
 
             #expect(section?.items.count == 3)
-            #expect(Omnibox.phrasesSection(query: "weath", phrases: [], limit: 3) { _ in } == nil)
-            #expect(Omnibox.phrasesSection(query: "weath", phrases: ["weather"], limit: 0) { _ in } == nil)
+            #expect(Omnibox.phrasesSection(query: "weath", phrases: [], limit: 3, settings: settings) { _ in } == nil)
+            #expect(Omnibox.phrasesSection(query: "weath", phrases: ["weather"], limit: 0, settings: settings) { _ in } == nil)
         }
     }
 
@@ -195,33 +198,27 @@ struct OmniboxTests {
 
     @Test func theRowReturnRunsSitsAloneAndUnheaded() throws {
         agentOnly(false) {
-            let section = Omnibox.topSection(query: "example.com") { _ in }
-            // No heading: the top hit sits above the groups, not inside one,
-            // so reordering what follows can never move it.
+            let section = Omnibox.topSection(query: "example.com", settings: settings) { _ in }
             #expect(section?.title.isEmpty == true)
             #expect(section?.items.count == 1)
         }
     }
 
-    /// ⌘-click is how every browser opens a link beside the page it is on, so
-    /// the palette offers the same destination twice: here, and in a new tab.
     @Test func theTopRowOffersANewTabAndCommandClickTakesIt() throws {
         try agentOnly(false) {
             var here: [URL] = []
             var beside: [URL] = []
             let section = try #require(Omnibox.topSection(
                 query: "example.com",
+                settings: settings,
                 openInNewTab: { beside.append($0) },
                 open: { here.append($0) }
             ))
-
             #expect(section.items.map(\.id) == ["omnibox-go", "omnibox-new-tab"])
             #expect(section.items[1].shortcut == "⇧↩")
-
             section.items[0].run()
             #expect(here.map(\.absoluteString) == ["https://example.com"])
             #expect(beside.isEmpty)
-
             let alternate = try #require(section.items[0].alternate)
             alternate()
             section.items[1].run()
@@ -230,28 +227,24 @@ struct OmniboxTests {
         }
     }
 
-    /// A typed search gets the same pair, pointed at the engine.
     @Test func aSearchAlsoOffersANewTab() throws {
         try agentOnly(false) {
             var beside: [URL] = []
             let section = try #require(Omnibox.topSection(
                 query: "weather tomorrow",
+                settings: settings,
                 openInNewTab: { beside.append($0) },
                 open: { _ in }
             ))
-
             #expect(section.items.map(\.id) == ["omnibox-search", "omnibox-new-tab"])
             section.items[1].run()
-            #expect(beside == [SearchURLBuilder.searchURL(for: "weather tomorrow")])
+            #expect(beside == [SearchURLBuilder.searchURL(for: "weather tomorrow", settings: settings)])
         }
     }
 
-    /// Without a second outcome the same gesture still runs the row, rather
-    /// than doing nothing at all.
     @Test func aRowWithoutASecondOutcomeKeepsItsOwn() throws {
         try agentOnly(false) {
-            let section = try #require(Omnibox.topSection(query: "example.com") { _ in })
-
+            let section = try #require(Omnibox.topSection(query: "example.com", settings: settings) { _ in })
             #expect(section.items.map(\.id) == ["omnibox-go"])
             #expect(section.items[0].alternate == nil)
         }
@@ -268,66 +261,53 @@ struct OmniboxTests {
 
     @Test func offTheWebProseGetsNoSearchRow() {
         agentOnly {
-            #expect(Omnibox.searchItem(for: "weather tomorrow") { _ in } == nil)
-            #expect(Omnibox.topSection(query: "weather tomorrow") { _ in } == nil)
+            #expect(Omnibox.searchItem(for: "weather tomorrow", settings: settings) { _ in } == nil)
+            #expect(Omnibox.topSection(query: "weather tomorrow", settings: settings) { _ in } == nil)
         }
     }
 
-    /// A link is still a link. This is the half of the setting that isn't
-    /// "everything goes to the model".
     @Test func offTheWebAPlaceStillOpens() throws {
         try agentOnly {
-            let section = try #require(Omnibox.topSection(query: "example.com") { _ in })
+            let section = try #require(Omnibox.topSection(query: "example.com", settings: settings) { _ in })
             #expect(section.items.count == 1)
             #expect(section.items.first?.kind == .go)
-            // Naming the engine over a row that never touches it would be a
-            // lie about where the click goes.
             #expect(section.title.isEmpty)
         }
     }
 
-    /// Completions are queries the engine wrote. Nothing fetches them in
-    /// this mode; this is the second lock on the same door.
     @Test func offTheWebLateCompletionsAreStillDropped() {
         agentOnly {
             #expect(Omnibox.phrasesSection(
                 query: "example.com",
                 phrases: ["example.com login", "example.com pricing"],
-                limit: 3
+                limit: 3,
+                settings: settings
             ) { _ in } == nil)
         }
     }
 
-    /// The fields ask `Omnibox` rather than the setting, so that is the
-    /// answer that has to track it - and the pin a test puts on it must not
-    /// outlive the test.
     @Test func theModeIsReadOffTheSetting() {
-        let before = BrowserSettings.shared.agentOnlyInput
-        agentOnly { #expect(Omnibox.isAgentOnly) }
-        agentOnly(false) { #expect(!Omnibox.isAgentOnly) }
-        #expect(Omnibox.isAgentOnly == before)
+        let before = settings.agentOnlyInput
+        agentOnly { #expect(Omnibox.isAgentOnly(settings: settings)) }
+        agentOnly(false) { #expect(!Omnibox.isAgentOnly(settings: settings)) }
+        #expect(Omnibox.isAgentOnly(settings: settings) == before)
         #expect(Omnibox.agentOnlyPlaceholder.isEmpty == false)
     }
 
-    /// Return has to reach the place even when the mode has taken the search
-    /// row away - typing a URL is the one thing this mode still does with
-    /// the web.
     @Test func offTheWebReturnStillGoesToAPlace() throws {
         try agentOnly {
             var opened: URL?
-            let item = try #require(Omnibox.searchItem(for: "example.com") { opened = $0 })
+            let item = try #require(Omnibox.searchItem(for: "example.com", settings: settings) { opened = $0 })
             #expect(item.kind == .go)
             item.run()
             #expect(opened?.absoluteString == "https://example.com")
         }
     }
 
-    /// A scheme the user typed is still honoured: the mode decides whether
-    /// prose becomes a search, not what counts as an address.
     @Test func offTheWebAnExplicitSchemeIsKept() throws {
         try agentOnly {
             var opened: URL?
-            let item = try #require(Omnibox.searchItem(for: "http://example.com/a") { opened = $0 })
+            let item = try #require(Omnibox.searchItem(for: "http://example.com/a", settings: settings) { opened = $0 })
             item.run()
             #expect(opened?.scheme == "http")
         }
@@ -338,7 +318,8 @@ struct OmniboxTests {
             #expect(Omnibox.phrasesSection(
                 query: "weather tomorrow",
                 phrases: ["weather"],
-                limit: 3
+                limit: 3,
+                settings: settings
             ) { _ in } == nil)
         }
     }
@@ -352,7 +333,7 @@ struct OmniboxTests {
         agentOnly {
             // Long enough and prosaic enough that any other guard would let
             // it through - so an empty list here is this one doing the work.
-            suggestions.update(for: "weather tomorrow")
+            suggestions.update(for: "weather tomorrow", settings: settings)
         }
         #expect(suggestions.phrases.isEmpty)
     }

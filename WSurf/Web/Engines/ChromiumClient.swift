@@ -44,6 +44,70 @@ nonisolated final class ChromiumTrackerPolicy: @unchecked Sendable {
     }
 }
 
+/// CEF's UI request has no ID, and its IO request ID is not a navigation ID.
+/// Publish native response metadata only when the committed CDP loader confirms
+/// the same values; a late same-URL request cannot claim a newer navigation.
+@MainActor
+final class ChromiumDocumentResponses {
+    private struct Metadata: Hashable {
+        let url: URL?
+        let status: Int
+        let headers: [String: String]
+
+        init(_ response: HTTPURLResponse) {
+            var components = response.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+            components?.fragment = nil
+            url = components?.url ?? response.url
+            status = response.statusCode
+            headers = response.allHeaderFields.reduce(into: [:]) { fields, field in
+                fields[String(describing: field.key).lowercased()] =
+                    String(describing: field.value).replacingOccurrences(of: "\n", with: ", ")
+            }
+        }
+    }
+
+    private var nativeResponses: [Metadata: HTTPURLResponse] = [:]
+    private var confirmedResponses: [String: (frameID: String, metadata: Metadata)] = [:]
+    private var committedDocument: (frameID: String, loaderID: String)?
+    private var delivered = false
+
+    func reset() {
+        nativeResponses.removeAll(keepingCapacity: true)
+        confirmedResponses.removeAll(keepingCapacity: true)
+        committedDocument = nil
+        delivered = false
+    }
+
+    func receive(_ response: HTTPURLResponse) -> HTTPURLResponse? {
+        guard !delivered else { return nil }
+        nativeResponses[Metadata(response)] = response
+        return takeCommittedResponse()
+    }
+
+    func confirm(_ response: HTTPURLResponse, frameID: String, loaderID: String) -> HTTPURLResponse? {
+        guard !delivered, !frameID.isEmpty, !loaderID.isEmpty else { return nil }
+        confirmedResponses[loaderID] = (frameID, Metadata(response))
+        return takeCommittedResponse()
+    }
+
+    func commit(frameID: String, loaderID: String) -> HTTPURLResponse? {
+        guard !delivered, !frameID.isEmpty, !loaderID.isEmpty else { return nil }
+        committedDocument = (frameID, loaderID)
+        return takeCommittedResponse()
+    }
+
+    private func takeCommittedResponse() -> HTTPURLResponse? {
+        guard let committedDocument,
+              let confirmed = confirmedResponses[committedDocument.loaderID],
+              confirmed.frameID == committedDocument.frameID,
+              let response = nativeResponses[confirmed.metadata] else { return nil }
+        delivered = true
+        nativeResponses.removeAll(keepingCapacity: true)
+        confirmedResponses.removeAll(keepingCapacity: true)
+        return response
+    }
+}
+
 /// Native CEF callback graph for one embedded ChromiumPage.
 ///
 /// CEF gives callback arguments an owned reference. Every callback below drops
@@ -57,6 +121,7 @@ final class ChromiumClient {
     nonisolated(unsafe) var clientPointer: UnsafeMutablePointer<cef_client_t>?
     nonisolated(unsafe) var lifeSpanPointer: UnsafeMutablePointer<cef_life_span_handler_t>?
     nonisolated(unsafe) var loadPointer: UnsafeMutablePointer<cef_load_handler_t>?
+    nonisolated(unsafe) var framePointer: UnsafeMutablePointer<cef_frame_handler_t>?
     nonisolated(unsafe) var displayPointer: UnsafeMutablePointer<cef_display_handler_t>?
     nonisolated(unsafe) var downloadPointer: UnsafeMutablePointer<cef_download_handler_t>?
     nonisolated(unsafe) var dialogPointer: UnsafeMutablePointer<cef_dialog_handler_t>?
@@ -69,26 +134,84 @@ final class ChromiumClient {
     nonisolated(unsafe) private var resourceHandlerClosed = false
 
     nonisolated let trackerPolicy: ChromiumTrackerPolicy
+    let documentResponses = ChromiumDocumentResponses()
     private var pendingCallbacks: [UInt: UInt] = [:]
     private var certificateCallbacks: Set<UInt> = []
     var downloadCallbacks: [UInt32: UInt] = [:]
     private(set) var isClosed = false
+    private var nativeDocuments: [String: UInt64] = [:]
+    private var documentEpoch: UInt64 = 0
 
     init(page: ChromiumPage) {
         self.page = page
         trackerPolicy = ChromiumTrackerPolicy(
-            blocksTrackers: BrowserSettings.shared.blocksTrackers,
-            exemptHosts: ContentBlocker.shared.exemptHosts,
+            blocksTrackers: page.context.settings.blocksTrackers,
+            exemptHosts: page.context.contentBlocker.exemptHosts,
             topLevelURL: page.owner?.url
         )
     }
 
     func updateSettings(_ settings: BrowserSettings) {
+        guard let page else { return }
         trackerPolicy.update(
             blocksTrackers: settings.blocksTrackers,
-            exemptHosts: ContentBlocker.shared.exemptHosts,
-            topLevelURL: page?.owner?.url
+            exemptHosts: page.context.contentBlocker.exemptHosts,
+            topLevelURL: page.owner?.url
         )
+    }
+
+    func advanceDocument(_ frame: UnsafeMutablePointer<cef_frame_t>, attached: Bool = false) {
+        guard !isClosed, frame.pointee.is_valid?(frame) == 1 else { return }
+        let id = ChromiumInterop.takeString(frame.pointee.get_identifier?(frame))
+        guard !id.isEmpty, attached || nativeDocuments[id] != nil else { return }
+        documentEpoch += 1
+        nativeDocuments[id] = documentEpoch
+    }
+
+    func retireDocument(_ frame: UnsafeMutablePointer<cef_frame_t>) {
+        nativeDocuments[ChromiumInterop.takeString(frame.pointee.get_identifier?(frame))] = nil
+    }
+
+    func externalAppSnapshot(for source: BrowserFrame?) -> (documents: [String: UInt64], sourceIsUnique: Bool)? {
+        guard !isClosed, let page, !nativeDocuments.isEmpty else { return nil }
+        guard let source else { return (nativeDocuments, false) }
+        let origin = SitePermissions.webOrigin(for: source.request.url)
+        guard !origin.isEmpty else { return (nativeDocuments, false) }
+        return page.withBrowser { browser -> (documents: [String: UInt64], sourceIsUnique: Bool)? in
+            var match: (id: String, epoch: UInt64)?
+            for (id, epoch) in nativeDocuments {
+                guard let frame = ChromiumInterop.withString(id, {
+                    browser.pointee.get_frame_by_identifier?(browser, $0)
+                }) else { return nil }
+                defer { Self.releaseFrame(frame) }
+                guard frame.pointee.is_valid?(frame) == 1 else { return nil }
+                let url = URL(string: ChromiumInterop.takeString(frame.pointee.get_url?(frame)))
+                let candidate = SitePermissions.webOrigin(for: url)
+                // Inherited/opaque documents cannot establish a unique HTTP source.
+                guard !candidate.isEmpty else { return (nativeDocuments, false) }
+                if candidate == origin {
+                    guard match == nil else { return (nativeDocuments, false) }
+                    match = (id, epoch)
+                }
+            }
+            guard let match else { return nil }
+            return ([match.id: match.epoch], true)
+        } ?? nil
+    }
+
+    func isCurrentExternalAppSnapshot(_ documents: [String: UInt64]) -> Bool {
+        guard !isClosed, let page, !documents.isEmpty else { return false }
+        return page.withBrowser { browser in
+            for (id, epoch) in documents {
+                guard nativeDocuments[id] == epoch,
+                      let frame = ChromiumInterop.withString(id, {
+                          browser.pointee.get_frame_by_identifier?(browser, $0)
+                      }) else { return false }
+                defer { Self.releaseFrame(frame) }
+                guard frame.pointee.is_valid?(frame) == 1 else { return false }
+            }
+            return true
+        } ?? false
     }
 
     nonisolated static func owner(_ raw: UnsafeMutableRawPointer?) -> ChromiumClient? {
@@ -187,6 +310,8 @@ final class ChromiumClient {
     /// this after OnBeforeClose (or when materialization fails).
     func close() {
         guard !isClosed else { return }
+        documentResponses.reset()
+        nativeDocuments.removeAll()
         let request = detachRequestHandler()
         let resource = detachResourceHandler()
         isClosed = true
@@ -213,6 +338,7 @@ final class ChromiumClient {
         for pointer in [
             lifeSpanPointer.map(UnsafeMutableRawPointer.init),
             loadPointer.map(UnsafeMutableRawPointer.init),
+            framePointer.map(UnsafeMutableRawPointer.init),
             displayPointer.map(UnsafeMutableRawPointer.init),
             downloadPointer.map(UnsafeMutableRawPointer.init),
             dialogPointer.map(UnsafeMutableRawPointer.init),
@@ -229,6 +355,7 @@ final class ChromiumClient {
         }
         lifeSpanPointer = nil
         loadPointer = nil
+        framePointer = nil
         displayPointer = nil
         downloadPointer = nil
         dialogPointer = nil
@@ -264,6 +391,7 @@ final class ChromiumClient {
             for pointer in [
                 lifeSpanPointer.map(UnsafeMutableRawPointer.init),
                 loadPointer.map(UnsafeMutableRawPointer.init),
+                framePointer.map(UnsafeMutableRawPointer.init),
                 displayPointer.map(UnsafeMutableRawPointer.init),
                 downloadPointer.map(UnsafeMutableRawPointer.init),
                 dialogPointer.map(UnsafeMutableRawPointer.init),
@@ -278,99 +406,6 @@ final class ChromiumClient {
             if let request {
                 Self.release(UnsafeMutableRawPointer(request))
             }
-        }
-    }
-
-    // MARK: JavaScript dialogs
-
-    func makeJSDialogHandler() {
-        let handler = ChromiumInterop.allocate(cef_jsdialog_handler_t.self, owner: self)
-        handler.pointee.on_jsdialog = { handlerSelf, browser, origin, type, message, defaultText, callback, suppress in
-            ChromiumClient.releaseBrowser(browser)
-            guard let callback else { return 0 }
-            suppress?.pointee = 0
-            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else {
-                ChromiumClient.release(UnsafeMutableRawPointer(callback)); return 0
-            }
-            let raw = UnsafeMutableRawPointer(callback)
-            let kind = type == JSDIALOGTYPE_ALERT ? 0 : (type == JSDIALOGTYPE_CONFIRM ? 1 : 2)
-            let originText = ChromiumClient.string(origin)
-            let messageText = ChromiumClient.string(message)
-            let prompt = ChromiumClient.string(defaultText)
-            MainActor.assumeIsolated { client.presentJSDialog(raw, kind: kind, origin: originText, message: messageText, prompt: prompt) }
-            return 1
-        }
-        handler.pointee.on_before_unload_dialog = { handlerSelf, browser, message, isReload, callback in
-            ChromiumClient.releaseBrowser(browser)
-            guard let callback else { return 0 }
-            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else {
-                ChromiumClient.release(UnsafeMutableRawPointer(callback)); return 0
-            }
-            let raw = UnsafeMutableRawPointer(callback)
-            MainActor.assumeIsolated { client.presentBeforeUnload(raw, message: ChromiumClient.string(message), isReload: isReload != 0) }
-            return 1
-        }
-        handler.pointee.on_reset_dialog_state = { _, browser in ChromiumClient.releaseBrowser(browser) }
-        handler.pointee.on_dialog_closed = { _, browser in ChromiumClient.releaseBrowser(browser) }
-        jsDialogPointer = handler
-    }
-
-    private func presentJSDialog(_ raw: UnsafeMutableRawPointer, kind: Int, origin: String, message: String, prompt: String) {
-        guard !isClosed else { Self.release(raw); return }
-        hold(raw)
-        guard let window = page?.window else {
-            guard finish(raw) else { return }
-            let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
-            callback.pointee.cont?(callback, 0, nil)
-            drop(raw)
-            return
-        }
-        let alert = NSAlert()
-        alert.messageText = origin.isEmpty ? "JavaScript" : origin
-        alert.informativeText = message
-        switch kind {
-        case 0:
-            alert.addButton(withTitle: String(localized: "OK"))
-        case 1:
-            alert.addButton(withTitle: String(localized: "OK"))
-            alert.addButton(withTitle: String(localized: "Cancel"))
-        default:
-            let field = NSSecureTextField(string: prompt)
-            field.frame.size = NSSize(width: 260, height: 24)
-            alert.accessoryView = field
-            alert.addButton(withTitle: String(localized: "OK"))
-            alert.addButton(withTitle: String(localized: "Cancel"))
-        }
-        alert.beginSheetModal(for: window) { [weak self, weak alert] response in
-            guard let self, self.finish(raw), !self.isClosed else { return }
-            let success = response == .alertFirstButtonReturn
-            let input = (alert?.accessoryView as? NSSecureTextField)?.stringValue
-            let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
-            ChromiumInterop.withString(input ?? "") { value in callback.pointee.cont?(callback, success ? 1 : 0, value) }
-            self.drop(raw)
-        }
-    }
-
-    private func presentBeforeUnload(_ raw: UnsafeMutableRawPointer, message: String, isReload: Bool) {
-        guard !isClosed else { Self.release(raw); return }
-        hold(raw)
-        guard let window = page?.window else {
-            guard finish(raw) else { return }
-            let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
-            callback.pointee.cont?(callback, 0, nil)
-            drop(raw)
-            return
-        }
-        let alert = NSAlert()
-        alert.messageText = isReload ? String(localized: "Reload page?") : String(localized: "Leave page?")
-        alert.informativeText = message
-        alert.addButton(withTitle: String(localized: "Leave"))
-        alert.addButton(withTitle: String(localized: "Stay"))
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard let self, self.finish(raw), !self.isClosed else { return }
-            let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
-            callback.pointee.cont?(callback, response == .alertFirstButtonReturn ? 1 : 0, nil)
-            self.drop(raw)
         }
     }
 
@@ -626,7 +661,7 @@ final class ChromiumClient {
         drop(raw)
     }
 
-    private static func sameOrigin(_ origin: String, _ trusted: BrowserSecurityOrigin) -> Bool {
+    static func sameOrigin(_ origin: String, _ trusted: BrowserSecurityOrigin) -> Bool {
         guard let url = URL(string: origin), let host = url.host(), let scheme = url.scheme else { return false }
         return scheme.caseInsensitiveCompare(trusted.protocol) == .orderedSame
             && host.caseInsensitiveCompare(trusted.host) == .orderedSame
@@ -634,6 +669,43 @@ final class ChromiumClient {
     }
 
     // MARK: Navigation, certificates and authentication
+
+    /// Copy all CEF-owned values before the IO callback returns. Foundation
+    /// supplies MIME/Content-Disposition filename parsing for both engines.
+    nonisolated static func documentResponse(
+        _ response: UnsafeMutablePointer<cef_response_t>,
+        request: UnsafeMutablePointer<cef_request_t>
+    ) -> HTTPURLResponse? {
+        let resolved = ChromiumInterop.takeString(response.pointee.get_url?(response))
+        let address = resolved.isEmpty ? ChromiumInterop.takeString(request.pointee.get_url?(request)) : resolved
+        guard let url = URL(string: address) else { return nil }
+        var headers: [String: String] = [:]
+        if let map = cef_string_multimap_alloc() {
+            defer { cef_string_multimap_free(map) }
+            response.pointee.get_header_map?(response, map)
+            for index in 0..<cef_string_multimap_size(map) {
+                var key = cef_string_t()
+                var value = cef_string_t()
+                defer {
+                    cef_string_utf16_clear(&key)
+                    cef_string_utf16_clear(&value)
+                }
+                guard cef_string_multimap_key(map, index, &key) != 0,
+                      cef_string_multimap_value(map, index, &value) != 0 else { continue }
+                let name = string(&key).lowercased()
+                let text = string(&value)
+                headers[name] = headers[name].map { "\($0), \(text)" } ?? text
+            }
+        }
+        let mime = ChromiumInterop.takeString(response.pointee.get_mime_type?(response))
+        if !mime.isEmpty, headers["content-type"] == nil {
+            headers["content-type"] = mime
+        }
+        return HTTPURLResponse(
+            url: url, statusCode: Int(response.pointee.get_status?(response) ?? 0),
+            httpVersion: nil, headerFields: headers
+        )
+    }
 
     func makeResourceHandler() {
         let handler = ChromiumInterop.allocate(cef_resource_request_handler_t.self, owner: self)
@@ -651,6 +723,26 @@ final class ChromiumClient {
             guard let url = URL(string: ChromiumClient.string(UnsafePointer(rawURL))) else { return RV_CONTINUE }
             return client.trackerPolicy.shouldBlock(url) ? RV_CANCEL : RV_CONTINUE
         }
+        handler.pointee.on_resource_response = { handlerSelf, browser, frame, request, response in
+            defer {
+                ChromiumClient.releaseBrowser(browser)
+                ChromiumClient.releaseFrame(frame)
+                ChromiumClient.release(request.map(UnsafeMutableRawPointer.init))
+                ChromiumClient.release(response.map(UnsafeMutableRawPointer.init))
+            }
+            guard let frame, frame.pointee.is_valid?(frame) == 1, frame.pointee.is_main?(frame) == 1,
+                  let request, request.pointee.get_resource_type?(request) == RT_MAIN_FRAME,
+                  let response,
+                  let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)),
+                  let copied = ChromiumClient.documentResponse(response, request: request)
+            else { return 0 }
+            Task { @MainActor [weak client] in
+                guard let client, !client.isClosed,
+                      let response = client.documentResponses.receive(copied) else { return }
+                client.page?.didReceiveMainFrameResponse(response)
+            }
+            return 0
+        }
         resourceStateLock.lock()
         resourcePointer = handler
         resourceStateLock.unlock()
@@ -659,9 +751,11 @@ final class ChromiumClient {
     func makeRequestHandler() {
         let handler = ChromiumInterop.allocate(cef_request_handler_t.self, owner: self)
         handler.pointee.get_resource_request_handler = { handlerSelf, browser, frame, request, _, _, _, disable in
-            ChromiumClient.releaseBrowser(browser)
-            ChromiumClient.releaseFrame(frame)
-            ChromiumClient.release(request.map(UnsafeMutableRawPointer.init))
+            defer {
+                ChromiumClient.releaseBrowser(browser)
+                ChromiumClient.releaseFrame(frame)
+                ChromiumClient.release(request.map(UnsafeMutableRawPointer.init))
+            }
             guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)),
                   let resource = client.acquireResourceHandler()
             else { return nil }
@@ -670,16 +764,16 @@ final class ChromiumClient {
         }
         handler.pointee.on_before_browse = { handlerSelf, browser, frame, request, userGesture, redirect in
             ChromiumClient.releaseBrowser(browser)
-            let isMain = frame?.pointee.is_main?(frame) != 0
-            let sourceURL = URL(string: ChromiumInterop.takeString(frame?.pointee.get_url?(frame)))
+            // CEF supplies the navigated frame, not necessarily the initiator.
+            // External handoffs bind only to an independently matched referrer frame.
+            let sourceURL = URL(string: ChromiumInterop.takeString(request?.pointee.get_referrer_url?(request)))
             let transition = request?.pointee.get_transition_type?(request) ?? TT_EXPLICIT
+            let isMain = frame?.pointee.is_main?(frame) == 1
             ChromiumClient.releaseFrame(frame)
             defer { ChromiumClient.release(request.map(UnsafeMutableRawPointer.init)) }
             guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return 1 }
             let url = URL(string: ChromiumInterop.takeString(request?.pointee.get_url?(request)))
-            guard let url,
-                  ["http", "https", "file", "about", "data", "blob"].contains(url.scheme?.lowercased() ?? "")
-            else { return 1 }
+            guard let url else { return 1 }
             var navigationRequest = URLRequest(url: url)
             navigationRequest.httpMethod = ChromiumInterop.takeString(request?.pointee.get_method?(request))
             if let post = request?.pointee.get_post_data?(request) {
@@ -692,9 +786,11 @@ final class ChromiumClient {
             let navigationType = ChromiumClient.navigationType(transition)
             return MainActor.assumeIsolated {
                 guard !client.isClosed, let page = client.page else { return 1 }
+                let sourceFrame = ExternalApp.staysInWebView(url) ? nil : page.sourceFrame(for: sourceURL)
                 guard page.navigationDecision?(
-                    navigationRequest, isMain, userGesture != 0, redirect != 0, navigationType, sourceURL
+                    navigationRequest, isMain, userGesture != 0, redirect != 0, navigationType, sourceURL, sourceFrame
                 ) != false else { return 1 }
+                guard ["http", "https", "file", "about", "data", "blob", "chrome-extension"].contains(url.scheme?.lowercased() ?? "") else { return 1 }
                 if isMain {
                     page.willNavigate(navigationRequest, isRedirect: redirect != 0)
                 }
@@ -703,12 +799,15 @@ final class ChromiumClient {
         }
         handler.pointee.on_open_urlfrom_tab = { handlerSelf, browser, frame, targetURL, _, userGesture in
             ChromiumClient.releaseBrowser(browser)
+            let sourceURL = frame?.pointee.is_valid?(frame) == 1
+                ? URL(string: ChromiumInterop.takeString(frame?.pointee.get_url?(frame))) : nil
             ChromiumClient.releaseFrame(frame)
             let url = URL(string: ChromiumClient.string(targetURL))
             guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return 1 }
             return MainActor.assumeIsolated {
-                guard let page = client.page, let url else { return 1 }
-                page.openWindow?(url, userGesture != 0)
+                guard let page = client.page, !client.isClosed, let url else { return 1 }
+                let sourceFrame = page.sourceFrame(for: sourceURL)
+                page.openWindow?(url, userGesture != 0, sourceURL, sourceFrame)
                 return 1
             }
         }
@@ -760,7 +859,10 @@ final class ChromiumClient {
         handler.pointee.on_render_process_terminated = { handlerSelf, browser, _, _, _ in
             ChromiumClient.releaseBrowser(browser)
             guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
-            MainActor.assumeIsolated { client.page?.didTerminate() }
+            MainActor.assumeIsolated {
+                client.nativeDocuments.removeAll()
+                client.page?.didTerminate()
+            }
         }
         resourceStateLock.lock()
         requestPointer = handler
@@ -793,7 +895,7 @@ final class ChromiumClient {
             let decision = await CertificateTrust.decideInvalid(
                 host: expectedHost ?? "",
                 trust: trust,
-                allowsExceptions: BrowserSettings.shared.allowsCertificateExceptions,
+                allowsExceptions: page.context.settings.allowsCertificateExceptions,
                 in: page.window
             )
             guard !self.isClosed, page.profileID == profileID,

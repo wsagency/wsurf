@@ -13,7 +13,7 @@ final class SiteContentGuard {
     private static let handlerName = "wsurfSiteGuard"
 
     @MainActor
-    func install(in page: BrowserPage, permissions: SitePermissions, settings: BrowserSettings = .shared,
+    func install(in page: BrowserPage, permissions: SitePermissions, settings: BrowserSettings,
                  onPopupBlocked: @escaping (URL?) -> Void = { _ in }) {
         page.installScript(Self.script, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.addScriptMessageHandler(name: Self.handlerName, in: .page) { [permissions, settings] message in

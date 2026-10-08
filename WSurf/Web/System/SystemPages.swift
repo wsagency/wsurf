@@ -16,6 +16,8 @@ nonisolated enum SystemPages {
 
     static let startSymbol = "house"
 
+    static let startTitle = String(localized: "Start Page")
+
     @MainActor static func showsStartFace(_ tab: BrowserTab) -> Bool {
         tab.isShowingStartPage || tab.hasNoPageYet
     }

@@ -59,7 +59,7 @@ struct SidebarTabRow: View {
     }
 
     private var textColor: Color {
-        coordinator.settings.sidebarTextColor(isDeferred: tab.isDeferred, scheme: windowColorScheme)
+        BrowserSettings.application.sidebarTextColor(isDeferred: tab.isDeferred, scheme: windowColorScheme)
     }
 
     private var returnHelp: String {
@@ -151,7 +151,7 @@ struct SidebarTabRow: View {
             if isRenaming {
                 TextField("", text: $draftTitle)
                     .textFieldStyle(.plain)
-                    .font(coordinator.settings.sidebarFont)
+                    .font(BrowserSettings.application.sidebarFont)
                     .foregroundStyle(textColor)
                     .focused($renameFocused)
                     .onSubmit(commitRename)
@@ -174,7 +174,7 @@ struct SidebarTabRow: View {
             } else {
                 HStack(spacing: 0) {
                     Text(verbatim: tab.title)
-                        .font(coordinator.settings.sidebarFont)
+                        .font(BrowserSettings.application.sidebarFont)
                         .foregroundStyle(textColor)
                         .lineLimit(1)
                     Spacer(minLength: 0)
@@ -228,14 +228,14 @@ struct SidebarTabRow: View {
                     }
                     .padding(.trailing, SidebarMetrics.rowControlEdgeOffset(
                         style: sidebarStyle,
-                        settings: coordinator.settings
+                        settings: BrowserSettings.application
                     ))
                 }
             }
             .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
             .frame(maxWidth: .infinity)
         }
-        .frame(height: SidebarMetrics.rowHeight(settings: coordinator.settings))
+        .frame(height: SidebarMetrics.rowHeight(settings: BrowserSettings.application))
         .environment(\.chromeIconExtent, SidebarMetrics.rowControlExtent)
         .sidebarRowSelectionEffect(
             isSelected: (isActive && !coordinator.isNewTabPaletteOpen) || isSelected,
@@ -403,11 +403,11 @@ private struct PinReturnSegment: View {
         .help(Text(verbatim: help))
         .task(id: tab.pinnedURL) {
             pinnedFavicon = nil
-            guard let host = tab.pinnedURL?.host() else { return }
-            if let cached = FaviconLoader.shared.cached(for: host) {
+            guard let pageURL = tab.pinnedURL, let host = pageURL.host() else { return }
+            if let cached = tab.context.favicons.cached(for: host) {
                 pinnedFavicon = cached
             } else {
-                pinnedFavicon = await FaviconLoader.shared.load(forHost: host)
+                pinnedFavicon = await tab.context.favicons.load(forPageURL: pageURL)
             }
         }
     }

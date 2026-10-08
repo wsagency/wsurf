@@ -4,10 +4,13 @@
 
 import AppKit
 import Foundation
+import os
 import WebKit
 
 final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
     weak var tab: BrowserTab?
+    private var pendingMainFrameURL: URL?
+    private var mainFrameActionGeneration = 0
 
     init(tab: BrowserTab) {
         self.tab = tab
@@ -18,6 +21,9 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
+        if navigationAction.targetFrame?.isMainFrame == true {
+            mainFrameActionGeneration &+= 1
+        }
         if navigationAction.shouldPerformDownload {
             downloadSource = navigationAction.request.url
             decisionHandler(.download)
@@ -28,9 +34,33 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             return
         }
         if let url = navigationAction.request.url, !ExternalApp.staysInWebView(url) {
+            let origin = requestingOrigin(for: navigationAction)
+            let page = tab?.liveView
+            let sourceFrame = page.flatMap {
+                PageFrameRegistry.shared.sourceFrame(navigationAction.sourceFrame, in: $0)
+            }
+            let initialRedirect = sourceFrame == nil && tab?.committedNavigation == nil
+                && navigationAction.sourceFrame.isMainFrame && navigationAction.targetFrame?.isMainFrame == true
+                && !origin.isEmpty && navigationAction.responds(to: NSSelectorFromString("_isRedirect"))
+                && navigationAction.value(forKey: "_isRedirect") as? Bool == true
+            let actionGeneration = mainFrameActionGeneration
             decisionHandler(.cancel)
             let window = webView.window
-            Task { await ExternalApp.offerToOpen(url, in: window) }
+            let document = tab?.committedNavigation
+            Task { [weak self, weak tab, weak webView, weak page] in
+                guard let self, let tab, !tab.isClosed, let webView, tab.liveView?.webKit === webView else { return }
+                await ExternalApp.offerToOpen(url, from: origin, policy: tab.externalApps, in: window, isCurrent: {
+                    guard let page else { return false }
+                    if let sourceFrame {
+                        guard await PageFrameRegistry.shared.isLive(sourceFrame, in: page) else { return false }
+                    } else {
+                        // A first HTTP redirect has no committed document token; bind its accepted request instead.
+                        guard initialRedirect, self.mainFrameActionGeneration == actionGeneration else { return false }
+                    }
+                    return !tab.isClosed && tab.liveView?.webKit === webView
+                        && tab.liveView === page && tab.committedNavigation === document
+                })
+            }
             return
         }
         if let tab, let onOpenInNewTab = tab.onOpenInNewTab,
@@ -53,6 +83,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             return
         }
         if let tab, navigationAction.targetFrame?.isMainFrame != false {
+            pendingMainFrameURL = navigationAction.request.url
             tab.rememberScrollOffset()
             if let mapped = Self.transition(for: navigationAction.navigationType) {
                 tab.noteTransition(mapped)
@@ -80,6 +111,37 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
 
     /// WebKit numbers the middle button 4, not NSEvent's 2.
     private static let middleButton = 4
+
+    private func requestingOrigin(for action: WKNavigationAction) -> String {
+        let frame: WKFrameInfo? = action.sourceFrame
+        guard let frame else { return "" }
+        let sourceOrigin = Self.frameOrigin(frame.securityOrigin)
+        // Redirects retain the old source document for main frames and iframes.
+        // Only main-frame redirect provenance is tracked by this delegate.
+        let selector = NSSelectorFromString("_isRedirect")
+        let isRedirect = action.responds(to: selector) ? action.value(forKey: "_isRedirect") as? Bool : nil
+        if isRedirect == true {
+            return frame.isMainFrame ? SitePermissions.webOrigin(for: pendingMainFrameURL) : ""
+        }
+        if isRedirect == nil {
+            guard frame.isMainFrame else { return "" }
+            if pendingMainFrameURL != nil, SitePermissions.webOrigin(for: pendingMainFrameURL) != sourceOrigin {
+                return ""
+            }
+        }
+        return sourceOrigin
+    }
+
+    private static func frameOrigin(_ origin: WKSecurityOrigin) -> String {
+        guard ["http", "https"].contains(origin.protocol.lowercased()), !origin.host.isEmpty else { return "" }
+        var components = URLComponents()
+        components.scheme = origin.protocol
+        components.host = origin.host
+        if origin.port != 0 {
+            components.port = origin.port
+        }
+        return SitePermissions.webOrigin(for: components.url)
+    }
 
     private static func reaches(
         _ url: URL,
@@ -124,7 +186,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         guard let tab, let onNewWindow = tab.onNewWindow else { return nil }
 
         let view = TabWebView(frame: webView.frame, configuration: configuration)
-        BrowserSettings.shared.apply(to: view)
+        tab.context.settings.apply(to: view)
         view.allowsBackForwardNavigationGestures = true
         view.allowsMagnification = true
 
@@ -293,6 +355,48 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
 
     // MARK: - Downloads
 
+    // WebKit's PDF viewer supplies its current bytes, including edits, through
+    // these private UI delegate selectors. Chromium retains its native downloads.
+    @objc(_webView:saveDataToFile:suggestedFilename:mimeType:originatingURL:)
+    func webView(
+        _ webView: WKWebView,
+        saveDataToFile data: Data,
+        suggestedFilename: String,
+        mimeType: String,
+        originatingURL: URL?
+    ) {
+        guard let tab, !tab.isClosed, tab.liveView?.webKit === webView,
+              let save = tab.onSaveDocument else { return }
+        Task { await save(data, suggestedFilename, originatingURL, false) }
+    }
+
+    @objc(_webView:shouldAllowPDFAtURL:toOpenFromFrame:completionHandler:)
+    func webView(
+        _ webView: WKWebView,
+        shouldAllowPDFAtURL fileURL: URL,
+        toOpenFromFrame frame: WKFrameInfo,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        // Never open WebKit's read-only, temporary file in Preview.
+        completionHandler(false)
+        guard let tab, !tab.isClosed, tab.liveView?.webKit === webView,
+              let save = tab.onSaveDocument else { return }
+        let source = frame.request.url
+        let filename = tab.documentFilename(for: source) ?? fileURL.lastPathComponent
+        let window = webView.window
+        Task {
+            do {
+                let data = try await Task.detached(priority: .userInitiated) {
+                    try Data(contentsOf: fileURL)
+                }.value
+                await save(data, filename, source, true)
+            } catch {
+                Pipeline.log.error("PDF: reading WebKit's temporary copy failed")
+                await PageDialogs.alert(error.localizedDescription, from: frame, in: window)
+            }
+        }
+    }
+
     private var downloadSource: URL?
 
     func webView(
@@ -300,6 +404,9 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
     ) {
+        if navigationResponse.isForMainFrame {
+            BrowserPage.from(webView)?.onMainFrameResponse?(navigationResponse.response)
+        }
         if navigationResponse.isForMainFrame,
            let response = navigationResponse.response as? HTTPURLResponse, response.statusCode >= 400 {
             tab?.autofillSave.submissions.clear()
@@ -339,6 +446,10 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         page.onNavigationStarted?(page.navigation(for: navigation), webView.url)
     }
 
+    func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
+        pendingMainFrameURL = webView.url
+    }
+
     // MARK: - Authentication
 
     func webView(
@@ -353,7 +464,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         case .evaluateServerTrust:
             switch await CertificateTrust.decide(
                 for: challenge,
-                allowsExceptions: BrowserSettings.shared.allowsCertificateExceptions,
+                allowsExceptions: tab?.context.settings.allowsCertificateExceptions ?? false,
                 in: webView.window
             ) {
             case .useDefaultHandling:
@@ -379,6 +490,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        pendingMainFrameURL = nil
         guard let page = BrowserPage.from(webView) else { return }
         page.onNavigationCommitted?(page.navigation(for: navigation))
     }
@@ -395,6 +507,9 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         guard let page = BrowserPage.from(webView) else { return }
+        if tab?.provisionalNavigation === page.navigation(for: navigation) {
+            pendingMainFrameURL = nil
+        }
         page.onNavigationFailed?(page.navigation(for: navigation), error)
     }
 

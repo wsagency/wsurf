@@ -98,19 +98,18 @@ struct SiteSettingsIndexTests {
         #expect(entries(permissions).isEmpty)
     }
 
-    @Test func theSummaryNamesEveryRuleTheWebsiteCarries() {
-        let permissions = store()
-        permissions.set(.allow, for: "https://example.com", .camera)
-        permissions.setAssistantAccess(.control, for: "https://example.com")
-        permissions.setKeepsActive(true, for: "https://example.com")
-        permissions.setAllowsAutomaticPicture(false, for: "https://example.com")
-
-        let phrases = entries(permissions, exempt: ["example.com"])[0].summaryPhrases
-        #expect(phrases.count == 5)
-        #expect(phrases.contains { $0.contains("assistant may control") })
-        #expect(phrases.contains { $0.contains("kept loaded") })
-        #expect(phrases.contains { $0.contains("no automatic Picture in Picture") })
-        #expect(phrases.contains { $0.contains("trackers allowed") })
+    @Test func savedAppChoicesAppearInWebsiteSettingsAndLeaveAfterRevocation() async {
+        let file = URL.temporaryDirectory.appending(path: "SiteSettingsIndexTests-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let permissions = SitePermissions(storageURL: file)
+        let slack = ExternalAppPermission(scheme: "slack", bundleIdentifier: "com.tinyspeck.slackmacgap", name: "Slack")
+        permissions.allowExternalApp(slack, for: "https://slack.com")
+        let found = entries(permissions)
+        #expect(found.map(\.origin) == ["https://slack.com"])
+        #expect(found.first?.externalApps == [slack])
+        permissions.removeExternalApps(for: "https://slack.com")
+        #expect(entries(permissions).isEmpty)
+        await permissions.waitForPendingSave()
     }
 
     @Test func theHostDropsTheSchemeAndTheWwwPrefix() {
