@@ -523,3 +523,102 @@ settings type. No obsolete global-accessor forwarding file is retained.
 - The complete Air feature/window matrix and final clean-source/CI gate remain
   open. PR #8 is still draft; nothing has been merged or deployed.
 
+### Final-source CI and native PDF save proof — 2026-10-07
+
+- [CI run 37629840541](https://github.com/wsagency/wsurf/actions/runs/37629840541)
+  passed every gate on **`113dcee60e05fe464cd7a88a20e8d1a3c5f19c95`**,
+  including the stage-restoration guard and failure-only focus diagnostics.
+  This completes the fresh-CI requirement recorded above; it is not a merge.
+- The Air WebKit PDF viewer changed the owned form field to
+  `Edited stage value 79`. Its native **Open with Preview** action presented
+  the app's save sheet, saved `Edited Stage Document.pdf` inside the owned
+  stage home and opened that exact file in native Preview. Screenshot/AX
+  proof and an independent PDFKit read confirmed the edited field survived.
+  The saved file retained WSurf's web-download quarantine metadata and
+  appeared in the regular window's Downloads list.
+- A separate private window saved `Private Stage Document.pdf` through the
+  same native action. Its download appeared only in that private window;
+  the regular list and persisted `Downloads.json` excluded it. After native
+  private-window close, the window disappeared and read-only SQL found zero
+  `private-pdf=1` rows in both persistent session tabs and history.
+- The direct floating PDF toolbar click did not establish a save action;
+  the observed WebKit save proof is specifically the native Preview route.
+  No production downloads, installed app, profile data or security settings
+  were changed. Remaining feature/window UI gates still precede PR merge.
+
+### Native external-app permission cycle — 2026-10-07
+
+- The owned local fixture requested `wsurf-stage-58423://check/verify`.
+  A separately signed, background-only **WSurf Stage Handoff** fixture accepts
+  only that test URL, records it inside the owned build directory and exits;
+  it neither accesses accounts nor sends network requests.
+- WebKit's native prompt displayed the exact source
+  `http://127.0.0.1:58423` and the exact handler. Cancel created no handler
+  receipt. The user then explicitly approved remembering this test-only
+  origin/handler permission and revoking it after verification.
+- The approved open delivered one real URL receipt. A second native link
+  activation delivered exactly one more without another prompt. Native
+  Websites settings displayed the matching origin and handler; **Ask next
+  time** removed that grant. WebKit then prompted again.
+- After the actual engine-switch confirmation, the same fixture reported
+  native **Chrome 154**. Chromium also prompted with the exact source after
+  revocation. Both post-revocation prompts were cancelled; the handler log
+  still contained exactly two receipts, and the owned persisted
+  `SitePermissions.json` had an empty `externalApps` map.
+- Engine switching had correctly been waiting on a separate native
+  **Switch rendering engine?** alert because the same origin also had the
+  edited PDF open. A parent-window AX snapshot alone did not expose that
+  separate alert; no product workaround or confirmation bypass was needed.
+
+### Native history-scroll restoration — 2026-10-07
+
+- The owned tall-page fixture ran through actual WebKit and Chromium
+  (Chrome 154) navigation. In each engine, same-host and cross-host
+  (`127.0.0.1` ↔ `localhost`, port `58423`) Back restored the native
+  wheel-selected offset of **1500**. Fixture reports sampled **1.8 seconds
+  after pageshow**, beyond the bounded restoration watcher, retained 1500.
+- WebKit's real back/forward-cache return initially reported zero, then
+  restored 1500; the final screenshot and settled report agreed. Chromium's
+  real history return also retained 1500 after settling.
+- In both engines, native Forward/Back followed by a real wheel input
+  changed the restored offset to **700** within the watcher interval.
+  The post-watcher report remained 700: restoration did not fight input.
+- Both test hosts used the same selected engine for cross-host coverage.
+  An initial mixed-engine navigation selected the destination's WebKit
+  preference and replaced native engine history; it was not counted as
+  scroll-restoration evidence. No product changes were made for that
+  fixture configuration.
+
+### Integration authorization with explicit manual-UI limits — 2026-10-08
+
+- The user explicitly selected **“Integriraj svih 31 sada”** after being told
+  that the complete native suite passed 3,016 cases with zero failures, CI was
+  green, and part of the additional manual Stage matrix remained unverified.
+  **Ruling:** integrate the complete reviewed 31-commit implementation through
+  PR #8 after its required CI passes; the remaining manual checks are not
+  pre-merge gates under this explicit approval. No feature or source port is
+  omitted, and no unexecuted UI check is counted as a pass.
+- The completed source reviews, whole-app builds, native consumer/ownership
+  tests, performance/coverage gates, backup/rollback and observed Stage checks
+  remain the evidence recorded above. Product source is unchanged from
+  `113dcee60e05fe464cd7a88a20e8d1a3c5f19c95`.
+- Additional native palette observations verified Command-V, Undo and Redo
+  without dismissing the palette. Explicit Edit-menu selection was not
+  established: background menu items stayed disabled. The original clipboard
+  was restored after each clipboard probe.
+- Still unverified manually: the direct floating WebKit PDF Save button;
+  remaining palette/menu/IME, light/dark preview/drop-marker and two-window
+  site-search interactions; the complete window/profile/private/transfer/
+  extension matrix and assistant question-surface matrix; and native Window/
+  Dock long-title presentation. Automated coverage is not relabelled as these
+  manual checks. The earlier edited-PDF Save/Preview, private download isolation,
+  external-app permission cycle and both-engine history-scroll proof did run.
+- After the execution runtime was lost, the existing signed Stage app was
+  relaunched in its owned home and its local fixture was restored. A new
+  foreground-control request timed out without granting control. No OS
+  permission, focus workaround or application behavior was changed to bypass
+  that limitation.
+- This event records authorization, not a merge SHA. PR #8 is the canonical
+  integration record once merged. Installed-app replacement, release tags and
+  deployment remain separately gated and are **not authorized or performed**.
+
