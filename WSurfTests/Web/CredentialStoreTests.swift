@@ -3,6 +3,7 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import Foundation
+import Security
 import Synchronization
 import Testing
 
@@ -91,8 +92,25 @@ struct CredentialStoreTests {
             }
         )
         let provider = Self.provider(auth: .bearer)
+        let account = "provider:\(provider.id)"
+        values.withLock { $0[account] = "fixture-key" }
         #expect(CredentialStore.save("   \n\t", for: provider, storage: storage) == nil)
-        #expect(values.withLock { $0.isEmpty })
+        #expect(storage.read(account) == nil)
+    }
+
+    @Test func aReservedTombstoneKeyCannotBeStored() {
+        let wrote = Mutex(false)
+        let storage = CredentialStore.Storage(
+            read: { _ in nil },
+            write: { _, _ in
+                wrote.withLock { $0 = true }
+                return errSecSuccess
+            },
+            delete: { _ in errSecSuccess }
+        )
+        let provider = Self.provider(auth: .bearer)
+        #expect(CredentialStore.save("\u{0}", for: provider, storage: storage) != nil)
+        #expect(!wrote.withLock { $0 })
     }
 
     @Test func keychainReadErrorsNeverFallBackToLegacyData() {
@@ -146,7 +164,7 @@ struct CredentialStoreTests {
         )
         #expect(migrated == "new-fixture")
         #expect(canonical == Data("new-fixture".utf8))
-        #expect(!legacyPresent)
+        #expect(legacyPresent)
     }
 
     @Test func migrationDoesNotResurrectAConcurrentTombstone() {
@@ -164,7 +182,7 @@ struct CredentialStoreTests {
         )
         #expect(migrated == nil)
         #expect(canonical == Data([0]))
-        #expect(!legacyPresent)
+        #expect(legacyPresent)
     }
 
     @Test func classicKeychainValueWinsOverLegacyAndTombstoneStopsFallback() {
@@ -187,19 +205,26 @@ struct CredentialStoreTests {
     }
 
     @Test func successfulMigrationWritesBeforeRetiringLegacy() {
+        let legacyData = Data([0x65, 0xcc, 0x81])
+        var insertedData: Data?
         var wroteCanonical = false
         var retiredBeforeWrite = false
         let migrated = CredentialStore.migrateLegacy(
-            Data("legacy-fixture".utf8),
+            legacyData,
             account: "provider:test-\(UUID().uuidString)",
-            addCanonical: { _, _ in wroteCanonical = true; return errSecSuccess },
+            addCanonical: { data, _ in
+                insertedData = data
+                wroteCanonical = true
+                return errSecSuccess
+            },
             readCanonical: { _ in .missing },
             retireLegacy: { _ in
                 if !wroteCanonical { retiredBeforeWrite = true }
                 return errSecSuccess
             }
         )
-        #expect(migrated == "legacy-fixture")
+        #expect(migrated == "e\u{301}")
+        #expect(insertedData == legacyData)
         #expect(wroteCanonical)
         #expect(!retiredBeforeWrite)
     }
@@ -207,10 +232,16 @@ struct CredentialStoreTests {
     @Test func nativeClassicKeychainCRUDUsesAnOwnedService() {
         let provider = Self.provider(auth: .bearer)
         let account = "provider:\(provider.id)"
-        let storage = CredentialStore.Storage.keychainStorage(
-            service: "io.wsagency.wsurf.tests.\(UUID().uuidString)"
-        )
-        defer { _ = storage.delete(account) }
+        let service = "io.wsagency.wsurf.tests.\(UUID().uuidString)"
+        let storage = CredentialStore.Storage.keychainStorage(service: service)
+        defer {
+            SecItemDelete([
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account,
+                kSecUseDataProtectionKeychain as String: false,
+            ] as CFDictionary)
+        }
 
         #expect(CredentialStore.save("fixture-key-one", for: provider, storage: storage) == nil)
         #expect(storage.read(account) == "fixture-key-one")

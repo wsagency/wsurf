@@ -25,16 +25,12 @@ nonisolated enum CredentialStore {
         var write: @Sendable (String, String) -> OSStatus
         var delete: @Sendable (String) -> OSStatus
 
-        static let keychain = Storage(
-            read: { CredentialStore.read(account: $0) },
-            write: { CredentialStore.write($0, account: $1) },
-            delete: { CredentialStore.delete(account: $0) }
-        )
+        static let keychain = keychainStorage(service: CredentialStore.service)
 
         static func keychainStorage(service: String) -> Storage {
             Storage(
                 read: { CredentialStore.read(account: $0, service: service) },
-                write: { CredentialStore.write($0, account: $1, service: service) },
+                write: { CredentialStore.write(Data($0.utf8), account: $1, service: service) },
                 delete: { CredentialStore.delete(account: $0, service: service) }
             )
         }
@@ -93,6 +89,9 @@ nonisolated enum CredentialStore {
             guard status == errSecSuccess || status == errSecItemNotFound else { return errorMessage(status) }
             return nil
         }
+        guard trimmed != "\u{0}" else {
+            return String(localized: "The provider key cannot be the reserved tombstone value.")
+        }
         let status = storage.write(trimmed, account)
         return status == errSecSuccess ? nil : errorMessage(status)
     }
@@ -140,18 +139,6 @@ nonisolated enum CredentialStore {
         case failure(OSStatus)
     }
 
-    private static let legacyDataProtectionIsPermitted: Bool = {
-        guard let task = SecTaskCreateFromSelf(kCFAllocatorDefault),
-              let applicationIdentifier = SecTaskCopyValueForEntitlement(
-                task, "application-identifier" as CFString, nil
-              ) as? String,
-              let groups = SecTaskCopyValueForEntitlement(
-                task, "keychain-access-groups" as CFString, nil
-              ) as? [String]
-        else { return false }
-        return groups.contains(applicationIdentifier)
-    }()
-
     private static func query(
         account: String,
         service: String = CredentialStore.service
@@ -174,11 +161,10 @@ nonisolated enum CredentialStore {
     }
 
     private static func write(
-        _ value: String,
+        _ data: Data,
         account: String,
         service: String = CredentialStore.service
     ) -> OSStatus {
-        let data = Data(value.utf8)
         let base = query(account: account, service: service)
         let update = SecItemUpdate(
             base as CFDictionary,
@@ -192,12 +178,12 @@ nonisolated enum CredentialStore {
     }
 
     private static func insert(
-        _ value: String,
+        _ data: Data,
         account: String,
         service: String = CredentialStore.service
     ) -> OSStatus {
         var item = query(account: account, service: service)
-        item[kSecValueData as String] = Data(value.utf8)
+        item[kSecValueData as String] = data
         return SecItemAdd(item as CFDictionary, nil)
     }
 
@@ -205,11 +191,9 @@ nonisolated enum CredentialStore {
         account: String,
         service: String = CredentialStore.service
     ) -> OSStatus {
-        let status = write(String(decoding: tombstone, as: UTF8.self), account: account, service: service)
+        let status = write(tombstone, account: account, service: service)
         guard status == errSecSuccess else { return status }
-        if legacyDataProtectionIsPermitted {
-            _ = SecItemDelete(legacyQuery(account: account, service: service) as CFDictionary)
-        }
+        _ = SecItemDelete(legacyQuery(account: account, service: service) as CFDictionary)
         return status
     }
 
@@ -219,10 +203,7 @@ nonisolated enum CredentialStore {
     ) -> String? {
         resolveRead(
             classic: lookup(query(account: account, service: service)),
-            readLegacy: {
-                guard legacyDataProtectionIsPermitted else { return .failure(errSecMissingEntitlement) }
-                return lookup(legacyQuery(account: account, service: service))
-            },
+            readLegacy: { lookup(legacyQuery(account: account, service: service)) },
             migrate: { migrateLegacy($0, account: account, service: service) }
         )
     }
@@ -260,25 +241,19 @@ nonisolated enum CredentialStore {
     static func migrateLegacy(
         _ data: Data,
         account: String,
-        addCanonical: (String, String) -> OSStatus,
+        addCanonical: (Data, String) -> OSStatus,
         readCanonical: (String) -> Lookup,
         retireLegacy: (String) -> OSStatus
     ) -> String? {
-        guard let legacyValue = nonemptyString(data) else { return nil }
-        let status = addCanonical(legacyValue, account)
+        guard let legacyValue = String(data: data, encoding: .utf8), !legacyValue.isEmpty else { return nil }
+        let status = addCanonical(data, account)
         guard status == errSecDuplicateItem else {
             if status == errSecSuccess { _ = retireLegacy(account) }
             return legacyValue
         }
 
         guard case .found(let canonicalData?) = readCanonical(account) else { return nil }
-        if canonicalData.isEmpty || canonicalData == tombstone {
-            _ = retireLegacy(account)
-            return nil
-        }
-        guard let canonicalValue = nonemptyString(canonicalData) else { return nil }
-        _ = retireLegacy(account)
-        return canonicalValue
+        return nonemptyString(canonicalData)
     }
 
     private static func lookup(_ query: [String: Any]) -> Lookup {

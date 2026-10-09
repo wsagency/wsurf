@@ -135,9 +135,9 @@ struct ModelProviderArchitectureTests {
 
     @Test func failedCredentialDeleteKeepsTheKeyStateAndError() {
         let model = credentialModel(deleteFailure: "Fixture delete failure")
-        let revision = model.credentialRevision
+        model.keyDraft = "fixture-visible-key"
         model.removeKey()
-        #expect(model.credentialRevision == revision)
+        #expect(model.keyDraft == "fixture-visible-key")
         #expect(model.keyError == "Fixture delete failure")
     }
 
