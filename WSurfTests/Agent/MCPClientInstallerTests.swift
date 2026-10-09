@@ -89,6 +89,40 @@ struct MCPClientInstallerTests {
         #expect(try MCPClientConfiguration.addingJSON(to: data, kind: kind, command: command) == nil)
     }
 
+    @Test func stageInstallationUsesItsSocketAndRejectsAnEntryPointingAtAnotherStage() throws {
+        let stageSocket = "/tmp/wsurf-mcp-501-0123456789abcdef0123456789abcdef/browser.sock"
+        let otherStageSocket = "/tmp/wsurf-mcp-501-fedcba9876543210fedcba9876543210/browser.sock"
+        let stageArguments = ["--mcp", "--mcp-socket", stageSocket]
+        let installedData = try MCPClientConfiguration.addingJSON(
+            to: nil,
+            kind: .claudeDesktop,
+            command: command,
+            arguments: stageArguments
+        )
+        let installed = try #require(installedData)
+        let installedRoot = try object(installed)
+        let installedEntry = try #require((installedRoot["mcpServers"] as? [String: Any])?["wsurf"] as? [String: Any])
+        #expect(installedEntry["args"] as? [String] == stageArguments)
+        #expect(MCPClientConfiguration.matches(installedEntry, command: command, arguments: stageArguments))
+
+        let otherStageEntry = MCPClientConfiguration.entry(
+            command: command,
+            kind: .claudeDesktop,
+            arguments: ["--mcp", "--mcp-socket", otherStageSocket]
+        )
+        #expect(!MCPClientConfiguration.matches(otherStageEntry, command: command, arguments: stageArguments))
+
+        let source = try JSONSerialization.data(withJSONObject: ["mcpServers": ["wsurf": otherStageEntry]])
+        #expect(throws: MCPClientSetupError.conflictingServer) {
+            try MCPClientConfiguration.addingJSON(
+                to: source,
+                kind: .claudeDesktop,
+                command: command,
+                arguments: stageArguments
+            )
+        }
+    }
+
     @Test(arguments: [#"{"mcpServers":{"wsurf":{"command":"/other","args":["--mcp"]}}}"#,
                       #"{"mcpServers":{"wsurf":{"url":"https://example.test"}}}"#,
                       #"{"mcpServers":{"wsurf":null}}"#, ])

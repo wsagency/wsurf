@@ -6,7 +6,19 @@ import Foundation
 import Security
 
 nonisolated enum CredentialStore {
+    #if DEBUG
+    private static let service: String = {
+        if StageMode.isActive, let home = StageMode.home {
+            return StageMode.defaultsSuiteName(for: home)
+        }
+        if AppDatabase.isRunningTests {
+            return "io.wsagency.wsurf.tests.\(ProcessInfo.processInfo.processIdentifier)"
+        }
+        return "io.wsagency.wsurf"
+    }()
+    #else
     private static let service = "io.wsagency.wsurf"
+    #endif
 
     struct Storage: Sendable {
         var read: @Sendable (String) -> String?
