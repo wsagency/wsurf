@@ -9,6 +9,7 @@ import Testing
 
 nonisolated private struct TestCredentialStore: ProviderCredentialStore {
     var saveFailure: String?
+    var deleteFailure: String?
     func key(for provider: Provider) -> String? {
         nil
     }
@@ -24,7 +25,9 @@ nonisolated private struct TestCredentialStore: ProviderCredentialStore {
     func save(_ key: String, for provider: Provider) -> String? {
         saveFailure
     }
-    func delete(for provider: Provider) {}
+    func delete(for provider: Provider) -> String? {
+        deleteFailure
+    }
 }
 
 @MainActor
@@ -130,9 +133,17 @@ struct ModelProviderArchitectureTests {
         #expect(model.keyError == "Fixture save failure")
     }
 
-    private func credentialModel(saveFailure: String? = nil) -> IntelligenceViewModel {
+    @Test func failedCredentialDeleteKeepsTheKeyStateAndError() {
+        let model = credentialModel(deleteFailure: "Fixture delete failure")
+        model.keyDraft = "fixture-visible-key"
+        model.removeKey()
+        #expect(model.keyDraft == "fixture-visible-key")
+        #expect(model.keyError == "Fixture delete failure")
+    }
+
+    private func credentialModel(saveFailure: String? = nil, deleteFailure: String? = nil) -> IntelligenceViewModel {
         let provider = ProviderCatalog.openAI
-        let credentials = TestCredentialStore(saveFailure: saveFailure)
+        let credentials = TestCredentialStore(saveFailure: saveFailure, deleteFailure: deleteFailure)
         let registry = ModelProviderRegistry(credentials: credentials, factories: [provider.id: { configuration in
             TestModelProvider(configuration: configuration, capabilities: [.toolCalling], availability: .available, models: [])
         }, ])

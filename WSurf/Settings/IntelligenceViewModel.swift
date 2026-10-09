@@ -502,7 +502,10 @@ final class IntelligenceViewModel {
 
     func removeKey() {
         let provider = subject
-        credentials.delete(for: provider)
+        if let failure = credentials.delete(for: provider) {
+            keyError = failure
+            return
+        }
         keyDraft = ""
         keyError = nil
         refreshKeyState()
