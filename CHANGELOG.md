@@ -7,6 +7,12 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-09 — Classic Keychain credential migration
+
+Provider credentials now use the classic macOS Keychain. Existing entitled
+Data Protection Keychain records migrate on read; durable tombstones keep
+deleted credentials from reappearing.
+
 ### 2026-10-08 — Complete Linen integration
 
 Integrated all 31 changes from the pinned upstream range through

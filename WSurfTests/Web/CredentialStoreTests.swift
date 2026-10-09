@@ -3,14 +3,13 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import Foundation
+import Synchronization
 import Testing
 
 @testable import WSurf
 
-/// Only the logic around the Keychain. The SecItem calls themselves cannot run
-/// here - test builds carry no keychain entitlement - so every case uses a
-/// provider id that has no stored item, which makes the keychain leg of each
-/// lookup answer "nothing" the same way in CI and on a developer's Mac.
+/// Credential tests use fresh provider IDs and clean up only those exact
+/// synthetic Keychain records.
 struct CredentialStoreTests {
     private let store: any ProviderCredentialStore = KeychainProviderCredentialStore()
 
@@ -30,13 +29,9 @@ struct CredentialStoreTests {
         )
     }
 
-    /// A variable that certainly exists in this process, with a value long
-    /// enough to mask.
+    /// `PATH` is non-secret and long enough for the mask assertions.
     private static func liveEnvironmentEntry() throws -> (key: String, value: String) {
-        let entry = try #require(
-            ProcessInfo.processInfo.environment.first { !$0.key.isEmpty && $0.value.count >= 8 }
-        )
-        return (entry.key, entry.value)
+        ("PATH", try #require(ProcessInfo.processInfo.environment["PATH"]))
     }
 
     @Test func aProviderWithoutAuthNeedsNoKey() {
@@ -83,10 +78,147 @@ struct CredentialStoreTests {
         #expect(masked.count == 8)
     }
 
-    @Test func savingABlankKeyClearsRatherThanStores() {
+    @Test func savingABlankKeyUsesStorageDeletion() {
+        let values = Mutex<[String: String]>([:])
+        let storage = CredentialStore.Storage(
+            read: { account in values.withLock { $0[account] } },
+            write: { value, account in
+                values.withLock { $0[account] = value }
+                return errSecSuccess
+            },
+            delete: { account in
+                values.withLock { $0.removeValue(forKey: account) == nil ? errSecItemNotFound : errSecSuccess }
+            }
+        )
         let provider = Self.provider(auth: .bearer)
-        #expect(store.save("   \n\t", for: provider) == nil)
-        #expect(store.key(for: provider) == nil)
-        #expect(!store.isConfigured(provider))
+        #expect(CredentialStore.save("   \n\t", for: provider, storage: storage) == nil)
+        #expect(values.withLock { $0.isEmpty })
+    }
+
+    @Test func keychainReadErrorsNeverFallBackToLegacyData() {
+        var didReadLegacy = false
+        let denied = CredentialStore.resolveRead(
+            classic: .failure(errSecInteractionNotAllowed),
+            readLegacy: {
+                didReadLegacy = true
+                return .found(Data("stale-fixture".utf8))
+            },
+            migrate: { _ in "stale-fixture" }
+        )
+        #expect(denied == nil)
+        #expect(!didReadLegacy)
+
+        var didMigrate = false
+        let legacyFailure = CredentialStore.resolveRead(
+            classic: .missing,
+            readLegacy: { .failure(errSecUserCanceled) },
+            migrate: { _ in didMigrate = true; return "stale-fixture" }
+        )
+        #expect(legacyFailure == nil)
+        #expect(!didMigrate)
+    }
+
+    @Test func failedLegacyCopyRemainsReadableAndIsNotRetired() {
+        var legacyPresent = true
+        let migrated = CredentialStore.migrateLegacy(
+            Data("legacy-fixture".utf8),
+            account: "provider:test-\(UUID().uuidString)",
+            addCanonical: { _, _ in errSecNotAvailable },
+            readCanonical: { _ in .missing },
+            retireLegacy: { _ in legacyPresent = false; return errSecSuccess }
+        )
+        #expect(migrated == "legacy-fixture")
+        #expect(legacyPresent)
+    }
+
+    @Test func migrationPreservesAConcurrentCanonicalSave() {
+        var canonical: Data?
+        var legacyPresent = true
+        let migrated = CredentialStore.migrateLegacy(
+            Data("legacy-fixture".utf8),
+            account: "provider:test-\(UUID().uuidString)",
+            addCanonical: { _, _ in
+                canonical = Data("new-fixture".utf8)
+                return errSecDuplicateItem
+            },
+            readCanonical: { _ in canonical.map(CredentialStore.Lookup.found) ?? .missing },
+            retireLegacy: { _ in legacyPresent = false; return errSecSuccess }
+        )
+        #expect(migrated == "new-fixture")
+        #expect(canonical == Data("new-fixture".utf8))
+        #expect(!legacyPresent)
+    }
+
+    @Test func migrationDoesNotResurrectAConcurrentTombstone() {
+        var canonical: Data?
+        var legacyPresent = true
+        let migrated = CredentialStore.migrateLegacy(
+            Data("legacy-fixture".utf8),
+            account: "provider:test-\(UUID().uuidString)",
+            addCanonical: { _, _ in
+                canonical = Data([0])
+                return errSecDuplicateItem
+            },
+            readCanonical: { _ in canonical.map(CredentialStore.Lookup.found) ?? .missing },
+            retireLegacy: { _ in legacyPresent = false; return errSecSuccess }
+        )
+        #expect(migrated == nil)
+        #expect(canonical == Data([0]))
+        #expect(!legacyPresent)
+    }
+
+    @Test func classicKeychainValueWinsOverLegacyAndTombstoneStopsFallback() {
+        var didReadLegacy = false
+        let canonical = CredentialStore.resolveRead(
+            classic: .found(Data("canonical-fixture".utf8)),
+            readLegacy: { didReadLegacy = true; return .found(Data("legacy-fixture".utf8)) },
+            migrate: { _ in "legacy-fixture" }
+        )
+        #expect(canonical == "canonical-fixture")
+        #expect(!didReadLegacy)
+
+        let tombstone = CredentialStore.resolveRead(
+            classic: .found(Data([0])),
+            readLegacy: { didReadLegacy = true; return .found(Data("legacy-fixture".utf8)) },
+            migrate: { _ in "legacy-fixture" }
+        )
+        #expect(tombstone == nil)
+        #expect(!didReadLegacy)
+    }
+
+    @Test func successfulMigrationWritesBeforeRetiringLegacy() {
+        var wroteCanonical = false
+        var retiredBeforeWrite = false
+        let migrated = CredentialStore.migrateLegacy(
+            Data("legacy-fixture".utf8),
+            account: "provider:test-\(UUID().uuidString)",
+            addCanonical: { _, _ in wroteCanonical = true; return errSecSuccess },
+            readCanonical: { _ in .missing },
+            retireLegacy: { _ in
+                if !wroteCanonical { retiredBeforeWrite = true }
+                return errSecSuccess
+            }
+        )
+        #expect(migrated == "legacy-fixture")
+        #expect(wroteCanonical)
+        #expect(!retiredBeforeWrite)
+    }
+
+    @Test func nativeClassicKeychainCRUDUsesAnOwnedService() {
+        let provider = Self.provider(auth: .bearer)
+        let account = "provider:\(provider.id)"
+        let storage = CredentialStore.Storage.keychainStorage(
+            service: "io.wsagency.wsurf.tests.\(UUID().uuidString)"
+        )
+        defer { _ = storage.delete(account) }
+
+        #expect(CredentialStore.save("fixture-key-one", for: provider, storage: storage) == nil)
+        #expect(storage.read(account) == "fixture-key-one")
+        #expect(CredentialStore.save("fixture-key-two", for: provider, storage: storage) == nil)
+        #expect(storage.read(account) == "fixture-key-two")
+        #expect(storage.delete(account) == errSecSuccess)
+        #expect(storage.read(account) == nil)
+        #expect(CredentialStore.save("fixture-key-three", for: provider, storage: storage) == nil)
+        #expect(storage.read(account) == "fixture-key-three")
     }
 }

@@ -15,9 +15,8 @@
 	<true/>
 	<key>com.apple.security.personal-information.location</key>
 	<true/>
-	<!-- The data-protection keychain refuses an item from code with no access
-	     group: SecItemAdd answers errSecMissingEntitlement. This group is what
-	     CredentialStore's API keys are filed under. -->
+	<!-- Retained to migrate legacy Data Protection Keychain items; canonical
+	     classic-keychain queries do not set an access group. -->
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)io.wsagency.wsurf</string>

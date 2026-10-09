@@ -53,7 +53,7 @@ nonisolated protocol ProviderCredentialStore: Sendable {
     func source(for provider: Provider) -> CredentialStore.Source
     func masked(for provider: Provider) -> String?
     func save(_ key: String, for provider: Provider) -> String?
-    func delete(for provider: Provider)
+    func delete(for provider: Provider) -> String?
 }
 
 nonisolated struct KeychainProviderCredentialStore: ProviderCredentialStore {
@@ -72,7 +72,7 @@ nonisolated struct KeychainProviderCredentialStore: ProviderCredentialStore {
     func save(_ key: String, for provider: Provider) -> String? {
         CredentialStore.save(key, for: provider)
     }
-    func delete(for provider: Provider) {
+    func delete(for provider: Provider) -> String? {
         CredentialStore.delete(for: provider)
     }
 }

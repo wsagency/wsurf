@@ -191,7 +191,7 @@ nonisolated private struct TestCredentialStore: ProviderCredentialStore {
     func save(_ key: String, for provider: Provider) -> String? {
         nil
     }
-    func delete(for provider: Provider) {}
+    func delete(for provider: Provider) -> String? { nil }
 }
 
 @MainActor
