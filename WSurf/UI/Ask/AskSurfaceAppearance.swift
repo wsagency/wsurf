@@ -166,6 +166,7 @@ struct AskRestingLine: View {
     let placement: AskSurface.Placement
     let content: AskRestingContent
     let security: PageSecurity
+    let engine: BrowserEngine?
 
     var body: some View {
         HStack(spacing: 5) {
@@ -219,6 +220,15 @@ struct AskRestingLine: View {
                     Image(systemName: symbol)
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundStyle(Theme.controlOverride ?? security.tint)
+                }
+                if let engine {
+                    Text(verbatim: engine == .webKit ? "WK" : "Cr")
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Theme.controlOverride ?? .secondary)
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 1)
+                        .background(.quaternary, in: .rect(cornerRadius: 3))
+                        .fixedSize()
                 }
                 Text(verbatim: host)
                     .font(.system(size: placement.textSize))

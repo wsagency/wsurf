@@ -64,6 +64,10 @@ final class AskSurfaceModel {
     var security: PageSecurity {
         browser.activeTab?.security ?? .none
     }
+    var addressEngine: BrowserEngine? {
+        guard case .address = restingContent else { return nil }
+        return browser.activeTab?.loadedEngine
+    }
     var isPrivate: Bool {
         browser.activeTab?.isPrivate ?? false
     }
@@ -88,7 +92,9 @@ final class AskSurfaceModel {
     }
 
     var accessibilityValue: String {
-        restingContent?.accessibilityValue(fallback: interaction.text) ?? interaction.text
+        let value = restingContent?.accessibilityValue(fallback: interaction.text) ?? interaction.text
+        guard let engine = addressEngine else { return value }
+        return String(localized: "\(value), rendering engine: \(String(localized: engine.label))")
     }
 
     var activity: AskSurfaceActivity {

@@ -66,7 +66,8 @@ struct AskSurfaceRow: View {
                     AskRestingLine(
                         placement: placement,
                         content: restingContent,
-                        security: security
+                        security: security,
+                        engine: model.addressEngine
                     )
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .allowsHitTesting(false)
@@ -78,6 +79,7 @@ struct AskSurfaceRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onTapGesture { model.focusForEditing() }
+            .help(Text(model.addressEngine?.label ?? ""))
 
             HStack(spacing: placement.controlSpacing) {
                 if placement.showsSiteControls {
@@ -104,7 +106,8 @@ struct AskSurfaceRow: View {
                 AskRestingLine(
                     placement: placement,
                     content: restingContent,
-                    security: security
+                    security: security,
+                    engine: model.addressEngine
                 )
                 .padding(.horizontal, Self.centredAddressInset)
                 .allowsHitTesting(false)
