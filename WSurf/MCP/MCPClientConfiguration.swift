@@ -147,18 +147,27 @@ nonisolated enum MCPClientConfiguration {
         Bundle.main.executableURL?.path ?? "/Applications/WSurf.app/Contents/MacOS/WSurf"
     }
 
-    static func entry(command: String, kind: MCPClientKind) -> [String: Any] {
-        var value: [String: Any] = ["command": command, "args": ["--mcp"]]
+    static var arguments: [String] {
+        #if DEBUG
+        if StageMode.isActive {
+            return ["--mcp", "--mcp-socket", LocalMCPEndpoint.path]
+        }
+        #endif
+        return ["--mcp"]
+    }
+
+    static func entry(command: String, kind: MCPClientKind, arguments: [String] = MCPClientConfiguration.arguments) -> [String: Any] {
+        var value: [String: Any] = ["command": command, "args": arguments]
         if kind == .claudeCode { value["type"] = "stdio" }
         return value
     }
 
-    static func matches(_ entry: [String: Any], command: String) -> Bool {
-        entry["command"] as? String == command && entry["args"] as? [String] == ["--mcp"]
+    static func matches(_ entry: [String: Any], command: String, arguments: [String] = MCPClientConfiguration.arguments) -> Bool {
+        entry["command"] as? String == command && entry["args"] as? [String] == arguments
             && entry["url"] == nil && (entry["type"] == nil || entry["type"] as? String == "stdio")
     }
 
-    static func addingJSON(to data: Data?, kind: MCPClientKind, command: String) throws -> Data? {
+    static func addingJSON(to data: Data?, kind: MCPClientKind, command: String, arguments: [String] = MCPClientConfiguration.arguments) throws -> Data? {
         var root: [String: Any] = [:]
         if let data {
             guard let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -172,12 +181,12 @@ nonisolated enum MCPClientConfiguration {
             servers = dictionary
         }
         if let existing = servers["wsurf"] {
-            guard let entry = existing as? [String: Any], matches(entry, command: command) else {
+            guard let entry = existing as? [String: Any], matches(entry, command: command, arguments: arguments) else {
                 throw MCPClientSetupError.conflictingServer
             }
             return nil
         }
-        servers["wsurf"] = entry(command: command, kind: kind)
+        servers["wsurf"] = entry(command: command, kind: kind, arguments: arguments)
         root["mcpServers"] = servers
         return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) + Data([10])
     }

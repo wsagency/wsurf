@@ -328,5 +328,7 @@ private nonisolated struct BenchCredentials: ProviderCredentialStore {
     func save(_ key: String, for provider: Provider) -> String? {
         "Read-only benchmark credentials"
     }
-    func delete(for provider: Provider) {}
+    func delete(for provider: Provider) -> String? {
+        nil
+    }
 }

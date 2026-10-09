@@ -30,6 +30,43 @@ struct MCPTransportTests {
         retainedWindows.values[ObjectIdentifier(browser)] = window
     }
 
+    @Test func stagedHomesKeepPreferencesAndWebKitStoresSeparateAcrossRestarts() {
+        let root = FileManager.default.temporaryDirectory.appending(path: "wsurf-stage-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let firstHome = root.appending(path: "first")
+        let secondHome = root.appending(path: "second")
+        let restartedHome = root.appending(path: "unused").appending(path: "..").appending(path: "first")
+        let firstSuite = StageMode.defaultsSuiteName(for: firstHome)
+        let secondSuite = StageMode.defaultsSuiteName(for: secondHome)
+        defer {
+            UserDefaults.standard.removePersistentDomain(forName: firstSuite)
+            UserDefaults.standard.removePersistentDomain(forName: secondSuite)
+        }
+
+        let first = StageMode.defaults(for: firstHome)
+        first.set("first stage", forKey: "isolation-test")
+        let restartedFirst = StageMode.defaults(for: restartedHome)
+        let second = StageMode.defaults(for: secondHome)
+
+        #expect(restartedFirst.string(forKey: "isolation-test") == "first stage")
+        #expect(second.string(forKey: "isolation-test") == nil)
+        #expect(StageMode.dataStoreID(for: firstHome) == StageMode.dataStoreID(for: restartedHome))
+        #expect(StageMode.dataStoreID(for: firstHome) != StageMode.dataStoreID(for: secondHome))
+    }
+
+    @Test func stagedMCPSocketsAreStableDistinctAndWithinUnixPathLimit() {
+        let root = FileManager.default.temporaryDirectory.appending(path: "wsurf-stage-test-\(UUID().uuidString)")
+        let firstHome = root.appending(path: "first")
+        let secondHome = root.appending(path: "second")
+        let first = LocalMCPEndpoint.stagePath(for: firstHome)
+        let restartedFirst = LocalMCPEndpoint.stagePath(for: firstHome.appending(path: "..").appending(path: "first"))
+        let second = LocalMCPEndpoint.stagePath(for: secondHome)
+
+        #expect(first == restartedFirst)
+        #expect(first != second)
+        #expect(first.utf8.count < 104)
+    }
+
     @Test func initializationIgnoresUnsupportedExtensionsAndPreservesStandardFields() throws {
         let request = Data(#"""
             {"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{
