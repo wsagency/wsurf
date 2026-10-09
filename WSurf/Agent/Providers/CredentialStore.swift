@@ -30,7 +30,10 @@ nonisolated enum CredentialStore {
         static func keychainStorage(service: String) -> Storage {
             Storage(
                 read: { CredentialStore.read(account: $0, service: service) },
-                write: { CredentialStore.write(Data($0.utf8), account: $1, service: service) },
+                write: {
+                    guard $0 != CredentialStore.tombstoneString else { return errSecParam }
+                    return CredentialStore.write(Data($0.utf8), account: $1, service: service)
+                },
                 delete: { CredentialStore.delete(account: $0, service: service) }
             )
         }
@@ -88,9 +91,6 @@ nonisolated enum CredentialStore {
             let status = storage.delete(account)
             guard status == errSecSuccess || status == errSecItemNotFound else { return errorMessage(status) }
             return nil
-        }
-        guard trimmed != "\u{0}" else {
-            return String(localized: "The provider key cannot be the reserved tombstone value.")
         }
         let status = storage.write(trimmed, account)
         return status == errSecSuccess ? nil : errorMessage(status)
@@ -245,7 +245,7 @@ nonisolated enum CredentialStore {
         readCanonical: (String) -> Lookup,
         retireLegacy: (String) -> OSStatus
     ) -> String? {
-        guard let legacyValue = String(data: data, encoding: .utf8), !legacyValue.isEmpty else { return nil }
+        guard let legacyValue = nonemptyString(data) else { return nil }
         let status = addCanonical(data, account)
         guard status == errSecDuplicateItem else {
             if status == errSecSuccess { _ = retireLegacy(account) }
@@ -268,7 +268,8 @@ nonisolated enum CredentialStore {
     }
 
     // Classic Keychain reports success for empty-data updates but retains the old value.
-    private static let tombstone = Data([0])
+    private static let tombstoneString = "\u{0}"
+    private static let tombstone = Data(tombstoneString.utf8)
 
     private static func nonemptyString(_ data: Data?) -> String? {
         guard let data, data != tombstone,

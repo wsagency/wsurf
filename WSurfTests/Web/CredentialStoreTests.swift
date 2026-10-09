@@ -98,21 +98,6 @@ struct CredentialStoreTests {
         #expect(storage.read(account) == nil)
     }
 
-    @Test func aReservedTombstoneKeyCannotBeStored() {
-        let wrote = Mutex(false)
-        let storage = CredentialStore.Storage(
-            read: { _ in nil },
-            write: { _, _ in
-                wrote.withLock { $0 = true }
-                return errSecSuccess
-            },
-            delete: { _ in errSecSuccess }
-        )
-        let provider = Self.provider(auth: .bearer)
-        #expect(CredentialStore.save("\u{0}", for: provider, storage: storage) != nil)
-        #expect(!wrote.withLock { $0 })
-    }
-
     @Test func keychainReadErrorsNeverFallBackToLegacyData() {
         var didReadLegacy = false
         let denied = CredentialStore.resolveRead(
@@ -147,6 +132,23 @@ struct CredentialStoreTests {
         )
         #expect(migrated == "legacy-fixture")
         #expect(legacyPresent)
+    }
+
+    @Test func invalidLegacyValuesAreNeverMigrated() {
+        for data in [Data(), Data([0]), Data([0xff])] {
+            var didAdd = false
+            var didRetire = false
+            let migrated = CredentialStore.migrateLegacy(
+                data,
+                account: "provider:test-\(UUID().uuidString)",
+                addCanonical: { _, _ in didAdd = true; return errSecSuccess },
+                readCanonical: { _ in .missing },
+                retireLegacy: { _ in didRetire = true; return errSecSuccess }
+            )
+            #expect(migrated == nil)
+            #expect(!didAdd)
+            #expect(!didRetire)
+        }
     }
 
     @Test func migrationPreservesAConcurrentCanonicalSave() {
@@ -229,18 +231,23 @@ struct CredentialStoreTests {
         #expect(!retiredBeforeWrite)
     }
 
-    @Test func nativeClassicKeychainCRUDUsesAnOwnedService() {
+    @Test func nativeClassicKeychainCRUDRejectsTombstoneInputsOnOwnedService() {
         let provider = Self.provider(auth: .bearer)
         let account = "provider:\(provider.id)"
+        let mcpProviderID = "fixture"
+        let mcpServerID = UUID()
+        let mcpAccount = "openai-mcp:\(mcpProviderID):\(mcpServerID.uuidString)"
         let service = "io.wsagency.wsurf.tests.\(UUID().uuidString)"
         let storage = CredentialStore.Storage.keychainStorage(service: service)
         defer {
-            SecItemDelete([
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecAttrAccount as String: account,
-                kSecUseDataProtectionKeychain as String: false,
-            ] as CFDictionary)
+            for recordAccount in [account, mcpAccount] {
+                SecItemDelete([
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: service,
+                    kSecAttrAccount as String: recordAccount,
+                    kSecUseDataProtectionKeychain as String: false,
+                ] as CFDictionary)
+            }
         }
 
         #expect(CredentialStore.save("fixture-key-one", for: provider, storage: storage) == nil)
@@ -251,5 +258,22 @@ struct CredentialStoreTests {
         #expect(storage.read(account) == nil)
         #expect(CredentialStore.save("fixture-key-three", for: provider, storage: storage) == nil)
         #expect(storage.read(account) == "fixture-key-three")
+        #expect(CredentialStore.save("\u{0}", for: provider, storage: storage) != nil)
+        #expect(storage.read(account) == "fixture-key-three")
+        #expect(
+            CredentialStore.saveMCPAuthorization(
+                "manual-token", providerID: mcpProviderID, serverID: mcpServerID, storage: storage
+            ) == nil
+        )
+        #expect(
+            CredentialStore.saveMCPAuthorization(
+                "\u{0}", providerID: mcpProviderID, serverID: mcpServerID, storage: storage
+            ) != nil
+        )
+        #expect(
+            CredentialStore.mcpAuthorization(
+                providerID: mcpProviderID, serverID: mcpServerID, storage: storage
+            ) == "manual-token"
+        )
     }
 }
