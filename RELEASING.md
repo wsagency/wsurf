@@ -95,10 +95,12 @@ signs with `--timestamp`.
 
 ## One-time: the provisioning profile
 
-`WSurf/WSurf.entitlements` declares two restricted entitlements. The app stores
-API keys in the data-protection keychain. That keychain refuses an item from code
-that has no keychain access group, so the file declares `keychain-access-groups`.
-The app also lets a website use a passkey, so the file declares
+`WSurf/WSurf.entitlements` declares two restricted entitlements. Provider API
+keys, MCP authorization tokens, and OAuth credentials use the encrypted
+classic Keychain, with migration for legacy Data Protection Keychain entries.
+The `keychain-access-groups` entitlement remains required for the separate Data
+Protection Keychain used by the password/autofill/payment vaults and for legacy
+migration. The app also lets a website use a passkey, so the file declares
 `com.apple.developer.web-browser.public-key-credential`. A Developer ID
 signature can only carry a restricted entitlement when an embedded profile
 authorizes it. Gatekeeper refuses to launch an app that declares an entitlement

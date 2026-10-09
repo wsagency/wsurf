@@ -7,6 +7,10 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-09 — Actual engine beside address lock
+
+The address bar shows WK or Cr beside the lock for the active page's loaded engine.
+
 ### 2026-10-09 — Classic Keychain credential storage
 
 Provider credentials, MCP authorization credentials, and OAuth credentials now

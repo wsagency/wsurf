@@ -203,7 +203,12 @@ final class BrowserTab: Identifiable {
         guard let pinnedURL else { return false }
         return urlString == pinnedURL.absoluteString
     }
-    @ObservationIgnored var liveView: BrowserPage?
+    @ObservationIgnored var liveView: BrowserPage? {
+        didSet {
+            loadedEngine = liveView?.engine
+        }
+    }
+    private(set) var loadedEngine: BrowserEngine?
     @ObservationIgnored private var retiredView: BrowserPage?
     private var retirementGeneration = 0
     private var pageGeneration = 0
