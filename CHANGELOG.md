@@ -7,11 +7,11 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
-### 2026-10-09 — Classic Keychain credential migration
+### 2026-10-09 — Classic Keychain credential storage
 
-Provider credentials now use the classic macOS Keychain. Existing entitled
-Data Protection Keychain records migrate on read; durable tombstones keep
-deleted credentials from reappearing.
+Provider credentials, MCP authorization credentials, and OAuth credentials now
+share the classic macOS Keychain store. Durable tombstones keep deleted
+credentials from reappearing.
 
 ### 2026-10-08 — Complete Linen integration
 
