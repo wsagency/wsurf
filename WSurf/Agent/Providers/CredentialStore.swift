@@ -248,7 +248,9 @@ nonisolated enum CredentialStore {
         guard let legacyValue = nonemptyString(data) else { return nil }
         let status = addCanonical(data, account)
         guard status == errSecDuplicateItem else {
-            if status == errSecSuccess { _ = retireLegacy(account) }
+            if status == errSecSuccess {
+                _ = retireLegacy(account)
+            }
             return legacyValue
         }
 
@@ -262,7 +264,9 @@ nonisolated enum CredentialStore {
         copyQuery[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
         let status = SecItemCopyMatching(copyQuery as CFDictionary, &item)
-        if status == errSecItemNotFound { return .missing }
+        if status == errSecItemNotFound {
+            return .missing
+        }
         guard status == errSecSuccess else { return .failure(status) }
         return .found(item as? Data)
     }

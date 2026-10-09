@@ -221,7 +221,9 @@ struct CredentialStoreTests {
             },
             readCanonical: { _ in .missing },
             retireLegacy: { _ in
-                if !wroteCanonical { retiredBeforeWrite = true }
+                if !wroteCanonical {
+                    retiredBeforeWrite = true
+                }
                 return errSecSuccess
             }
         )
