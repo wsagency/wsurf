@@ -186,24 +186,34 @@ Stage mode loads sample browsing data for screenshots and recordings.
 Set the session in `WSurf/Stage/StageSet.swift`: pinned tabs, folders, loose
 tabs, history and downloads.
 
+Build an owned Debug app with `PRODUCT_BUNDLE_IDENTIFIER` set to
+`io.wsagency.wsurf.stage.<12-hex-home-suffix>`, copy the complete bundle away
+from the installed app, and launch only the required environment:
+
 ```bash
-WSURF_STAGE=1 build/DD/Build/Products/Debug/WSurf.app/Contents/MacOS/WSurf
+stage_home="$PWD/build/stage-home"
+mkdir -p "$stage_home"
+env -i PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="$stage_home" \
+  WSURF_STAGE=1 WSURF_STAGE_HOME="$stage_home" \
+  /path/to/owned/WSurf.app/Contents/MacOS/WSurf
 ```
 
-Prepare the session once. Staged tabs load real websites, which may show cookie
-banners and region prompts on first use.
+The 12-hex bundle suffix is the start of `StageMode.identity(for:)`, which
+hashes the standardized stage-home path. `env -i` matters because stage mode
+alone does not clear provider-key environment variables. Staged tabs load real
+websites, which may show cookie banners and region prompts on first use.
 
-1. Launch with `WSURF_STAGE=1`.
+1. Launch with `WSURF_STAGE=1` and an owned `WSURF_STAGE_HOME`.
 2. Dismiss every banner on every staged tab.
-3. Add a model API key in Settings if a recording needs an agent turn.
-4. Quit. Your choices are saved in the stage data store.
-5. Relaunch with `WSURF_STAGE=1 WSURF_STAGE_SEED=0` to retain the existing
-   session instead of replacing tabs, history and downloads with sample data.
+3. Quit. Stage state remains in that home.
+4. Relaunch with `WSURF_STAGE_SEED=0` to retain the existing session instead
+   of replacing tabs, history and downloads with sample data.
 
-A stage run writes to its own support directory, its own website data store and
-its own preference domain. It cannot change the real installation’s history,
-cookies, tabs or settings. Delete `$TMPDIR/wsurf-stage` to reset it, or set
-`WSURF_STAGE_HOME` to keep more than one staged session.
+The standardized stage-home path supplies a stable per-home identity for the
+preference suite, WebKit data store, CredentialStore service and MCP socket.
+Release builds ignore stage mode. The stage app's MCP install action still
+targets real client configuration files, so do not use it here. Credential
+saving is not verified by this isolation check; do not use production keys.
 
 For migration and rollback checks, keep `WSURF_STAGE=1`, set an owned
 `WSURF_STAGE_HOME`, and set `WSURF_STAGE_SEED=0` before launching. Disabling
