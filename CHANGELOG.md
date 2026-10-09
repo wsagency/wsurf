@@ -7,24 +7,92 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
-- Integrated the pinned 31-change Linen migration: profile-aware windows and
-  live same-profile tab transfer, isolated private sessions on WebKit and CEF,
-  owner-bound assistant/MCP/extension actions, 32-control form filling without
-  submission, safe rate-limit pause/Continue, and Tab-to-search palette chips.
-  Preserves WSurf Favorites, pins, folders, sidebar Undo and engine choice.
-  Includes PDF titles/saves, revocable external-app approvals, bounded scroll
-  restoration, idle media/lyrics work, native input/autofill fixes, startup
-  speech preparation and URL-correct favicons. Native builds use Xcode 27,
-  AnyLanguageModel 0.15.1 and swift-collections 1.7.1 with pinned CefSwift;
-  locked builds install Metal and OCR supports CPU fallback. MCP accepts
-  compatible initialize payloads and both Codex bundle layouts, with event-driven
-  stdio. External-app decisions remain bound to live source documents; ambiguous
-  or opaque sources receive only one-time consent. History clearing removes only
-  the owning profile's conversation log, and link previews retain that profile's
-  JavaScript settings. Isolated stage verification can retain restored sessions
-  with `WSURF_STAGE_SEED=0` instead of replacing them with sample data.
-  See [the migration journal](docs/upstream-migrations.md) for provenance and
-  observed verification; this entry is not a deployment record.
+### 2026-10-08 — Complete Linen integration
+
+Integrated all 31 changes from the pinned upstream range through
+[PR #8](https://github.com/wsagency/wsurf/pull/8). The list follows the
+[source manifest](docs/upstream-migrations.md#complete-source-manifest):
+
+1. Detect both standalone and ChatGPT-bundled Codex CLI layouts for MCP setup,
+   retaining WSurf configuration and safe TOML merging.
+2. Preserve command-palette editing shortcuts across keyboard layouts.
+3. Wait for focused autofill fields to finish layout before delivering input,
+   with bounded waits and cancellation.
+4. Stop media polling on idle players and hidden pages, including page-cache
+   transitions.
+5. Show PDF filenames and correct untitled-page names on WebKit and Chromium,
+   without overwriting custom tab titles.
+6. Remember external-app approvals per website origin and target app, with
+   revocation in website settings and session-only private-window grants.
+7. Save WebKit PDF viewer documents through the download manager, preserving
+   edited PDF bytes, filename reservations, quarantine and handoff deduplication.
+8. Open the actual Downloads page from download settings and settings search.
+9. Refresh the localization catalog while retaining WSurf-only strings and
+   branding.
+10. Align global-reset settings copy with the string catalog.
+11. Stabilize assistant context test titles while pages load and retain fixture
+    servers for their full lifetime.
+12. Test external navigation with real WebKit actions and requesting origins
+    rather than fabricated navigation objects.
+13. Measure result-ranking performance independently of WebKit page loading,
+    retaining WSurf performance budgets.
+14. Restore saved scroll positions after late WebKit resets; stop restoration
+    when the user scrolls, the page moves itself or the document is left.
+15. Wait for extension test replies from the expected page instead of accepting
+    unrelated responses.
+16. Keep headless automation fixtures active without changing production page
+    scheduling.
+17. Confirm assistant key delivery on trusted keydown, avoiding duplicate input
+    when a page consumes keyup.
+18. Move native CI to Xcode 27, refresh CI actions and SwiftLint, and upgrade
+    AnyLanguageModel to 0.15.1 and swift-collections to 1.7.1. Keep CefSwift pinned
+    and enforce locked package resolution.
+19. Update README behavior and privacy documentation for WSurf.
+20. Install and verify the Metal toolchain before release and preview builds,
+    retaining the existing CI setup and deployment gates.
+21. Support CPU fallback for OCR and active autofill fixtures on virtual macOS
+    runners.
+22. Exclude only four unsupported Vision OCR integration tests from hosted CI;
+    keep all four enabled in native Pro verification.
+23. Improve gray folder-preview icon contrast in dark mode while retaining
+    colored folders.
+24. Accept object-valued MCP experimental capabilities during initialization
+    without changing standard fields or permission grants.
+25. Add profile-aware browser windows, live same-profile tab transfer and
+    isolated private sessions on both WebKit and Chromium. Bind assistant,
+    MCP and extension operations to their owning window, profile and document.
+26. Show assistant questions only in the window, space and surface where the
+    request began.
+27. Fill up to 32 controls per guarded assistant or MCP operation without
+    submitting the form. Add bounded rate-limit recovery, pause/Continue and
+    visual no-progress detection without replaying completed actions.
+28. Reduce idle work and correct startup behavior: event-driven MCP stdio,
+    cached speech preparation, visible-playing synchronized lyrics, validated
+    media geometry, URL-correct favicons, privacy-safe autofill diagnostics and
+    engine-aware page-resource cleanup.
+29. Keep sidebar drop targets visible on light websites using the sidebar's own
+    appearance.
+30. Add Tab-to-search site chips with native editor safeguards and adaptive
+    command-palette sizing.
+31. Limit Window/Dock page-title labels to 40 grapheme clusters, retaining full
+    stored titles and profile/private suffixes.
+
+WSurf compatibility work preserves Favorites, pinned tabs and folders, sidebar
+Undo/Redo, split panes and per-website engine selection. History clearing removes
+only the owning profile's conversation log; link previews retain that profile's
+JavaScript settings. External-app decisions remain bound to live source
+documents, with one-time consent for ambiguous or opaque sources. Stage runs can
+retain restored sessions with `WSURF_STAGE_SEED=0` without disabling isolation.
+
+Native Pro verification recorded 3,016 passing tests and no failures, including
+the four OCR integrations. PR and merged-main CI passed. The
+[migration journal](docs/upstream-migrations.md) and
+[integration record](https://github.com/wsagency/wsurf/pull/8#issuecomment-6067821179)
+separate observed checks from the remaining manual UI checks accepted by the
+user. This entry records source integration, not a signed public release.
+
+### Earlier WSurf changes
+
 - Added repository-local omp worktree placement and documented feature-branch,
   PR-only changes to `main`.
 - Independent WSurf product, app/project/module and `io.wsagency.wsurf`
