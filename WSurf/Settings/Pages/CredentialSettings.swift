@@ -547,7 +547,11 @@ private struct CredentialEditorSheet: View {
                 }
                 Button("Cancel", role: .cancel) { pendingPasskeyRemoval = nil }
             } message: { passkey in
-                Text("Remove passkey #\(passkey.shortID) for \(passkey.rpID) from this credential? Save to apply this change.")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Remove passkey #\(passkey.shortID) for \(passkey.rpID) from this credential?")
+                    Text("Only this local copy is removed.")
+                    Text("The website registration and any other exported copies remain. Save to apply.")
+                }
             }
         }
     }
@@ -609,14 +613,16 @@ private struct CredentialEditorSheet: View {
         let source: String
         switch passkey.source {
         case .some(.created):
-            source = String(localized: "Created here")
+            source = String(localized: "Created in WSurf")
         case .some(.imported):
             source = String(localized: "Imported")
         case nil:
             source = String(localized: "Source unknown")
         }
-        let created = passkey.createdAt.map {
-            String(localized: "Created \($0.formatted(date: .abbreviated, time: .shortened))")
+        let created = passkey.createdAt.map { date in
+            let timestamp = date.formatted(date: .abbreviated, time: .shortened)
+            let relativeAge = date.formatted(.relative(presentation: .named))
+            return String(localized: "Created \(timestamp) (\(relativeAge))")
         } ?? String(localized: "Creation date unknown")
         let signed = passkey.lastSignedAt.map {
             String(localized: "Last signed \($0.formatted(date: .abbreviated, time: .shortened))")
