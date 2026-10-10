@@ -279,11 +279,11 @@ struct CredentialExchangeTests {
     @Test func replacingAPasskeyUsesIncomingKeyAndUnknownImportedHistory() throws {
         let oldKey = P256.Signing.PrivateKey()
         let oldInput = data(credentials: [passkey(key: try PasskeyKeyEncoding.exportPKCS8(oldKey))])
-        let existingPasskey = try #require(
+        let importedPasskey = try #require(
             CredentialExchangeCodec.preview(oldInput, against: snapshot([])).candidates.first?.passkeys.first
         )
         var existingPasskeyJSON = try #require(JSONSerialization.jsonObject(
-            with: JSONEncoder().encode(existingPasskey)
+            with: JSONEncoder().encode(importedPasskey)
         ) as? [String: Any])
         let createdAt = Date(timeIntervalSince1970: 1_700_000_100)
         let lastSignedAt = Date(timeIntervalSince1970: 1_700_000_200)
