@@ -53,6 +53,8 @@ extension WebsiteAuthenticatorTests {
         #"https://a"b.example"#,
         #"https://a\b.example"#,
         "https://a\u{01}b.example",
+        "https://a\u{0A}b\u{09}c.example",
+        "https://a\u{1F}b.example",
         "https://a\u{7F}b.example",
         "https://bücher.example",
         "https://\u{1F512}.example",
@@ -70,6 +72,22 @@ extension WebsiteAuthenticatorTests {
         #expect(parsed["origin"] as? String == origin)
         #expect(parsed["challenge"] as? String == "-_-__g")
         #expect(parsed["topOrigin"] as? String == Self.embedder)
+    }
+
+    /// Control characters are `\u` plus four lower-case hex digits, never the `\n` or `\t` shorthand, and `topOrigin`
+    /// is escaped by the same rules as `origin`.
+    @Test func clientDataEscapesControlCharactersAndTheTopOriginAsSpecified() throws {
+        let top = "https://top\"\\\u{0A}\u{1F}.example"
+        let client = WebAuthnClientData(origin: "https://a\u{0A}b\u{09}c.example", topOrigin: top, crossOrigin: true, rpID: "example.com")
+        let bytes = WebAuthnEncoding.clientDataJSON(type: "webauthn.create", challenge: Data([1, 2, 3]), client: client)
+        let text = try #require(String(data: bytes, encoding: .utf8))
+
+        #expect(text.contains(#""origin":"https://a\u000ab\u0009c.example""#))
+        #expect(text.hasSuffix(#""topOrigin":"https://top\"\\\u000a\u001f.example"}"#))
+        #expect(!text.contains(#"\n"#) && !text.contains(#"\t"#) && !text.contains(#"\u000A"#))
+        #expect(WebAuthnVerifier.limitedClientDataVerifies(
+            bytes, type: "webauthn.create", challenge: Data([1, 2, 3]), origin: client.origin, topOrigin: top
+        ))
     }
 
     @Test func theIndependentVerifierRejectsAClientDataOriginThatIsNotTheExpectedOne() throws {
@@ -94,6 +112,18 @@ extension WebsiteAuthenticatorTests {
         let assertion = try WebsiteAuthenticator.makeAssertion(get, client: client(), passkey: passkey, consent: consent(for: get))
         let signature = try #require(assertion.signature)
         let authenticatorData = try #require(assertion.authenticatorData)
+
+        // Positive control: the same ceremony output passes the full assertion verifier for the right origin.
+        _ = try WebAuthnVerifier.assertion(
+            authenticatorData: authenticatorData,
+            clientDataJSON: assertion.clientDataJSON,
+            signature: signature,
+            publicKey: verified.publicKey,
+            challenge: Data("assertion challenge".utf8),
+            origin: .init(origin: origin),
+            rpID: rpID,
+            userHandle: assertion.userHandle
+        )
 
         for wrong in ["https://attacker.example", "http://login.example.com", "https://login.example.com:8443", "https://example.com"] {
             #expect(throws: (any Error).self) {
