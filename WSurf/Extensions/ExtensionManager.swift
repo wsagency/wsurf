@@ -123,8 +123,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         }
     }
 
-    func didUnregister(browser: BrowserModel, window: ExtensionWindowAdapter) {
-        let identifier = ObjectIdentifier(browser)
+    func didUnregister(key identifier: ObjectIdentifier, window: ExtensionWindowAdapter) {
         anchors[identifier] = nil
         overflowAnchors[identifier] = nil
         if presentedPopupWindow === window {
@@ -132,9 +131,6 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
             presentedPopup = nil
             presentedPopupID = nil
             presentedPopupWindow = nil
-        }
-        if windows.isEmpty, profile?.isPrivate == true {
-            stop()
         }
     }
 
