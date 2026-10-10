@@ -59,12 +59,11 @@ extension BrowserTab {
         zoomDidChange()
     }
 
-    static func applyObscuredInsets(to page: BrowserPage, isUnderTopBar: Bool = false) {
-        let top: CGFloat = page.isFullscreen || !isUnderTopBar ? 0 : Theme.topBarHeight
+    static func applyObscuredInsets(to page: BrowserPage) {
         if let native = page.webKit {
-            native.obscuredContentInsets = NSEdgeInsets(top: top, left: 0, bottom: 0, right: 0)
+            native.obscuredContentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         } else {
-            page.topBarInset = top
+            page.topBarInset = 0
         }
     }
 

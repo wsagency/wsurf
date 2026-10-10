@@ -80,7 +80,6 @@ final class BrowserModel {
                 noteActivation(activeTabID)
             }
             let previous = oldValue.flatMap { id in tabs.first { $0.id == id } }
-            refreshTopBarCoverage()
             if previous.map({ !isVisibleInSplit($0) }) ?? false {
                 previous?.refreshPreview()
                 previous?.noteHoveredLink(nil)
@@ -410,12 +409,7 @@ final class BrowserModel {
 
     var spaceAnchors: [UUID: UUID] = [:]
 
-    var paneInAir: UUID? {
-        didSet {
-            guard paneInAir != oldValue else { return }
-            refreshTopBarCoverage()
-        }
-    }
+    var paneInAir: UUID?
 
     var closedTabs: [ClosedTab] = []
 

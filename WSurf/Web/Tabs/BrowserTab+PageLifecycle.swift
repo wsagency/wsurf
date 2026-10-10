@@ -197,10 +197,10 @@ extension BrowserTab {
         precondition(view.context === context)
         liveView = view
         engine = view.engine
-        Self.applyObscuredInsets(to: view, isUnderTopBar: isUnderTopBar)
-        fullscreenObservation = view.observe(\.isFullscreen, options: [.new]) { [weak self] view, _ in
+        Self.applyObscuredInsets(to: view)
+        fullscreenObservation = view.observe(\.isFullscreen, options: [.new]) { view, _ in
             MainActor.assumeIsolated {
-                Self.applyObscuredInsets(to: view, isUnderTopBar: self?.isUnderTopBar ?? true)
+                Self.applyObscuredInsets(to: view)
             }
         }
         view.onNavigationStarted = { [weak self] navigation, url in self?.navigationStarted(navigation, url: url) }
