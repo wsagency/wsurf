@@ -218,7 +218,9 @@ struct CredentialExchangeTests {
         let importedPasskey = try #require(importedAccount.passkeys.first)
         #expect(importedPasskey.credentialID == Data([0xC0, 0x01]))
         #expect(importedPasskey.rpID == "example.test")
-        #expect(importedPasskey.userHandle == Data([0x31, 0x32]))
+        let importedRecord = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(importedPasskey)) as? [String: Any])
+        #expect(importedRecord["source"] as? String == "imported")
+        #expect(importedRecord["createdAt"] == nil, "a provider item timestamp is not the passkey creation time")
         let importedSigner = try PasskeyKeyEncoding.importPKCS8(importedPasskey.privateKeyPKCS8)
         #expect(try securityVerifiesX963PublicKey(
             sourceKey.publicKey.x963Representation,
@@ -272,6 +274,42 @@ struct CredentialExchangeTests {
         #expect(exportedTOTP.algorithm == .sha512)
         #expect(exportedTOTP.issuer == "Example Issuer" && exportedTOTP.userName == "ada")
     }
+    @Test func replacingAnImportedPasskeyPreservesTheExistingLocalMetadata() throws {
+        let oldKey = P256.Signing.PrivateKey()
+        let oldInput = data(credentials: [passkey(key: try PasskeyKeyEncoding.exportPKCS8(oldKey))])
+        var existingPasskeyJSON = try #require(JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(try #require(CredentialExchangeCodec.preview(oldInput, against: snapshot([])).candidates.first?.passkeys.first))
+        ) as? [String: Any])
+        let createdAt = Date(timeIntervalSince1970: 1_700_000_100)
+        let lastSignedAt = Date(timeIntervalSince1970: 1_700_000_200)
+        existingPasskeyJSON["source"] = "created"
+        existingPasskeyJSON["createdAt"] = createdAt.timeIntervalSinceReferenceDate
+        existingPasskeyJSON["lastSignedAt"] = lastSignedAt.timeIntervalSinceReferenceDate
+        let existingPasskey = try JSONDecoder().decode(
+            WebsitePasskey.self, from: JSONSerialization.data(withJSONObject: existingPasskeyJSON)
+        )
+        let existing = account(
+            id: accountID, externalID: accountExternalID, itemID: itemExternalID, username: "ada",
+            password: nil, passkeys: [existingPasskey]
+        )
+        let newKey = P256.Signing.PrivateKey()
+        let incoming = data(
+            credentials: [passkey(key: try PasskeyKeyEncoding.exportPKCS8(newKey))]
+        )
+        let preview = try CredentialExchangeCodec.preview(incoming, against: snapshot([existing]))
+        let conflict = try #require(preview.conflicts.first)
+        let reconciled = try CredentialExchangeCodec.apply(
+            preview, decisions: [.replace(incoming: conflict.incoming, target: conflict.existing)]
+        )
+        let updated = try #require(reconciled.first?.passkeys.first)
+        let updatedRecord = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(updated)) as? [String: Any])
+
+        #expect(updated.credentialID == existingPasskey.credentialID)
+        #expect(updatedRecord["source"] as? String == "created")
+        #expect((updatedRecord["createdAt"] as? NSNumber)?.doubleValue == createdAt.timeIntervalSinceReferenceDate)
+        #expect((updatedRecord["lastSignedAt"] as? NSNumber)?.doubleValue == lastSignedAt.timeIntervalSinceReferenceDate)
+    }
+
 
     @Test func preservesProviderAndItemMetadataAndPrunesUnselectedCollectionLinks() throws {
         let providerID = Data([0xA0, 0x41])

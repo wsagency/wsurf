@@ -548,6 +548,7 @@ struct WebsiteAuthenticatorCeremonyTests {
     @Test(.boundedWebViews) func assertionUsesTheChosenPasskeyAndIsIndependentlyVerified() async throws {
         try await withFixture { fixture in
             let registered = try verified(fixture, try await create(fixture, User()).result, challenge: "create challenge")
+            let beforeSnapshot = try await fixture.manager.snapshot()
             let before = try fixture.bytes()
 
             let user = User()
@@ -567,7 +568,12 @@ struct WebsiteAuthenticatorCeremonyTests {
             #expect(result.userHandle == Data([1, 2, 3, 4]))
             let authenticatorData = try #require(result.authenticatorData)
             #expect(authenticatorData[32] & 0x04 != 0)
-            #expect(try fixture.bytes() == before, "an assertion must not mutate the vault")
+            let afterSnapshot = try await fixture.manager.snapshot()
+            let storedPasskey = try #require(afterSnapshot.accounts.flatMap(\.passkeys).first { $0.credentialID == registered.credentialID })
+            let storedRecord = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(storedPasskey)) as? [String: Any])
+            #expect(storedRecord["lastSignedAt"] is NSNumber, "the local signature time is stored with the encrypted vault record")
+            #expect(afterSnapshot.revision == beforeSnapshot.revision + 1)
+            #expect(try fixture.bytes() != before, "a locally created signature updates the encrypted vault")
 
             // The signature is bound to the vault state it was read under, so the final dispatch can refuse it if that moved.
             #expect(outcome.epoch == fixture.manager.authorizationEpoch)
@@ -575,6 +581,23 @@ struct WebsiteAuthenticatorCeremonyTests {
             #expect(outcome.savedRevision == nil && outcome.rpID == rpID)
         }
     }
+    @Test(.boundedWebViews) func aSecondRegistrationForTheSameUserRetainsBothPasskeysAndRecordsLocalCreation() async throws {
+        try await withFixture { fixture in
+            let first = try await create(fixture, User(), request: creation(challenge: "first", userID: Data([1, 2, 3]))).result
+            let second = try await create(fixture, User(), request: creation(challenge: "second", userID: Data([1, 2, 3]))).result
+            let stored = try await passkeys(fixture)
+
+            #expect(stored.count == 2)
+            #expect(Set(stored.map(\.credentialID)) == [first.credentialID, second.credentialID])
+            for credentialID in [first.credentialID, second.credentialID] {
+                let passkey = try #require(stored.first { $0.credentialID == credentialID })
+                let record = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(passkey)) as? [String: Any])
+                #expect(record["source"] as? String == "created")
+                #expect(record["createdAt"] is NSNumber)
+            }
+        }
+    }
+
 
     @Test(.boundedWebViews) func discoverableAccountsStayDistinctAndAllowListFilters() async throws {
         try await withFixture { fixture in

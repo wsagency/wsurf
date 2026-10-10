@@ -96,9 +96,9 @@ struct CredentialSettingsTests {
         )
     }
 
-    private func passkey(_ seed: UInt8) throws -> WebsitePasskey {
+    private func passkey(_ seed: UInt8, id: UUID = UUID()) throws -> WebsitePasskey {
         WebsitePasskey(
-            id: UUID(),
+            id: id,
             credentialID: Data(repeating: seed, count: 32),
             rpID: "example.test",
             userHandle: Data([seed]),
@@ -109,6 +109,21 @@ struct CredentialSettingsTests {
             backupEligible: true,
             backupState: false,
             exchangeFIDO2Metadata: nil
+        )
+    }
+
+    private func passkeyWithMetadata(
+        _ passkey: WebsitePasskey,
+        source: String,
+        createdAt: Date?,
+        lastSignedAt: Date?
+    ) throws -> WebsitePasskey {
+        var record = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(passkey)) as? [String: Any])
+        record["source"] = source
+        record["createdAt"] = createdAt?.timeIntervalSinceReferenceDate
+        record["lastSignedAt"] = lastSignedAt?.timeIntervalSinceReferenceDate
+        return try JSONDecoder().decode(
+            WebsitePasskey.self, from: JSONSerialization.data(withJSONObject: record)
         )
     }
 
@@ -177,6 +192,59 @@ struct CredentialSettingsTests {
         #expect(try bytes(draft.account()) == bytes(rich))
         #expect(draft.revision == 7)
     }
+    @Test func passkeyMetadataSurvivesSettingsEditingAndProvidesUniqueStableIdentifiers() async throws {
+        let createdAt = Date(timeIntervalSince1970: 1_700_000_100)
+        let lastSignedAt = Date(timeIntervalSince1970: 1_700_000_200)
+        let first = try passkeyWithMetadata(
+            passkey(1, id: UUID(uuidString: "ABCD1000-0000-4000-8000-000000000001")!),
+            source: "created", createdAt: createdAt, lastSignedAt: lastSignedAt
+        )
+        let second = try passkeyWithMetadata(
+            passkey(2, id: UUID(uuidString: "ABCD2000-0000-4000-8000-000000000002")!),
+            source: "imported", createdAt: nil, lastSignedAt: nil
+        )
+        let stored = account("ada", passkeys: [first, second])
+
+        try await withFixture { f in
+            try await f.seed([stored])
+            await f.model.load()
+            let summaries = try #require(f.model.summaries.first).passkeys
+            #expect(summaries.count == 2)
+            let reflected: [[String: Any]] = summaries.map {
+                Dictionary(uniqueKeysWithValues: Mirror(reflecting: $0).children.compactMap { child in
+                    guard let label = child.label else { return nil }
+                    return (label, child.value)
+                })
+            }
+            func date(_ value: Any?) -> Date? {
+                guard let value, let wrapped = Mirror(reflecting: value).children.first else { return nil }
+                return wrapped.value as? Date
+            }
+            #expect(reflected[0]["shortID"] as? String == "ABCD1")
+            #expect(reflected[1]["shortID"] as? String == "ABCD2")
+            #expect(String(describing: reflected[0]["source"]).contains("created"))
+            #expect(String(describing: reflected[1]["source"]).contains("imported"))
+            #expect(date(reflected[0]["createdAt"]) == createdAt)
+            #expect(date(reflected[0]["lastSignedAt"]) == lastSignedAt)
+            #expect(reflected[1]["createdAt"] == nil && reflected[1]["lastSignedAt"] == nil)
+
+            try await f.model.beginEditing(accountID: stored.id)
+            f.model.draft?.displayName = "Edited"
+            _ = try await f.model.commitDraft()
+            let after = try await f.stored().accounts.first(where: { $0.id == stored.id })
+            for (id, source, creation, signing) in [
+                (first.id, "created", Optional(createdAt), Optional(lastSignedAt)),
+                (second.id, "imported", Optional<Date>.none, Optional<Date>.none),
+            ] {
+                let actual = try #require(after?.passkeys.first(where: { $0.id == id }))
+                let record = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(actual)) as? [String: Any])
+                #expect(record["source"] as? String == source)
+                #expect((record["createdAt"] as? NSNumber)?.doubleValue == creation?.timeIntervalSinceReferenceDate)
+                #expect((record["lastSignedAt"] as? NSNumber)?.doubleValue == signing?.timeIntervalSinceReferenceDate)
+            }
+        }
+    }
+
 
     @Test func absentAndEmptyPasswordsSurviveAnUnrelatedEdit() async throws {
         try await withFixture { f in
