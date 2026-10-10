@@ -23,13 +23,12 @@ For structured localization, project/test metadata and generated image files
 whose format does not carry source comments, the modification record above
 and the Git history describe the WSurf changes.
 
-The Credential Manager bundles the Public Suffix List, WSurf/Web/Credentials/
-public_suffix_list.dat, from https://publicsuffix.org/list/ (snapshot
-2026-10-07, upstream commit 3929462652695bad04f0a27afb600974014a3c8b). The list
-is licensed under the Mozilla Public License 2.0, https://mozilla.org/MPL/2.0/,
-and the file keeps its license header. Its rules are used as published; only the
-VERSION and COMMIT header lines and the trailing newline differ from the
-upstream file. The list is refreshed with WSurf releases, not at run time.
+The Credential Manager contains Public Suffix List data,
+WSurf/Web/Credentials/public_suffix_list.dat, from https://publicsuffix.org/list/
+(snapshot 2026-10-07, upstream commit 3929462652695bad04f0a27afb600974014a3c8b).
+The list is licensed under the Mozilla Public License 2.0,
+https://mozilla.org/MPL/2.0/, and the file keeps its license header. The list
+is refreshed with WSurf releases, not at run time.
 
 Apple's iCloud Passwords extension is a separately licensed product. Its
 resources, the Apple credential vault, private signing keys, and provisioning
