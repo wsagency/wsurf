@@ -191,10 +191,6 @@ struct MCPWindowScopeTests {
         try #require(await PageSettle.untilIdle(tab.page))
         app.focus(first)
         let capturedAdapter = first.extensions.adapter(for: first.browser)
-        let capturedBeforeSession = (
-            browserIsFirst: capturedAdapter?.browser === first.browser,
-            nativeIsFirst: capturedAdapter?.nativeWindow === firstNative
-        )
         let connection = try #require(app.mcpServer.makeSessionForConnection(consent: { _, _, _ in .control }))
         try #require(try await call(connection, "requestAccess").isError == false)
         let read = try await call(connection, "readPage", arguments: ["tabID": .string(tab.id.uuidString)])
@@ -230,11 +226,8 @@ struct MCPWindowScopeTests {
         }.joined(separator: " | ")
         let diagnostics = """
             click text: \(text)
-            first.browser=\(ObjectIdentifier(first.browser)) captured adapter present=\(capturedAdapter != nil) \
-            before-session browser===first=\(capturedBeforeSession.browserIsFirst) native===first=\(capturedBeforeSession.nativeIsFirst)
-            after click: captured browser alive=\(capturedAdapter?.browser != nil) \
+            captured browser alive=\(capturedAdapter?.browser != nil) \
             captured browser===first=\(capturedAdapter?.browser === first.browser) \
-            captured native===first=\(capturedAdapter?.nativeWindow === firstNative) \
             current===captured=\(currentAdapter === capturedAdapter) \
             registered=\(first.browser.context.isRegistered(first.browser)) \
             sessionClosed=\(first.browser.sessionClosedAt != nil) \
