@@ -167,6 +167,7 @@ struct ChromiumPageTests {
 
             await #expect(throws: (any Error).self) { try await page.validateCredentialContext(earlier) }
             let records = native.devTools.contextsByUniqueID.values.filter { $0.frameID == restored.chromiumID }
+            #expect(!records.isEmpty, "No context was kept for the restored frame, so the rebind was not exercised")
             for record in records {
                 #expect(record.documentID == restored.documentID)
                 #expect(try await pathname(inContext: record.uniqueID) == "/first")
