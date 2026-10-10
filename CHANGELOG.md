@@ -51,8 +51,15 @@ nonce before the offer is shown. A cancelled in-flight navigation no longer
 invalidates an offer from the already-loaded page. Pending frames are never
 treated as acknowledged, and stale or replaced frames still refuse. Verified
 in hosted CI on `5649bbe` (3012 tests, including all handoff, stale-frame and
-back/forward-cache cases); the performance-budget step of that run still
-failed (0.1019 s against 0.100 s) and is unresolved.
+back/forward-cache cases); the performance-budget step of that run failed
+(0.1019 s against 0.100 s) and its cause is unresolved. On `9253f7d` (main
+`a2ab7b6` merged in), run 38075169484 passed 3014 tests in 334 suites, all
+budgets (start page 0.0774 s) and coverage; the same run started the built
+Debug app in an isolated Stage home and drove its bundled MCP relay through
+initialize, the 19-tool listing, `listTabs` and EOF. That proves app startup
+and relay IPC only, not the credential UI, native user presence or
+verification, or the other tools; the earlier performance failure did not
+recur but was not explained.
 
 ### 2026-10-10 — Tab title test waits for the website title
 
