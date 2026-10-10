@@ -109,6 +109,11 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_ENTITLEMENTS=
 
+      # TEMPORARY (PR15): remove after one recorded run.
+      - name: PR15 built-app MCP smoke
+        timeout-minutes: 5
+        run: bash Tools/pr15-app-smoke.sh
+
       - name: Check coverage
         run: Tools/check-coverage.sh build/TestResults.xcresult 24.0
 
