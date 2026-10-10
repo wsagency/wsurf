@@ -105,6 +105,12 @@ release notes will be added above this provenance record.
 - Command-palette projection reuses its ranked command matches for promotion
   instead of scoring the full catalog twice; ordering and performance budgets
   remain unchanged.
+- Standardized task worktrees on the main repository's `.worktrees/<task>/`,
+  with matching local and Pro build instructions and a Git ignore rule.
+- Chromium Back/Forward-cache restores preserve isolated-world contexts and
+  script messages, finish navigation state, and publish correct history controls.
+  MCP reads and main-frame/iframe actions work after restoration; document,
+  observation, permission, and sensitive-field checks remain in force.
 
 No signed WSurf release has been published yet. Apple Passwords compatibility
 changes are present in source and fixtures, but real PIN, fill, save, OTP,

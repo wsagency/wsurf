@@ -5,6 +5,7 @@ These rules apply to all code, documentation, and configuration changes in this 
 - Use Superpowers for every task: start with `using-superpowers` and follow the relevant skills using native omp tools.
 
 - Use one dedicated Git worktree and a unique `feature/<short-name>` branch per task, based on the latest `origin/main`. Do not develop in the `main` checkout or switch branches in a shared checkout.
+- Put every linked worktree in the main repository's `.worktrees/<task>` directory, including worktrees on Pro. Do not create sibling `wsurf-worktrees` directories or put worktrees under `build`.
 - Leave other tasks' uncommitted changes alone. Never stash, discard, move, or commit them as part of your task.
 - Keep build output and DerivedData local to your worktree; do not reuse another worktree's build directory.
 - Integrate changes only through a PR targeting `main`, after review and required CI checks pass. Never commit or push changes directly to `main`.

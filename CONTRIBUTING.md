@@ -11,6 +11,9 @@ worktree and a unique `feature/<short-name>` branch based on the latest
 `main` checkout, switch branches in a shared checkout, or stash, discard, move,
 or commit another task's uncommitted changes.
 
+Store every linked worktree in the main repository's `.worktrees/<task>`
+directory, including on Pro; keep build output inside its owning worktree.
+
 Keep build output and DerivedData inside your worktree; do not reuse another
 worktree's build directory. Local development builds, tests, and PR validation
 builds are allowed before merge.
@@ -33,8 +36,8 @@ You need macOS 26 or later, Apple silicon, and Xcode 26.5 or later.
 git clone https://github.com/wsagency/wsurf.git
 cd wsurf
 git fetch origin main
-git worktree add -b feature/my-change ../wsurf-worktrees/my-change origin/main
-cd ../wsurf-worktrees/my-change
+git worktree add -b feature/my-change .worktrees/my-change origin/main
+cd .worktrees/my-change
 xcodebuild test \
   -project WSurf.xcodeproj \
   -scheme WSurf \

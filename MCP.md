@@ -197,5 +197,13 @@ It calls the existing `PageDriver` and honors `TabAssistantAccessCenter` policy.
 `PageAutomationGuard` supplies additional revocation and document checks only
 while an external page call is executing.
 
+WebKit and Chromium use the same page driver and privacy checks. Chromium
+Back/Forward-cache restores retain isolated-world contexts and rebind them to
+the restored document, while completing navigation and updating history controls.
+Actions on restored pages still require a fresh MCP observation.
+
 The SDK dependency is pinned in the Xcode project and package lockfile. Focused
 tests live in `MCPPrivacyTests` and `MCPTransportTests` and use local fixtures.
+`ChromiumPageTests` runs embedded CEF against local HTTP fixtures, covering
+cached Back/Forward navigation, isolated-world state, live frame identities,
+script messages, and loading/history state.

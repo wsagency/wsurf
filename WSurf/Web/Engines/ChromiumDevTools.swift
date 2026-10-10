@@ -421,14 +421,27 @@ final class ChromiumDevTools {
 
     private func frameNavigated(_ params: [String: Any]) {
         guard let frame = params["frame"] as? [String: Any], let parsed = parseFrame(frame, parentID: frame["parentId"] as? String) else { return }
+        let restoredFromCache = params["type"] as? String == "BackForwardCacheRestore"
         let oldDocument = framesByID[parsed.id]?.documentID
         framesByID[parsed.id] = parsed
         if oldDocument != nil, oldDocument != parsed.documentID {
             retireDescendants(parentID: parsed.id)
-            removeContexts(frameID: parsed.id)
+            if !restoredFromCache {
+                removeContexts(frameID: parsed.id)
+            }
+        }
+        if restoredFromCache {
+            // Cached contexts are replayed before the restored frame's navigation event.
+            var index = contextsByUniqueID.startIndex
+            while index != contextsByUniqueID.endIndex {
+                if contextsByUniqueID[index].value.frameID == parsed.id {
+                    contextsByUniqueID.values[index].documentID = parsed.documentID
+                }
+                contextsByUniqueID.formIndex(after: &index)
+            }
         }
         if !parsed.documentID.isEmpty {
-            page?.didNavigate(frame: parsed.browserFrame)
+            page?.didNavigate(frame: parsed.browserFrame, restoredFromCache: restoredFromCache)
         }
     }
 
