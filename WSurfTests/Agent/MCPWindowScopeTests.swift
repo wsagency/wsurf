@@ -190,6 +190,11 @@ struct MCPWindowScopeTests {
         firstNative.orderFront(nil)
         try #require(await PageSettle.untilIdle(tab.page))
         app.focus(first)
+        let capturedAdapter = first.extensions.adapter(for: first.browser)
+        let capturedBeforeSession = (
+            browserIsFirst: capturedAdapter?.browser === first.browser,
+            nativeIsFirst: capturedAdapter?.nativeWindow === firstNative
+        )
         let connection = try #require(app.mcpServer.makeSessionForConnection(consent: { _, _, _ in .control }))
         try #require(try await call(connection, "requestAccess").isError == false)
         let read = try await call(connection, "readPage", arguments: ["tabID": .string(tab.id.uuidString)])
@@ -218,8 +223,24 @@ struct MCPWindowScopeTests {
                 "tabID": .string(tab.id.uuidString), "observationID": .string(observationID), "ref": 1,
             ])
         }
-        #expect(prompts == 1)
-        #expect(result.isError == retireRegistration)
+        let currentAdapter = first.extensions.adapter(for: first.browser)
+        let text = result.content.compactMap { block -> String? in
+            if case .text(let text, _, _) = block { text } else { nil }
+        }.joined(separator: " | ")
+        let diagnostics = """
+            click text: \(text)
+            first.browser=\(ObjectIdentifier(first.browser)) captured adapter present=\(capturedAdapter != nil) \
+            before-session browser===first=\(capturedBeforeSession.browserIsFirst) native===first=\(capturedBeforeSession.nativeIsFirst)
+            after click: captured browser alive=\(capturedAdapter?.browser != nil) \
+            captured browser===first=\(capturedAdapter?.browser === first.browser) \
+            captured native===first=\(capturedAdapter?.nativeWindow === firstNative) \
+            current===captured=\(currentAdapter === capturedAdapter) \
+            registered=\(first.browser.context.isRegistered(first.browser)) \
+            sessionClosed=\(first.browser.sessionClosedAt != nil) \
+            activeTab===tab=\(first.browser.activeTabID == tab.id)
+            """
+        #expect(prompts == 1, "\(diagnostics)")
+        #expect(result.isError == retireRegistration, "\(diagnostics)")
         #expect(try await tab.page.evaluateJavaScript("window.published === true") as? Bool == !retireRegistration)
         #expect(policy?.isAlwaysAllowed(.publication, host: tab.page.url?.host()) == !retireRegistration)
         #expect(focused.browser.tabs.isEmpty)
