@@ -730,35 +730,49 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
     }
 
     /// What a navigation decision knew about its source frame: the document nonce the registry issued or acknowledged
-    /// for it and the native navigation current then. It is not authority; `isLiveAfterReady` proves it later.
+    /// for it and the native navigation that owns that document. It is not authority; `isLiveAfterReady` proves it later.
     struct SourceFrameClaim {
         let frame: BrowserFrame
         let navigation: WKNavigation?
     }
 
     /// Binds `source` to one registered or issued document without waiting for its acknowledgement. Ambiguity fails closed.
+    /// A registered document is owned by `mainFrameNavigation` (early acknowledgements can precede the commit), an issued
+    /// one by its own navigation; an unrelated navigation that is merely in flight does not own the source document.
     func captureSourceFrame(_ source: WKFrameInfo, in view: BrowserPage) -> SourceFrameClaim? {
         guard let store = stores.object(forKey: view) else { return nil }
-        let navigation = store.activeNavigation ?? store.committedNavigation
-        var known: [(nonce: String, frame: BrowserFrame)] = []
-        if let mainFrame = store.mainFrame {
-            known.append((nonce: mainFrame.documentID, frame: mainFrame))
-        }
-        known.append(contentsOf: store.frames.map { (nonce: $0.key, frame: $0.value.frame) })
-        known.append(contentsOf: store.issued.filter { Self.sameNavigation($0.value.navigation, navigation) }
-            .map { (nonce: $0.key, frame: $0.value.frame) })
-        let exact = known.filter { $0.frame.webKit === source || $0.frame.webKit?.isEqual(source) == true }
-        var match = exact
-        if exact.isEmpty {
-            let request = BrowserFrame(webKit: source)
-            match = known.filter {
-                $0.frame.isMainFrame == request.isMainFrame
-                    && $0.frame.request.url == request.request.url
-                    && $0.frame.securityOrigin == request.securityOrigin
+        let current = store.activeNavigation ?? store.committedNavigation
+        let origin = BrowserSecurityOrigin(
+            protocol: source.securityOrigin.protocol,
+            host: source.securityOrigin.host,
+            port: source.securityOrigin.port
+        )
+        var exact: (nonce: String, navigation: WKNavigation?)?
+        var similar: (nonce: String, navigation: WKNavigation?)?
+        var exactCount = 0
+        var similarCount = 0
+        func consider(_ nonce: String, _ frame: BrowserFrame, _ navigation: WKNavigation?) {
+            if frame.webKit === source || frame.webKit?.isEqual(source) == true {
+                exactCount += 1
+                exact = (nonce, navigation)
+            } else if frame.isMainFrame == source.isMainFrame
+                && frame.request.url == source.request.url
+                && frame.securityOrigin == origin {
+                similarCount += 1
+                similar = (nonce, navigation)
             }
         }
-        guard match.count == 1 else { return nil }
-        return SourceFrameClaim(frame: BrowserFrame(webKit: source, documentID: match[0].nonce), navigation: navigation)
+        if let mainFrame = store.mainFrame {
+            consider(mainFrame.documentID, mainFrame, store.mainFrameNavigation)
+        }
+        for (nonce, target) in store.frames {
+            consider(nonce, target.frame, store.mainFrameNavigation)
+        }
+        for (nonce, issued) in store.issued where Self.sameNavigation(issued.navigation, current) {
+            consider(nonce, issued.frame, issued.navigation)
+        }
+        guard let match = exactCount == 1 ? exact : (exactCount == 0 && similarCount == 1 ? similar : nil) else { return nil }
+        return SourceFrameClaim(frame: BrowserFrame(webKit: source, documentID: match.nonce), navigation: match.navigation)
     }
 
     /// Waits for the original source frame's own readiness promise, then requires its captured nonce, the captured
@@ -776,9 +790,11 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
         return proven == true && navigationUnchanged(claim, in: view) && isCurrent(claim.frame, in: view)
     }
 
+    /// The owning navigation must still be the committed or the in-flight one; a different one replaced the document.
     private func navigationUnchanged(_ claim: SourceFrameClaim, in view: BrowserPage) -> Bool {
         guard let store = stores.object(forKey: view) else { return false }
-        return Self.sameNavigation(claim.navigation, store.activeNavigation ?? store.committedNavigation)
+        guard let navigation = claim.navigation else { return store.activeNavigation == nil && store.committedNavigation == nil }
+        return navigation === store.committedNavigation || navigation === store.activeNavigation
     }
 
     func target(_ id: String, in view: BrowserPage) -> Target? {
