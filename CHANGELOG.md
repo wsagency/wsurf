@@ -7,6 +7,10 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-10 — Tab title test waits for the website title
+
+The website-title removal test now waits for the page's initial title before removing it, instead of reading the tab title the moment loading settles. This is a test-readiness correction; no tab title behavior changed.
+
 ### 2026-10-10 — Fresh window registration over a retired key
 
 Registering a browser over a retired extension-window key now retires the old entry and creates a fresh window adapter instead of returning the dead one. Consent captured for the retired window stays invalid. The MCP transport tests now unregister the extension windows they register.
