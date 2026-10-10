@@ -9,9 +9,9 @@ release notes will be added above this provenance record.
 
 ### 2026-10-11 — Website passkey metadata and Settings
 
-Website passkeys now retain optional creation time, local creation/import provenance, and last local signature time in the encrypted vault. Imported passkeys have unknown creation time; local signature time is recorded only after a revision-authorized vault commit. Credential Settings shows unknown values honestly and removes a specific passkey only after identifier-bearing confirmation and the existing draft Save.
+Website passkeys retain optional creation time, local creation/import provenance, and last local signature time in the encrypted vault; imported passkeys have unknown creation time. The timestamp records a local signature after the expected-revision and authorization-checked vault commit; it does not mean the website received or accepted a sign-in. It can be saved even when a later lock, cancellation, navigation, expiry, changed vault state, or vault read/write failure prevents delivery. Stale-revision, authorization, and I/O commit failures refuse delivery; assertions are not retried from stale state.
 
-Same-relying-party/same-user-handle registrations retain both passkeys by design; this retention policy is not a claim of WebAuthn duplicate-credential conformance. `excludeCredentials` remains enforced. Hosted verification and native acceptance are pending.
+Credential Settings shows unknown values honestly and removes a specific passkey only after identifier-bearing confirmation and the existing draft Save. Same-RP/same-user-handle registrations retain each passkey separately; `excludeCredentials` still rejects a matching credential. This branch intentionally retains all matching passkeys, a deliberate deviation from duplicate-registration overwrite expectations rather than a claim of WebAuthn conformance; D1 remains a merge/deploy decision gate. Hosted CI and native acceptance remain pending.
 
 ### 2026-10-10 — Credential Manager in source
 
