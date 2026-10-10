@@ -21,6 +21,10 @@ extension AppCoordinator {
 
     private func performProfileSwitch(to profile: Profile) async {
         guard !isClosed, profile.id != profiles.current.id else { return }
+        // Revoked synchronously, before the first suspension, so nothing issued to the profile being left outlives the
+        // switch. Locked again at adoption: until then that profile's settings are still on screen and can unlock it anew.
+        let leaving = context.profile.id
+        CredentialManager.lock(profileID: leaving, reason: .profileSwitch)
         switchingTo = profile
         mcpServer.disconnect(browser: browser)
         defer { switchingTo = nil }
@@ -61,6 +65,7 @@ extension AppCoordinator {
 
         applyProfileStores(profile)
         profiles.markCurrent(profile)
+        CredentialManager.lock(profileID: leaving, reason: .profileSwitch)
         application?.configureExtensions(extensions, profile: profile)
         timing.mark("adopt stores")
 

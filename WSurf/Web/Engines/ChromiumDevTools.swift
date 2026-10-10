@@ -7,32 +7,34 @@ import WebKit
 
 @MainActor
 final class ChromiumDevTools {
-    private weak var page: ChromiumPage?
+    weak var page: ChromiumPage?
     private var host: UnsafeMutablePointer<cef_browser_host_t>?
     private var observer: UnsafeMutablePointer<cef_dev_tools_message_observer_t>?
     private var registration: UnsafeMutablePointer<cef_registration_t>?
     private var nextMessageID = 1
     private var pending: [Int: PendingCommand] = [:]
     private var timeouts: [Int: Task<Void, Never>] = [:]
-    private var closed = false
+    var closed = false
     private var prepared = false
     private var preparing = false
     private var prepareWaiters: [CheckedContinuation<Void, Error>] = []
 
-    private struct FrameState {
+    struct FrameState {
         let id: String
         let parentID: String?
         let documentID: String
         let url: URL
         let securityOrigin: BrowserSecurityOrigin
+        let hasTrustedSecurityOrigin: Bool
         let isMainFrame: Bool
         var browserFrame: BrowserFrame {
             BrowserFrame(id: id, documentID: documentID, url: url,
-                         isMainFrame: isMainFrame, securityOrigin: securityOrigin)
+                         isMainFrame: isMainFrame, securityOrigin: securityOrigin,
+                         parentID: parentID, hasTrustedSecurityOrigin: hasTrustedSecurityOrigin)
         }
     }
 
-    private struct ContextState {
+    struct ContextState {
         let executionID: Int
         let uniqueID: String
         let frameID: String
@@ -56,25 +58,29 @@ final class ChromiumDevTools {
         let worldName: String
         let injectionTime: WKUserScriptInjectionTime
         let mainFrameOnly: Bool
+        /// Non-nil once registered with Chromium; nil means not (or no longer) installed.
+        var identifier: String?
     }
 
-    private struct HandlerKey: Hashable {
+    struct HandlerKey: Hashable {
         let name: String
         let worldName: String
     }
 
-    private typealias Handler = (BrowserScriptMessage) -> Void
+    typealias Handler = (BrowserScriptMessage) -> Void
 
-    private var framesByID: [String: FrameState] = [:]
-    private var frameRevision = 0
-    private var contextsByUniqueID: [String: ContextState] = [:]
-    private var uniqueIDByExecutionID: [Int: String] = [:]
+    var framesByID: [String: FrameState] = [:]
+    var frameRevision = 0
+    var contextsByUniqueID: [String: ContextState] = [:]
+    var uniqueIDByExecutionID: [Int: String] = [:]
     private var scripts: [Script] = []
-    private var handlers: [HandlerKey: Handler] = [:]
+    var handlers: [HandlerKey: Handler] = [:]
     private var bindingWorlds: Set<String> = []
+    /// Serializes script registration so Chromium's registration order always matches `scripts`.
+    private var scriptQueue: Task<Void, Never>?
 
     private let commandTimeout: Duration = .seconds(15)
-    private let maxBindingPayload = 1_048_576
+    let maxBindingPayload = 1_048_576
 
     init(page: ChromiumPage) {
         self.page = page
@@ -121,6 +127,7 @@ final class ChromiumDevTools {
                 owner.framesByID.removeAll()
                 owner.contextsByUniqueID.removeAll()
                 owner.uniqueIDByExecutionID.removeAll()
+                owner.page?.owner?.invalidateCredentialContexts()
             }
         }
 
@@ -156,12 +163,21 @@ final class ChromiumDevTools {
             _ = try await command("Security.enable")
             _ = try await command("Network.enable")
 
-            let worlds = Set(scripts.map(\.worldName)).union(handlers.keys.map(\.worldName))
-            for worldName in worlds.sorted() {
-                try await installBinding(worldName: worldName)
-            }
-            for script in scripts {
-                try await install(script)
+            while true {
+                if let index = scripts.firstIndex(where: { $0.identifier == nil }) {
+                    try await installBinding(worldName: scripts[index].worldName)
+                    guard !closed, scripts.indices.contains(index) else { throw ChromiumError.closed }
+                    let identifier = try await install(scripts[index])
+                    guard !closed, scripts.indices.contains(index) else { throw ChromiumError.closed }
+                    scripts[index].identifier = identifier
+                    continue
+                }
+                let worlds = Set(scripts.map(\.worldName)).union(handlers.keys.map(\.worldName))
+                if let worldName = worlds.sorted().first(where: { !bindingWorlds.contains($0) }) {
+                    try await installBinding(worldName: worldName)
+                    continue
+                }
+                break
             }
             prepared = true
             preparing = false
@@ -173,22 +189,20 @@ final class ChromiumDevTools {
         }
     }
 
-    func command(_ method: String, params: [String: Any] = [:]) async throws -> [String: Any] {
+    func command(
+        _ method: String,
+        params baseParams: [String: Any] = [:],
+        dispatchCheck: (@MainActor @Sendable () throws -> Void)? = nil,
+        prepareParameters: (@MainActor @Sendable () throws -> [String: Any])? = nil
+    ) async throws -> [String: Any] {
         guard !closed else { throw ChromiumError.closed }
         guard let host else { throw ChromiumError.unavailable("Chromium DevTools is not attached.") }
-        guard JSONSerialization.isValidJSONObject(params) else {
+        if prepareParameters == nil, !JSONSerialization.isValidJSONObject(baseParams) {
             throw ChromiumError.protocolFailure("DevTools parameters are not JSON serializable.")
         }
         let result = CommandResult()
         let id = nextMessageID
         nextMessageID &+= 1
-        let object: [String: Any] = ["id": id, "method": method, "params": params]
-        let data: Data
-        do {
-            data = try JSONSerialization.data(withJSONObject: object)
-        } catch {
-            throw ChromiumError.protocolFailure("DevTools parameters are not JSON serializable: \(error.localizedDescription)")
-        }
 
         return try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -196,23 +210,39 @@ final class ChromiumDevTools {
                     continuation.resume(throwing: ChromiumError.closed)
                     return
                 }
-                pending[id] = PendingCommand(continuation: continuation, result: result)
-                timeouts[id] = Task { [weak self] in
-                    do { try await Task.sleep(for: self?.commandTimeout ?? .seconds(15)) } catch { return }
-                    guard let self else { return }
-                    self.finishFailure(id: id, error: ChromiumError.unavailable("Chromium DevTools command timed out."))
-                }
-                if method == "Runtime.evaluate" {
-                    guard !Task.isCancelled, PageAutomationGuard.allowsExecution else {
-                        self.finishFailure(id: id, error: Task.isCancelled ? CancellationError() : ChromiumError.staleFrame)
-                        return
+                do {
+                    if method == "Runtime.evaluate" {
+                        try Task.checkCancellation()
+                        guard PageAutomationGuard.allowsExecution else { throw ChromiumError.staleFrame }
                     }
-                }
-                let accepted = data.withUnsafeBytes { bytes in
-                    host.pointee.send_dev_tools_message?(host, bytes.baseAddress, data.count) ?? 0
-                }
-                if accepted == 0 {
-                    self.finishFailure(id: id, error: ChromiumError.unavailable("Chromium DevTools rejected the command."))
+                    // Parameters are prepared and re-checked in the same synchronous turn that sends the message.
+                    let params = try prepareParameters?() ?? baseParams
+                    guard JSONSerialization.isValidJSONObject(params) else {
+                        throw ChromiumError.protocolFailure("DevTools parameters are not JSON serializable.")
+                    }
+                    let object: [String: Any] = ["id": id, "method": method, "params": params]
+                    let data: Data
+                    do {
+                        data = try JSONSerialization.data(withJSONObject: object)
+                    } catch {
+                        throw ChromiumError.protocolFailure("DevTools parameters are not JSON serializable: \(error.localizedDescription)")
+                    }
+                    try dispatchCheck?()
+                    guard !closed, self.host == host else { throw ChromiumError.closed }
+                    pending[id] = PendingCommand(continuation: continuation, result: result)
+                    timeouts[id] = Task { [weak self] in
+                        do { try await Task.sleep(for: self?.commandTimeout ?? .seconds(15)) } catch { return }
+                        guard let self else { return }
+                        self.finishFailure(id: id, error: ChromiumError.unavailable("Chromium DevTools command timed out."))
+                    }
+                    let accepted = data.withUnsafeBytes { bytes in
+                        host.pointee.send_dev_tools_message?(host, bytes.baseAddress, data.count) ?? 0
+                    }
+                    if accepted == 0 {
+                        self.finishFailure(id: id, error: ChromiumError.unavailable("Chromium DevTools rejected the command."))
+                    }
+                } catch {
+                    continuation.resume(throwing: error)
                 }
             }
             guard let value = result.value else {
@@ -230,6 +260,10 @@ final class ChromiumDevTools {
         closed = true
         finishPrepareWaiters(ChromiumError.closed)
         failAll(ChromiumError.closed)
+        // A browser closed natively (not through BrowserPage.close) must still end its credential contexts.
+        if let owner = page?.owner, !owner.isClosed {
+            owner.invalidateCredentialContexts()
+        }
         if let registration {
             ChromiumInterop.release(UnsafeMutableRawPointer(registration))
             self.registration = nil
@@ -308,37 +342,176 @@ final class ChromiumDevTools {
             && current.securityOrigin == frame.securityOrigin
     }
 
+    /// Ordered requesting frame → top frame, from the live native tree. Fails closed on a stale requester,
+    /// missing ancestor, cycle, or a root that is not the single main frame.
+    func frameChain(for frame: BrowserFrame) async throws -> [BrowserFrame] {
+        guard let id = frame.chromiumID, !frame.documentID.isEmpty else { throw WebAuthnContextError.staleFrame }
+        try await refreshFrames()
+        guard let requesting = framesByID[id], requesting.documentID == frame.documentID,
+              requesting.securityOrigin == frame.securityOrigin,
+              requesting.parentID == frame.chromiumParentID else { throw WebAuthnContextError.staleFrame }
+        var chain = [requesting]
+        var visited: Set<String> = [id]
+        while let parentID = chain[chain.count - 1].parentID {
+            guard visited.insert(parentID).inserted, let parent = framesByID[parentID],
+                  !parent.documentID.isEmpty else { throw WebAuthnContextError.untrustedOrigin }
+            chain.append(parent)
+        }
+        guard chain[chain.count - 1].isMainFrame, framesByID.values.filter({ $0.parentID == nil }).count == 1 else {
+            throw WebAuthnContextError.untrustedOrigin
+        }
+        return chain.map(\.browserFrame)
+    }
+
+    func permissionsPolicyAllows(frame: BrowserFrame, feature: String) async throws -> Bool {
+        guard let frameID = frame.chromiumID else { throw WebAuthnContextError.staleFrame }
+        guard try await isLiveCredentialFrame(frame) else { throw WebAuthnContextError.staleFrame }
+        let response = try await command("Page.getPermissionsPolicyState", params: ["frameId": frameID])
+        guard let states = response["states"] as? [[String: Any]] else { throw WebAuthnContextError.policyUnavailable }
+        let matches = states.filter { $0["feature"] as? String == feature }
+        guard matches.count == 1, let allowed = matches[0]["allowed"] as? Bool else {
+            throw WebAuthnContextError.policyUnavailable
+        }
+        guard try await isLiveCredentialFrame(frame) else { throw WebAuthnContextError.staleFrame }
+        return allowed
+    }
+
+    /// Reports the document's current activation state; never grants or consumes one.
+    func transientUserActivationIsActive(in frame: BrowserFrame, world: WKContentWorld) async throws -> Bool {
+        let (target, snapshot) = try await credentialContext(for: frame, world: world)
+        let response = try await command("Runtime.evaluate", params: [
+            "expression": "navigator.userActivation?.isActive === true",
+            "uniqueContextId": snapshot.uniqueID,
+            "returnByValue": true,
+            "awaitPromise": false,
+            "userGesture": false,
+        ], dispatchCheck: { [self] in
+            guard credentialFrameIsCurrent(target), contextIsLive(snapshot) else { throw WebAuthnContextError.staleFrame }
+        })
+        let value = try runtimeValue(response)
+        guard try await isLiveCredentialFrame(target), contextIsLive(snapshot) else {
+            throw WebAuthnContextError.staleFrame
+        }
+        return value as? Bool == true
+    }
+
+    func executionContextIdentity(for frame: BrowserFrame, world: WKContentWorld) async throws -> String {
+        try await credentialContext(for: frame, world: world).context.uniqueID
+    }
+
+    func isCurrentCredentialContext(frame: BrowserFrame, executionContextID: String) -> Bool {
+        guard credentialFrameIsCurrent(frame),
+              let context = contextsByUniqueID[executionContextID],
+              context.frameID == frame.chromiumID,
+              context.documentID == frame.documentID,
+              uniqueIDByExecutionID[context.executionID] == executionContextID else { return false }
+        return contextIsLive(context)
+    }
+
+    private func credentialFrameIsCurrent(_ frame: BrowserFrame) -> Bool {
+        guard !closed, frame.hasTrustedSecurityOrigin, let id = frame.chromiumID, !frame.documentID.isEmpty,
+              let current = framesByID[id] else { return false }
+        return current.hasTrustedSecurityOrigin
+            && current.documentID == frame.documentID
+            && current.securityOrigin == frame.securityOrigin
+    }
+
+    private func isLiveCredentialFrame(_ frame: BrowserFrame) async throws -> Bool {
+        guard !closed, frame.chromiumID != nil else { return false }
+        try await refreshFrames()
+        return credentialFrameIsCurrent(frame)
+    }
+
+    /// The live frame and its (marked) execution context for `world`, revalidated after every async step.
+    private func credentialContext(
+        for frame: BrowserFrame, world: WKContentWorld
+    ) async throws -> (frame: BrowserFrame, context: ContextState) {
+        guard try await isLiveCredentialFrame(frame), let id = frame.chromiumID, let state = framesByID[id] else {
+            throw WebAuthnContextError.staleFrame
+        }
+        let target = state.browserFrame
+        let snapshot: ContextState
+        do {
+            snapshot = try await context(for: target, world: world)
+            if snapshot.worldName != "" {
+                try await setDocumentMarker(contextID: snapshot.uniqueID, documentID: snapshot.documentID)
+            }
+        } catch ChromiumError.staleFrame {
+            throw WebAuthnContextError.staleFrame
+        }
+        guard try await isLiveCredentialFrame(target), contextIsLive(snapshot) else {
+            throw WebAuthnContextError.staleFrame
+        }
+        return (target, snapshot)
+    }
+
     func evaluate(_ script: String, in frame: BrowserFrame?, world: WKContentWorld) async throws -> Any {
+        try await evaluate(in: frame, world: world, userGesture: true, dispatchCheck: nil) { script }
+    }
+
+    private func evaluate(
+        in frame: BrowserFrame?,
+        world: WKContentWorld,
+        userGesture: Bool,
+        dispatchCheck: (@MainActor @Sendable () throws -> Void)?,
+        expression: @escaping @MainActor @Sendable () throws -> String
+    ) async throws -> Any {
         let target = try await targetFrame(frame)
-        let context = try await context(for: target, world: world)
-        let snapshot = context
+        let snapshot = try await context(for: target, world: world)
         if snapshot.worldName != "" {
             try Task.checkCancellation()
             guard PageAutomationGuard.allowsExecution else { throw ChromiumError.staleFrame }
             try await setDocumentMarker(contextID: snapshot.uniqueID, documentID: snapshot.documentID)
         }
         try Task.checkCancellation()
-        guard PageAutomationGuard.allowsExecution,
-              let frameID = target.chromiumID,
-              let currentFrame = framesByID[frameID],
-              currentFrame.documentID == target.documentID,
-              currentFrame.securityOrigin == target.securityOrigin,
-              contextIsLive(snapshot) else {
+        guard PageAutomationGuard.allowsExecution, canDispatch(to: target, snapshot) else {
             throw ChromiumError.staleFrame
         }
-        let response = try await command("Runtime.evaluate", params: [
-            "expression": script,
-            "uniqueContextId": snapshot.uniqueID,
-            "returnByValue": true,
-            "awaitPromise": true,
-            "userGesture": true,
-        ])
+        let response = try await command("Runtime.evaluate", dispatchCheck: { [self] in
+            guard canDispatch(to: target, snapshot) else { throw ChromiumError.staleFrame }
+            try dispatchCheck?()
+        }, prepareParameters: {
+            let source = try expression()
+            return [
+                "expression": source,
+                "uniqueContextId": snapshot.uniqueID,
+                "returnByValue": true,
+                "awaitPromise": true,
+                "userGesture": userGesture,
+            ]
+        })
         let value = try runtimeValue(response)
         guard try await isLive(frame: target), contextIsLive(snapshot) else { throw ChromiumError.staleFrame }
         return value
     }
 
+    private func canDispatch(to target: BrowserFrame, _ snapshot: ContextState) -> Bool {
+        guard let frameID = target.chromiumID,
+              let current = framesByID[frameID],
+              current.documentID == target.documentID,
+              current.securityOrigin == target.securityOrigin else { return false }
+        return contextIsLive(snapshot)
+    }
+
     func callAsync(_ body: String, arguments: [String: Any], in frame: BrowserFrame?, world: WKContentWorld) async throws -> Any {
+        try await evaluate(try asyncExpression(body, arguments: arguments), in: frame, world: world)
+    }
+
+    /// Arguments are built, then `dispatchCheck` runs, in the same synchronous turn that sends the command.
+    /// Never claims a user gesture, so page activation is neither fabricated nor consumed.
+    func callAsync(
+        _ body: String,
+        in frame: BrowserFrame?,
+        world: WKContentWorld,
+        prepareArguments: @escaping @MainActor @Sendable () throws -> [String: Any],
+        dispatchCheck: (@MainActor @Sendable () throws -> Void)? = nil
+    ) async throws -> Any {
+        try await evaluate(in: frame, world: world, userGesture: false, dispatchCheck: dispatchCheck) { [self] in
+            try asyncExpression(body, arguments: prepareArguments())
+        }
+    }
+
+    private func asyncExpression(_ body: String, arguments: [String: Any]) throws -> String {
         let names = Array(arguments.keys)
         guard names.allSatisfy({ $0.range(of: #"^[A-Za-z_$][A-Za-z0-9_$]*$"#, options: .regularExpression) != nil }) else {
             throw ChromiumError.protocolFailure("Async JavaScript argument names must be valid identifiers.")
@@ -356,20 +529,92 @@ final class ChromiumDevTools {
         guard let json = String(data: encoded, encoding: .utf8) else {
             throw ChromiumError.protocolFailure("Async JavaScript arguments are not UTF-8.")
         }
-        let expression = "(async function(\(names.joined(separator: ",")) {\n\(body)\n})(...JSON.parse(\(jsonLiteral(json))))"
-        return try await evaluate(expression, in: frame, world: world)
+        return "(async function(\(names.joined(separator: ","))) {\n\(body)\n})(...JSON.parse(\(jsonLiteral(json))))"
     }
 
     func installScript(_ source: String, in world: WKContentWorld,
                        injectionTime: WKUserScriptInjectionTime, forMainFrameOnly: Bool) {
-        let script = Script(source: source, worldName: worldName(world), injectionTime: injectionTime,
-                            mainFrameOnly: forMainFrameOnly)
-        scripts.append(script)
+        let index = scripts.count
+        scripts.append(Script(source: source, worldName: worldName(world), injectionTime: injectionTime,
+                              mainFrameOnly: forMainFrameOnly))
         guard prepared else { return }
-        Task { @MainActor [weak self] in
-            guard let self, !self.closed else { return }
-            try? await self.installBinding(worldName: script.worldName)
-            try? await self.install(script)
+        schedule { [weak self] in try await self?.installPending(from: index) }
+    }
+
+    /// Swaps the matching script's source in place (same world, injection time and position). Already swapped
+    /// is success; neither source present is stale.
+    func replaceScript(_ old: String, with new: String, in world: WKContentWorld) async throws {
+        guard !closed else { throw ChromiumError.closed }
+        let name = worldName(world)
+        try await schedule { [weak self] in
+            guard let self, !self.closed else { throw ChromiumError.closed }
+            if self.preparing {
+                try await self.prepare()
+            }
+            guard let start = self.scripts.firstIndex(where: { $0.source == old && $0.worldName == name }) else {
+                if self.scripts.contains(where: { $0.source == new && $0.worldName == name }) {
+                    return
+                }
+                throw ChromiumError.staleFrame
+            }
+            let original = self.scripts[start]
+            let replacement = Script(source: new, worldName: name, injectionTime: original.injectionTime,
+                                     mainFrameOnly: original.mainFrameOnly)
+            guard self.prepared else {
+                self.scripts[start] = replacement
+                return
+            }
+            // Chromium runs new-document scripts in registration order: unregister the tail (last first, so a
+            // failure leaves a registered prefix), then register it again with the replacement in place.
+            for index in stride(from: self.scripts.count - 1, through: start, by: -1) {
+                guard let identifier = self.scripts[index].identifier else { continue }
+                do {
+                    _ = try await self.command("Page.removeScriptToEvaluateOnNewDocument",
+                                               params: ["identifier": identifier])
+                } catch {
+                    try? await self.installPending(from: index + 1)
+                    throw error
+                }
+                guard !self.closed, self.scripts.indices.contains(index) else { throw ChromiumError.closed }
+                self.scripts[index].identifier = nil
+            }
+            self.scripts[start] = replacement
+            do {
+                try await self.installPending(from: start)
+            } catch {
+                if self.scripts.indices.contains(start), self.scripts[start].identifier == nil {
+                    self.scripts[start] = Script(source: old, worldName: name, injectionTime: original.injectionTime,
+                                                 mainFrameOnly: original.mainFrameOnly)
+                }
+                try? await self.installPending(from: start)
+                throw error
+            }
+        }.value
+    }
+
+    @discardableResult
+    private func schedule(_ work: @escaping @MainActor @Sendable () async throws -> Void) -> Task<Void, Error> {
+        let previous = scriptQueue
+        let task = Task { @MainActor in
+            await previous?.value
+            try await work()
+        }
+        scriptQueue = Task { @MainActor in _ = try? await task.value }
+        return task
+    }
+
+    /// Registers every not-yet-installed script from `start` on, in order.
+    private func installPending(from start: Int) async throws {
+        var index = start
+        while index < scripts.count {
+            if scripts[index].identifier == nil {
+                let script = scripts[index]
+                try await installBinding(worldName: script.worldName)
+                let identifier = try await install(script)
+                guard !closed, scripts.indices.contains(index) else { throw ChromiumError.closed }
+                scripts[index].identifier = identifier
+            }
+            index += 1
         }
     }
 
@@ -407,247 +652,6 @@ final class ChromiumDevTools {
         }
     }
 
-    private func receiveEvent(name: String, pointer: UnsafeRawPointer?, size: Int) {
-        guard !closed, size <= 8 * 1_048_576 else { return }
-        let params: [String: Any]
-        if size == 0 {
-            params = [:]
-        } else {
-            guard let value = try? Self.jsonObject(pointer, size: size) as? [String: Any] else { return }
-            params = value
-        }
-        switch name {
-        case "Runtime.executionContextCreated":
-            contextCreated(params)
-        case "Runtime.executionContextDestroyed":
-            if let executionID = params["executionContextId"] as? Int {
-                removeContexts(executionID: executionID)
-            }
-        case "Runtime.executionContextsCleared":
-            contextsByUniqueID.removeAll()
-            uniqueIDByExecutionID.removeAll()
-        case "Runtime.bindingCalled":
-            bindingCalled(params)
-        case "Page.frameNavigated":
-            frameNavigated(params)
-        case "Page.frameDetached":
-            frameDetached(params)
-        case "Network.responseReceived":
-            documentResponseReceived(params)
-        case "Security.securityStateChanged":
-            if let state = params["securityState"] as? String {
-                page?.didChangeSecurity(state == "secure")
-            }
-        case "Security.visibleSecurityStateChanged":
-            if let visible = params["visibleSecurityState"] as? [String: Any],
-               let state = visible["securityState"] as? String {
-                page?.didChangeSecurity(state == "secure")
-            }
-        default:
-            break
-        }
-    }
-
-    private func documentResponseReceived(_ params: [String: Any]) {
-        guard params["type"] as? String == "Document",
-              let frameID = params["frameId"] as? String,
-              let loaderID = params["loaderId"] as? String,
-              let response = params["response"] as? [String: Any],
-              let address = response["url"] as? String, let url = URL(string: address),
-              let status = response["status"] as? Int,
-              let fields = response["headers"] as? [String: Any] else { return }
-        var headers = fields.reduce(into: [String: String]()) { headers, field in
-            headers[field.key.lowercased()] = String(describing: field.value)
-        }
-        if headers["content-type"] == nil, let mime = response["mimeType"] as? String, !mime.isEmpty {
-            headers["content-type"] = mime
-        }
-        guard let confirmation = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: headers),
-              let current = page?.client?.documentResponses.confirm(confirmation, frameID: frameID, loaderID: loaderID)
-        else { return }
-        page?.didReceiveMainFrameResponse(current)
-    }
-
-    private func contextCreated(_ params: [String: Any]) {
-        guard let context = params["context"] as? [String: Any],
-              let executionID = context["id"] as? Int,
-              let uniqueID = context["uniqueId"] as? String, !uniqueID.isEmpty,
-              let aux = context["auxData"] as? [String: Any],
-              let frameID = aux["frameId"] as? String else { return }
-        let isDefault = aux["isDefault"] as? Bool ?? false
-        let worldName = isDefault ? "" : (context["name"] as? String ?? "")
-        guard isDefault || !worldName.isEmpty else { return }
-        let documentID = framesByID[frameID]?.documentID ?? ""
-        contextsByUniqueID[uniqueID] = ContextState(executionID: executionID, uniqueID: uniqueID,
-                                                     frameID: frameID, worldName: worldName,
-                                                     documentID: documentID)
-        uniqueIDByExecutionID[executionID] = uniqueID
-    }
-
-    private func bindingCalled(_ params: [String: Any]) {
-        guard let name = params["name"] as? String, name == "__wsurfSend",
-              let payload = params["payload"] as? String,
-              payload.utf8.count <= maxBindingPayload,
-              let executionID = params["executionContextId"] as? Int,
-              let uniqueID = uniqueIDByExecutionID[executionID],
-              let context = contextsByUniqueID[uniqueID],
-              let current = framesByID[context.frameID],
-              current.documentID == context.documentID else { return }
-        guard let pair = try? Self.jsonObject(Data(payload.utf8)) as? [Any], pair.count == 2,
-              let handlerName = pair[0] as? String, !handlerName.isEmpty, handlerName.utf8.count <= 256 else { return }
-        guard let handler = handlers[HandlerKey(name: handlerName, worldName: context.worldName)],
-              let owner = page?.owner else { return }
-        let body = pair[1]
-        handler(BrowserScriptMessage(page: owner, body: body, frameInfo: current.browserFrame, name: handlerName))
-    }
-
-    private func frameNavigated(_ params: [String: Any]) {
-        guard let frame = params["frame"] as? [String: Any], let parsed = parseFrame(frame, parentID: frame["parentId"] as? String) else { return }
-        let oldDocument = framesByID[parsed.id]?.documentID
-        frameRevision &+= 1
-        framesByID[parsed.id] = parsed
-        if oldDocument != nil, oldDocument != parsed.documentID {
-            retireDescendants(parentID: parsed.id)
-            removeContexts(frameID: parsed.id)
-        }
-        if !parsed.documentID.isEmpty {
-            page?.didNavigate(frame: parsed.browserFrame)
-        }
-    }
-
-    private func frameDetached(_ params: [String: Any]) {
-        guard let frameID = params["frameId"] as? String else { return }
-        frameRevision &+= 1
-        var removed = Set([frameID])
-        var changed = true
-        while changed {
-            changed = false
-            for frame in framesByID.values where frame.parentID.map(removed.contains) == true && removed.insert(frame.id).inserted {
-                changed = true
-            }
-        }
-        for id in removed {
-            framesByID.removeValue(forKey: id)
-            removeContexts(frameID: id)
-        }
-    }
-
-    private func targetFrame(_ requested: BrowserFrame?) async throws -> BrowserFrame {
-        let current = try await frames()
-        if let requested {
-            guard let id = requested.chromiumID,
-                  !requested.documentID.isEmpty,
-                  let match = current.first(where: { $0.chromiumID == id && $0.documentID == requested.documentID
-                      && $0.securityOrigin == requested.securityOrigin }) else { throw ChromiumError.staleFrame }
-            return match
-        }
-        guard let main = current.first(where: \.isMainFrame) else { throw ChromiumError.unavailable("Chromium has no main frame.") }
-        return main
-    }
-
-    private func context(for frame: BrowserFrame, world: WKContentWorld) async throws -> ContextState {
-        guard let frameID = frame.chromiumID, !frame.documentID.isEmpty,
-              let state = framesByID[frameID], state.documentID == frame.documentID else {
-            throw ChromiumError.staleFrame
-        }
-        let name = worldName(world)
-        if let existing = contextsByUniqueID.values.first(where: {
-            $0.frameID == frameID && $0.documentID == frame.documentID && $0.worldName == name
-        }) { return existing }
-        guard !name.isEmpty else { throw ChromiumError.unavailable("Chromium page context is not ready.") }
-        let response = try await command("Page.createIsolatedWorld", params: [
-            "frameId": frameID, "worldName": name, "grantUniveralAccess": false,
-        ])
-        guard let executionID = response["executionContextId"] as? Int,
-              let uniqueID = uniqueIDByExecutionID[executionID],
-              let created = contextsByUniqueID[uniqueID], created.frameID == frameID,
-              created.documentID == frame.documentID else {
-            throw ChromiumError.unavailable("Chromium isolated world context is not ready.")
-        }
-        return created
-    }
-
-    private func setDocumentMarker(contextID: String, documentID: String) async throws {
-        guard let context = contextsByUniqueID[contextID], !context.markerSet else { return }
-        let response = try await command("Runtime.evaluate", params: [
-            "expression": "void Object.defineProperty(globalThis, '__wsurfFrameDocumentID', {value: \(jsonLiteral(documentID)), writable: false, configurable: false, enumerable: false});",
-            "uniqueContextId": contextID, "returnByValue": true,
-        ])
-        _ = try runtimeValue(response)
-        guard var current = contextsByUniqueID[contextID],
-              current.documentID == context.documentID,
-              framesByID[current.frameID]?.documentID == context.documentID else {
-            throw ChromiumError.staleFrame
-        }
-        current.markerSet = true
-        contextsByUniqueID[contextID] = current
-    }
-
-    private func runtimeValue(_ response: [String: Any]) throws -> Any {
-        guard let result = response["result"] as? [String: Any] else {
-            throw ChromiumError.protocolFailure("Runtime.evaluate returned no result.")
-        }
-        if let exception = response["exceptionDetails"] as? [String: Any] {
-            let description = exception["text"] as? String ?? "JavaScript evaluation failed."
-            throw ChromiumError.protocolFailure(description)
-        }
-        if result["type"] as? String == "undefined" { return NSNull() }
-        if let value = result["value"] { return value }
-        if let serialized = result["unserializableValue"] as? String { return serialized }
-        return NSNull()
-    }
-
-    private func contextIsLive(_ context: ContextState) -> Bool {
-        guard let current = contextsByUniqueID[context.uniqueID], let frame = framesByID[context.frameID] else { return false }
-        return current.documentID == context.documentID && frame.documentID == context.documentID
-    }
-
-    private func updateFrames(_ parsed: [String: FrameState]) {
-        frameRevision &+= 1
-        framesByID = parsed
-        let staleContexts = contextsByUniqueID.compactMap { uniqueID, context -> (String, Int)? in
-            guard let frame = parsed[context.frameID] else { return (uniqueID, context.executionID) }
-            if context.documentID.isEmpty {
-                return nil
-            }
-            return context.documentID == frame.documentID ? nil : (uniqueID, context.executionID)
-        }
-        for (uniqueID, executionID) in staleContexts {
-            contextsByUniqueID.removeValue(forKey: uniqueID)
-            uniqueIDByExecutionID.removeValue(forKey: executionID)
-        }
-        let documentUpdates = contextsByUniqueID.compactMap { uniqueID, context -> (String, ContextState)? in
-            guard context.documentID.isEmpty, let frame = parsed[context.frameID] else { return nil }
-            var updated = context
-            updated.documentID = frame.documentID
-            return (uniqueID, updated)
-        }
-        for (uniqueID, context) in documentUpdates {
-            contextsByUniqueID[uniqueID] = context
-        }
-    }
-
-    private func parseFrameTree(_ tree: [String: Any], parentID: String?, into result: inout [String: FrameState]) {
-        guard let frame = tree["frame"] as? [String: Any], let parsed = parseFrame(frame, parentID: parentID) else { return }
-        result[parsed.id] = parsed
-        if let children = tree["childFrames"] as? [[String: Any]] {
-            for child in children {
-                parseFrameTree(child, parentID: parsed.id, into: &result)
-            }
-        }
-    }
-
-    private func parseFrame(_ frame: [String: Any], parentID: String?) -> FrameState? {
-        guard let id = frame["id"] as? String, !id.isEmpty,
-              let urlString = frame["url"] as? String else { return nil }
-        let url = URL(string: urlString) ?? URL(string: "about:blank")!
-        let originString = frame["securityOrigin"] as? String ?? url.originString
-        let originURL = URL(string: originString)
-        let origin = originURL.map(BrowserSecurityOrigin.init(url:)) ?? BrowserSecurityOrigin(url: url)
-        return FrameState(id: id, parentID: parentID, documentID: frame["loaderId"] as? String ?? "",
-                          url: url, securityOrigin: origin, isMainFrame: parentID == nil)
-    }
-
     private func installBinding(worldName: String) async throws {
         guard !bindingWorlds.contains(worldName) else { return }
         var params: [String: Any] = ["name": "__wsurfSend"]
@@ -670,7 +674,7 @@ final class ChromiumDevTools {
         bindingWorlds.insert(worldName)
     }
 
-    private func install(_ script: Script) async throws {
+    private func install(_ script: Script) async throws -> String {
         let source: String
         if script.injectionTime == .atDocumentStart {
             source = script.mainFrameOnly
@@ -684,19 +688,25 @@ final class ChromiumDevTools {
         }
         var params: [String: Any] = ["source": source]
         if !script.worldName.isEmpty { params["worldName"] = script.worldName }
-        _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: params)
+        let response = try await command("Page.addScriptToEvaluateOnNewDocument", params: params)
+        guard let identifier = response["identifier"] as? String else {
+            throw ChromiumError.protocolFailure("Page.addScriptToEvaluateOnNewDocument returned no identifier.")
+        }
+        return identifier
     }
 
-    private func worldName(_ world: WKContentWorld) -> String {
+    func worldName(_ world: WKContentWorld) -> String {
         world === WKContentWorld.page ? "" : world.name ?? "defaultClient"
     }
 
-    private func removeContexts(executionID: Int) {
-        guard let uniqueID = uniqueIDByExecutionID.removeValue(forKey: executionID) else { return }
-        contextsByUniqueID.removeValue(forKey: uniqueID)
+    /// Returns the removed context's document so the caller can end credential contexts bound to it.
+    @discardableResult
+    func removeContexts(executionID: Int) -> String? {
+        guard let uniqueID = uniqueIDByExecutionID.removeValue(forKey: executionID) else { return nil }
+        return contextsByUniqueID.removeValue(forKey: uniqueID)?.documentID
     }
 
-    private func removeContexts(frameID: String) {
+    func removeContexts(frameID: String) {
         let removed = contextsByUniqueID.compactMap { uniqueID, context -> (String, Int)? in
             context.frameID == frameID ? (uniqueID, context.executionID) : nil
         }
@@ -705,7 +715,8 @@ final class ChromiumDevTools {
             uniqueIDByExecutionID.removeValue(forKey: executionID)
         }
     }
-    private func retireDescendants(parentID: String) {
+    /// Removes `parentID`'s descendants and returns their document IDs.
+    func retireDescendants(parentID: String) -> [String] {
         var retired = Set<String>()
         var changed = true
         while changed {
@@ -716,9 +727,23 @@ final class ChromiumDevTools {
                 }
             }
         }
+        let documents = retired.compactMap { framesByID[$0]?.documentID }
         for id in retired {
             framesByID.removeValue(forKey: id)
             removeContexts(frameID: id)
+        }
+        return documents
+    }
+
+    /// Page-wide turnover bumps the page's credential generation; otherwise only the retired documents end.
+    func invalidateCredentialContexts(documents: [String], pageWide: Bool) {
+        guard let owner = page?.owner else { return }
+        if pageWide {
+            owner.invalidateCredentialContexts()
+        } else {
+            for documentID in Set(documents) where !documentID.isEmpty {
+                owner.invalidateCredentialContexts(documentID: documentID)
+            }
         }
     }
 
@@ -762,25 +787,18 @@ final class ChromiumDevTools {
             ChromiumInterop.release(UnsafeMutableRawPointer(browser))
         }
     }
-    private static func jsonObject(_ pointer: UnsafeRawPointer?, size: Int) throws -> Any {
+    static func jsonObject(_ pointer: UnsafeRawPointer?, size: Int) throws -> Any {
         guard let pointer, size > 0 else { throw ChromiumError.protocolFailure("Empty DevTools JSON payload.") }
         let data = Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: pointer), count: size, deallocator: .none)
         return try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
     }
-    private static func jsonObject(_ data: Data) throws -> Any {
+    static func jsonObject(_ data: Data) throws -> Any {
         try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
     }
 
-    private func jsonLiteral(_ string: String) -> String {
+    func jsonLiteral(_ string: String) -> String {
         guard let data = try? JSONSerialization.data(withJSONObject: string, options: [.fragmentsAllowed]),
               let literal = String(data: data, encoding: .utf8) else { return "\"\"" }
         return literal
-    }
-}
-
-private extension URL {
-    var originString: String {
-        guard let scheme, let host else { return "" }
-        return "\(scheme)://\(host)\(port.map { ":\($0)" } ?? "")"
     }
 }

@@ -37,7 +37,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             let origin = requestingOrigin(for: navigationAction)
             let page = tab?.liveView
             let sourceFrame = page.flatMap {
-                PageFrameRegistry.shared.sourceFrame(navigationAction.sourceFrame, in: $0)
+                PageFrameRegistry.shared.captureSourceFrame(navigationAction.sourceFrame, in: $0)
             }
             let initialRedirect = sourceFrame == nil && tab?.committedNavigation == nil
                 && navigationAction.sourceFrame.isMainFrame && navigationAction.targetFrame?.isMainFrame == true
@@ -52,7 +52,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
                 await ExternalApp.offerToOpen(url, from: origin, policy: tab.externalApps, in: window, isCurrent: {
                     guard let page else { return false }
                     if let sourceFrame {
-                        guard await PageFrameRegistry.shared.isLive(sourceFrame, in: page) else { return false }
+                        guard await PageFrameRegistry.shared.isLiveAfterReady(sourceFrame, in: page) else { return false }
                     } else {
                         // A first HTTP redirect has no committed document token; bind its accepted request instead.
                         guard initialRedirect, self.mainFrameActionGeneration == actionGeneration else { return false }
@@ -404,8 +404,9 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
     ) {
-        if navigationResponse.isForMainFrame {
-            BrowserPage.from(webView)?.onMainFrameResponse?(navigationResponse.response)
+        if navigationResponse.isForMainFrame, let page = BrowserPage.from(webView) {
+            PageFrameRegistry.shared.recordMainFrameResponse(navigationResponse, in: page)
+            page.onMainFrameResponse?(navigationResponse.response)
         }
         if navigationResponse.isForMainFrame,
            let response = navigationResponse.response as? HTTPURLResponse, response.statusCode >= 400 {
@@ -443,7 +444,9 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         guard let page = BrowserPage.from(webView) else { return }
-        page.onNavigationStarted?(page.navigation(for: navigation), webView.url)
+        let nativeNavigation = page.navigation(for: navigation)
+        PageFrameRegistry.shared.navigationStarted(navigation, in: page)
+        page.onNavigationStarted?(nativeNavigation, webView.url)
     }
 
     func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
@@ -492,6 +495,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         pendingMainFrameURL = nil
         guard let page = BrowserPage.from(webView) else { return }
+        PageFrameRegistry.shared.navigationCommitted(navigation, in: page)
         page.onNavigationCommitted?(page.navigation(for: navigation))
     }
 
@@ -502,6 +506,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         guard let page = BrowserPage.from(webView) else { return }
+        PageFrameRegistry.shared.navigationFailed(navigation, in: page)
         page.onNavigationFailed?(page.navigation(for: navigation), error)
     }
 
@@ -510,10 +515,15 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         if tab?.provisionalNavigation === page.navigation(for: navigation) {
             pendingMainFrameURL = nil
         }
+        PageFrameRegistry.shared.navigationFailed(navigation, in: page)
         page.onNavigationFailed?(page.navigation(for: navigation), error)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if let page = BrowserPage.from(webView) {
+            page.invalidateCredentialContexts()
+            PageFrameRegistry.shared.retire(page)
+        }
         tab?.autofillSave.clear()
         tab?.contentProcessDidTerminate()
     }

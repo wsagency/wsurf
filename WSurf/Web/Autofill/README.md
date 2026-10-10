@@ -4,7 +4,8 @@
 `AutofillPage` installs one model and focus bridge in the `WSurfAutofill`
 isolated content world, once per content controller, in every frame. Password,
 card, contact, and save clients share that model. No autofill UI is inserted into
-the document and there is no page-world credential bridge.
+the document and this form bridge exposes no credential API to the page. The
+separate page-world WebAuthn API is described under Password providers.
 
 ## Form model
 
@@ -48,24 +49,49 @@ and policy changes discard pending state. Canceled redirects can continue the
 flow. Username steps are restricted to their HTTPS origin and expire after five
 minutes. A native address-bar popover presents the pending offer without changing
 page layout. Closing it keeps the offer available from its icon until expiry or
-explicit dismissal. Only explicit Save/Update writes a candidate to the existing vaults.
+explicit dismissal. Only explicit Save/Update writes a candidate to the selected
+provider's store (Passwords by default).
 
-Native code binds messages to WKFrameInfo origins. Filling additionally checks
-the document/form/field identity, selection token, focus, geometry, and policy
-before and after authentication. A new document at the same URL is still a
-different document. Browser password fills reuse an authenticated context for
-five minutes on the same top-level document, profile, and credential origin.
-The context is cleared on policy changes, authentication failure, sleep,
-screen lock, or user-session switch. Password settings own
-a separate, page-scoped context that is invalidated on page dismissal, sleep,
-screen lock, and user-session switch. Browser fills and save prompts never share
-that context. Diagnostics contain static event names/counts only.
+Native code binds messages to the WebKit or CEF frame identity and origin.
+Filling additionally checks the document/form/field identity, selection token,
+focus, geometry, and policy before and after authentication. A new document at
+the same URL is still a different document.
+
+Legacy (Passwords provider): browser password fills reuse an authenticated
+context for five minutes on the same top-level document, profile, and credential
+origin. It is cleared on policy changes, authentication failure, sleep, screen
+lock, or user-session switch, and is not the Credential Manager's lease.
+Password settings own a separate, page-scoped context that is invalidated on
+page dismissal, sleep, screen lock, and user-session switch. Browser fills and
+save prompts never share that context. Diagnostics contain static event names/counts only.
+
+## Password providers
+
+Settings › Autofill › Password provider chooses what fills and saves logins,
+per profile. Source behavior, not exercised end to end:
+
+- Passwords (the Keychain store above) is the default and its data is untouched.
+  Credential Manager is a separate, explicit choice with its own encrypted
+  vault. There is no migration or read-through, and switching rewrites neither
+  store.
+- Only the built-in writers are mutually exclusive. An installed password
+  extension can still act until the user turns it off; Settings warns about it.
+- Every request is scoped by the originating page's native context: its
+  profile, document, origin and the vault authorization epoch, on WebKit and
+  CEF. A stale epoch or document is refused.
+- The vault lock is shared per profile. Any window leaving the profile locks all
+  of its windows. Private browsing has no Credential Manager.
+- The user picks the account; nothing is chosen automatically. A chosen
+  account's password or one-time code is read again at delivery.
+- WebAuthn is a separate page-world adapter. It returns standard WebAuthn
+  results to the page and never exposes a private key or seed.
 
 ## Limits and validation
 
 Completion signals are heuristics, not proof that a server accepted a password
-or payment. This uses public WKWebView APIs; it does not implement Chromium's
-network/renderer hooks or server predictions. Closed shadow roots and arbitrary
+or payment. Detection uses native frame identity and form-based heuristics; it
+does not implement Chromium's network/renderer hooks or server predictions.
+Closed shadow roots and arbitrary
 custom editing widgets remain unsupported. Fields belonging to different
 frames are not combined. Embedded dropdown geometry currently requires a
 resolvable focused frame chain; multiple unrelated nested origins can be refused.
@@ -94,3 +120,7 @@ Use synthetic credentials and card details on a test page.
   and private browsing must not use saved autofill.
 - Leave password settings, lock the screen, or switch macOS users. Returning to
   password settings must require authentication again.
+- Turn on Credential Manager, fill and save a login, then turn it off. Passwords
+  must be selected again, with its entries intact and nothing moved.
+- Not performed: Settings keyboard and VoiceOver, real passkey unlock (PRF),
+  user presence and verification, Apple Passwords transfers, and Stage UI runs.

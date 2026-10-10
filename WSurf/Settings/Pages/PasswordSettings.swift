@@ -21,8 +21,10 @@ struct PasswordSettings: View {
         _model = State(initialValue: PasswordSettingsModel(profileID: context.profile.id))
     }
 
+    /// The extension that actually owns native password filling; nil once the profile explicitly chose Credential Manager.
     private var provider: InstalledExtension? {
-        PasswordExtensionPolicy.provider(in: extensions.installed + extensions.systemExtensions, selectedID: settings.passwordExtensionID)
+        guard settings.passwordProvider == .legacy else { return nil }
+        return PasswordExtensionPolicy.provider(in: extensions.installed + extensions.systemExtensions, selectedID: settings.passwordExtensionID)
     }
 
     private var availableProviders: [InstalledExtension] {
@@ -50,8 +52,8 @@ struct PasswordSettings: View {
                     }
                 }
                 RowSeparator()
-                DetailRow(title: "Password provider") {
-                    Picker("Password provider", selection: selectedProvider) {
+                DetailRow(title: "Password extension") {
+                    Picker("Password extension", selection: selectedProvider) {
                         Text("Automatic").tag("")
                         ForEach(availableProviders) { record in
                             Text(record.displayName).tag(record.id)

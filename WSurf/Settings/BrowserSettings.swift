@@ -51,6 +51,7 @@ final class BrowserSettings {
         static let videoInPlayer = "experiments.videoInPlayer"
         static let passwordAutofill = "autofill.passwords"
         static let passwordExtension = "autofill.passwordExtension"
+        static let passwordProvider = "autofill.passwordProvider"
         static let contactAutofill = "autofill.contacts"
         static let paymentCardAutofill = "privacy.paymentCardAutofill"
         static let downloadFolder = "downloads.folder"
@@ -69,7 +70,7 @@ final class BrowserSettings {
         Key.searchEngine, Key.customSearchName, Key.customSearchTemplate,
         Key.suggestions, Key.agentOnlyInput,
         Key.historyRetention, Key.clearOnQuit, Key.certificateExceptions,
-        Key.paymentCardAutofill, Key.contactAutofill, Key.passwordAutofill, Key.passwordExtension,
+        Key.paymentCardAutofill, Key.contactAutofill, Key.passwordAutofill, Key.passwordExtension, Key.passwordProvider,
         Key.javaScript, Key.blockPopups, Key.blockTrackers, Key.autoplay,
         Key.startPageOrder, Key.startPageHidden, Key.startPageHiddenSites,
     ]
@@ -118,6 +119,9 @@ final class BrowserSettings {
     @ObservationIgnored var onMediaPlayerChanged: ((Bool) -> Void)?
     @ObservationIgnored var onAutomaticPictureInPictureChanged: ((Bool) -> Void)?
     @ObservationIgnored var onVideoInPlayerChanged: ((Bool) -> Void)?
+    /// Fires after this profile's password provider changed. Owned by the profile's context, so it reaches only that
+    /// profile's pages; nothing global learns of it.
+    @ObservationIgnored var onPasswordProviderChanged: (() -> Void)?
     @ObservationIgnored private var sidebarFontCache: Font?
     @ObservationIgnored private var sidebarLineHeightCache: CGFloat = 0
 
@@ -470,6 +474,16 @@ final class BrowserSettings {
         }
     }
 
+    /// Which internal store answers password autofill and passkey calls for this profile. Switching only changes the
+    /// writer; neither store moves, and the default stays the legacy one.
+    var passwordProvider: PasswordProvider {
+        didSet {
+            guard passwordProvider != oldValue else { return }
+            write(passwordProvider.rawValue, forKey: Key.passwordProvider)
+            onPasswordProviderChanged?()
+        }
+    }
+
     var fillsContacts: Bool {
         didSet {
             write(fillsContacts, forKey: Key.contactAutofill)
@@ -720,6 +734,7 @@ final class BrowserSettings {
 
         fillsPasswords = object(Key.passwordAutofill) as? Bool ?? true
         passwordExtensionID = object(Key.passwordExtension) as? String ?? ""
+        passwordProvider = string(Key.passwordProvider).flatMap(PasswordProvider.init(rawValue:)) ?? .legacy
         fillsContacts = object(Key.contactAutofill) as? Bool ?? true
         fillsPaymentCards = object(Key.paymentCardAutofill) as? Bool ?? true
 
@@ -771,6 +786,7 @@ final class BrowserSettings {
     func resetToDefaults() {
         fillsPasswords = true
         passwordExtensionID = ""
+        passwordProvider = .legacy
         fillsContacts = true
         fillsPaymentCards = true
         appearance = .system
@@ -955,4 +971,10 @@ enum UserAgentMode: String, CaseIterable, Identifiable {
             "Custom"
         }
     }
+}
+
+/// Which store answers website login autofill for a profile. Exactly one is active; choosing one never moves,
+/// reads through or deletes the other's data.
+nonisolated enum PasswordProvider: String, CaseIterable, Sendable {
+    case legacy, credentialManager
 }

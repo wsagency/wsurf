@@ -12,8 +12,8 @@ enum PageDriver {
     static func scripted(_ body: String) -> String {
         let frameCheck: String
         if let frame = selectedFrame {
-            if frame.frame.webKit != nil, let id = jsonString(frame.id) {
-                frameCheck = "if (window.__wsurfFrameToken !== \(id)) return JSON.stringify({ stale: true });\n"
+            if frame.frame.webKit != nil, let id = jsonString(frame.frame.documentID) {
+                frameCheck = "if (globalThis.__wsurfNativeFrameNonce !== \(id)) return JSON.stringify({ stale: true });\n"
             } else if let id = jsonString(frame.frame.documentID) {
                 frameCheck = "if (window.__wsurfFrameDocumentID !== \(id)) return JSON.stringify({ stale: true });\n"
             } else {

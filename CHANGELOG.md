@@ -7,6 +7,66 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-11 — Website passkey metadata and Settings
+
+Website passkeys now retain optional creation time, local creation/import provenance, and last local signature time in the encrypted vault. Imported passkeys have unknown creation time; local signature time is recorded only after a revision-authorized vault commit. Credential Settings shows unknown values honestly and removes a specific passkey only after identifier-bearing confirmation and the existing draft Save.
+
+Same-relying-party/same-user-handle registrations retain both passkeys by design; this retention policy is not a claim of WebAuthn duplicate-credential conformance. `excludeCredentials` remains enforced. Hosted verification and native acceptance are pending.
+
+### 2026-10-10 — Credential Manager in source
+
+Implemented in source, not released, and not natively accepted: an opt-in
+per-profile encrypted Credential Manager for passwords, ES256 passkeys, and
+one-time codes, plus an exchange-only credential-exchange extension. Legacy
+SavedPassword, SecureAutofillVault, settings, data and the default provider are
+unchanged; the manager is used only when a profile selects it.
+`CredentialManager.commit` and `updatePasswordSavePolicy` require the
+authorization epoch captured at decision time and refuse with `unauthorized`
+after a lock or re-unlock. Verified on the integration branch: WebAuthn nonce, history
+(back/forward cache root) and late-resume handling, plus escaped
+Permissions-Policy denial. The current proof is the joined 17-suite run, the
+strict lint gate and a built-module CLI smoke (synthetic password, passkey and
+one-time code through encrypted save, reopen, exchange export/preview/apply
+and ES256 verification), recorded in the current-main integration appendix
+(`docs/superpowers/plans/2026-10-10-credential-current-main-integration.md`).
+Fill delivery (manager, legacy, card and contact) checks the request's
+authority at the final dispatch point with no suspension before the engine
+send; this is source-traced, with no actual UI fill. Autofill and save refuse
+frames the engine flags as untrusted-origin, as WebAuthn already did (source
+only). Native PRF, real user presence and verification, Apple Passwords
+transfers, Settings accessibility and Stage remain unverified. Removing an
+unlock passkey does not rotate the vault key, so a removed passkey that still
+has an older copy of the vault file can decrypt later versions; this is a
+documented limit, not forward revocation.
+
+Review corrections on the draft PR, source only and unverified natively:
+WebAuthn client data is serialized in the specified order and its origin is
+checked by the independent verifier; the exchange review says when replacing a
+stored login removes its password; Chromium back/forward-cache restores keep
+isolated-world contexts and script messages, finish navigation state and
+publish correct history controls while credential contexts are still
+invalidated. Merge and deploy stay blocked on the unresolved duplicate-passkey
+registration policy (D1: a second registration appends instead of overwriting),
+and native handoff, signing, PRF and transfer gates remain open.
+
+External-app offers from a web page no longer depend on a race with the frame
+handshake: the navigation decision records the exact document nonce the
+registry issued or acknowledged for the source frame and that document's own
+navigation, then waits for that frame's native readiness proof of the same
+nonce before the offer is shown. A cancelled in-flight navigation no longer
+invalidates an offer from the already-loaded page. Pending frames are never
+treated as acknowledged, and stale or replaced frames still refuse. Verified
+in hosted CI on `5649bbe` (3012 tests, including all handoff, stale-frame and
+back/forward-cache cases); the performance-budget step of that run failed
+(0.1019 s against 0.100 s) and its cause is unresolved. On `9253f7d` (main
+`a2ab7b6` merged in), run 38075169484 passed 3014 tests in 334 suites, all
+budgets (start page 0.0774 s) and coverage; the same run started the built
+Debug app in an isolated Stage home and drove its bundled MCP relay through
+initialize, the 19-tool listing, `listTabs` and EOF. That proves app startup
+and relay IPC only, not the credential UI, native user presence or
+verification, or the other tools; the earlier performance failure did not
+recur but was not explained.
+
 ### 2026-10-10 — Tab title test waits for the website title
 
 The website-title removal test now waits for the page's initial title before removing it, instead of reading the tab title the moment loading settles. This is a test-readiness correction; no tab title behavior changed.

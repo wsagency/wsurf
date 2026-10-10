@@ -116,6 +116,22 @@ branding. Source fixtures and extension parsing are covered, but real Apple
 Passwords PIN, fill, save, OTP, 15-minute idle, lock, and sleep behavior has
 not been verified in an own signed WSurf build.
 
+Settings › Autofill › Password provider also offers a separate, opt-in
+Credential Manager. Passwords stays the default and its data stays intact; there
+is no automatic migration or read-through. Only one built-in password writer is
+active. Installed extensions still act until you turn them off in Extensions,
+and Settings warns you. The Credential Manager keeps passwords, ES256 passkeys,
+and one-time codes in an encrypted per-profile store unlocked by a passkey. If
+any window leaves the profile, every window of that profile locks. It is
+unavailable in private browsing. WSurf makes no promise to zero memory, and
+there is no recovery key, master password, or Keychain fallback: losing every
+unlock passkey loses the store. The source also adds an exchange-only
+credential-exchange extension. This feature is in source and not released.
+Native PRF, real user presence and verification, the six Apple Passwords
+transfers, Settings keyboard and VoiceOver behavior, and Stage are not
+verified. A WebKit iframe credential request currently fails closed as
+unsupported; Chromium requires native effective policy.
+
 ### Choose a model
 
 Use Apple Intelligence on your Mac, add a provider API key, or connect to a local
@@ -237,8 +253,8 @@ location = /.well-known/apple-app-site-association {
 The file authorizes `5X68L55TNU.io.wsagency.wsurf`, using the repository's
 configured release team and bundle ID. Before enabling passkey vault unlock,
 confirm it matches the signed app's `application-identifier`; the App ID prefix
-is not necessarily the Team ID. The app will also need a provisioned
-`webcredentials:wsurf.app` Associated Domains entitlement. This website does not
+is not necessarily the Team ID. The app declares the `webcredentials:wsurf.app`
+Associated Domains entitlement, which its profile must authorize. This website does not
 implement credential migration or vault unlock, and contains no certificates,
 private keys, vault data, or PRF results. Keep Apple signing material out of
 the website deployment.
