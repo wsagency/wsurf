@@ -153,6 +153,9 @@ struct ChromiumPageTests {
             let secondExecutionContext = try await native.devTools.executionContextIdentity(
                 for: secondFrame, world: PageAutomationGuard.world
             )
+            // The first document's context ended with the A→B turnover; this one is live right up to the back step.
+            let second = try await page.credentialContext(for: secondFrame, operation: .get)
+            try await page.validateCredentialContext(second)
 
             page.goBack()
             try #require(await PageSettle.untilIdle(page, timeout: .seconds(30)))
@@ -166,6 +169,7 @@ struct ChromiumPageTests {
             )
 
             await #expect(throws: (any Error).self) { try await page.validateCredentialContext(earlier) }
+            await #expect(throws: (any Error).self) { try await page.validateCredentialContext(second) }
             let records = native.devTools.contextsByUniqueID.values.filter { $0.frameID == restored.chromiumID }
             #expect(!records.isEmpty, "No context was kept for the restored frame, so the rebind was not exercised")
             for record in records {
