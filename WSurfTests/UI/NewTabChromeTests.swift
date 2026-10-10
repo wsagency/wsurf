@@ -271,13 +271,13 @@ struct NewTabChromeTests {
         let url = URL(string: "https://example.test/titled")!
         tab.loadHTML("<!doctype html><title>Website</title><p>Page</p>", baseURL: url)
         #expect(await settled(tab, at: url))
-        #expect(tab.title == "Website")
+        try #require(await waitUntil { tab.title == "Website" })
         tab.customTitle = "My Page"
         _ = try await tab.page.evaluateJavaScript("document.title = ''")
-        #expect(await waitUntil { tab.pageTitle == "New Page" })
+        #expect(await waitUntil { tab.pageTitle == BrowserTab.placeholderTitle })
         #expect(tab.title == "My Page")
         tab.customTitle = ""
-        #expect(tab.title == "New Page")
+        #expect(tab.title == BrowserTab.placeholderTitle)
     }
     @Test func typingAnAddressLeavesTheStartPageAgain() async throws {
         let server = try await HTTPFixtureServer.start(routes: [
