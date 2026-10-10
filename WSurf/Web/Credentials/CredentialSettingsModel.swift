@@ -10,16 +10,14 @@ import Observation
 
 nonisolated struct PasskeySummary: Identifiable, Equatable, Sendable {
     let id: UUID
-    let shortID: String
     let rpID: String
     let userName: String
     let createdAt: Date?
     let source: WebsitePasskeySource?
     let lastSignedAt: Date?
 
-    init(_ passkey: WebsitePasskey, identifiers: [UUID]) {
+    init(_ passkey: WebsitePasskey) {
         id = passkey.id
-        shortID = passkey.id.shortestUniquePrefix(in: identifiers)
         rpID = passkey.rpID
         userName = passkey.userName
         createdAt = passkey.createdAt
@@ -51,8 +49,7 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
         hasPassword = account.password != nil
         hasLogin = account.password != nil || account.basicAuthenticationMetadata != nil || !account.username.isEmpty
         hasTOTP = account.totp != nil
-        let passkeyIDs = account.passkeys.map(\.id)
-        passkeys = account.passkeys.map { PasskeySummary($0, identifiers: passkeyIDs) }
+        passkeys = account.passkeys.map { PasskeySummary($0) }
     }
 
     /// What a row, a removal prompt or an import review calls this credential. An empty imported title counts as none.
@@ -129,8 +126,7 @@ nonisolated struct CredentialDraft: Sendable {
     }
 
     var passkeySummaries: [PasskeySummary] {
-        let passkeyIDs = passkeys.map(\.id)
-        return passkeys.map { PasskeySummary($0, identifiers: passkeyIDs) }
+        passkeys.map { PasskeySummary($0) }
     }
 
     mutating func removePasskey(_ id: UUID) {

@@ -548,6 +548,7 @@ private struct CredentialEditorSheet: View {
                 Button("Cancel", role: .cancel) { pendingPasskeyRemoval = nil }
             } message: { passkey in
                 Text("""
+                    Remove passkey \(passkey.id.uuidString) for \(passkey.rpID)?
                     Only this local copy is removed.
                     The website registration and any other exported copies remain. Save to apply.
                     """)
@@ -595,13 +596,13 @@ private struct CredentialEditorSheet: View {
                 ForEach(draft.passkeySummaries) { passkey in
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(verbatim: "\(passkey.rpID) · \(passkey.userName) · #\(passkey.shortID)")
+                            Text(verbatim: "\(passkey.rpID) · \(passkey.userName) · \(passkey.id.uuidString)")
                             Text(verbatim: passkeyMetadata(passkey))
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
                         Button("Remove", role: .destructive) { pendingPasskeyRemoval = passkey }
-                            .accessibilityLabel("Remove passkey #\(passkey.shortID) for \(passkey.rpID)")
+                            .accessibilityLabel("Remove passkey \(passkey.id.uuidString) for \(passkey.rpID)")
                     }
                 }
             }
@@ -624,7 +625,7 @@ private struct CredentialEditorSheet: View {
             return String(localized: "Created \(timestamp) (\(relativeAge))")
         } ?? String(localized: "Creation date unknown")
         let signed = passkey.lastSignedAt.map {
-            String(localized: "Last signed \($0.formatted(date: .abbreviated, time: .shortened))")
+            String(localized: "Last local signature \($0.formatted(date: .abbreviated, time: .shortened))")
         } ?? String(localized: "No local signature recorded")
         return [source, created, signed].joined(separator: " · ")
     }

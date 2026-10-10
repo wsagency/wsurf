@@ -522,8 +522,11 @@ extension WebsiteAuthenticator {
             }
         }
         let choices = disambiguated(found.map { account, passkey in
-            (passkey.id, label(account), [passkey.userName.displaySafe, passkey.userDisplayName == passkey.userName ? "" : passkey.userDisplayName.displaySafe]
-                .filter { !$0.isEmpty }.joined(separator: " · "))
+            let name = passkey.userDisplayName == passkey.userName ? "" : passkey.userDisplayName.displaySafe
+            let detail = [passkey.userName.displaySafe, name, "#" + passkey.id.uuidString]
+                .filter { !$0.isEmpty }
+                .joined(separator: " · ")
+            return (passkey.id, label(account), detail)
         })
         return zip(found, choices).map { AssertionCandidate(accountID: $0.0.id, passkey: $0.1, choice: $1) }
     }

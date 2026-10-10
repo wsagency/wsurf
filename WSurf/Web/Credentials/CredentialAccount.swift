@@ -130,38 +130,6 @@ nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
     var source: WebsitePasskeySource?
     var lastSignedAt: Date?
 
-    init(
-        id: UUID,
-        credentialID: Data,
-        rpID: String,
-        userHandle: Data,
-        userName: String,
-        userDisplayName: String,
-        algorithm: Int,
-        privateKeyPKCS8: Data,
-        backupEligible: Bool,
-        backupState: Bool,
-        exchangeFIDO2Metadata: Data?,
-        createdAt: Date? = nil,
-        source: WebsitePasskeySource? = nil,
-        lastSignedAt: Date? = nil
-    ) {
-        self.id = id
-        self.credentialID = credentialID
-        self.rpID = rpID
-        self.userHandle = userHandle
-        self.userName = userName
-        self.userDisplayName = userDisplayName
-        self.algorithm = algorithm
-        self.privateKeyPKCS8 = privateKeyPKCS8
-        self.backupEligible = backupEligible
-        self.backupState = backupState
-        self.exchangeFIDO2Metadata = exchangeFIDO2Metadata
-        self.createdAt = createdAt
-        self.source = source
-        self.lastSignedAt = lastSignedAt
-    }
-
     func validate() throws {
         guard algorithm == -7,
               !credentialID.isEmpty, credentialID.count <= 1_024,

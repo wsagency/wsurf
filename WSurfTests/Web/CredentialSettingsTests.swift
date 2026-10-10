@@ -226,7 +226,7 @@ struct CredentialSettingsTests {
         }
     }
 
-    @Test func passkeySummariesExposeMetadataAndDistinctStableIdentifiers() throws {
+    @Test func passkeySummariesExposeMetadataAndImmutableIdentifiers() throws {
         let createdAt = Date(timeIntervalSince1970: 1_700_000_100)
         let signedAt = Date(timeIntervalSince1970: 1_700_000_200)
         let first = try passkeyWithMetadata(
@@ -239,7 +239,7 @@ struct CredentialSettingsTests {
         )
 
         let summaries = CredentialSummary(account("ada", passkeys: [first, second])).passkeys
-        #expect(summaries.map(\.shortID) == ["ABCD1", "ABCD2"])
+        #expect(summaries.map(\.id) == [first.id, second.id])
         #expect(summaries[0].createdAt == createdAt && summaries[0].source == .created)
         #expect(summaries[0].lastSignedAt == signedAt)
         #expect(summaries[1].createdAt == nil && summaries[1].source == .imported)
