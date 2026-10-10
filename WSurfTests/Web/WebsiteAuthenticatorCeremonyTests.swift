@@ -675,13 +675,10 @@ struct WebsiteAuthenticatorCeremonyTests {
 
             let cancelledDuringVerification = User()
             cancelledDuringVerification.respond = { prompt in .approved(choice: prompt.choices[0].id) }
-            let ceremony = Task { @MainActor in
-                try await get(fixture, cancelledDuringVerification, request: assertion(userVerification: .required))
-            }
+            let request = assertion(userVerification: .required)
+            let ceremony = Task { @MainActor in try await get(fixture, cancelledDuringVerification, request: request) }
             cancelledDuringVerification.whileVerifying = { ceremony.cancel() }
-            await #expect(throws: CancellationError.self) {
-                _ = try await ceremony.value
-            }
+            await #expect(throws: CancellationError.self) { _ = try await ceremony.value }
             #expect(cancelledDuringVerification.verifications == 1)
             #expect(try fixture.bytes() == before)
 
