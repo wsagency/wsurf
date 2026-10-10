@@ -158,6 +158,55 @@ nonisolated enum WebAuthnVerifier {
         }
     }
 
+    /// WebAuthn Level 3 §5.8.1.2, literally: what a relying party without a JSON parser checks. The client data must
+    /// begin with the specified serialization of `type`, `challenge`, `origin`, `crossOrigin` and, when a top-level
+    /// origin is expected, `topOrigin` (required here), followed by `}` or `,`. Written from the specification
+    /// text, not from the production encoder.
+    static func limitedClientDataVerifies(
+        _ clientDataJSON: Data,
+        type: String,
+        challenge: Data,
+        origin: String,
+        topOrigin: String?
+    ) -> Bool {
+        var expected = Data(#"{"type":"#.utf8)
+        expected.append(ccdString(type))
+        expected.append(Data(#","challenge":"#.utf8))
+        expected.append(ccdString(base64URL(challenge)))
+        expected.append(Data(#","origin":"#.utf8))
+        expected.append(ccdString(origin))
+        expected.append(Data(#","crossOrigin":"#.utf8))
+        if let topOrigin {
+            expected.append(Data("true".utf8))
+            expected.append(Data(#","topOrigin":"#.utf8))
+            expected.append(ccdString(topOrigin))
+        } else {
+            expected.append(Data("false".utf8))
+        }
+        let bytes = [UInt8](clientDataJSON)
+        guard bytes.starts(with: expected), bytes.count > expected.count else { return false }
+        return bytes[expected.count] == 0x7D || bytes[expected.count] == 0x2C
+    }
+
+    /// `CCDToString` (§5.8.1.1): only `"`, `\` and code points below U+0020 are escaped, so `/` stays literal.
+    private static func ccdString(_ value: String) -> Data {
+        var encoded = Data([0x22])
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 0x20, 0x21, 0x23...0x5B, 0x5D...0x10FFFF:
+                encoded.append(contentsOf: String(scalar).utf8)
+            case 0x22:
+                encoded.append(contentsOf: [0x5C, 0x22])
+            case 0x5C:
+                encoded.append(contentsOf: [0x5C, 0x5C])
+            default:
+                encoded.append(contentsOf: String(format: "\\u%04x", scalar.value).utf8)
+            }
+        }
+        encoded.append(0x22)
+        return encoded
+    }
+
     private static func base64URL(_ data: Data) -> String {
         data.base64EncodedString().replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
