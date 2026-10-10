@@ -598,7 +598,6 @@ struct WebsiteAuthenticatorCeremonyTests {
         }
     }
 
-
     @Test(.boundedWebViews) func discoverableAccountsStayDistinctAndAllowListFilters() async throws {
         try await withFixture { fixture in
             // Same RP, same display username, two different user handles: two accounts, not one.

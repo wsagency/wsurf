@@ -310,7 +310,6 @@ struct CredentialExchangeTests {
         #expect((updatedRecord["lastSignedAt"] as? NSNumber)?.doubleValue == lastSignedAt.timeIntervalSinceReferenceDate)
     }
 
-
     @Test func preservesProviderAndItemMetadataAndPrunesUnselectedCollectionLinks() throws {
         let providerID = Data([0xA0, 0x41])
         let firstItemID = Data([0xB0, 0x41])

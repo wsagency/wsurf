@@ -245,7 +245,6 @@ struct CredentialSettingsTests {
         }
     }
 
-
     @Test func absentAndEmptyPasswordsSurviveAnUnrelatedEdit() async throws {
         try await withFixture { f in
             let absent = account("ada", password: nil, passkeys: [try passkey(1)])
