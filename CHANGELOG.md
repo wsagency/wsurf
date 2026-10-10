@@ -43,6 +43,17 @@ invalidated. Merge and deploy stay blocked on the unresolved duplicate-passkey
 registration policy (D1: a second registration appends instead of overwriting),
 and native handoff, signing, PRF and transfer gates remain open.
 
+External-app offers from a web page no longer depend on a race with the frame
+handshake: the navigation decision records the exact document nonce the
+registry issued or acknowledged for the source frame and that document's own
+navigation, then waits for that frame's native readiness proof of the same
+nonce before the offer is shown. A cancelled in-flight navigation no longer
+invalidates an offer from the already-loaded page. Pending frames are never
+treated as acknowledged, and stale or replaced frames still refuse. Verified
+in hosted CI on `5649bbe` (3012 tests, including all handoff, stale-frame and
+back/forward-cache cases); the performance-budget step of that run still
+failed (0.1019 s against 0.100 s) and is unresolved.
+
 ### 2026-10-09 — Actual engine beside address lock
 
 The address bar shows WK or Cr beside the lock for the active page's loaded engine.
