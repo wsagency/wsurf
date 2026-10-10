@@ -514,7 +514,7 @@ final class ChromiumPage: NSView {
         owner?.isLoading = true
     }
 
-    func didNavigate(frame: BrowserFrame) {
+    func didNavigate(frame: BrowserFrame, restoredFromCache: Bool) {
         guard !closing, !isClosed else { return }
         if let url = frame.request.url {
             ChromiumRuntime.shared.recordOrigin(url, context: context)
@@ -522,6 +522,9 @@ final class ChromiumPage: NSView {
         guard frame.isMainFrame else { return }
         guard !initialDocument,
               frame.request.url?.absoluteString != "about:blank" || requestedURL?.absoluteString == "about:blank" else { return }
+        if restoredFromCache && !navigationStarted {
+            willNavigate(frame.request, isRedirect: false)
+        }
         owner?.url = frame.request.url
         if let frameID = frame.chromiumID,
            let response = client?.documentResponses.commit(frameID: frameID, loaderID: frame.documentID) {
@@ -530,6 +533,12 @@ final class ChromiumPage: NSView {
         updateNativeSecurity()
         owner?.onNavigationCommitted?(navigation)
         refreshHistory()
+        if restoredFromCache {
+            owner?.isLoading = false
+            owner?.estimatedProgress = 1
+            owner?.onNavigationFinished?(navigation)
+            navigationStarted = false
+        }
     }
 
     func didFinishLoad(status: Int) {
@@ -574,11 +583,11 @@ final class ChromiumPage: NSView {
         refreshHistory()
     }
     func didChangeLoading(_ loading: Bool, canGoBack: Bool, canGoForward: Bool) {
-        guard !closing, !isClosed else { return }
-        guard !initialDocument, !awaitingNativeNavigation || loading else { return }
-        owner?.isLoading = loading
+        guard !closing, !isClosed, !initialDocument else { return }
         owner?.canGoBack = canGoBack
         owner?.canGoForward = canGoForward
+        guard !awaitingNativeNavigation || loading else { return }
+        owner?.isLoading = loading
         if !loading {
             owner?.estimatedProgress = 1
         }

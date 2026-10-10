@@ -105,16 +105,29 @@ extension ChromiumDevTools {
 
     private func frameNavigated(_ params: [String: Any]) {
         guard let frame = params["frame"] as? [String: Any], let parsed = parseFrame(frame, parentID: frame["parentId"] as? String) else { return }
+        let restoredFromCache = params["type"] as? String == "BackForwardCacheRestore"
         let old = framesByID[parsed.id]
         frameRevision &+= 1
         framesByID[parsed.id] = parsed
         if let old, old.documentID != parsed.documentID {
             let retired = [old.documentID] + retireDescendants(parentID: parsed.id)
-            removeContexts(frameID: parsed.id)
+            if !restoredFromCache {
+                removeContexts(frameID: parsed.id)
+            }
             invalidateCredentialContexts(documents: retired, pageWide: parsed.isMainFrame && !old.documentID.isEmpty)
         }
+        if restoredFromCache {
+            // Cached contexts are replayed before the restored frame's navigation event.
+            var index = contextsByUniqueID.startIndex
+            while index != contextsByUniqueID.endIndex {
+                if contextsByUniqueID[index].value.frameID == parsed.id {
+                    contextsByUniqueID.values[index].documentID = parsed.documentID
+                }
+                contextsByUniqueID.formIndex(after: &index)
+            }
+        }
         if !parsed.documentID.isEmpty {
-            page?.didNavigate(frame: parsed.browserFrame)
+            page?.didNavigate(frame: parsed.browserFrame, restoredFromCache: restoredFromCache)
         }
     }
 
