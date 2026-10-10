@@ -479,6 +479,7 @@ private struct CredentialEditorSheet: View {
     @State private var totpInput = ""
     @State private var totpError: String?
     @State private var isSaving = false
+    @State private var saving: Task<Void, Never>?
     @State private var pendingPasskeyRemoval: PasskeySummary?
 
     var body: some View {
