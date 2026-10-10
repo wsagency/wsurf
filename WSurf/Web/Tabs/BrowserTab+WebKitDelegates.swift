@@ -37,7 +37,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             let origin = requestingOrigin(for: navigationAction)
             let page = tab?.liveView
             let sourceFrame = page.flatMap {
-                PageFrameRegistry.shared.sourceFrame(navigationAction.sourceFrame, in: $0)
+                PageFrameRegistry.shared.captureSourceFrame(navigationAction.sourceFrame, in: $0)
             }
             let initialRedirect = sourceFrame == nil && tab?.committedNavigation == nil
                 && navigationAction.sourceFrame.isMainFrame && navigationAction.targetFrame?.isMainFrame == true
@@ -47,41 +47,18 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             decisionHandler(.cancel)
             let window = webView.window
             let document = tab?.committedNavigation
-            // TEMPORARY DIAGNOSTIC (PR14 AppHandoff CI hang): remove with the root fix.
-            PageFrameRegistry.handoffDiagnostic(
-                "decide sourceFrame=\(sourceFrame != nil) initialRedirect=\(initialRedirect) "
-                    + "sourceMain=\(navigationAction.sourceFrame.isMainFrame) targetMain=\(String(describing: navigationAction.targetFrame?.isMainFrame)) "
-                    + "committed=\(document != nil) originEmpty=\(origin.isEmpty) page=\(page != nil) "
-                    + (page.map { PageFrameRegistry.shared.handoffState(in: $0) } ?? "state=n/a")
-            )
             Task { [weak self, weak tab, weak webView, weak page] in
                 guard let self, let tab, !tab.isClosed, let webView, tab.liveView?.webKit === webView else { return }
                 await ExternalApp.offerToOpen(url, from: origin, policy: tab.externalApps, in: window, isCurrent: {
-                    guard let page else {
-                        PageFrameRegistry.handoffDiagnostic("offer page=nil")
-                        return false
-                    }
+                    guard let page else { return false }
                     if let sourceFrame {
-                        let live = await PageFrameRegistry.shared.isLive(sourceFrame, in: page)
-                        PageFrameRegistry.handoffDiagnostic("offer isLive=\(live)")
-                        guard live else { return false }
+                        guard await PageFrameRegistry.shared.isLiveAfterReady(sourceFrame, in: page) else { return false }
                     } else {
                         // A first HTTP redirect has no committed document token; bind its accepted request instead.
-                        guard initialRedirect, self.mainFrameActionGeneration == actionGeneration else {
-                            PageFrameRegistry.handoffDiagnostic(
-                                "offer noSourceFrame initialRedirect=\(initialRedirect) "
-                                    + "sameGeneration=\(self.mainFrameActionGeneration == actionGeneration)"
-                            )
-                            return false
-                        }
+                        guard initialRedirect, self.mainFrameActionGeneration == actionGeneration else { return false }
                     }
-                    let current = !tab.isClosed && tab.liveView?.webKit === webView
+                    return !tab.isClosed && tab.liveView?.webKit === webView
                         && tab.liveView === page && tab.committedNavigation === document
-                    PageFrameRegistry.handoffDiagnostic(
-                        "offer gates closed=\(tab.isClosed) sameWebView=\(tab.liveView?.webKit === webView) "
-                            + "samePage=\(tab.liveView === page) sameDocument=\(tab.committedNavigation === document) current=\(current)"
-                    )
-                    return current
                 })
             }
             return

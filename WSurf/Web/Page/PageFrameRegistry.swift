@@ -146,26 +146,6 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
 
     private let stores = NSMapTable<BrowserPage, Store>(keyOptions: .weakMemory, valueOptions: .strongMemory)
 
-    // TEMPORARY DIAGNOSTIC (PR14 AppHandoff CI hang): remove with the root fix. Booleans and counts only; no URLs,
-    // nonces, tokens or page content, and nothing here changes a decision.
-    nonisolated static func handoffDiagnostic(_ line: @autoclosure () -> String) {
-        #if DEBUG
-        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil else { return }
-        FileHandle.standardError.write(Data("[handoff-diag] \(DispatchTime.now().uptimeNanoseconds / 1_000_000) \(line())\n".utf8))
-        #endif
-    }
-
-    private func handoffState(_ store: Store?) -> String {
-        guard let store else { return "store=nil" }
-        return "mainFrame=\(store.mainFrame != nil) rootEmpty=\(store.root.isEmpty) active=\(store.activeNavigation != nil) "
-            + "committed=\(store.committedNavigation != nil) mainNav=\(store.mainFrameNavigation != nil) "
-            + "issued=\(store.issued.count) frames=\(store.frames.count) superseded=\(store.supersededNavigations.count)"
-    }
-
-    func handoffState(in view: BrowserPage) -> String {
-        handoffState(stores.object(forKey: view))
-    }
-
     static func install(in controller: WKUserContentController) {
         controller.addScriptMessageHandler(shared, contentWorld: PageAutomationGuard.world, name: handlerName)
         controller.addScriptMessageHandler(shared, contentWorld: PageAutomationGuard.world, name: acknowledgementHandlerName)
@@ -176,7 +156,6 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
 
     func navigationStarted(_ navigation: WKNavigation?, in view: BrowserPage) {
         let store = store(for: view)
-        Self.handoffDiagnostic("nav-started \(handoffState(store))")
         if let active = store.activeNavigation, active !== navigation {
             if !store.supersededNavigations.contains(where: { $0 === active }) {
                 store.supersededNavigations.append(active)
@@ -210,10 +189,6 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
     func navigationCommitted(_ navigation: WKNavigation?, in view: BrowserPage) {
         guard let navigation else { return }
         let store = store(for: view)
-        Self.handoffDiagnostic(
-            "nav-committed isActive=\(store.activeNavigation === navigation) "
-            + "wasSuperseded=\(store.supersededNavigations.contains { $0 === navigation }) \(handoffState(store))"
-        )
         if let index = store.supersededNavigations.firstIndex(where: { $0 === navigation }) {
             store.supersededNavigations.remove(at: index)
             return
@@ -320,7 +295,6 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
             let nonce = UUID().uuidString.lowercased()
             let navigation = store.activeNavigation ?? store.committedNavigation
             store.issued[nonce] = IssuedFrame(frame: frame, navigation: navigation)
-            Self.handoffDiagnostic("frame-issued main=\(frame.isMainFrame) \(handoffState(store))")
             replyHandler(nonce, nil)
             return
         }
@@ -360,18 +334,6 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
     }
 
     private func acknowledge(_ nonce: String, frameInfo: WKFrameInfo, in view: BrowserPage) -> Bool {
-        Self.handoffDiagnostic(
-            "ack-begin main=\(frameInfo.isMainFrame) issuedFound=\(stores.object(forKey: view)?.issued[nonce] != nil) "
-            + handoffState(stores.object(forKey: view))
-        )
-        let accepted = acknowledgeFrame(nonce, frameInfo: frameInfo, in: view)
-        Self.handoffDiagnostic(
-            "ack-end main=\(frameInfo.isMainFrame) accepted=\(accepted) \(handoffState(stores.object(forKey: view)))"
-        )
-        return accepted
-    }
-
-    private func acknowledgeFrame(_ nonce: String, frameInfo: WKFrameInfo, in view: BrowserPage) -> Bool {
         guard let store = stores.object(forKey: view) else {
             return false
         }
@@ -767,23 +729,56 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
         return (url.port ?? standard) == (securityPort == 0 ? standard : securityPort)
     }
 
-    func sourceFrame(_ source: WKFrameInfo, in view: BrowserPage) -> BrowserFrame? {
+    /// What a navigation decision knew about its source frame: the document nonce the registry issued or acknowledged
+    /// for it and the native navigation current then. It is not authority; `isLiveAfterReady` proves it later.
+    struct SourceFrameClaim {
+        let frame: BrowserFrame
+        let navigation: WKNavigation?
+    }
+
+    /// Binds `source` to one registered or issued document without waiting for its acknowledgement. Ambiguity fails closed.
+    func captureSourceFrame(_ source: WKFrameInfo, in view: BrowserPage) -> SourceFrameClaim? {
         guard let store = stores.object(forKey: view) else { return nil }
-        var registered: [BrowserFrame] = []
+        let navigation = store.activeNavigation ?? store.committedNavigation
+        var known: [(nonce: String, frame: BrowserFrame)] = []
         if let mainFrame = store.mainFrame {
-            registered.append(mainFrame)
+            known.append((nonce: mainFrame.documentID, frame: mainFrame))
         }
-        registered.append(contentsOf: store.frames.values.map(\.frame))
-        if let exact = registered.first(where: { $0.webKit === source || $0.webKit?.isEqual(source) == true }) {
-            return exact
+        known.append(contentsOf: store.frames.map { (nonce: $0.key, frame: $0.value.frame) })
+        known.append(contentsOf: store.issued.filter { Self.sameNavigation($0.value.navigation, navigation) }
+            .map { (nonce: $0.key, frame: $0.value.frame) })
+        let exact = known.filter { $0.frame.webKit === source || $0.frame.webKit?.isEqual(source) == true }
+        var match = exact
+        if exact.isEmpty {
+            let request = BrowserFrame(webKit: source)
+            match = known.filter {
+                $0.frame.isMainFrame == request.isMainFrame
+                    && $0.frame.request.url == request.request.url
+                    && $0.frame.securityOrigin == request.securityOrigin
+            }
         }
-        let request = BrowserFrame(webKit: source)
-        let candidates = registered.filter {
-            $0.isMainFrame == request.isMainFrame
-                && $0.request.url == request.request.url
-                && $0.securityOrigin == request.securityOrigin
-        }
-        return candidates.count == 1 ? candidates[0] : nil
+        guard match.count == 1 else { return nil }
+        return SourceFrameClaim(frame: BrowserFrame(webKit: source, documentID: match[0].nonce), navigation: navigation)
+    }
+
+    /// Waits for the original source frame's own readiness promise, then requires its captured nonce, the captured
+    /// native navigation and a registry-acknowledged current frame. This is provenance for a native decision, not
+    /// page automation, so it runs on the frame directly instead of through the PageDriver-guarded path.
+    func isLiveAfterReady(_ claim: SourceFrameClaim, in view: BrowserPage) async -> Bool {
+        guard let webKit = view.webKit, let source = claim.frame.webKit,
+              navigationUnchanged(claim, in: view) else { return false }
+        let proven = try? await webKit.callAsyncJavaScript(
+            "return (await globalThis.__wsurfNativeFrameReady) === true && globalThis.__wsurfNativeFrameNonce === nonce;",
+            arguments: ["nonce": claim.frame.documentID],
+            in: source,
+            contentWorld: PageAutomationGuard.world
+        ) as? Bool
+        return proven == true && navigationUnchanged(claim, in: view) && isCurrent(claim.frame, in: view)
+    }
+
+    private func navigationUnchanged(_ claim: SourceFrameClaim, in view: BrowserPage) -> Bool {
+        guard let store = stores.object(forKey: view) else { return false }
+        return Self.sameNavigation(claim.navigation, store.activeNavigation ?? store.committedNavigation)
     }
 
     func target(_ id: String, in view: BrowserPage) -> Target? {
