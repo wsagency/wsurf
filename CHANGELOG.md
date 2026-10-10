@@ -15,9 +15,11 @@ key now retires the stale entry (controller window, window order, focus, anchors
 popup) and creates a fresh adapter; it no longer returns the retired adapter, and it
 never rebinds it, so consent scopes captured for the old window stay invalid. A live
 browser registering again still keeps its adapter. `unregister` shares the same
-retirement in the same order. In the app this state can arise only when a window
-skips unregistering during termination; the test suite produced it by registering
-windows it never unregistered, which `MCPTransportTests` now cleans up. Tab adapters
+retirement in the same order. The one app path found that skips unregistering is
+`BrowserApplication.didClose` returning early while the application is terminating;
+no other path was proven unable to leave a stale key. The test suite produced the
+state by registering windows it never unregistered, which `MCPTransportTests` now
+cleans up. Tab adapters
 left by a deallocated browser are not pruned, and this change is not shown to be the
 cause of the earlier `MCPWindowScopeTests` CI failure, whose failing click error was
 never recorded; the test now reports it if it recurs.
