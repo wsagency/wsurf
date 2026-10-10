@@ -545,56 +545,6 @@ struct WebsiteAuthenticatorCeremonyTests {
 
     // MARK: Assertion
 
-    @Test(.boundedWebViews) func assertionUsesTheChosenPasskeyAndIsIndependentlyVerified() async throws {
-        try await withFixture { fixture in
-            let registered = try verified(fixture, try await create(fixture, User()).result, challenge: "create challenge")
-            try await seed(fixture, 9)
-            let beforeSnapshot = try await fixture.manager.snapshot()
-            let before = try fixture.bytes()
-            let selected = try #require(beforeSnapshot.accounts.flatMap(\.passkeys).first { $0.credentialID == registered.credentialID })
-            let untouched = try #require(beforeSnapshot.accounts.flatMap(\.passkeys).first { $0.id != selected.id })
-            let selectedBefore = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(selected)) as? [String: Any])
-
-            let user = User()
-            user.respond = { _ in .approved(choice: selected.id) }
-            let signatureStartedAt = Date()
-            let outcome = try await get(fixture, user, request: assertion(userVerification: .required))
-            let signatureFinishedAt = Date()
-            let result = outcome.result
-            let prompt = try #require(user.prompts.first)
-            #expect(prompt.operation == .get && !prompt.offersNewAccount && prompt.choices.count == 2)
-            #expect(user.verifications == 1)
-            #expect(result.credentialID == registered.credentialID)
-            let counter = try WebAuthnVerifier.assertion(
-                authenticatorData: #require(result.authenticatorData), clientDataJSON: result.clientDataJSON,
-                signature: #require(result.signature), publicKey: registered.publicKey, challenge: Data("get challenge".utf8),
-                origin: .init(origin: fixture.origin), rpID: rpID, userHandle: result.userHandle
-            )
-            #expect(counter == 0)
-            #expect(result.userHandle == Data([1, 2, 3, 4]))
-            let authenticatorData = try #require(result.authenticatorData)
-            #expect(authenticatorData[32] & 0x04 != 0)
-            let afterSnapshot = try await fixture.manager.snapshot()
-            let storedPasskey = try #require(afterSnapshot.accounts.flatMap(\.passkeys).first { $0.credentialID == registered.credentialID })
-            let storedRecord = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(storedPasskey)) as? [String: Any])
-            let lastSignedAt = try #require((storedRecord["lastSignedAt"] as? NSNumber)?.doubleValue)
-            #expect(storedRecord["source"] as? String == "created")
-            #expect(storedRecord["createdAt"] as? NSNumber == selectedBefore["createdAt"] as? NSNumber)
-            #expect(lastSignedAt >= signatureStartedAt.timeIntervalSinceReferenceDate)
-            #expect(lastSignedAt <= signatureFinishedAt.timeIntervalSinceReferenceDate)
-            let untouchedAfter = try #require(afterSnapshot.accounts.flatMap(\.passkeys).first { $0.id == untouched.id })
-            let untouchedRecord = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(untouchedAfter)) as? [String: Any])
-            #expect(untouchedRecord["lastSignedAt"] == nil)
-            #expect(afterSnapshot.revision == beforeSnapshot.revision + 1)
-            #expect(try fixture.bytes() != before, "a locally created signature updates the encrypted vault")
-
-            // The signature is bound to the vault state it was read under, so the final dispatch can refuse it if that moved.
-            #expect(outcome.epoch == fixture.manager.authorizationEpoch)
-            #expect(outcome.generation == fixture.manager.stableGeneration)
-            #expect(outcome.savedRevision == afterSnapshot.revision && outcome.rpID == rpID)
-        }
-    }
-
     @Test(.boundedWebViews) func aSecondRegistrationForTheSameUserRetainsBothPasskeysAndRecordsLocalCreation() async throws {
         try await withFixture { fixture in
             let firstStartedAt = Date()
@@ -987,5 +937,57 @@ struct WebsiteAuthenticatorCeremonyTests {
         chooser.selectItem(at: 1)
         guard case .approved(let picked) = NativeWebAuthnInteraction.decision(from: chooser) else { Issue.record("not approved"); return }
         #expect(picked == many[1].id)
+    }
+}
+
+extension WebsiteAuthenticatorCeremonyTests {
+    @Test(.boundedWebViews) func assertionUsesTheChosenPasskeyAndIsIndependentlyVerified() async throws {
+        try await withFixture { fixture in
+            let registered = try verified(fixture, try await create(fixture, User()).result, challenge: "create challenge")
+            try await seed(fixture, 9)
+            let beforeSnapshot = try await fixture.manager.snapshot()
+            let before = try fixture.bytes()
+            let selected = try #require(beforeSnapshot.accounts.flatMap(\.passkeys).first { $0.credentialID == registered.credentialID })
+            let untouched = try #require(beforeSnapshot.accounts.flatMap(\.passkeys).first { $0.id != selected.id })
+            let selectedBefore = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(selected)) as? [String: Any])
+
+            let user = User()
+            user.respond = { _ in .approved(choice: selected.id) }
+            let signatureStartedAt = Date()
+            let outcome = try await get(fixture, user, request: assertion(userVerification: .required))
+            let signatureFinishedAt = Date()
+            let result = outcome.result
+            let prompt = try #require(user.prompts.first)
+            #expect(prompt.operation == .get && !prompt.offersNewAccount && prompt.choices.count == 2)
+            #expect(user.verifications == 1)
+            #expect(result.credentialID == registered.credentialID)
+            let counter = try WebAuthnVerifier.assertion(
+                authenticatorData: #require(result.authenticatorData), clientDataJSON: result.clientDataJSON,
+                signature: #require(result.signature), publicKey: registered.publicKey, challenge: Data("get challenge".utf8),
+                origin: .init(origin: fixture.origin), rpID: rpID, userHandle: result.userHandle
+            )
+            #expect(counter == 0)
+            #expect(result.userHandle == Data([1, 2, 3, 4]))
+            let authenticatorData = try #require(result.authenticatorData)
+            #expect(authenticatorData[32] & 0x04 != 0)
+            let afterSnapshot = try await fixture.manager.snapshot()
+            let storedPasskey = try #require(afterSnapshot.accounts.flatMap(\.passkeys).first { $0.credentialID == registered.credentialID })
+            let storedRecord = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(storedPasskey)) as? [String: Any])
+            let lastSignedAt = try #require((storedRecord["lastSignedAt"] as? NSNumber)?.doubleValue)
+            #expect(storedRecord["source"] as? String == "created")
+            #expect(storedRecord["createdAt"] as? NSNumber == selectedBefore["createdAt"] as? NSNumber)
+            #expect(lastSignedAt >= signatureStartedAt.timeIntervalSinceReferenceDate)
+            #expect(lastSignedAt <= signatureFinishedAt.timeIntervalSinceReferenceDate)
+            let untouchedAfter = try #require(afterSnapshot.accounts.flatMap(\.passkeys).first { $0.id == untouched.id })
+            let untouchedRecord = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(untouchedAfter)) as? [String: Any])
+            #expect(untouchedRecord["lastSignedAt"] == nil)
+            #expect(afterSnapshot.revision == beforeSnapshot.revision + 1)
+            #expect(try fixture.bytes() != before, "a locally created signature updates the encrypted vault")
+
+            // The signature is bound to the vault state it was read under, so the final dispatch can refuse it if that moved.
+            #expect(outcome.epoch == fixture.manager.authorizationEpoch)
+            #expect(outcome.generation == fixture.manager.stableGeneration)
+            #expect(outcome.savedRevision == afterSnapshot.revision && outcome.rpID == rpID)
+        }
     }
 }
