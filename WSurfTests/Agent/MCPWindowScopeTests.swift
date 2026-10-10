@@ -225,7 +225,8 @@ struct MCPWindowScopeTests {
         }
         let currentAdapter = first.extensions.adapter(for: first.browser)
         let text = result.content.compactMap { block -> String? in
-            if case .text(let text, _, _) = block { text } else { nil }
+            guard case .text(let text, _, _) = block else { return nil }
+            return text
         }.joined(separator: " | ")
         let diagnostics = """
             click text: \(text)
