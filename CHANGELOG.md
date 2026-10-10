@@ -47,7 +47,10 @@ isolated-world contexts and script messages, finish navigation state and
 publish correct history controls while credential contexts are still
 invalidated. Merge and deploy stay blocked on the unresolved duplicate-passkey
 registration policy (D1: a second registration appends instead of overwriting),
-and native handoff, signing, PRF and transfer gates remain open.
+and native handoff, signing, PRF and transfer gates remain open. (Superseded
+2026-10-11: the user approved the retain-all registration policy for merge/deploy
+to manual testing; D1 is no longer a gate. Capability-bearing signing/provisioning
+remains a deployment prerequisite.)
 
 External-app offers from a web page no longer depend on a race with the frame
 handshake: the navigation decision records the exact document nonce the
