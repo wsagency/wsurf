@@ -37,10 +37,15 @@ extension ExtensionManager {
     func register(browser: BrowserModel, window: NSWindow? = nil) -> ExtensionWindowAdapter {
         let identifier = ObjectIdentifier(browser)
         if let existing = windows[identifier] {
-            if let window {
-                existing.nativeWindow = window
+            if existing.browser === browser {
+                if let window {
+                    existing.nativeWindow = window
+                }
+                return existing
             }
-            return existing
+            // The key outlived its browser. Rebinding the retired adapter would
+            // revive every consent scope captured for the old window.
+            retire(existing, key: identifier)
         }
 
         let adapter = ExtensionWindowAdapter(browser: browser, manager: self, window: window)
@@ -99,20 +104,31 @@ extension ExtensionManager {
             tabAdapters[tabID] = nil
             tabAdapter.invalidate()
         }
+        retire(window, key: identifier)
+        if windows.isEmpty, profile?.isPrivate == true {
+            stop()
+        }
+    }
+
+    /// Drops a window's registry entry. A key can outlive its weak browser, so the
+    /// browser is read from the adapter and is nil once it deallocated.
+    private func retire(_ window: ExtensionWindowAdapter, key: ObjectIdentifier) {
         controller.didCloseWindow(window)
-        windows[identifier] = nil
-        windowOrder.removeAll { $0 == identifier }
+        windows[key] = nil
+        windowOrder.removeAll { $0 == key }
         if lastFocusedWindow === window {
             lastFocusedWindow = nil
         }
-        browser.extensionPageHost = nil
-        browser.onTabOpened = nil
-        browser.onTabClosed = nil
-        browser.onActiveTabChanged = nil
-        browser.onNavigationStarted = nil
-        browser.onTabTransferredIn = nil
+        if let browser = window.browser {
+            browser.extensionPageHost = nil
+            browser.onTabOpened = nil
+            browser.onTabClosed = nil
+            browser.onActiveTabChanged = nil
+            browser.onNavigationStarted = nil
+            browser.onTabTransferredIn = nil
+        }
         window.invalidate()
-        didUnregister(browser: browser, window: window)
+        didUnregister(key: key, window: window)
     }
 
     func focus(browser: BrowserModel?) {

@@ -54,6 +54,14 @@ in hosted CI on `5649bbe` (3012 tests, including all handoff, stale-frame and
 back/forward-cache cases); the performance-budget step of that run still
 failed (0.1019 s against 0.100 s) and is unresolved.
 
+### 2026-10-10 — Tab title test waits for the website title
+
+The website-title removal test now waits for the page's initial title before removing it, instead of reading the tab title the moment loading settles. This is a test-readiness correction; no tab title behavior changed.
+
+### 2026-10-10 — Fresh window registration over a retired key
+
+Registering a browser over a retired extension-window key now retires the old entry and creates a fresh window adapter instead of returning the dead one. Consent captured for the retired window stays invalid. The MCP transport tests now unregister the extension windows they register.
+
 ### 2026-10-09 — Actual engine beside address lock
 
 The address bar shows WK or Cr beside the lock for the active page's loaded engine.

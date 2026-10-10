@@ -371,4 +371,84 @@ struct ExtensionWindowTests {
         #expect(source.tabs.isEmpty)
         await destinationContext.endPrivateSession()
     }
+
+    private func nativeWindow() -> NSWindow {
+        let window = NSWindow(contentRect: NSRect(x: 10, y: 20, width: 700, height: 500), styleMask: [], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        return window
+    }
+
+    /// A registry key that outlived its weak browser, now looked up by a new browser:
+    /// the state left when a browser deallocates without unregistering. The key is
+    /// seeded by hand because address reuse cannot be forced.
+    private func retiredEntry(
+        in manager: ExtensionManager, context: BrowserProfileContext,
+        keyedBy browser: BrowserModel, window: NSWindow
+    ) throws -> ExtensionWindowAdapter {
+        var departed: BrowserModel? = BrowserModel(context: context, windowID: UUID())
+        let stale = ExtensionWindowAdapter(browser: try #require(departed), manager: manager, window: window)
+        departed = nil
+        try #require(stale.browser == nil)
+        let key = ObjectIdentifier(browser)
+        manager.windows[key] = stale
+        manager.windowOrder.append(key)
+        return stale
+    }
+
+    @Test func registeringOverARetiredCacheKeyCreatesAFreshAdapter() throws {
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let manager = context.extensions
+        let browser = BrowserModel(context: context, windowID: UUID())
+        let native = nativeWindow()
+        let stale = try retiredEntry(in: manager, context: context, keyedBy: browser, window: native)
+
+        let fresh = manager.register(browser: browser, window: native)
+        defer {
+            manager.unregister(browser: browser)
+            native.close()
+        }
+
+        #expect(fresh !== stale)
+        #expect(fresh.browser === browser)
+        #expect(manager.adapter(for: browser) === fresh)
+        #expect(manager.owns(fresh))
+        #expect(!manager.owns(stale))
+        #expect(stale.browser == nil)
+        #expect(manager.windowAdapters.count == 1)
+        #expect(manager.windowAdapters.first === fresh)
+    }
+
+    @Test func aConsentScopeCapturedForARetiredAdapterStaysInvalidWhenItsKeyIsReused() async throws {
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let manager = context.extensions
+        let browser = BrowserModel(context: context, windowID: UUID())
+        let native = nativeWindow()
+        let stale = try retiredEntry(in: manager, context: context, keyedBy: browser, window: native)
+        let fresh = manager.register(browser: browser, window: native)
+        defer {
+            manager.unregister(browser: browser)
+            native.close()
+        }
+        try #require(context.isRegistered(browser))
+        var prompts = 0
+        let stub = AgentActionConsent.Stub { _, _, _, _ in
+            prompts += 1
+            return .allowOnce
+        }
+        func permit(in scope: ExtensionWindowAdapter) async -> Bool {
+            await AgentActionConsent.$decisionForTesting.withValue(stub) {
+                await AgentActionConsent.$scopedWindow.withValue(scope) {
+                    await AgentActionConsent.permit(
+                        label: "Publish post", category: .publication, host: "example.invalid",
+                        policy: context.actionPolicy
+                    )
+                }
+            }
+        }
+
+        #expect(await permit(in: stale) == false)
+        #expect(prompts == 0)
+        #expect(await permit(in: fresh))
+        #expect(prompts == 1)
+    }
 }
