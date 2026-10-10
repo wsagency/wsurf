@@ -548,15 +548,21 @@ struct WebsiteAuthenticatorCeremonyTests {
     @Test(.boundedWebViews) func assertionUsesTheChosenPasskeyAndIsIndependentlyVerified() async throws {
         try await withFixture { fixture in
             let registered = try verified(fixture, try await create(fixture, User()).result, challenge: "create challenge")
+            try await seed(fixture, 9)
             let beforeSnapshot = try await fixture.manager.snapshot()
             let before = try fixture.bytes()
+            let selected = try #require(beforeSnapshot.accounts.flatMap(\.passkeys).first { $0.credentialID == registered.credentialID })
+            let untouched = try #require(beforeSnapshot.accounts.flatMap(\.passkeys).first { $0.id != selected.id })
+            let selectedBefore = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(selected)) as? [String: Any])
 
             let user = User()
-            user.respond = { prompt in .approved(choice: prompt.choices[0].id) }
+            user.respond = { _ in .approved(choice: selected.id) }
+            let signatureStartedAt = Date()
             let outcome = try await get(fixture, user, request: assertion(userVerification: .required))
+            let signatureFinishedAt = Date()
             let result = outcome.result
             let prompt = try #require(user.prompts.first)
-            #expect(prompt.operation == .get && !prompt.offersNewAccount && prompt.choices.count == 1)
+            #expect(prompt.operation == .get && !prompt.offersNewAccount && prompt.choices.count == 2)
             #expect(user.verifications == 1)
             #expect(result.credentialID == registered.credentialID)
             let counter = try WebAuthnVerifier.assertion(
@@ -571,29 +577,46 @@ struct WebsiteAuthenticatorCeremonyTests {
             let afterSnapshot = try await fixture.manager.snapshot()
             let storedPasskey = try #require(afterSnapshot.accounts.flatMap(\.passkeys).first { $0.credentialID == registered.credentialID })
             let storedRecord = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(storedPasskey)) as? [String: Any])
-            #expect(storedRecord["lastSignedAt"] is NSNumber, "the local signature time is stored with the encrypted vault record")
+            let lastSignedAt = try #require((storedRecord["lastSignedAt"] as? NSNumber)?.doubleValue)
+            #expect(storedRecord["source"] as? String == "created")
+            #expect(storedRecord["createdAt"] as? NSNumber == selectedBefore["createdAt"] as? NSNumber)
+            #expect(lastSignedAt >= signatureStartedAt.timeIntervalSinceReferenceDate)
+            #expect(lastSignedAt <= signatureFinishedAt.timeIntervalSinceReferenceDate)
+            let untouchedAfter = try #require(afterSnapshot.accounts.flatMap(\.passkeys).first { $0.id == untouched.id })
+            let untouchedRecord = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(untouchedAfter)) as? [String: Any])
+            #expect(untouchedRecord["lastSignedAt"] == nil)
             #expect(afterSnapshot.revision == beforeSnapshot.revision + 1)
             #expect(try fixture.bytes() != before, "a locally created signature updates the encrypted vault")
 
             // The signature is bound to the vault state it was read under, so the final dispatch can refuse it if that moved.
             #expect(outcome.epoch == fixture.manager.authorizationEpoch)
             #expect(outcome.generation == fixture.manager.stableGeneration)
-            #expect(outcome.savedRevision == nil && outcome.rpID == rpID)
+            #expect(outcome.savedRevision == afterSnapshot.revision && outcome.rpID == rpID)
         }
     }
+
     @Test(.boundedWebViews) func aSecondRegistrationForTheSameUserRetainsBothPasskeysAndRecordsLocalCreation() async throws {
         try await withFixture { fixture in
+            let firstStartedAt = Date()
             let first = try await create(fixture, User(), request: creation(challenge: "first", userID: Data([1, 2, 3]))).result
+            let firstFinishedAt = Date()
+            let secondStartedAt = Date()
             let second = try await create(fixture, User(), request: creation(challenge: "second", userID: Data([1, 2, 3]))).result
+            let secondFinishedAt = Date()
             let stored = try await passkeys(fixture)
 
             #expect(stored.count == 2)
             #expect(Set(stored.map(\.credentialID)) == [first.credentialID, second.credentialID])
-            for credentialID in [first.credentialID, second.credentialID] {
+            for (credentialID, start, end) in [
+                (first.credentialID, firstStartedAt, firstFinishedAt),
+                (second.credentialID, secondStartedAt, secondFinishedAt),
+            ] {
                 let passkey = try #require(stored.first { $0.credentialID == credentialID })
                 let record = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(passkey)) as? [String: Any])
+                let createdAt = try #require((record["createdAt"] as? NSNumber)?.doubleValue)
                 #expect(record["source"] as? String == "created")
-                #expect(record["createdAt"] is NSNumber)
+                #expect(createdAt >= start.timeIntervalSinceReferenceDate && createdAt <= end.timeIntervalSinceReferenceDate)
+                #expect(record["lastSignedAt"] == nil)
             }
         }
     }
@@ -689,13 +712,23 @@ struct WebsiteAuthenticatorCeremonyTests {
     @Test(.boundedWebViews) func assertionCancelledDeclinedStaleOrRemovedSignsNothing() async throws {
         try await withFixture { fixture in
             try await create(fixture, User())
+            let before = try fixture.bytes()
 
             let declined = User()
             declined.respond = { _ in .declined }
             await #expect(throws: WebsiteAuthenticatorError.self) { try await get(fixture, declined) }
+            #expect(try fixture.bytes() == before)
             let cancelled = User()
             cancelled.respond = { _ in .cancelled }
             await #expect(throws: CancellationError.self) { try await get(fixture, cancelled) }
+            #expect(try fixture.bytes() == before)
+
+            let cancelledDuringVerification = User()
+            cancelledDuringVerification.respond = { prompt in .approved(choice: prompt.choices[0].id) }
+            let assertion = Task { @MainActor in try await get(fixture, cancelledDuringVerification) }
+            cancelledDuringVerification.whileVerifying = { assertion.cancel() }
+            await #expect(throws: CancellationError.self) { _ = try await assertion.value }
+            #expect(try fixture.bytes() == before)
 
             // The passkey is deleted while the sheet is open.
             let epoch = try #require(fixture.manager.authorizationEpoch)

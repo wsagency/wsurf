@@ -192,7 +192,8 @@ struct CredentialSettingsTests {
         #expect(try bytes(draft.account()) == bytes(rich))
         #expect(draft.revision == 7)
     }
-    @Test func passkeyMetadataSurvivesSettingsEditingAndProvidesUniqueStableIdentifiers() async throws {
+
+    @Test func passkeyMetadataSurvivesSettingsEditing() async throws {
         let createdAt = Date(timeIntervalSince1970: 1_700_000_100)
         let lastSignedAt = Date(timeIntervalSince1970: 1_700_000_200)
         let first = try passkeyWithMetadata(
@@ -208,26 +209,6 @@ struct CredentialSettingsTests {
         try await withFixture { f in
             try await f.seed([stored])
             await f.model.load()
-            let summaries = try #require(f.model.summaries.first).passkeys
-            #expect(summaries.count == 2)
-            let reflected: [[String: Any]] = summaries.map {
-                Dictionary(uniqueKeysWithValues: Mirror(reflecting: $0).children.compactMap { child in
-                    guard let label = child.label else { return nil }
-                    return (label, child.value)
-                })
-            }
-            func date(_ value: Any?) -> Date? {
-                guard let value, let wrapped = Mirror(reflecting: value).children.first else { return nil }
-                return wrapped.value as? Date
-            }
-            #expect(reflected[0]["shortID"] as? String == "ABCD1")
-            #expect(reflected[1]["shortID"] as? String == "ABCD2")
-            #expect(String(describing: reflected[0]["source"]).contains("created"))
-            #expect(String(describing: reflected[1]["source"]).contains("imported"))
-            #expect(date(reflected[0]["createdAt"]) == createdAt)
-            #expect(date(reflected[0]["lastSignedAt"]) == lastSignedAt)
-            #expect(reflected[1]["createdAt"] == nil && reflected[1]["lastSignedAt"] == nil)
-
             try await f.model.beginEditing(accountID: stored.id)
             f.model.draft?.displayName = "Edited"
             _ = try await f.model.commitDraft()
@@ -243,6 +224,16 @@ struct CredentialSettingsTests {
                 #expect((record["lastSignedAt"] as? NSNumber)?.doubleValue == signing?.timeIntervalSinceReferenceDate)
             }
         }
+    }
+
+    @Test func legacyPasskeyJSONWithoutMetadataStillDecodes() throws {
+        let original = try passkey(3)
+        let legacyRecord = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        let decoded = try JSONDecoder().decode(
+            WebsitePasskey.self, from: JSONSerialization.data(withJSONObject: legacyRecord)
+        )
+        let reencoded = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(decoded)) as? [String: Any])
+        #expect(reencoded["source"] == nil && reencoded["createdAt"] == nil && reencoded["lastSignedAt"] == nil)
     }
 
     @Test func absentAndEmptyPasswordsSurviveAnUnrelatedEdit() async throws {

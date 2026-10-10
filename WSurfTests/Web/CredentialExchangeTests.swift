@@ -218,6 +218,7 @@ struct CredentialExchangeTests {
         let importedPasskey = try #require(importedAccount.passkeys.first)
         #expect(importedPasskey.credentialID == Data([0xC0, 0x01]))
         #expect(importedPasskey.rpID == "example.test")
+        #expect(importedPasskey.userHandle == Data([0x31, 0x32]))
         let importedRecord = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(importedPasskey)) as? [String: Any])
         #expect(importedRecord["source"] as? String == "imported")
         #expect(importedRecord["createdAt"] == nil, "a provider item timestamp is not the passkey creation time")
@@ -274,11 +275,15 @@ struct CredentialExchangeTests {
         #expect(exportedTOTP.algorithm == .sha512)
         #expect(exportedTOTP.issuer == "Example Issuer" && exportedTOTP.userName == "ada")
     }
-    @Test func replacingAnImportedPasskeyPreservesTheExistingLocalMetadata() throws {
+
+    @Test func replacingAPasskeyUsesIncomingKeyAndUnknownImportedHistory() throws {
         let oldKey = P256.Signing.PrivateKey()
         let oldInput = data(credentials: [passkey(key: try PasskeyKeyEncoding.exportPKCS8(oldKey))])
+        let existingPasskey = try #require(
+            CredentialExchangeCodec.preview(oldInput, against: snapshot([])).candidates.first?.passkeys.first
+        )
         var existingPasskeyJSON = try #require(JSONSerialization.jsonObject(
-            with: JSONEncoder().encode(try #require(CredentialExchangeCodec.preview(oldInput, against: snapshot([])).candidates.first?.passkeys.first))
+            with: JSONEncoder().encode(existingPasskey)
         ) as? [String: Any])
         let createdAt = Date(timeIntervalSince1970: 1_700_000_100)
         let lastSignedAt = Date(timeIntervalSince1970: 1_700_000_200)
@@ -305,9 +310,9 @@ struct CredentialExchangeTests {
         let updatedRecord = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(updated)) as? [String: Any])
 
         #expect(updated.credentialID == existingPasskey.credentialID)
-        #expect(updatedRecord["source"] as? String == "created")
-        #expect((updatedRecord["createdAt"] as? NSNumber)?.doubleValue == createdAt.timeIntervalSinceReferenceDate)
-        #expect((updatedRecord["lastSignedAt"] as? NSNumber)?.doubleValue == lastSignedAt.timeIntervalSinceReferenceDate)
+        #expect(updated.privateKeyPKCS8 != existingPasskey.privateKeyPKCS8)
+        #expect(updatedRecord["source"] as? String == "imported")
+        #expect(updatedRecord["createdAt"] == nil && updatedRecord["lastSignedAt"] == nil)
     }
 
     @Test func preservesProviderAndItemMetadataAndPrunesUnselectedCollectionLinks() throws {
