@@ -126,6 +126,9 @@ nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
     var backupEligible: Bool
     var backupState: Bool
     var exchangeFIDO2Metadata: Data?
+    var createdAt: Date? = nil
+    var source: WebsitePasskeySource? = nil
+    var lastSignedAt: Date? = nil
 
     func validate() throws {
         guard algorithm == -7,
@@ -146,6 +149,23 @@ nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
         if let metadata = exchangeFIDO2Metadata, metadata.count > CredentialVaultLimits.payloadBytes {
             throw CredentialVaultError.invalidData
         }
+    }
+}
+
+nonisolated enum WebsitePasskeySource: String, Codable, Sendable, Equatable {
+    case created
+    case imported
+}
+
+extension UUID {
+    nonisolated func shortestUniquePrefix(in identifiers: [UUID]) -> String {
+        let value = uuidString
+        var length = 4
+        while length < value.count,
+              identifiers.contains(where: { $0 != self && $0.uuidString.prefix(length) == value.prefix(length) }) {
+            length += 1
+        }
+        return String(value.prefix(length))
     }
 }
 

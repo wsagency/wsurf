@@ -4,16 +4,16 @@
 import AuthenticationServices
 import Foundation
 
-/// What a finished ceremony hands to page delivery: the result plus the exact vault state it was produced under, so the
-/// final dispatch can refuse a result whose authority or key material changed after it was made.
+/// What a finished ceremony hands to page delivery: the result plus the exact vault state it was checked against, so the
+/// final dispatch can refuse a result whose authority or key material changed after that check.
 nonisolated struct WebAuthnCeremonyOutcome: Sendable {
     let result: WebAuthnResult
     /// The vault authorization the ceremony ran under.
     let epoch: UInt64
-    /// The vault content generation the result was produced under: for an assertion the generation the key was read at,
-    /// for a registration the generation read after its own commit, proving the saved key is still in the vault.
+    /// The settled vault content generation: assertions are re-read after their signature-time metadata commit;
+    /// registrations are re-read after their creation commit, proving the saved key is still in the vault.
     let generation: UInt64
-    /// Registration: the saved revision. Non-nil means the passkey is saved whatever happens to delivery.
+    /// Registration only: the saved revision. Non-nil means the passkey is saved whatever happens to delivery.
     let savedRevision: UInt64?
     let rpID: String
     let userName: String
@@ -264,9 +264,8 @@ extension WebsiteAuthenticator {
               passkey == pick.passkey else {
             throw WebsiteAuthenticatorError.notAllowed
         }
-        // The last suspension is this one. Context and access are re-proved, then the vault content generation the key was
-        // read under must still be current, with no suspension between that check and the signature: a delete or edit that
-        // landed during the await changes the generation even though the access epoch does not.
+        // The selected key was authorized under this exact revision/generation. Only the resulting local signature
+        // advances its metadata; the receipt and a settled read prove the write before this outcome can be delivered.
         try await revalidate(request, context: context, manager: manager, bound: bound)
         guard manager.stableGeneration == current.generation else { throw WebsiteAuthenticatorError.notAllowed }
         let result = try makeAssertion(
@@ -275,8 +274,43 @@ extension WebsiteAuthenticator {
             passkey: passkey,
             consent: WebAuthnConsent(requestID: request.requestID, userPresent: true, userVerified: verified)
         )
+        let signatureAt = Date()
+        var updatedAccounts = current.accounts
+        guard let accountIndex = updatedAccounts.firstIndex(where: { $0.id == account.id }),
+              let passkeyIndex = updatedAccounts[accountIndex].passkeys.firstIndex(where: { $0.id == passkey.id }) else {
+            throw WebsiteAuthenticatorError.notAllowed
+        }
+        updatedAccounts[accountIndex].passkeys[passkeyIndex].lastSignedAt = signatureAt
+
+        try Task.checkCancellation()
+        try validateDeadline(request)
+        let commit = Task { @MainActor in
+            try await manager.commit(updatedAccounts, expectedRevision: current.revision, authorizedEpoch: bound.epoch)
+        }
+        let receipt: VaultCommitReceipt
+        do {
+            receipt = try await withTaskCancellationHandler { try await commit.value } onCancel: { commit.cancel() }
+        } catch {
+            throw vaultFailure(error)
+        }
+
+        try Task.checkCancellation()
+        try validateDeadline(request)
+        try await revalidate(request, context: context, manager: manager, bound: bound)
+        let settled = try await snapshot(manager, bound: bound)
+        guard settled.revision == receipt.revision,
+              let settledPasskey = settled.accounts
+                .first(where: { $0.id == account.id })?.passkeys.first(where: { $0.id == passkey.id }),
+              settledPasskey == updatedAccounts[accountIndex].passkeys[passkeyIndex],
+              settledPasskey.lastSignedAt == signatureAt,
+              manager.authorizationEpoch == bound.epoch,
+              manager.stableGeneration == settled.generation else {
+            throw WebsiteAuthenticatorError.notAllowed
+        }
+        try Task.checkCancellation()
+        try validateDeadline(request)
         return WebAuthnCeremonyOutcome(
-            result: result, epoch: bound.epoch, generation: current.generation,
+            result: result, epoch: bound.epoch, generation: settled.generation,
             savedRevision: nil, rpID: bound.rpID, userName: passkey.userName.displaySafe
         )
     }
@@ -510,13 +544,11 @@ extension WebsiteAuthenticator {
         return items.map { item in
             let group = groups[item.title + "\u{0}" + item.detail, default: []]
             guard group.count > 1 else { return WebAuthnPromptChoice(id: item.id, title: item.title, detail: item.detail) }
-            let full = item.id.uuidString
-            var length = 4
-            while length < full.count,
-                  group.contains(where: { $0 != item.id && $0.uuidString.prefix(length) == full.prefix(length) }) {
-                length += 1
-            }
-            return WebAuthnPromptChoice(id: item.id, title: item.title, detail: item.detail + " · #" + full.prefix(length))
+            return WebAuthnPromptChoice(
+                id: item.id,
+                title: item.title,
+                detail: item.detail + " · #" + item.id.shortestUniquePrefix(in: group)
+            )
         }
     }
 }

@@ -7,6 +7,12 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-11 — Website passkey metadata and Settings
+
+Website passkeys now retain optional creation time, local creation/import provenance, and last local signature time in the encrypted vault. Imported passkeys have unknown creation time; local signature time is recorded only after a revision-authorized vault commit. Credential Settings shows unknown values honestly and removes a specific passkey only after identifier-bearing confirmation and the existing draft Save.
+
+Same-relying-party/same-user-handle registrations retain both passkeys by design; this retention policy is not a claim of WebAuthn duplicate-credential conformance. `excludeCredentials` remains enforced. Hosted verification and native acceptance are pending.
+
 ### 2026-10-10 — Credential Manager in source
 
 Implemented in source, not released, and not natively accepted: an opt-in

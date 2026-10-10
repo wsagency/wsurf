@@ -226,6 +226,26 @@ struct CredentialSettingsTests {
         }
     }
 
+    @Test func passkeySummariesExposeMetadataAndDistinctStableIdentifiers() throws {
+        let createdAt = Date(timeIntervalSince1970: 1_700_000_100)
+        let signedAt = Date(timeIntervalSince1970: 1_700_000_200)
+        let first = try passkeyWithMetadata(
+            passkey(1, id: UUID(uuidString: "ABCD1000-0000-4000-8000-000000000001")!),
+            source: "created", createdAt: createdAt, lastSignedAt: signedAt
+        )
+        let second = try passkeyWithMetadata(
+            passkey(2, id: UUID(uuidString: "ABCD2000-0000-4000-8000-000000000002")!),
+            source: "imported", createdAt: nil, lastSignedAt: nil
+        )
+
+        let summaries = CredentialSummary(account("ada", passkeys: [first, second])).passkeys
+        #expect(summaries.map(\.shortID) == ["ABCD1", "ABCD2"])
+        #expect(summaries[0].createdAt == createdAt && summaries[0].source == .created)
+        #expect(summaries[0].lastSignedAt == signedAt)
+        #expect(summaries[1].createdAt == nil && summaries[1].source == .imported)
+        #expect(summaries[1].lastSignedAt == nil)
+    }
+
     @Test func legacyPasskeyJSONWithoutMetadataStillDecodes() throws {
         let original = try passkey(3)
         let legacyRecord = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])

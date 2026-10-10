@@ -675,9 +675,14 @@ struct WebsiteAuthenticatorCeremonyTests {
 
             let cancelledDuringVerification = User()
             cancelledDuringVerification.respond = { prompt in .approved(choice: prompt.choices[0].id) }
-            let assertion = Task { @MainActor in try await get(fixture, cancelledDuringVerification) }
-            cancelledDuringVerification.whileVerifying = { assertion.cancel() }
-            await #expect(throws: CancellationError.self) { _ = try await assertion.value }
+            let ceremony = Task { @MainActor in
+                try await get(fixture, cancelledDuringVerification, request: assertion(userVerification: .required))
+            }
+            cancelledDuringVerification.whileVerifying = { ceremony.cancel() }
+            await #expect(throws: CancellationError.self) {
+                _ = try await ceremony.value
+            }
+            #expect(cancelledDuringVerification.verifications == 1)
             #expect(try fixture.bytes() == before)
 
             // The passkey is deleted while the sheet is open.
@@ -987,7 +992,7 @@ extension WebsiteAuthenticatorCeremonyTests {
             // The signature is bound to the vault state it was read under, so the final dispatch can refuse it if that moved.
             #expect(outcome.epoch == fixture.manager.authorizationEpoch)
             #expect(outcome.generation == fixture.manager.stableGeneration)
-            #expect(outcome.savedRevision == afterSnapshot.revision && outcome.rpID == rpID)
+            #expect(outcome.savedRevision == nil && outcome.rpID == rpID)
         }
     }
 }

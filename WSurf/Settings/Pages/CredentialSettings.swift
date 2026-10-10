@@ -479,7 +479,7 @@ private struct CredentialEditorSheet: View {
     @State private var totpInput = ""
     @State private var totpError: String?
     @State private var isSaving = false
-    @State private var saving: Task<Void, Never>?
+    @State private var pendingPasskeyRemoval: PasskeySummary?
 
     var body: some View {
         if let draft = model.draft {
@@ -532,6 +532,22 @@ private struct CredentialEditorSheet: View {
             .padding(24)
             .frame(width: 520)
             .onDisappear { totpInput = ""; saving?.cancel() }
+            .confirmationDialog(
+                "Remove Passkey?",
+                isPresented: Binding(
+                    get: { pendingPasskeyRemoval != nil },
+                    set: { if !$0 { pendingPasskeyRemoval = nil } }
+                ),
+                presenting: pendingPasskeyRemoval
+            ) { passkey in
+                Button("Remove Passkey", role: .destructive) {
+                    model.draft?.removePasskey(passkey.id)
+                    pendingPasskeyRemoval = nil
+                }
+                Button("Cancel", role: .cancel) { pendingPasskeyRemoval = nil }
+            } message: { passkey in
+                Text("Remove passkey #\(passkey.shortID) for \(passkey.rpID) from this credential? Save to apply this change.")
+            }
         }
     }
 
@@ -574,14 +590,34 @@ private struct CredentialEditorSheet: View {
                 Text("Passkeys").font(Theme.Font.rowTitle)
                 ForEach(draft.passkeySummaries) { passkey in
                     HStack {
-                        Text(verbatim: "\(passkey.rpID) · \(passkey.userName)").foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(verbatim: "\(passkey.rpID) · \(passkey.userName) · #\(passkey.shortID)")
+                            Text(verbatim: passkeyMetadata(passkey))
+                                .foregroundStyle(.secondary)
+                        }
                         Spacer()
-                        Button("Remove", role: .destructive) { model.draft?.removePasskey(passkey.id) }
-                            .accessibilityLabel("Remove passkey for \(passkey.rpID)")
+                        Button("Remove", role: .destructive) { pendingPasskeyRemoval = passkey }
+                            .accessibilityLabel("Remove passkey #\(passkey.shortID) for \(passkey.rpID)")
                     }
                 }
             }
         }
+    }
+
+    private func passkeyMetadata(_ passkey: PasskeySummary) -> String {
+        let source: String
+        switch passkey.source {
+        case .created: source = String(localized: "Created here")
+        case .imported: source = String(localized: "Imported")
+        case nil: source = String(localized: "Source unknown")
+        }
+        let created = passkey.createdAt.map {
+            String(localized: "Created \($0.formatted(date: .abbreviated, time: .shortened))")
+        } ?? String(localized: "Creation date unknown")
+        let signed = passkey.lastSignedAt.map {
+            String(localized: "Last signed \($0.formatted(date: .abbreviated, time: .shortened))")
+        } ?? String(localized: "No local signature recorded")
+        return [source, created, signed].joined(separator: " · ")
     }
 
     private func text(_ keyPath: WritableKeyPath<CredentialDraft, String>) -> Binding<String> {

@@ -10,8 +10,22 @@ import Observation
 
 nonisolated struct PasskeySummary: Identifiable, Equatable, Sendable {
     let id: UUID
+    let shortID: String
     let rpID: String
     let userName: String
+    let createdAt: Date?
+    let source: WebsitePasskeySource?
+    let lastSignedAt: Date?
+
+    init(_ passkey: WebsitePasskey, identifiers: [UUID]) {
+        id = passkey.id
+        shortID = passkey.id.shortestUniquePrefix(in: identifiers)
+        rpID = passkey.rpID
+        userName = passkey.userName
+        createdAt = passkey.createdAt
+        source = passkey.source
+        lastSignedAt = passkey.lastSignedAt
+    }
 }
 
 /// Everything a row needs and nothing secret: passwords, TOTP seeds and passkey keys never leave the vault
@@ -37,7 +51,8 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
         hasPassword = account.password != nil
         hasLogin = account.password != nil || account.basicAuthenticationMetadata != nil || !account.username.isEmpty
         hasTOTP = account.totp != nil
-        passkeys = account.passkeys.map { PasskeySummary(id: $0.id, rpID: $0.rpID, userName: $0.userName) }
+        let passkeyIDs = account.passkeys.map(\.id)
+        passkeys = account.passkeys.map { PasskeySummary($0, identifiers: passkeyIDs) }
     }
 
     /// What a row, a removal prompt or an import review calls this credential. An empty imported title counts as none.
@@ -114,7 +129,8 @@ nonisolated struct CredentialDraft: Sendable {
     }
 
     var passkeySummaries: [PasskeySummary] {
-        passkeys.map { PasskeySummary(id: $0.id, rpID: $0.rpID, userName: $0.userName) }
+        let passkeyIDs = passkeys.map(\.id)
+        return passkeys.map { PasskeySummary($0, identifiers: passkeyIDs) }
     }
 
     mutating func removePasskey(_ id: UUID) {

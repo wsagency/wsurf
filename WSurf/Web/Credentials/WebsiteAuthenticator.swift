@@ -167,7 +167,9 @@ nonisolated enum WebsiteAuthenticator {
             privateKeyPKCS8: privateKeyPKCS8,
             backupEligible: true,
             backupState: false,
-            exchangeFIDO2Metadata: nil
+            exchangeFIDO2Metadata: nil,
+            createdAt: Date(),
+            source: .created
         )
         try passkey.validate()
 
