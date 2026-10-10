@@ -261,6 +261,7 @@ extension BrowserTab {
         PaymentCardAutofill.shared.install(in: view)
         ContactAutofill.shared.install(in: view)
         PasswordAutofill.shared.install(in: view)
+        WebAuthnAdapter.install(in: view)
         AutofillSaveCoordinator.shared.install(in: view, session: autofillSave)
         installPageObservations(for: view)
         installPermissionCallbacks(for: view)

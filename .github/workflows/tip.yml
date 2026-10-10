@@ -122,6 +122,7 @@ jobs:
           CERTIFICATE_P12: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12 }}
           CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
           PROVISIONING_PROFILE: ${{ secrets.DEVELOPER_ID_PROVISIONING_PROFILE }}
+          EXCHANGE_PROVISIONING_PROFILE: ${{ secrets.DEVELOPER_ID_CREDENTIAL_EXCHANGE_PROVISIONING_PROFILE }}
           AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
           AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
           AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
@@ -129,8 +130,8 @@ jobs:
           WSURF_SPARKLE_PUBLIC_KEY: ${{ secrets.WSURF_SPARKLE_PUBLIC_KEY }}
         run: |
           for name in CERTIFICATE_P12 CERTIFICATE_PASSWORD PROVISIONING_PROFILE \
-            AC_API_KEY_P8 AC_API_KEY_ID AC_API_ISSUER_ID WSURF_SPARKLE_PRIVATE_KEY \
-            WSURF_SPARKLE_PUBLIC_KEY; do
+            EXCHANGE_PROVISIONING_PROFILE AC_API_KEY_P8 AC_API_KEY_ID AC_API_ISSUER_ID \
+            WSURF_SPARKLE_PRIVATE_KEY WSURF_SPARKLE_PUBLIC_KEY; do
             if [ -z "${!name:-}" ]; then
               echo "::error::Missing own preview credential $name. Configure the release environment; no unsigned or upstream-signed preview is published."
               exit 1
@@ -162,9 +163,14 @@ jobs:
       - name: Install provisioning profile
         env:
           PROVISIONING_PROFILE: ${{ secrets.DEVELOPER_ID_PROVISIONING_PROFILE }}
+          EXCHANGE_PROVISIONING_PROFILE: ${{ secrets.DEVELOPER_ID_CREDENTIAL_EXCHANGE_PROVISIONING_PROFILE }}
         run: |
           if [ -z "$PROVISIONING_PROFILE" ]; then
             echo "::error::DEVELOPER_ID_PROVISIONING_PROFILE is not set. See RELEASING.md."
+            exit 1
+          fi
+          if [ -z "$EXCHANGE_PROVISIONING_PROFILE" ]; then
+            echo "::error::DEVELOPER_ID_CREDENTIAL_EXCHANGE_PROVISIONING_PROFILE is not set. See RELEASING.md."
             exit 1
           fi
 
@@ -172,9 +178,26 @@ jobs:
           mkdir -p "$DIR"
           PROFILE="$DIR/$APP.provisionprofile"
           echo "$PROVISIONING_PROFILE" | base64 --decode > "$PROFILE"
+          EXCHANGE_PROFILE="$DIR/$APP-CredentialExchange.provisionprofile"
+          echo "$EXCHANGE_PROVISIONING_PROFILE" | base64 --decode > "$EXCHANGE_PROFILE"
 
           NAME="$(security cms -D -i "$PROFILE" | plutil -extract Name raw -o - -)"
+          EXCHANGE_NAME="$(security cms -D -i "$EXCHANGE_PROFILE" | plutil -extract Name raw -o - -)"
+          # The names go unescaped into the ExportOptions plist below.
+          case "$NAME" in
+            *'&'*|*'<'*|*'>'*)
+              echo "::error::The host provisioning profile name contains &, < or >. Rename it in the portal."
+              exit 1
+              ;;
+          esac
+          case "$EXCHANGE_NAME" in
+            *'&'*|*'<'*|*'>'*)
+              echo "::error::The credential exchange provisioning profile name contains &, < or >. Rename it in the portal."
+              exit 1
+              ;;
+          esac
           echo "PROFILE_NAME=$NAME" >> "$GITHUB_ENV"
+          echo "EXCHANGE_PROFILE_NAME=$EXCHANGE_NAME" >> "$GITHUB_ENV"
 
       - name: Archive
         run: |
@@ -191,6 +214,7 @@ jobs:
             CODE_SIGN_IDENTITY="Developer ID Application" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
             WSURF_PROFILE="$PROFILE_NAME" \
+            WSURF_EXCHANGE_PROFILE="$EXCHANGE_PROFILE_NAME" \
             OTHER_CODE_SIGN_FLAGS="--timestamp"
 
       - name: Export
@@ -210,6 +234,7 @@ jobs:
             <key>provisioningProfiles</key>
             <dict>
               <key>io.wsagency.wsurf</key><string>$PROFILE_NAME</string>
+              <key>io.wsagency.wsurf.CredentialExchange</key><string>$EXCHANGE_PROFILE_NAME</string>
             </dict>
           </dict>
           </plist>
@@ -222,10 +247,44 @@ jobs:
 
           codesign --verify --deep --strict --verbose=2 "build/export/$APP.app"
 
-          if [ ! -f "build/export/$APP.app/Contents/embedded.provisionprofile" ]; then
-            echo "::error::No embedded profile. Gatekeeper will refuse to launch the app."
-            exit 1
-          fi
+          # The host app and the exchange extension each need the profile and
+          # the credential-provider entitlement, signed and granted, as true.
+          CRED_KEY='com\.apple\.developer\.authentication-services\.autofill-credential-provider'
+          for BUNDLE in "build/export/$APP.app" "build/export/$APP.app/Contents/PlugIns/WSurfCredentialExchange.appex"; do
+            if [ ! -f "$BUNDLE/Contents/embedded.provisionprofile" ]; then
+              echo "::error::No embedded profile in $BUNDLE. Gatekeeper will refuse to launch it."
+              exit 1
+            fi
+            SIGNED="$(codesign -d --entitlements - --xml "$BUNDLE" 2>/dev/null \
+              | plutil -extract "$CRED_KEY" raw -o - - 2>/dev/null || true)"
+            if [ "$SIGNED" != "true" ]; then
+              echo "::error::The signed entitlements of $BUNDLE do not grant the credential provider."
+              exit 1
+            fi
+            GRANTED="$(security cms -D -i "$BUNDLE/Contents/embedded.provisionprofile" 2>/dev/null \
+              | plutil -extract "Entitlements.$CRED_KEY" raw -o - - 2>/dev/null || true)"
+            if [ "$GRANTED" != "true" ]; then
+              echo "::error::The embedded profile of $BUNDLE does not grant the credential provider."
+              exit 1
+            fi
+          done
+          # Associated domains, host app only: the signed entitlement must list
+          # the exact domain; the profile may grant "*", the domain or
+          # `webcredentials:*`, as a string or an array. Anything else fails.
+          python3 - <(codesign -d --entitlements - --xml "build/export/$APP.app" 2>/dev/null) \
+            <(security cms -D -i "build/export/$APP.app/Contents/embedded.provisionprofile" 2>/dev/null) <<'PY' \
+            || { echo "::error::The app's associated domains are not signed for, or not granted by, webcredentials:wsurf.app."; exit 1; }
+          import plistlib, sys
+          KEY, DOMAIN = "com.apple.developer.associated-domains", "webcredentials:wsurf.app"
+          signed = plistlib.loads(open(sys.argv[1], "rb").read()).get(KEY)
+          granted = plistlib.loads(open(sys.argv[2], "rb").read()).get("Entitlements", {}).get(KEY)
+          if isinstance(granted, str):
+              granted = [granted]
+          ok = isinstance(signed, list) and all(isinstance(d, str) for d in signed) and DOMAIN in signed
+          ok = ok and isinstance(granted, list) and all(isinstance(g, str) for g in granted)
+          ok = ok and any(g in ("*", DOMAIN, "webcredentials:*") for g in granted)
+          sys.exit(0 if ok else 1)
+          PY
           codesign -d --entitlements - --xml "build/export/$APP.app" 2>/dev/null \
             | plutil -extract keychain-access-groups raw -o - - > /dev/null 2>&1 \
             || { echo "::error::keychain-access-groups is missing: API keys cannot be saved."; exit 1; }

@@ -553,6 +553,8 @@ final class ChromiumPage: NSView {
     }
 
     func didTerminate() {
+        // The renderer's documents and execution contexts are gone; no DevTools event reports it.
+        owner?.invalidateCredentialContexts()
         owner?.onContentProcessTerminated?()
     }
     func didChangeTitle() {

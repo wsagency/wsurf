@@ -1,0 +1,66 @@
+# Current-main credential integration
+
+> Execution continues with subagent-driven-development under Main orchestration; this is the current-main integration appendix to the approved credential plan, not a new product design.
+
+**Goal:** Carry only the approved credential feature onto latest merged main without reverting multiwindow, profile, CEF or Stage isolation work.
+
+**Spec:** [`docs/superpowers/specs/2026-10-05-profile-credential-manager-design.md`](../specs/2026-10-05-profile-credential-manager-design.md) (base version reconciled with the binding 2026-10-09 direction; main had made no spec change since the old baseline)
+
+**Parent plan:** [`docs/superpowers/plans/2026-10-06-profile-credential-manager.md`](2026-10-06-profile-credential-manager.md), carried into this tree. The old baseline worktree `/Users/klukacin/projects/wsurf/.worktrees/profile-credentials-20261006` (`feat/profile-credentials-20261006`, base `9606f9d4`) is historical and frozen.
+
+**Status:** Source port implemented; the whole app, appex and tests compile. NOT natively accepted, NOT released and NOT merge-ready. Worktree `/Users/klukacin/projects/wsurf/.worktrees/credentials-integration-20261010` on `feature/credentials-integration-20261010`, from `origin/main` fb7b91c2c5f5dbf523649c0a384ff8ae8b2684bc fetched 2026-10-10 01:26Z (a fetch-time base, not asserted to be the latest remote head now). In source: the credential core, exchange and settings model with tests; the app extension target and project/Info.plist entries; profile-switch, profile-erase and termination lock/retire hooks; the per-profile password-provider setting and Autofill settings destination; exchange activity routing (queued only until the user reviews it) with owner-aware ownership; the producer/consumer WebAuthn and Autofill ports, BFCache root handling and `BrowserProfileContext` provider wiring; and the stale-authorization guard (`CredentialManager.commit` and `updatePasswordSavePolicy` require the epoch authorized at decision time and refuse with `unauthorized` after lock and re-unlock).
+
+**Current evidence (Pro unless noted; receipts are in the matching `.build/` directories on Pro, and the logs on Air):**
+
+| Gate | Result | Receipt (sha256) |
+|---|---|---|
+| Joined 17-suite run, final4 | 378 tests / 17 suites PASS, rc 0 | `credentials-joined-final4-20261010/run.log` `0dcf52d7cc6afcd02a9f356b35eb25c06cc6f735ab5dc9350964dc1e558ca02e` |
+| Pinned strict SwiftLint 0.65.1 (full Xcode), joined5 | rc 0 | `credentials-lint-joined5-20261010/lint.log` `f104c4fc2f725830a47f712bf2311492ff2cc5fbe12a8a2f48b1f56685f80d61` |
+| Built-module CLI smoke (`@testable import WSurf`, linked against the final4 `WSurf.debug.dylib`, module `CredentialStoreSmoke`) | 18 Swift checks (prepare 1 + verify 17) and 4 OpenSSL checks PASS, verify rc 0; the exact final4 dylib was confirmed loaded at run time | Swift log `30b4519dde17f59a52f5454d34ffc45340379bbc9e641b1b0c11d32092d3207f`; OpenSSL `b920d4fca62917d1da6adff861417536a10e862a99cd57df7d62dea5cda2e658`; dylib `5bd6b764d8d488ca8665cd7b659dca788283e3b2735353a7f51c271851da8e69`; module `c4b7c184724d39ef1305b2cd5ca3eb04787e9de223c1fd68550e51738e652523` |
+| Pre-ack controlled RED then GREEN | RED, then GREEN2 | RED `8e3529f6e30648eef2409476a664677099b5ed8e14b13e9b8565b8121a2443ee`; GREEN2 `3a80d170be9d06e9fde3c42c7b3c7353c10980deae1e9adfa8484da9a3aeb477` (`run.log` in `credentials-preack-controlled-red-20261010` / `-green2-20261010`) |
+
+The smoke covers a synthetic password, ES256 passkey and TOTP: encrypted save, a separate-process prepare/reopen, Codec export and preview into an empty destination then apply with every credential field preserved byte for byte, and independent CryptoKit and OpenSSL ES256 signature verification with tamper rejection. It uses no UI, NSApp, provider, default store or network. Only C module-map `-Xcc` flags were added after the compiler asked for them. Earlier "source smoke" runs never proved module loading, and the shim/source-subset smoke is NOT accepted proof; the older store smoke (46 checks) and the earlier 149-test core run are historical component evidence only.
+
+**Source manifest:** 801-path compiler manifest `e86d162c7184d9b975e3c67cced5b8ac2f43faef5b18bb59e7669a5304459549`; pre-doc candidate-90 manifest `36fcc03a161f20c0419cb70ec4a546ceabdc6d92d6955a8fb7c9dd0e08e8d725`. Both matched on Air and Pro before and after the final4 and lint5 runs.
+
+**Pre-ack root cause:** the main document can change URL between nonce issuance and the acknowledgement while its same non-nil native navigation binding is unchanged (including an already committed navigation), so the earlier exact-URL check refused a legitimate state. The fix accepts that case for the main frame only; the child-frame and nil-navigation exact checks are retained. Escaped-policy deny, stale resume, native back/forward and MCP regressions passed. The resource-only back/forward gate (`.requiresBackForwardCache`, paired with `.boundedWebViews`) reserves all bounded WebView slots; it is not whole-suite serialization.
+
+**Lint:** initial 484 error-severity violations in 45 files and 162 file+rule groups against base 0 (base `fb7b91c2c5f5dbf523649c0a384ff8ae8b2684bc`), current 0 under the same pinned SwiftLint 0.65.1 strict gate (full Xcode on Pro). No rule, threshold or exclusion was weakened (`.swiftlint.yml` only gains `WSurfCredentialExchange` in `included`); no tests were skipped, deleted or serialized; some private/internal helpers were moved or restructured for style, and the temporary diagnostic prints were removed.
+
+**Independent reviews:** cross-owner source reviews report no Critical or Important findings. They were source-only and in part line-limited; they are not a security certification and not PR approval.
+
+**Source-traced, not exercised:** both the manager branch and the legacy/card/contact branch of `AutofillSuggestions.fill` run `requireAuthority` inside the `prepare` closure, with no suspension before the engine send; no automated test drives `fill` (private, reachable only through an NSPanel with https and system authentication), so this is not full fill or UI proof. Autofill and save consumers also require `hasTrustedSecurityOrigin`, matching WebAuthn; native opaque-frame and TLS flows are unvalidated.
+
+**Source-status limits:** removing an unlock passkey drops its wrapper from the current manifest but does not rotate the vault data key; a removed passkey holding an older envelope can still decrypt later envelopes of the same vault. This is documented, not rotation. No anti-rollback, fsync/power-loss durability or cross-process guarantee is claimed.
+
+**Known source limits (unchanged or unverified):** the inherited 256 child-document Target cap and same-URL ambiguity fail closed. Baseline pointer eviction appears ineffective from the WebKit source; installed-runtime equality was not probed empirically. A prompt stays on its original window after a tab move, lock dropdown titles can linger until validation, and actual focus, accessibility and user-presence/user-verification behavior are unverified.
+
+**Historical receipts (not current proof):** the earlier M3 stale-epoch RED/GREEN (`credentials-current-main-red2-20261010` / `-green` logs) and the single-test process-termination RED (rc 65) then GREEN were run on frozen earlier manifests; the termination compile-failure attempt was not a RED. They are superseded by the final4 run above.
+
+**Remaining gates (none accepted):** native UI and Stage (Settings keyboard/VoiceOver, Stage restart); real PRF and Touch ID with UP/UV; six real Apple Passwords transfers, system-token, provider and provisioning-profile eligibility; peer reconciliation (Mail auth unavailable; no agreed merge); full repository CI, review and PR gates.
+
+## Global constraints
+
+Preserve legacy SavedPassword/SecureAutofillVault/settings/autofill/data and default provider; separate explicitly selected encrypted manager. Native PRF and six Apple transfers remain late gates. No fake production keys/fallback. No UI/Stage launch while task control remains declined. No main checkout edits, branch switch in shared worktree, stash/reset, wholesale old-branch merge, commit/push/release/deploy. Preserve all dirty source and existing Pro output. Peer reconciliation remains blocked by Mail auth, not assumed agreed.
+
+## Review focus
+
+Native originating page.context owns profile/settings/provider; no active-window/global-profile substitution. Same-profile windows share one vault; other profiles and private contexts cannot access it. Lifecycle cancellation must reach retired pages and affected vaults without returning to global single-window architecture. Native document identity and effective policy remain authoritative after all awaits. Keep merged StageMode per-home identity/defaults/WebKit/MCP isolation. Import destination/profile and in-flight exchange state must not silently follow focus changes.
+
+## Sequence
+
+- [x] Freeze complete Task9 Registry/context/driver and consumer relay contract, including unchanged dependencies; runner verifies one 72-path-or-expanded current manifest. Run the exact observed RED7 method once after the correction; compilation/setup failures are not GREEN. Preserve baseline MCP no-WebAuthn BFCache main+HTTP-child behavior, stale-resume refusal and retirement cleanup.
+- [x] Complete Task10 privacy/error/concurrency corrections and read-only review; distinguish synthetic tests from real UP/UV.
+- [x] Main authorizes fresh dedicated feature/<short-name> integration worktree based on newly fetched origin/main. Record exact base and owned Air/Pro paths; preserve old Air canonical candidate and Pro build mirror. Do not reuse another worktree's build directories. This task is source integration, not PR merge.
+- [x] Inventory credential-owned new files and semantic deltas against the approved parent baseline 9606f9d4d14669798049f32c37aa8f8beab7e2c8 and frozen candidate; exclude unrelated historical pin/test repairs. Do not copy old shared files wholesale. Query LSP references before symbol/interface changes.
+- [x] Port independent credential models/crypto/TOTP/exchange codecs and extension target onto current main. Preserve main deployment floor and SDK availability. Native provider registration remains unproved.
+- [x] Native owner ports BrowserPage/BrowserFrame/PageFrameRegistry/PageDriver/WebAuthnContext, lifecycle delegates and CEF effective-policy/final-dispatch checks; preserve current-main window/context ownership and transport. Consumer owner ports Task8 autofill and Task10/11 ceremony/relay/adapters using page.context.profile/settings and existing main conventions. No shared-file concurrent edits. (Source port and independent source review complete; native acceptance remains gated below.)
+- [x] Main owns lifecycle/settings/activity/project integration: reuse BrowserProfileContext.shared(for:), BrowserApplication.coordinator(for:), per-window AppCoordinator and Settings context. Shared per-profile CredentialManager must not depend on global active profile. Hook lock/retire/delete/termination at the actual new ownership boundaries; keep legacy paths intact. Existing BrowserApplication.activeCoordinator has fallback and is not foreground evidence. Resolve native foreground policy from current-main APIs; never guess NSApp key-window timing around sheets.
+- [x] Freeze complete current-main candidate, sync only owned sources to owned Pro integration worktree, use local DerivedData/SourcePackages. Run focused changed-path checks, relevant profile/window/legacy/MCP regressions, then one combined required gate with external stall sampling. Capture exact logs/source manifest. No repeated green hunting or whole-suite serialization. (Done: manifest801 freeze, final4 378/17 PASS, lint5 rc 0, regressions passed; no whole-suite serialization.)
+- [x] Run an actual-source synthetic smoke of the ported store/codec/ceremony boundaries. Real Settings/Stage restart/WebAuthn/PRF/six transfer acceptance remains blocked until fresh interactive approval; report each unperformed gate separately. Update docs/changelog only after exercised proof and remove throwaway scaffolding. (Done against the built module: 18 Swift + 4 OpenSSL checks; this is synthetic, not native acceptance.)
+- [x] Independent source reviews (no Critical/Important; source-only, partial line review).
+- [ ] Native acceptance (UI/Stage, real PRF/Touch ID, six Apple transfers, provider/provisioning eligibility) and the full repository CI gates required before merge. Integration into main happens only through a reviewed PR after the required CI and native gates pass; a PR may be opened for review earlier, and this appendix authorizes no commit, push, PR or deployment.
+
+## Known merged contracts
+
+PR #8 (30069a194562057d65a2c56daaf72b4578eb5a2a) introduced BrowserApplication, BrowserProfileContext and per-context autofill. PR #10 (350de9362d09d7115517dfec865db08ae6121ae6) preserves password/payment/autofill vaults while fixing classic provider Keychain scope and per-home Stage isolation. PR #11 modifies BrowserTab/engine presentation. Revalidate remote main before any future PR integration; these references are not asserted latest remote HEAD.

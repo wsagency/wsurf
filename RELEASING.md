@@ -95,13 +95,20 @@ signs with `--timestamp`.
 
 ## One-time: the provisioning profile
 
-`WSurf/WSurf.entitlements` declares two restricted entitlements. Provider API
+`WSurf/WSurf.entitlements` declares restricted entitlements. Provider API
 keys, MCP authorization tokens, and OAuth credentials use the encrypted
 classic Keychain, with migration for legacy Data Protection Keychain entries.
 The `keychain-access-groups` entitlement remains required for the separate Data
 Protection Keychain used by the password/autofill/payment vaults and for legacy
 migration. The app also lets a website use a passkey, so the file declares
-`com.apple.developer.web-browser.public-key-credential`. A Developer ID
+`com.apple.developer.web-browser.public-key-credential`, which stays declared and
+is not stripped. The opt-in Credential Manager, WSurf's own store and relying
+party, and its exchange extension use separate standard entitlements:
+`com.apple.developer.associated-domains` (`webcredentials:wsurf.app`, see the
+README's website section for the AASA team identity) and
+`com.apple.developer.authentication-services.autofill-credential-provider`, on
+both the app and the extension. None of that is managed browser approval; do not
+claim the new store, own relying party, or exchange needs it. A Developer ID
 signature can only carry a restricted entitlement when an embedded profile
 authorizes it. Gatekeeper refuses to launch an app that declares an entitlement
 without the profile.
@@ -109,7 +116,8 @@ without the profile.
 Once, in the Apple Developer portal:
 
 1. Open Certificates, Identifiers & Profiles › Identifiers.
-2. Select the `io.wsagency.wsurf` App ID, or register it.
+2. Select the `io.wsagency.wsurf` App ID, or register it. Also enable Associated
+   Domains and the credential provider capability on it.
 3. Enable the Web Browser Public Key Credential Requests capability. Apple
    assigns this capability to the account. You must also enable it on the
    App ID. This managed browser capability requires organization Account Holder
@@ -121,8 +129,10 @@ Once, in the Apple Developer portal:
 7. Give the profile a name, for example `WSurf Developer ID`. Do not use the
    characters `&`, `<` or `>`. The export step puts the name in a plist.
 8. Download the profile as `WSurf.provisionprofile`.
-9. Run this command. The output must contain `keychain-access-groups` and
-   `com.apple.developer.web-browser.public-key-credential`:
+9. Run this command. The output must contain `keychain-access-groups`,
+   `com.apple.developer.web-browser.public-key-credential`,
+   `com.apple.developer.associated-domains`, and
+   `com.apple.developer.authentication-services.autofill-credential-provider`:
 
    ```bash
    security cms -D -i WSurf.provisionprofile | plutil -extract Entitlements xml1 -o - -
@@ -138,6 +148,35 @@ fails at the provisioning step until you do.
 Make the profile again when it expires, and when you add a restricted
 entitlement. The release then fails at the Install provisioning profile step,
 and at the checks after the export.
+
+## One-time: the credential exchange profile
+
+`WSurfCredentialExchange` is embedded at
+`Contents/PlugIns/WSurfCredentialExchange.appex` with its own bundle ID,
+`io.wsagency.wsurf.CredentialExchange`, and needs its own profile with the
+provider grant. It is exchange-only: `ProvidesPasswords`, `ProvidesPasskeys`,
+and `ProvidesOneTimeCodes` are false, `SupportsCredentialExchange` is true, and
+it publishes no identities and shares no store with the app.
+
+No portal, App ID, or profile change has been made for this source feature. Once,
+in the portal:
+
+1. Register the `io.wsagency.wsurf.CredentialExchange` App ID with the credential
+   provider capability.
+2. Make a Developer ID profile for it with your Developer ID Application
+   certificate. Do not use `&`, `<` or `>` in the name. Download it as
+   `WSurf-CredentialExchange.provisionprofile`.
+3. Run the command from the previous section. The output must contain
+   `com.apple.developer.authentication-services.autofill-credential-provider`.
+4. Put the profile in the `DEVELOPER_ID_CREDENTIAL_EXCHANGE_PROVISIONING_PROFILE`
+   secret below. Regenerate the app profile after the App ID changes.
+
+The two profile names reach the build as two target build settings:
+`WSURF_PROFILE` for the app and `WSURF_EXCHANGE_PROFILE` for the extension. A
+native manual debug build passes the same two. Do not use
+`-allowProvisioningUpdates`, change the global `xcode-select`, or export a key.
+Native profile and configuration checks, and Apple's participation in the
+credential exchange, are separate blockers; neither has been verified.
 
 ## One-time: who can release
 
@@ -160,7 +199,7 @@ that runs from an approved ref can read them.
    the tag. A preview build comes from the branch, because `workflow_run` runs
    from `main` and not from a tag. With no branch in the list, each preview
    build fails when it asks for the certificate.
-6. Add the seven secrets from the next section as environment secrets.
+6. Add the nine secrets from the next section as environment secrets.
 
 Do not add a required reviewer. A reviewer stops the release until you come
 back and approve it, and stops each preview build the same way. The tag ruleset
@@ -187,7 +226,7 @@ ruleset is what stops the commit getting to `main`.
 
 ## One-time: the release secrets
 
-`.github/workflows/release.yml` needs eight secrets. Add them to the `release`
+`.github/workflows/release.yml` needs nine secrets. Add them to the `release`
 environment, in Settings › Environments › release › Environment secrets. Do not
 add them in Settings › Secrets and variables › Actions: a repository secret is
 available to every workflow run, with no approval:
@@ -197,6 +236,7 @@ available to every workflow run, with no approval:
 | `DEVELOPER_ID_CERTIFICATE_P12` | The `.p12` file from the certificate section above. Run `base64 -i cert.p12 \| pbcopy` |
 | `DEVELOPER_ID_CERTIFICATE_PASSWORD` | The password that you set on the `.p12` file |
 | `DEVELOPER_ID_PROVISIONING_PROFILE` | The WSurf Developer ID profile from the section above. Run `base64 -i WSurf.provisionprofile \| pbcopy` |
+| `DEVELOPER_ID_CREDENTIAL_EXCHANGE_PROVISIONING_PROFILE` | The credential exchange profile from the section above. Run `base64 -i WSurf-CredentialExchange.provisionprofile \| pbcopy` |
 | `AC_API_KEY_P8` | The full contents of the App Store Connect API key `.p8` file. Include the `BEGIN` and `END` lines |
 | `AC_API_KEY_ID` | The ID of the key. This is the `ABCD1234EF` part of `AuthKey_ABCD1234EF.p8` |
 | `AC_API_ISSUER_ID` | The issuer UUID. App Store Connect shows it above the list of keys |
@@ -211,7 +251,7 @@ and the API key does not give access to all of your Apple ID.
 
 The team ID is not a secret. The workflow contains WSurf's own team ID
 `5X68L55TNU`. Do not configure the workflows until the organization Account
-Holder has approved the managed browser capability and all eight own secrets
+Holder has approved the managed browser capability and all nine own secrets
 exist in the protected release environment.
 
 ## Each release
@@ -231,7 +271,9 @@ CI, because the `gate` job waits for you. From there the workflow:
 1. Confirms the tag is on `main`.
 2. Waits for the CI run on that commit, and stops if it fails.
 3. Builds an archive.
-4. Signs the app with the Developer ID certificate and the profile.
+4. Installs the app and credential exchange profiles, then signs both with the
+   Developer ID certificate. After export, it checks each embedded profile, each
+   signature, and the provider entitlement in both bundles.
 5. Sends the app to Apple for notarization.
 6. Staples the notarization ticket to the app.
 7. Builds a zip file.
@@ -378,7 +420,8 @@ or tag is needed. The workflow:
    such as `0.1.2 (4)`.
 2. Uses the tag alone when that count is zero, such as `0.1.2`. The commit is
    the release itself.
-3. Builds an archive, signs the app, and sends it to Apple for notarization.
+3. Builds an archive, signs the app and credential exchange extension with their
+   profiles, checks both after export, and sends the app to Apple for notarization.
 4. Builds a zip file, and no disk image.
 5. Signs the app for Sparkle and writes `appcast-tip.xml`.
 6. Moves the `tip` tag to that commit.

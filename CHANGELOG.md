@@ -7,6 +7,32 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-10 — Credential Manager in source
+
+Implemented in source, not released, and not natively accepted: an opt-in
+per-profile encrypted Credential Manager for passwords, ES256 passkeys, and
+one-time codes, plus an exchange-only credential-exchange extension. Legacy
+SavedPassword, SecureAutofillVault, settings, data and the default provider are
+unchanged; the manager is used only when a profile selects it.
+`CredentialManager.commit` and `updatePasswordSavePolicy` require the
+authorization epoch captured at decision time and refuse with `unauthorized`
+after a lock or re-unlock. Verified on the integration branch: WebAuthn nonce, history
+(back/forward cache root) and late-resume handling, plus escaped
+Permissions-Policy denial. The current proof is the joined 17-suite run, the
+strict lint gate and a built-module CLI smoke (synthetic password, passkey and
+one-time code through encrypted save, reopen, exchange export/preview/apply
+and ES256 verification), recorded in the current-main integration appendix
+(`docs/superpowers/plans/2026-10-10-credential-current-main-integration.md`).
+Fill delivery (manager, legacy, card and contact) checks the request's
+authority at the final dispatch point with no suspension before the engine
+send; this is source-traced, with no actual UI fill. Autofill and save refuse
+frames the engine flags as untrusted-origin, as WebAuthn already did (source
+only). Native PRF, real user presence and verification, Apple Passwords
+transfers, Settings accessibility and Stage remain unverified. Removing an
+unlock passkey does not rotate the vault key, so a removed passkey that still
+has an older copy of the vault file can decrypt later versions; this is a
+documented limit, not forward revocation.
+
 ### 2026-10-09 — Actual engine beside address lock
 
 The address bar shows WK or Cr beside the lock for the active page's loaded engine.

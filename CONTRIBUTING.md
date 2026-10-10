@@ -71,8 +71,10 @@ machine's selected developer directory. Keep the resolved package graph frozen
 for build/test runs; dependency updates must explicitly update the lockfile and
 regenerate `WSurf/Support/Acknowledgements.json`.
 
-The command removes the entitlements. The keychain access group and the passkey
-entitlement both need a provisioning profile. CI runs the same command. To build the app in Xcode,
+The command removes the entitlements. The keychain access group, the passkey
+entitlement, and the associated-domains and credential-provider entitlements
+need provisioning profiles; the credential exchange extension needs its own.
+CI runs the same command. To build the app in Xcode,
 set **Team** in **Signing & Capabilities** to your own Apple developer team
 first. See [Building](README.md#building).
 
@@ -147,6 +149,19 @@ together exhausts WebContent processes and turns resource pressure into
 unrelated navigation failures. Put the trait on the tests that build a view, not
 on the suite around them, so pure cases do not queue for a resource they never
 use. Add `.serialized` as well when the cases in a suite share state.
+
+Apply the bounded trait exactly once. Pair it with `.requiresBackForwardCache`
+only for cases that genuinely need strict back/forward cache behavior, so those
+cases reserve all bounded WebView slots; ordinary tests stay parallel and this is not
+whole-suite serialization. `makeConfiguration` already installs the bridge and
+registry, so do not install those handlers again. For registration timing,
+delay the genuine nonce reply rather than depending on cross-world script
+ordering, and keep the strict persisted and nonce checks. If a test replaces
+installed scripts, reuse the `BrowserPage.replaceScript` retained-array
+mutation pattern, not a dangling remove and re-add.
+
+Lint runs with the pinned SwiftLint on the Pro machine with full Xcode. Do not
+relax rules to work around failures on a Command Line Tools-only machine.
 
 `WSurf.xctestplan` runs with per-test timeouts: 120 seconds by default, 300 at
 most. A stalled test times out and reports its name without blocking the full run.

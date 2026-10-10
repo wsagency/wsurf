@@ -99,6 +99,9 @@ final class BrowserApplication {
         let queued = queuedURLs
         queuedURLs.removeAll()
         openFromAnotherApp(queued)
+        if CredentialExchangeCoordinator.shared.pendingToken != nil {
+            showCredentialExchange()
+        }
         mcpServer.resume()
     }
 
@@ -182,6 +185,24 @@ final class BrowserApplication {
         }
         let target = externalLinkTarget ?? newWindow(profile: ProfileStore.shared.current)
         target.openFromAnotherApp(urls)
+    }
+
+    /// The system delivers an import from another app as an activity that carries only a token. Queueing it fetches
+    /// nothing: the credential page asks for the profile, the unlock and the review first, and the import is bound
+    /// to the profile whose page the user reviews it from. Before bootstrap finishes the token waits in the
+    /// exchange coordinator and `bootstrap` shows it.
+    @discardableResult
+    func receiveCredentialExchange(_ activity: NSUserActivity) -> Bool {
+        guard CredentialExchangeCoordinator.shared.receive(activity) else { return false }
+        if isReady {
+            showCredentialExchange()
+        }
+        return true
+    }
+
+    /// Opens the credential page in the window external links go to: never a private window, which keeps no vault.
+    private func showCredentialExchange() {
+        (externalLinkTarget ?? newWindow(profile: ProfileStore.shared.current)).openSettings(.autofill)
     }
 
     var canReopenWindow: Bool {
@@ -269,6 +290,9 @@ final class BrowserApplication {
 
     func prepareToTerminate() {
         isTerminating = true
+        // Every profile's vault, synchronously and before anything below can suspend. A cancelled termination leaves them
+        // locked: unlocking again is one explicit user action, never an implicit one.
+        CredentialManager.lockAll(reason: .termination)
         mcpServer.stop()
         for coordinator in windows {
             coordinator.stopAgent()

@@ -34,6 +34,18 @@ your report.
   Granting that access without approval is a defect.
 - Credentials (`WSurf/Agent/Providers/CredentialStore.swift`). A key goes only
   in the Authorization header of the provider it belongs to.
+- The opt-in Credential Manager and credential-exchange extension
+  (`WSurf/Web/Credentials`, `WSurfCredentialExchange`). Passwords, passkeys, and
+  one-time codes belong to one profile, and any window leaving that profile
+  revokes the authorization epoch for all of its windows. A request must pass
+  the origin, relying-party, and native policy checks; a stale epoch is refused.
+  A commit changes a credential and its related state atomically. A path that
+  crosses profiles, acts after revocation, or commits partly is a defect. The
+  extension is exchange-only and holds no credential store. Removing an unlock
+  passkey stops its normal unlock of the current vault only. The vault key is
+  not rotated, so a removed passkey that still has a copy of the vault file
+  containing its wrapper can decrypt that copy and later versions of the same
+  vault. Removal is not forward revocation.
 - Download filenames (`WSurf/Web/System/DownloadManager.swift`). The app does
   not run in a sandbox, so treat a filename from a server as a path until you
   have proved it safe. WSurf quarantines each completed file for Gatekeeper to

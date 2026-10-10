@@ -37,6 +37,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.application.openFromAnotherApp(urls)
     }
 
+    func application(
+        _ application: NSApplication,
+        continue userActivity: NSUserActivity,
+        restorationHandler: @escaping ([any NSUserActivityRestoring]) -> Void
+    ) -> Bool {
+        guard !isRunningTests else { return false }
+        return self.application.receiveCredentialExchange(userActivity)
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         guard !isRunningTests else { return true }
         application.showBrowser()

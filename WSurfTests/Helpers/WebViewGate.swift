@@ -8,28 +8,46 @@ import Testing
 actor WebViewGate {
     static let shared = WebViewGate(limit: max(2, ProcessInfo.processInfo.activeProcessorCount / 2))
 
+    private struct Waiter {
+        let permits: Int
+        let continuation: CheckedContinuation<Int, Never>
+    }
+
     private let limit: Int
     private var active = 0
-    private var waiting: [CheckedContinuation<Void, Never>] = []
+    private var waiting: [Waiter] = []
 
     init(limit: Int) {
         self.limit = limit
     }
 
-    func acquire() async {
-        guard active >= limit else {
-            active += 1
-            return
+    func acquire(exclusive: Bool) async -> Int {
+        let permits = exclusive ? limit : 1
+        guard waiting.isEmpty, active + permits <= limit else {
+            return await withCheckedContinuation { continuation in
+                waiting.append(Waiter(permits: permits, continuation: continuation))
+            }
         }
-        await withCheckedContinuation { waiting.append($0) }
+        active += permits
+        return permits
     }
 
-    func release() {
-        if waiting.isEmpty {
-            active -= 1
-        } else {
-            waiting.removeFirst().resume()
+    func release(_ permits: Int) {
+        active -= permits
+        while let next = waiting.first, active + next.permits <= limit {
+            waiting.removeFirst()
+            active += next.permits
+            next.continuation.resume(returning: next.permits)
         }
+    }
+}
+
+/// Requires an enclosing `.boundedWebViews` trait to acquire exclusive cache capacity.
+nonisolated struct RequiresBackForwardCache: TestTrait {}
+
+extension Trait where Self == RequiresBackForwardCache {
+    static var requiresBackForwardCache: Self {
+        Self()
     }
 }
 
@@ -47,14 +65,15 @@ nonisolated struct BoundedWebViews: TestTrait, SuiteTrait, TestScoping {
             try await function()
             return
         }
-        await WebViewGate.shared.acquire()
+        let requiresCache = test.traits.contains { $0 is RequiresBackForwardCache }
+        let permits = await WebViewGate.shared.acquire(exclusive: requiresCache)
         do {
             try await function()
         } catch {
-            await WebViewGate.shared.release()
+            await WebViewGate.shared.release(permits)
             throw error
         }
-        await WebViewGate.shared.release()
+        await WebViewGate.shared.release(permits)
     }
 }
 

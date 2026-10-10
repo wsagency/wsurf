@@ -14,17 +14,26 @@ final class PasswordAutofill {
     private static let handlerName = "wsurfPasswords"
     func isEnabled(in context: BrowserProfileContext) -> Bool {
         !context.profile.isPrivate && context.settings.fillsPasswords
-            && PasswordExtensionPolicy.provider(
+            && !PasswordExtensionPolicy.suppressesNativeFill(
+                provider: context.settings.passwordProvider,
                 in: context.extensions.installed + context.extensions.systemExtensions,
                 selectedID: context.settings.passwordExtensionID
-            ) == nil
+            )
     }
     @ObservationIgnored private let pages = NSHashTable<BrowserPage>.weakObjects()
     @ObservationIgnored private var frames: [ObjectIdentifier: [String: BrowserFrame]] = [:]
 
     func refreshPolicy() {
         AutofillSaveCoordinator.shared.refreshPolicy()
-        for page in pages.allObjects {
+        refreshPages { _ in true }
+    }
+    /// One profile switched password provider: only its pages are told, and only its save sessions are refreshed.
+    func providerChanged(in context: BrowserProfileContext) {
+        AutofillSaveCoordinator.shared.providerChanged(in: context)
+        refreshPages { $0 === context }
+    }
+    private func refreshPages(where matches: (BrowserProfileContext) -> Bool) {
+        for page in pages.allObjects where matches(page.context) {
             for frame in (frames[ObjectIdentifier(page)] ?? [:]).values {
                 applyPolicy(in: page, frame: frame)
             }
@@ -32,13 +41,13 @@ final class PasswordAutofill {
     }
     private func applyPolicy(in page: BrowserPage, frame: BrowserFrame) {
         let context = page.context
-        let enabled = isEnabled(in: context)
+        let enabled = isEnabled(in: context), manager = context.settings.passwordProvider == .credentialManager
         Task {
             do {
                 guard page.context === context else { return }
                 _ = try await page.callAsyncJavaScript(
-                    "globalThis.__wsurfPasswords?.setEnabled(enabled);",
-                    arguments: ["enabled": enabled],
+                    "globalThis.__wsurfPasswords?.setCredentialManager(manager); globalThis.__wsurfPasswords?.setEnabled(enabled);",
+                    arguments: ["enabled": enabled, "manager": manager],
                     in: frame,
                     contentWorld: Self.world
                 )
