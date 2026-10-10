@@ -5,17 +5,38 @@ import CryptoKit
 import Foundation
 
 nonisolated enum WebAuthnEncoding {
-    static func clientDataJSON(type: String, challenge: Data, client: WebAuthnClientData) throws -> Data {
-        var object: [String: Any] = [
-            "type": type,
-            "challenge": base64URL(challenge),
-            "origin": client.origin,
-            "crossOrigin": client.crossOrigin,
+    /// The serialization in WebAuthn Level 3 §5.8.1.1. Relying parties that cannot parse JSON verify the client data
+    /// by prefix (§5.8.1.2), so the field order and the escaping are part of the wire format; a JSON encoder that sorts
+    /// keys or escapes "/" produces valid JSON they reject.
+    static func clientDataJSON(type: String, challenge: Data, client: WebAuthnClientData) -> Data {
+        var fields = [
+            #"{"type":"# + quoted(type),
+            #""challenge":"# + quoted(base64URL(challenge)),
+            #""origin":"# + quoted(client.origin),
+            #""crossOrigin":"# + (client.crossOrigin ? "true" : "false"),
         ]
         if client.crossOrigin, let topOrigin = client.topOrigin {
-            object["topOrigin"] = topOrigin
+            fields.append(#""topOrigin":"# + quoted(topOrigin))
         }
-        return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return Data((fields.joined(separator: ",") + "}").utf8)
+    }
+
+    /// `CCDToString`: escapes only `"`, `\` and the code points below U+0020, as `\u` plus four lower-case hex digits.
+    private static func quoted(_ value: String) -> String {
+        var result = "\""
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 0x22:
+                result += #"\""#
+            case 0x5C:
+                result += #"\\"#
+            case ..<0x20:
+                result += String(format: "\\u%04x", scalar.value)
+            default:
+                result.unicodeScalars.append(scalar)
+            }
+        }
+        return result + "\""
     }
 
     static func base64URL(_ data: Data) -> String {

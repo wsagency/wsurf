@@ -171,7 +171,7 @@ nonisolated enum WebsiteAuthenticator {
         )
         try passkey.validate()
 
-        let clientDataJSON = try WebAuthnEncoding.clientDataJSON(
+        let clientDataJSON = WebAuthnEncoding.clientDataJSON(
             type: "webauthn.create",
             challenge: options.challenge,
             client: client
@@ -227,7 +227,7 @@ nonisolated enum WebsiteAuthenticator {
         }
 
         let privateKey = try PasskeyKeyEncoding.importPKCS8(passkey.privateKeyPKCS8)
-        let clientDataJSON = try WebAuthnEncoding.clientDataJSON(
+        let clientDataJSON = WebAuthnEncoding.clientDataJSON(
             type: "webauthn.get",
             challenge: options.challenge,
             client: client

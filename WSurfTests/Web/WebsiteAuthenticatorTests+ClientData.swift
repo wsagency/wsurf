@@ -61,7 +61,7 @@ extension WebsiteAuthenticatorTests {
         // These bytes encode to a base64url string that uses both "-" and "_".
         let challenge = Data([0xFB, 0xFF, 0xBF, 0xFE])
         let client = WebAuthnClientData(origin: origin, topOrigin: Self.embedder, crossOrigin: true, rpID: "example.com")
-        let bytes = try WebAuthnEncoding.clientDataJSON(type: "webauthn.get", challenge: challenge, client: client)
+        let bytes = WebAuthnEncoding.clientDataJSON(type: "webauthn.get", challenge: challenge, client: client)
 
         #expect(WebAuthnVerifier.limitedClientDataVerifies(
             bytes, type: "webauthn.get", challenge: challenge, origin: origin, topOrigin: Self.embedder

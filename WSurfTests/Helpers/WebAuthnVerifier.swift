@@ -150,11 +150,16 @@ nonisolated enum WebAuthnVerifier {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               json["type"] as? String == type,
               json["challenge"] as? String == base64URL(challenge),
+              json["origin"] as? String == origin,
               json["crossOrigin"] as? Bool == crossOrigin else { throw VerificationError.invalid }
         if crossOrigin {
             guard let topOrigin, json["topOrigin"] as? String == topOrigin else { throw VerificationError.invalid }
         } else {
             guard topOrigin == nil, json["topOrigin"] == nil else { throw VerificationError.invalid }
+        }
+        // Every relying party accepts a JSON parse; only the specified serialization also passes the prefix check.
+        guard limitedClientDataVerifies(data, type: type, challenge: challenge, origin: origin, topOrigin: topOrigin) else {
+            throw VerificationError.invalid
         }
     }
 
