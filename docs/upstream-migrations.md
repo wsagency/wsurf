@@ -20,6 +20,28 @@ Each manifest row records full source SHA/link, original subject, WSurf task(s),
 
 Use full-SHA `Upstream-Commit:` and `Migration-Task:` trailers on code commits. Record those **known commits** in a following journal/evidence commit; never insert a guessed/self-referential SHA. Actual PR/CI/deploy fields are absent until those events occur. A combined WSurf commit can reference multiple upstream SHAs; a split upstream commit can reference multiple WSurf commits. Record both directions.
 
+## Standing intake and contribution rules
+
+These rules govern every future exchange with Linen. They add no states: items use the statuses and `Upstream-Commit:`/`Migration-Task:` trailers defined above. The recorded 31-commit migration (`3c532ff33660f14b7ba4039cd924473de5f80b60` exclusive to `eb338d70bd1740a33e6a34f71e328e13d014bc42` inclusive, [PR #8](https://github.com/wsagency/wsurf/pull/8)) is integrated; its manifest and evidence below stay as recorded and are never re-ported.
+
+### Inbound: Linen to WSurf
+
+- **Key by full SHA.** Search this file for the full upstream SHA before starting work. Keep one provenance record per SHA; dependent SHAs may share a row. A release or range is never merged wholesale, and a commit count is not a feature count. Each new pin is its own dated section with an exclusive base, an inclusive tip and a line for later commits it excludes. Every commit in a pinned range appears here with a disposition, so a search by SHA always finds it.
+- **Approval.** An item gets a manifest row and enters `PLANNED` only after the user approves that item or package in writing. Proposal lists, peer messages and analysis reports are not approval, so a proposed item carries no status.
+- **Adapt, do not copy.** Keep WSurf names, SPDX and modification headers, Favorites, pinned folders, profile and private-window isolation, Stage isolation and the engine badge. A changed default, shortcut or removed behavior is stated in its row and approved explicitly.
+- **Both-engine proof.** An item that touches page content, scripts, navigation, snapshots, lifecycle or input records WebKit and Chromium results through the shared `BrowserPage` and `PageDriver` seams, or documents a WebKit-only limit (for example `WKWebExtension` or private WebKit SPI). Do not add a second Chromium transport, and do not duplicate protections Chromium already has, such as the 15-second DevTools command timeout.
+- **Shared files, APIs and order.** Each row names the files it shares with in-flight work and the shared APIs or behavior it depends on or changes (for example the `BrowserPage` script and capture seam, or `PageDriver`). Before branching, check open PRs and active branches for those files and for changes to those APIs and semantics; coordinate with whoever owns them by rebasing after their merge or agreeing the interface first. Branch from the latest `origin/main` and open one PR per package. Work in an independent region of a file, with no shared API or semantic dependency, may proceed in parallel. Never edit another task's worktree, and never merge an archival preservation branch.
+- **Evidence.** Record the WSurf commits, the PR, and only checks actually run, with the numbers observed. For code: local native builds and focused suites run on Pro with their own DerivedData; the full test suite runs only on a genuinely disposable macOS/Xcode runner (the existing hosted PR CI, or a separately approved disposable Pro account or VM), never on a daily account, because the suite is not isolated and writes standard preferences and similar state. Setting `HOME` or DerivedData alone is not OS isolation. Record the Xcode version, tests passed, failed and disabled as observed in that run (not an earlier run's counts), the exact commit, and the counts of each focused suite. For a UI or page-affecting item also: a Stage smoke of the real app (see [Stage the app](../CONTRIBUTING.md#stage-the-app-for-screenshots-and-video)) on an owned Stage environment, only after its isolation is proven, exercising the changed behavior in a WebKit tab and in a Chromium tab and recording what was seen. A check not run is recorded as not run, never as a pass. Keep secrets, private paths, backups, deployment receipts and screenshots out of this file.
+
+### Outbound: WSurf to Linen
+
+- **Applicability.** A WSurf change is a candidate only if it applies to unmodified Linen and is absent from current upstream `main`; compare the named files at the current upstream tip, not the last release tag. Fork-specific work (the embedded Chromium engine, WSurf credential-storage design, branding, signing and release tooling) is not a candidate as a whole.
+- **Reproduce first.** Reproduce the defect on an upstream checkout and record the result, or record "not reproduced". An unreproduced item is not proposed upstream.
+- **Neutral patch.** Branch from upstream `main` on a contributor fork. Use upstream names and SPDX headers only, no WSurf modification notices or WSurf-only code. Add the regression test that upstream's [CONTRIBUTING](https://github.com/kavoye/linen-browser/blob/main/CONTRIBUTING.md) asks for (`waitUntil`, injected clocks, `.boundedWebViews`, the `TestFiles`/`TestDefaults` helpers), use its SwiftLint and CI versions, and write a Conventional Commit whose body gives the reason.
+- **License and review.** Upstream is Apache-2.0 and a contribution falls under section 5 of that license; submit only code the contributor may license that way. Opening an upstream PR or issue needs explicit user approval each time. Record the PR link and status here.
+- **Security.** Describe no suspected vulnerability here or in a public issue or PR. Follow upstream's [SECURITY.md](https://github.com/kavoye/linen-browser/blob/main/SECURITY.md) private reporting first.
+- **Record.** Each outbound entry names the WSurf SHA or PR, the upstream SHA it was compared with, the reproduction result and the upstream PR link and status.
+
 ## Complete source manifest
 
 At initialization: **30 PLANNED; 1 ALREADY_EQUIVALENT**. Execution corrected the Metal item to **PLANNED** because only CI was equivalent, not release/tip; the baseline finding and correction are preserved below. Implementation, verification, merge and deployment remain separate recorded events.
@@ -622,3 +644,94 @@ settings type. No obsolete global-accessor forwarding file is retained.
   integration record once merged. Installed-app replacement, release tags and
   deployment remain separately gated and are **not authorized or performed**.
 
+## Linen 0.8.0 intake proposals — pinned 2026-10-10
+
+- Base (exclusive, already integrated): `eb338d70bd1740a33e6a34f71e328e13d014bc42`. Tip (inclusive): tag `v0.8.0`, commit `4b6d2203db4b55557798cae5839847ded98a2830`. Range: **40 commits, 308 files**. All 40 are listed below with a disposition. [Compare](https://github.com/kavoye/linen-browser/compare/eb338d70bd1740a33e6a34f71e328e13d014bc42...4b6d2203db4b55557798cae5839847ded98a2830).
+- Excluded after the tag: 7 commits up to `16c58005a589946d21b039fa1aa51fcc88ed8daa` ([compare](https://github.com/kavoye/linen-browser/compare/4b6d2203db4b55557798cae5839847ded98a2830...16c58005a589946d21b039fa1aa51fcc88ed8daa)). They are not part of 0.8.0.
+- WSurf comparison base: `origin/main` `fb7b91c2c5f5dbf523649c0a384ff8ae8b2684bc`. Rows were compared at that base; `d682dfbd4678d2ef01d19ae15cb31c0b1e5d7059` ([PR #15](https://github.com/wsagency/wsurf/pull/15)) landed later and overlaps the first row of section A.
+- **Status: no item below is approved, planned or implemented, so none has a status.** The comparison is static (Git ranges, release notes, WSurf source at the base). No upstream build, test or runtime was run. Check each item against the then-current `origin/main` and open PRs before branching.
+
+### A. Fixes to existing behavior
+
+| Upstream commit | Subject | WSurf adaptation and proof | Shared files |
+|---|---|---|---|
+| [`e47897970dfc6e4a507e243f8b694975d6143994`](https://github.com/kavoye/linen-browser/commit/e47897970dfc6e4a507e243f8b694975d6143994) | fix(extensions): Drop window adapters left by a released browser | Guard window adapters in the extension manager against a reused object identifier. Partly covered by WSurf PR #15 (`register` and `unregister` retire a stale entry); upstream also guards the lookup (`registeredWindow(in:)`), which WSurf still does not. Compare before taking the rest. `WKWebExtension` only: record a WebKit-only limit. | `ExtensionManager+Windows.swift` |
+| [`ebb66e95278ce2f1ddabb12dc3762a2989c5e1de`](https://github.com/kavoye/linen-browser/commit/ebb66e95278ce2f1ddabb12dc3762a2989c5e1de) | fix(autoplay): Stop players kept off the page | WSurf's content guard listens for `play` only. Add the detached-element guard; prove the script installs on both engines. | none known |
+| [`9cf08cac08c3fa6fcaae55fea1a6329d69ec1221`](https://github.com/kavoye/linen-browser/commit/9cf08cac08c3fa6fcaae55fea1a6329d69ec1221) | fix(palette): Build the palette once and steady the clear button | WSurf builds the palette model in `init`. UI only. | none known |
+| [`f1bab37ada25dae715c008453e95b79e55a9c171`](https://github.com/kavoye/linen-browser/commit/f1bab37ada25dae715c008453e95b79e55a9c171) and [`88e1ebf9926a97e50d95f8aa79a6ff59fd183c1d`](https://github.com/kavoye/linen-browser/commit/88e1ebf9926a97e50d95f8aa79a6ff59fd183c1d) | chore(deps): Update AnyLanguageModel, swift-collections, swift-log and swift-nio; fix(agent): Treat reasoning items like instructions when compacting | One change: the dependency bump needs the new `reasoning` cases in three exhaustive `Transcript.Entry` switches. Regenerate `Acknowledgements.json`. | `Package.resolved`, `Acknowledgements.json` |
+| [`3d0903d4218839cfba4df4e120cbcd7c7fa080ae`](https://github.com/kavoye/linen-browser/commit/3d0903d4218839cfba4df4e120cbcd7c7fa080ae) | fix(web): Time out page script replies and favicon fetches | Bound only the WebKit continuation branch of `BrowserPage` script evaluation and the favicon requests; Chromium already times out at 15 seconds. Prerequisite of Reader and Translation. | `BrowserPage.swift` (shared engine API), `FaviconLoader.swift` |
+| [`c0afef30cb8720d8a517b72827a47c636ff8540e`](https://github.com/kavoye/linen-browser/commit/c0afef30cb8720d8a517b72827a47c636ff8540e) | fix(tabs): Reload a crashed background tab only when it is shown | WSurf reloads at once. Prove the Chromium termination callback reaches the same handler. | `BrowserTab+PageLifecycle.swift`, `BrowserModel.swift` |
+| [`773109beab526187cb197bb03cfeac47e0d51e74`](https://github.com/kavoye/linen-browser/commit/773109beab526187cb197bb03cfeac47e0d51e74) | fix(palette): Keep text editing shortcuts in the field | Follow-up to the integrated `fe1d5dc034c1fa780eff2dcd1a7dbba3e670c168`; keep WSurf menu and palette ownership. | `MainMenu.swift`, `BrowserHost.swift` |
+| [`dd221023830c4cb79d187339a0ca2d3a5f1ada1f`](https://github.com/kavoye/linen-browser/commit/dd221023830c4cb79d187339a0ca2d3a5f1ada1f) | fix(agent): Sample busy pages before giving up on a click | Optional. WSurf already samples at least twice before giving up (a hunk of the mixed WSurf commit `e6362ec0329f29d3df04f169da1d8e1feffbd134`); the difference is one constant (two versus three). | `PageObservation.swift` (`PageDriver` family) |
+
+### B. Feature candidates
+
+Each needs its own approval, a branch and both-engine proof where it touches pages.
+
+| Upstream commit | Subject | WSurf adaptation and decisions | Shared files |
+|---|---|---|---|
+| [`77a3d43d67e9cb277d864ba348228872a35865fe`](https://github.com/kavoye/linen-browser/commit/77a3d43d67e9cb277d864ba348228872a35865fe) | feat(reader): Add Reader | Replace the `WKWebView`-typed extraction seam with `BrowserPage` script calls; per-profile preferences. Needs `3d0903d`. | `BrowserPage.swift`, `MainMenu.swift` |
+| [`f456b064e861917223f8e8b63b6de4480014c176`](https://github.com/kavoye/linen-browser/commit/f456b064e861917223f8e8b63b6de4480014c176) | feat(translation): Translate pages on this Mac | Apple's Translation framework is not WebKit-only; only upstream's script transport and surface are. Use `BrowserPage.callAsyncJavaScript` and an engine-neutral navigation hook. Needs `3d0903d`; take the post-release `e335e9a` with it. | `BrowserPage.swift`, `MainMenu.swift` |
+| [`02d3c98a5bda9424ef1f70536a32c1b6f8d75e31`](https://github.com/kavoye/linen-browser/commit/02d3c98a5bda9424ef1f70536a32c1b6f8d75e31) | feat(voice): Add Voice settings | Changes behavior: WSurf picks OpenAI voice automatically when the selected provider is OpenAI Responses and has a key, whereas upstream sets dictation and reading independently and defaults conversation off. Migrate the default deliberately. | `AppCoordinator+Voice.swift`, settings index |
+| [`9ca659567a350b043aa4d4cc55e7b91baf7ca5ef`](https://github.com/kavoye/linen-browser/commit/9ca659567a350b043aa4d4cc55e7b91baf7ca5ef) | feat(tabs): Archive tabs you have not used | Proposal, not yet approved: default off. Archive keeps only title and URL; also exempt Favorites and pinned-folder tabs and keep sidebar Undo working. Additive database change. | `BrowserModel`, `BrowserSettings.swift`, `AppDatabase.swift` |
+| [`7c806187a593b6036c5b2404232e77741f312808`](https://github.com/kavoye/linen-browser/commit/7c806187a593b6036c5b2404232e77741f312808) | feat(tabs): Show previews in the Control-Tab switcher | Build previews from `BrowserPage.capture` for both engines and only from the current window's profile. Upstream removes the quick-tap jump; decide before dropping it. | `MainMenu.swift`, `BrowserPage.swift` |
+| [`594009419f141953a9c2efee7d43bf9a34ef9fe5`](https://github.com/kavoye/linen-browser/commit/594009419f141953a9c2efee7d43bf9a34ef9fe5) | feat(sidebar): Offer to close tabs when deleting a folder | Await the Chromium close acknowledgment; keep Favorites and Undo. | `FolderSection.swift` |
+| [`0e277d64c59f4b9d2b7f3b40044fa857a9ad4378`](https://github.com/kavoye/linen-browser/commit/0e277d64c59f4b9d2b7f3b40044fa857a9ad4378) | feat(window): Drop dragged tabs at the aimed row in another window | At the base WSurf has no caller of `finishWindowDrag`; confirm the real drag-out scenario and wire it before porting the aimed row. | `AppCoordinator+Windows.swift`, `WorkspaceList.swift` |
+| [`3b15854b44d7e5b2eb84064d58cab1935f8a7208`](https://github.com/kavoye/linen-browser/commit/3b15854b44d7e5b2eb84064d58cab1935f8a7208) | feat(media): Add Previous Track and Next Track buttons | Injected media script runs per engine; prove both. Keep the idle-work rules already integrated. | `MediaCenter.swift` |
+| [`ca9cf6eab82acb3b738ad97ec8aa7da0f9ab673a`](https://github.com/kavoye/linen-browser/commit/ca9cf6eab82acb3b738ad97ec8aa7da0f9ab673a) | fix(lyrics): Show live streams and keep lyrics on the tab you left | Do not take upstream's removal of word-by-word lyrics. | `AppCoordinator+Media.swift`, `LyricsModel.swift` |
+| [`3de8c71487c1be631aa1ac14ffd719bf1c579969`](https://github.com/kavoye/linen-browser/commit/3de8c71487c1be631aa1ac14ffd719bf1c579969) | feat(side-panel): Add integrations from the Side Panel | Extends the existing Side Panel. Decide the fate of the Show lyrics setting, the Option-Command-A and Option-Command-Y shortcuts and the `media.lyrics` default change. | `MainMenu.swift`, `BrowserSettings.swift`, `SidePanel.swift` |
+
+### C. Separate, optional packages
+
+| Upstream commit | Subject | WSurf adaptation and decisions | Shared files |
+|---|---|---|---|
+| [`50d748f2b16d2e433bed140d860cd7d134c2794a`](https://github.com/kavoye/linen-browser/commit/50d748f2b16d2e433bed140d860cd7d134c2794a) | feat(github): Add the GitHub integration | Needs a WSurf-owned OAuth client ID, not Linen's. Store tokens through the existing `CredentialStore` ([PR #10](https://github.com/wsagency/wsurf/pull/10)), per profile and Stage-isolated. | `CredentialStore.swift`, `Info.plist`, `project.pbxproj` |
+| [`120b1e8d84cd38a5bccec26dabc3b2cc7a7533c5`](https://github.com/kavoye/linen-browser/commit/120b1e8d84cd38a5bccec26dabc3b2cc7a7533c5) | feat(watches): Watch pages for changes | Upstream loads a hidden WebKit view with the profile's cookies and uses the local Apple model. Design engine, session, private-profile and permission behavior first. | assistant toolkit, `BrowserProfileContext.swift` |
+| [`fe587d0d03343ae4b1a77e4e9e32439b2b13ce5d`](https://github.com/kavoye/linen-browser/commit/fe587d0d03343ae4b1a77e4e9e32439b2b13ce5d) | feat(window): Hand off the current tab to iPhone and iPad | The patch changes no entitlements; whether it works on a WSurf build needs a second device. | `AppCoordinator+Windows.swift` |
+| [`28589efe94108566a19e4a9e572c02efcd6e8e01`](https://github.com/kavoye/linen-browser/commit/28589efe94108566a19e4a9e572c02efcd6e8e01) | feat(developer): Add the Show Web Inspector command | Uses private WebKit selectors; the Chromium DevTools client is not an inspector UI. Hide or disable it for Chromium tabs, or design a separate path. | `MainMenu.swift` |
+
+### Remaining commits of the range
+
+Every commit of the range not listed above, with its disposition. None is approved or planned. "UI polish" means a visual or small interaction change that was not reviewed line by line; any of them may be reconsidered with the package that touches the same files.
+
+| Upstream commit | Subject | Disposition |
+|---|---|---|
+| [`58a923786bff26a76360b9a16cbd80d3eb06d6dd`](https://github.com/kavoye/linen-browser/commit/58a923786bff26a76360b9a16cbd80d3eb06d6dd) | ci: Stop measuring code coverage in CI | Not proposed: WSurf keeps its coverage gate. |
+| [`abe2db97de12815219df0bf01fba0c714d30972f`](https://github.com/kavoye/linen-browser/commit/abe2db97de12815219df0bf01fba0c714d30972f) | refactor: Move shared types and Peek into their own files | Not proposed: pure refactor; conflicts with WSurf file layout. |
+| [`dacb97d456d5aec6b411bc7c0f0e8b6585f74b51`](https://github.com/kavoye/linen-browser/commit/dacb97d456d5aec6b411bc7c0f0e8b6585f74b51) | fix(copy): Simplify assistant, settings and error messages | Not proposed: copy only; revisit per feature. |
+| [`72e40c268b5fda77b7d2d9bd962842fbeebb84aa`](https://github.com/kavoye/linen-browser/commit/72e40c268b5fda77b7d2d9bd962842fbeebb84aa) | feat(media): Scroll long titles and show the source in the media card | UI polish; consider with Previous/Next Track (media card). |
+| [`dfa673d0f023532477028de2604712d971a3fd77`](https://github.com/kavoye/linen-browser/commit/dfa673d0f023532477028de2604712d971a3fd77) | feat(toolbar): Show the page symbol for Linen pages | UI polish; shares the toolbar and `AskSurface*` files. |
+| [`e85f52c7c09ae4d642f246593cee094f50d4a699`](https://github.com/kavoye/linen-browser/commit/e85f52c7c09ae4d642f246593cee094f50d4a699) | fix(toolbar): Lead with the address when it does not fit centred | UI polish; shares `AskSurface*` and the engine badge area. |
+| [`cca7acdf7a40854ca812ba67af63a632ac0afb3e`](https://github.com/kavoye/linen-browser/commit/cca7acdf7a40854ca812ba67af63a632ac0afb3e) | feat(ui): Ease the composing orb in and out | UI polish. |
+| [`9e68bfc72c2c59d3174590ecad2924a92c2e14d5`](https://github.com/kavoye/linen-browser/commit/9e68bfc72c2c59d3174590ecad2924a92c2e14d5) | fix(chrome): Match popovers and overlays to the page tint | UI polish; adds a lint rule. |
+| [`985824ecd9c07978d5aeb21d585779759166b2db`](https://github.com/kavoye/linen-browser/commit/985824ecd9c07978d5aeb21d585779759166b2db) | fix(find): Restyle the find bar controls | UI polish. |
+| [`6a60da3abd943096ba0739dae42d483d330801cb`](https://github.com/kavoye/linen-browser/commit/6a60da3abd943096ba0739dae42d483d330801cb) | feat(ui): Lift glyphs on hover instead of washing them | UI polish. |
+| [`e9cd267950a8e171a438d3666894a01451cc938f`](https://github.com/kavoye/linen-browser/commit/e9cd267950a8e171a438d3666894a01451cc938f) | fix(extensions): Give toolbar buttons more room | UI polish; spacing constants. |
+| [`fa41efd6f5edb2d08ef362c39c5b7ce134e45128`](https://github.com/kavoye/linen-browser/commit/fa41efd6f5edb2d08ef362c39c5b7ce134e45128) | test: Isolate scratch files and defaults, and bound WebKit suites | Test support (two production constants become task-local); reference for future test isolation. |
+| [`385929e5ea5d6b090739d5c123f4fd3df8693a22`](https://github.com/kavoye/linen-browser/commit/385929e5ea5d6b090739d5c123f4fd3df8693a22) | chore: Remove stale comments | Not proposed: comments only. |
+| [`42cd6febe69f8df8681c0531ea661b205719b783`](https://github.com/kavoye/linen-browser/commit/42cd6febe69f8df8681c0531ea661b205719b783) | docs: Rewrite the guides in Simplified Technical English | Not proposed: upstream documentation. |
+| [`b4f867868d2c55c3d63dc9eccbea6e80cd9b15fd`](https://github.com/kavoye/linen-browser/commit/b4f867868d2c55c3d63dc9eccbea6e80cd9b15fd) | docs: Update the README screenshot | Not proposed: upstream documentation. |
+| [`506ddf86d02c4114336a997ff59417bd310e6c56`](https://github.com/kavoye/linen-browser/commit/506ddf86d02c4114336a997ff59417bd310e6c56) | docs(changelog): Add 0.8.0 release notes | Not proposed: upstream release notes; WSurf keeps its own changelog. |
+| [`4b6d2203db4b55557798cae5839847ded98a2830`](https://github.com/kavoye/linen-browser/commit/4b6d2203db4b55557798cae5839847ded98a2830) | test: Fix two compiler warnings | Tag commit; test-only warnings in two test files. Not proposed by itself. |
+
+### After the tag: separate pin, not part of 0.8.0
+
+| Upstream commit | Subject | Note | Shared files |
+|---|---|---|---|
+| [`e335e9ac286b06b3e0311fcfee5b32b286d77aa7`](https://github.com/kavoye/linen-browser/commit/e335e9ac286b06b3e0311fcfee5b32b286d77aa7) | fix(translation): Trust the page’s language when the sample is thin | Travels with Translation. | with `f456b06` |
+| [`78b76dee95ed892c9d507e5b5b56ba8a2a6cee42`](https://github.com/kavoye/linen-browser/commit/78b76dee95ed892c9d507e5b5b56ba8a2a6cee42) | fix(mcp): Fit screenshots under the message limit | MCP; owned by the MCP development-mode coordination, which decides whether and how it is taken. No product port is approved. | MCP and page-driver files |
+| [`447c02bbcf7b5ab685e8f131f62c126792060e01`](https://github.com/kavoye/linen-browser/commit/447c02bbcf7b5ab685e8f131f62c126792060e01) | fix(mcp): Return full field values | As above. | `PageDriver` family |
+| [`70c3c576c54c00acfd1269efde81059d54eb2d80`](https://github.com/kavoye/linen-browser/commit/70c3c576c54c00acfd1269efde81059d54eb2d80) | fix(mcp): Match every element a scope selects | As above. | `PageDriver` family |
+| [`59c396de431ca98f4286adcc4a10bb42ef6fb478`](https://github.com/kavoye/linen-browser/commit/59c396de431ca98f4286adcc4a10bb42ef6fb478) | fix(mcp): Say when a ref was not listed | As above. | `PageDriver` family |
+| [`16c58005a589946d21b039fa1aa51fcc88ed8daa`](https://github.com/kavoye/linen-browser/commit/16c58005a589946d21b039fa1aa51fcc88ed8daa) | feat(mcp): Show text an action revealed | As above. | `PageDriver` family |
+| [`89800b27ec2001f2e04ede8a7ed2b7eaacc8c78b`](https://github.com/kavoye/linen-browser/commit/89800b27ec2001f2e04ede8a7ed2b7eaacc8c78b) | feat(toolbar): Show a checkmark when a link is copied | Toolbar UI. | `AskSurface*` |
+
+### Outbound candidate, compared with upstream `16c58005a589946d21b039fa1aa51fcc88ed8daa`
+
+Not reproduced on Linen and not proposed to upstream. Opening an upstream PR needs explicit approval. Further candidates are added here only after the reproduction step above.
+
+| WSurf change | Upstream state at the compared SHA | Next step |
+|---|---|---|
+| Ignore a download the download manager already owns, so repeated handoffs do not duplicate a transfer. Only the download-manager guard and its regression test from WSurf `e6362ec0329f29d3df04f169da1d8e1feffbd134`, a mixed commit that also changes agent page sampling, extension tests and the changelog. | `DownloadManager.adopt` starts a new item on every call. Whether upstream can hand the same download over twice is not proven. | Hold until a real double handoff reproduces on upstream. Then write the upstream patch fresh; never cherry-pick the WSurf commit. |
+
+Not candidates as wholesale changes: the embedded Chromium engine and its lifecycle code, and WSurf's classic-Keychain credential storage with tombstones and legacy migration.
