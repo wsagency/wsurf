@@ -134,6 +134,23 @@ struct ProfileTests {
         #expect(store.current.isOriginal)
     }
 
+    /// A removed profile's credential access is revoked before its directory goes, and no manager is handed out
+    /// for it again. The original profile can't be removed, so its credentials are never retired.
+    @Test func removingAProfileRevokesItsCredentialAccess() async throws {
+        let (store, _) = makeStore()
+        let work = store.add(name: "Work")
+        let access = try CredentialManager.forProfile(work).beginAccess()
+        #expect(access.isAuthorized(at: ContinuousClock().now))
+
+        await store.remove(Profile.original())
+        #expect(access.isAuthorized(at: ContinuousClock().now))
+        _ = try CredentialManager.forProfile(Profile.original())
+
+        await store.remove(work)
+        #expect(!access.isAuthorized(at: ContinuousClock().now))
+        #expect(throws: CredentialVaultError.unauthorized) { try CredentialManager.forProfile(work) }
+    }
+
     @Test func theChoiceOfProfileSurvivesARelaunch() {
         let (store, file) = makeStore()
         let work = store.add(name: "Work")

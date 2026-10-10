@@ -7,101 +7,33 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
-### 2026-10-09 — Actual engine beside address lock
+- WebAuthn context invalidation now tracks Chromium document identities, so replacing a child frame retires that document
+  without invalidating an unchanged main-frame context. Provider route scripts are replaced in place without disturbing
+  unrelated scripts, and BFCache-restored documents receive the current route.
 
-The address bar shows WK or Cr beside the lock for the active page's loaded engine.
+- Credential manager autofill source (Task 8), selectable per profile and off by default: the legacy Keychain
+  password store stays the default and is neither migrated nor read through; choosing the new manager is explicit and
+  exclusive with it. With the manager selected, the native picker lists accounts for the page origin only after an
+  explicit unlock, keeps same-name and case-distinct accounts as separate labelled choices, and carries the chosen
+  account through username, password and one-time-code steps for 300 seconds on the same page, origin and unlock.
+  Codes are computed natively at fill time and only for origins the account lists. Saving or updating writes only
+  into the account the user was shown; an edited username that points elsewhere writes nothing and is offered again
+  for confirmation. A fill is refused if the unlock, vault revision or a vault write changed after the choice.
+  Real-vault behavior tests, the combined gate (235 tests) and a 23-check actual-source smoke pass. Pending, so
+  not verified or claimed: Chromium late-dispatch authority (needs an engine-side contract), native UI acceptance,
+  Apple PRF unlock and Apple Passwords transfer.
+- Choosing the credential manager as the password provider is no longer silently overridden by an enabled password
+  extension; with the legacy store the extension still takes over exactly as before. The extension is not disabled or
+  changed, and Autofill settings says it is still enabled. Contract-tested on extension records; native UI unverified.
 
-### 2026-10-09 — Classic Keychain credential storage
-
-Provider credentials, MCP authorization credentials, and OAuth credentials now
-share the classic macOS Keychain store. Durable tombstones keep deleted
-credentials from reappearing.
-
-### 2026-10-08 — Complete Linen integration
-
-Integrated all 31 changes from the pinned upstream range through
-[PR #8](https://github.com/wsagency/wsurf/pull/8). The list follows the
-[source manifest](docs/upstream-migrations.md#complete-source-manifest):
-
-1. Detect both standalone and ChatGPT-bundled Codex CLI layouts for MCP setup,
-   retaining WSurf configuration and safe TOML merging.
-2. Preserve command-palette editing shortcuts across keyboard layouts.
-3. Wait for focused autofill fields to finish layout before delivering input,
-   with bounded waits and cancellation.
-4. Stop media polling on idle players and hidden pages, including page-cache
-   transitions.
-5. Show PDF filenames and correct untitled-page names on WebKit and Chromium,
-   without overwriting custom tab titles.
-6. Remember external-app approvals per website origin and target app, with
-   revocation in website settings and session-only private-window grants.
-7. Save WebKit PDF viewer documents through the download manager, preserving
-   edited PDF bytes, filename reservations, quarantine and handoff deduplication.
-8. Open the actual Downloads page from download settings and settings search.
-9. Refresh the localization catalog while retaining WSurf-only strings and
-   branding.
-10. Align global-reset settings copy with the string catalog.
-11. Stabilize assistant context test titles while pages load and retain fixture
-    servers for their full lifetime.
-12. Test external navigation with real WebKit actions and requesting origins
-    rather than fabricated navigation objects.
-13. Measure result-ranking performance independently of WebKit page loading,
-    retaining WSurf performance budgets.
-14. Restore saved scroll positions after late WebKit resets; stop restoration
-    when the user scrolls, the page moves itself or the document is left.
-15. Wait for extension test replies from the expected page instead of accepting
-    unrelated responses.
-16. Keep headless automation fixtures active without changing production page
-    scheduling.
-17. Confirm assistant key delivery on trusted keydown, avoiding duplicate input
-    when a page consumes keyup.
-18. Move native CI to Xcode 27, refresh CI actions and SwiftLint, and upgrade
-    AnyLanguageModel to 0.15.1 and swift-collections to 1.7.1. Keep CefSwift pinned
-    and enforce locked package resolution.
-19. Update README behavior and privacy documentation for WSurf.
-20. Install and verify the Metal toolchain before release and preview builds,
-    retaining the existing CI setup and deployment gates.
-21. Support CPU fallback for OCR and active autofill fixtures on virtual macOS
-    runners.
-22. Exclude only four unsupported Vision OCR integration tests from hosted CI;
-    keep all four enabled in native Pro verification.
-23. Improve gray folder-preview icon contrast in dark mode while retaining
-    colored folders.
-24. Accept object-valued MCP experimental capabilities during initialization
-    without changing standard fields or permission grants.
-25. Add profile-aware browser windows, live same-profile tab transfer and
-    isolated private sessions on both WebKit and Chromium. Bind assistant,
-    MCP and extension operations to their owning window, profile and document.
-26. Show assistant questions only in the window, space and surface where the
-    request began.
-27. Fill up to 32 controls per guarded assistant or MCP operation without
-    submitting the form. Add bounded rate-limit recovery, pause/Continue and
-    visual no-progress detection without replaying completed actions.
-28. Reduce idle work and correct startup behavior: event-driven MCP stdio,
-    cached speech preparation, visible-playing synchronized lyrics, validated
-    media geometry, URL-correct favicons, privacy-safe autofill diagnostics and
-    engine-aware page-resource cleanup.
-29. Keep sidebar drop targets visible on light websites using the sidebar's own
-    appearance.
-30. Add Tab-to-search site chips with native editor safeguards and adaptive
-    command-palette sizing.
-31. Limit Window/Dock page-title labels to 40 grapheme clusters, retaining full
-    stored titles and profile/private suffixes.
-
-WSurf compatibility work preserves Favorites, pinned tabs and folders, sidebar
-Undo/Redo, split panes and per-website engine selection. History clearing removes
-only the owning profile's conversation log; link previews retain that profile's
-JavaScript settings. External-app decisions remain bound to live source
-documents, with one-time consent for ambiguous or opaque sources. Stage runs can
-retain restored sessions with `WSURF_STAGE_SEED=0` without disabling isolation.
-
-Native Pro verification recorded 3,016 passing tests and no failures, including
-the four OCR integrations. PR and merged-main CI passed. The
-[migration journal](docs/upstream-migrations.md) and
-[integration record](https://github.com/wsagency/wsurf/pull/8#issuecomment-6067821179)
-separate observed checks from the remaining manual UI checks accepted by the
-user. This entry records source integration, not a signed public release.
-
-### Earlier WSurf changes
+- Added validated RFC 6238 TOTP setup parsing and time-based code generation to the credential core. The native TOTP suite and actual-source post-2038/UInt64 counter smoke pass; this does not verify Settings UI or native-provider integration.
+- Credential vault writes honor task cancellation before work and immediately
+  before atomic replacement; committed receipts remain successful.
+- Passkey registration requires a fresh assertion before vault writes. Full
+  wrapper limits are checked before provider use; unknown registration outcomes
+  differ from known-created setup failures; durable add receipts avoid stale
+  metadata; authorization epochs expire at deadline. PKCS#8 import accepts
+  nonzero-start `Data` slices.
 
 - Added repository-local omp worktree placement and documented feature-branch,
   PR-only changes to `main`.

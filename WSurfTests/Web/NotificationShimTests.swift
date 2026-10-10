@@ -23,7 +23,7 @@ struct NotificationShimTests {
                 frame: .init(x: 0, y: 0, width: 400, height: 300),
                 configuration: configuration
             ),
-            context: BrowserProfileContext(profile: .privateBrowsing())
+            profile: Profile.privateBrowsing()
         )
         page.loadHTMLString("<!doctype html><html><body>page</body></html>", baseURL: nil)
         #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
@@ -53,6 +53,7 @@ struct NotificationShimTests {
     }
 
     // MARK: - Installing
+
 
     @Test func theShimAnnouncesItselfAsSoonAsItIsInstalled() async {
         let (webView, sink) = await armed()
@@ -232,5 +233,6 @@ struct NotificationShimTests {
 
         #expect(result as? String == "survived")
     }
+
 
 }

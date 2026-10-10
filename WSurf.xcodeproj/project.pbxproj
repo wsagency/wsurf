@@ -15,6 +15,7 @@
 		EEAD00013027B875008F6668 /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = EEAD00033027B875008F6668 /* MCP */; };
 		EEAE00013027B875008F6668 /* Logging in Frameworks */ = {isa = PBXBuildFile; productRef = EEAE00033027B875008F6668 /* Logging */; };
 		EEAF00013027B875008F6668 /* CefKit in Frameworks */ = {isa = PBXBuildFile; productRef = EEAF00033027B875008F6668 /* CefKit */; };
+		EEC0DE20000000000000000E /* WSurfCredentialExchange.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EEC0DE200000000000000002 /* WSurfCredentialExchange.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -25,10 +26,32 @@
 			remoteGlobalIDString = EE41BFE13027B875008F6668;
 			remoteInfo = WSurf;
 		};
+		EEC0DE200000000000000008 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = EE41BFDA3027B875008F6668 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EEC0DE200000000000000001;
+			remoteInfo = WSurfCredentialExchange;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		EEC0DE20000000000000000D /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				EEC0DE20000000000000000E /* WSurfCredentialExchange.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		EE41BFE23027B875008F6668 /* WSurf.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WSurf.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		EEC0DE200000000000000002 /* WSurfCredentialExchange.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = WSurfCredentialExchange.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		EEC0DE100000000000000002 /* WSurfTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WSurfTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -40,6 +63,14 @@
 			);
 			target = EE41BFE13027B875008F6668 /* WSurf */;
 		};
+		EEC0DE200000000000000004 /* Exceptions for "WSurfCredentialExchange" folder in "WSurfCredentialExchange" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				WSurfCredentialExchange.entitlements,
+			);
+			target = EEC0DE200000000000000001 /* WSurfCredentialExchange */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -49,6 +80,14 @@
 				EEAA00043027B875008F6668 /* Exceptions for "WSurf" folder in "WSurf" target */,
 			);
 			path = WSurf;
+			sourceTree = "<group>";
+		};
+		EEC0DE200000000000000003 /* WSurfCredentialExchange */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				EEC0DE200000000000000004 /* Exceptions for "WSurfCredentialExchange" folder in "WSurfCredentialExchange" target */,
+			);
+			path = WSurfCredentialExchange;
 			sourceTree = "<group>";
 		};
 		EEC0DE100000000000000003 /* WSurfTests */ = {
@@ -70,6 +109,11 @@
 				EEAF00013027B875008F6668 /* CefKit in Frameworks */,
 			);
 		};
+		EEC0DE200000000000000006 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
 		EEC0DE100000000000000005 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
@@ -83,6 +127,7 @@
 			isa = PBXGroup;
 			children = (
 				EE41BFE43027B875008F6668 /* WSurf */,
+				EEC0DE200000000000000003 /* WSurfCredentialExchange */,
 				EEC0DE100000000000000003 /* WSurfTests */,
 				EE41BFE33027B875008F6668 /* Products */,
 			);
@@ -92,6 +137,7 @@
 			isa = PBXGroup;
 			children = (
 				EE41BFE23027B875008F6668 /* WSurf.app */,
+				EEC0DE200000000000000002 /* WSurfCredentialExchange.appex */,
 				EEC0DE100000000000000002 /* WSurfTests.xctest */,
 			);
 			name = Products;
@@ -107,9 +153,13 @@
 				EE41BFDE3027B875008F6668 /* Sources */,
 				EE41BFDF3027B875008F6668 /* Frameworks */,
 				EE41BFE03027B875008F6668 /* Resources */,
+				EEC0DE20000000000000000D /* Embed Foundation Extensions */,
 				EEAF00043027B875008F6668 /* Embed Chromium */,
 			);
 			buildRules = (
+			);
+			dependencies = (
+				EEC0DE200000000000000009 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				EE41BFE43027B875008F6668 /* WSurf */,
@@ -126,6 +176,28 @@
 			productName = WSurf;
 			productReference = EE41BFE23027B875008F6668 /* WSurf.app */;
 			productType = "com.apple.product-type.application";
+		};
+		EEC0DE200000000000000001 /* WSurfCredentialExchange */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EEC0DE20000000000000000A /* Build configuration list for PBXNativeTarget "WSurfCredentialExchange" */;
+			buildPhases = (
+				EEC0DE200000000000000005 /* Sources */,
+				EEC0DE200000000000000006 /* Frameworks */,
+				EEC0DE200000000000000007 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				EEC0DE200000000000000003 /* WSurfCredentialExchange */,
+			);
+			name = WSurfCredentialExchange;
+			packageProductDependencies = (
+			);
+			productName = WSurfCredentialExchange;
+			productReference = EEC0DE200000000000000002 /* WSurfCredentialExchange.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 		EEC0DE100000000000000001 /* WSurfTests */ = {
 			isa = PBXNativeTarget;
@@ -163,6 +235,14 @@
 				TargetAttributes = {
 					EE41BFE13027B875008F6668 = {
 						CreatedOnToolsVersion = 26.6;
+						SystemCapabilities = {
+							com.apple.AssociatedDomains = {
+								enabled = 1;
+							};
+						};
+					};
+					EEC0DE200000000000000001 = {
+						CreatedOnToolsVersion = 26.6;
 					};
 					EEC0DE100000000000000001 = {
 						CreatedOnToolsVersion = 26.6;
@@ -193,6 +273,7 @@
 			projectRoot = "";
 			targets = (
 				EE41BFE13027B875008F6668 /* WSurf */,
+				EEC0DE200000000000000001 /* WSurfCredentialExchange */,
 				EEC0DE100000000000000001 /* WSurfTests */,
 			);
 		};
@@ -200,6 +281,11 @@
 
 /* Begin PBXResourcesBuildPhase section */
 		EE41BFE03027B875008F6668 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		EEC0DE200000000000000007 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -232,6 +318,11 @@
 			files = (
 			);
 		};
+		EEC0DE200000000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 		EEC0DE100000000000000004 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
@@ -240,6 +331,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		EEC0DE200000000000000009 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EEC0DE200000000000000001 /* WSurfCredentialExchange */;
+			targetProxy = EEC0DE200000000000000008 /* PBXContainerItemProxy */;
+		};
 		EEC0DE100000000000000007 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = EE41BFE13027B875008F6668 /* WSurf */;
@@ -414,6 +510,7 @@
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = io.wsagency.wsurf;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "$(WSURF_PROFILE)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -466,6 +563,64 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		EEC0DE20000000000000000B /* Debug configuration for PBXNativeTarget "WSurfCredentialExchange" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = WSurfCredentialExchange/WSurfCredentialExchange.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 5X68L55TNU;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = WSurfCredentialExchange/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.wsagency.wsurf.CredentialExchange;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		EEC0DE20000000000000000C /* Release configuration for PBXNativeTarget "WSurfCredentialExchange" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = WSurfCredentialExchange/WSurfCredentialExchange.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 5X68L55TNU;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = WSurfCredentialExchange/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.wsagency.wsurf.CredentialExchange;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
 			};
@@ -534,6 +689,14 @@
 			);
 			defaultConfigurationName = Release;
 		};
+		EEC0DE20000000000000000A /* Build configuration list for PBXNativeTarget "WSurfCredentialExchange" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EEC0DE20000000000000000B /* Debug configuration for PBXNativeTarget "WSurfCredentialExchange" */,
+				EEC0DE20000000000000000C /* Release configuration for PBXNativeTarget "WSurfCredentialExchange" */,
+			);
+			defaultConfigurationName = Release;
+		};
 		EEC0DE100000000000000009 /* Build configuration list for PBXNativeTarget "WSurfTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -558,7 +721,7 @@
 			repositoryURL = "https://github.com/huggingface/AnyLanguageModel.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.15.1;
+				minimumVersion = 0.13.0;
 			};
 		};
 		EEAC00023027B875008F6668 /* XCRemoteSwiftPackageReference "GRDB" */ = {

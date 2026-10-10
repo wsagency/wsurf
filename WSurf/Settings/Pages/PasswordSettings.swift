@@ -7,22 +7,25 @@ import SwiftUI
 struct PasswordSettings: View {
     @Bindable var settings: BrowserSettings
     let extensions: ExtensionManager
-    let context: BrowserProfileContext
     @State private var model: PasswordSettingsModel
     @State private var editing: SavedPassword?
     @State private var showsAdd = false
     @State private var removing: SavedPassword.Summary?
     @State private var query = ""
 
-    init(context: BrowserProfileContext) {
-        self.context = context
-        self.settings = context.settings
-        self.extensions = context.extensions
-        _model = State(initialValue: PasswordSettingsModel(profileID: context.profile.id))
+    init(settings: BrowserSettings, extensions: ExtensionManager, profileID: UUID) {
+        self.settings = settings
+        self.extensions = extensions
+        _model = State(initialValue: PasswordSettingsModel(profileID: profileID))
     }
 
+    /// The extension that actually owns native password filling; nil once the profile explicitly chose Credential Manager.
     private var provider: InstalledExtension? {
-        PasswordExtensionPolicy.provider(in: extensions.installed + extensions.systemExtensions, selectedID: settings.passwordExtensionID)
+        let records = extensions.installed + extensions.systemExtensions
+        guard PasswordExtensionPolicy.suppressesNativeFill(
+            provider: settings.passwordProvider, in: records, selectedID: settings.passwordExtensionID
+        ) else { return nil }
+        return PasswordExtensionPolicy.provider(in: records, selectedID: settings.passwordExtensionID)
     }
 
     private var availableProviders: [InstalledExtension] {
@@ -50,8 +53,8 @@ struct PasswordSettings: View {
                     }
                 }
                 RowSeparator()
-                DetailRow(title: "Password provider") {
-                    Picker("Password provider", selection: selectedProvider) {
+                DetailRow(title: "Password extension") {
+                    Picker("Password extension", selection: selectedProvider) {
                         Text("Automatic").tag("")
                         ForEach(availableProviders) { record in
                             Text(record.displayName).tag(record.id)
@@ -69,7 +72,7 @@ struct PasswordSettings: View {
                     .padding(.top, 1)
             }
         }
-        AutofillSavePromptReset(kind: .password, context: context)
+        AutofillSavePromptReset(kind: .password, profileID: model.profileID)
         SettingsSection(title: "Saved passwords", symbol: "key", footnote: "WSurf encrypts saved passwords. macOS manages passkeys.", accessory: {
             HStack(spacing: 10) {
                 if model.isLoaded, !model.entries.isEmpty {

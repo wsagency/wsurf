@@ -12,8 +12,8 @@ enum PageDriver {
     static func scripted(_ body: String) -> String {
         let frameCheck: String
         if let frame = selectedFrame {
-            if frame.frame.webKit != nil, let id = jsonString(frame.id) {
-                frameCheck = "if (window.__wsurfFrameToken !== \(id)) return JSON.stringify({ stale: true });\n"
+            if frame.frame.webKit != nil, let id = jsonString(frame.frame.documentID) {
+                frameCheck = "if (globalThis.__wsurfNativeFrameNonce !== \(id)) return JSON.stringify({ stale: true });\n"
             } else if let id = jsonString(frame.frame.documentID) {
                 frameCheck = "if (window.__wsurfFrameDocumentID !== \(id)) return JSON.stringify({ stale: true });\n"
             } else {
@@ -187,9 +187,7 @@ enum PageDriver {
 
     // MARK: - Actions
 
-    static func click(
-        ref: Int, label: String, in webView: BrowserPage, announced: Bool = false, refreshControls: Bool = true
-    ) async -> String {
+    static func click(ref: Int, label: String, in webView: BrowserPage, announced: Bool = false) async -> String {
         let resolved = await resolve(ref: ref, label: label, kinds: #"["button","link","checkbox","radio","field","select","combobox"]"#, in: webView)
         switch resolved {
         case .failure(let message):
@@ -200,8 +198,7 @@ enum PageDriver {
                     label: found.label,
                     category: category,
                     host: (selectedFrame?.url ?? webView.url)?.host(),
-                    authoredByAI: AgentAuthoredText.isPresent(in: webView),
-                    policy: webView.context.actionPolicy
+                    authoredByAI: AgentAuthoredText.isPresent(in: webView)
                 )
                 guard permitted else {
                     return SensitiveAction.declined(found.label, category: category)
@@ -276,18 +273,13 @@ enum PageDriver {
                   if (!el || !el.isConnected) { return JSON.stringify({ stale: true }); }
                   const error = R.actionable(el);
                   if (error) return JSON.stringify({ error });
-                  const kind = R.kindOf(el);
-                  if (kind === 'checkbox' || kind === 'radio') {
-                    if (R.isSensitiveField(el)) return JSON.stringify({ error: 'The user must fill this sensitive field. Do not retry with another tool.' });
-                    if (el.readOnly || el.getAttribute('aria-readonly') === 'true') return JSON.stringify({ error: 'This control is read-only.' });
-                  }
                   el.click();
                   return JSON.stringify({ ok: true });
                 """)
             guard let object = await evaluateJSON(script, in: webView) else { return staleMessage }
             if let error = object["error"] as? String { return error }
             guard object["ok"] as? Bool == true else { return staleMessage }
-            return "Clicked “\(found.label)”. " + (refreshControls ? await settleAndSnippet(webView) : "")
+            return "Clicked “\(found.label)”. \(await settleAndSnippet(webView))"
         }
     }
 
@@ -311,8 +303,7 @@ enum PageDriver {
                     label: found.label,
                     category: category,
                     host: (selectedFrame?.url ?? webView.url)?.host(),
-                    authoredByAI: true,
-                    policy: webView.context.actionPolicy
+                    authoredByAI: true
                 )
                 guard permitted else {
                     return SensitiveAction.declined(found.label, category: category)
@@ -329,39 +320,17 @@ enum PageDriver {
                   if (R.isSensitiveField(el)) {
                     return JSON.stringify({ refused: true });
                   }
-                  if (R.disabled(el) || el.readOnly || el.getAttribute('aria-readonly') === 'true') { return JSON.stringify({ unavailable: true }); }
+                  if (R.disabled(el) || el.readOnly) { return JSON.stringify({ unavailable: true }); }
                   if (!['INPUT','TEXTAREA'].includes(el.tagName) && !el.isContentEditable) return JSON.stringify({ error: 'This control is not directly editable. Use click or keyboard controls.' });
-                  if (el.tagName === 'INPUT' && ['file','hidden','checkbox','radio','button','submit'].includes(el.type)) {
-                    return JSON.stringify({ error: el.type === 'file' ? 'Use chooseFilesOnPage; file selection requires the user.'
-                      : 'Use fillFields or setChecked for checkbox and radio controls; this input cannot accept text.' });
-                  }
-                  let value = \(encodedText);
-                  if (el.type === 'color') {
-                    if (!/^#[0-9a-f]{6}$/i.test(value)) return JSON.stringify({ error: 'Use a color in #RRGGBB format.' });
-                    value = value.toLowerCase();
-                  }
-                  if (el.type === 'date') {
-                    const probe = el.cloneNode(false);
-                    probe.value = value;
-                    if ((value && !probe.value) || !probe.validity.valid) {
-                      return JSON.stringify({ error: 'Use a valid date within the control min, max, and step constraints. Inspect the control before retrying.' });
-                    }
-                    value = probe.value;
-                  }
-                  if (el.type === 'range') {
-                    const probe = el.cloneNode(false);
-                    probe.value = value;
-                    if (!value.trim() || !Number.isFinite(Number(value)) || Number(probe.value) !== Number(value) || !probe.validity.valid) {
-                      return JSON.stringify({ error: 'Use a numeric value within the range min, max, and step constraints. Inspect the control before retrying.' });
-                    }
-                    value = probe.value;
+                  if (el.tagName === 'INPUT' && ['file','range','color','hidden','checkbox','radio','button','submit'].includes(el.type)) {
+                    return JSON.stringify({ error: 'Use the appropriate control tool for this input type.' });
                   }
                   const error = R.actionable(el);
                   if (error) return JSON.stringify({ error });
                   el.scrollIntoView({ block: 'center' });
-                  if (\(refreshControls)) el.focus();
-                  R.expectValue(el, value);
-                  R.setValue(el, value);
+                  el.focus();
+                  R.expectValue(el, \(encodedText));
+                  R.setValue(el, \(encodedText));
                   const retained = R.valueState(\(found.ref)) === 'matched';
                   if (\(submit ? "true" : "false") && retained) { R.pressEnter(el); }
                   return JSON.stringify({ ok: true, submitted: \(submit ? "true" : "false") && retained });
@@ -414,7 +383,6 @@ enum PageDriver {
                   if (R.isSensitiveField(el)) { return JSON.stringify({ refused: true }); }
                   const error = R.actionable(el);
                   if (error) return JSON.stringify({ error });
-                  if (el.readOnly || el.getAttribute('aria-readonly') === 'true') return JSON.stringify({ error: 'This control is read-only.' });
                   const want = R.norm(\(encodedOption)).toLowerCase();
                   const options = Array.from(el.options);
                   let matches = options.filter(o => R.norm(o.value).toLowerCase() === want);
@@ -454,6 +422,96 @@ enum PageDriver {
                 status: status, ref: found.ref, documentID: observation(in: webView)?.documentID,
                 refreshControls: refreshControls, in: webView)
         }
+    }
+
+    nonisolated struct FieldValue: Codable, Equatable, Sendable {
+        let ref: Int
+        let value: String
+        let select: Bool
+    }
+
+    static func fillFields(_ fields: [FieldValue], in webView: BrowserPage, announced: Bool = false) async -> String {
+        guard (1...8).contains(fields.count), fields.allSatisfy({ $0.ref > 0 }),
+            Set(fields.map(\.ref)).count == fields.count
+        else {
+            return "Use one to eight distinct field refs from the latest page observation."
+        }
+        guard let initial = await batchState(in: webView) else { return staleMessage }
+        let documentID = observation(in: webView)?.documentID
+        var completed = 0
+        var reason = ""
+        for field in fields {
+            guard !Task.isCancelled, PageAutomationGuard.allowsExecution,
+                !webView.isLoading, await batchState(in: webView) == initial
+            else {
+                reason = "The page changed. Read the fresh controls before filling remaining fields."
+                break
+            }
+            let result: String
+            if field.select {
+                result = await selectOption(
+                    field.value, ref: field.ref, field: "", in: webView,
+                    announced: announced && completed == 0, refreshControls: false)
+            } else {
+                result = await type(
+                    text: field.value, intoField: "", ref: field.ref, submit: false,
+                    in: webView, announced: announced && completed == 0, refreshControls: false)
+            }
+            guard result.hasPrefix("Typed") || result.hasPrefix("Selected") else {
+                reason = result
+                break
+            }
+            completed += 1
+        }
+        await PageSettle.afterInteraction(webView)
+        var retained = 0
+        for field in fields.prefix(completed) {
+            let state = await valueState(ref: field.ref, documentID: documentID, in: webView)
+            retained += state == "matched" ? 1 : 0
+        }
+        if retained < completed {
+            reason = "Some earlier values changed or could not be verified. Inspect the current page before retrying. " + reason
+            completed = retained
+        }
+        return "Filled \(completed) of \(fields.count) fields. \(reason)\n" + (await PageAutomationGuard.withCurrentDocument(in: webView) {
+            await snapshot(webView)
+        })
+    }
+
+    private static func batchState(in webView: BrowserPage) async -> String? {
+        guard PageAutomationGuard.allowsExecution, await selectedFrameIsLive(in: webView) else { return nil }
+        let script = scripted(
+            """
+            const textOutsideFields = doc => {
+              if (!doc.body) return '';
+              const parts = [];
+              const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+              let node;
+              while ((node = walker.nextNode())) {
+                const parent = node.parentElement;
+                if (!parent || parent.isContentEditable || parent.closest('textarea,script,style,noscript')) continue;
+                if (!parent.getClientRects().length || (parent.checkVisibility && !parent.checkVisibility())) continue;
+                parts.push(node.textContent);
+              }
+              return R.norm(parts.join(' '));
+            };
+            const markupWithoutValues = el => {
+              const copy = el.cloneNode(true);
+              if (el.isContentEditable || el.tagName === 'TEXTAREA') copy.replaceChildren();
+              for (const field of copy.querySelectorAll('textarea,[contenteditable]:not([contenteditable="false"])')) {
+                field.replaceChildren();
+              }
+              return copy.outerHTML.replace(/value="[^"]*"/g, '');
+            };
+            let text = textOutsideFields(document);
+            for (const frame of document.querySelectorAll('iframe')) {
+              try { if (frame.contentDocument) text += ' ' + textOutsideFields(frame.contentDocument); } catch (e) {}
+            }
+            return JSON.stringify({ snapshot: window.__wsurfSnapshot, url: location.href,
+              text, refs: (window.__wsurfRefs || []).map(el =>
+                [el.isConnected, el.disabled, R.kindOf(el), el.name, el.id, markupWithoutValues(el)]) });
+            """)
+        return (try? await webView.evaluateJavaScript(script, in: selectedFrame?.frame, contentWorld: PageAutomationGuard.world)) as? String
     }
 
     static func scroll(direction: String, ref: Int = 0, in webView: BrowserPage) async -> String {

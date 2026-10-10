@@ -5,8 +5,6 @@ These rules apply to all code, documentation, and configuration changes in this 
 - Use Superpowers for every task: start with `using-superpowers` and follow the relevant skills using native omp tools.
 
 - Use one dedicated Git worktree and a unique `feature/<short-name>` branch per task, based on the latest `origin/main`. Do not develop in the `main` checkout or switch branches in a shared checkout.
-- Store worktrees inside the project's `/.worktrees/` directory, which must remain gitignored.
-- OMP automatically creates an isolated worktree for a task. Detect and reuse that worktree on its `feature/<short-name>` branch; do not create a second worktree or switch the shared checkout.
 - Leave other tasks' uncommitted changes alone. Never stash, discard, move, or commit them as part of your task.
 - Keep build output and DerivedData local to your worktree; do not reuse another worktree's build directory.
 - Integrate changes only through a PR targeting `main`, after review and required CI checks pass. Never commit or push changes directly to `main`.
@@ -22,6 +20,29 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md#development-workflow) for the worktree 
 - Use native omp tools for the workflows: `read` for skills, `task` for
   subagents, and `todo` for task lists.
 
+## Mandatory feature branches and worktrees
+
+- **MUST:** Before starting any task, create a dedicated feature branch
+  (for example `feature/<task>`) and its own linked Git worktree. For a
+  continuation of the same task, reuse its existing feature branch/worktree.
+- **MUST:** Do all development, source and documentation edits, commits,
+  builds, and tests in that task's worktree. This includes bug fixes,
+  refactors, configuration changes, plans, and instruction-file changes;
+  there is no exception for small or documentation-only tasks.
+- **MUST NOT:** Develop or commit directly in `main`, `master`, the shared
+  checkout, or another task's worktree. The shared checkout is for reference
+  and explicitly authorized integration only.
+- Before editing, verify the active branch and linked-worktree path. A
+  feature branch without a separate worktree is not sufficient isolation.
+- Give every subagent the exact branch and worktree path; run repository
+  commands with that worktree as `cwd`.
+- Preserve the user's checkout and other worktrees. Never stash, reset, clean,
+  or overwrite unrelated work to prepare a task.
+- If the required feature branch/worktree cannot be created or located,
+  stop and report the blocker; never fall back to working in `main`.
+- Merging or publishing back to the shared checkout requires explicit user
+  authorization. Build outputs and stage data must remain separately owned;
+  they are not a substitute for a source worktree.
 ## Native builds and verification
 
 - Develop locally on the Air (`m5air.local`); build and test the native WSurf app
@@ -43,8 +64,8 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md#development-workflow) for the worktree 
 - Use `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` for remote
   build/test commands; do not change global `xcode-select` settings.
 - Pro's established project is `~/projects/wsurf`. Preserve its working tree
-  and existing builds. Sync current sources into an isolated worktree or owned
-  build snapshot, then use the native `xcodebuild` workflow in `CONTRIBUTING.md`.
+  and existing builds. Sync current feature sources into a dedicated feature
+  worktree on Pro, then use the native `xcodebuild` workflow in `CONTRIBUTING.md`.
 - Copy the resulting app back to the Air for real UI verification. Use a
   separate stage app and `WSURF_STAGE=1` with an owned `WSURF_STAGE_HOME`; do not
   replace the user's installed app or use production browsing data.

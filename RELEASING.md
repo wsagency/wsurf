@@ -93,14 +93,65 @@ Export the key from that Mac, or revoke the certificate and make a new one. A
 revoked certificate does not stop a release that is already public. The workflow
 signs with `--timestamp`.
 
-## One-time: the provisioning profile
+## Local Debug: Mac App Development profile
 
-`WSurf/WSurf.entitlements` declares two restricted entitlements. Provider API
-keys, MCP authorization tokens, and OAuth credentials use the encrypted
-classic Keychain, with migration for legacy Data Protection Keychain entries.
-The `keychain-access-groups` entitlement remains required for the separate Data
-Protection Keychain used by the password/autofill/payment vaults and for legacy
-migration. The app also lets a website use a passkey, so the file declares
+Use Zen for the Apple Developer portal, not WSurf. A Mac App Development
+profile is for local signed Debug verification; it does not replace the
+Developer ID profile used by the release workflow.
+
+The profile was created on 2026-10-07. On 2026-10-08, separately approved
+updates added the current Air, then enabled Associated Domains and regenerated
+the profile again. The existing certificate and all three devices were preserved:
+
+| Field | Verified value |
+|---|---|
+| Name | `WSurf Mac Development` |
+| Current UUID | `92d65b2e-5d60-4405-914f-8f65c9455a5b` |
+| Team | `WEB rjesenja d.o.o.` / `5X68L55TNU` |
+| Application identifier | `5X68L55TNU.io.wsagency.wsurf` |
+| Profile expiration | 2027-10-08 |
+| Certificate | Apple Development: Kristijan Lukacin (DX3HVXTCKY) |
+| Certificate SHA-1 | `3076859F107D3B59F2D72CA9F7EBEB55AB7CFBC0` |
+| Certificate expiration | 2027-08-02, before the profile expires |
+
+The current download is `WSurf_Mac_Development(2).provisionprofile`.
+`security cms` comparison with the previous device-only profile confirms that
+the only added entitlement is `com.apple.developer.associated-domains`, with
+the profile grant `"*"`. The application remains restricted to
+`webcredentials:wsurf.app` in `WSurf/WSurf.entitlements`.
+
+The current Air (`MacBook Air (m5air)`, provisioning UDID
+`00008142-000E645E112B401C`), original Air, and Pro remain included. Compare
+provisioning UDIDs, not device names. The certificate bytes are unchanged.
+
+The new UUID-named profile is installed on both Air and Pro under
+`~/Library/Developer/Xcode/UserData/Provisioning Profiles/`; existing files
+were not replaced or deleted. Both installed copies match the downloaded
+SHA-256 `3f8a7f741464859b9ad197e3a76012036dd9a9b18acbb38cc28f86fd7b28c4ef`.
+Earlier profiles became invalid on the portal when the App ID capability
+changed. Use the current profile for future development builds. Keep profile
+binaries and private keys out of the repository.
+
+The human requested Associated Domains and personally confirmed Apple's
+profile-invalidation warning. Only that capability changed; In-App Purchase
+was preserved. Both the origin AASA and Apple's cached AASA name
+`5X68L55TNU.io.wsagency.wsurf`. No domain deployment was needed.
+
+**Associated Domains configuration is verified; native PRF is not yet proved.**
+The app still declares the separate managed browser entitlement, which this
+profile does not grant. Existing browser request `6CL33UDT7A` remains
+**Declined**; it was not resubmitted. That API is not a prerequisite for
+own-domain PRF unlocking, app-owned website cryptography, or credential
+exchange. Resolve the app's browser-API dependency separately, not by stripping
+entitlements merely to hide a signing error. No signed build or credential
+ceremony was run for this configuration update.
+
+## One-time: the Developer ID provisioning profile
+
+`WSurf/WSurf.entitlements` declares two restricted entitlements. The app stores
+API keys in the data-protection keychain. That keychain refuses an item from code
+that has no keychain access group, so the file declares `keychain-access-groups`.
+The app also lets a website use a passkey, so the file declares
 `com.apple.developer.web-browser.public-key-credential`. A Developer ID
 signature can only carry a restricted entitlement when an embedded profile
 authorizes it. Gatekeeper refuses to launch an app that declares an entitlement

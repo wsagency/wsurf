@@ -27,11 +27,14 @@ final class BrowserFrame {
     let documentID: String
     let isMainFrame: Bool
     let request: URLRequest
+    let chromiumParentID: String?
     let securityOrigin: BrowserSecurityOrigin
+    let hasTrustedSecurityOrigin: Bool
 
     init(webKit: WKFrameInfo, documentID: String = "") {
         self.webKit = webKit
         chromiumID = nil
+        chromiumParentID = nil
         self.documentID = documentID
         isMainFrame = webKit.isMainFrame
         request = webKit.request
@@ -40,15 +43,27 @@ final class BrowserFrame {
             host: webKit.securityOrigin.host,
             port: webKit.securityOrigin.port
         )
+        hasTrustedSecurityOrigin = ["http", "https"].contains(webKit.securityOrigin.protocol.lowercased())
+            && !webKit.securityOrigin.host.isEmpty
     }
 
-    init(id: String, documentID: String, url: URL, isMainFrame: Bool, securityOrigin: BrowserSecurityOrigin) {
+    init(
+        id: String,
+        documentID: String,
+        url: URL,
+        isMainFrame: Bool,
+        securityOrigin: BrowserSecurityOrigin,
+        parentID: String? = nil,
+        hasTrustedSecurityOrigin: Bool = true
+    ) {
         webKit = nil
         chromiumID = id
+        chromiumParentID = parentID
         self.documentID = documentID
         self.isMainFrame = isMainFrame
         request = URLRequest(url: url)
         self.securityOrigin = securityOrigin
+        self.hasTrustedSecurityOrigin = hasTrustedSecurityOrigin
     }
 }
 

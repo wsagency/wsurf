@@ -12,12 +12,19 @@ final class PasswordAutofill {
     static let shared = PasswordAutofill()
     static let world = AutofillPage.world
     private static let handlerName = "wsurfPasswords"
-    func isEnabled(in context: BrowserProfileContext) -> Bool {
-        !context.profile.isPrivate && context.settings.fillsPasswords
-            && PasswordExtensionPolicy.provider(
-                in: context.extensions.installed + context.extensions.systemExtensions,
-                selectedID: context.settings.passwordExtensionID
-            ) == nil
+    private(set) var profile = Profile.original()
+    var profileID: UUID { profile.id }
+    var isPrivate: Bool {
+        profileID == Profile.privateID
+    }
+    /// The one internal store that fills and saves passwords; legacy unless the profile explicitly chose the manager.
+    var provider: PasswordProvider { BrowserSettings.shared.passwordProvider }
+    @ObservationIgnored var extensions: () -> [InstalledExtension] = { [] }
+    var isEnabled: Bool {
+        !isPrivate && BrowserSettings.shared.fillsPasswords
+            && !PasswordExtensionPolicy.suppressesNativeFill(
+                provider: provider, in: extensions(), selectedID: BrowserSettings.shared.passwordExtensionID
+            )
     }
     @ObservationIgnored private let pages = NSHashTable<BrowserPage>.weakObjects()
     @ObservationIgnored private var frames: [ObjectIdentifier: [String: BrowserFrame]] = [:]
@@ -31,21 +38,22 @@ final class PasswordAutofill {
         }
     }
     private func applyPolicy(in page: BrowserPage, frame: BrowserFrame) {
-        let context = page.context
-        let enabled = isEnabled(in: context)
+        guard page.profileID == profileID else { return }
+        let enabled = isEnabled, manager = provider == .credentialManager
         Task {
-            do {
-                guard page.context === context else { return }
-                _ = try await page.callAsyncJavaScript(
-                    "globalThis.__wsurfPasswords?.setEnabled(enabled);",
-                    arguments: ["enabled": enabled],
-                    in: frame,
-                    contentWorld: Self.world
-                )
-            } catch {
-                AutofillDiagnostics.policyFailed(.password, error: error, isMainFrame: frame.isMainFrame)
-            }
+            _ = try? await page.callAsyncJavaScript(
+                "globalThis.__wsurfPasswords?.setCredentialManager(manager); globalThis.__wsurfPasswords?.setEnabled(enabled);",
+                arguments: ["enabled": enabled, "manager": manager],
+                in: frame,
+                contentWorld: Self.world
+            )
         }
+    }
+    func use(profile: Profile) {
+        WebAuthnAdapter.providerChanged()
+        self.profile = profile
+        frames.removeAll()
+        refreshPolicy()
     }
 
     func install(in page: BrowserPage) {
@@ -53,7 +61,7 @@ final class PasswordAutofill {
         page.installScript(AutofillFormScript.source + AutofillSuggestionScript.source, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.installScript(PasswordAutofillScript.clientSource, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.addScriptMessageHandler(name: Self.handlerName, in: Self.world) { [weak self] message in
-            guard let self else { return }
+            guard let self, message.page.profileID == self.profileID else { return }
             if let body = message.body as? [String: Any], body["action"] as? String == "ready" {
                 guard let documentID = body["documentID"] as? String, UUID(uuidString: documentID) != nil else { return }
                 var values = self.frames[ObjectIdentifier(message.page)] ?? [:]
@@ -66,7 +74,7 @@ final class PasswordAutofill {
                 AutofillDiagnostics.note(.scriptReady, kind: .password)
                 self.applyPolicy(in: message.page, frame: message.frameInfo)
             } else {
-                AutofillSuggestions.shared.receive(message, kind: .password, world: Self.world, bridge: "__wsurfPasswords")
+                AutofillSuggestions.shared.receive(message, kind: .password, profileID: self.profileID, world: Self.world, bridge: "__wsurfPasswords")
             }
         }
     }

@@ -61,6 +61,7 @@ struct WebsiteDataTests {
         #expect(summary.contains("cookies"))
         #expect(summary.contains("cached files"))
     }
+ 
 
     @Test func engineTagKeepsDuplicateOriginsDistinct() {
         let webKit = WebsiteData.Entry(displayName: "example.com", types: [WKWebsiteDataTypeCookies], engine: .webKit)

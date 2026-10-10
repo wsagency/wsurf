@@ -73,5 +73,16 @@
 		</dict>
 	</array>
 
+	<!-- The activity the system sends when another app exports credentials to WSurf. Its runtime type is the SDK
+	     constant ASCredentialExchangeActivity (the string "ASCredentialExchangeActivity"), which the exchange
+	     coordinator matches. Apple's documentation disagrees with itself about what NSUserActivityTypes must
+	     hold: the macOS 26.5 SDK and the online ASCredentialImportManager page say ASCredentialExchangeActivityType,
+	     the macOS 27 SDK says ASCredentialExchangeActivity. Both are declared; an unused entry is harmless. -->
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>ASCredentialExchangeActivity</string>
+		<string>ASCredentialExchangeActivityType</string>
+	</array>
+
 </dict>
 </plist>

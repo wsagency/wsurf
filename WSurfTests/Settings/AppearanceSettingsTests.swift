@@ -4,43 +4,12 @@
 
 import AppKit
 import Foundation
-import Observation
 import SwiftUI
-import Synchronization
 import Testing
 
 @testable import WSurf
 
 struct AppearanceSettingsTests {
-    @Test func contextSettingsShareObservableApplicationPreferences() {
-        let suites = (0..<3).map { "SharedBrowserSettings-\($0)-\(UUID().uuidString)" }
-        let defaults = suites.map { UserDefaults(suiteName: $0)! }
-        defer {
-            for (suiteName, suiteDefaults) in zip(suites, defaults) {
-                suiteDefaults.removePersistentDomain(forName: suiteName)
-            }
-        }
-
-        let application = BrowserSettings(defaults: defaults[0])
-        let first = BrowserSettings(defaults: defaults[0], sessionDefaults: defaults[1], application: application)
-        let second = BrowserSettings(defaults: defaults[0], sessionDefaults: defaults[2], application: application)
-
-        let invalidated = Mutex(false)
-        withObservationTracking {
-            _ = second.pageZoom
-        } onChange: {
-            invalidated.withLock { $0 = true }
-        }
-        first.pageZoom = 1.25
-        first.sidebarFontSize = 18
-        first.javaScriptEnabled = false
-
-        #expect(invalidated.withLock { $0 })
-        #expect(second.pageZoom == 1.25)
-        #expect(second.sidebarFontSize == 18)
-        #expect(!first.javaScriptEnabled)
-        #expect(second.javaScriptEnabled)
-    }
     @Test func sidebarAppearancePersistsAndBoundsMalformedValues() throws {
         let suiteName = "AppearanceSettingsTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -52,11 +21,13 @@ struct AppearanceSettingsTests {
         settings.sidebarFontWeight = .bold
         settings.sidebarRowSpacing = 4.5
         settings.sidebarFolderTint = 0.8
+
         let restored = BrowserSettings(defaults: defaults)
         #expect(restored.sidebarFontFamily == "Menlo")
         #expect(restored.sidebarFontSize == 18.5)
         #expect(restored.sidebarFontWeight == .bold)
         #expect(restored.sidebarRowSpacing == 4.5)
+
         #expect(restored.sidebarFolderTint == 0.8)
 
         defaults.set(Double.nan, forKey: "appearance.sidebar.fontSize")
@@ -228,7 +199,7 @@ struct AppearanceSettingsTests {
     @Test func editedAddressKeepsCustomColorWhenPastedStylesAreStripped() {
         let color = NSColor(srgbRed: 0.2, green: 0.4, blue: 0.8, alpha: 0.6)
         let rendered = MentionFieldRendering.attributed(
-            text: "example.com", chips: [], fontSize: 13, isDark: false, textColor: color, favicons: FaviconLoader()
+            text: "example.com", chips: [], fontSize: 13, isDark: false, textColor: color
         )
         #expect(rendered.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == color)
         let editor = NSTextView()
@@ -262,7 +233,7 @@ struct AppearanceSettingsTests {
 
     @MainActor
     @Test func explicitChromeColorsWinOverWebsiteTintAndResetRestoresSampling() throws {
-        let settings = BrowserSettings.application
+        let settings = BrowserSettings.shared
         let savedAppearance = settings.appearance
         let savedThemes = settings.themeCustomizations
         let savedForcedDark = settings.forcesDarkAppearance
@@ -292,24 +263,5 @@ struct AppearanceSettingsTests {
         settings.resetThemeCustomization(theme: .light)
         #expect(Theme.controlOverride == nil && Theme.urlOverride == nil)
         #expect(LoomChrome.sampledColor(page, scheme: .light) == sampled)
-    }
-    @MainActor
-    @Test func privateAppearanceDoesNotChangeTheApplicationAppearance() throws {
-        let appName = "AppearanceApp-\(UUID().uuidString)"
-        let sessionName = "AppearanceSession-\(UUID().uuidString)"
-        let appDefaults = try #require(UserDefaults(suiteName: appName))
-        let sessionDefaults = try #require(UserDefaults(suiteName: sessionName))
-        defer {
-            appDefaults.removePersistentDomain(forName: appName)
-            sessionDefaults.removePersistentDomain(forName: sessionName)
-        }
-        let settings = BrowserSettings(
-            defaults: appDefaults,
-            sessionDefaults: sessionDefaults,
-            appliesAppearanceGlobally: false
-        )
-        let originalAppearance = NSApp.appearance?.name
-        settings.forcesDarkAppearance = true
-        #expect(NSApp.appearance?.name == originalAppearance)
     }
 }

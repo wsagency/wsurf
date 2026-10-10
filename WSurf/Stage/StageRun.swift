@@ -3,6 +3,7 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 #if DEBUG
+import AppKit
 import Foundation
 
 @MainActor
@@ -10,7 +11,20 @@ enum StageRun {
     private static var tabs: [String: BrowserTab] = [:]
 
     static func startIfRequested(coordinator: AppCoordinator) {
-        guard StageMode.isActive, ProcessInfo.processInfo.environment["WSURF_STAGE_SEED"] != "0" else { return }
+        guard StageMode.isActive else { return }
+        if CredentialIntegrationProbe.isEnabled {
+            // Bootstrap installs the main menu asynchronously. Add only an explicit foreground entry.
+            Task {
+                while coordinator.mainMenu == nil {
+                    do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                }
+                guard CredentialIntegrationProbe.isEnabled else { return }
+                NSApp.mainMenu?.items.first?.submenu?.addItem(title: "Credential Probe…") {
+                    CredentialIntegrationProbe.present(coordinator: coordinator)
+                }
+            }
+            return
+        }
         Task {
             try? await Task.sleep(for: .seconds(1.2))
             seed(into: coordinator)

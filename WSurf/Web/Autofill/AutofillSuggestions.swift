@@ -15,10 +15,10 @@ final class AutofillSuggestions {
 
     private final class Request {
         let page: BrowserPage
-        let context: BrowserProfileContext
         let frame: BrowserFrame
         let token: String
         let kind: AutofillSaveKind
+        let profileID: UUID
         let frameURL: URL
         let topURL: URL
         let world: WKContentWorld
@@ -27,14 +27,23 @@ final class AutofillSuggestions {
         let formID: String
         let fieldID: String
         var rect = NSRect.zero
+        /// Which store this request was made against, and what it asked for. Set once; a later change of either
+        /// provider or vault state makes the request stale instead of redirecting it.
+        let provider: PasswordProvider
+        let field: CredentialAutofillField
+        let enteredUsername: String?
+        var epoch: UInt64?
+        var revision: UInt64?
 
-        init(page: BrowserPage, context: BrowserProfileContext, frame: BrowserFrame, token: String, kind: AutofillSaveKind,
-             frameURL: URL, topURL: URL, world: WKContentWorld, bridge: String,
-             documentID: String, formID: String, fieldID: String) {
-            self.page = page; self.context = context; self.frame = frame; self.token = token; self.kind = kind
-            self.frameURL = frameURL; self.topURL = topURL
+        init(page: BrowserPage, frame: BrowserFrame, token: String, kind: AutofillSaveKind,
+             profileID: UUID, frameURL: URL, topURL: URL, world: WKContentWorld, bridge: String,
+             documentID: String, formID: String, fieldID: String,
+             provider: PasswordProvider, field: CredentialAutofillField, enteredUsername: String?) {
+            self.page = page; self.frame = frame; self.token = token; self.kind = kind
+            self.profileID = profileID; self.frameURL = frameURL; self.topURL = topURL
             self.world = world; self.bridge = bridge; self.documentID = documentID
             self.formID = formID; self.fieldID = fieldID
+            self.provider = provider; self.field = field; self.enteredUsername = enteredUsername
         }
     }
 
@@ -94,17 +103,15 @@ final class AutofillSuggestions {
         observers.removeAll()
     }
 
-    func receive(_ message: BrowserScriptMessage, kind: AutofillSaveKind,
+    func receive(_ message: BrowserScriptMessage, kind: AutofillSaveKind, profileID: UUID,
                  world: WKContentWorld, bridge: String) {
         guard let body = message.body as? [String: Any],
               let action = body["action"] as? String,
               let token = body["token"] as? String, UUID(uuidString: token) != nil else { return }
         let page = message.page
-        let context = page.context
-        let profileID = context.profile.id
         let key = ObjectIdentifier(page)
         if action == "dismiss" || action == "hide" {
-            guard requests[key]?.token == token, requests[key]?.context === context else { return }
+            guard requests[key]?.token == token else { return }
             if action == "dismiss" { requests[key] = nil }
             dismiss(in: page)
             return
@@ -113,7 +120,8 @@ final class AutofillSuggestions {
               let documentID = body["documentID"] as? String, UUID(uuidString: documentID) != nil,
               let formID = body["formID"] as? String, Int(formID) ?? 0 > 0,
               let fieldID = body["fieldID"] as? String, Int(fieldID) ?? 0 > 0,
-              AutofillSaveCoordinator.shared.isEnabled(kind, context: context),
+              AutofillSaveCoordinator.shared.isEnabled(kind, profileID: profileID),
+              profileID == page.profileID,
               let rawURL = body["url"] as? String, let frameURL = URL(string: rawURL),
               let topURL = page.url, SavedPassword.origin(for: topURL) != nil,
               let origin = SavedPassword.origin(for: frameURL), page.hasOnlySecureContent,
@@ -127,23 +135,81 @@ final class AutofillSuggestions {
             return
         }
         dismiss()
-        let request = Request(page: page, context: context, frame: message.frameInfo, token: token, kind: kind,
-                              frameURL: frameURL, topURL: topURL, world: world,
-                              bridge: bridge, documentID: documentID, formID: formID, fieldID: fieldID)
+        let provider = kind == .password ? PasswordAutofill.shared.provider : .legacy
+        let manager = provider == .credentialManager
+        let enteredUsername = manager ? (body["username"] as? String).flatMap { $0.isEmpty || $0.count > 500 ? nil : $0 } : nil
+        let request = Request(page: page, frame: message.frameInfo, token: token, kind: kind,
+                              profileID: profileID, frameURL: frameURL, topURL: topURL, world: world,
+                              bridge: bridge, documentID: documentID, formID: formID, fieldID: fieldID,
+                              provider: provider, field: manager && body["field"] as? String == "totp" ? .totp : .password,
+                              enteredUsername: enteredUsername)
         requests[key] = request; self.page = page
         let id = presentationID
         Task { [weak self, weak page] in
-            guard let self, let page, page.context === context, id == self.presentationID,
+            guard let self, let page, id == self.presentationID,
                   let rect = try? await self.awaitRect(rawRect, requestPage: page, frame: message.frameInfo, frameURL: frameURL, world: world) else { return }
             request.rect = rect
-            let records = try? await Task.detached {
-                try AutofillSaveIndex.suggestions(kind: kind, origin: origin, profileID: profileID)
-            }.value
-            guard page.context === context, id == self.presentationID, let records, !records.isEmpty,
+            let records: [AutofillSuggestion]?
+            if manager {
+                records = await self.managerSuggestions(for: request, origin: origin, presentation: id)
+            } else {
+                records = try? await Task.detached {
+                    try AutofillSaveIndex.suggestions(kind: kind, origin: origin, profileID: profileID)
+                }.value
+            }
+            guard id == self.presentationID, let records, !records.isEmpty,
                   (try? await self.validate(request, in: page, requiresFocus: true)) != nil,
                   Self.canPresent(in: page) else { return }
             self.show(records, request: request, in: page)
         }
+    }
+
+    /// The one manager that may answer `request`: same provider, same profile, and still the unlock it was made under.
+    private func manager(for request: Request) -> CredentialManager? {
+        let profile = PasswordAutofill.shared.profile
+        guard request.provider == .credentialManager, PasswordAutofill.shared.provider == .credentialManager,
+              profile.id == request.profileID, let epoch = request.epoch,
+              let manager = try? CredentialManager.forProfile(profile), manager.authorizationEpoch == epoch else { return nil }
+        return manager
+    }
+
+    /// Account choices for `request`, read only while the vault is explicitly unlocked. Locked, stale or mis-originated
+    /// requests get no dropdown; unlocking happens in settings. The picked-account lookup can invalidate the carry-over,
+    /// so it runs only while this is still the page's current request and presentation.
+    private func managerSuggestions(for request: Request, origin: String, presentation: UUID) async -> [AutofillSuggestion]? {
+        let profile = PasswordAutofill.shared.profile
+        guard request.provider == .credentialManager, PasswordAutofill.shared.provider == .credentialManager,
+              profile.id == request.profileID, CredentialAccountSelection.origin(for: request.frameURL) == origin,
+              let manager = try? CredentialManager.forProfile(profile), let epoch = manager.authorizationEpoch,
+              let snapshot = try? await manager.snapshot(), manager.authorizationEpoch == epoch,
+              PasswordAutofill.shared.provider == .credentialManager,
+              presentation == presentationID, requests[ObjectIdentifier(request.page)] === request else { return nil }
+        request.epoch = epoch; request.revision = snapshot.revision
+        // Frame, focus and field must still be the ones asked about before the pick is read (and possibly invalidated).
+        guard (try? await validate(request, in: request.page, requiresFocus: true)) != nil,
+              presentation == presentationID, requests[ObjectIdentifier(request.page)] === request else { return nil }
+        let pinned = AutofillSaveCoordinator.shared.session(for: request.page)?.selectedAccount(
+            in: request.page, origin: origin, enteredUsername: request.enteredUsername, epoch: epoch)
+        return CredentialAccountSelection.suggestions(
+            snapshot.accounts, origin: origin, pageURL: request.topURL, entered: request.enteredUsername,
+            field: request.field, pinned: pinned)
+    }
+
+    /// What may be delivered for `id` now: the account must still exist, still be associated with this origin, and the
+    /// vault must be the same unlock and revision the choice was shown under. The returned generation is the vault
+    /// content generation the answer is valid for: it was available (no write in flight) before the read and is
+    /// unchanged after it, and the caller must see it unchanged again immediately before delivering.
+    private func managerAccount(
+        _ id: UUID, request: Request, origin: String
+    ) async throws -> (account: CredentialAccount, generation: UInt64) {
+        guard let manager = manager(for: request), let epoch = request.epoch,
+              CredentialAccountSelection.origin(for: request.frameURL) == origin,
+              let generation = manager.stableGeneration else { throw ContactAutofillError.changedPage }
+        let snapshot = try await manager.snapshot()
+        guard manager.authorizationEpoch == epoch, manager.stableGeneration == generation, snapshot.revision == request.revision,
+              let account = snapshot.accounts.first(where: { $0.id == id }),
+              account.origins.contains(origin) else { throw ContactAutofillError.changedPage }
+        return (account, generation)
     }
 
     private func awaitRect(_ value: Any?, requestPage: BrowserPage, frame: BrowserFrame,
@@ -271,12 +337,22 @@ final class AutofillSuggestions {
         }
     }
 
-    private func validate(_ request: Request, in page: BrowserPage, requiresFocus: Bool = false) async throws {
-        guard requests[ObjectIdentifier(page)] === request, request.context === page.context,
-              AutofillSaveCoordinator.shared.isEnabled(request.kind, context: request.context), page.url == request.topURL,
+    /// The one synchronous answer to "may this request still act?": still the page's current request, the same provider
+    /// and (for the credential manager) the same unlock, the feature still on, and the page still what it was shown for.
+    /// Nothing here suspends, so a caller that runs it right before delivering anything is not racing a lock or a
+    /// provider switch. Page, field and frame identity are the job of the asynchronous checks in `validate`.
+    private func requireAuthority(_ request: Request, in page: BrowserPage) throws {
+        guard requests[ObjectIdentifier(page)] === request, request.profileID == page.profileID,
+              request.kind != .password || request.provider == PasswordAutofill.shared.provider,
+              request.provider == .legacy || manager(for: request) != nil,
+              AutofillSaveCoordinator.shared.isEnabled(request.kind, profileID: request.profileID), page.url == request.topURL,
               page.hasOnlySecureContent, page.window != nil, !page.isHiddenOrHasHiddenAncestor else { throw ContactAutofillError.changedPage }
+    }
+
+    private func validate(_ request: Request, in page: BrowserPage, requiresFocus: Bool = false) async throws {
+        try requireAuthority(request, in: page)
         if let chromium = page.chromium {
-            guard try await chromium.isLive(frame: request.frame), request.context === page.context else { throw ContactAutofillError.changedPage }
+            guard try await chromium.isLive(frame: request.frame) else { throw ContactAutofillError.changedPage }
         }
         let valid = try await page.callAsyncJavaScript("""
             const model = globalThis.__wsurfAutofillForms;
@@ -287,17 +363,17 @@ final class AutofillSuggestions {
             """, arguments: ["bridge": request.bridge, "token": request.token, "url": request.frameURL.absoluteString,
                         "requiresFocus": requiresFocus, "documentID": request.documentID, "formID": request.formID, "fieldID": request.fieldID, ],
             in: request.frame, contentWorld: request.world)
-        guard request.context === page.context else { throw ContactAutofillError.changedPage }
         let rect = try await awaitRect(valid, requestPage: page, frame: request.frame, frameURL: request.frameURL, world: request.world)
         guard abs(rect.minX - request.rect.minX) < 2, abs(rect.minY - request.rect.minY) < 2,
               abs(rect.width - request.rect.width) < 2, abs(rect.height - request.rect.height) < 2,
-              requests[ObjectIdentifier(page)] === request, request.context === page.context,
-              page.url == request.topURL, page.hasOnlySecureContent else {
+              requests[ObjectIdentifier(page)] === request, page.url == request.topURL, page.hasOnlySecureContent else {
             throw ContactAutofillError.changedPage
         }
         if let chromium = page.chromium {
-            guard try await chromium.isLive(frame: request.frame), request.context === page.context else { throw ContactAutofillError.changedPage }
+            guard try await chromium.isLive(frame: request.frame) else { throw ContactAutofillError.changedPage }
         }
+        // The Chromium liveness answer above was the last suspension: re-establish authority on the way out.
+        try requireAuthority(request, in: page)
     }
 
     private func fill(_ id: UUID, request: Request, in page: BrowserPage) {
@@ -308,53 +384,92 @@ final class AutofillSuggestions {
             guard let self, let page else { return }
             do {
                 try await self.validate(request, in: page)
-                let fields: [String: Any]
+                var fields: [String: Any] = [:]
                 switch request.kind {
                 case .password:
                     guard let origin = SavedPassword.origin(for: request.frameURL) else { throw ContactAutofillError.changedPage }
-                    let vault = AutofillVaults.passwords(for: request.context.profile.id)
-                    let documentID = try await self.topDocumentID(in: page, world: request.world)
-                    let auth = try await self.passwordAuthentication.session(
-                        for: page,
-                        contextID: request.context.contextID,
-                        documentID: documentID,
-                        origin: origin,
-                        create: { await vault.makeAuthenticationSession() }
-                    )
-                    let records: [SavedPassword]
-                    do { records = try await vault.records(using: auth) } catch { self.passwordAuthentication.clear(in: page); throw error }
-                    guard let login = records.first(where: { $0.id == id }), login.origin == origin else { throw ContactAutofillError.noField }
-                    self.passwordAuthentication.markAuthenticated(auth, in: page)
-                    fields = ["username": login.username, "password": login.password]
+                    // The credential manager's vault is not touched here; it is read after the final checks below.
+                    if request.provider != .credentialManager {
+                        let vault = AutofillVaults.passwords(for: request.profileID)
+                        let documentID = try await self.topDocumentID(in: page, world: request.world)
+                        let auth = try await self.passwordAuthentication.session(
+                            for: page,
+                            profileID: request.profileID,
+                            documentID: documentID,
+                            origin: origin,
+                            create: { await vault.makeAuthenticationSession() }
+                        )
+                        let records: [SavedPassword]
+                        do { records = try await vault.records(using: auth) } catch { self.passwordAuthentication.clear(in: page); throw error }
+                        guard let login = records.first(where: { $0.id == id }), login.origin == origin else { throw ContactAutofillError.noField }
+                        self.passwordAuthentication.markAuthenticated(auth, in: page)
+                        fields = ["username": login.username, "password": login.password]
+                    }
                 case .card:
-                    guard let card = try await AutofillVaults.cards(for: request.context.profile.id).cards().first(where: { $0.id == id }), !card.isExpired() else { throw PaymentCardError.noField }
+                    guard let card = try await AutofillVaults.cards(for: request.profileID).cards().first(where: { $0.id == id }), !card.isExpired() else { throw PaymentCardError.noField }
                     fields = ["number": card.number, "cardholder": card.cardholder, "securityCode": card.securityCode ?? "", "month": card.month ?? 0, "year": card.year ?? 0]
                 case .contact:
-                    guard let contact = try await AutofillVaults.contacts(for: request.context.profile.id).records().first(where: { $0.id == id }) else { throw ContactAutofillError.noField }
+                    guard let contact = try await AutofillVaults.contacts(for: request.profileID).records().first(where: { $0.id == id }) else { throw ContactAutofillError.noField }
                     fields = contact.fields
                 }
                 try await self.validate(request, in: page)
-                let count = try await page.callAsyncJavaScript(
+                // One transport for every fill: the page call's arguments are produced by the engine at its true dispatch
+                // boundary (after its own last suspension, which for Chromium includes its internal awaits), never earlier.
+                let prepare: @MainActor @Sendable () throws -> [String: Any]
+                var filledUsername: String?
+                if request.provider == .credentialManager {
+                    // Read last: the vault answer is valid for one unlock, revision and write generation. Whatever is
+                    // computed from it is delivered only if all of that, and the request's native authority, still hold
+                    // at the dispatch boundary. Secrets and the fresh TOTP are materialised there, in Swift only.
+                    guard let origin = SavedPassword.origin(for: request.frameURL), let manager = self.manager(for: request) else {
+                        throw ContactAutofillError.changedPage
+                    }
+                    let (account, generation) = try await self.managerAccount(id, request: request, origin: origin)
+                    let field = request.field
+                    prepare = { [weak self, weak page] in
+                        guard let self, let page else { throw ContactAutofillError.changedPage }
+                        try self.requireAuthority(request, in: page)
+                        guard self.manager(for: request) === manager, manager.stableGeneration == generation,
+                              manager.authorizationEpoch == request.epoch else {
+                            throw ContactAutofillError.changedPage
+                        }
+                        var delivered: [String: Any]
+                        switch field {
+                        case .totp:
+                            guard let code = CredentialAccountSelection.totpCode(for: account, origin: origin, at: .now) else {
+                                throw ContactAutofillError.noField
+                            }
+                            delivered = ["code": code]
+                        case .password:
+                            delivered = ["username": account.username]
+                            if let password = account.password { delivered["password"] = password }
+                        }
+                        return Self.fillArguments(request, fields: delivered)
+                    }
+                    if request.field == .password { filledUsername = account.username }
+                } else {
+                    // Legacy, card and contact values were read before this point exactly as before; the copy is only read.
+                    nonisolated(unsafe) let legacy = fields
+                    prepare = { Self.fillArguments(request, fields: legacy) }
+                    filledUsername = fields["username"] as? String
+                }
+                let delivered = try await page.callAsyncJavaScript(
                     "if (globalThis.__wsurfAutofillForms?.documentID !== documentID) return 0; return globalThis[bridge]?.fill(token, url, fields) || 0;",
-                    arguments: [
-                        "bridge": request.bridge,
-                        "token": request.token,
-                        "url": request.frameURL.absoluteString,
-                        "fields": fields,
-                        "documentID": request.documentID,
-                    ],
                     in: request.frame,
-                    contentWorld: request.world
+                    contentWorld: request.world,
+                    prepareArguments: prepare
                 )
-                guard (count as? Int ?? 0) > 0 else { throw ContactAutofillError.noField }
+                guard (delivered as? Int ?? 0) > 0 else { throw ContactAutofillError.noField }
                 try await self.validate(request, in: page)
-                if request.kind == .password, let username = fields["username"] as? String,
+                if request.kind == .password, request.field == .password, let username = filledUsername,
                    let origin = SavedPassword.origin(for: request.frameURL) {
                     AutofillSaveCoordinator.shared.rememberFilledUsername(
                         username,
                         origin: origin,
                         documentID: request.documentID,
-                        in: page
+                        in: page,
+                        accountID: request.provider == .credentialManager ? id : nil,
+                        epoch: request.epoch
                     )
                 }
             } catch {
@@ -362,11 +477,13 @@ final class AutofillSuggestions {
                 switch error {
                 case AutofillVaultError.keychain(let status), PaymentCardError.keychain(let status):
                     canceled = status == errSecUserCanceled || status == errSecAuthFailed
+                case CredentialVaultError.unauthorized, CredentialVaultError.expired:
+                    canceled = true
                 default:
                     canceled = false
                 }
                 guard !canceled, self.requests[ObjectIdentifier(page)] === request,
-                      AutofillSaveCoordinator.shared.isEnabled(request.kind, context: request.context),
+                      AutofillSaveCoordinator.shared.isEnabled(request.kind, profileID: request.profileID),
                       page.url == request.topURL, let window = page.window,
                       !page.isHiddenOrHasHiddenAncestor else { return }
                 let alert = NSAlert()
@@ -375,6 +492,16 @@ final class AutofillSuggestions {
                 await alert.beginSheetModal(for: window)
             }
         }
+    }
+
+    private static func fillArguments(_ request: Request, fields: [String: Any]) -> [String: Any] {
+        [
+            "bridge": request.bridge,
+            "token": request.token,
+            "url": request.frameURL.absoluteString,
+            "fields": fields,
+            "documentID": request.documentID,
+        ]
     }
 
     private func topDocumentID(in page: BrowserPage, world: WKContentWorld) async throws -> String {
@@ -386,38 +513,32 @@ final class AutofillSuggestions {
 
 final class PasswordFillAuthenticationCache {
     private final class Entry: NSObject {
-        let contextID: UUID
+        let profileID: UUID
         let documentID: String
         let origin: String
         let session: AutofillAuthenticationSession
         var expiresAt: Date?
-        init(contextID: UUID, documentID: String, origin: String, session: AutofillAuthenticationSession) {
-            self.contextID = contextID
+        init(profileID: UUID, documentID: String, origin: String, session: AutofillAuthenticationSession) {
+            self.profileID = profileID
             self.documentID = documentID
             self.origin = origin
             self.session = session
         }
     }
     private var entries: [ObjectIdentifier: Entry] = [:]
-    private var generations: [ObjectIdentifier: Int] = [:]
     private let duration: TimeInterval = 5 * 60
+    private var generation = 0
 
-    func session(for page: BrowserPage, contextID: UUID, documentID: String, origin: String,
+    func session(for page: BrowserPage, profileID: UUID, documentID: String, origin: String,
                  now: Date = .now, create: () async -> AutofillAuthenticationSession) async throws -> AutofillAuthenticationSession {
         let key = ObjectIdentifier(page)
-        if let entry = entries[key], entry.contextID == contextID, entry.documentID == documentID,
+        if let entry = entries[key], entry.profileID == profileID, entry.documentID == documentID,
            entry.origin == origin, let expiry = entry.expiresAt, now < expiry {
             return entry.session
         }
-        clear(in: page)
-        let generation = generations[key, default: 0]
-        let session = await create()
-        guard generations[key, default: 0] == generation, page.context.contextID == contextID else {
-            session.invalidate()
-            throw ContactAutofillError.changedPage
-        }
-        entries[key] = Entry(contextID: contextID, documentID: documentID, origin: origin, session: session)
-        return session
+        clear(in: page); let generation = generation; let session = await create()
+        guard self.generation == generation else { session.invalidate(); throw ContactAutofillError.changedPage }
+        entries[key] = Entry(profileID: profileID, documentID: documentID, origin: origin, session: session); return session
     }
     func markAuthenticated(_ session: AutofillAuthenticationSession, in page: BrowserPage, now: Date = .now) {
         let key = ObjectIdentifier(page)
@@ -427,14 +548,11 @@ final class PasswordFillAuthenticationCache {
         }
     }
     func clear(in page: BrowserPage) {
-        let key = ObjectIdentifier(page)
-        generations[key, default: 0] += 1
-        entries.removeValue(forKey: key)?.session.invalidate()
+        generation += 1
+        entries.removeValue(forKey: ObjectIdentifier(page))?.session.invalidate()
     }
     func clear() {
-        for key in Array(generations.keys) {
-            generations[key, default: 0] += 1
-        }
+        generation += 1
         entries.values.forEach { $0.session.invalidate() }
         entries.removeAll()
     }

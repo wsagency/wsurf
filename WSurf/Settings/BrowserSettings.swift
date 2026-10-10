@@ -9,11 +9,11 @@ import WebKit
 
 @Observable
 final class BrowserSettings {
-#if DEBUG
-        static let application = BrowserSettings(defaults: StageMode.defaults, appliesAppearanceGlobally: true)
-#else
-        static let application = BrowserSettings(appliesAppearanceGlobally: true)
-#endif
+    #if DEBUG
+    static let shared = BrowserSettings(defaults: StageMode.defaults)
+    #else
+    static let shared = BrowserSettings()
+    #endif
 
     private enum Key {
         static let appearance = "appearance.mode"
@@ -51,6 +51,7 @@ final class BrowserSettings {
         static let videoInPlayer = "experiments.videoInPlayer"
         static let passwordAutofill = "autofill.passwords"
         static let passwordExtension = "autofill.passwordExtension"
+        static let passwordProvider = "autofill.passwordProvider"
         static let contactAutofill = "autofill.contacts"
         static let paymentCardAutofill = "privacy.paymentCardAutofill"
         static let downloadFolder = "downloads.folder"
@@ -69,7 +70,7 @@ final class BrowserSettings {
         Key.searchEngine, Key.customSearchName, Key.customSearchTemplate,
         Key.suggestions, Key.agentOnlyInput,
         Key.historyRetention, Key.clearOnQuit, Key.certificateExceptions,
-        Key.paymentCardAutofill, Key.contactAutofill, Key.passwordAutofill, Key.passwordExtension,
+        Key.paymentCardAutofill, Key.contactAutofill, Key.passwordAutofill, Key.passwordExtension, Key.passwordProvider,
         Key.javaScript, Key.blockPopups, Key.blockTrackers, Key.autoplay,
         Key.startPageOrder, Key.startPageHidden, Key.startPageHiddenSites,
     ]
@@ -77,42 +78,9 @@ final class BrowserSettings {
     private static let sessionKeySet = Set(sessionKeys)
 
     @ObservationIgnored private let appDefaults: UserDefaults
-    @ObservationIgnored private let sessionDefaults: UserDefaults
-    @ObservationIgnored private let appliesAppearanceGlobally: Bool
-    @ObservationIgnored private var applicationSettings: BrowserSettings?
-    private var globalSettings: BrowserSettings {
-        applicationSettings ?? self
-    }
-    @ObservationIgnored private var storedAppearance: AppearanceMode?
-    @ObservationIgnored private var storedLoomStyle: LoomStyle?
-    @ObservationIgnored private var storedTransparency: Double?
-    @ObservationIgnored private var storedSidebarFontFamily: String?
-    @ObservationIgnored private var storedSidebarFontSize: Double?
-    @ObservationIgnored private var storedSidebarFontWeight: SidebarFontWeight?
-    @ObservationIgnored private var storedSidebarRowSpacing: Double?
-    @ObservationIgnored private var storedSidebarFolderTint: Double?
-    @ObservationIgnored private var storedSidebarTextStyles: [String: SidebarTextStyle]?
-    @ObservationIgnored private var storedThemeCustomizations: [String: ThemeCustomization]?
-    @ObservationIgnored private var storedMatchesWebsiteColor: Bool?
-    @ObservationIgnored private var storedUpdateChannel: UpdateChannel?
-    @ObservationIgnored private var storedPageZoom: Double?
-    @ObservationIgnored private var storedShowsMediaPlayer: Bool?
-    @ObservationIgnored private var storedShowsLyrics: Bool?
-    @ObservationIgnored private var storedSleepsInactiveTabs: Bool?
-    @ObservationIgnored private var storedShowsLinkPreview: Bool?
-    @ObservationIgnored private var storedPeeksAtLinks: Bool?
-    @ObservationIgnored private var storedRefractsTabColor: Bool?
-    @ObservationIgnored private var storedAutomaticPictureInPicture: Bool?
-    @ObservationIgnored private var storedShowsVideoInPlayer: Bool?
-    @ObservationIgnored private var storedDownloadFolder: URL?
-    @ObservationIgnored private var storedAsksWhereToSave: Bool?
-    @ObservationIgnored private var storedDownloadRetention: DownloadRetention?
-    @ObservationIgnored private var storedUserAgentMode: UserAgentMode?
-    @ObservationIgnored private var storedCustomUserAgent: String?
-    @ObservationIgnored private var storedWebInspectorEnabled: Bool?
+    @ObservationIgnored private var sessionDefaults: UserDefaults
 
     @ObservationIgnored var onWebPreferencesChanged: (() -> Void)?
-    @ObservationIgnored var onContentBlockingChanged: (() -> Void)?
     @ObservationIgnored var onUpdateChannelChanged: ((UpdateChannel) -> Void)?
     @ObservationIgnored var onLyricsChanged: ((Bool) -> Void)?
     @ObservationIgnored var onMediaPlayerChanged: ((Bool) -> Void)?
@@ -152,126 +120,110 @@ final class BrowserSettings {
     private func stringArray(_ key: String) -> [String]? {
         store(for: key).stringArray(forKey: key)
     }
-    private func globalValue<Value>(
-        _ keyPath: KeyPath<BrowserSettings, Value>,
-        storage: Value?
-    ) -> Value {
-        if let applicationSettings {
-            return applicationSettings[keyPath: keyPath]
-        }
-        access(keyPath: keyPath)
-        return storage!
-    }
-
-    private func setGlobal<Value: Equatable>(
-        _ keyPath: ReferenceWritableKeyPath<BrowserSettings, Value>,
-        storage: ReferenceWritableKeyPath<BrowserSettings, Value?>,
-        value: Value,
-        key: String,
-        encode: (Value) -> Any? = { $0 },
-        didChange: (BrowserSettings) -> Void = { _ in }
-    ) {
-        if let applicationSettings {
-            applicationSettings[keyPath: keyPath] = value
-            return
-        }
-        if let oldValue = self[keyPath: storage], oldValue == value {
-            return
-        }
-        withMutation(keyPath: keyPath) {
-            self[keyPath: storage] = value
-            if let encoded = encode(value) {
-                write(encoded, forKey: key)
-            }
-            didChange(self)
-        }
-    }
 
     // MARK: - Appearance
 
     var appearance: AppearanceMode {
-        get { globalValue(\.appearance, storage: storedAppearance) }
-        set {
-            setGlobal(\BrowserSettings.appearance, storage: \BrowserSettings.storedAppearance, value: newValue, key: Key.appearance, encode: { $0.rawValue }) { $0.applyAppearance() }
+        didSet {
+            guard appearance != oldValue else { return }
+            write(appearance.rawValue, forKey: Key.appearance)
+            applyAppearance()
         }
     }
 
     var loomStyle: LoomStyle {
-        get { globalValue(\.loomStyle, storage: storedLoomStyle) }
-        set { setGlobal(\BrowserSettings.loomStyle, storage: \BrowserSettings.storedLoomStyle, value: newValue, key: Key.loomStyle, encode: { $0.rawValue }) }
+        didSet {
+            guard loomStyle != oldValue else { return }
+            write(loomStyle.rawValue, forKey: Key.loomStyle)
+        }
     }
 
     var transparency: Double {
-        get { globalValue(\.transparency, storage: storedTransparency) }
-        set { setGlobal(\BrowserSettings.transparency, storage: \BrowserSettings.storedTransparency, value: newValue, key: Key.transparency) }
+        didSet {
+            guard transparency != oldValue else { return }
+            write(transparency, forKey: Key.transparency)
+        }
     }
-
     var sidebarFontFamily: String {
-        get { globalValue(\.sidebarFontFamily, storage: storedSidebarFontFamily) }
-        set {
-            setGlobal(\BrowserSettings.sidebarFontFamily, storage: \BrowserSettings.storedSidebarFontFamily, value: newValue, key: Key.sidebarFontFamily, didChange: {
-                $0.sidebarFontCache = nil
-            })
+        didSet {
+            guard sidebarFontFamily != oldValue else { return }
+            sidebarFontCache = nil
+            write(sidebarFontFamily, forKey: Key.sidebarFontFamily)
         }
     }
 
     var sidebarFontSize: Double {
-        get { globalValue(\.sidebarFontSize, storage: storedSidebarFontSize) }
-        set {
-            let value = newValue.isFinite ? min(max(newValue, 10), 20) : 12
-            setGlobal(\BrowserSettings.sidebarFontSize, storage: \BrowserSettings.storedSidebarFontSize, value: value, key: Key.sidebarFontSize, didChange: {
-                $0.sidebarFontCache = nil
-            })
+        didSet {
+            let clamped = sidebarFontSize.isFinite
+                ? min(max(sidebarFontSize, 10), 20)
+                : 12
+            if sidebarFontSize != clamped {
+                sidebarFontSize = clamped
+            }
+            guard sidebarFontSize != oldValue else { return }
+            sidebarFontCache = nil
+            write(sidebarFontSize, forKey: Key.sidebarFontSize)
         }
     }
 
     var sidebarFontWeight: SidebarFontWeight {
-        get { globalValue(\.sidebarFontWeight, storage: storedSidebarFontWeight) }
-        set {
-            setGlobal(\BrowserSettings.sidebarFontWeight, storage: \BrowserSettings.storedSidebarFontWeight, value: newValue, key: Key.sidebarFontWeight, encode: { $0.rawValue }) {
-                $0.sidebarFontCache = nil
-            }
+        didSet {
+            guard sidebarFontWeight != oldValue else { return }
+            sidebarFontCache = nil
+            write(sidebarFontWeight.rawValue, forKey: Key.sidebarFontWeight)
         }
     }
 
     var sidebarRowSpacing: Double {
-        get { globalValue(\.sidebarRowSpacing, storage: storedSidebarRowSpacing) }
-        set {
-            let value = newValue.isFinite ? min(max(newValue, 0), 8) : 1
-            setGlobal(\BrowserSettings.sidebarRowSpacing, storage: \BrowserSettings.storedSidebarRowSpacing, value: value, key: Key.sidebarRowSpacing)
+        didSet {
+            let clamped = sidebarRowSpacing.isFinite
+                ? min(max(sidebarRowSpacing, 0), 8)
+                : 1
+            if sidebarRowSpacing != clamped {
+                sidebarRowSpacing = clamped
+            }
+            guard sidebarRowSpacing != oldValue else { return }
+            write(sidebarRowSpacing, forKey: Key.sidebarRowSpacing)
         }
     }
 
     var sidebarFolderTint: Double {
-        get { globalValue(\.sidebarFolderTint, storage: storedSidebarFolderTint) }
-        set {
-            let value = newValue.isFinite ? min(max(newValue, 0), 1) : 0.35
-            setGlobal(\BrowserSettings.sidebarFolderTint, storage: \BrowserSettings.storedSidebarFolderTint, value: value, key: Key.sidebarFolderTint)
+        didSet {
+            let clamped = sidebarFolderTint.isFinite
+                ? min(max(sidebarFolderTint, 0), 1)
+                : 0.35
+            if sidebarFolderTint != clamped {
+                sidebarFolderTint = clamped
+            }
+            guard sidebarFolderTint != oldValue else { return }
+            write(sidebarFolderTint, forKey: Key.sidebarFolderTint)
         }
     }
 
     var sidebarTextStyles: [String: SidebarTextStyle] {
-        get { globalValue(\.sidebarTextStyles, storage: storedSidebarTextStyles) }
-        set {
-            setGlobal(\BrowserSettings.sidebarTextStyles, storage: \BrowserSettings.storedSidebarTextStyles, value: newValue, key: Key.sidebarTextStyles, encode: { try? JSONEncoder().encode($0) })
+        didSet {
+            guard sidebarTextStyles != oldValue,
+                  let data = try? JSONEncoder().encode(sidebarTextStyles)
+            else { return }
+            write(data, forKey: Key.sidebarTextStyles)
         }
     }
 
     var themeCustomizations: [String: ThemeCustomization] {
-        get { globalValue(\.themeCustomizations, storage: storedThemeCustomizations) }
-        set {
-            setGlobal(\BrowserSettings.themeCustomizations, storage: \BrowserSettings.storedThemeCustomizations,
-                      value: newValue, key: Key.themeCustomizations, encode: { try? JSONEncoder().encode($0) })
+        didSet {
+            guard themeCustomizations != oldValue,
+                  let data = try? JSONEncoder().encode(themeCustomizations)
+            else { return }
+            write(data, forKey: Key.themeCustomizations)
         }
     }
 
     var sidebarFont: Font {
-        let settings = globalSettings
         let family = sidebarFontFamily
         let size = CGFloat(sidebarFontSize)
         let weight = sidebarFontWeight
-        if let font = settings.sidebarFontCache {
-            return font
+        if let sidebarFontCache {
+            return sidebarFontCache
         }
 
         let native: NSFont
@@ -286,89 +238,103 @@ final class BrowserSettings {
             ) ?? .systemFont(ofSize: size, weight: weight.nativeWeight)
         }
         let resolved = Font(native)
-        settings.sidebarFontCache = resolved
-        settings.sidebarLineHeightCache = (native.ascender - native.descender + native.leading).rounded(.up)
+        sidebarFontCache = resolved
+        sidebarLineHeightCache = (native.ascender - native.descender + native.leading).rounded(.up)
         return resolved
     }
 
     var sidebarLineHeight: CGFloat {
         _ = sidebarFont
-        return globalSettings.sidebarLineHeightCache
+        return sidebarLineHeightCache
     }
 
     var matchesWebsiteColor: Bool {
-        get { globalValue(\.matchesWebsiteColor, storage: storedMatchesWebsiteColor) }
-        set { setGlobal(\BrowserSettings.matchesWebsiteColor, storage: \BrowserSettings.storedMatchesWebsiteColor, value: newValue, key: Key.websiteTint) }
+        didSet {
+            guard matchesWebsiteColor != oldValue else { return }
+            write(matchesWebsiteColor, forKey: Key.websiteTint)
+        }
     }
 
     var updateChannel: UpdateChannel {
-        get { globalValue(\.updateChannel, storage: storedUpdateChannel) }
-        set {
-            setGlobal(\BrowserSettings.updateChannel, storage: \BrowserSettings.storedUpdateChannel, value: newValue, key: Key.updateChannel, encode: { $0.rawValue }) {
-                $0.onUpdateChannelChanged?(newValue)
-            }
+        didSet {
+            guard updateChannel != oldValue else { return }
+            write(updateChannel.rawValue, forKey: Key.updateChannel)
+            onUpdateChannelChanged?(updateChannel)
         }
     }
 
     var pageZoom: Double {
-        get { globalValue(\.pageZoom, storage: storedPageZoom) }
-        set {
-            setGlobal(\BrowserSettings.pageZoom, storage: \BrowserSettings.storedPageZoom, value: newValue, key: Key.pageZoom, didChange: {
-                $0.onWebPreferencesChanged?()
-            })
+        didSet {
+            guard pageZoom != oldValue else { return }
+            write(pageZoom, forKey: Key.pageZoom)
+            onWebPreferencesChanged?()
         }
     }
 
     // MARK: - Media
 
     var showsMediaPlayer: Bool {
-        get { globalValue(\.showsMediaPlayer, storage: storedShowsMediaPlayer) }
-        set { setGlobal(\BrowserSettings.showsMediaPlayer, storage: \BrowserSettings.storedShowsMediaPlayer, value: newValue, key: Key.mediaPlayer, didChange: { $0.onMediaPlayerChanged?(newValue) }) }
-    }
-
-    var showsLyrics: Bool {
-        get { globalValue(\.showsLyrics, storage: storedShowsLyrics) }
-        set { setGlobal(\BrowserSettings.showsLyrics, storage: \BrowserSettings.storedShowsLyrics, value: newValue, key: Key.lyrics, didChange: { $0.onLyricsChanged?(newValue) }) }
-    }
-
-    var sleepsInactiveTabs: Bool {
-        get { globalValue(\.sleepsInactiveTabs, storage: storedSleepsInactiveTabs) }
-        set { setGlobal(\BrowserSettings.sleepsInactiveTabs, storage: \BrowserSettings.storedSleepsInactiveTabs, value: newValue, key: Key.sleepsInactiveTabs) }
-    }
-
-    var showsLinkPreview: Bool {
-        get { globalValue(\.showsLinkPreview, storage: storedShowsLinkPreview) }
-        set { setGlobal(\BrowserSettings.showsLinkPreview, storage: \BrowserSettings.storedShowsLinkPreview, value: newValue, key: Key.linkPreview) }
-    }
-
-    var peeksAtLinks: Bool {
-        get { globalValue(\.peeksAtLinks, storage: storedPeeksAtLinks) }
-        set { setGlobal(\BrowserSettings.peeksAtLinks, storage: \BrowserSettings.storedPeeksAtLinks, value: newValue, key: Key.linkPeek) }
-    }
-
-    var refractsTabColor: Bool {
-        get { globalValue(\.refractsTabColor, storage: storedRefractsTabColor) }
-        set { setGlobal(\BrowserSettings.refractsTabColor, storage: \BrowserSettings.storedRefractsTabColor, value: newValue, key: Key.tabColorRefraction) }
-    }
-
-    var automaticPictureInPicture: Bool {
-        get { globalValue(\.automaticPictureInPicture, storage: storedAutomaticPictureInPicture) }
-        set {
-            setGlobal(\BrowserSettings.automaticPictureInPicture, storage: \BrowserSettings.storedAutomaticPictureInPicture, value: newValue, key: Key.automaticPiP, didChange: {
-                $0.onAutomaticPictureInPictureChanged?(newValue)
-            })
+        didSet {
+            guard showsMediaPlayer != oldValue else { return }
+            write(showsMediaPlayer, forKey: Key.mediaPlayer)
+            onMediaPlayerChanged?(showsMediaPlayer)
         }
     }
 
+    var showsLyrics: Bool {
+        didSet {
+            guard showsLyrics != oldValue else { return }
+            write(showsLyrics, forKey: Key.lyrics)
+            onLyricsChanged?(showsLyrics)
+        }
+    }
+
+    var sleepsInactiveTabs: Bool {
+        didSet {
+            guard sleepsInactiveTabs != oldValue else { return }
+            write(sleepsInactiveTabs, forKey: Key.sleepsInactiveTabs)
+        }
+    }
+
+    var showsLinkPreview: Bool {
+        didSet {
+            guard showsLinkPreview != oldValue else { return }
+            write(showsLinkPreview, forKey: Key.linkPreview)
+        }
+    }
+
+    var peeksAtLinks: Bool {
+        didSet {
+            guard peeksAtLinks != oldValue else { return }
+            write(peeksAtLinks, forKey: Key.linkPeek)
+        }
+    }
+
+    var refractsTabColor: Bool {
+        didSet {
+            guard refractsTabColor != oldValue else { return }
+            write(refractsTabColor, forKey: Key.tabColorRefraction)
+        }
+    }
+
+    var automaticPictureInPicture: Bool {
+        didSet {
+            guard automaticPictureInPicture != oldValue else { return }
+            write(automaticPictureInPicture, forKey: Key.automaticPiP)
+            onAutomaticPictureInPictureChanged?(automaticPictureInPicture)
+        }
+    }
+
+    // MARK: - Experiments
+
     var showsVideoInPlayer: Bool {
-        get { globalValue(\.showsVideoInPlayer, storage: storedShowsVideoInPlayer) }
-        set {
-            setGlobal(\BrowserSettings.showsVideoInPlayer, storage: \BrowserSettings.storedShowsVideoInPlayer, value: newValue, key: Key.videoInPlayer, didChange: { settings in
-                if settings.showsVideoInPlayer {
-                    settings.automaticPictureInPicture = false
-                }
-                settings.onVideoInPlayerChanged?(settings.showsVideoInPlayer)
-            })
+        didSet {
+            guard showsVideoInPlayer != oldValue else { return }
+            write(showsVideoInPlayer, forKey: Key.videoInPlayer)
+            if showsVideoInPlayer {
+                automaticPictureInPicture = false
+            }
+            onVideoInPlayerChanged?(showsVideoInPlayer)
         }
     }
 
@@ -443,7 +409,7 @@ final class BrowserSettings {
         didSet {
             guard blocksTrackers != oldValue else { return }
             write(blocksTrackers, forKey: Key.blockTrackers)
-            onContentBlockingChanged?()
+            ContentBlocker.shared.refresh()
             onWebPreferencesChanged?()
         }
     }
@@ -470,6 +436,16 @@ final class BrowserSettings {
         }
     }
 
+    /// Which internal store answers password autofill. Switching only changes the writer; neither store moves.
+    var passwordProvider: PasswordProvider {
+        didSet {
+            write(passwordProvider.rawValue, forKey: Key.passwordProvider)
+            // A different store now answers: nothing pending under the old provider may complete.
+            WebAuthnAdapter.providerChanged()
+            PasswordAutofill.shared.refreshPolicy()
+        }
+    }
+
     var fillsContacts: Bool {
         didSet {
             write(fillsContacts, forKey: Key.contactAutofill)
@@ -487,18 +463,15 @@ final class BrowserSettings {
     // MARK: - Downloads
 
     var downloadFolder: URL {
-        get { globalValue(\.downloadFolder, storage: storedDownloadFolder) }
-        set { setGlobal(\BrowserSettings.downloadFolder, storage: \BrowserSettings.storedDownloadFolder, value: newValue, key: Key.downloadFolder, encode: { $0.path(percentEncoded: false) }) }
+        didSet { write(downloadFolder.path(percentEncoded: false), forKey: Key.downloadFolder) }
     }
 
     var asksWhereToSave: Bool {
-        get { globalValue(\.asksWhereToSave, storage: storedAsksWhereToSave) }
-        set { setGlobal(\BrowserSettings.asksWhereToSave, storage: \BrowserSettings.storedAsksWhereToSave, value: newValue, key: Key.askWhereToSave) }
+        didSet { write(asksWhereToSave, forKey: Key.askWhereToSave) }
     }
 
     var downloadRetention: DownloadRetention {
-        get { globalValue(\.downloadRetention, storage: storedDownloadRetention) }
-        set { setGlobal(\BrowserSettings.downloadRetention, storage: \BrowserSettings.storedDownloadRetention, value: newValue, key: Key.downloadRetention, encode: { $0.rawValue }) }
+        didSet { write(downloadRetention.rawValue, forKey: Key.downloadRetention) }
     }
 
     static var defaultDownloadFolder: URL {
@@ -509,22 +482,19 @@ final class BrowserSettings {
     // MARK: - Advanced
 
     var userAgentMode: UserAgentMode {
-        get { globalValue(\.userAgentMode, storage: storedUserAgentMode) }
-        set {
-            setGlobal(\BrowserSettings.userAgentMode, storage: \BrowserSettings.storedUserAgentMode, value: newValue, key: Key.userAgent, encode: { $0.rawValue }) {
-                $0.onWebPreferencesChanged?()
-            }
+        didSet {
+            guard userAgentMode != oldValue else { return }
+            write(userAgentMode.rawValue, forKey: Key.userAgent)
+            onWebPreferencesChanged?()
         }
     }
 
     var customUserAgent: String {
-        get { globalValue(\.customUserAgent, storage: storedCustomUserAgent) }
-        set {
-            setGlobal(\BrowserSettings.customUserAgent, storage: \BrowserSettings.storedCustomUserAgent, value: newValue, key: Key.customUserAgent, didChange: { settings in
-                if settings.userAgentMode == .custom {
-                    settings.onWebPreferencesChanged?()
-                }
-            })
+        didSet {
+            write(customUserAgent, forKey: Key.customUserAgent)
+            if userAgentMode == .custom {
+                onWebPreferencesChanged?()
+            }
         }
     }
 
@@ -542,11 +512,10 @@ final class BrowserSettings {
     }
 
     var webInspectorEnabled: Bool {
-        get { globalValue(\.webInspectorEnabled, storage: storedWebInspectorEnabled) }
-        set {
-            setGlobal(\BrowserSettings.webInspectorEnabled, storage: \BrowserSettings.storedWebInspectorEnabled, value: newValue, key: Key.webInspector, didChange: {
-                $0.onWebPreferencesChanged?()
-            })
+        didSet {
+            guard webInspectorEnabled != oldValue else { return }
+            write(webInspectorEnabled, forKey: Key.webInspector)
+            onWebPreferencesChanged?()
         }
     }
 
@@ -628,17 +597,11 @@ final class BrowserSettings {
 
     // MARK: - Init
 
-    init(
-        defaults: UserDefaults = .standard,
-        sessionDefaults: UserDefaults? = nil,
-        appliesAppearanceGlobally: Bool = false,
-        application: BrowserSettings? = nil
-    ) {
+    init(defaults: UserDefaults = .standard, sessionDefaults: UserDefaults? = nil) {
         let session = sessionDefaults ?? defaults
         self.appDefaults = defaults
         self.sessionDefaults = session
-        self.appliesAppearanceGlobally = appliesAppearanceGlobally
-        self.applicationSettings = application
+
         func pick(_ key: String) -> UserDefaults {
             Self.sessionKeySet.contains(key) ? session : defaults
         }
@@ -664,64 +627,51 @@ final class BrowserSettings {
             pick(key).stringArray(forKey: key)
         }
 
-        if application == nil {
-            storedAppearance = string(Key.appearance)
-                .flatMap(AppearanceMode.init(rawValue:)) ?? .system
-            let legacyLoomStyle = string(Key.loomStyle)
-            storedLoomStyle = legacyLoomStyle == LoomStyle.transparent.rawValue ? .transparent : .standard
-            if let storedWebsiteTint = object(Key.websiteTint) as? Bool {
-                storedMatchesWebsiteColor = storedWebsiteTint
-            } else if legacyLoomStyle == "websiteTint" {
-                storedMatchesWebsiteColor = true
-            } else if legacyLoomStyle == nil {
-                storedMatchesWebsiteColor = object(Key.websiteColor) as? Bool ?? true
-            } else {
-                storedMatchesWebsiteColor = false
-            }
-            storedTransparency = object(Key.transparency) == nil
-                ? 0.5
-                : min(max(double(Key.transparency), 0), 1)
-            storedSidebarFontFamily = string(Key.sidebarFontFamily) ?? ""
-            storedSidebarFontSize = min(max(finiteNumber(Key.sidebarFontSize) ?? 12, 10), 20)
-            storedSidebarFontWeight = string(Key.sidebarFontWeight)
-                .flatMap(SidebarFontWeight.init(rawValue:)) ?? .medium
-            storedSidebarRowSpacing = min(max(finiteNumber(Key.sidebarRowSpacing) ?? 1, 0), 8)
-            storedSidebarFolderTint = min(max(finiteNumber(Key.sidebarFolderTint) ?? 0.35, 0), 1)
-            let storedThemes = defaults.data(forKey: Key.themeCustomizations)
-                .flatMap { try? JSONDecoder().decode([String: ThemeCustomization].self, from: $0) } ?? [:]
-            storedThemeCustomizations = storedThemes.mapValues { $0.bounded() }
-            defaults.removeObject(forKey: "appearance.sidebar.directRemoveUnloadedTabs")
-            storedSidebarTextStyles = Self.decodeSidebarTextStyles(defaults.data(forKey: Key.sidebarTextStyles))
-
-            storedShowsMediaPlayer = object(Key.mediaPlayer) as? Bool ?? true
-            storedShowsLyrics = object(Key.lyrics) as? Bool ?? true
-            storedRefractsTabColor = object(Key.tabColorRefraction) as? Bool ?? true
-            storedSleepsInactiveTabs = object(Key.sleepsInactiveTabs) as? Bool ?? false
-            storedShowsLinkPreview = object(Key.linkPreview) as? Bool ?? true
-            storedPeeksAtLinks = object(Key.linkPeek) as? Bool ?? true
-            storedAutomaticPictureInPicture = object(Key.automaticPiP) as? Bool ?? false
-            storedShowsVideoInPlayer = object(Key.videoInPlayer) as? Bool ?? false
-            storedUpdateChannel = string(Key.updateChannel)
-                .flatMap(UpdateChannel.init(rawValue:)) ?? .release
-            let storedZoom = double(Key.pageZoom)
-            storedPageZoom = storedZoom > 0 ? storedZoom : 1
-
-            let storedFolder = string(Key.downloadFolder)
-            storedDownloadFolder = storedFolder.map { URL(filePath: $0, directoryHint: .isDirectory) }
-                ?? Self.defaultDownloadFolder
-            storedAsksWhereToSave = bool(Key.askWhereToSave)
-            storedDownloadRetention = string(Key.downloadRetention)
-                .flatMap(DownloadRetention.init(rawValue:)) ?? .manually
-            storedUserAgentMode = string(Key.userAgent)
-                .flatMap(UserAgentMode.init(rawValue:)) ?? .safari
-            storedCustomUserAgent = string(Key.customUserAgent) ?? ""
-            storedWebInspectorEnabled = object(Key.webInspector) as? Bool ?? true
+        appearance = string(Key.appearance)
+            .flatMap(AppearanceMode.init(rawValue:)) ?? .system
+        let storedLoomStyle = string(Key.loomStyle)
+        loomStyle = storedLoomStyle == LoomStyle.transparent.rawValue ? .transparent : .standard
+        if let storedWebsiteTint = object(Key.websiteTint) as? Bool {
+            matchesWebsiteColor = storedWebsiteTint
+        } else if storedLoomStyle == "websiteTint" {
+            matchesWebsiteColor = true
+        } else if storedLoomStyle == nil {
+            matchesWebsiteColor = object(Key.websiteColor) as? Bool ?? true
+        } else {
+            matchesWebsiteColor = false
         }
+        transparency = object(Key.transparency) == nil
+            ? 0.5
+            : min(max(double(Key.transparency), 0), 1)
+        sidebarFontFamily = string(Key.sidebarFontFamily) ?? ""
+        sidebarFontSize = min(max(finiteNumber(Key.sidebarFontSize) ?? 12, 10), 20)
+        sidebarFontWeight = string(Key.sidebarFontWeight)
+            .flatMap(SidebarFontWeight.init(rawValue:)) ?? .medium
+        sidebarRowSpacing = min(max(finiteNumber(Key.sidebarRowSpacing) ?? 1, 0), 8)
+        sidebarFolderTint = min(max(finiteNumber(Key.sidebarFolderTint) ?? 0.35, 0), 1)
+        let storedThemes = defaults.data(forKey: Key.themeCustomizations)
+            .flatMap { try? JSONDecoder().decode([String: ThemeCustomization].self, from: $0) } ?? [:]
+        themeCustomizations = storedThemes.mapValues { $0.bounded() }
+        defaults.removeObject(forKey: "appearance.sidebar.directRemoveUnloadedTabs")
+        sidebarTextStyles = Self.decodeSidebarTextStyles(defaults.data(forKey: Key.sidebarTextStyles))
 
+        showsMediaPlayer = object(Key.mediaPlayer) as? Bool ?? true
+        showsLyrics = object(Key.lyrics) as? Bool ?? true
+        refractsTabColor = object(Key.tabColorRefraction) as? Bool ?? true
+        sleepsInactiveTabs = object(Key.sleepsInactiveTabs) as? Bool ?? false
+        showsLinkPreview = object(Key.linkPreview) as? Bool ?? true
+        peeksAtLinks = object(Key.linkPeek) as? Bool ?? true
+        automaticPictureInPicture = object(Key.automaticPiP) as? Bool ?? false
+        showsVideoInPlayer = object(Key.videoInPlayer) as? Bool ?? false
         fillsPasswords = object(Key.passwordAutofill) as? Bool ?? true
         passwordExtensionID = object(Key.passwordExtension) as? String ?? ""
+        passwordProvider = string(Key.passwordProvider).flatMap(PasswordProvider.init(rawValue:)) ?? .legacy
         fillsContacts = object(Key.contactAutofill) as? Bool ?? true
         fillsPaymentCards = object(Key.paymentCardAutofill) as? Bool ?? true
+        updateChannel = string(Key.updateChannel)
+            .flatMap(UpdateChannel.init(rawValue:)) ?? .release
+        let storedZoom = double(Key.pageZoom)
+        pageZoom = storedZoom > 0 ? storedZoom : 1
 
         searchEngineID = string(Key.searchEngine) ?? SearchEngine.duckDuckGo.id
         customSearchName = string(Key.customSearchName) ?? ""
@@ -740,6 +690,18 @@ final class BrowserSettings {
         autoplay = string(Key.autoplay)
             .flatMap(AutoplayPolicy.init(rawValue:)) ?? .allow
 
+        let storedFolder = string(Key.downloadFolder)
+        downloadFolder = storedFolder.map { URL(filePath: $0, directoryHint: .isDirectory) }
+            ?? Self.defaultDownloadFolder
+        asksWhereToSave = bool(Key.askWhereToSave)
+        downloadRetention = string(Key.downloadRetention)
+            .flatMap(DownloadRetention.init(rawValue:)) ?? .manually
+
+        userAgentMode = string(Key.userAgent)
+            .flatMap(UserAgentMode.init(rawValue:)) ?? .safari
+        customUserAgent = string(Key.customUserAgent) ?? ""
+        webInspectorEnabled = object(Key.webInspector) as? Bool ?? true
+
         startPageOrder = Self.resolveOrder(stringArray(Key.startPageOrder))
         hiddenStartPageSections = Set(
             (stringArray(Key.startPageHidden) ?? [])
@@ -747,9 +709,42 @@ final class BrowserSettings {
         )
         hiddenFrequentHosts = Set(stringArray(Key.startPageHiddenSites) ?? [])
 
-        if application == nil, object(Key.websiteTint) == nil {
+        if object(Key.websiteTint) == nil {
             write(matchesWebsiteColor, forKey: Key.websiteTint)
         }
+    }
+
+    func useSessionDefaults(_ defaults: UserDefaults) {
+        guard defaults !== sessionDefaults else { return }
+        sessionDefaults = defaults
+        fillsPasswords = object(Key.passwordAutofill) as? Bool ?? true
+        passwordExtensionID = object(Key.passwordExtension) as? String ?? ""
+        passwordProvider = string(Key.passwordProvider).flatMap(PasswordProvider.init(rawValue:)) ?? .legacy
+        fillsContacts = object(Key.contactAutofill) as? Bool ?? true
+        fillsPaymentCards = object(Key.paymentCardAutofill) as? Bool ?? true
+
+        searchEngineID = string(Key.searchEngine) ?? SearchEngine.duckDuckGo.id
+        customSearchName = string(Key.customSearchName) ?? ""
+        customSearchTemplate = string(Key.customSearchTemplate) ?? ""
+        showsSearchSuggestions = object(Key.suggestions) as? Bool ?? true
+        agentOnlyInput = bool(Key.agentOnlyInput)
+
+        historyRetention = string(Key.historyRetention).flatMap(HistoryRetention.init(rawValue:)) ?? .forever
+        clearsDataOnQuit = bool(Key.clearOnQuit)
+        allowsCertificateExceptions = bool(Key.certificateExceptions)
+
+        javaScriptEnabled = object(Key.javaScript) as? Bool ?? true
+        blocksPopups = object(Key.blockPopups) as? Bool ?? true
+        blocksTrackers = object(Key.blockTrackers) as? Bool ?? true
+        autoplay = string(Key.autoplay).flatMap(AutoplayPolicy.init(rawValue:)) ?? .allow
+
+        startPageOrder = Self.resolveOrder(stringArray(Key.startPageOrder))
+        hiddenStartPageSections = Set(
+            (stringArray(Key.startPageHidden) ?? []).compactMap(StartPageSection.init(rawValue:))
+        )
+        hiddenFrequentHosts = Set(stringArray(Key.startPageHiddenSites) ?? [])
+
+        onWebPreferencesChanged?()
     }
 
     // MARK: - Applying
@@ -762,7 +757,6 @@ final class BrowserSettings {
     }
 
     func applyAppearance() {
-        guard appliesAppearanceGlobally else { return }
         NSApp.appearance = forcesDarkAppearance
             ? NSAppearance(named: .darkAqua)
             : appearance.nsAppearance
@@ -771,6 +765,7 @@ final class BrowserSettings {
     func resetToDefaults() {
         fillsPasswords = true
         passwordExtensionID = ""
+        passwordProvider = .legacy
         fillsContacts = true
         fillsPaymentCards = true
         appearance = .system
@@ -932,6 +927,49 @@ enum HistoryRetention: String, CaseIterable, Identifiable {
             365 * 86_400
         case .forever:
             nil
+        }
+    }
+}
+
+nonisolated enum AutoplayPolicy: String, Codable, CaseIterable, Identifiable, Sendable {
+    case allow
+    case silent
+    case block
+
+    var id: String {
+        rawValue
+    }
+
+    var label: LocalizedStringResource {
+        switch self {
+        case .allow:
+            "Allow"
+        case .silent:
+            "Muted"
+        case .block:
+            "Never"
+        }
+    }
+
+    var caption: LocalizedStringResource {
+        switch self {
+        case .allow:
+            "Video and audio may start playing as soon as a page loads."
+        case .silent:
+            "Video plays without sound until you click."
+        case .block:
+            "Nothing plays until you press play."
+        }
+    }
+
+    var mediaTypes: WKAudiovisualMediaTypes {
+        switch self {
+        case .allow:
+            []
+        case .silent:
+            .audio
+        case .block:
+            .all
         }
     }
 }

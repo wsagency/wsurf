@@ -42,16 +42,19 @@ struct WebViewConfigurationTests {
         #expect(second.defaultWebpagePreferences.allowsContentJavaScript)
     }
 
-    @Test(.boundedWebViews) func theLinkPreviewUsesItsInitiatingContextSettings() async throws {
-        let context = BrowserProfileContext(profile: .privateBrowsing())
-        context.settings.javaScriptEnabled = false
+    @Test(.boundedWebViews) func theLinkPreviewLeavesEveryTabsSettingsAlone() {
+        let settings = BrowserSettings.shared
+        let wasEnabled = settings.javaScriptEnabled
+        settings.javaScriptEnabled = false
+        defer { settings.javaScriptEnabled = wasEnabled }
 
-        let tab = context.webViewPool.makeColdView()
-        let configuration = LinkPeekLoader.configuration(context: context)
+        let tab = WebViewPool.shared.makeColdView()
+        _ = LinkPeekLoader.configuration()
 
-        #expect(!tab.configuration.defaultWebpagePreferences.allowsContentJavaScript)
-        #expect(!configuration.defaultWebpagePreferences.allowsContentJavaScript)
-        #expect(!configuration.websiteDataStore.isPersistent)
+        #expect(
+            !tab.configuration.defaultWebpagePreferences.allowsContentJavaScript,
+            "the tab keeps the setting it was built with"
+        )
     }
 
     /// A user script belongs to the page it was put in. The copy shares its
@@ -67,13 +70,31 @@ struct WebViewConfigurationTests {
         ))
 
         #expect(!second.userContentController.userScripts.contains { $0.source == "void 0" })
-        #expect(second.userContentController.userScripts.contains { $0.source == PageFrameRegistry.script })
+    }
+    @Test(.boundedWebViews)
+    func frameRegistryUserScriptParsesAndCompletesItsNativeHandshake() async throws {
+        let configuration = WebViewPool.makeConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let page = BrowserPage(webKit: WKWebView(frame: .zero, configuration: configuration))
+        defer { Task { await page.close() } }
+        page.loadHTMLString(
+            "<!doctype html><title>Frame registry</title>",
+            baseURL: URL(string: "https://example.test/")
+        )
+        #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+        #expect(await waitUntil { PageFrameRegistry.shared.mainFrame(in: page) != nil })
+        let frame = try #require(PageFrameRegistry.shared.mainFrame(in: page))
+        let nonce = try await page.callAsyncJavaScript(
+            "await globalThis.__wsurfNativeFrameReady; return globalThis.__wsurfNativeFrameNonce;",
+            in: frame,
+            contentWorld: PageAutomationGuard.world
+        ) as? String
+        #expect(nonce == frame.documentID)
     }
 
     @Test(.boundedWebViews) func aBuiltViewKeepsItsOwnPreferences() {
-        let pool = BrowserProfileContext.shared(for: .original()).webViewPool
-        let first = pool.makeColdView()
-        let second = pool.makeColdView()
+        let first = WebViewPool.shared.makeColdView()
+        let second = WebViewPool.shared.makeColdView()
 
         #expect(first.configuration.preferences !== second.configuration.preferences)
     }

@@ -10,20 +10,20 @@ import WebKit
 
 /// The agent's hands, against real pages. Every fixture is a condition the
 /// open web presents: duplicate labels, shadow roots, iframes, selects, fields
-/// that must be refused, elements that vanish between the read and the act.
-/// Real `WKWebView`s rather than mocks, because what is under test is
-/// precisely the JavaScript that runs inside WebKit.
+/// that must be refused, and elements that vanish between the read and the act.
+/// Real WebKit and Chromium pages rather than mocks, because what is under test is
+/// precisely the JavaScript that runs inside each engine.
 @MainActor
-@Suite(.serialized, .boundedWebViews)
+@Suite(.serialized)
 struct PageDriverTests {
     private static let stage: BrowserPage = {
-        let configuration = interactiveWebViewConfiguration()
+        let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let view = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 500, height: 400),
             configuration: configuration
         )
-        return BrowserPage(webKit: view, context: BrowserProfileContext(profile: .privateBrowsing()))
+        return BrowserPage(webKit: view)
     }()
 
     private func loadedWebView(_ body: String) async -> BrowserPage {
@@ -47,10 +47,25 @@ struct PageDriverTests {
                 return Int(line[line.index(after: line.startIndex)..<close])
             }
     }
+    private func withPage(
+        _ page: BrowserPage,
+        window: NSWindow? = nil,
+        body: () async throws -> Void
+    ) async throws {
+        do {
+            try await body()
+        } catch {
+            await page.close()
+            window?.close()
+            throw error
+        }
+        await page.close()
+        window?.close()
+    }
 
     // MARK: - Observation
 
-    @Test func highlightFitsAllEdgesDespitePageStylesAndBodyTransforms() async throws {
+    @Test(.boundedWebViews) func highlightFitsAllEdgesDespitePageStylesAndBodyTransforms() async throws {
         let view = await loadedWebView("""
         <style>
           body { transform: translate(31px, 17px); }
@@ -73,7 +88,7 @@ struct PageDriverTests {
         #expect(await js(view, "getComputedStyle(document.querySelector('.__wsurf-ring')).pointerEvents") as? String == "none")
     }
 
-    @Test func highlightTracksLayoutChangesAndDisappearsWithItsControl() async throws {
+    @Test(.boundedWebViews) func highlightTracksLayoutChangesAndDisappearsWithItsControl() async throws {
         let view = await loadedWebView("<button id='target' style='width:180px;height:44px'>Fixture control</button>")
         let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = view
@@ -100,7 +115,7 @@ struct PageDriverTests {
         #expect(await waitUntil { await js(view, "document.querySelector('.__wsurf-ring') === null") as? Bool == true })
     }
 
-    @Test func numbersEveryControlAndSaysWhatItIs() async {
+    @Test(.boundedWebViews) func numbersEveryControlAndSaysWhatItIs() async {
         let webView = await loadedWebView("""
         <p>Welcome to the shop.</p>
         <button>Add to Bag</button>
@@ -121,7 +136,7 @@ struct PageDriverTests {
     /// The activity trail and the navigation allowlist both read the links
     /// out of an observation. Only anchors count: a bare domain printed in
     /// prose - which is how Hacker News labels every story - is text.
-    @Test func onlyAnchorsCountAsLinks() async {
+    @Test(.boundedWebViews) func onlyAnchorsCountAsLinks() async {
         let webView = await loadedWebView("""
         <p>Discussed on news.ycombinator.com and simonwillison.net today.</p>
         <a href="https://example.com/story">The story</a>
@@ -148,7 +163,7 @@ struct PageDriverTests {
 
     /// The reason refs exist: five "More" buttons are five different rows,
     /// not one row shown once.
-    @Test func duplicateLabelsGetDistinctRefs() async {
+    @Test(.boundedWebViews) func duplicateLabelsGetDistinctRefs() async {
         let webView = await loadedWebView("""
         <button onclick="window.__hit='first'">More</button>
         <button onclick="window.__hit='second'">More</button>
@@ -160,7 +175,7 @@ struct PageDriverTests {
         #expect(Set(more).count == 3)
     }
 
-    @Test func clickByRefHitsExactlyTheElementNamed() async throws {
+    @Test(.boundedWebViews) func clickByRefHitsExactlyTheElementNamed() async throws {
         let webView = await loadedWebView("""
         <button onclick="window.__hit='first'">More</button>
         <button onclick="window.__hit='second'">More</button>
@@ -174,7 +189,7 @@ struct PageDriverTests {
         #expect(await js(webView, "window.__hit") as? String == "second")
     }
 
-    @Test func ambiguousLabelRequiresAnExplicitRef() async {
+    @Test(.boundedWebViews) func ambiguousLabelRequiresAnExplicitRef() async {
         let webView = await loadedWebView("""
         <button onclick="window.__hit='a'">Accept cookies</button>
         <button onclick="window.__hit='b'">Accept cookies</button>
@@ -184,7 +199,7 @@ struct PageDriverTests {
         #expect(await js(webView, "window.__hit === undefined") as? Bool == true)
     }
 
-    @Test func aMissingLabelListsWhatIsActuallyThere() async {
+    @Test(.boundedWebViews) func aMissingLabelListsWhatIsActuallyThere() async {
         let webView = await loadedWebView("""
         <button>Sign up</button>
         <button>Log in</button>
@@ -197,7 +212,7 @@ struct PageDriverTests {
 
     // MARK: - The modern web
 
-    @Test func seesInsideOpenShadowRoots() async {
+    @Test(.boundedWebViews) func seesInsideOpenShadowRoots() async {
         let webView = await loadedWebView("""
         <div id="host"></div>
         <script>
@@ -214,7 +229,7 @@ struct PageDriverTests {
         #expect(await js(webView, "window.__shadowHit") as? Bool == true)
     }
 
-    @Test func seesInsideSameOriginIframes() async {
+    @Test(.boundedWebViews) func seesInsideSameOriginIframes() async {
         let webView = await loadedWebView("""
         <iframe srcdoc="<p>Inside the frame.</p><button onclick='parent.__frameHit = true'>Frame Button</button>"></iframe>
         """)
@@ -233,7 +248,210 @@ struct PageDriverTests {
         #expect(await js(webView, "window.__frameHit") as? Bool == true)
     }
 
-    @Test func doesNotReadOrControlCrossOriginFrames() async throws {
+    @Test(.boundedWebViews)
+    @MainActor
+    func nativeDocumentNonceBindsFrameToolsAndRejectsReplacedDocuments() async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<iframe src='/child-one'></iframe><p>Main page</p>"),
+            "/child-one": .html("<p>Selected frame</p>"),
+            "/next": .html("<p>Replacement document</p>")
+        ])
+        let configuration = WebViewPool.makeConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let page = BrowserPage(webKit: WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 500, height: 400),
+            configuration: configuration
+        ))
+        defer { Task { await page.close() } }
+        page.load(URLRequest(url: try server.url()))
+        #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+
+        guard await waitUntil({ !(await PageFrameRegistry.shared.targets(in: page)).isEmpty }),
+              let target = await PageFrameRegistry.shared.targets(in: page).first,
+              let main = PageFrameRegistry.shared.mainFrame(in: page) else {
+            Issue.record("frame unavailable")
+            return
+        }
+        let readyNonce = try await page.callAsyncJavaScript(
+            "await globalThis.__wsurfNativeFrameReady; return globalThis.__wsurfNativeFrameNonce;",
+            in: main, contentWorld: PageAutomationGuard.world
+        ) as? String
+        #expect(readyNonce == main.documentID)
+        let nonce = main.documentID
+        #expect(PageFrameRegistry.shared.currentMainFrame(
+            matching: main, documentNonce: nonce, in: page
+        )?.documentID == nonce)
+        #expect(PageFrameRegistry.shared.currentMainFrame(
+            matching: main, documentNonce: UUID().uuidString, in: page
+        ) == nil)
+
+        let selectedResult = await PageDriver.$selectedFrame.withValue(target) {
+            await PageDriver.evaluateJSON(
+                "return JSON.stringify({ text: document.body.textContent, nonce: typeof globalThis.__wsurfNativeFrameNonce });",
+                in: page
+            )
+        }
+        if selectedResult?["text"] as? String != "Selected frame" ||
+            selectedResult?["nonce"] as? String != "string" {
+            let targets = await PageFrameRegistry.shared.targets(in: page)
+            let live = await PageFrameRegistry.shared.isLive(target, in: page)
+            let pageProbe = try? await page.callAsyncJavaScript(
+                "return {url: location.href, text: document.body.textContent};",
+                in: target.frame, contentWorld: .page
+            )
+            let nonceProbe = try? await page.callAsyncJavaScript(
+                "return globalThis.__wsurfNativeFrameNonce;",
+                in: target.frame, contentWorld: PageAutomationGuard.world
+            )
+            print("[TEMP nativeFrame] target=\(target.id) root=\(target.root) url=\(target.url) live=\(live) targets=\(targets.map { "\($0.id):\($0.root):\($0.url)" }) selected=\(String(describing: selectedResult)) pageProbe=\(String(describing: pageProbe)) nonceProbe=\(String(describing: nonceProbe)) main=\(main.documentID) mainURL=\(main.request.url?.absoluteString ?? "nil")")
+        }
+        #expect(selectedResult?["text"] as? String == "Selected frame")
+        #expect(selectedResult?["nonce"] as? String == "string")
+        #expect(await js(page, "typeof globalThis.__wsurfNativeFrameNonce") as? String == "undefined")
+
+        page.load(URLRequest(url: try server.url("/next")))
+        #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+        #expect(await waitUntil {
+            PageFrameRegistry.shared.mainFrame(in: page)?.documentID != nonce
+        })
+        #expect(PageFrameRegistry.shared.currentMainFrame(
+            matching: main, documentNonce: nonce, in: page
+        ) == nil)
+    }
+
+    @Test(.boundedWebViews)
+    func inheritedAboutFramesAreNotExposedAsFrameTargets() async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("""
+            <!doctype html><title>Top</title>
+            <iframe src="about:blank"></iframe>
+            <iframe srcdoc="&lt;p&gt;srcdoc frame&lt;/p&gt;"></iframe>
+            """)
+        ])
+        let configuration = WebViewPool.makeConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let page = BrowserPage(webKit: WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 500, height: 400),
+            configuration: configuration
+        ))
+        defer { Task { await page.close() } }
+        page.load(URLRequest(url: try server.url()))
+        #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+        #expect(await PageFrameRegistry.shared.targets(in: page).isEmpty)
+    }
+
+    @Test(.boundedWebViews)
+    func chromiumFrameDriverUsesLiveFrameTargets() async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<!doctype html><title>Top</title><iframe src='/child'></iframe>"),
+            "/child": .html("<!doctype html><title>Child</title><button onclick='parent.__frameHit=true'>Frame Button</button>")
+        ])
+        let page = BrowserPage(chromium: ChromiumPage(profile: .privateBrowsing()))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = page
+        window.orderBack(nil)
+        try await withPage(page, window: window) {
+
+            page.load(URLRequest(url: try server.url()))
+            #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+            #expect(await waitUntil({
+                await PageFrameRegistry.shared.targets(in: page).contains { $0.url.path == "/child" }
+            }))
+            let target = try #require(
+                await PageFrameRegistry.shared.targets(in: page).first(where: { $0.url.path == "/child" })
+            )
+            #expect(await PageFrameRegistry.shared.isLive(target, in: page))
+
+            let observation = await PageDriver.$selectedFrame.withValue(target) {
+                await PageDriver.readRenderedPage(page)
+            }
+            #expect(observation.contains("Frame Button"))
+            let ref = try #require(refs(in: observation, matching: "Frame Button").first)
+            let result = await PageDriver.$selectedFrame.withValue(target) {
+                await PageDriver.click(ref: ref, label: "Frame Button", in: page)
+            }
+            #expect(result.hasPrefix("Clicked"))
+            #expect(await js(page, "window.__frameHit") as? Bool == true)
+        }
+    }
+
+    @Test(.boundedWebViews)
+    func sharedWebKitControllerMakesOwnedScriptReplacementIdempotent() async throws {
+        let controller = WKUserContentController()
+        let configurationA = WKWebViewConfiguration()
+        configurationA.userContentController = controller
+        configurationA.websiteDataStore = .nonPersistent()
+        let configurationB = WKWebViewConfiguration()
+        configurationB.userContentController = controller
+        configurationB.websiteDataStore = .nonPersistent()
+        let pageA = BrowserPage(webKit: WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 500, height: 400),
+            configuration: configurationA
+        ))
+        let pageB = BrowserPage(webKit: WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 500, height: 400),
+            configuration: configurationB
+        ))
+        try await withPage(pageA) {
+            try await withPage(pageB) {
+
+                let oldScript = "window.__oldScriptRuns = (window.__oldScriptRuns || 0) + 1;"
+                let newScript = "window.__newScriptRuns = (window.__newScriptRuns || 0) + 1;"
+                let unrelatedScript = "window.__unrelatedScriptRuns = (window.__unrelatedScriptRuns || 0) + 1;"
+                pageA.installScript(oldScript, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+                pageB.installScript(oldScript, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+                pageA.installScript(unrelatedScript, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+                pageB.installScript(unrelatedScript, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+
+                try await pageA.replaceScript(oldScript, with: newScript, in: .page)
+                try await pageB.replaceScript(oldScript, with: newScript, in: .page)
+                pageA.loadHTMLString("<!doctype html><html><body>Shared controller</body></html>", baseURL: nil)
+                #expect(await PageSettle.untilIdle(pageA, timeout: .seconds(30)))
+                #expect(await js(pageA, "window.__oldScriptRuns === undefined") as? Bool == true)
+                #expect(await js(pageA, "window.__newScriptRuns") as? Int == 1)
+                #expect(await js(pageA, "window.__unrelatedScriptRuns") as? Int == 1)
+            }
+        }
+    }
+
+    @Test(.boundedWebViews)
+    func chromiumImmediateScriptReplacementRegistersNewSourceBeforeNavigation() async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/before": .html("<!doctype html><title>Before</title>"),
+            "/after": .html("<!doctype html><title>After</title>")
+        ])
+        let page = BrowserPage(chromium: ChromiumPage(profile: .privateBrowsing()))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = page
+        window.orderBack(nil)
+        try await withPage(page, window: window) {
+
+            page.load(URLRequest(url: try server.url("/before")))
+            #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+            let oldScript = "window.__oldScriptRuns = (window.__oldScriptRuns || 0) + 1;"
+            let newScript = "window.__newScriptRuns = (window.__newScriptRuns || 0) + 1;"
+            page.installScript(oldScript, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+            try await page.replaceScript(oldScript, with: newScript, in: .page)
+
+            page.load(URLRequest(url: try server.url("/after")))
+            #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+            #expect(await js(page, "window.__newScriptRuns") as? Int == 1)
+        }
+    }
+
+    @Test(.boundedWebViews) func doesNotReadOrControlCrossOriginFrames() async throws {
         let framed = try await HTTPFixtureServer.start(routes: [
             "/framed": .html("<p>Cross-origin secret</p><button>Hidden action</button>"),
         ])
@@ -241,14 +459,14 @@ struct PageDriverTests {
         let top = try await HTTPFixtureServer.start(routes: [
             "/": .html("<h1>Top-level text</h1><iframe src=\"\(framedURL.absoluteString)\"></iframe>"),
         ])
-        let configuration = interactiveWebViewConfiguration()
+        let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let page = BrowserPage(
             webKit: WKWebView(
                 frame: NSRect(x: 0, y: 0, width: 500, height: 400),
                 configuration: configuration
             ),
-            context: BrowserProfileContext(profile: .privateBrowsing())
+            profile: Profile.privateBrowsing()
         )
         page.load(URLRequest(url: try top.url()))
         #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
@@ -259,7 +477,7 @@ struct PageDriverTests {
         #expect(!observation.contains("Hidden action"))
     }
 
-    @Test func invisibleElementsAreNotOffered() async {
+    @Test(.boundedWebViews) func invisibleElementsAreNotOffered() async {
         let webView = await loadedWebView("""
         <button>Visible</button>
         <button style="display:none">Hidden</button>
@@ -271,7 +489,7 @@ struct PageDriverTests {
         #expect(!observation.contains("\"Ghost\""))
     }
 
-    @Test func aWrapperAndItsInnerControlAreOneRow() async {
+    @Test(.boundedWebViews) func aWrapperAndItsInnerControlAreOneRow() async {
         let webView = await loadedWebView("""
         <div role="button" onclick="window.__hit=1">
           <button>Buy tickets</button>
@@ -283,7 +501,7 @@ struct PageDriverTests {
 
     // MARK: - Staleness and disabled controls
 
-    @Test func aStaleRefSaysSoInsteadOfGuessing() async throws {
+    @Test(.boundedWebViews) func aStaleRefSaysSoInsteadOfGuessing() async throws {
         let webView = await loadedWebView(#"<button id="gone">Remove me</button>"#)
         let observation = await PageDriver.readRenderedPage(webView)
         let ref = try #require(refs(in: observation, matching: "Remove me").first)
@@ -294,7 +512,7 @@ struct PageDriverTests {
         #expect(result.contains("readPage"))
     }
 
-    @Test func aStaleFieldRefDoesNotTypeIntoAReplacement() async throws {
+    @Test(.boundedWebViews) func aStaleFieldRefDoesNotTypeIntoAReplacement() async throws {
         let webView = await loadedWebView(#"<input id="gone" placeholder="Search">"#)
         let observation = await PageDriver.readRenderedPage(webView)
         let ref = try #require(refs(in: observation, matching: "Search").first)
@@ -314,7 +532,7 @@ struct PageDriverTests {
         #expect(await js(webView, "document.getElementById('replacement').value") as? String == "")
     }
 
-    @Test func aStaleSelectRefDoesNotChooseFromAReplacement() async throws {
+    @Test(.boundedWebViews) func aStaleSelectRefDoesNotChooseFromAReplacement() async throws {
         let webView = await loadedWebView("""
         <select id="gone" aria-label="Size"><option>Small</option><option>Large</option></select>
         """)
@@ -330,7 +548,7 @@ struct PageDriverTests {
         #expect(await js(webView, "document.getElementById('replacement').value") as? String == "Small")
     }
 
-    @Test func aDisabledControlIsMarkedAndNotClicked() async throws {
+    @Test(.boundedWebViews) func aDisabledControlIsMarkedAndNotClicked() async throws {
         let webView = await loadedWebView(#"<script>window.__hit=0</script><button disabled onclick="window.__hit++">Continue</button>"#)
         let observation = await PageDriver.readRenderedPage(webView)
         #expect(observation.contains("(disabled)"))
@@ -343,7 +561,7 @@ struct PageDriverTests {
 
     // MARK: - Typing
 
-    @Test func typesByRefAndFiresTheEventsFrameworksListenFor() async throws {
+    @Test(.boundedWebViews) func typesByRefAndFiresTheEventsFrameworksListenFor() async throws {
         let webView = await loadedWebView("""
         <input id="q" placeholder="Search">
         <script>
@@ -364,7 +582,7 @@ struct PageDriverTests {
         #expect(events?.contains("change") == true)
     }
 
-    @Test func submitReachesTheForm() async {
+    @Test(.boundedWebViews) func submitReachesTheForm() async {
         let webView = await loadedWebView("""
         <form onsubmit="window.__submitted = true; return false;">
           <input name="q" placeholder="Search">
@@ -377,7 +595,7 @@ struct PageDriverTests {
 
     // MARK: - Selects
 
-    @Test func listsASelectWithItsOptionsAndCurrentChoice() async {
+    @Test(.boundedWebViews) func listsASelectWithItsOptionsAndCurrentChoice() async {
         let webView = await loadedWebView("""
         <label for="size">Size</label>
         <select id="size">
@@ -389,7 +607,7 @@ struct PageDriverTests {
         #expect(observation.contains("Small | Medium | Large"))
     }
 
-    @Test func choosesAnOptionByRefAndFiresChange() async throws {
+    @Test(.boundedWebViews) func choosesAnOptionByRefAndFiresChange() async throws {
         let webView = await loadedWebView("""
         <label for="size">Size</label>
         <select id="size" onchange="window.__changed = this.value">
@@ -405,7 +623,7 @@ struct PageDriverTests {
         #expect(await js(webView, "window.__changed") as? String == "Large")
     }
 
-    @Test func choosesAnOptionByTheSelectsLabel() async {
+    @Test(.boundedWebViews) func choosesAnOptionByTheSelectsLabel() async {
         let webView = await loadedWebView("""
         <label for="country">Country</label>
         <select id="country"><option>France</option><option>Germany</option></select>
@@ -414,7 +632,7 @@ struct PageDriverTests {
         #expect(result.hasPrefix("Selected “Germany”"))
     }
 
-    @Test func aMissingOptionListsWhatTheSelectOffers() async throws {
+    @Test(.boundedWebViews) func aMissingOptionListsWhatTheSelectOffers() async throws {
         let webView = await loadedWebView("""
         <label for="size">Size</label>
         <select id="size"><option>Small</option><option>Large</option></select>
@@ -429,7 +647,7 @@ struct PageDriverTests {
 
     // MARK: - Checkboxes
 
-    @Test func checkboxesReadTheirLabelsAndReportTheirState() async throws {
+    @Test(.boundedWebViews) func checkboxesReadTheirLabelsAndReportTheirState() async throws {
         let webView = await loadedWebView("""
         <input type="checkbox" id="news">
         <label for="news">Subscribe to the newsletter</label>
@@ -447,7 +665,7 @@ struct PageDriverTests {
 
     /// "Visible now" has to mean the viewport, not the top of the document -
     /// after a scroll those differ by exactly the amount scrolled.
-    @Test func scrollReportsWhatIsActuallyOnScreen() async {
+    @Test(.boundedWebViews) func scrollReportsWhatIsActuallyOnScreen() async {
         let webView = await loadedWebView("""
         <p>TOPMARKER at the very top.</p>
         <div style="height: 500px"></div>
@@ -458,7 +676,7 @@ struct PageDriverTests {
         #expect(!result.contains("TOPMARKER"))
     }
 
-    @Test func lookingForReturnsThePartOfThePageAboutIt() async {
+    @Test(.boundedWebViews) func lookingForReturnsThePartOfThePageAboutIt() async {
         let filler = String(repeating: "Nothing to see in this paragraph of filler prose. ", count: 120)
         let webView = await loadedWebView("""
         <p>\(filler)</p>
@@ -472,27 +690,28 @@ struct PageDriverTests {
         #expect(aimed.contains("24 months"))
     }
 
-    @Test func anActionWithNeitherRefNorLabelAsksForOne() async {
+    @Test(.boundedWebViews) func anActionWithNeitherRefNorLabelAsksForOne() async {
         let webView = await loadedWebView("<button>Fine</button>")
         let result = await PageDriver.click(ref: 0, label: "", in: webView)
         #expect(result.contains("Say which element"))
     }
 }
 
-/// The consent gate, in a suite of its own. Each page's private profile context
-/// owns its grant storage, keeping these consent checks isolated.
+/// The consent gate, in a suite of its own. Serialized even though the seam is
+/// task-local: these share `AgentActionPolicy.shared`'s stored grants, and a
+/// grant left by one is a question the next never gets asked.
 @MainActor
-@Suite(.serialized, .boundedWebViews)
+@Suite(.serialized)
 struct AgentConsentGateTests {
     private func loadedWebView(_ body: String) async -> BrowserPage {
-        let configuration = interactiveWebViewConfiguration()
+        let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let page = BrowserPage(
             webKit: WKWebView(
                 frame: NSRect(x: 0, y: 0, width: 500, height: 400),
                 configuration: configuration
             ),
-            context: BrowserProfileContext(profile: .privateBrowsing())
+            profile: Profile.privateBrowsing()
         )
         page.loadHTMLString("<!doctype html><html><body>\(body)</body></html>", baseURL: nil)
         #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
@@ -521,13 +740,13 @@ struct AgentConsentGateTests {
     /// payment button by number instead of by name changes nothing - and the
     /// user's decline is final: no click, and the model is told to stop
     /// rather than to try another route.
-    @Test func aDeclinedConsequentialClickDoesNotHappen() async throws {
+    @Test(.boundedWebViews) func aDeclinedConsequentialClickDoesNotHappen() async throws {
         let webView = await loadedWebView(#"<button onclick="window.__paid=1">Place order</button>"#)
         let observation = await PageDriver.readRenderedPage(webView)
         let ref = try #require(firstRef(in: observation, matching: "Place order"))
 
         var asked: (label: String, category: SensitiveAction.Category)?
-        let result = await AgentActionConsent.$decisionForTesting.withValue(.init({ label, category, _, _ in
+        let result = await AgentActionConsent.$decisionForTesting.withValue(.init({ label, category, _ in
             asked = (label, category)
             return .decline
         })) {
@@ -542,19 +761,19 @@ struct AgentConsentGateTests {
 
     /// And the user saying yes is equally final: the click proceeds exactly
     /// as an ordinary one would.
-    @Test func anAllowedConsequentialClickProceeds() async throws {
+    @Test(.boundedWebViews) func anAllowedConsequentialClickProceeds() async throws {
         let webView = await loadedWebView(#"<button onclick="window.__paid=1">Place order</button>"#)
         let observation = await PageDriver.readRenderedPage(webView)
         let ref = try #require(firstRef(in: observation, matching: "Place order"))
 
-        let result = await AgentActionConsent.$decisionForTesting.withValue(.init({ _, _, _, _ in .allowOnce })) {
+        let result = await AgentActionConsent.$decisionForTesting.withValue(.init({ _, _, _ in .allowOnce })) {
             await PageDriver.click(ref: ref, label: "", in: webView)
         }
         #expect(result.hasPrefix("Clicked"))
         #expect(await js(webView, "window.__paid") as? Int == 1)
     }
 
-    @Test func aDeceptiveLabelCannotHideAConsequentialForm() async throws {
+    @Test(.boundedWebViews) func aDeceptiveLabelCannotHideAConsequentialForm() async throws {
         let webView = await loadedWebView("""
         <form aria-label="Checkout" onsubmit="window.__paid=1; return false;">
           <p>Review and complete purchase</p>
@@ -565,7 +784,7 @@ struct AgentConsentGateTests {
         let ref = try #require(firstRef(in: observation, matching: "Continue"))
 
         var asked: (label: String, category: SensitiveAction.Category)?
-        let result = await AgentActionConsent.$decisionForTesting.withValue(.init({ label, category, _, _ in
+        let result = await AgentActionConsent.$decisionForTesting.withValue(.init({ label, category, _ in
             asked = (label, category)
             return .decline
         })) {
@@ -578,7 +797,7 @@ struct AgentConsentGateTests {
         #expect(await js(webView, "typeof window.__paid === 'undefined'") as? Bool == true)
     }
 
-    @Test func anOrdinaryContinueButtonDoesNotTriggerConsequentialConsent() async throws {
+    @Test(.boundedWebViews) func anOrdinaryContinueButtonDoesNotTriggerConsequentialConsent() async throws {
         let webView = await loadedWebView("""
         <form onsubmit="window.__continued=1; return false;">
           <p>Continue profile setup</p>
@@ -589,7 +808,7 @@ struct AgentConsentGateTests {
         let ref = try #require(firstRef(in: observation, matching: "Continue"))
 
         var asked = false
-        let result = await AgentActionConsent.$decisionForTesting.withValue(.init({ _, _, _, _ in
+        let result = await AgentActionConsent.$decisionForTesting.withValue(.init({ _, _, _ in
             asked = true
             return .decline
         })) {
@@ -601,7 +820,7 @@ struct AgentConsentGateTests {
         #expect(await js(webView, "window.__continued") as? Int == 1)
     }
 
-    @Test func aSensitiveFieldIsRefusedEvenByRef() async throws {
+    @Test(.boundedWebViews) func aSensitiveFieldIsRefusedEvenByRef() async throws {
         let webView = await loadedWebView(#"<input type="password" placeholder="Password">"#)
         let observation = await PageDriver.readRenderedPage(webView)
         let ref = try #require(refs(in: observation, matching: "Password").first)
@@ -615,7 +834,7 @@ struct AgentConsentGateTests {
     /// verbatim to whichever provider the user configured, so a value already
     /// in the field - a password manager fills one on load, without the user
     /// touching the page - must not travel with it.
-    @Test func anObservationNeverCarriesASensitiveValue() async {
+    @Test(.boundedWebViews) func anObservationNeverCarriesASensitiveValue() async {
         let webView = await loadedWebView("""
         <input name="user" value="ada@example.com">
         <input type="password" name="password" value="hunter2-SECRET">
@@ -631,7 +850,7 @@ struct AgentConsentGateTests {
 
     /// The same predicate the writing half uses, so the two cannot drift:
     /// a card number is caught by its `autocomplete`, a code by its label.
-    @Test func anObservationHidesPaymentAndCodeValuesToo() async {
+    @Test(.boundedWebViews) func anObservationHidesPaymentAndCodeValuesToo() async {
         let webView = await loadedWebView("""
         <input autocomplete="cc-number" placeholder="Card number" value="4111111111111111">
         <input autocomplete="cc-csc" placeholder="CVC" value="737">
@@ -650,7 +869,7 @@ struct AgentConsentGateTests {
 
     /// An empty sensitive field says so, rather than going quiet and leaving
     /// "is the form filled in?" unanswerable.
-    @Test func anEmptySensitiveFieldReportsThatItIsEmpty() async {
+    @Test(.boundedWebViews) func anEmptySensitiveFieldReportsThatItIsEmpty() async {
         let webView = await loadedWebView(#"<input type="password" placeholder="Password">"#)
         let observation = await PageDriver.readRenderedPage(webView)
 
@@ -661,16 +880,15 @@ struct AgentConsentGateTests {
     /// must never count as granted - otherwise `data:`, `file:` and
     /// `about:` pages would walk through the gate unasked.
     @Test func aPageWithNoHostIsNeverAlreadyAllowed() {
-        let policy = BrowserProfileContext(profile: .privateBrowsing()).actionPolicy
         for category in SensitiveAction.Category.allCases {
-            #expect(!policy.isAlwaysAllowed(category, host: nil))
-            #expect(!policy.isAlwaysAllowed(category, host: ""))
+            #expect(!AgentActionPolicy.shared.isAlwaysAllowed(category, host: nil))
+            #expect(!AgentActionPolicy.shared.isAlwaysAllowed(category, host: ""))
         }
     }
 }
 
 extension PageDriverTests {
-    @Test func aBatchFillsIndependentFieldsWithoutSubmitting() async throws {
+    @Test(.boundedWebViews) func aBatchFillsIndependentFieldsWithoutSubmitting() async throws {
         let webView = await loadedWebView("""
         <form onsubmit="window.submitted=true;return false">
           <input aria-label="First"><input aria-label="Second">
@@ -695,7 +913,7 @@ extension PageDriverTests {
         #expect(result.contains("CONTROLS"))
     }
 
-    @Test func aBatchContinuesAfterFillingEditableText() async throws {
+    @Test(.boundedWebViews) func aBatchContinuesAfterFillingEditableText() async throws {
         let webView = await loadedWebView("""
         <div contenteditable="true" aria-label="First"><span>Original text</span></div>
         <textarea aria-label="Second">Original notes</textarea>
@@ -716,7 +934,7 @@ extension PageDriverTests {
         #expect(await js(webView, "document.querySelector('input').value") as? String == "Last value")
     }
 
-    @Test func aBatchStopsWhenEditableTextTriggersValidation() async throws {
+    @Test(.boundedWebViews) func aBatchStopsWhenEditableTextTriggersValidation() async throws {
         let webView = await loadedWebView("""
         <div contenteditable="true" aria-label="First"
              oninput="document.getElementById('validation').textContent='Check the first value'"></div>
@@ -734,7 +952,7 @@ extension PageDriverTests {
         #expect(await js(webView, "document.querySelector('input').value") as? String == "")
     }
 
-    @Test func aBatchStopsWhenValidationChangesTheForm() async throws {
+    @Test(.boundedWebViews) func aBatchStopsWhenValidationChangesTheForm() async throws {
         let webView = await loadedWebView("""
         <input aria-label="First" onchange="document.getElementById('validation').textContent='Check the first value'">
         <input aria-label="Second"><div id="validation"></div>
@@ -751,22 +969,20 @@ extension PageDriverTests {
         #expect(await js(webView, "document.querySelectorAll('input')[1].value") as? String == "")
     }
 
-    @Test func aBatchCannotBypassSensitiveFieldChecks() async throws {
+    @Test(.boundedWebViews) func aBatchCannotBypassSensitiveFieldChecks() async throws {
         let webView = await loadedWebView("<input aria-label='Password' type='password'><input aria-label='Other'>")
         let page = await PageDriver.readRenderedPage(webView)
         let password = try #require(refs(in: page, matching: "field \"Password\"").first)
         let other = try #require(refs(in: page, matching: "field \"Other\"").first)
         let result = await PageDriver.fillFields([
             .init(ref: password, value: "fixture-secret", select: false),
-            .init(ref: other, value: "safe-value", select: false),
+            .init(ref: other, value: "never-entered", select: false),
         ], in: webView)
-        #expect(result.hasPrefix("Filled 1 of 2 fields."))
-        #expect(result.contains("sensitive field"))
-        #expect(await js(webView, "document.querySelector('input[type=password]').value") as? String == "")
-        #expect(await js(webView, "document.querySelectorAll('input')[1].value") as? String == "safe-value")
+        #expect(result.hasPrefix("Filled 0 of 2 fields."))
+        #expect(await js(webView, "Array.from(document.querySelectorAll('input')).every(e => e.value === '')") as? Bool == true)
     }
 
-    @Test func aBatchRejectsDuplicateOrStaleRefsBeforeFurtherWrites() async throws {
+    @Test(.boundedWebViews) func aBatchRejectsDuplicateOrStaleRefsBeforeFurtherWrites() async throws {
         let webView = await loadedWebView("<input aria-label='First'>")
         let page = await PageDriver.readRenderedPage(webView)
         let first = try #require(refs(in: page, matching: "field \"First\"").first)
@@ -778,7 +994,7 @@ extension PageDriverTests {
         #expect(await js(webView, "document.querySelector('input').value") as? String == "")
     }
 
-    @Test func individualActionsReturnFreshRefsAfterValidation() async throws {
+    @Test(.boundedWebViews) func individualActionsReturnFreshRefsAfterValidation() async throws {
         let webView = await loadedWebView("""
         <input aria-label="First" onchange="document.body.insertAdjacentHTML('afterbegin','<button>Validation help</button>')">
         <input aria-label="Second">
@@ -790,121 +1006,5 @@ extension PageDriverTests {
         let secondResult = await PageDriver.type(text: "two", intoField: "", ref: newSecond, submit: false, in: webView)
         #expect(secondResult.hasPrefix("Typed"))
         #expect(await js(webView, "document.querySelectorAll('input')[1].value") as? String == "two")
-    }
-    @Test func mixedFormFillsTenOfFourteenAndSkipsIneligibleControls() async throws {
-        let webView = await loadedWebView("""
-        <form onsubmit="window.submitted=true;return false">
-          <input aria-label="Name"><textarea aria-label="Notes"></textarea>
-          <select aria-label="Choice"><option>A</option><option>B</option></select>
-          <input aria-label="City" list="cities"><datalist id="cities"><option value="Paris"></datalist>
-          <input aria-label="Color" type="color" value="#563d7c">
-          <input aria-label="Date" type="date" onfocus="document.body.insertAdjacentHTML('beforeend','<p>Calendar open</p>')">
-          <input aria-label="Range" type="range" min="0" max="10" step="1">
-          <input aria-label="Checked" type="checkbox" checked>
-          <input aria-label="Unchecked" type="checkbox">
-          <input aria-label="First radio" type="radio" name="choice" checked>
-          <input aria-label="Second radio" type="radio" name="choice">
-          <input aria-label="Password" type="password"><input aria-label="File" type="file">
-          <input aria-label="Disabled" disabled><input aria-label="Readonly" readonly>
-          <button>Submit</button>
-        </form>
-        <script>window.events=[]; document.addEventListener('change', e => window.events.push(e.target.getAttribute('aria-label')));</script>
-        """)
-        let page = await PageDriver.readRenderedPage(webView)
-        let values = [
-            ("Name", "Jordan"), ("Notes", "Sample"), ("Choice", "B"), ("City", "Paris"),
-            ("Color", "#3366AA"), ("Date", "2026-10-15"), ("Range", "7"),
-            ("Checked", "false"), ("Unchecked", "true"), ("Second radio", "true"),
-            ("Password", "never-write"), ("File", "never-write"), ("Disabled", "never-write"), ("Readonly", "never-write"),
-        ]
-        let fields = try values.map { label, value in
-            PageDriver.FieldValue(
-                ref: try #require(refs(in: page, matching: "\"\(label)\"").first),
-                value: value, select: label == "Choice"
-            )
-        }
-        let result = await PageDriver.fillFields(fields, in: webView)
-        #expect(result.hasPrefix("Filled 10 of 14 fields."), "\(result)")
-        #expect(await js(webView, "document.querySelector('[type=color]').value") as? String == "#3366aa")
-        #expect(await js(webView, "document.querySelector('[type=range]').value") as? String == "7")
-        #expect(await js(webView, "document.querySelector('[type=date]').value") as? String == "2026-10-15")
-        #expect(await js(webView, "Array.from(document.querySelectorAll('[type=checkbox],[type=radio]')).map(e=>e.checked)") as? [Bool] == [false, true, false, true])
-        #expect(await js(webView, "Array.from(document.querySelectorAll('[type=password],[type=file],[disabled],[readonly]')).every(e=>e.value==='')") as? Bool == true)
-        #expect(await js(webView, "window.submitted === true") as? Bool == false)
-        #expect(await js(webView, "window.events.filter(x=>x==='Color'||x==='Range').length") as? Int == 2)
-        #expect(await js(webView, "document.body.textContent.includes('Calendar open')") as? Bool == false)
-        let verified = fields.prefix(10).map { "[\($0.ref)]" }.joined(separator: ", ")
-        #expect(result.contains("Verified refs: \(verified)."), "\(result)")
-    }
-
-    @Test(arguments: ["11", "3", "", "NaN"])
-    func invalidColorDateAndRangeDoNotBlockSafeFields(range: String) async {
-        let webView = await loadedWebView("""
-        <input aria-label="Color" type="color" value="#563d7c">
-        <input aria-label="Range" type="range" min="0" max="10" step="2" value="4">
-        <input aria-label="Date" type="date" value="2026-10-15">
-        <input aria-label="Name">
-        """)
-        _ = await PageDriver.readRenderedPage(webView)
-        let result = await PageDriver.fillFields([
-            .init(ref: 1, value: "red", select: false), .init(ref: 2, value: range, select: false),
-            .init(ref: 3, value: "not-a-date", select: false), .init(ref: 4, value: "Jordan", select: false),
-        ], in: webView)
-        #expect(result.hasPrefix("Filled 1 of 4 fields."), "\(result)")
-        #expect(result.contains("Verified refs: [4]."), "\(result)")
-        #expect(await js(webView, "document.querySelector('[type=color]').value") as? String == "#563d7c")
-        #expect(await js(webView, "document.querySelector('[type=range]').value") as? String == "4")
-        #expect(await js(webView, "document.querySelector('[type=date]').value") as? String == "2026-10-15")
-        #expect(await js(webView, "document.querySelector('[aria-label=Name]').value") as? String == "Jordan")
-        #expect((await PageDriver.inspectControl(ref: 2, in: webView)).contains("\"step\":\"2\""))
-    }
-
-    @Test func oversizedAndInvalidRefBatchesCannotPartiallyWrite() async {
-        let webView = await loadedWebView("<input aria-label='First'>")
-        _ = await PageDriver.readRenderedPage(webView)
-        let batches = [
-            (1...33).map { $0 },
-            [1, 1],
-            [0, 1],
-            [-1],
-        ]
-        for refs in batches {
-            let result = await PageDriver.fillFields(refs.map { .init(ref: $0, value: "unexpected", select: false) }, in: webView)
-            #expect(result.contains(refs.count > 32 ? "one to 32" : "distinct positive"))
-            #expect(await js(webView, "document.querySelector('input').value") as? String == "")
-        }
-    }
-
-    @Test func laterRadioSelectionInvalidatesEarlierVerifiedState() async {
-        let webView = await loadedWebView("""
-        <input aria-label="First" type="radio" name="choice"><input aria-label="Second" type="radio" name="choice">
-        """)
-        _ = await PageDriver.readRenderedPage(webView)
-        let result = await PageDriver.fillFields([
-            .init(ref: 1, value: "true", select: false), .init(ref: 2, value: "true", select: false),
-        ], in: webView)
-        #expect(result.hasPrefix("Filled 1 of 2 fields."))
-        #expect(result.contains("[1] not verified"))
-        #expect(await js(webView, "document.querySelectorAll('input')[1].checked") as? Bool == true)
-        #expect(result.contains("Verified refs: [2]."), "\(result)")
-    }
-
-    @Test func ariaCheckedValueChangeDoesNotStopIndependentFields() async throws {
-        let view = await loadedWebView("""
-            <div role="checkbox" aria-label="Agreement" aria-checked="false" tabindex="0"
-              onclick="this.setAttribute('aria-checked', 'true');window.checkWrites=(window.checkWrites||0)+1">Agreement</div>
-            <input aria-label="Name" oninput="window.nameWrites=(window.nameWrites||0)+1">
-            """)
-        let observation = await PageDriver.readRenderedPage(view)
-        let checkbox = try #require(refs(in: observation, matching: "checkbox \"Agreement\"").first)
-        let name = try #require(refs(in: observation, matching: "field \"Name\"").first)
-        let result = await PageDriver.fillFields([
-            .init(ref: checkbox, value: "true", select: false),
-            .init(ref: name, value: "Jordan", select: false),
-        ], in: view)
-        #expect(await js(view, "document.querySelector('[role=checkbox]').getAttribute('aria-checked')") as? String == "true")
-        #expect(await js(view, "document.querySelector('input').value") as? String == "Jordan")
-        #expect(await js(view, "[window.checkWrites,window.nameWrites]") as? [Int] == [1, 1])
-        #expect(result.contains("Verified refs: [\(checkbox)], [\(name)]."), "\(result)")
     }
 }

@@ -44,20 +44,6 @@ struct MCPClientInstallerTests {
         #expect(MCPClientKind.omp.configurationURL(home: home, environment: [:]).path == "/Users/test/.omp/agent/mcp.json")
     }
 
-    @Test(arguments: ["Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "Contents/Resources/codex"])
-    func bundledCodexCLIIsDetectedWithoutShellPath(relativePath: String) throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let application = directory.appending(path: "ChatGPT.app")
-        let executable = application.appending(path: relativePath)
-        try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: executable.path)
-        #expect(MCPClientDiscovery.bundledCodexExecutable(in: [application]) == nil)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
-        #expect(MCPClientDiscovery.bundledCodexExecutable(in: [application]) == executable)
-    }
-
     @Test(arguments: [MCPClientKind.claudeDesktop, .claudeCode, .cursor, .omp])
     func JSONMergePreservesOtherServersAndPrivateClientState(kind: MCPClientKind) throws {
         let source = Data(#"""
@@ -83,44 +69,10 @@ struct MCPClientInstallerTests {
             "disabledServers": ["wsurf"],
             "mcpServers": ["wsurf": [
                 "command": command, "args": ["--mcp"], "disabled": true, "enabled": false, "autoApprove": [], "env": ["A": "B"],
-            ], ],
+            ]],
         ]
         let data = try JSONSerialization.data(withJSONObject: root)
         #expect(try MCPClientConfiguration.addingJSON(to: data, kind: kind, command: command) == nil)
-    }
-
-    @Test func stageInstallationUsesItsSocketAndRejectsAnEntryPointingAtAnotherStage() throws {
-        let stageSocket = "/tmp/wsurf-mcp-501-0123456789abcdef0123456789abcdef/browser.sock"
-        let otherStageSocket = "/tmp/wsurf-mcp-501-fedcba9876543210fedcba9876543210/browser.sock"
-        let stageArguments = ["--mcp", "--mcp-socket", stageSocket]
-        let installedData = try MCPClientConfiguration.addingJSON(
-            to: nil,
-            kind: .claudeDesktop,
-            command: command,
-            arguments: stageArguments
-        )
-        let installed = try #require(installedData)
-        let installedRoot = try object(installed)
-        let installedEntry = try #require((installedRoot["mcpServers"] as? [String: Any])?["wsurf"] as? [String: Any])
-        #expect(installedEntry["args"] as? [String] == stageArguments)
-        #expect(MCPClientConfiguration.matches(installedEntry, command: command, arguments: stageArguments))
-
-        let otherStageEntry = MCPClientConfiguration.entry(
-            command: command,
-            kind: .claudeDesktop,
-            arguments: ["--mcp", "--mcp-socket", otherStageSocket]
-        )
-        #expect(!MCPClientConfiguration.matches(otherStageEntry, command: command, arguments: stageArguments))
-
-        let source = try JSONSerialization.data(withJSONObject: ["mcpServers": ["wsurf": otherStageEntry]])
-        #expect(throws: MCPClientSetupError.conflictingServer) {
-            try MCPClientConfiguration.addingJSON(
-                to: source,
-                kind: .claudeDesktop,
-                command: command,
-                arguments: stageArguments
-            )
-        }
     }
 
     @Test(arguments: [#"{"mcpServers":{"wsurf":{"command":"/other","args":["--mcp"]}}}"#,
@@ -238,15 +190,7 @@ struct MCPClientInstallerTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path) == ["config.toml"])
     }
 
-    private nonisolated static var installedCodex: URL? {
-        MCPClientDiscovery.codexExecutable(
-            home: FileManager.default.homeDirectoryForCurrentUser,
-            environment: ProcessInfo.processInfo.environment,
-            applications: [URL(fileURLWithPath: "/Applications/ChatGPT.app"), URL(fileURLWithPath: "/Applications/Codex.app")]
-        )
-    }
-
-    @Test(.enabled(if: installedCodex != nil))
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: "/Applications/ChatGPT.app/Contents/Resources/codex")))
     func installedCodexCLIPreservesTOMLCommentsOtherServersAndPermissions() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -254,7 +198,7 @@ struct MCPClientInstallerTests {
         let original = Data("# Keep this comment\nmodel = \"test\"\n[mcp_servers.\"other.server\"]\ncommand = \"/bin/true\"\nenabled = false\n".utf8)
         try original.write(to: url)
         let destination = MCPClientTarget(kind: .codex, configurationURL: url,
-                                          codexExecutable: try #require(Self.installedCodex), isDetected: true)
+                                          codexExecutable: URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex"), isDetected: true)
         let installer = MCPClientInstaller()
         #expect(try await !installer.isInstalled(destination, command: command))
         let result = try await installer.install(destination, command: command)

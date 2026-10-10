@@ -141,28 +141,19 @@ extension BrowserTab {
         return false
     }
 
-    func permitsChromiumNavigation(
-        _ request: URLRequest,
-        isMainFrame: Bool,
-        isRedirect: Bool,
-        sourceURL: URL?,
-        sourceFrame: BrowserFrame?
-    ) -> Bool {
+    func permitsChromiumNavigation(_ request: URLRequest, isMainFrame: Bool, userGesture: Bool, isRedirect: Bool) -> Bool {
         guard let url = request.url else { return false }
         if SystemPages.isSystem(url) {
             return false
         }
-        // Chromium's built-in PDF viewer is an engine extension, not an external app.
-        if url.scheme?.lowercased() == "chrome-extension" { return true }
         if page.chromium?.htmlDocumentURL == url {
             return true
         }
         if !ExternalApp.staysInWebView(url) {
-            offerChromiumExternalApp(
-                url,
-                sourceURL: isRedirect ? nil : sourceURL,
-                sourceFrame: sourceFrame
-            )
+            if userGesture {
+                let window = page.window
+                Task { await ExternalApp.offerToOpen(url, in: window) }
+            }
             return false
         }
         guard permitsEngineNavigation(request, isMainFrame: isMainFrame) else { return false }
@@ -172,29 +163,7 @@ extension BrowserTab {
         return true
     }
 
-    private func offerChromiumExternalApp(_ url: URL, sourceURL: URL?, sourceFrame: BrowserFrame?) {
-        let view = page
-        guard let chromium = view.chromium, let client = chromium.client,
-              let native = client.externalAppSnapshot(for: sourceFrame) else { return }
-        let source = native.sourceIsUnique ? sourceFrame : nil
-        let candidate = SitePermissions.webOrigin(for: sourceURL)
-        let origin = source.map { ChromiumClient.sameOrigin(candidate, $0.securityOrigin) } == true ? candidate : ""
-        let document = committedNavigation
-        // ponytail: ambiguous initiators bind every live native document until CEF can prove the source.
-        let snapshot = source.map { [$0] } ?? chromium.devTools.frameSnapshot()
-        Task { [weak self, weak view] in
-            guard let self, !isClosed, let view, liveView === view else { return }
-            await ExternalApp.offerToOpen(url, from: origin, policy: externalApps, in: view.window, isCurrent: {
-                // DevTools renderer RPCs are suspended by an unrelated pending top-level navigation.
-                client.isCurrentExternalAppSnapshot(native.documents)
-                    && chromium.devTools.isCurrent(snapshot: snapshot)
-                    && !self.isClosed && self.liveView === view && self.committedNavigation === document
-            })
-        }
-    }
-
     func adopt(_ view: BrowserPage) {
-        precondition(view.context === context)
         liveView = view
         engine = view.engine
         Self.applyObscuredInsets(to: view, isUnderTopBar: isUnderTopBar)
@@ -207,11 +176,6 @@ extension BrowserTab {
         view.onNavigationCommitted = { [weak self] navigation in self?.navigationCommitted(navigation) }
         view.onNavigationFinished = { [weak self] navigation in self?.navigationFinished(navigation) }
         view.onNavigationFailed = { [weak self] navigation, error in self?.navigationFailed(navigation, error: error) }
-        view.onMainFrameResponse = { [weak self, weak view] response in
-            guard let self, let view, !isClosed, liveView === view else { return }
-            noteMainFrameResponse(response)
-            refreshChrome()
-        }
         view.onContentProcessTerminated = { [weak self] in self?.contentProcessDidTerminate() }
         view.onHistoryChanged = { [weak self] in self?.refreshChrome() }
         view.onLinkHovered = { [weak self, weak view] url in
@@ -224,11 +188,6 @@ extension BrowserTab {
             native.navigationDelegate = delegate
             native.uiDelegate = delegate
             if let tabView = native as? TabWebView {
-                tabView.profileContext = context
-                tabView.onOpenLinkInNewWindow = { [weak self, weak view] url, isPrivate in
-                    guard let self, let view, !isClosed, liveView === view else { return }
-                    onOpenInNewWindow?(url, isPrivate || self.isPrivate)
-                }
                 tabView.onContextDownload = { [weak self] download, source in self?.onDownload?(download, source) }
                 tabView.onPeekLink = { [weak self, weak view] url in
                     guard let view else { return }
@@ -244,23 +203,19 @@ extension BrowserTab {
             installChromiumCallbacks(on: chromium, in: view)
         }
 
-        context.webViewPool.configurePage?(view)
+        WebViewPool.shared.configurePage?(view)
         PageActivityMonitor.shared.install(in: view) { [weak self] signal in self?.notePageActivity(signal) }
         ScrollPositionMonitor.shared.install(in: view) { [weak self] y, url in
             self?.lastReportedScrollY = y
             self?.lastReportedScrollURL = url
         }
         FaviconWatcher.shared.install(in: view) { [weak self] in self?.declaredFaviconChanged() }
-        PageClickWatcher.shared.install(in: view) { [weak view] point in
-            guard let view else { return }
-            PageClickWatcher.shared.onClick?(view, point)
-        }
-        SiteContentGuard.shared.install(in: view, permissions: sitePermissions, settings: context.settings) { [weak self] url in
-            self?.popups.note(url)
-        }
+        PageClickWatcher.shared.install(in: view) { PageClickWatcher.shared.onClick?($0) }
+        SiteContentGuard.shared.install(in: view, permissions: sitePermissions) { [weak self] url in self?.popups.note(url) }
         PaymentCardAutofill.shared.install(in: view)
         ContactAutofill.shared.install(in: view)
         PasswordAutofill.shared.install(in: view)
+        WebAuthnAdapter.install(in: view)
         AutofillSaveCoordinator.shared.install(in: view, session: autofillSave)
         installPageObservations(for: view)
         installPermissionCallbacks(for: view)
@@ -339,15 +294,9 @@ extension BrowserTab {
     }
 
     private func installChromiumCallbacks(on chromium: ChromiumPage, in view: BrowserPage) {
-        chromium.navigationDecision = { [weak self, weak view] request, main, _, redirect, type, sourceURL, sourceFrame in
+        chromium.navigationDecision = { [weak self, weak view] request, main, gesture, redirect, type, sourceURL in
             guard let self, let view, self.liveView === view else { return false }
-            guard permitsChromiumNavigation(
-                request,
-                isMainFrame: main,
-                isRedirect: redirect,
-                sourceURL: sourceURL,
-                sourceFrame: sourceFrame
-            ) else { return false }
+            guard permitsChromiumNavigation(request, isMainFrame: main, userGesture: gesture, isRedirect: redirect) else { return false }
             let kind: AutofillSubmissionTracker.NavigationKind
             switch type {
             case .linkActivated:
@@ -368,12 +317,8 @@ extension BrowserTab {
             autofillSave.submissions.navigationRequested(isMainFrame: main, kind: kind, sourceURL: sourceURL)
             return true
         }
-        chromium.openWindow = { [weak self, weak view] url, userGesture, sourceURL, sourceFrame in
+        chromium.openWindow = { [weak self, weak view] url, userGesture in
             guard let self, let view, self.liveView === view else { return }
-            if !ExternalApp.staysInWebView(url) {
-                offerChromiumExternalApp(url, sourceURL: sourceURL, sourceFrame: sourceFrame)
-                return
-            }
             if popups.effective.blocks && !userGesture {
                 popups.note(url)
                 return

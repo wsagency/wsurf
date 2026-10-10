@@ -8,11 +8,11 @@
 
 # WSurf
 
-A macOS browser with a built-in assistant.
+**A browser with a built-in assistant for macOS.**
 
 Ask the assistant to search, read websites, and use the tabs you have open.
-It can click, type, and scroll. Click the page to stop the assistant and
-continue browsing yourself.
+It can click, type, and scroll. Click the page at any time to stop the assistant
+and use it yourself.
 
 WSurf is an independent fork of
 [kavoye/linen-browser](https://github.com/kavoye/linen-browser). It preserves
@@ -49,17 +49,8 @@ versions.
 
 ## What it does
 
-- Browse in separate windows with tabs, folders, Favorites, pins, and split view.
-  Move live tabs between windows of the same profile without reloading; tabs
-  cannot move between profiles or private sessions. Windows restore after relaunch.
-  Search your history, resume downloads, and view synced lyrics.
-- Import bookmarks from another browser's HTML export in Settings › General.
-- Choose Open Link in New Window from a link's context menu; hold Option for
-  a new private window. History and frequent-site links offer the same actions.
-- In the command palette, type a supported site name or domain and press Tab
-  to search that site. Enter opens results in a new tab; Option-Enter uses the
-  current tab. Backspace in an empty query removes the site chip; its remove
-  button preserves a query you have already typed.
+- **Browse:** tabs, folders, pins, split view, history, resumable downloads, and
+  bookmark import. Play media in Picture in Picture and view synced lyrics.
 - **Choose a website engine:** Website Settings › Browser Engine selects
   WebKit (default) or embedded Chromium. Changing engines reloads the website
   and resets its Back/Forward history; cookies, storage, and sign-ins are separate.
@@ -95,19 +86,31 @@ versions.
   rows without changing child bookmarks.
 - **Ask the assistant:** type in the address field or hold ⌥Space to speak.
   Use `@` to include a tab, attach files, and review actions in Agent Activity.
-  Batch filling supports up to 32 nonsensitive form controls without submitting.
-  Provider rate limits pause with saved progress after bounded retries; wait,
-  then choose Continue rather than repeating completed browser actions.
 - **Preview links:** hold Shift over a link for a summary, or Shift-click to
   open a preview.
-- Use macOS Passwords-compatible password autofill, and save payment cards and
-  contact details in Settings › Autofill. Unlock saved passwords and cards with
-  Touch ID or your Mac password. Passkeys use the macOS sign-in prompt.
+- **Fill forms:** use macOS Passwords-compatible password autofill, save
+  payment cards, and contact details in Settings › Autofill. Passwords and
+  cards require system authentication. Passkeys use macOS.
 - **Add WebKit extensions:** install from the Chrome Web Store or Firefox Add-ons.
-- Use profiles to keep cookies, history, tabs, permissions, and extensions
-  separate. Regular windows of one profile share these services but keep their
-  tab selection and assistant task independent. Press ⇧⌘N for a new private
-  window; closing it ends only that private session.
+- **Separate browsing:** profiles keep cookies, history, tabs, permissions, and
+  extensions separate. Press ⇧⌘N for private browsing.
+- **Choose a theme:** Settings › Appearance offers Auto, Light, Dark, pastel
+  Light Calm, and Dark Calm.
+- **Tune the sidebar:** Settings › Appearance › Sidebar controls the installed
+  font family, text size and weight, row spacing, and folder tint.
+  Loaded and unloaded text/icon colors and opacity are saved separately for each
+  theme. Original favicons remain recognizable in monochrome. Click a tab title
+  to activate it; use Right-click › Rename to edit its name.
+- **Unload without losing links:** sidebar X/minus, middle-click, and ⌘W unload
+  page content while retaining the link, pin, and folder membership. Unloaded
+  tabs show Play to load them again; selecting the link also reloads it.
+  Settings › Appearance lets you show a removal X beside Play or reveal it
+  while holding ⌘. Remove Tab permanently removes the tab and its link.
+  Hover a folder while holding ⌘ to show its X immediately left of the far-right
+  count. It unloads descendant tabs; existing unload protections still apply.
+- **Pin a folder:** Right-click › Pin keeps the folder above unpinned rows without
+  changing its child bookmarks. Pin/Unpin and folder order survive a restart,
+  including empty folders.
 
 The Apple Passwords compatibility work preserves Apple's official Chrome
 extension identity, public key, authentication, PIN, and native protocol
@@ -122,31 +125,28 @@ Use Apple Intelligence on your Mac, add a provider API key, or connect to a loca
 server such as Ollama or LM Studio. Supported providers include OpenAI,
 Anthropic, Gemini, DeepSeek, Groq, Mistral, OpenRouter, and xAI.
 
-External assistants can access only the tabs you share through WSurf's
-[MCP server](MCP.md). Each connection stays bound to its original regular window.
+External assistants can use explicitly shared tabs through WSurf's
+[MCP server](MCP.md).
 
 ## Privacy and control
 
-- Set assistant access for each website and enable its tools in Settings ›
-  Assistant. The assistant asks before making purchases, sending information,
-  or signing in. It cannot fill passwords or card numbers; use browser autofill.
-- External-app approvals can be remembered for a specific website and app.
-  Revoke them in Website Settings › Opening apps. Unknown origins ask each time;
-  private-tab approvals are temporary.
+- Choose assistant access per website and enable tools in Settings › Assistant.
+  The assistant asks before purchases, sending, or signing in. It cannot fill
+  passwords or card numbers; browser autofill is separate.
 - API keys stay in Keychain and are sent only to their provider. Submitted
   messages, shared page content, and attachments go to the selected model.
-- On-device voice converts speech to text on your Mac. OpenAI dictation and voice
+- On-device voice transcribes audio on your Mac. OpenAI dictation and voice
   conversations send microphone audio to OpenAI.
-- Each private window has separate temporary website storage and permissions.
-  Private browsing does not save history, tabs, or assistant transcripts.
-- WSurf blocks known third-party trackers by default. WebKit extensions can
-  block additional trackers.
+- Private browsing does not save history, tabs, or assistant transcripts.
+- Known third-party trackers are blocked by default. This is basic protection;
+  extensions can provide more comprehensive blocking.
 
 The assistant uses AI and can make mistakes. Check important information.
 Report vulnerabilities privately through [Security](SECURITY.md).
 
 ## Known limitations
 
+- One window. Links requesting another window open in tabs.
 - Pins and folders replace a separate bookmarks manager. Import bookmarks from
   an HTML export in Settings › General; history is not imported.
 - Website notifications require WSurf to be running. There is no background web
@@ -170,7 +170,7 @@ can contain local paths and website details.
 
 ## Building
 
-Requires **Xcode 27.0 or later** and its Metal toolchain component.
+Requires **Xcode 26.5 or later**.
 
 ```bash
 git clone https://github.com/wsagency/wsurf.git
@@ -285,8 +285,8 @@ successful main CI gate for recurring deployments.
 
 ## License and acknowledgements
 
-WSurf is licensed under [Apache 2.0](LICENSE), with attribution to the upstream
-Kavoye Linen project. Provider logos and Apple client identifiers belong to
+[Apache 2.0](LICENSE). WSurf is a fork with attribution to the upstream
+Kavoye Linen project; provider logos and Apple client identifiers belong to
 their owners.
 
 WSurf uses [Sparkle](https://github.com/sparkle-project/Sparkle),

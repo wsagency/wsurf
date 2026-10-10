@@ -9,21 +9,23 @@ extension AppCoordinator {
     // MARK: - Profiles
 
     func switchProfile(to profile: Profile) async {
-        guard !isClosed else { return }
-        if profile.isPrivate {
-            requestNewWindow(isPrivate: true)
-            return
-        }
         await profileSwitches.run { [weak self] in
             await self?.performProfileSwitch(to: profile)
         }
     }
 
     private func performProfileSwitch(to profile: Profile) async {
-        guard !isClosed, profile.id != profiles.current.id else { return }
+        guard profile.id != profiles.current.id else { return }
+        // Revoked synchronously, before the first suspension, so nothing issued to this profile outlives the switch.
+        // Locked again at adoption: until then the old profile's settings are still on screen and can unlock it anew.
+        let leaving = profiles.current.id
+        CredentialManager.lock(profileID: leaving, reason: .profileSwitch)
         switchingTo = profile
-        mcpServer.disconnect(browser: browser)
-        defer { switchingTo = nil }
+        mcpServer.stop()
+        defer {
+            switchingTo = nil
+            mcpServer.resume()
+        }
 
         var timing = ProfileSwitchTiming()
 
@@ -35,38 +37,32 @@ extension AppCoordinator {
         media.releaseControl()
         statusMessage = nil
         closePalette()
-        let oldContext = context
-        closePeekImmediately()
+        if let held = peek.take(quietly: true) {
+            browser.dismissPeekTab(held)
+            await held.waitForRetirement()
+        }
         timing.mark("quiesce")
 
-        browser.markSessionClosed()
+        browser.saveBlocking()
         timing.mark("save session")
 
-        extensions.unregister(browser: browser)
         let closingTabs = browser.tabs
         browser.closeAllTabs(saving: false)
         for tab in closingTabs {
             await tab.waitForRetirement()
         }
-        guard !isClosed else { return }
-        if oldContext.profile.isPrivate {
-            if let application {
-                application.endPrivateSession(oldContext)
-            } else {
-                await oldContext.endPrivateSession()
-                guard !isClosed else { return }
-            }
-        }
         timing.mark("close tabs")
 
-        applyProfileStores(profile)
+        let database = profile.isPrivate ? nil : profile.makeDatabase()
+        timing.mark("open database")
+
+        applyProfileStores(profile, database: database)
         profiles.markCurrent(profile)
-        application?.configureExtensions(extensions, profile: profile)
+        CredentialManager.lock(profileID: leaving, reason: .profileSwitch)
         timing.mark("adopt stores")
 
-        prepareWindowWebServices()
-        followSettings()
-        updateWindowAppearance()
+        extensions.beginAdopting(profile: profile)
+        WebViewPool.shared.installExtensionController(extensions.controller)
         timing.mark("extensions")
 
         browser.restoreSession()
@@ -81,21 +77,82 @@ extension AppCoordinator {
     }
 
     func enterPrivateBrowsing() {
-        requestNewWindow(isPrivate: true)
+        guard !profiles.isPrivate else {
+            openNewTab()
+            return
+        }
+        Task { await switchProfile(to: profiles.privateBrowsing) }
     }
 
-    func applyProfileStores(_ profile: Profile) {
-        let owner = profile.isPrivate ? profiles.profileToReturnTo : profile
-        if context.profile.id != profile.id {
-            browser.context = .shared(for: profile, settingsOwner: owner)
+    func leavePrivateBrowsing() {
+        guard profiles.isPrivate || privateSession != nil else { return }
+        Task {
+            if profiles.isPrivate {
+                await switchProfile(to: profiles.profileToReturnTo)
+            }
+            await endPrivateSession()
         }
-        linkPeek.forget()
-        browser.adopt(database: context.database, sitePermissions: context.sitePermissions, privately: profile.isPrivate)
-        agentTurns.adopt(context: context)
-        privateSession = profile.isPrivate
-            ? PrivateBrowsingSession(database: context.database, dataStore: context.dataStore)
-            : nil
+    }
+
+    func applyProfileStores(_ profile: Profile, database prepared: AppDatabase? = nil) {
+        ChromiumRuntime.shared.use(profile: profile)
+        PaymentCardAutofill.shared.use(profileID: profile.id)
+        ContactAutofill.shared.use(profile: profile)
+        PasswordAutofill.shared.use(profile: profile)
+        AutofillSaveCoordinator.shared.use(profileID: profile.id)
+        let database: AppDatabase
+        if profile.isPrivate {
+            let session = privateSession ?? PrivateBrowsingSession(
+                database: prepared ?? profile.makeDatabase(),
+                dataStore: profile.makeDataStore()
+            )
+            privateSession = session
+            database = session.database
+            WebViewPool.shared.useDataStore(session.dataStore)
+        } else {
+            database = prepared ?? profile.makeDatabase()
+            WebViewPool.shared.useDataStore(profile.makeDataStore())
+        }
+        let sitePermissions = SitePermissions.use(file: profile.permissionsFile)
+        browser.adopt(
+            database: database,
+            sitePermissions: sitePermissions,
+            privately: profile.isPrivate
+        )
+        conversationLog.adopt(database: database)
+        PageZoomStore.use(file: profile.zoomFile)
+        applyProfileSettings(profile)
+        FaviconLoader.shared.persistsToDisk = !profile.isPrivate
+        settings.forcesDarkAppearance = profile.isPrivate
+    }
+
+    private func applyProfileSettings(_ profile: Profile) {
+        let owner = profile
+        let defaults = ProfileSettingsStore.defaults(for: owner)
+
+        settings.useSessionDefaults(defaults)
+        LLMSettings.defaults = defaults
+        ContentBlocker.shared.use(defaults: defaults)
+        AgentActionPolicy.use(storage: defaults)
+        FaviconLoader.shared.use(cacheDirectory: FaviconLoader.cacheDirectory(for: owner))
         configureEngines()
+    }
+
+    private func endPrivateSession() async {
+        guard privateSession != nil else { return }
+        ChromiumRuntime.shared.endPrivateSession()
+        privateSession = nil
+        browser.downloads.forgetPrivateDownloads()
+        FaviconLoader.shared.forgetSessionOnlyIcons()
+        await Profile.erase(profiles.privateBrowsing)
+        Pipeline.log.notice("profile: private session ended")
+    }
+
+    func windowDidClose() async {
+        if profiles.isPrivate {
+            await switchProfile(to: profiles.profileToReturnTo)
+        }
+        await endPrivateSession()
     }
 }
 

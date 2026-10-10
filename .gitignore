@@ -14,9 +14,6 @@ DerivedData/
 *.dSYM.zip
 *.dSYM
 
-# Task worktrees
-/.worktrees/
-
 # Swift Package Manager
 .build/
 .swiftpm/
@@ -48,3 +45,6 @@ DerivedData/
 # Python cache files
 __pycache__/
 *.py[cod]
+
+# Isolated development worktrees
+/.worktrees/

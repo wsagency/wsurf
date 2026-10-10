@@ -79,7 +79,6 @@ struct SidebarFolderMoveMenuTests {
         #expect(browser.folderRenameID == nil)
         #expect(created.name == "Manual name")
     }
-
     @Test func lowerFolderRowsReceiveContextMenuMouseHitsInSuperviewCoordinates() throws {
         let window = FolderContextEventWindow(
             contentRect: NSRect(x: 0, y: 0, width: 240, height: 240),
