@@ -7,6 +7,21 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-10 — Retired window keys no longer return a dead adapter
+
+An extension window registry key can outlive its weak browser, for example when a
+browser deallocates without being unregistered. Registering a browser over such a
+key now retires the stale entry (controller window, window order, focus, anchors and
+popup) and creates a fresh adapter; it no longer returns the retired adapter, and it
+never rebinds it, so consent scopes captured for the old window stay invalid. A live
+browser registering again still keeps its adapter. `unregister` shares the same
+retirement in the same order. In the app this state can arise only when a window
+skips unregistering during termination; the test suite produced it by registering
+windows it never unregistered, which `MCPTransportTests` now cleans up. Tab adapters
+left by a deallocated browser are not pruned, and this change is not shown to be the
+cause of the earlier `MCPWindowScopeTests` CI failure, whose failing click error was
+never recorded; the test now reports it if it recurs.
+
 ### 2026-10-09 — Actual engine beside address lock
 
 The address bar shows WK or Cr beside the lock for the active page's loaded engine.
