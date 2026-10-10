@@ -685,7 +685,8 @@ struct WebsiteAuthenticatorCeremonyTests {
             #expect(cancelledDuringVerification.verifications == 1)
             #expect(try fixture.bytes() == before)
 
-            // The passkey is deleted while the sheet is open.
+            // The passkey is deleted while the sheet is open; that user mutation must remain the only write.
+            let beforeRemoval = try await fixture.manager.snapshot()
             let epoch = try #require(fixture.manager.authorizationEpoch)
             let removed = User()
             removed.respond = { prompt in .approved(choice: prompt.choices[0].id) }
@@ -701,6 +702,10 @@ struct WebsiteAuthenticatorCeremonyTests {
             } catch WebsiteAuthenticatorError.notAllowed {} catch {
                 Issue.record("wrong error \(error)")
             }
+            let afterRemoval = try await fixture.manager.snapshot()
+            #expect(afterRemoval.revision == beforeRemoval.revision + 1)
+            let removedAccount = try #require(afterRemoval.accounts.first)
+            #expect(removedAccount.passkeys.isEmpty && removedAccount.password == "kept")
         }
     }
 
