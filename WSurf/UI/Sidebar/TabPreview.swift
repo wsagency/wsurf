@@ -164,7 +164,7 @@ private struct TabPreviewCard: View {
             case .folder(let folder, let tabs):
                 GroupFace(
                     symbol: "folder",
-                    tint: folder.color == .gray ? .secondary : folder.color.tint,
+                    tint: folder.color.tint,
                     title: folder.name,
                     detail: tabs.count == 1
                         ? String(localized: "1 tab")
@@ -283,7 +283,7 @@ private struct TabFace: View {
     private static let imageHeight: CGFloat = 150
 
     private var isAsleep: Bool {
-        tab.reclaimState == .unloaded
+        TabIcon.isAsleep(tab.reclaimState)
     }
 
     private var host: String {
@@ -348,7 +348,7 @@ private struct TabFace: View {
         .task(id: tab.id) {
             guard !isSystemPage else { return }
             while !Task.isCancelled {
-                memoryBytes = tab.isMaterialised ? WebProcessFootprint.bytes(of: tab.page) : nil
+                memoryBytes = tab.isMaterialised ? WebProcessFootprint.bytes(of: tab.webView) : nil
                 try? await Task.sleep(for: .seconds(2))
             }
         }

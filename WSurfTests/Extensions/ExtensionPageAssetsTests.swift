@@ -15,15 +15,12 @@ struct ExtensionPageAssetsTests {
     private static let handlerName = "probe"
 
     private final class Collector: NSObject, WKScriptMessageHandler {
-        weak var webView: WKWebView?
         var messages: [String] = []
 
         func userContentController(
             _ userContentController: WKUserContentController,
             didReceive message: WKScriptMessage
         ) {
-            // The shared content controller can still receive an earlier page's replies.
-            guard message.webView === webView else { return }
             messages.append(message.body as? String ?? "")
         }
     }
@@ -298,7 +295,6 @@ struct ExtensionPageAssetsTests {
             frame: NSRect(x: 0, y: 0, width: 800, height: 600),
             configuration: configuration
         )
-        collector.webView = webView
         let window = NSWindow(
             contentRect: NSRect(x: -10_000, y: -10_000, width: 800, height: 600),
             styleMask: [.borderless],
@@ -315,17 +311,8 @@ struct ExtensionPageAssetsTests {
         return (webView, collector, window)
     }
 
-    private func waitForMessages(
-        _ collector: Collector,
-        prefixes: [String],
-        limit: Duration,
-        sourceLocation: SourceLocation = #_sourceLocation
-    ) async throws {
-        // Duplicate readiness messages cannot substitute for a worker or asset reply.
-        let received = await waitUntil(timeout: limit) {
-            prefixes.allSatisfy { prefix in collector.messages.contains { $0.hasPrefix(prefix) } }
-        }
-        try #require(received, "Wanted \(prefixes); received \(collector.messages)", sourceLocation: sourceLocation)
+    private func waitForMessages(_ collector: Collector, count: Int, limit: Duration = .seconds(6)) async {
+        #expect(await waitUntil(timeout: limit) { collector.messages.count >= count })
     }
 
     private func value(_ prefix: String, in collector: Collector) -> String? {
@@ -336,14 +323,10 @@ struct ExtensionPageAssetsTests {
         let package = try probePackage()
         defer { try? FileManager.default.removeItem(at: package) }
         let harness = try await loadedHarness(for: package)
-        defer { withExtendedLifetime(harness) {} }
         let (webView, collector, window) = page(
             harness, url: harness.pageURL
         )
-        defer { window.orderOut(nil) }
-        try await waitForMessages(
-            collector, prefixes: ["src:", "attr:", "path:", "css:", "fetch:", "script:"], limit: .seconds(8)
-        )
+        await waitForMessages(collector, count: 6, limit: .seconds(8))
         window.orderOut(nil)
         _ = webView
 
@@ -357,16 +340,12 @@ struct ExtensionPageAssetsTests {
         let package = try probePackage()
         defer { try? FileManager.default.removeItem(at: package) }
         let harness = try await loadedHarness(for: package)
-        defer { withExtendedLifetime(harness) {} }
         let (webView, collector, window) = page(
             harness,
             pageWorldScripts: [ExtensionPageAssets.script],
             url: harness.pageURL
         )
-        defer { window.orderOut(nil) }
-        try await waitForMessages(
-            collector, prefixes: ["src:", "attr:", "path:", "css:", "fetch:", "script:"], limit: .seconds(8)
-        )
+        await waitForMessages(collector, count: 6, limit: .seconds(8))
         window.orderOut(nil)
         _ = webView
 
@@ -381,14 +360,12 @@ struct ExtensionPageAssetsTests {
         let package = try probePackage(connectable: true)
         defer { try? FileManager.default.removeItem(at: package) }
         let harness = try await loadedHarness(for: package)
-        defer { withExtendedLifetime(harness) {} }
         let (webView, collector, window) = page(
             harness,
             pageWorldScripts: [ExtensionPageAssets.script, ExtensionExternalConnect.pageScript],
             url: harness.pageURL
         )
-        defer { window.orderOut(nil) }
-        try await waitForMessages(collector, prefixes: ["ids:", "port:", "barrier"], limit: .seconds(30))
+        await waitForMessages(collector, count: 2, limit: .seconds(30))
         window.orderOut(nil)
         _ = webView
 
@@ -400,7 +377,6 @@ struct ExtensionPageAssetsTests {
         let package = try probePackage(connectable: true)
         defer { try? FileManager.default.removeItem(at: package) }
         let harness = try await loadedHarness(for: package)
-        defer { withExtendedLifetime(harness) {} }
         let scripts = [ExtensionPageAssets.script, ExtensionExternalConnect.pageScript]
 
         let first = page(
@@ -408,8 +384,7 @@ struct ExtensionPageAssetsTests {
             pageWorldScripts: scripts,
             url: harness.pageURL
         )
-        defer { first.2.orderOut(nil) }
-        try await waitForMessages(first.1, prefixes: ["ids:", "port:", "barrier"], limit: .seconds(30))
+        await waitForMessages(first.1, count: 2, limit: .seconds(30))
         first.2.orderOut(nil)
         first.0.loadHTMLString("<html></html>", baseURL: nil)
         #expect(first.1.messages.contains { $0.hasPrefix("port:") }, "\(first.1.messages)")
@@ -422,8 +397,7 @@ struct ExtensionPageAssetsTests {
             pageWorldScripts: scripts,
             url: harness.pageURL
         )
-        defer { second.2.orderOut(nil) }
-        try await waitForMessages(second.1, prefixes: ["ids:", "port:", "barrier"], limit: .seconds(30))
+        await waitForMessages(second.1, count: 2, limit: .seconds(30))
         second.2.orderOut(nil)
         _ = second.0
 
@@ -441,14 +415,13 @@ struct ExtensionPageAssetsTests {
         let package = try probePackage(connectable: true, listens: listens)
         defer { try? FileManager.default.removeItem(at: package) }
         let harness = try await loadedHarness(for: package)
-        defer { withExtendedLifetime(harness) {} }
         let (webView, collector, window) = page(
             harness,
             pageWorldScripts: [ExtensionPageAssets.script, ExtensionExternalConnect.pageScript],
             url: harness.pageURL
         )
-        defer { window.orderOut(nil) }
-        try await waitForMessages(collector, prefixes: ["ids:", "port:", "barrier"], limit: .seconds(30))
+        await waitForMessages(collector, count: 2, limit: .seconds(30))
+        try #require(await waitUntil { collector.messages.contains("barrier") })
         window.orderOut(nil)
         _ = webView
 

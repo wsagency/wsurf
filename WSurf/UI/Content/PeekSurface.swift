@@ -61,7 +61,7 @@ struct PeekSurface: View {
     private func panel(_ tab: BrowserTab) -> some View {
         let shape = RoundedRectangle(cornerRadius: Theme.Radius.panel, style: .continuous)
         return WebViewRepresentable(
-            page: tab.page,
+            webView: tab.webView,
             parksWhenIdle: true,
             onReady: { tab.webViewDidBecomeVisible() }
         )
@@ -118,7 +118,7 @@ private struct PeekPageMenu: View {
     var body: some View {
         Menu {
             Button {
-                tab.page.reload()
+                tab.webView.reload()
             } label: {
                 Label("Reload", systemImage: "arrow.clockwise")
             }
@@ -248,7 +248,7 @@ struct PeekRowBadge: View {
         .contextMenu {
             Button(toggleLabel) { coordinator.togglePeekVisibility() }
             Divider()
-            Button("Reload", systemImage: "arrow.clockwise") { tab.page.reload() }
+            Button("Reload", systemImage: "arrow.clockwise") { tab.webView.reload() }
             Button("Back", systemImage: "chevron.left") { tab.goBack() }
                 .disabled(!tab.canGoBack)
             Button("Forward", systemImage: "chevron.right") { tab.goForward() }

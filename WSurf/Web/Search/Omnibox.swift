@@ -151,12 +151,12 @@ enum OmniboxSelection {
 }
 
 enum Omnibox {
-    static func engineName(settings: BrowserSettings) -> String {
-        SearchURLBuilder.engine(settings: settings).name
+    static var engineName: String {
+        SearchURLBuilder.engine.name
     }
 
-    static func isAgentOnly(settings: BrowserSettings) -> Bool {
-        agentOnlyForTesting ?? settings.agentOnlyInput
+    static var isAgentOnly: Bool {
+        agentOnlyForTesting ?? BrowserSettings.shared.agentOnlyInput
     }
 
     @TaskLocal static var agentOnlyForTesting: Bool?
@@ -168,13 +168,12 @@ enum Omnibox {
         return query.contains("://") ? URL(string: query) : URL(string: "https://\(query)")
     }
 
-    static func destination(for query: String, settings: BrowserSettings) -> URL? {
-        location(for: query) ?? (isAgentOnly(settings: settings) ? nil : SearchURLBuilder.searchURL(for: query, settings: settings))
+    static func destination(for query: String) -> URL? {
+        location(for: query) ?? (isAgentOnly ? nil : SearchURLBuilder.searchURL(for: query))
     }
 
     static func searchItem(
         for query: String,
-        settings: BrowserSettings,
         symbol: String? = nil,
         openInNewTab: ((URL) -> Void)? = nil,
         openInCurrentTab: ((URL) -> Void)? = nil,
@@ -193,13 +192,13 @@ enum Omnibox {
                 open(location)
             }
         }
-        guard !isAgentOnly(settings: settings) else { return nil }
-        let search = SearchURLBuilder.searchURL(for: query, settings: settings)
+        guard !isAgentOnly else { return nil }
+        let search = SearchURLBuilder.searchURL(for: query)
         return OmniboxItem(
             id: "omnibox-search",
             kind: .search,
             title: query,
-            detail: String(localized: "Search with \(engineName(settings: settings))"),
+            detail: String(localized: "Search with \(engineName)"),
             symbol: symbol,
             alternate: openInCurrentTab.map { openCurrent in { openCurrent(search) } }
                 ?? openInNewTab.map { openNew in { openNew(search) } }
@@ -208,14 +207,10 @@ enum Omnibox {
         }
     }
 
-    static func newTabItem(
-        for query: String,
-        settings: BrowserSettings,
-        open: @escaping (URL) -> Void
-    ) -> OmniboxItem? {
-        guard let destination = destination(for: query, settings: settings) else { return nil }
+    static func newTabItem(for query: String, open: @escaping (URL) -> Void) -> OmniboxItem? {
+        guard let destination = destination(for: query) else { return nil }
         let detail: LocalizedStringResource = location(for: query) == nil
-            ? "Search with \(engineName(settings: settings)) in a new tab"
+            ? "Search with \(engineName) in a new tab"
             : "Open website in a new tab"
         return OmniboxItem(
             id: "omnibox-new-tab",
@@ -230,7 +225,6 @@ enum Omnibox {
 
     static func topSection(
         query: String,
-        settings: BrowserSettings,
         symbol: String? = nil,
         openInNewTab: ((URL) -> Void)? = nil,
         openInCurrentTab: ((URL) -> Void)? = nil,
@@ -240,14 +234,13 @@ enum Omnibox {
         guard !query.isEmpty,
               let row = searchItem(
                   for: query,
-                  settings: settings,
                   symbol: symbol,
                   openInNewTab: openInNewTab,
                   openInCurrentTab: openInCurrentTab,
                   open: open
               )
         else { return nil }
-        let items = [row, openInNewTab.flatMap { newTabItem(for: query, settings: settings, open: $0) }].compactMap { $0 }
+        let items = [row, openInNewTab.flatMap { newTabItem(for: query, open: $0) }].compactMap { $0 }
         return OmniboxSection(id: "top", title: "", items: items)
     }
 
@@ -255,22 +248,20 @@ enum Omnibox {
         query: String,
         phrases: [String],
         limit: Int,
-        settings: BrowserSettings,
         openInNewTab: ((URL) -> Void)? = nil,
         openInCurrentTab: ((URL) -> Void)? = nil,
         open: @escaping (URL) -> Void
     ) -> OmniboxSection? {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty, !isAgentOnly(settings: settings), limit > 0 else { return nil }
+        guard !query.isEmpty, !isAgentOnly, limit > 0 else { return nil }
         let items = phraseItems(
             phrases.prefix(limit),
-            settings: settings,
             openInNewTab: openInNewTab,
             openInCurrentTab: openInCurrentTab,
             open: open
         )
         guard !items.isEmpty else { return nil }
-        return OmniboxSection(id: "suggestions", title: String(localized: "\(engineName(settings: settings)) Suggestions"), items: items)
+        return OmniboxSection(id: "suggestions", title: String(localized: "\(engineName) Suggestions"), items: items)
     }
 
     static func tabsSection(
@@ -379,14 +370,13 @@ enum Omnibox {
 
     private static func phraseItems(
         _ phrases: some Sequence<String>,
-        settings: BrowserSettings,
         openInNewTab: ((URL) -> Void)? = nil,
         openInCurrentTab: ((URL) -> Void)? = nil,
         open: @escaping (URL) -> Void
     ) -> [OmniboxItem] {
-        guard !isAgentOnly(settings: settings) else { return [] }
+        guard !isAgentOnly else { return [] }
         return phrases.map { phrase in
-            let search = SearchURLBuilder.searchURL(for: phrase, settings: settings)
+            let search = SearchURLBuilder.searchURL(for: phrase)
             return OmniboxItem(
                 id: "omnibox-phrase-\(phrase)",
                 kind: .phrase,

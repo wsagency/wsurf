@@ -117,10 +117,7 @@ nonisolated enum PageRuntime {
         const el = window.__wsurfRefs[ref - 1];
         const expected = el && expectedValues.get(el);
         if (!el?.isConnected || !expected || signature(el) !== expected.signature || isSensitiveField(el)) return 'unverified';
-        const actual = typeof expected.value === 'boolean'
-          ? (el.checked ?? (el.getAttribute('aria-checked') === 'true'))
-          : (el.isContentEditable ? el.textContent : el.value);
-        return actual === expected.value ? 'matched' : 'mismatch';
+        return (el.isContentEditable ? el.textContent : el.value) === expected.value ? 'matched' : 'mismatch';
       };
 
       const collect = () => {

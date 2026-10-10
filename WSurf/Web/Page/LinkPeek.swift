@@ -44,17 +44,12 @@ final class LinkPeek {
     }
 
     private(set) var shown: Shown?
-    @ObservationIgnored private var shownContextID: UUID?
 
     static let trigger: NSEvent.ModifierFlags = .shift
     private static let holdDelay: Duration = .milliseconds(180)
     private static let rememberedSummaries = 24
     private static let rememberedSnapshots = 6
 
-    private struct RememberedKey: Hashable {
-        let contextID: UUID
-        let url: URL
-    }
     private struct Remembered {
         let summary: LinkPeekSummary
         var snapshot: NSImage?
@@ -62,20 +57,16 @@ final class LinkPeek {
 
     @ObservationIgnored private let loader = LinkPeekLoader()
     @ObservationIgnored private var candidate: Candidate?
-    @ObservationIgnored private var candidateContext: BrowserProfileContext?
     @ObservationIgnored private var pending: URL?
-    @ObservationIgnored private var pendingContextID: UUID?
     @ObservationIgnored private var work: Task<Void, Never>?
     @ObservationIgnored private var monitor: Any?
-    @ObservationIgnored private var resignActiveObserver: NSObjectProtocol?
-    @ObservationIgnored private var remembered: [RememberedKey: Remembered] = [:]
-    @ObservationIgnored private var order: [RememberedKey] = []
+    @ObservationIgnored private var remembered: [URL: Remembered] = [:]
+    @ObservationIgnored private var order: [URL] = []
     @ObservationIgnored private var isSuppressed = false
     private(set) var isHeld = false
 
-    func isEnabled(in context: BrowserProfileContext) -> Bool {
-        context.settings.peeksAtLinks
-            && LLMSettings.$scoped.withValue(context.modelSettings, operation: { LinkSummarizer.isAvailable })
+    var isEnabled: Bool {
+        BrowserSettings.shared.peeksAtLinks && LinkSummarizer.isAvailable
     }
 
     // MARK: - Lifecycle
@@ -92,7 +83,7 @@ final class LinkPeek {
             }
             return event
         }
-        resignActiveObserver = NotificationCenter.default.addObserver(
+        NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification,
             object: nil,
             queue: .main
@@ -108,32 +99,20 @@ final class LinkPeek {
             NSEvent.removeMonitor(monitor)
         }
         monitor = nil
-        if let resignActiveObserver {
-            NotificationCenter.default.removeObserver(resignActiveObserver)
-        }
-        resignActiveObserver = nil
         forget()
         loader.release()
     }
 
     // MARK: - Pointing
 
-    func hovered(
-        _ url: URL?,
-        flags: NSEvent.ModifierFlags,
-        tabID: UUID,
-        anchor: CGPoint,
-        context: BrowserProfileContext
-    ) {
-        guard context.settings.peeksAtLinks, !isSuppressed else { return }
+    func hovered(_ url: URL?, flags: NSEvent.ModifierFlags, tabID: UUID, anchor: CGPoint) {
+        guard BrowserSettings.shared.peeksAtLinks, !isSuppressed else { return }
         guard let url, LinkPeekLoader.canPeek(url) else {
             candidate = nil
-            candidateContext = nil
             release()
             return
         }
         candidate = Candidate(url: url, tabID: tabID, anchor: anchor)
-        candidateContext = context
         guard flags.contains(Self.trigger) else {
             release()
             return
@@ -142,18 +121,16 @@ final class LinkPeek {
         start()
     }
 
-    func show(_ url: URL, tabID: UUID, anchor: CGPoint, context: BrowserProfileContext) {
-        guard context.settings.peeksAtLinks, !isSuppressed else { return }
-        guard LinkPeekLoader.canPeek(url), isEnabled(in: context) else { return }
+    func show(_ url: URL, tabID: UUID, anchor: CGPoint) {
+        guard BrowserSettings.shared.peeksAtLinks, !isSuppressed else { return }
+        guard LinkPeekLoader.canPeek(url), isEnabled else { return }
         candidate = Candidate(url: url, tabID: tabID, anchor: anchor)
-        candidateContext = context
         isHeld = true
         start()
     }
 
     func forget() {
         candidate = nil
-        candidateContext = nil
         dismiss()
     }
 
@@ -172,11 +149,9 @@ final class LinkPeek {
         work?.cancel()
         work = nil
         pending = nil
-        pendingContextID = nil
         loader.stop()
         if shown != nil {
             shown = nil
-            shownContextID = nil
         }
     }
 
@@ -203,59 +178,56 @@ final class LinkPeek {
     }
 
     private func start() {
-        guard !isSuppressed, let candidate, let context = candidateContext else { return }
-        guard !(shown?.url == candidate.url && shownContextID == context.contextID),
-              !(pending == candidate.url && pendingContextID == context.contextID) else { return }
-        guard isEnabled(in: context) else { return }
+        guard !isSuppressed, let candidate else { return }
+        guard shown?.url != candidate.url, pending != candidate.url else { return }
+        // `isEnabled` asks for a language model, which is far too heavy to ask
+        // on the pointer's path.
+        guard isEnabled else { return }
 
         work?.cancel()
         pending = candidate.url
-        pendingContextID = context.contextID
         let target = candidate
         work = Task { [weak self] in
             try? await Task.sleep(for: Self.holdDelay)
             guard !Task.isCancelled else { return }
-            await self?.peek(at: target, context: context)
+            await self?.peek(at: target)
         }
     }
 
-    private func peek(at target: Candidate, context: BrowserProfileContext) async {
-        let key = RememberedKey(contextID: context.contextID, url: target.url)
-        if let kept = remembered[key] {
-            present(target, context: context, phase: .ready(kept.summary), snapshot: kept.snapshot)
+    private func peek(at target: Candidate) async {
+        if let kept = remembered[target.url] {
+            present(target, phase: .ready(kept.summary), snapshot: kept.snapshot)
             return
         }
-        present(target, context: context, phase: .loading)
+        present(target, phase: .loading)
 
         do {
-            let page = try await loader.load(target.url, context: context)
+            let page = try await loader.load(target.url)
             try Task.checkCancellation()
-            guard shown?.url == target.url, shownContextID == context.contextID else { return }
+            guard shown?.url == target.url else { return }
             shown?.snapshot = page.snapshot
 
             guard page.hasReadableContent else {
-                settle(target.url, context: context, to: Self.emptyPhase(for: page))
+                settle(target.url, to: Self.emptyPhase(for: page))
                 return
             }
-            let streamed = await LLMSettings.$scoped.withValue(context.modelSettings) {
-                await LinkSummarizer.summarize(page, url: target.url) { [weak self] partial in
-                    self?.stream(partial, for: target.url, context: context)
-                }
+            let streamed = await LinkSummarizer.summarize(page, url: target.url) { [weak self] partial in
+                self?.stream(partial, for: target.url)
             }
             guard let summary = streamed else {
-                settle(target.url, context: context, to: .failed)
+                settle(target.url, to: .failed)
                 return
             }
-            remember(summary, snapshot: page.snapshot, for: target.url, context: context)
-            settle(target.url, context: context, to: .ready(summary))
+            remember(summary, snapshot: page.snapshot, for: target.url)
+            settle(target.url, to: .ready(summary))
         } catch is CancellationError {
             return
         } catch {
-            settle(target.url, context: context, to: .failed)
+            settle(target.url, to: .failed)
         }
     }
 
-    private func present(_ target: Candidate, context: BrowserProfileContext, phase: Phase, snapshot: NSImage? = nil) {
+    private func present(_ target: Candidate, phase: Phase, snapshot: NSImage? = nil) {
         withAnimation(Theme.Motion.quick) {
             shown = Shown(
                 url: target.url,
@@ -264,12 +236,11 @@ final class LinkPeek {
                 snapshot: snapshot,
                 phase: phase
             )
-            shownContextID = context.contextID
         }
     }
 
-    private func stream(_ summary: LinkPeekSummary, for url: URL, context: BrowserProfileContext) {
-        guard !Task.isCancelled, shown?.url == url, shownContextID == context.contextID else { return }
+    private func stream(_ summary: LinkPeekSummary, for url: URL) {
+        guard !Task.isCancelled, shown?.url == url else { return }
         guard case .ready = shown?.phase else {
             withAnimation(Theme.Motion.settle) {
                 shown?.phase = .ready(summary)
@@ -280,31 +251,31 @@ final class LinkPeek {
         shown?.phase = .ready(summary)
     }
 
-    private func settle(_ url: URL, context: BrowserProfileContext, to phase: Phase) {
-        guard !Task.isCancelled, shown?.url == url, shownContextID == context.contextID else { return }
+    private func settle(_ url: URL, to phase: Phase) {
+        guard !Task.isCancelled, shown?.url == url else { return }
         withAnimation(Theme.Motion.settle) {
             shown?.phase = phase
             shown?.isStreaming = false
         }
     }
 
-    func keptSummary(for url: URL, context: BrowserProfileContext) -> LinkPeekSummary? {
-        remembered[RememberedKey(contextID: context.contextID, url: url)]?.summary
+    func keptSummary(for url: URL) -> LinkPeekSummary? {
+        remembered[url]?.summary
     }
 
-    func keptSnapshot(for url: URL, context: BrowserProfileContext) -> NSImage? {
-        remembered[RememberedKey(contextID: context.contextID, url: url)]?.snapshot
+    func keptSnapshot(for url: URL) -> NSImage? {
+        remembered[url]?.snapshot
     }
 
-    func remember(_ summary: LinkPeekSummary, snapshot: NSImage?, for url: URL, context: BrowserProfileContext) {
-        let key = RememberedKey(contextID: context.contextID, url: url)
-        if remembered[key] == nil {
-            order.append(key)
+    func remember(_ summary: LinkPeekSummary, snapshot: NSImage?, for url: URL) {
+        if remembered[url] == nil {
+            order.append(url)
         }
-        remembered[key] = Remembered(summary: summary, snapshot: snapshot)
+        remembered[url] = Remembered(summary: summary, snapshot: snapshot)
         while order.count > Self.rememberedSummaries {
             remembered.removeValue(forKey: order.removeFirst())
         }
+        // A snapshot is a few megabytes; only the recent ones are worth keeping.
         for old in order.dropLast(Self.rememberedSnapshots) {
             remembered[old]?.snapshot = nil
         }

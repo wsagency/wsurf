@@ -15,9 +15,6 @@ struct QuietIconButton: View {
     @State private var hovering = false
 
     private var ink: AnyShapeStyle {
-        if let override = Theme.controlOverride {
-            return AnyShapeStyle(override)
-        }
         if let tint {
             return AnyShapeStyle(tint)
         }

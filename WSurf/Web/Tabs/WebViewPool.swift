@@ -14,7 +14,6 @@ final class TabWebView: WKWebView {
     ]
 
     static let liveInstances = NSHashTable<TabWebView>.weakObjects()
-    weak var profileContext: BrowserProfileContext?
 
     static var refreshHoverShield: (() -> Void)?
 
@@ -58,9 +57,17 @@ final class TabWebView: WKWebView {
     }
 
     var onContextDownload: ((WKDownload, URL?) -> Void)?
-    var onOpenLinkInNewWindow: ((URL, Bool) -> Void)?
     var onPeekLink: ((URL) -> Void)?
     var onSummarizeLink: ((URL, CGPoint?) -> Void)?
+    var onPageActivity: ((PageActivitySignal) -> Void)?
+    var hasPageActivityMonitor = false
+    var onScrollPosition: ((Double, URL?) -> Void)?
+    var hasScrollPositionMonitor = false
+    var onFaviconDeclarationChange: (() -> Void)?
+    var hasFaviconWatcher = false
+    var hasClickWatcher = false
+    var hasSiteGuard = false
+    var onPopupBlocked: ((URL?) -> Void)?
 
     var onZoomChanged: (() -> Void)?
 
@@ -209,15 +216,7 @@ final class TabWebView: WKWebView {
         )
         summary.target = self
         summary.image = NSImage(systemSymbolName: "text.line.first.and.arrowtriangle.forward", accessibilityDescription: nil)
-        return TabContextMenu.linkWindowItems(
-            opensPrivately: profileContext?.profile.isPrivate == true,
-            target: self, action: #selector(openContextLinkInNewWindow(_:))
-        ) + [peek, summary]
-    }
-
-    @objc private func openContextLinkInNewWindow(_ sender: NSMenuItem) {
-        guard let url = contextLinkURL else { return }
-        onOpenLinkInNewWindow?(url, sender.tag == 1)
+        return [peek, summary]
     }
 
     @objc private func peekAtContextLink() {
@@ -249,13 +248,11 @@ final class TabWebView: WKWebView {
     }
 
     @objc private func savePage() {
-        guard let page = BrowserPage.from(self) else { return }
-        PageSaving.begin(for: page)
+        PageSaving.begin(for: self)
     }
 
     @objc private func printPage() {
-        guard let page = BrowserPage.from(self) else { return }
-        PagePrinting.begin(for: page)
+        PagePrinting.begin(for: self)
     }
 
     @objc private func startContextDownload(_ sender: NSMenuItem) {
@@ -288,9 +285,7 @@ final class TabWebView: WKWebView {
 
 @MainActor
 final class WebViewPool {
-
-    private let settings: BrowserSettings
-    private let contentBlocker: ContentBlocker
+    static let shared = WebViewPool()
 
     nonisolated static let warmUpHTML = """
         <!doctype html><html><head>
@@ -319,17 +314,19 @@ final class WebViewPool {
     private var refillTask: Task<Void, Never>?
     private var refillNotBefore: ContinuousClock.Instant?
 
-    var configurePage: ((BrowserPage) -> Void)?
+    private struct PooledScript {
+        let source: String
+        let injectionTime: WKUserScriptInjectionTime
+        let forMainFrameOnly: Bool
+        let handlerName: String
+        weak var handler: (any WKScriptMessageHandler & AnyObject)?
+    }
+
+    private var scripts: [PooledScript] = []
 
     private var extensionController: WKWebExtensionController?
 
-    let dataStore: WKWebsiteDataStore
-
-    init(dataStore: WKWebsiteDataStore, settings: BrowserSettings, contentBlocker: ContentBlocker) {
-        self.dataStore = dataStore
-        self.settings = settings
-        self.contentBlocker = contentBlocker
-    }
+    private(set) var dataStore: WKWebsiteDataStore = .default()
 
     private static let configurationTemplate = WKWebViewConfiguration()
 
@@ -340,9 +337,40 @@ final class WebViewPool {
         configuration.preferences = WKPreferences()
         configuration.defaultWebpagePreferences = WKWebpagePreferences()
         configuration.userContentController = WKUserContentController()
-        BrowserPage.installBridge(in: configuration.userContentController, world: PageAutomationGuard.world)
         PageFrameRegistry.install(in: configuration.userContentController)
         return configuration
+    }
+
+    func useDataStore(_ store: WKWebsiteDataStore) {
+        guard store !== dataStore else { return }
+        dataStore = store
+        idle.removeAll()
+    }
+
+    func prepare(scriptSource: String, handlerName: String, handler: any WKScriptMessageHandler & AnyObject) {
+        addScript(
+            scriptSource,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: false,
+            handlerName: handlerName,
+            handler: handler
+        )
+    }
+
+    func addScript(
+        _ source: String,
+        injectionTime: WKUserScriptInjectionTime,
+        forMainFrameOnly: Bool,
+        handlerName: String,
+        handler: any WKScriptMessageHandler & AnyObject
+    ) {
+        scripts.append(PooledScript(
+            source: source,
+            injectionTime: injectionTime,
+            forMainFrameOnly: forMainFrameOnly,
+            handlerName: handlerName,
+            handler: handler
+        ))
     }
 
     func installExtensionController(_ controller: WKWebExtensionController?) {
@@ -406,7 +434,7 @@ final class WebViewPool {
         defer { scheduleRefill() }
         while let view = idle.popLast() {
             if view.configuration.websiteDataStore === dataStore {
-                settings.apply(to: view)
+                BrowserSettings.shared.apply(to: view)
                 return view
             }
         }
@@ -434,12 +462,21 @@ final class WebViewPool {
         let configuration = Self.makeConfiguration()
         configuration.websiteDataStore = dataStore ?? self.dataStore
         configuration.webExtensionController = extensionController
-        settings.apply(to: configuration)
+        BrowserSettings.shared.apply(to: configuration)
         MediaCenter.enablePictureInPicture(on: configuration.preferences)
 
-        let contentController = configuration.userContentController
+        let contentController = WKUserContentController()
+        for script in scripts {
+            guard let handler = script.handler else { continue }
+            contentController.addUserScript(WKUserScript(
+                source: script.source,
+                injectionTime: script.injectionTime,
+                forMainFrameOnly: script.forMainFrameOnly
+            ))
+            contentController.add(handler, name: script.handlerName)
+        }
 
-        contentBlocker.apply(to: contentController)
+        ContentBlocker.shared.apply(to: contentController)
         if extensionController != nil {
             for source in [ExtensionPageAssets.script, ExtensionExternalConnect.pageScript] {
                 contentController.addUserScript(WKUserScript(
@@ -450,13 +487,15 @@ final class WebViewPool {
             }
         }
 
+        configuration.userContentController = contentController
+        PageFrameRegistry.install(in: contentController)
         configuration.setURLSchemeHandler(SystemPageSchemeHandler(), forURLScheme: SystemPages.scheme)
 
         let view = TabWebView(
             frame: NSRect(x: 0, y: 0, width: 800, height: 600),
             configuration: configuration
         )
-        settings.apply(to: view)
+        BrowserSettings.shared.apply(to: view)
         view.allowsBackForwardNavigationGestures = true
         view.allowsMagnification = true
         return view

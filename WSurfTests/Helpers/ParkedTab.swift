@@ -14,7 +14,7 @@ import WebKit
 func parkTab(_ browser: BrowserModel, at url: URL) async -> BrowserTab {
     let tab = browser.newTab()
     tab.loadHTML("<!doctype html><title>Parked</title><p>Parked</p>", baseURL: url)
-    _ = await waitUntil { tab.page.url == url }
+    _ = await waitUntil { tab.webView.url == url }
     tab.assistantAccess.persistsAnswers = false
     tab.assistantAccess.pageChanged(url: url)
     return tab

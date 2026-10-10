@@ -11,19 +11,19 @@ import WebKit
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct AgentVisibilityTests {
-    private func loadedWebView(_ body: String) async -> BrowserPage {
+    private func loadedWebView(_ body: String) async -> WKWebView {
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        let webView = BrowserPage(webKit: WKWebView(
+        let webView = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 500, height: 400),
             configuration: configuration
-        ), context: BrowserProfileContext(profile: .privateBrowsing()))
+        )
         webView.loadHTMLString("<!doctype html><html><body>\(body)</body></html>", baseURL: nil)
         #expect(await PageSettle.untilIdle(webView, timeout: .seconds(30)))
         return webView
     }
 
-    private func ringCount(_ webView: BrowserPage) async -> Int {
+    private func ringCount(_ webView: WKWebView) async -> Int {
         (try? await webView.evaluateJavaScript(
             "document.getElementsByClassName('__wsurf-ring').length"
         )) as? Int ?? -1
@@ -86,13 +86,11 @@ struct AgentVisibilityTests {
         <input placeholder="Search">
         <label for="s">Size</label><select id="s"><option>S</option><option>M</option></select>
         """)
-        let typing = Task { @MainActor in
-            await PageDriver.type(
-                text: "shoes", intoField: "Search", ref: 0, submit: false, in: webView, announced: true
-            )
-        }
+        async let typing = PageDriver.type(
+            text: "shoes", intoField: "Search", ref: 0, submit: false, in: webView, announced: true
+        )
         let sawRing = await waitUntil { await ringCount(webView) > 0 }
-        _ = await typing.value
+        _ = await typing
         #expect(sawRing)
     }
 

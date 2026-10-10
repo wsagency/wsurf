@@ -212,8 +212,7 @@ struct StartPageSiteTile: View {
     let site: StartPageSite
     let action: () -> Void
     let onRemove: () -> Void
-    let isPrivate: Bool
-    let onOpenInNewWindow: (_ isPrivate: Bool) -> Void
+
     @State private var hovering = false
 
     var body: some View {
@@ -241,9 +240,6 @@ struct StartPageSiteTile: View {
         .buttonStyle(.plain)
         .animation(Theme.Motion.quick, value: hovering)
         .help(Text(verbatim: site.url))
-        .contextMenu {
-            LinkWindowMenuItems(isPrivate: isPrivate, onOpen: onOpenInNewWindow)
-        }
         .overlay(alignment: .topTrailing) {
             CloseButton(help: String(localized: "Remove \(site.title)"), action: onRemove)
                 .padding(3)
@@ -325,8 +321,6 @@ struct HistoryRow: View {
     let action: () -> Void
     var onRemove: (() -> Void)?
     var onOpenInNewTab: ((_ activate: Bool) -> Void)?
-    var onOpenInNewWindow: ((_ isPrivate: Bool) -> Void)?
-    var isPrivate = false
     var onHoverChanged: ((Bool) -> Void)?
 
     @State private var hovering = false
@@ -375,9 +369,6 @@ struct HistoryRow: View {
         .contextMenu {
             if let onOpenInNewTab {
                 Button("Open in New Tab") { onOpenInNewTab(false) }
-            }
-            if let onOpenInNewWindow {
-                LinkWindowMenuItems(isPrivate: isPrivate, onOpen: onOpenInNewWindow)
             }
             Button("Copy Link") {
                 NSPasteboard.general.clearContents()

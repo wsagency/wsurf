@@ -327,7 +327,7 @@ private struct WebPane: View {
 
     private var page: some View {
         WebViewRepresentable(
-            page: tab.page,
+            webView: tab.webView,
             parksWhenIdle: true,
             onReady: { tab.webViewDidBecomeVisible() }
         )

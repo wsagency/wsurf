@@ -44,16 +44,15 @@ final class PageObservation {
 extension PageDriver {
     @TaskLocal static var outputBudget = PageOutputBudget()
     @TaskLocal static var expectedObservation: String?
-    static let observations = NSMapTable<BrowserPage, PageObservation>(keyOptions: .weakMemory, valueOptions: .strongMemory)
+    static let observations = NSMapTable<WKWebView, PageObservation>(keyOptions: .weakMemory, valueOptions: .strongMemory)
 
-    static func observation(in view: BrowserPage) -> PageObservation? {
+    static func observation(in view: WKWebView) -> PageObservation? {
         observations.object(forKey: view)
     }
 
-    static func validateObservation(in view: BrowserPage, ref: Int? = nil) async -> Bool {
+    static func validateObservation(in view: WKWebView, ref: Int? = nil) async -> Bool {
         guard let prior = observation(in: view), ref.map({ prior.refs.contains($0) }) ?? true,
-            expectedObservation == nil || expectedObservation == prior.id,
-            await selectedFrameIsLive(in: view)
+            expectedObservation == nil || expectedObservation == prior.id
         else { return false }
         let refState = ref.map { "window.__wsurf?.matchesRef(\($0)) ? 'valid' : 'changed'" } ?? "'valid'"
         let value =
@@ -61,11 +60,10 @@ extension PageDriver {
                 "[window.__wsurf?.documentID || '', window.__wsurfSnapshot || '', location.href, \(refState)]",
                 in: selectedFrame?.frame, contentWorld: PageAutomationGuard.world
             ) as? [String]
-        guard value == [prior.documentID, prior.id, prior.url, "valid"], PageAutomationGuard.allowsExecution else { return false }
-        return await selectedFrameIsLive(in: view)
+        return value == [prior.documentID, prior.id, prior.url, "valid"] && PageAutomationGuard.allowsExecution
     }
 
-    static func prepareAction(ref: Int, in view: BrowserPage) async -> String? {
+    static func prepareAction(ref: Int, in view: WKWebView) async -> String? {
         let deadline = ContinuousClock.now + .seconds(1)
         var previousBounds: [Double]?
         // Cold WebKit IPC can consume the timeout before stability has two samples.

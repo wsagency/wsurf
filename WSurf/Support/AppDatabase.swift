@@ -110,50 +110,7 @@ struct AppDatabase: Sendable {
     private static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1") { db in try defineSchema(in: db) }
-        migrator.registerMigration("v2-folder-pinning") { db in
-            let hadPinnedColumn = try db.tableExists("sessionFolder")
-                && db.columns(in: "sessionFolder").contains { $0.name == "isPinned" }
-            try defineSchema(in: db)
-            guard !hadPinnedColumn else { return }
-            try db.execute(sql: """
-                WITH RECURSIVE descendants(rootID, folderID) AS (
-                    SELECT id, id FROM sessionFolder
-                    UNION
-                    SELECT d.rootID, i.folderID
-                    FROM descendants d
-                    JOIN sessionItem i ON i.parentID = d.folderID
-                    WHERE i.folderID IS NOT NULL
-                )
-                UPDATE sessionFolder
-                SET isPinned = 1
-                WHERE id IN (
-                    SELECT d.rootID
-                    FROM descendants d
-                    JOIN sessionItem i ON i.parentID = d.folderID
-                    JOIN sessionTab t ON t.id = i.tabID
-                    GROUP BY d.rootID
-                    HAVING MAX(t.pinnedURL IS NULL) = 0
-                )
-                """)
-        }
         return migrator
-    }
-
-    private nonisolated static func defineSessionFolders(in db: Database) throws {
-        try db.create(table: "sessionFolder", options: .ifNotExists) {  t in
-            t.primaryKey("id", .blob)
-            t.column("position", .integer).notNull()
-            t.column("name", .text).notNull()
-            t.column("color", .text).notNull()
-            t.column("isExpanded", .boolean).notNull()
-            t.column("isPinned", .boolean).notNull().defaults(to: false)
-        }
-
-        if try !db.columns(in: "sessionFolder").contains(where: { $0.name == "isPinned" }) {
-            try db.alter(table: "sessionFolder") { t in
-                t.add(column: "isPinned", .boolean).notNull().defaults(to: false)
-            }
-        }
     }
 
     private nonisolated static func defineSchema(in db: Database) throws {
@@ -172,7 +129,38 @@ struct AppDatabase: Sendable {
             t.column("title")
         }
 
-        try defineSessionSchema(in: db)
+        try db.create(table: "sessionFolder", options: .ifNotExists) {  t in
+            t.primaryKey("id", .blob)
+            t.column("position", .integer).notNull()
+            t.column("name", .text).notNull()
+            t.column("color", .text).notNull()
+            t.column("isExpanded", .boolean).notNull()
+        }
+
+        try db.create(table: "sessionTab", options: .ifNotExists) {  t in
+            t.primaryKey("id", .blob)
+            t.column("title", .text).notNull()
+            t.column("customTitle", .text)
+            t.column("url", .text).notNull()
+            t.column("state", .blob)
+            t.column("pinnedURL", .text)
+            t.column("pinnedTitle", .text)
+            t.column("internalPage", .text)
+            t.column("isActive", .boolean).notNull().defaults(to: false)
+        }
+
+        if try !db.columns(in: "sessionTab").contains(where: { $0.name == "customTitle" }) {
+            try db.alter(table: "sessionTab") { t in
+                t.add(column: "customTitle", .text)
+            }
+        }
+
+        try db.create(table: "sessionItem", options: .ifNotExists) {  t in
+            t.primaryKey("position", .integer)
+            t.column("tabID", .blob).references("sessionTab", onDelete: .cascade)
+            t.column("folderID", .blob).references("sessionFolder", onDelete: .cascade)
+            t.column("parentID", .blob).references("sessionFolder", onDelete: .cascade)
+        }
 
         try db.create(table: "agentTrace", options: .ifNotExists) {  t in
             t.primaryKey("id", .blob)
@@ -260,86 +248,6 @@ struct AppDatabase: Sendable {
             t.column("rowFraction", .double).notNull()
             t.column("columnFraction", .double).notNull()
         }
-
-        try defineWindowSessions(in: db)
-    }
-
-    private nonisolated static func defineSessionSchema(in db: Database) throws {
-        try defineSessionFolders(in: db)
-        try db.create(table: "sessionTab", options: .ifNotExists) { t in
-            t.primaryKey("id", .blob)
-            t.column("title", .text).notNull()
-            t.column("customTitle", .text)
-            t.column("url", .text).notNull()
-            t.column("state", .blob)
-            t.column("pinnedURL", .text)
-            t.column("pinnedTitle", .text)
-            t.column("internalPage", .text)
-            t.column("isActive", .boolean).notNull().defaults(to: false)
-            t.column("isFavorite", .boolean).notNull().defaults(to: false)
-        }
-
-        if try !db.columns(in: "sessionTab").contains(where: { $0.name == "customTitle" }) {
-            try db.alter(table: "sessionTab") { t in
-                t.add(column: "customTitle", .text)
-            }
-        }
-
-        if try !db.columns(in: "sessionTab").contains(where: { $0.name == "isFavorite" }) {
-            try db.alter(table: "sessionTab") { t in
-                t.add(column: "isFavorite", .boolean).notNull().defaults(to: false)
-            }
-        }
-
-        try db.create(table: "sessionItem", options: .ifNotExists) { t in
-            t.primaryKey("position", .integer)
-            t.column("tabID", .blob).references("sessionTab", onDelete: .cascade)
-            t.column("folderID", .blob).references("sessionFolder", onDelete: .cascade)
-            t.column("parentID", .blob).references("sessionFolder", onDelete: .cascade)
-        }
-    }
-
-    private nonisolated static func defineWindowSessions(in db: Database) throws {
-        let legacyID = Data(repeating: 0, count: 16)
-        try db.create(table: "sessionWindow", options: .ifNotExists) { t in
-            t.primaryKey("id", .blob)
-            t.column("lastActiveAt", .datetime).notNull()
-            t.column("closedAt", .datetime)
-            t.column("revision", .integer).notNull().defaults(to: 0)
-        }
-        try db.create(table: "sessionWindowRetirement", options: .ifNotExists) { t in
-            t.primaryKey("id", .blob)
-            t.column("revision", .integer).notNull()
-        }
-        for table in ["sessionTab", "sessionFolder", "sessionSplitTree", "sessionSplitPane"] {
-            guard try !db.columns(in: table).contains(where: { $0.name == "windowID" }) else { continue }
-            try db.alter(table: table) { t in
-                t.add(column: "windowID", .blob).notNull().defaults(to: legacyID).indexed()
-            }
-        }
-        if try !db.columns(in: "sessionItem").contains(where: { $0.name == "windowID" }) {
-            try db.create(table: "sessionWindowItem") { t in
-                t.column("windowID", .blob).notNull().defaults(to: legacyID)
-                t.column("position", .integer).notNull()
-                t.column("tabID", .blob).references("sessionTab", onDelete: .cascade)
-                t.column("folderID", .blob).references("sessionFolder", onDelete: .cascade)
-                t.column("parentID", .blob).references("sessionFolder", onDelete: .cascade)
-                t.primaryKey(["windowID", "position"])
-            }
-            try db.execute(sql: """
-                INSERT INTO sessionWindowItem (position, tabID, folderID, parentID)
-                    SELECT position, tabID, folderID, parentID FROM sessionItem;
-                DROP TABLE sessionItem;
-                ALTER TABLE sessionWindowItem RENAME TO sessionItem;
-                """)
-        }
-        try db.execute(sql: """
-            INSERT OR IGNORE INTO sessionWindow (id, lastActiveAt, revision)
-                SELECT windowID, ?, 0 FROM (
-                    SELECT windowID FROM sessionTab
-                    UNION SELECT windowID FROM sessionFolder
-                )
-            """, arguments: [Date()])
     }
 }
 

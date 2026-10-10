@@ -3,7 +3,6 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import AppKit
-import CCefAppKit
 
 if CommandLine.arguments.contains("--mcp") {
     let socketOption = CommandLine.arguments.firstIndex(of: "--mcp-socket")
@@ -12,9 +11,6 @@ if CommandLine.arguments.contains("--mcp") {
     }
     LocalMCPEndpoint.runStdioRelay(socketPath: socketPath ?? LocalMCPEndpoint.path)
 }
-
-// Install CEF's lightweight AppKit subclass without loading Chromium.
-CEFApplication.install()
 
 UserDefaults.standard.set("WhenScrolling", forKey: "AppleShowScrollBars")
 

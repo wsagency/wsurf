@@ -18,7 +18,7 @@ struct OpenAIFileLiveTests {
         let config = try OpenAIJSON.decode(Data(contentsOf: URL(fileURLWithPath: path)))
         guard config["live"].bool == true, config["files_only"].bool == true else { return }
         let url = URL(fileURLWithPath: try #require(config["report_path"].string))
-        let model = config["model"].string ?? LLMSettings.current.model(for: ProviderCatalog.openAI)
+        let model = config["model"].string ?? LLMSettings.model(for: ProviderCatalog.openAI)
         let key = ProcessInfo.processInfo.environment["WSURF_OPENAI_LIVE_KEY"] ?? CredentialStore.key(for: ProviderCatalog.openAI)
         let recorder = OpenAILiveRecorder(requestLimit: 5)
         var report: OpenAIJSON = [

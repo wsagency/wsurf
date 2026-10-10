@@ -15,38 +15,33 @@ import WebKit
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct TabZoomTests {
-    private func makeTab() -> BrowserTab {
-        BrowserTab(context: BrowserProfileContext(profile: .privateBrowsing()))
-    }
-
     /// Actual Size must greet a new tab disabled - including when the user's
     /// default zoom isn't 100%, which is exactly the case "compare against
     /// 1" would get wrong.
     @Test func aFreshTabIsNotZoomed() {
-        let tab = makeTab()
+        let tab = BrowserTab()
         #expect(!tab.isZoomed)
     }
 
-    @Test func zoomingEnablesActualSizeAndResetPutsEverythingBack() throws {
-        let tab = makeTab()
-        let before = tab.page.pageZoom
-        let webKit = try #require(tab.page.webKit)
+    @Test func zoomingEnablesActualSizeAndResetPutsEverythingBack() {
+        let tab = BrowserTab()
+        let before = tab.webView.pageZoom
 
         tab.zoomIn()
-        #expect(abs(tab.page.pageZoom - (before + TabWebView.zoomStep)) < 0.001)
+        #expect(abs(tab.webView.pageZoom - (before + TabWebView.zoomStep)) < 0.001)
         #expect(tab.isZoomed)
 
         tab.resetZoom()
         #expect(!tab.isZoomed)
-        #expect(abs(tab.page.pageZoom - tab.context.settings.pageZoom) < 0.005)
-        #expect(webKit.magnification == 1)
+        #expect(abs(tab.webView.pageZoom - BrowserSettings.shared.pageZoom) < 0.005)
+        #expect(tab.webView.magnification == 1)
     }
 
     /// A leftover pinch counts as zoomed too - Actual Size answers for the
-    @Test func aPinchAloneCountsAsZoomed() throws {
-        let tab = makeTab()
-        let webKit = try #require(tab.page.webKit)
-        webKit.magnification = 1.6
+    /// pair, so its enabled state has to as well.
+    @Test func aPinchAloneCountsAsZoomed() {
+        let tab = BrowserTab()
+        tab.webView.magnification = 1.6
         #expect(tab.isZoomed)
 
         tab.resetZoom()
@@ -56,8 +51,8 @@ struct TabZoomTests {
     /// The sizes live on the web view, which SwiftUI can't watch. Every path
     /// that changes one has to say so, or a menu goes on showing the answer
     /// it was built with - which is how Actual Size came to ignore a zoom.
-    @Test func everyZoomPathAnnouncesItself() throws {
-        let tab = makeTab()
+    @Test func everyZoomPathAnnouncesItself() {
+        let tab = BrowserTab()
         var seen = tab.zoomChanges
 
         tab.zoomIn()
@@ -74,8 +69,7 @@ struct TabZoomTests {
 
         // ⌘-scroll and the pinch happen inside the web view and come back
         // through this hook.
-        let tabWebView = try #require(tab.page.webKit as? TabWebView)
-        tabWebView.onZoomChanged?()
+        (tab.webView as? TabWebView)?.onZoomChanged?()
         #expect(tab.zoomChanges > seen)
     }
 
@@ -111,16 +105,16 @@ struct TabZoomTests {
     }
 
     @Test func zoomStopsAtTheEndsOfTheRange() {
-        let tab = makeTab()
+        let tab = BrowserTab()
 
         for _ in 0..<40 {
             tab.zoomIn()
         }
-        #expect(abs(tab.page.pageZoom - TabWebView.zoomRange.upperBound) < 0.001)
+        #expect(abs(tab.webView.pageZoom - TabWebView.zoomRange.upperBound) < 0.001)
 
         for _ in 0..<40 {
             tab.zoomOut()
         }
-        #expect(abs(tab.page.pageZoom - TabWebView.zoomRange.lowerBound) < 0.001)
+        #expect(abs(tab.webView.pageZoom - TabWebView.zoomRange.lowerBound) < 0.001)
     }
 }

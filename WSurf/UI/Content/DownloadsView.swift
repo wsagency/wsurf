@@ -51,7 +51,7 @@ struct DownloadsView: View {
             Spacer(minLength: 12)
 
             ToolbarChip(symbol: "folder", label: "Open in Finder") {
-                NSWorkspace.shared.open(BrowserSettings.application.downloadFolder)
+                NSWorkspace.shared.open(BrowserSettings.shared.downloadFolder)
             }
 
             ToolbarChip(symbol: "trash", label: "Clear", isDestructive: true) {

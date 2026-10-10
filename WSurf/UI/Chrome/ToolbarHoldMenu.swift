@@ -4,6 +4,7 @@
 
 import AppKit
 import SwiftUI
+import WebKit
 
 @MainActor
 enum NavigationHoldMenu {
@@ -12,11 +13,11 @@ enum NavigationHoldMenu {
     private static let maximumTitleLength = 64
 
     static func back(for tab: BrowserTab, coordinator: AppCoordinator) -> NSMenu? {
-        history(tab.page.backForwardList.backList.reversed(), tab: tab, coordinator: coordinator)
+        history(tab.backList.reversed(), tab: tab, coordinator: coordinator)
     }
 
     static func forward(for tab: BrowserTab, coordinator: AppCoordinator) -> NSMenu? {
-        history(tab.page.backForwardList.forwardList, tab: tab, coordinator: coordinator)
+        history(tab.webView.backForwardList.forwardList, tab: tab, coordinator: coordinator)
     }
 
     static func reload(for tab: BrowserTab) -> NSMenu? {
@@ -31,7 +32,7 @@ enum NavigationHoldMenu {
                 key: "r",
                 modifiers: [.command, .shift]
             ) { [weak tab] in
-                tab?.page.reloadFromOrigin()
+                tab?.webView.reloadFromOrigin()
             }
         }
         if tab.extensionBaseURL == nil {
@@ -43,15 +44,15 @@ enum NavigationHoldMenu {
     }
 
     private static func history(
-        _ items: [PageHistoryItem],
+        _ items: [WKBackForwardListItem],
         tab: BrowserTab,
         coordinator: AppCoordinator
     ) -> NSMenu? {
         guard !items.isEmpty else { return nil }
         let menu = NSMenu()
         for item in items.prefix(maximumEntries) {
-            menu.addItem(title: label(for: item), image: icon(for: item, favicons: coordinator.context.favicons)) { [weak tab] in
-                tab?.page.go(to: item)
+            menu.addItem(title: label(for: item), image: icon(for: item)) { [weak tab] in
+                tab?.webView.go(to: item)
             }
         }
         menu.addItem(.separator())
@@ -61,7 +62,7 @@ enum NavigationHoldMenu {
         return menu
     }
 
-    private static func label(for item: PageHistoryItem) -> String {
+    private static func label(for item: WKBackForwardListItem) -> String {
         if let page = BrowserTab.InternalPage(url: item.url) {
             guard let category = SystemPages.settingsCategory(of: item.url) else {
                 return page.title
@@ -69,7 +70,7 @@ enum NavigationHoldMenu {
             return "\(page.title) — \(String(localized: category.title))"
         }
         if SystemPages.isStart(item.url) {
-            return SystemPages.startTitle
+            return BrowserTab.placeholderTitle
         }
         var title = item.title ?? ""
         if title.isEmpty {
@@ -79,7 +80,7 @@ enum NavigationHoldMenu {
         return title.prefix(maximumTitleLength).trimmingCharacters(in: .whitespaces) + "…"
     }
 
-    private static func icon(for item: PageHistoryItem, favicons: FaviconLoader) -> NSImage? {
+    private static func icon(for item: WKBackForwardListItem) -> NSImage? {
         if let page = BrowserTab.InternalPage(url: item.url) {
             return symbol(page.symbol)
         }
@@ -87,7 +88,7 @@ enum NavigationHoldMenu {
             return symbol(SystemPages.startSymbol)
         }
         guard let host = item.url.host(),
-              let cached = favicons.cached(for: host),
+              let cached = FaviconLoader.shared.cached(for: host),
               let sized = cached.copy() as? NSImage
         else { return symbol("globe") }
         sized.size = NSSize(width: 16, height: 16)

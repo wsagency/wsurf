@@ -149,10 +149,23 @@ struct LoomChromeTests {
     }
 }
 
-/// Unloading a background tab remains observable without the retired moon badge.
+/// A sleeping tab says so on its favicon - dimmed, moon in the corner -
+/// rather than with a second glyph beside the title.
 @MainActor
 struct SidebarSleepIndicatorTests {
-    @Test func discardingABackgroundTabMarksItUnloaded() {
+    @Test func onlyAnUnloadedTabWearsTheMoon() {
+        #expect(TabIcon.isAsleep(.unloaded))
+        #expect(!TabIcon.isAsleep(.none))
+        #expect(!TabIcon.isAsleep(.reloading))
+    }
+
+    /// The dim has to leave room for the moon to read against the favicon.
+    @Test func theSleepingFaviconIsDimmedButNotGone() {
+        #expect(TabIcon.asleepDim > 0)
+        #expect(TabIcon.asleepDim < 1)
+    }
+
+    @Test func discardingATabPutsItsFaviconToSleep() {
         let model = BrowserModel(
             database: .temporary(),
             sitePermissions: SitePermissions(
@@ -163,11 +176,12 @@ struct SidebarSleepIndicatorTests {
         let background = model.newTab(url: URL(string: "https://example.com/a"))
         _ = model.newTab(url: URL(string: "https://example.com/b"))
 
-        #expect(background.reclaimState != .unloaded)
+        #expect(!TabIcon.isAsleep(background.reclaimState))
         model.discardBackgroundTabs()
-        #expect(background.reclaimState == .unloaded)
+        #expect(TabIcon.isAsleep(background.reclaimState))
     }
 }
+
 /// The sidebar toggle belongs to the window beam, never to the sidebar or a
 /// particular toolbar variant. Content controls only reserve its fixed slot.
 @MainActor
@@ -343,7 +357,6 @@ struct SidebarPeekShieldTests {
             frame: NSRect(x: 0, y: 0, width: 600, height: 400),
             configuration: WebViewPool.makeConfiguration()
         )
-        let page = BrowserPage(webKit: web, context: BrowserProfileContext(profile: .privateBrowsing()))
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
             styleMask: [.titled],
@@ -351,12 +364,12 @@ struct SidebarPeekShieldTests {
             defer: false
         )
         defer { window.orderOut(nil) }
-        window.contentView?.addSubview(page)
+        window.contentView?.addSubview(web)
         window.orderBack(nil)
         web.loadHTMLString("<html><body>page</body></html>", baseURL: nil)
         // WebKit installs the areas for a page it has painted in a window on
         // screen. Asking before either has happened is what made this flake.
-        #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(web, timeout: .seconds(30)))
 
         var foreign: [NSTrackingArea] = []
         _ = await waitUntil {
@@ -386,57 +399,11 @@ struct SidebarPeekShieldTests {
     }
 }
 
+/// The row says its key out loud, the way the palette does.
 @MainActor
-struct SidebarTabActionTests {
-    @Test func unpinnedTabsCloseByDefaultEvenWhenUnloaded() {
-        #expect(SidebarTabAction.resolve(isPinned: false, isDeferred: false, command: false) == .close)
-        #expect(SidebarTabAction.resolve(isPinned: false, isDeferred: true, command: false) == .close)
-        #expect(SidebarTabAction.resolve(isPinned: false, isDeferred: false, command: true) == .unload)
-        #expect(SidebarTabAction.resolve(isPinned: false, isDeferred: true, command: true) == .unload)
-    }
-
-    @Test func pinnedTabsToggleLoadingAndCommandAlwaysRemoves() {
-        #expect(SidebarTabAction.resolve(isPinned: true, isDeferred: false, command: false) == .unload)
-        #expect(SidebarTabAction.resolve(isPinned: true, isDeferred: true, command: false) == .load)
-        #expect(SidebarTabAction.resolve(isPinned: true, isDeferred: false, command: true) == .close)
-        #expect(SidebarTabAction.resolve(isPinned: true, isDeferred: true, command: true) == .close)
-    }
-
-    @Test func hiddenFavoritesCannotJoinSidebarBulkSelection() {
-        let browser = BrowserModel(database: .temporary())
-        let favorite = browser.newTab(url: URL(string: "https://favorite.example/"))
-        let ordinary = browser.newTab()
-        browser.addFavorite(favorite)
-        let selection = browser.sidebarSelection
-        selection.selectAll(in: browser.sidebarTree, isExpanded: { _ in true })
-        selection.excludeFavorites(browser.favorites)
-        #expect(selection.items == [.tab(ordinary.id)])
-    }
-}
-
-@MainActor
-struct SidebarUndoKeyTests {
-    @Test func controlZRestoresADeletedFolderAndControlShiftZRedoesDeletion() throws {
-        let browser = BrowserModel(database: .temporary())
-        let folder = browser.createFolder(named: "Work")
-        browser.deleteFolder(folder)
-        let catcher = SidebarKeyCatcher.CatcherView()
-        catcher.history = browser.sidebarUndoManager
-        let undo = try #require(NSEvent.keyEvent(
-            with: .keyDown, location: .zero, modifierFlags: .control,
-            timestamp: 0, windowNumber: 0, context: nil,
-            characters: "z", charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6
-        ))
-        catcher.keyDown(with: undo)
-        #expect(browser.folder(id: folder.id)?.name == "Work")
-
-        let redo = try #require(NSEvent.keyEvent(
-            with: .keyDown, location: .zero, modifierFlags: [.control, .shift],
-            timestamp: 0, windowNumber: 0, context: nil,
-            characters: "Z", charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6
-        ))
-        catcher.keyDown(with: redo)
-        #expect(browser.folder(id: folder.id) == nil)
+struct NewTabShortcutHintTests {
+    @Test func theHintIsCommandT() {
+        #expect(NewTabRow.shortcutHint == "⌘T")
     }
 }
 

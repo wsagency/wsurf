@@ -6,7 +6,6 @@ import SwiftUI
 
 struct AdvancedSettings: View {
     @Bindable var settings: BrowserSettings
-    @Bindable var profileSettings: BrowserSettings
     var mcpServer: BrowserMCPServer?
     var highlight: String?
 
@@ -50,7 +49,7 @@ struct AdvancedSettings: View {
                 title: "Certificate exceptions",
                 caption: "Continue past a certificate macOS rejects. WSurf forgets the exception when you quit."
             ) {
-                SettingsToggle($profileSettings.allowsCertificateExceptions)
+                SettingsToggle($settings.allowsCertificateExceptions)
             }
             .settingsAnchor("advanced.certificates")
 
@@ -124,7 +123,7 @@ struct AdvancedSettings: View {
                 } message: {
                     Text("""
                         Appearance, search, privacy, websites, and downloads go back to their \
-                        defaults. Tabs, history, shortcuts, and your provider are not affected.
+                        defaults. Tabs, history, shortcuts, and your provider aren't affected.
                         """)
                 }
             }

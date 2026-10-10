@@ -335,8 +335,8 @@ struct EnginePopover: View {
     private func choose(model id: String) {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        coordinator.modelSettings.setModel(trimmed, for: provider)
-        coordinator.reloadAssistantConfiguration()
+        LLMSettings.setModel(trimmed, for: provider)
+        coordinator.configureEngines()
         dismiss()
     }
 
@@ -351,8 +351,8 @@ struct EnginePopover: View {
 
     private func choose(effort: LLMSettings.ReasoningEffort) {
         guard effort != coordinator.selectedEffort else { return }
-        coordinator.modelSettings.setReasoningEffort(effort, for: provider)
-        coordinator.reloadAssistantConfiguration()
+        LLMSettings.setReasoningEffort(effort, for: provider)
+        coordinator.configureEngines()
     }
 
     private func load() async {
@@ -372,9 +372,7 @@ struct EnginePopover: View {
             }
         }
         do {
-            let models = try await LLMSettings.$scoped.withValue(coordinator.modelSettings) {
-                try await engine.availableModels()
-            }
+            let models = try await engine.availableModels()
             guard !Task.isCancelled, requestedProvider.id == provider.id else { return }
             fetched = models
         } catch {

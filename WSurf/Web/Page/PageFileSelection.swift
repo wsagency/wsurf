@@ -3,20 +3,15 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import AppKit
+import WebKit
+
 @MainActor
 final class PageFileSelection {
-    static let pending = NSMapTable<BrowserPage, PageFileSelection>(keyOptions: .weakMemory, valueOptions: .strongMemory)
+    static let pending = NSMapTable<WKWebView, PageFileSelection>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     let origin: String
     let observationID: String
     let validate: () -> Bool
-    struct Parameters {
-        let allowsMultipleSelection: Bool
-        let allowsDirectories: Bool
-    }
-    var selectFiles: ((Parameters) async -> [URL]?)?
-    var isCompleted: Bool {
-        completed
-    }
+    var selectFiles: ((WKOpenPanelParameters) async -> [URL]?)?
     var requestedPanel = false
     var cancelPanel: (() -> Void)?
     private var continuation: CheckedContinuation<Int?, Never>?
@@ -65,7 +60,7 @@ final class PageFileSelection {
 }
 
 extension PageDriver {
-    static func chooseFiles(ref: Int, in view: BrowserPage, selectFiles: ((PageFileSelection.Parameters) async -> [URL]?)? = nil) async -> String {
+    static func chooseFiles(ref: Int, in view: WKWebView, selectFiles: ((WKOpenPanelParameters) async -> [URL]?)? = nil) async -> String {
         guard selectedFrame == nil, await validateObservation(in: view, ref: ref),
               let scope = PageAutomationGuard.current, let window = view.window,
               let observation = observations.object(forKey: view),

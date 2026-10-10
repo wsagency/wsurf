@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
-import AppKit
 import Foundation
 import Testing
 import WebKit
@@ -295,7 +294,7 @@ struct AgentActionPolicyTests {
     /// awaits and nothing running beside it - no clearing, and nothing for a
     /// suite finishing next door to clear out from under a click.
     private func withDecision(
-        _ decision: @escaping @MainActor (String, SensitiveAction.Category, String?, NSWindow?) async -> AgentActionConsent.Decision,
+        _ decision: @escaping (String, SensitiveAction.Category, String?) -> AgentActionConsent.Decision,
         _ body: () async -> Void
     ) async {
         await AgentActionConsent.$decisionForTesting.withValue(.init(decision)) {
@@ -308,7 +307,7 @@ struct AgentActionPolicyTests {
         policy.allowAlways(.purchase, host: "shop.example.com")
 
         var asked = false
-        await withDecision({ _, _, _, _ in
+        await withDecision({ _, _, _ in
             asked = true
             return .decline
         }) {
@@ -326,7 +325,7 @@ struct AgentActionPolicyTests {
 
     @Test func decliningStopsTheClickAndRemembersNothing() async throws {
         let policy = makePolicy()
-        await withDecision({ _, _, _, _ in .decline }) {
+        await withDecision({ _, _, _ in .decline }) {
             let permitted = await AgentActionConsent.permit(
                 label: "Place order",
                 category: .purchase,
@@ -340,7 +339,7 @@ struct AgentActionPolicyTests {
 
     @Test func allowingOnceDoesNotRemember() async throws {
         let policy = makePolicy()
-        await withDecision({ _, _, _, _ in .allowOnce }) {
+        await withDecision({ _, _, _ in .allowOnce }) {
             let permitted = await AgentActionConsent.permit(
                 label: "Place order",
                 category: .purchase,
@@ -355,7 +354,7 @@ struct AgentActionPolicyTests {
 
     @Test func allowingAlwaysRemembersExactlyThatSiteAndCategory() async throws {
         let policy = makePolicy()
-        await withDecision({ _, _, _, _ in .allowAlways }) {
+        await withDecision({ _, _, _ in .allowAlways }) {
             _ = await AgentActionConsent.permit(
                 label: "Place order",
                 category: .purchase,
@@ -368,6 +367,19 @@ struct AgentActionPolicyTests {
         #expect(!policy.isAlwaysAllowed(.purchase, host: "elsewhere.example.com"))
     }
 
+    /// The sheet has to name the control, the site, and the stakes - a generic
+    /// "allow this action?" is the kind people learn to click through.
+    @Test func theSheetNamesTheStakes() {
+        let body = AgentActionConsent.body(
+            label: "Place order",
+            category: .purchase,
+            site: "shop.example.com"
+        )
+        #expect(body.contains("Place order"))
+        #expect(body.contains("shop.example.com"))
+        #expect(body.contains("completes a purchase"))
+        #expect(body.contains("hidden instructions"))
+    }
 }
 
 /// The id is scraped off a results page and becomes the address a tab loads,
@@ -481,7 +493,7 @@ struct ProviderEndpointTests {
 struct CertificateTrustTests {
     /// The setting itself, not the alert, is what the invariant hangs on.
     @Test func exceptionsAreOffUntilAskedFor() {
-        let settings = BrowserProfileContext(profile: .privateBrowsing()).settings
+        let settings = BrowserSettings.shared
         let restore = settings.allowsCertificateExceptions
         defer { settings.allowsCertificateExceptions = restore }
 
@@ -493,7 +505,7 @@ struct CertificateTrustTests {
     /// turning the switch back off leaves the hosts already accepted
     /// permanently trusted, which is the opposite of what it says.
     @Test func turningTheSettingOffForgetsWhatWasAcceptedUnderIt() {
-        let settings = BrowserProfileContext(profile: .privateBrowsing()).settings
+        let settings = BrowserSettings.shared
         let restore = settings.allowsCertificateExceptions
         defer {
             settings.allowsCertificateExceptions = restore

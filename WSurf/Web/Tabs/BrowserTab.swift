@@ -3,7 +3,6 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import AppKit
-import CefKit
 import Foundation
 import Observation
 import os
@@ -28,13 +27,12 @@ enum PageSecurity: Equatable {
 @MainActor
 @Observable
 final class BrowserTab: Identifiable {
-    static let placeholderTitle = String(localized: "New Page")
+    static let placeholderTitle = String(localized: "Start Page")
 
     let id: UUID
     let autofillSave = AutofillSaveSession()
     var pageTitle = BrowserTab.placeholderTitle
     var customTitle = ""
-    private var documentTitles: [URL: String] = [:]
 
     var title: String {
         get { customTitle.isEmpty ? pageTitle : customTitle }
@@ -42,7 +40,6 @@ final class BrowserTab: Identifiable {
     }
     var urlString = ""
     var isLoading = false
-    var isFavorite = false
     var favicon: NSImage?
     private var faviconHost = ""
     var progress: Double = 0
@@ -81,13 +78,13 @@ final class BrowserTab: Identifiable {
     var canGoBack: Bool {
         _ = canGoBackInWeb
         guard isMaterialised else { return false }
-        return page.canGoBack
+        return webView.canGoBack
     }
 
     var canGoForward: Bool {
         _ = canGoForwardInWeb
         guard isMaterialised else { return false }
-        return page.canGoForward
+        return webView.canGoForward
     }
 
     /// `urlString` may include a provisional navigation; this URL reflects the committed page.
@@ -96,7 +93,7 @@ final class BrowserTab: Identifiable {
     var isUnderTopBar = false {
         didSet {
             guard isUnderTopBar != oldValue, isMaterialised else { return }
-            Self.applyObscuredInsets(to: page, isUnderTopBar: isUnderTopBar)
+            Self.applyObscuredInsets(to: webView, isUnderTopBar: isUnderTopBar)
             measureBandUnderBar()
         }
     }
@@ -106,11 +103,12 @@ final class BrowserTab: Identifiable {
     private(set) var preview: NSImage?
 
     func refreshPreview() {
-        guard isMaterialised, isShowingRealPage, !isDeferred, page.window != nil else { return }
-        let view = page
-        Task { [weak self] in
-            guard let image = try? await view.capture(width: 480) else { return }
-            guard self?.liveView === view else { return }
+        guard isMaterialised, isShowingRealPage, !isDeferred, webView.window != nil else { return }
+        let configuration = WKSnapshotConfiguration()
+        configuration.snapshotWidth = 480
+        configuration.afterScreenUpdates = false
+        webView.takeSnapshot(with: configuration) { [weak self] image, _ in
+            guard let image else { return }
             self?.preview = image
         }
     }
@@ -122,12 +120,7 @@ final class BrowserTab: Identifiable {
         canvasColor.map(Color.init(nsColor:)) ?? Theme.windowBackground
     }
 
-    var hasPresentedContent = false
-    static let presentationUpdateSelector = Selector(("_doAfterNextPresentationUpdate:"))
-    static let coverCeiling: Duration = .milliseconds(400)
-    @ObservationIgnored var presentationClock: any Clock<Duration> = ContinuousClock()
-    @ObservationIgnored var coverHold: Task<Void, Never>?
-    @ObservationIgnored var isArmingPresentation = false
+    private(set) var hasPresentedContent = false
 
     private(set) var security: PageSecurity = .none
 
@@ -168,7 +161,7 @@ final class BrowserTab: Identifiable {
         if let addressed = InternalPage(url: URL(string: urlString)) {
             return addressed
         }
-        if isMaterialised, !isLoading, let standing = page.url {
+        if isMaterialised, !isLoading, let standing = webView.url {
             return InternalPage(url: standing)
         }
         return InternalPage(url: committedURL)
@@ -203,100 +196,61 @@ final class BrowserTab: Identifiable {
         guard let pinnedURL else { return false }
         return urlString == pinnedURL.absoluteString
     }
-    @ObservationIgnored var liveView: BrowserPage? {
-        didSet {
-            loadedEngine = liveView?.engine
-        }
-    }
-    private(set) var loadedEngine: BrowserEngine?
-    @ObservationIgnored private var retiredView: BrowserPage?
-    private var retirementGeneration = 0
-    private var pageGeneration = 0
-    let sitePermissions: SitePermissions
-    let context: BrowserProfileContext
-    private let dataStore: WKWebsiteDataStore
-    var engine: BrowserEngine = .webKit
-    @ObservationIgnored private var pendingNavigationTask: Task<PageNavigation?, Never>?
-    @ObservationIgnored private var lastRequestedNavigation: PageNavigation?
-    var hasActiveDownload: (() -> Bool)?
+    @ObservationIgnored private var liveView: WKWebView?
+    private var webViewGeneration = 0
     @ObservationIgnored private var stoppedNavigation = false
 
     var isMaterialised: Bool {
         liveView != nil
     }
 
-    var page: BrowserPage {
-        _ = pageGeneration
+    var webView: WKWebView {
+        _ = webViewGeneration
         if let liveView {
             return liveView
         }
-        if let retiredView {
-            return retiredView
-        }
-        engine = preferredEngine(for: deferredURL ?? URL(string: urlString))
-        let view = makePage(engine: engine)
+        let view = WebViewPool.shared.makeColdView()
+        liveView = view
         adopt(view)
         return view
-    }
-
-    func preferredEngine(for url: URL?) -> BrowserEngine {
-        guard extensionBaseURL == nil, let url else { return .webKit }
-        let origin = SitePermissions.origin(for: url)
-        guard !origin.isEmpty else { return .webKit }
-        return sitePermissions.engine(for: origin)
-    }
-
-    private func makePage(engine: BrowserEngine) -> BrowserPage {
-        switch engine {
-        case .webKit:
-            BrowserPage(webKit: context.webViewPool.makeColdView(dataStore: dataStore), context: context)
-        case .chromium:
-            BrowserPage(chromium: ChromiumPage(context: context))
-        }
     }
     var onNavigationStarted: ((URL) -> Void)?
     var onNavigationFinished: ((Bool) -> Void)?
     var onNavigationOutsideExtension: ((URL) -> Void)?
     var onNewWindow: ((WKWebView, Bool) -> Void)?
     var onOpenInNewTab: ((URL, Bool) -> Void)?
-    var onOpenInNewWindow: ((URL, Bool) -> Void)?
     var onOpenInPeek: ((URL, CGPoint) -> Void)?
     var onSummarizeLink: ((URL, CGPoint) -> Void)?
     var onCloseRequested: (() -> Void)?
     var onPictureInPictureChanged: ((Bool) -> Void)?
     var onPictureReturnExpected: (() -> Void)?
     var onDownload: ((WKDownload, URL?) -> Void)?
-    var onSaveDocument: ((Data, String, URL?, Bool) async -> Void)?
-    var onChromiumDownload: ((BrowserPage, CefDownload, String, @escaping (CefDownloadDecision) -> Void) -> Void)?
-    var onChromiumDownloadProgress: ((BrowserPage, CefDownload) -> Void)?
-    var onPageRetired: ((BrowserPage) -> Void)?
     var onLinkHovered: ((URL?, NSEvent.ModifierFlags, CGPoint) -> Void)?
 
     let extensionBaseURL: URL?
     let popups: TabPopupPolicy
-    let externalApps: TabExternalAppPolicy
 
-    var navigationDelegate: TabNavigationDelegate?
+    private var navigationDelegate: TabNavigationDelegate?
     let permissions: TabPermissionCenter
     let assistantAccess: TabAssistantAccessCenter
     let find = FindSession()
 
     let isPrivate: Bool
 
-    var progressObservation: NSKeyValueObservation?
-    var loadingObservation: NSKeyValueObservation?
-    var cameraObservation: NSKeyValueObservation?
-    var microphoneObservation: NSKeyValueObservation?
-    var pageBackgroundObservation: NSKeyValueObservation?
-    var addressObservation: NSKeyValueObservation?
-    var titleObservation: NSKeyValueObservation?
-    var backObservation: NSKeyValueObservation?
-    var forwardObservation: NSKeyValueObservation?
-    var fullscreenObservation: NSKeyValueObservation?
-    var secureContentObservation: NSKeyValueObservation?
-    let processState = TabProcessState()
-    var provisionalNavigation: PageNavigation?
-    var committedNavigation: PageNavigation?
+    private var progressObservation: NSKeyValueObservation?
+    private var loadingObservation: NSKeyValueObservation?
+    private var cameraObservation: NSKeyValueObservation?
+    private var microphoneObservation: NSKeyValueObservation?
+    private var pageBackgroundObservation: NSKeyValueObservation?
+    private var addressObservation: NSKeyValueObservation?
+    private var titleObservation: NSKeyValueObservation?
+    private var backObservation: NSKeyValueObservation?
+    private var forwardObservation: NSKeyValueObservation?
+    private var fullscreenObservation: NSKeyValueObservation?
+    private var secureContentObservation: NSKeyValueObservation?
+    private let processState = TabProcessState()
+    var provisionalNavigation: WKNavigation?
+    var committedNavigation: WKNavigation?
 
     init(
         id: UUID = UUID(),
@@ -305,48 +259,152 @@ final class BrowserTab: Identifiable {
         restoring: Bool = false,
         opensBlank: Bool = true,
         privately: Bool = false,
-        sitePermissions: SitePermissions? = nil,
-        context: BrowserProfileContext? = nil
+        sitePermissions: SitePermissions = .shared
     ) {
-        let context = context ?? .shared(for: privately ? .privateBrowsing() : .original())
-        precondition(!privately || context.profile.isPrivate)
-        let sitePermissions = sitePermissions ?? context.sitePermissions
         self.id = id
-        self.sitePermissions = sitePermissions
-        self.context = context
-        dataStore = adopting?.configuration.websiteDataStore
-            ?? extensionHost?.configuration.websiteDataStore ?? context.dataStore
-        isPrivate = context.profile.isPrivate
-        popups = TabPopupPolicy(store: sitePermissions, settings: context.settings)
-        externalApps = TabExternalAppPolicy(store: sitePermissions, isPrivate: isPrivate)
+        isPrivate = privately
+        popups = TabPopupPolicy(store: sitePermissions)
         permissions = TabPermissionCenter(store: sitePermissions)
         assistantAccess = TabAssistantAccessCenter(store: sitePermissions)
-        permissions.persistsAnswers = !isPrivate
-        assistantAccess.persistsAnswers = !isPrivate
+        permissions.persistsAnswers = !privately
+        assistantAccess.persistsAnswers = !privately
         let opensStartPage = opensBlank && adopting == nil && extensionHost == nil && !restoring
-        if opensStartPage {
-            pageTitle = SystemPages.startTitle
-        }
         if let adopting {
             // WebKit requires this exact view, with the opener's configuration attached.
-            liveView = BrowserPage(webKit: adopting, context: context)
+            liveView = adopting
             extensionBaseURL = nil
         } else if let extensionHost {
-            liveView = BrowserPage(webKit: context.webViewPool.makeView(configuration: extensionHost.configuration), context: context)
+            liveView = WebViewPool.shared.makeView(configuration: extensionHost.configuration)
             extensionBaseURL = extensionHost.baseURL
             pageTitle = extensionHost.name
             favicon = extensionHost.icon
         } else {
-            liveView = opensStartPage ? BrowserPage(webKit: context.webViewPool.acquire(), context: context) : nil
+            liveView = restoring ? nil : WebViewPool.shared.acquire()
             extensionBaseURL = nil
         }
         if let liveView {
             adopt(liveView)
         }
-        find.driver = .browserPage { [weak self] in self?.page }
+        find.driver = .webKit { [weak self] in self?.webView }
         if opensStartPage {
             permitSystemPage(SystemPages.start)
-            page.load(URLRequest(url: SystemPages.start))
+            webView.load(URLRequest(url: SystemPages.start))
+        }
+    }
+
+    private func adopt(_ view: WKWebView) {
+        liveView = view
+        Self.applyObscuredInsets(to: webView, isUnderTopBar: isUnderTopBar)
+        fullscreenObservation = webView.observe(\.fullscreenState, options: [.new]) { [weak self] view, _ in
+            MainActor.assumeIsolated {
+                Self.applyObscuredInsets(to: view, isUnderTopBar: self?.isUnderTopBar ?? true)
+            }
+        }
+
+        let delegate = TabNavigationDelegate(tab: self)
+        navigationDelegate = delegate
+        webView.navigationDelegate = delegate
+        webView.uiDelegate = delegate
+        (webView as? TabWebView)?.onContextDownload = { [weak self] download, source in
+            self?.onDownload?(download, source)
+        }
+        (webView as? TabWebView)?.onPeekLink = { [weak self] url in
+            guard let self else { return }
+            onOpenInPeek?(url, TabNavigationDelegate.pointer(in: webView))
+        }
+        (webView as? TabWebView)?.onSummarizeLink = { [weak self] url, anchor in
+            guard let self else { return }
+            onSummarizeLink?(url, anchor ?? TabNavigationDelegate.pointer(in: webView))
+        }
+        if let tabView = webView as? TabWebView {
+            tabView.onPageActivity = { [weak self] signal in
+                self?.notePageActivity(signal)
+            }
+            PageActivityMonitor.shared.install(in: tabView)
+            tabView.onScrollPosition = { [weak self] y, url in
+                self?.lastReportedScrollY = y
+                self?.lastReportedScrollURL = url
+            }
+            ScrollPositionMonitor.shared.install(in: tabView)
+            tabView.onFaviconDeclarationChange = { [weak self] in
+                self?.declaredFaviconChanged()
+            }
+            FaviconWatcher.shared.install(in: tabView)
+            PageClickWatcher.shared.install(in: tabView)
+            tabView.onPopupBlocked = { [weak self] url in
+                self?.popups.note(url)
+            }
+            SiteContentGuard.shared.install(in: tabView)
+            PaymentCardAutofill.shared.install(in: tabView)
+            ContactAutofill.shared.install(in: tabView)
+            PasswordAutofill.shared.install(in: tabView)
+            AutofillSaveCoordinator.shared.install(in: tabView, session: autofillSave)
+        }
+        progressObservation = webView.observe(\.estimatedProgress, options: [.new]) { [weak self] _, change in
+            let value = change.newValue ?? 1
+            MainActor.assumeIsolated {
+                self?.progress = value
+            }
+        }
+        loadingObservation = webView.observe(\.isLoading, options: [.new, .initial]) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.refreshChrome() }
+        }
+        addressObservation = webView.observe(\.url, options: [.new]) { [weak self] view, _ in
+            MainActor.assumeIsolated { self?.pageDidChangeInPlace(view) }
+        }
+        titleObservation = webView.observe(\.title, options: [.new]) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.refreshChrome() }
+        }
+        backObservation = webView.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.refreshChrome() }
+        }
+        forwardObservation = webView.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.refreshChrome() }
+        }
+        secureContentObservation = webView.observe(
+            \.hasOnlySecureContent,
+            options: [.new]
+        ) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.refreshSecurity() }
+        }
+        pageBackgroundObservation = webView.observe(
+            \.underPageBackgroundColor,
+            options: [.new, .initial]
+        ) { [weak self] view, _ in
+            MainActor.assumeIsolated {
+                self?.refreshCanvas(from: view)
+                self?.measureBandUnderBar()
+            }
+        }
+        cameraObservation = webView.observe(\.cameraCaptureState, options: [.new, .initial]) { [weak self] view, _ in
+            MainActor.assumeIsolated {
+                self?.permissions.setLive(.camera, view.cameraCaptureState != .none)
+            }
+        }
+        microphoneObservation = webView.observe(\.microphoneCaptureState, options: [.new, .initial]) { [weak self] view, _ in
+            MainActor.assumeIsolated {
+                self?.permissions.setLive(.microphone, view.microphoneCaptureState != .none)
+            }
+        }
+        permissions.onRevoke = { [weak self] permission in
+            guard let self else { return }
+            switch permission {
+            case .camera:
+                webView.setCameraCaptureState(.none)
+            case .microphone:
+                webView.setMicrophoneCaptureState(.none)
+            case .location:
+                onLocationRevoked?()
+            case .notifications:
+                break
+            }
+        }
+        permissions.pageChanged(url: webView.url ?? (urlString.isEmpty ? nil : URL(string: urlString)))
+        assistantAccess.pageChanged(url: webView.url ?? (urlString.isEmpty ? nil : URL(string: urlString)))
+        applySiteZoom()
+        applySitePopups()
+        (webView as? TabWebView)?.onZoomChanged = { [weak self] in
+            self?.zoomDidChange()
         }
     }
 
@@ -395,7 +453,7 @@ final class BrowserTab: Identifiable {
         let url = URL(string: urlString)
         guard state != nil || url != nil else { return }
 
-        let outgoing = page
+        let outgoing = webView
         retire(outgoing)
         stoppedNavigation = false
 
@@ -406,36 +464,18 @@ final class BrowserTab: Identifiable {
         processState.markUnloaded()
     }
 
-    @discardableResult
-    private func retire(_ outgoing: BrowserPage) -> Task<Void, Never> {
-        onPageRetired?(outgoing)
-        retirementGeneration &+= 1
-        let generation = retirementGeneration
-        retiredView = outgoing
-        if liveView === outgoing {
-            liveView = nil
-        }
+    private func retire(_ outgoing: WKWebView) {
         outgoing.stopLoading()
-        outgoing.onNavigationStarted = nil
-        outgoing.onNavigationCommitted = nil
-        outgoing.onNavigationFinished = nil
-        outgoing.onMainFrameResponse = nil
-        outgoing.onNavigationFailed = nil
-        outgoing.onContentProcessTerminated = nil
-        outgoing.onHistoryChanged = nil
-        outgoing.onLinkHovered = nil
-        if let native = outgoing.webKit {
-            native.navigationDelegate = nil
-            native.uiDelegate = nil
-            if let tabView = native as? TabWebView {
-                tabView.onZoomChanged = nil
-                tabView.onContextDownload = nil
-                tabView.onOpenLinkInNewWindow = nil
-                tabView.profileContext = nil
-                tabView.onPeekLink = nil
-                tabView.onSummarizeLink = nil
-            }
-        }
+        outgoing.navigationDelegate = nil
+        outgoing.uiDelegate = nil
+        (outgoing as? TabWebView)?.onZoomChanged = nil
+        (outgoing as? TabWebView)?.onContextDownload = nil
+        (outgoing as? TabWebView)?.onPeekLink = nil
+        (outgoing as? TabWebView)?.onSummarizeLink = nil
+        (outgoing as? TabWebView)?.onPageActivity = nil
+        (outgoing as? TabWebView)?.onScrollPosition = nil
+        (outgoing as? TabWebView)?.onFaviconDeclarationChange = nil
+        (outgoing as? TabWebView)?.onPopupBlocked = nil
         outgoing.removeFromSuperview()
         progressObservation = nil
         loadingObservation = nil
@@ -449,30 +489,11 @@ final class BrowserTab: Identifiable {
         fullscreenObservation = nil
         secureContentObservation = nil
         permissions.onRevoke = nil
-        permissions.onPolicyChanged = nil
         navigationDelegate = nil
-        let task = Task { [weak self] in
-            await outgoing.close()
-            guard let self, retirementGeneration == generation else { return }
-            retirement = nil
-            if engineSwitchTask == nil {
-                retiredView = nil
-                pageGeneration &+= 1
-            }
-        }
-        retirement = task
-        return task
-    }
-
-    func waitForRetirement() async {
-        if let retirement {
-            await retirement.value
-        }
     }
 
     func stopLoading() {
-        pendingNavigationTask?.cancel()
-        page.stopLoading()
+        webView.stopLoading()
         stoppedNavigation = true
         isLoading = false
     }
@@ -483,78 +504,29 @@ final class BrowserTab: Identifiable {
 
     func reload() {
         let wasStopped = stoppedNavigation
-        if wasStopped && page.isLoading && extensionBaseURL == nil
+        if wasStopped && webView.isLoading && extensionBaseURL == nil
             && URL(string: urlString) != nil {
             restartPage()
             return
         }
         stoppedNavigation = false
         if let url = URL(string: urlString),
-           page.backForwardList.currentItem == nil || (wasStopped && url != committedURL) {
+           webView.backForwardList.currentItem == nil || (wasStopped && url != committedURL) {
             load(url, transition: .reload)
             return
         }
-        if page.reload() == nil, extensionBaseURL == nil {
+        if webView.reload() == nil, extensionBaseURL == nil {
             restartPage()
         }
     }
 
-    /// Recreate an unresponsive page in its selected engine and existing profile.
+    /// Replace an unresponsive WebKit view without closing the tab or its data store.
     func restartPage() {
-        guard !isClosed, extensionBaseURL == nil, let url = URL(string: urlString) else { return }
-        pendingNavigationTask?.cancel()
-        pendingNavigationTask = Task { [weak self] in
-            guard let self else { return nil }
-            onContentProcessTerminated?()
-            guard await replaceEngine(with: engine, force: true), !Task.isCancelled else { return nil }
-            return loadDirect(url)
-        }
-    }
-
-    @ObservationIgnored private var retirement: Task<Void, Never>?
-    @ObservationIgnored private var engineSwitchTask: Task<Bool, Never>?
-
-    func switchEngine(to engine: BrowserEngine) async -> Bool {
-        while let pending = engineSwitchTask {
-            _ = await pending.value
-        }
-        guard !isClosed, extensionBaseURL == nil else { return false }
-        guard liveView?.engine != engine else { return true }
-        let url = URL(string: urlString) ?? liveView?.url
-        guard await replaceEngine(with: engine), !Task.isCancelled else { return false }
-        if let url, urlString == url.absoluteString {
-            lastRequestedNavigation = loadDirect(url)
-        }
-        return true
-    }
-
-    private func replaceEngine(with engine: BrowserEngine, force: Bool = false) async -> Bool {
-        while let pending = engineSwitchTask {
-            _ = await pending.value
-        }
-        guard !isClosed, !Task.isCancelled else { return false }
-        if !force, let liveView, liveView.engine == engine {
-            return true
-        }
-        let task = Task { [weak self] in
-            guard let self else { return false }
-            defer { engineSwitchTask = nil }
-            return await installEngine(engine)
-        }
-        engineSwitchTask = task
-        return await task.value
-    }
-
-    private func installEngine(_ engine: BrowserEngine) async -> Bool {
-        if let outgoing = liveView {
-            await retire(outgoing).value
-        } else if let retirement {
-            await retirement.value
-        }
-        guard !isClosed else { return false }
-        retiredView = nil
-        liveView = nil
-        self.engine = engine
+        guard !isClosed, extensionBaseURL == nil,
+              let url = URL(string: urlString), let outgoing = liveView
+        else { return }
+        onContentProcessTerminated?()
+        retire(outgoing)
         stoppedNavigation = false
         provisionalNavigation = nil
         committedNavigation = nil
@@ -567,19 +539,44 @@ final class BrowserTab: Identifiable {
         hasVideo = false
         isPictureOut = false
         committedURL = nil
-        zoomHost = ""
+        pendingTransition = .reload
         clearPageActivity()
         invalidateSessionState()
         processState.finishReload()
         releasePageColorHold()
-        permissions.pageChanged(url: nil)
-        assistantAccess.pageChanged(url: nil)
-        adopt(makePage(engine: engine))
-        pageGeneration &+= 1
-        return true
+
+        let replacement = WebViewPool.shared.makeColdView(
+            dataStore: outgoing.configuration.websiteDataStore
+        )
+        adopt(replacement)
+        webViewGeneration &+= 1
+        permitSystemPage(url)
+        if url.isFileURL {
+            replacement.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+        } else {
+            replacement.load(URLRequest(url: url))
+        }
     }
 
     var onLocationRevoked: (() -> Void)?
+
+    private func pageDidChangeInPlace(_ webView: WKWebView) {
+        let previous = urlString
+        // The start page is a surface over the tab, not a place it went.
+        if !SystemPages.isStart(webView.url) {
+            permissions.pageChanged(url: webView.url)
+            assistantAccess.pageChanged(url: webView.url)
+        }
+        applySiteZoom()
+        applySitePopups()
+        refreshChrome()
+        guard urlString != previous else { return }
+        refreshPageColor(from: webView)
+        refreshFavicon()
+        measureBandUnderBar()
+        invalidateSessionState()
+        onSameDocumentNavigation?()
+    }
 
     var onSameDocumentNavigation: (() -> Void)?
 
@@ -590,32 +587,43 @@ final class BrowserTab: Identifiable {
     func detach() {
         guard !isClosed else { return }
         isClosed = true
-        pendingNavigationTask?.cancel()
-        coverHold?.cancel()
-        onChromiumDownload = nil
-        onChromiumDownloadProgress = nil
-        hasActiveDownload = nil
         onNavigationStarted = nil
         onNavigationFinished = nil
         onNavigationOutsideExtension = nil
         onNewWindow = nil
         onOpenInNewTab = nil
-        onOpenInNewWindow = nil
         onOpenInPeek = nil
         onSummarizeLink = nil
         onCloseRequested = nil
         onPictureInPictureChanged = nil
         onPictureReturnExpected = nil
         onDownload = nil
-        onSaveDocument = nil
         onLinkHovered = nil
         onSameDocumentNavigation = nil
         onContentProcessTerminated = nil
         onLocationRevoked = nil
-        if let view = liveView {
-            retire(view)
+        navigationDelegate = nil
+        guard let view = liveView else { return }
+        view.navigationDelegate = nil
+        view.uiDelegate = nil
+        (view as? TabWebView)?.onContextDownload = nil
+        (view as? TabWebView)?.onPeekLink = nil
+        (view as? TabWebView)?.onSummarizeLink = nil
+        (view as? TabWebView)?.onZoomChanged = nil
+    }
+
+    func contentProcessDidTerminate() {
+        guard !isClosed else { return }
+        isPlayingAudio = false
+        onContentProcessTerminated?()
+        if !processState.shouldReloadAfterUnexpectedTermination() {
+            Pipeline.log.error("web content process died twice; leaving the tab alone")
+            return
         }
-        liveView = nil
+        Pipeline.log.notice("web content process died; reloading the tab")
+        guard let url = URL(string: urlString), !urlString.isEmpty else { return }
+        hasPresentedContent = false
+        webView.load(URLRequest(url: url))
     }
 
     // MARK: - Page colour
@@ -637,26 +645,26 @@ final class BrowserTab: Identifiable {
 
     private var zoomHost = ""
 
-    func applySiteZoom() {
-        let host = SystemPages.isSystem(page.url)
+    fileprivate func applySiteZoom() {
+        let host = SystemPages.isSystem(webView.url)
             ? ""
-            : page.url?.host()?.lowercased() ?? ""
+            : webView.url?.host()?.lowercased() ?? ""
         guard host != zoomHost else { return }
         zoomHost = host
-        let remembered = host.isEmpty ? nil : context.pageZoom.level(for: host)
-        page.pageZoom = remembered ?? context.settings.pageZoom
+        let remembered = host.isEmpty ? nil : PageZoomStore.shared.level(for: host)
+        webView.pageZoom = remembered ?? BrowserSettings.shared.pageZoom
         zoomChanges &+= 1
     }
 
     fileprivate func recordSiteZoom() {
         guard !isPrivate, !zoomHost.isEmpty else { return }
-        context.pageZoom.set(page.pageZoom, for: zoomHost, defaultZoom: context.settings.pageZoom)
+        PageZoomStore.shared.set(webView.pageZoom, for: zoomHost)
     }
 
     // MARK: - Scroll return
 
-    var lastReportedScrollY: Double = 0
-    var lastReportedScrollURL: URL?
+    private(set) var lastReportedScrollY: Double = 0
+    private var lastReportedScrollURL: URL?
     private var scrollReturns = ScrollReturnMemory()
 
     func rememberScrollOffset() {
@@ -673,11 +681,11 @@ final class BrowserTab: Identifiable {
 
     func restoreScrollOffsetIfNeeded() {
         guard pendingTransition == .backForward,
-              let stored = scrollReturns.offset(returningTo: page.url?.absoluteString)
+              let stored = scrollReturns.offset(returningTo: webView.url?.absoluteString)
         else { return }
         lastReportedScrollY = stored
-        lastReportedScrollURL = page.url
-        page.evaluateJavaScript(Self.restoreScrollScript(to: stored), completionHandler: nil)
+        lastReportedScrollURL = webView.url
+        webView.evaluateJavaScript(Self.restoreScrollScript(to: stored), completionHandler: nil)
     }
 
     private(set) var pendingTransition: HistoryStore.Transition = .typed
@@ -688,86 +696,30 @@ final class BrowserTab: Identifiable {
 
     /// A new tab is still on its way to the start page; two navigations race.
     private func stopUncommittedStartPage() {
-        guard committedURL == nil, SystemPages.isStart(page.url) else { return }
-        page.stopLoading()
+        guard committedURL == nil, SystemPages.isStart(webView.url) else { return }
+        webView.stopLoading()
     }
 
     @discardableResult
-    func load(_ url: URL, transition: HistoryStore.Transition = .typed) -> PageNavigation? {
-        guard !isClosed else { return nil }
-        pendingNavigationTask?.cancel()
-        pendingTransition = transition
-        let desired = preferredEngine(for: url)
-        let previous = urlString
-        urlString = url.absoluteString
-        if liveView.map({ $0.engine != desired }) == true || retirement != nil || engineSwitchTask != nil {
-            lastRequestedNavigation = nil
-            pendingNavigationTask = Task { [weak self] in
-                guard let self else { return nil }
-                if liveView.map({ $0.engine != desired }) == true
-                    && (hasEditedForm || isAgentWorking || isPlayingAudio || isSharingScreen
-                        || !permissions.live.isEmpty || hasActiveDownload?() == true) {
-                    guard await ConfirmAlert.destructive(
-                        "Switch rendering engine?",
-                        detail: "This reloads the website and may end active work, media, or downloads.",
-                        verb: "Switch Engine"
-                    ) else {
-                        if !Task.isCancelled {
-                            urlString = previous
-                        }
-                        return nil
-                    }
-                }
-                guard !Task.isCancelled, await replaceEngine(with: desired), !Task.isCancelled else { return nil }
-                let result = loadDirect(url)
-                lastRequestedNavigation = result
-                return result
-            }
-            return nil
-        }
-        let result = loadDirect(url)
-        lastRequestedNavigation = result
-        return result
-    }
-
-    private func loadDirect(_ url: URL) -> PageNavigation? {
-        discardDeferredSession()
+    func load(_ url: URL, transition: HistoryStore.Transition = .typed) -> WKNavigation? {
         autofillSave.clear()
+        pendingTransition = transition
+        discardDeferredSession()
         stopUncommittedStartPage()
         permitSystemPage(url)
+        // WebKit refuses a plain request for a file: URL and leaves the tab blank.
         if url.isFileURL {
-            return page.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            return webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+        } else {
+            return webView.load(URLRequest(url: url))
         }
-        return page.load(URLRequest(url: url))
-    }
-
-    func waitForPendingNavigation() async -> PageNavigation? {
-        guard let task = pendingNavigationTask else { return lastRequestedNavigation }
-        return await task.value
     }
 
     func loadHTML(_ html: String, baseURL: URL?) {
-        guard !isClosed else { return }
-        pendingNavigationTask?.cancel()
         autofillSave.clear()
         discardDeferredSession()
-        if retirement != nil || engineSwitchTask != nil {
-            pendingNavigationTask = Task { [weak self] in
-                guard let self else { return nil }
-                if let pending = engineSwitchTask {
-                    _ = await pending.value
-                }
-                await waitForRetirement()
-                guard !isClosed, !Task.isCancelled else { return nil }
-                stopUncommittedStartPage()
-                let result = page.loadHTMLString(html, baseURL: baseURL)
-                lastRequestedNavigation = result
-                return result
-            }
-            return
-        }
         stopUncommittedStartPage()
-        lastRequestedNavigation = page.loadHTMLString(html, baseURL: baseURL)
+        webView.loadHTMLString(html, baseURL: baseURL)
     }
 
     // MARK: - Deferred restore
@@ -800,7 +752,7 @@ final class BrowserTab: Identifiable {
             return cachedSessionState
         }
         if !hasFreshSessionState {
-            cachedSessionState = page.interactionState as? Data
+            cachedSessionState = webView.interactionState as? Data
             hasFreshSessionState = true
         }
         return cachedSessionState
@@ -819,32 +771,14 @@ final class BrowserTab: Identifiable {
         clearDeferredSession()
         invalidateSessionState()
         isRestoring = true
-        if let retirement {
-            pendingNavigationTask?.cancel()
-            pendingNavigationTask = Task { [weak self] in
-                await retirement.value
-                guard let self, !isClosed, !Task.isCancelled else { return nil }
-                return restoreDeferredState(state, url: url)
-            }
-        } else {
-            lastRequestedNavigation = restoreDeferredState(state, url: url)
-        }
-    }
-
-    private func restoreDeferredState(_ state: Data?, url: URL?) -> PageNavigation? {
         permitSystemPage(url)
-        if let url {
-            urlString = url.absoluteString
+        if let state {
+            webView.interactionState = state
+        } else if let url {
+            webView.load(URLRequest(url: url))
+        } else {
+            isRestoring = false
         }
-        if let state, BrowserPage.canRestore(state, using: preferredEngine(for: url)) {
-            page.interactionState = state
-            return nil
-        }
-        if let url {
-            return loadDirect(url)
-        }
-        isRestoring = false
-        return nil
     }
 
     private func discardDeferredSession() {
@@ -862,85 +796,122 @@ final class BrowserTab: Identifiable {
         processState.finishReload()
     }
 
-    var isShowingError = false
-    var isLoadingErrorPage = false
-}
-
-extension BrowserTab {
-    func refreshCanvas(from page: BrowserPage) {
+    func refreshCanvas(from webView: WKWebView) {
         canvasColor = isShowingRealPage && hasPresentedContent
-            ? page.underPageBackgroundColor
+            ? webView.underPageBackgroundColor
             : nil
     }
 
-    func documentFilename(for url: URL?) -> String? {
-        url.flatMap { documentTitles[Self.documentURL($0)] }
+    private static let presentationUpdateSelector = Selector(("_doAfterNextPresentationUpdate:"))
+    static let coverCeiling: Duration = .milliseconds(400)
+
+    @ObservationIgnored var presentationClock: any Clock<Duration> = ContinuousClock()
+
+    @ObservationIgnored private var coverHold: Task<Void, Never>?
+    @ObservationIgnored private var isArmingPresentation = false
+
+    func coverUntilPresented() {
+        hasPresentedContent = false
+        coverHold?.cancel()
+        coverHold = nil
+        awaitPresentation()
     }
 
-    func noteMainFrameResponse(_ response: URLResponse) {
-        guard let url = response.url.map(Self.documentURL) else { return }
-        if response.mimeType?.lowercased() == "application/pdf",
-           let filename = response.suggestedFilename, !filename.isEmpty {
-            documentTitles[url] = filename
-        } else {
-            documentTitles[url] = nil
+    private func awaitPresentation() {
+        guard webView.window != nil else { return }
+        guard webView.responds(to: Self.presentationUpdateSelector) else {
+            uncover()
+            return
         }
+        let done: @convention(block) () -> Void = { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if self.isArmingPresentation {
+                    self.uncover()
+                } else {
+                    self.didPresentContent()
+                }
+            }
+        }
+        isArmingPresentation = true
+        _ = webView.perform(Self.presentationUpdateSelector, with: done)
+        isArmingPresentation = false
     }
 
-    private static func documentURL(_ url: URL) -> URL {
-        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
-        components.fragment = nil
-        return components.url ?? url
+    func didPresentContent() {
+        guard !hasPresentedContent else { return }
+        guard presentedFrameWouldFlash else {
+            uncover()
+            return
+        }
+        if coverHold == nil {
+            coverHold = Task { [weak self, presentationClock] in
+                try? await presentationClock.sleep(for: Self.coverCeiling)
+                guard !Task.isCancelled else { return }
+                self?.uncover()
+            }
+        }
+        awaitPresentation()
+    }
+
+    private func uncover() {
+        guard !hasPresentedContent else { return }
+        coverHold?.cancel()
+        coverHold = nil
+        hasPresentedContent = true
+        refreshCanvas(from: webView)
+        refreshPageColor(from: webView)
+    }
+
+    private var presentedFrameWouldFlash: Bool {
+        Self.wouldFlash(
+            painting: webView.underPageBackgroundColor,
+            inDark: webView.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        )
     }
 
     func refreshChrome() {
-        isLoading = page.isLoading && isShowingRealPage && !stoppedNavigation
-        canGoBackInWeb = page.canGoBack
-        canGoForwardInWeb = page.canGoForward
+        isLoading = webView.isLoading && isShowingRealPage && !stoppedNavigation
+        canGoBackInWeb = webView.canGoBack
+        canGoForwardInWeb = webView.canGoForward
         let displaced = committedURL
-        committedURL = page.backForwardList.currentItem?.url
-        let url = page.url
-        if url?.absoluteString == "about:blank" {
-            urlString = ""
-            title = SystemPages.startTitle
-            favicon = nil
-        } else if let page = InternalPage(url: url) {
+        committedURL = webView.backForwardList.currentItem?.url
+        let url = webView.url
+        if let page = InternalPage(url: url) {
             urlString = url?.absoluteString ?? page.url.absoluteString
             title = page.title
             favicon = nil
         } else if SystemPages.isStart(url) {
-            // Do not replace the title of a failed navigation still covering the start page.
+            // The start page takes the row's name back only over a page that had one.
             let leftOwnPage = InternalPage(url: URL(string: urlString)) != nil
-            if urlString.isEmpty || leftOwnPage || (displaced != nil && displaced != committedURL) {
+            if leftOwnPage || (displaced != nil && displaced != committedURL) {
                 urlString = ""
-                title = SystemPages.startTitle
+                title = Self.placeholderTitle
                 favicon = nil
             }
         } else {
-            if let url, !(isShowingError && page.chromium?.htmlDocumentURL == url) {
+            if let url, url.absoluteString != "about:blank" {
                 urlString = url.absoluteString
             }
-            if let pageTitle = page.title, !pageTitle.isEmpty {
+            if let pageTitle = webView.title, !pageTitle.isEmpty {
                 title = pageTitle
-            } else if isShowingRealPage, extensionBaseURL == nil, !isRestoring {
-                title = documentFilename(for: url) ?? Self.placeholderTitle
             }
         }
         refreshSecurity()
-        refreshCanvas(from: page)
+        refreshCanvas(from: webView)
     }
 
-    func refreshSecurity() {
-        guard !isShowingError, let scheme = page.url?.scheme else {
+    fileprivate func refreshSecurity() {
+        guard !isShowingError, let scheme = webView.url?.scheme else {
             security = .none
             return
         }
         switch scheme {
         case "https":
-            if page.isLoading {
+            if webView.isLoading {
                 security = .pending
             } else {
-                security = page.hasOnlySecureContent ? .secure : .mixed
+                security = webView.hasOnlySecureContent ? .secure : .mixed
             }
         case "http":
             security = .insecure
@@ -949,30 +920,31 @@ extension BrowserTab {
         }
     }
 
+    var isShowingError = false
+
     func declaredFaviconChanged() {
         guard extensionBaseURL == nil, !isPrivate, !isShowingSystemPage else { return }
-        guard let host = page.url?.host()?.lowercased() else { return }
-        context.favicons.forget(host: host)
+        guard let host = webView.url?.host()?.lowercased() else { return }
+        FaviconLoader.shared.forget(host: host)
         refreshFavicon()
     }
 
     func refreshFavicon() {
         guard extensionBaseURL == nil, isMaterialised else { return }
         guard !isPrivate, !isShowingSystemPage else { return }
-        guard let host = page.url?.host()?.lowercased() else { return }
+        guard let host = webView.url?.host()?.lowercased() else { return }
         if host != faviconHost {
             faviconHost = host
             favicon = nil
         }
-        if let cached = context.favicons.cached(for: host) {
+        if let cached = FaviconLoader.shared.cached(for: host) {
             favicon = cached
-            guard context.favicons.isGuessedIcon(for: host) else { return }
+            guard FaviconLoader.shared.isGuessedIcon(for: host) else { return }
         }
         Task { [weak self] in
             guard let self else { return }
-            let view = page
-            let icon = await context.favicons.load(for: view)
-            guard !isClosed, liveView === view, let icon, view.url?.host()?.lowercased() == host else { return }
+            let icon = await FaviconLoader.shared.load(for: webView)
+            guard let icon, webView.url?.host()?.lowercased() == host else { return }
             favicon = icon
         }
     }

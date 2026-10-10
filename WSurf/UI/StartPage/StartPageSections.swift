@@ -41,8 +41,7 @@ private struct StartPageSectionView: View {
                 StartPageFrequentSitesSection(
                     sites: sites,
                     browser: browser,
-                    coordinator: coordinator,
-                    settings: coordinator.context.settings
+                    settings: coordinator.settings
                 )
             case .history(let entries):
                 StartPageHistorySection(
@@ -106,8 +105,8 @@ private struct StartPageTaskSection: View {
 private struct StartPageFrequentSitesSection: View {
     let sites: [StartPageSite]
     let browser: BrowserModel
-    let coordinator: AppCoordinator
     let settings: BrowserSettings
+
     var body: some View {
         StartPageSectionGroup(section: .frequentSites) {
             LazyVGrid(
@@ -118,12 +117,7 @@ private struct StartPageFrequentSitesSection: View {
                     StartPageSiteTile(
                         site: site,
                         action: { open(site.url) },
-                        onRemove: { settings.hideFrequentSite(host: site.domain) },
-                        isPrivate: browser.opensPrivately,
-                        onOpenInNewWindow: { isPrivate in
-                            guard let url = URL(string: site.url) else { return }
-                            coordinator.openLinkInNewWindow(url, isPrivate: isPrivate)
-                        }
+                        onRemove: { settings.hideFrequentSite(host: site.domain) }
                     )
                 }
             }
@@ -149,12 +143,7 @@ private struct StartPageHistorySection: View {
                         entry: entry,
                         action: { open(entry.url) },
                         onRemove: { browser.history.remove(entry) },
-                        onOpenInNewTab: { openInNewTab(entry.url, activate: $0) },
-                        onOpenInNewWindow: { isPrivate in
-                            guard let url = URL(string: entry.url) else { return }
-                            coordinator.openLinkInNewWindow(url, isPrivate: isPrivate)
-                        },
-                        isPrivate: browser.opensPrivately
+                        onOpenInNewTab: { openInNewTab(entry.url, activate: $0) }
                     )
                 }
 

@@ -7,7 +7,7 @@ import Foundation
 import WebKit
 
 extension PageDriver {
-    static func verifyControl(ref: Int, value: String?, checked: Bool?, in view: BrowserPage) async -> Bool {
+    static func verifyControl(ref: Int, value: String?, checked: Bool?, in view: WKWebView) async -> Bool {
         guard await validateObservation(in: view, ref: ref), let encoded = jsonString(value ?? "") else { return false }
         let result = await evaluateJSON(scripted("""
             const el = window.__wsurfRefs[\(ref) - 1];
@@ -19,7 +19,7 @@ extension PageDriver {
         return result?["matched"] as? Bool == true
     }
 
-    static func inspectControl(ref: Int, offset: Int = 0, in view: BrowserPage) async -> String {
+    static func inspectControl(ref: Int, offset: Int = 0, in view: WKWebView) async -> String {
         guard await validateObservation(in: view, ref: ref) else { return staleMessage }
         let start = max(0, offset)
         let script = scripted(
@@ -27,17 +27,12 @@ extension PageDriver {
             const el = window.__wsurfRefs[\(ref) - 1];
             const rect = el.getBoundingClientRect();
             const result = { ref: \(ref), kind: R.kindOf(el), label: R.labelOf(el, R.kindOf(el)),
-              disabled: R.disabled(el), readOnly: !!el.readOnly || el.getAttribute('aria-readonly') === 'true',
+              disabled: R.disabled(el), readOnly: !!el.readOnly,
               role: el.getAttribute('role'), expanded: el.getAttribute('aria-expanded'),
               checked: el.checked ?? el.getAttribute('aria-checked'),
               bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } };
             if (R.isSensitiveField(el)) result.value = '(hidden)';
-            else if (el.tagName === 'INPUT') {
-              result.type = el.type;
-              if (['range','color','date','datetime-local','time','month','week','number'].includes(el.type)) result.value = el.value;
-              result.min = el.min.slice(0, 100); result.max = el.max.slice(0, 100);
-              result.step = el.step.slice(0, 100); result.placeholder = el.placeholder.slice(0, 200);
-            } else if (el.options) {
+            else if (el.options) {
               result.options = Array.from(el.options).slice(\(start), \(start + 12)).map(o => ({
                 label: R.norm(o.text).slice(0, 100), value: o.value.slice(0, 100),
                 disabled: o.disabled || !!o.closest('optgroup[disabled]'), selected: o.selected }));
@@ -55,35 +50,35 @@ extension PageDriver {
             + "\nobservationID: " + (observation(in: view)?.id ?? "")
     }
 
-    static func setChecked(
-        ref: Int, checked: Bool, in view: BrowserPage, announced: Bool = false, refreshControls: Bool = true
-    ) async -> String {
+    static func setChecked(ref: Int, checked: Bool, in view: WKWebView, announced: Bool = false) async -> String {
         guard await validateObservation(in: view, ref: ref) else { return staleMessage }
-        let state = await evaluateJSON(scripted("""
-            const el = window.__wsurfRefs[\(ref) - 1];
-            if (R.isSensitiveField(el)) return JSON.stringify({ refused: true });
-            R.expectValue(el, \(checked));
-            return JSON.stringify({ kind: R.kindOf(el), checked: el.checked ?? (el.getAttribute('aria-checked') === 'true') });
-            """), in: view)
-        if state?["refused"] as? Bool == true { return "The user must fill this sensitive field. Do not retry with another tool." }
-        guard let kind = state?["kind"] as? String, ["checkbox", "radio"].contains(kind) else {
-            return "Use a checkbox, switch, or radio ref."
+        let state = await evaluateJSON(
+            scripted(
+                """
+                const el = window.__wsurfRefs[\(ref) - 1];
+                return JSON.stringify({ kind: R.kindOf(el), checked: el.checked ?? (el.getAttribute('aria-checked') === 'true') });
+                """), in: view)
+        guard let kind = state?["kind"] as? String, ["checkbox", "radio"].contains(kind) else { return "Use a checkbox, switch, or radio ref." }
+        if state?["checked"] as? Bool == checked { return "Checked state already matches.\n" + (await snapshot(view)) }
+        if kind == "radio", !checked { return "Choose another radio option to change the selection." }
+        let document = observation(in: view)?.documentID
+        let output = await click(ref: ref, label: "", in: view, announced: announced)
+        guard output.hasPrefix("Clicked") else { return output }
+        guard observation(in: view)?.documentID == document else { return "The page changed before the checked state could be confirmed.\n" + output }
+        let confirmed = await PageAutomationGuard.withCurrentDocument(in: view) {
+            let actual = await evaluateJSON(
+            scripted(
+                """
+                const el = window.__wsurfRefs[\(ref) - 1];
+                return JSON.stringify({ matches: !!el?.isConnected && (el.checked ?? (el.getAttribute('aria-checked') === 'true')) === \(checked) });
+                """), in: view)
+            return actual?["matches"] as? Bool == true ? "confirmed" : "unconfirmed"
         }
-        let documentID = observation(in: view)?.documentID
-        let status: String
-        if state?["checked"] as? Bool == checked {
-            status = "Checked state already matches."
-        } else {
-            if kind == "radio", !checked { return "Choose another radio option to change the selection." }
-            let output = await click(ref: ref, label: "", in: view, announced: announced, refreshControls: false)
-            guard output.hasPrefix("Clicked") else { return output }
-            status = "Set checked state to \(checked)."
-        }
-        return await finishValueAction(
-            status: status, ref: ref, documentID: documentID, refreshControls: refreshControls, in: view)
+        guard confirmed == "confirmed" else { return "The requested checked state was not confirmed.\n" + output }
+        return "Set checked state to \(checked).\n" + output
     }
 
-    static func waitForPage(condition: String, value: String, timeout: Int = 5, in view: BrowserPage) async -> String {
+    static func waitForPage(condition: String, value: String, timeout: Int = 5, in view: WKWebView) async -> String {
         guard ["text", "textAbsent", "url", "ready"].contains(condition),
             condition == "ready" || !value.isEmpty,
             let encoded = jsonString(value)
@@ -121,7 +116,7 @@ extension PageDriver {
         return "Timed out waiting for \(condition).\n" + (await PageAutomationGuard.withCurrentDocument(in: view) { await snapshot(view, lookingFor: value) })
     }
 
-    static func screenshot(in view: BrowserPage) async -> Data? {
+    static func screenshot(in view: WKWebView) async -> Data? {
         guard PageAutomationGuard.allowsExecution else { return nil }
         let document = view.url
         let safetyCheck = scripted(
@@ -131,9 +126,10 @@ extension PageDriver {
             """)
         let safe = await evaluateJSON(safetyCheck, in: view)
         guard safe?["safe"] as? Bool == true else { return nil }
-        guard let image = try? await view.capture(width: min(1280, max(1, view.bounds.width))),
-              PageAutomationGuard.allowsExecution, view.url == document,
-              let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff)
+        let config = WKSnapshotConfiguration()
+        config.snapshotWidth = NSNumber(value: min(1280, max(1, view.bounds.width)))
+        guard let image = try? await view.takeSnapshot(configuration: config), PageAutomationGuard.allowsExecution, view.url == document,
+            let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff)
         else { return nil }
         let after = await evaluateJSON(safetyCheck, in: view)
         guard after?["safe"] as? Bool == true, after?["document"] as? String == safe?["document"] as? String else { return nil }

@@ -16,7 +16,6 @@ extension BrowserModel {
         let spared = Set([activeTabID].compactMap { $0 } + recentlyActive.prefix(keep))
         var discarded = 0
         for tab in tabs where !spared.contains(tab.id)
-            && !tab.isFavorite
             && tab.canDiscardWebContent
             && protectionReason(for: tab) == nil {
             tab.discardWebContent()
@@ -102,43 +101,6 @@ extension BrowserModel {
         else { return "" }
         return SitePermissions.origin(for: url)
     }
-    func setEngine(_ engine: BrowserEngine, for origin: String) async -> Bool {
-        let permissions = sitePermissions
-        let canonical = SitePermissions.origin(for: URL(string: origin))
-        guard let scheme = URL(string: canonical)?.scheme?.lowercased(),
-              scheme == "http" || scheme == "https"
-        else { return false }
-        guard sitePermissions.engine(for: canonical) != engine else { return true }
-
-        let affected = tabs.filter { siteOrigin(for: $0) == canonical && $0.isMaterialised }
-        let protected = affected.contains {
-            $0.intrinsicProtectionReason != nil || downloads.hasActiveDownload(for: $0.id)
-        }
-        if protected {
-            guard await ConfirmAlert.destructive(
-                "Switch rendering engine?",
-                detail: "This reloads the website and may end active work, media, or downloads.",
-                verb: "Switch Engine"
-            ) else { return false }
-        }
-        guard sitePermissions === permissions else { return false }
-
-        sitePermissions.setEngine(engine, for: canonical)
-        await applyStoredEngine(to: canonical)
-        return true
-    }
-
-    func engine(for tab: BrowserTab) -> BrowserEngine {
-        sitePermissions.engine(for: siteOrigin(for: tab))
-    }
-
-    func applyStoredEngine(to origin: String) async {
-        let engine = sitePermissions.engine(for: origin)
-        for tab in tabs where siteOrigin(for: tab) == origin && tab.isMaterialised {
-            guard tab.page.engine != engine else { continue }
-            _ = await tab.switchEngine(to: engine)
-        }
-    }
 
     func keepsActive(_ tab: BrowserTab) -> Bool {
         let origin = siteOrigin(for: tab)
@@ -163,8 +125,8 @@ extension BrowserModel {
     }
 
     func relieveMemoryPressure(_ level: MemoryPressureMonitor.Level) {
-        context.webViewPool.discardIdleForMemoryPressure()
-        guard context.settings.sleepsInactiveTabs else { return }
+        WebViewPool.shared.discardIdleForMemoryPressure()
+        guard BrowserSettings.shared.sleepsInactiveTabs else { return }
         let keep = level == .critical ? 0 : Self.warningKeepsRecent
         let discarded = discardBackgroundTabs(keepingRecent: keep)
         guard discarded > 0 else { return }
@@ -172,24 +134,24 @@ extension BrowserModel {
     }
 
     func applyWebSettings() {
-        let settings = context.settings
+        let settings = BrowserSettings.shared
         for tab in tabs where tab.isMaterialised {
-            settings.apply(to: tab.page)
+            settings.apply(to: tab.webView)
             tab.refreshPopupPolicy()
         }
-        context.webViewPool.discardIdle()
+        WebViewPool.shared.discardIdle()
     }
 
     func autoplay(for tab: BrowserTab) -> AutoplayPolicy {
         let origin = siteOrigin(for: tab)
-        guard !origin.isEmpty else { return context.settings.autoplay }
-        return sitePermissions.autoplay(for: origin) ?? context.settings.autoplay
+        guard !origin.isEmpty else { return BrowserSettings.shared.autoplay }
+        return sitePermissions.autoplay(for: origin) ?? BrowserSettings.shared.autoplay
     }
 
     func setAutoplay(_ policy: AutoplayPolicy, for tab: BrowserTab) {
         let origin = siteOrigin(for: tab)
         guard !origin.isEmpty else { return }
-        sitePermissions.setAutoplay(policy == context.settings.autoplay ? nil : policy, for: origin)
+        sitePermissions.setAutoplay(policy == BrowserSettings.shared.autoplay ? nil : policy, for: origin)
     }
 
     func popups(for tab: BrowserTab) -> PopupPolicy {
@@ -199,7 +161,7 @@ extension BrowserModel {
     func setPopups(_ policy: PopupPolicy, for tab: BrowserTab) {
         let origin = siteOrigin(for: tab)
         guard !origin.isEmpty else { return }
-        let fallback: PopupPolicy = context.settings.blocksPopups ? .blockAndNotify : .allow
+        let fallback: PopupPolicy = BrowserSettings.shared.blocksPopups ? .blockAndNotify : .allow
         sitePermissions.setPopups(policy == fallback ? nil : policy, for: origin)
         tab.refreshPopupPolicy()
     }
@@ -353,7 +315,7 @@ extension BrowserModel {
         } else if Self.looksLikeLocation(text), let url = URL(string: "https://\(text)") {
             tab.load(url)
         } else {
-            tab.load(SearchURLBuilder.searchURL(for: text, settings: context.settings))
+            tab.load(SearchURLBuilder.searchURL(for: text))
         }
     }
 }

@@ -3,27 +3,9 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import AppKit
-import CefKit
 import Observation
 import os
 import WebKit
-
-struct ChromiumDownloadControls {
-    let pageID: ObjectIdentifier
-    let isLive: () -> Bool
-    let cancel: (UInt32) -> Void
-    let pause: (UInt32) -> Void
-    let resume: (UInt32) -> Void
-}
-
-struct ChromiumDownloadRequest {
-    let download: CefDownload
-    let suggestedName: String
-    let sourceTabID: UUID?
-    let isPrivate: Bool
-    let window: NSWindow?
-    let controls: ChromiumDownloadControls
-}
 
 @Observable
 final class DownloadManager: NSObject {
@@ -82,47 +64,32 @@ final class DownloadManager: NSObject {
     @ObservationIgnored var onFinished: ((String) -> Void)?
 
     @ObservationIgnored private var live: [UUID: WKDownload] = [:]
-    @ObservationIgnored private var chromiumIDs: [UInt32: UUID] = [:]
-    @ObservationIgnored private var chromiumControls: [UInt32: ChromiumDownloadControls] = [:]
-    @ObservationIgnored private var chromiumPaused: Set<UUID> = []
-    @ObservationIgnored private var retiredChromiumPages: Set<ObjectIdentifier> = []
     @ObservationIgnored private var identifiers: [ObjectIdentifier: UUID] = [:]
     @ObservationIgnored private var observations: [UUID: NSKeyValueObservation] = [:]
     @ObservationIgnored private var origins: [UUID: URL] = [:]
     @ObservationIgnored private var resumeData: [UUID: Data] = [:]
     @ObservationIgnored private var resuming: Set<UUID> = []
-    @ObservationIgnored private var explicitSaves: Set<UUID> = []
-    @ObservationIgnored private var writingDestinations: Set<URL> = []
 
     @ObservationIgnored var webViewProvider: (() -> WKWebView?)?
 
     @ObservationIgnored private let destinationFolderOverride: URL?
     @ObservationIgnored private let asksWhereToSaveOverride: Bool?
-    @ObservationIgnored var selectSaveLocation: ((String, URL, NSWindow?) async -> URL?)?
-    @ObservationIgnored var writeDocument: (Data, URL, Data.WritingOptions) async throws -> Void = { data, destination, options in
-        try await Task.detached(priority: .userInitiated) {
-            try data.write(to: destination, options: options)
-        }.value
-    }
     @ObservationIgnored private let file: URL?
-    @ObservationIgnored private let settings: BrowserSettings
     @ObservationIgnored private var writeTask: Task<Void, Never>?
 
-    init(
-        destinationFolder: URL? = nil,
-        asksWhereToSave: Bool? = nil,
-        file: URL? = nil,
-        persists: Bool = true,
-        settings: BrowserSettings = .application
-    ) {
+    init(destinationFolder: URL? = nil, asksWhereToSave: Bool? = nil, file: URL? = nil) {
         destinationFolderOverride = destinationFolder
         asksWhereToSaveOverride = asksWhereToSave
-        self.file = persists ? file : nil
-        self.settings = settings
+        self.file = file ?? Self.defaultFile
         super.init()
         items = Self.read(from: self.file)
         writeTask?.cancel()
         writeTask = nil
+    }
+
+    static var defaultFile: URL? {
+        guard !AppDatabase.isRunningTests, AppDatabase.ownsSession else { return nil }
+        return AppDatabase.supportDirectory.appendingPathComponent("Downloads.json")
     }
 
     /// A ceiling the list is not meant to reach: what it keeps is decided by
@@ -219,199 +186,6 @@ final class DownloadManager: NSObject {
         attach(download, to: id)
     }
 
-    /// Save the PDF viewer's current bytes through the ordinary download policy.
-    /// Explicit saves are distinct actions, unlike duplicate WKDownload handoffs.
-    func save(
-        _ data: Data,
-        suggestedFilename: String,
-        source: URL?,
-        sourceTabID: UUID? = nil,
-        privately: Bool = false,
-        on window: NSWindow? = nil
-    ) async -> URL? {
-        let id = beginItem(source: source, sourceTabID: sourceTabID, privately: privately)
-        explicitSaves.insert(id)
-        defer { explicitSaves.remove(id) }
-        update(id) { $0.filename = Self.safeFilename(suggestedFilename) }
-        let options: Data.WritingOptions = asksWhereToSave ? .atomic : .withoutOverwriting
-        guard let destination = await destination(for: suggestedFilename, itemID: id, on: window) else {
-            noteCancelRequested(id)
-            finish(id)
-            return nil
-        }
-        noteDestination(destination, expectedLength: Int64(data.count), for: id)
-        writingDestinations.insert(destination)
-        defer { writingDestinations.remove(destination) }
-        do {
-            try await writeDocument(data, destination, options)
-        } catch {
-            noteFailure(id, reason: error.localizedDescription, resumeData: nil)
-            return nil
-        }
-        // A tab/private session may close during disk IO; the written file must
-        // still be quarantined even when its transient row has been removed.
-        guard items.contains(where: { $0.id == id && $0.isRunning }) else {
-            Self.quarantine(destination, from: source)
-            finish(id)
-            return nil
-        }
-        noteProgress(received: Int64(data.count), expected: Int64(data.count), for: id)
-        noteFinished(id)
-        return destination
-    }
-
-    /// Accepts the native CEF request callback. The completion is passed
-    /// directly to CEF; no WebKit resume data is synthesized for Chromium.
-    func decideChromiumDownload(
-        _ request: ChromiumDownloadRequest,
-        completion: @escaping (CefDownloadDecision) -> Void
-    ) {
-        let id = chromiumIDs[request.download.id] ?? beginItem(
-            source: request.download.url,
-            sourceTabID: request.sourceTabID,
-            privately: request.isPrivate
-        )
-        chromiumIDs[request.download.id] = id
-        chromiumControls[request.download.id] = request.controls
-        if request.controls.isLive() {
-            retiredChromiumPages.remove(request.controls.pageID)
-        }
-        let name = request.suggestedName.isEmpty ? "Download" : request.suggestedName
-        update(id) { $0.filename = Self.safeFilename(name) }
-        guard !retiredChromiumPages.contains(request.controls.pageID), request.controls.isLive() else {
-            update(id) { $0.state = .interrupted("The page closed before this download could start") }
-            finish(id)
-            completion(.deny)
-            return
-        }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let destination = await destination(for: name, itemID: id, on: request.window)
-            guard !Task.isCancelled,
-                  !retiredChromiumPages.contains(request.controls.pageID),
-                  request.controls.isLive(),
-                  chromiumIDs[request.download.id] == id
-            else {
-                if items.contains(where: { $0.id == id && $0.isRunning }) {
-                    update(id) { $0.state = .interrupted("The page closed before this download could start") }
-                    finish(id)
-                }
-                completion(.deny)
-                return
-            }
-            guard let destination else {
-                update(id) { $0.state = .cancelled }
-                finish(id)
-                completion(.deny)
-                return
-            }
-            noteDestination(destination, expectedLength: request.download.totalBytes, for: id)
-            completion(.allow(destination: destination))
-        }
-    }
-
-    /// Consumes snapshots from the native CEF page and maps them to its row.
-    func noteChromiumDownload(_ download: CefDownload, from page: BrowserPage? = nil) {
-        guard let id = chromiumIDs[download.id] else { return }
-        if let page {
-            guard let chromium = page.chromium,
-                  chromiumControls[download.id]?.pageID == ObjectIdentifier(chromium)
-            else { return }
-        }
-        if let path = download.fullPath, items.first(where: { $0.id == id })?.destination == nil {
-            noteDestination(path, expectedLength: download.totalBytes, for: id)
-        }
-        noteProgress(received: download.receivedBytes, expected: download.totalBytes, for: id)
-        if download.isComplete {
-            var filename = ""
-            var destination: URL?
-            update(id) {
-                $0.state = .finished
-                filename = $0.filename
-                destination = $0.destination
-            }
-            if let destination {
-                Self.quarantine(destination, from: origins[id])
-            }
-            finish(id)
-            onFinished?(filename)
-        } else if download.isCanceled {
-            update(id) { $0.state = .interrupted("Chromium download interrupted") }
-            finish(id)
-        }
-    }
-
-    func retireChromiumPage(_ page: BrowserPage) {
-        guard let chromium = page.chromium else { return }
-        let pageID = ObjectIdentifier(chromium)
-        retiredChromiumPages.insert(pageID)
-        let ids = chromiumControls.compactMap { nativeID, controls in
-            controls.pageID == pageID ? nativeID : nil
-        }
-        for nativeID in ids {
-            guard let id = chromiumIDs[nativeID] else { continue }
-            update(id) { item in
-                guard item.isRunning else { return }
-                item.state = .interrupted("Download stopped because its page closed")
-            }
-            finish(id)
-        }
-    }
-
-    func pause(_ item: Item) {
-        guard let nativeID = chromiumIDs.first(where: { $0.value == item.id }),
-              let controls = chromiumControls[nativeID.key],
-              controls.isLive()
-        else { return }
-        chromiumPaused.insert(item.id)
-        update(item.id) { $0.state = .interrupted("Download paused") }
-        controls.pause(nativeID.key)
-    }
-
-    func cancel(_ item: Item) {
-        if explicitSaves.contains(item.id) {
-            noteCancelRequested(item.id)
-            return
-        }
-        if let nativeID = chromiumIDs.first(where: { $0.value == item.id }) {
-            guard let controls = chromiumControls[nativeID.key], controls.isLive() else {
-                update(item.id) { $0.state = .interrupted("Chromium download stopped with its page") }
-                finish(item.id)
-                return
-            }
-            noteCancelRequested(item.id)
-            controls.cancel(nativeID.key)
-            finish(item.id)
-            return
-        }
-        guard let download = live[item.id] else { return }
-        let id = item.id
-        noteCancelRequested(id)
-        download.cancel { [weak self] data in
-            Task { @MainActor [weak self] in
-                self?.noteCancellation(id, resumeData: data)
-            }
-        }
-    }
-
-    func resume(_ item: Item) {
-        if let nativeID = chromiumIDs.first(where: { $0.value == item.id }),
-           let controls = chromiumControls[nativeID.key],
-           chromiumPaused.contains(item.id),
-           controls.isLive() {
-            chromiumPaused.remove(item.id)
-            noteResumeStarted(item.id)
-            controls.resume(nativeID.key)
-            return
-        }
-        guard let data = resumeData[item.id], let webView = webViewProvider?() else { return }
-        let id = item.id
-        noteResumeStarted(id)
-        webView.resumeDownload(fromResumeData: data) { [weak self] download in
-            self?.attach(download, to: id)
-        }
-    }
-
     @ObservationIgnored var onBegin: (() -> Void)?
 
     @discardableResult
@@ -469,6 +243,28 @@ final class DownloadManager: NSObject {
             let expected = progress.totalUnitCount
             Task { @MainActor [weak self] in
                 self?.noteProgress(received: received, expected: expected, for: id)
+            }
+        }
+    }
+
+    func cancel(_ item: Item) {
+        guard let download = live[item.id] else { return }
+        let id = item.id
+        noteCancelRequested(id)
+        download.cancel { [weak self] data in
+            Task { @MainActor [weak self] in
+                self?.noteCancellation(id, resumeData: data)
+            }
+        }
+    }
+
+    func resume(_ item: Item) {
+        guard let data = resumeData[item.id], let webView = webViewProvider?() else { return }
+        let id = item.id
+        noteResumeStarted(id)
+        webView.resumeDownload(fromResumeData: data) { [weak self] download in
+            Task { @MainActor [weak self] in
+                self?.attach(download, to: id)
             }
         }
     }
@@ -534,14 +330,7 @@ final class DownloadManager: NSObject {
     }
 
     func canResume(_ item: Item) -> Bool {
-        if let nativeID = chromiumIDs.first(where: { $0.value == item.id })?.key {
-            guard case .interrupted = item.state, chromiumPaused.contains(item.id),
-                  let controls = chromiumControls[nativeID],
-                  controls.isLive()
-            else { return false }
-            return true
-        }
-        return item.isResumable && resumeData[item.id] != nil && webViewProvider?() != nil
+        item.isResumable && resumeData[item.id] != nil && webViewProvider?() != nil
     }
 
     func remove(_ item: Item) {
@@ -588,10 +377,6 @@ final class DownloadManager: NSObject {
         if let download = live.removeValue(forKey: id) {
             identifiers.removeValue(forKey: ObjectIdentifier(download))
         }
-        let nativeIDs = chromiumIDs.filter { $0.value == id }.map(\.key)
-        nativeIDs.forEach { chromiumControls.removeValue(forKey: $0) }
-        chromiumIDs = chromiumIDs.filter { $0.value != id }
-        chromiumPaused.remove(id)
         observations.removeValue(forKey: id)?.invalidate()
         guard !keepingResumeState else { return }
         origins.removeValue(forKey: id)
@@ -604,26 +389,6 @@ final class DownloadManager: NSObject {
     }
 
     // MARK: - Where the file goes
-
-    private var asksWhereToSave: Bool {
-        asksWhereToSaveOverride ?? settings.asksWhereToSave
-    }
-
-    private func destination(for filename: String, itemID: UUID, on window: NSWindow?) async -> URL? {
-        let folder = destinationFolderOverride ?? settings.downloadFolder
-        let name = Self.safeFilename(filename)
-        let selected = asksWhereToSave
-            ? await askWhereToSave(name, in: folder, on: window)
-            : uniqueDestination(for: name, in: folder)
-        guard var selected, items.contains(where: { $0.id == itemID && $0.isRunning }) else { return nil }
-        if writingDestinations.contains(selected) || items.contains(where: { $0.isRunning && $0.destination == selected }) {
-            selected = uniqueDestination(for: selected.lastPathComponent, in: selected.deletingLastPathComponent())
-        }
-        // Reserve before returning across an async boundary, shared by both
-        // network engines and explicit viewer saves.
-        update(itemID) { $0.destination = selected }
-        return selected
-    }
 
     nonisolated static func safeFilename(_ suggested: String) -> String {
         var name = suggested
@@ -645,32 +410,23 @@ final class DownloadManager: NSObject {
         try? manager.createDirectory(at: folder, withIntermediateDirectories: true)
 
         let candidate = folder.appending(path: Self.safeFilename(filename))
-        guard destinationIsTaken(candidate) else { return candidate }
+        guard manager.fileExists(atPath: candidate.path(percentEncoded: false)) else { return candidate }
 
         let stem = candidate.deletingPathExtension().lastPathComponent
         let ext = candidate.pathExtension
         for index in 2...999 {
             let name = ext.isEmpty ? "\(stem) \(index)" : "\(stem) \(index).\(ext)"
             let next = folder.appending(path: name)
-            if !destinationIsTaken(next) {
+            if !manager.fileExists(atPath: next.path(percentEncoded: false)) {
                 return next
             }
         }
-        return folder.appending(path: "\(stem)-\(UUID().uuidString)").appendingPathExtension(ext)
-    }
-
-    private func destinationIsTaken(_ destination: URL) -> Bool {
-        FileManager.default.fileExists(atPath: destination.path(percentEncoded: false))
-            || writingDestinations.contains(destination)
-            || items.contains { $0.isRunning && $0.destination == destination }
+        return candidate
     }
 
     /// A sheet, not `runModal()`. A nested event loop re-enters main-actor work
     /// and wedges when a second download starts under the first panel.
     private func askWhereToSave(_ filename: String, in folder: URL, on window: NSWindow?) async -> URL? {
-        if let selectSaveLocation {
-            return await selectSaveLocation(filename, folder, window)
-        }
         let panel = NSSavePanel()
         panel.title = String(localized: "Save File")
         panel.nameFieldStringValue = Self.safeFilename(filename)
@@ -699,23 +455,31 @@ extension DownloadManager: WKDownloadDelegate {
             return existing
         }
 
-        guard let id = id(for: download) else { return nil }
-        guard let destination = await destination(for: suggestedFilename, itemID: id, on: download.webView?.window) else {
-            update(id) { $0.state = .cancelled }
-            finish(id)
+        let settings = BrowserSettings.shared
+        let name = suggestedFilename.isEmpty ? "Download" : suggestedFilename
+        let folder = destinationFolderOverride ?? settings.downloadFolder
+        let asksWhereToSave = asksWhereToSaveOverride ?? settings.asksWhereToSave
+
+        let destination = asksWhereToSave
+            ? await askWhereToSave(name, in: folder, on: download.webView?.window)
+            : uniqueDestination(for: name, in: folder)
+
+        guard let destination else {
+            if let id = id(for: download) {
+                update(id) { $0.state = .cancelled }
+                finish(id)
+            }
             return nil
         }
 
-        noteDestination(destination, expectedLength: response.expectedContentLength, for: id)
+        if let id = id(for: download) {
+            noteDestination(destination, expectedLength: response.expectedContentLength, for: id)
+        }
         return destination
     }
 
     func downloadDidFinish(_ download: WKDownload) {
         guard let id = id(for: download) else { return }
-        noteFinished(id)
-    }
-
-    private func noteFinished(_ id: UUID) {
         var filename = ""
         var destination: URL?
         update(id) {

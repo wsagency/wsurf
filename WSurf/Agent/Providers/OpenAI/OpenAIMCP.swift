@@ -87,7 +87,7 @@ nonisolated struct OpenAIMCPApproval: Sendable {
 
     func proposal() throws -> Transcript.ToolCall {
         let arguments: OpenAIJSON = ["questions": [["question": .string(question), "options": [.string(Self.deny), .string(Self.approve)]]]]
-        return .init(id: id, toolName: "askUser", arguments: try GeneratedContent(json: arguments.data()))
+        return .init(id: id, toolName: "askUser", arguments: try GeneratedContent(json: arguments.text()))
     }
 
     func answer(_ output: Transcript.ToolOutput) throws -> OpenAIJSON {

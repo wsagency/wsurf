@@ -33,16 +33,10 @@ struct AssistantToolSettingsTests {
         defaultModel: "small-model"
     )
 
-    private func makeModel(
-        settings: LLMSettings,
-        onVoiceChange: (() -> Void)? = nil,
-        onChange: @escaping () -> Void
-    ) -> (IntelligenceViewModel, TestProviderCatalog) {
+    private func makeModel(onVoiceChange: (() -> Void)? = nil, onChange: @escaping () -> Void) -> (IntelligenceViewModel, TestProviderCatalog) {
         let catalog = TestProviderCatalog(providers: [Self.inUse, Self.other], selectedID: Self.inUse.id)
         let credentials = TestCredentialStore()
         let model = IntelligenceViewModel(
-            settings: settings,
-            actionPolicy: AgentActionPolicy(storage: SessionAgentGrantStorage()),
             catalog: catalog,
             credentials: credentials,
             modelProviders: ModelProviderRegistry(credentials: credentials),
@@ -60,11 +54,7 @@ struct AssistantToolSettingsTests {
         OpenAISettingsStore.save(.init(), providerID: Self.inUse.id)
         var agentChanges = 0
         var voiceChanges = 0
-        let (model, _) = makeModel(
-            settings: LLMSettings(defaults: .standard),
-            onVoiceChange: { voiceChanges += 1 },
-            onChange: { agentChanges += 1 }
-        )
+        let (model, _) = makeModel(onVoiceChange: { voiceChanges += 1 }, onChange: { agentChanges += 1 })
         var settings = OpenAIResponseSettings()
         settings.voice.voice = "marin"
         model.saveOpenAISettings(settings)
@@ -77,20 +67,21 @@ struct AssistantToolSettingsTests {
         #expect(agentChanges == 1)
     }
 
-    private func withCleanDefaults(_ body: (IntelligenceViewModel, LLMSettings, @escaping () -> Int) -> Void) {
-        let suiteName = "assistant-tool-settings-tests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let settings = LLMSettings(defaults: defaults)
+    private func withCleanDefaults(_ body: (IntelligenceViewModel, @escaping () -> Int) -> Void) {
+        let previous = LLMSettings.defaults
+        let suiteName = "assistant-tool-settings-tests"
+        let defaults = UserDefaults(suiteName: suiteName)
+        defaults?.removePersistentDomain(forName: suiteName)
+        LLMSettings.defaults = defaults ?? .standard
+        defer { LLMSettings.defaults = previous }
 
         var changes = 0
-        let (model, _) = makeModel(settings: settings) { changes += 1 }
-        body(model, settings, { changes })
+        let (model, _) = makeModel { changes += 1 }
+        body(model, { changes })
     }
 
     @Test func toolsBelongToTheProviderOnScreen() {
-        withCleanDefaults { model, _, _ in
+        withCleanDefaults { model, _ in
             #expect(model.subject.id == Self.inUse.id)
             #expect(model.enabledTools == AgentToolCatalog.defaultIDs(for: .full))
 
@@ -102,12 +93,12 @@ struct AssistantToolSettingsTests {
     }
 
     @Test func editingAnotherProviderLeavesTheOneInUseAlone() {
-        withCleanDefaults { model, settings, _ in
+        withCleanDefaults { model, _ in
             model.open(Self.other)
             model.setTool("playVideo", enabled: true)
 
-            #expect(settings.enabledAgentTools(for: Self.other)?.contains("playVideo") == true)
-            #expect(settings.enabledAgentTools(for: Self.inUse) == nil)
+            #expect(LLMSettings.enabledAgentTools(for: Self.other)?.contains("playVideo") == true)
+            #expect(LLMSettings.enabledAgentTools(for: Self.inUse) == nil)
 
             model.showOverview()
             #expect(model.enabledTools == AgentToolCatalog.defaultIDs(for: .full))
@@ -115,7 +106,7 @@ struct AssistantToolSettingsTests {
     }
 
     @Test func onlyEditsToTheProviderInUseRebuildTheAgent() {
-        withCleanDefaults { model, _, changes in
+        withCleanDefaults { model, changes in
             model.open(Self.other)
             model.setTool("playVideo", enabled: true)
             #expect(changes() == 0, "editing an idle provider rebuilt the running agent")
@@ -127,7 +118,7 @@ struct AssistantToolSettingsTests {
     }
 
     @Test func resetReturnsToTheRecommendedSetForThatProvider() {
-        withCleanDefaults { model, settings, _ in
+        withCleanDefaults { model, _ in
             model.open(Self.other)
             model.setTool("playVideo", enabled: true)
             model.setTool("closeVideo", enabled: true)
@@ -139,12 +130,12 @@ struct AssistantToolSettingsTests {
             #expect(model.isUsingRecommendedTools)
             #expect(model.toolWarning == nil)
             #expect(model.enabledTools == AgentToolCatalog.defaultIDs(for: .core))
-            #expect(settings.enabledAgentTools(for: Self.other) == nil)
+            #expect(LLMSettings.enabledAgentTools(for: Self.other) == nil)
         }
     }
 
     @Test func aLargeWindowProviderNeverWarns() {
-        withCleanDefaults { model, _, _ in
+        withCleanDefaults { model, _ in
             model.setTool("playVideo", enabled: true)
 
             #expect(model.recommendedToolIDs == AgentToolCatalog.defaultIDs(for: .full))
@@ -153,7 +144,7 @@ struct AssistantToolSettingsTests {
     }
 
     @Test func leavingToolsReturnsToTheProviderItWasOpenedFrom() {
-        withCleanDefaults { model, _, _ in
+        withCleanDefaults { model, _ in
             model.open(Self.other)
             model.showTools()
             #expect(model.destination == .tools)
@@ -191,9 +182,7 @@ nonisolated private struct TestCredentialStore: ProviderCredentialStore {
     func save(_ key: String, for provider: Provider) -> String? {
         nil
     }
-    func delete(for provider: Provider) -> String? {
-        nil
-    }
+    func delete(for provider: Provider) {}
 }
 
 @MainActor

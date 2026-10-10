@@ -33,9 +33,7 @@ nonisolated enum LyricsPhase: Equatable {
 @MainActor
 @Observable
 final class LyricsModel {
-    private(set) var phase: LyricsPhase = .idle {
-        didSet { updateTicking() }
-    }
+    private(set) var phase: LyricsPhase = .idle
     private(set) var alternatives: [LyricsMatch] = []
     private(set) var matched: LyricsMatch?
     private(set) var activeIndex: Int?
@@ -47,7 +45,11 @@ final class LyricsModel {
     var isOnScreen = false {
         didSet {
             guard isOnScreen != oldValue else { return }
-            updateTicking()
+            if isOnScreen {
+                startTicking()
+            } else {
+                stopTicking()
+            }
         }
     }
 
@@ -67,7 +69,6 @@ final class LyricsModel {
 
     @ObservationIgnored private let source: any LyricsSource
     @ObservationIgnored private let defaults: UserDefaults
-    @ObservationIgnored private let clock: any Clock<Duration>
     @ObservationIgnored private var anchorMedia: Double = 0
     @ObservationIgnored private var anchorHost: Double = 0
     @ObservationIgnored private var isRunning = false
@@ -78,14 +79,9 @@ final class LyricsModel {
         seconds: 0, isEnabled: false, isPrivate: false, isLive: false
     )
 
-    init(
-        source: any LyricsSource = LRCLIB(),
-        defaults: UserDefaults = .standard,
-        clock: any Clock<Duration> = ContinuousClock()
-    ) {
+    init(source: any LyricsSource = LRCLIB(), defaults: UserDefaults = .standard) {
         self.source = source
         self.defaults = defaults
-        self.clock = clock
         textSize = defaults.string(forKey: Key.textSize)
             .flatMap(LyricsTextSize.init(rawValue:)) ?? .huge
     }
@@ -112,7 +108,6 @@ final class LyricsModel {
         anchorHost = CACurrentMediaTime()
         isRunning = isPlaying
         retime()
-        updateTicking()
     }
 
     func elapsed(at host: Double = CACurrentMediaTime()) -> Double {
@@ -127,16 +122,11 @@ final class LyricsModel {
         }
     }
 
-    private func updateTicking() {
-        guard isOnScreen, isRunning, isSynced else {
-            stopTicking()
-            return
-        }
+    private func startTicking() {
         guard ticker == nil else { return }
-        let clock = clock
         ticker = Task { [weak self] in
             while !Task.isCancelled {
-                do { try await clock.sleep(for: .milliseconds(60)) } catch { return }
+                try? await Task.sleep(for: .milliseconds(60))
                 guard let self else { return }
                 retime()
             }
@@ -146,10 +136,6 @@ final class LyricsModel {
     private func stopTicking() {
         ticker?.cancel()
         ticker = nil
-    }
-
-    deinit {
-        ticker?.cancel()
     }
 
     // MARK: - Looking a track up

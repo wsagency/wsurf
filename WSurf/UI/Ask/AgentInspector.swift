@@ -111,7 +111,7 @@ struct AgentInspector: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var pendingQuestion: AgentQuestionModel.Ask? {
-        coordinator.pendingAgentQuestion(inChrome: false)
+        coordinator.agentQuestions.ask(inSpace: activeSpaceID)
     }
 
     var body: some View {

@@ -185,26 +185,20 @@ enum BrowsingData {
         _ kinds: Set<Kind>,
         range: Range,
         history: HistoryStore,
-        tabs: [BrowserTab] = [],
-        context: BrowserProfileContext
-    ) async throws {
-        try ChromiumRuntime.shared.preflightClearData(
-            context: context,
-            kinds: kinds,
-            since: range.since
-        )
-
+        agent: ConversationLog? = nil,
+        tabs: [BrowserTab] = []
+    ) async {
         if kinds.contains(.history) {
             if range == .everything {
                 history.clear()
             } else {
                 history.removeEntries(since: range.since)
             }
-            context.conversationLog.clearAll()
+            agent?.clearAll()
         }
 
         if kinds.contains(.cookies) {
-            context.sitePermissions.removeEverything()
+            SitePermissions.shared.removeEverything()
             for tab in tabs {
                 tab.permissions.siteDataCleared()
                 tab.assistantAccess.siteDataCleared()
@@ -212,33 +206,30 @@ enum BrowsingData {
         }
 
         if kinds.contains(.cache) {
-            context.favicons.clear(modifiedSince: range.since)
+            FaviconLoader.shared.clear(modifiedSince: range.since)
         }
 
         let types = kinds.reduce(into: Set<String>()) { $0.formUnion($1.dataTypes) }
-        if !types.isEmpty {
-            await context.dataStore.removeData(ofTypes: types, modifiedSince: range.since)
-        }
-        try await ChromiumRuntime.shared.clearData(context: context, kinds: kinds, since: range.since)
+        guard !types.isEmpty else { return }
+        await store.removeData(ofTypes: types, modifiedSince: range.since)
     }
 
-    static func siteCount(context: BrowserProfileContext) async throws -> Int {
-        try await WebsiteData.entries(context: context).count
+    @MainActor
+    static var store: WKWebsiteDataStore {
+        WebViewPool.shared.dataStore
+    }
+
+    static func siteCount() async -> Int {
+        let records = await store.dataRecords(ofTypes: WebsiteData.allTypes)
+        return records.count
     }
 
     static func clearEverything(
         history: HistoryStore,
-        tabs: [BrowserTab] = [],
-        context: BrowserProfileContext
-    ) async throws {
-        try await clear(
-            [.cookies, .cache],
-            range: .everything,
-            history: history,
-            tabs: tabs,
-            context: context
-        )
-        context.conversationLog.clearAll()
+        agent: ConversationLog? = nil,
+        tabs: [BrowserTab] = []
+    ) async {
+        await clear([.cookies, .cache], range: .everything, history: history, agent: agent, tabs: tabs)
+        agent?.clearAll()
     }
-
 }

@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
-import AppKit
 import SwiftUI
+import WebKit
+
 struct MediaPlayerSurface: View {
     let media: MediaCenter
-    var page: BrowserPage
+    var webView: WKWebView
     var crop: CGRect
     var width: CGFloat
     var cornerRadius: CGFloat
@@ -24,7 +25,7 @@ struct MediaPlayerSurface: View {
         ZStack {
             Color.black
 
-            MediaCropSurface(page: page, crop: crop)
+            MediaCropSurface(webView: webView, crop: crop)
         }
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
@@ -73,19 +74,19 @@ enum MediaCropMath {
 }
 
 struct MediaCropSurface: NSViewRepresentable {
-    let page: BrowserPage
+    let webView: WKWebView
     var crop: CGRect
 
     func makeNSView(context: Context) -> MediaCropContainer {
         let container = MediaCropContainer()
         container.crop = crop
-        container.install(page)
+        container.install(webView)
         return container
     }
 
     func updateNSView(_ nsView: MediaCropContainer, context: Context) {
         nsView.crop = crop
-        nsView.install(page)
+        nsView.install(webView)
     }
 
     static func dismantleNSView(_ nsView: MediaCropContainer, coordinator: ()) {
@@ -97,7 +98,8 @@ struct MediaCropSurface: NSViewRepresentable {
         nsView: MediaCropContainer,
         context: Context
     ) -> CGSize? {
-        proposal.webViewSize
+        guard let width = proposal.width, let height = proposal.height else { return nil }
+        return CGSize(width: width, height: height)
     }
 }
 
@@ -109,7 +111,7 @@ final class MediaCropContainer: NSView {
         }
     }
 
-    private weak var installedView: NSView?
+    private weak var installedWebView: WKWebView?
 
     override var isFlipped: Bool {
         true
@@ -130,26 +132,26 @@ final class MediaCropContainer: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func install(_ page: BrowserPage) {
-        if let installedView, installedView !== page, installedView.superview === self {
-            installedView.removeFromSuperview()
+    func install(_ webView: WKWebView) {
+        if let installedWebView, installedWebView !== webView, installedWebView.superview === self {
+            WebViewParking.park(installedWebView)
         }
-        installedView = page
+        installedWebView = webView
         attachIfHosted()
     }
 
     private func attachIfHosted() {
-        guard window != nil, let view = installedView, view.superview !== self else { return }
-        let size = view.bounds.size
-        view.removeFromSuperview()
-        view.autoresizingMask = []
-        view.frame = NSRect(
+        guard window != nil, let webView = installedWebView, webView.superview !== self else { return }
+        let size = webView.bounds.size
+        webView.removeFromSuperview()
+        webView.autoresizingMask = []
+        webView.frame = NSRect(
             x: 0,
             y: 0,
             width: max(size.width, 640),
             height: max(size.height, 480)
         )
-        addSubview(view)
+        addSubview(webView)
         applyCrop()
     }
 
@@ -161,15 +163,15 @@ final class MediaCropContainer: NSView {
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         super.viewWillMove(toWindow: newWindow)
         guard newWindow == nil,
-              let installedView, installedView.superview === self else { return }
-        installedView.removeFromSuperview()
+              let installedWebView, installedWebView.superview === self else { return }
+        WebViewParking.park(installedWebView)
     }
 
     func uninstall() {
-        if let installedView, installedView.superview === self {
-            installedView.removeFromSuperview()
+        if let installedWebView, installedWebView.superview === self {
+            WebViewParking.park(installedWebView)
         }
-        installedView = nil
+        installedWebView = nil
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -178,12 +180,12 @@ final class MediaCropContainer: NSView {
     }
 
     private func applyCrop() {
-        guard let view = installedView, view.superview === self,
+        guard let webView = installedWebView, webView.superview === self,
               frame.width > 0, frame.height > 0,
               let scaled = MediaCropMath.scaledBounds(cardSize: frame.size, crop: crop)
         else { return }
-        if view.frame.origin != .zero {
-            view.frame.origin = .zero
+        if webView.frame.origin != .zero {
+            webView.frame.origin = .zero
         }
         setBoundsSize(scaled.size)
         setBoundsOrigin(scaled.origin)

@@ -21,10 +21,10 @@ nonisolated struct AgentEvaluationEvent: Codable, Equatable, Sendable {
             safe["name"] = AgentDiagnosticPrivacy.tool(name)
         }
         let statuses: Set<String> = [
-            "completed", "cancelled", "agent_error", "budget_exceeded", "request_limit", "rate_limited",
+            "completed", "cancelled", "agent_error", "budget_exceeded", "request_limit",
             "no_progress", "context_limit", "provider_error", "interrupted", "input_budget",
             "failed", "succeeded", "not_executed", "manual", "empty_summary", "not_smaller", "summary_too_large",
-            "verification_required", "blocked", "answered", "verified", "unverified", "overflow",
+            "verification_required", "blocked", "answered", "verified", "unverified",
         ]
         for key in ["status", "reason"] {
             if let value = values[key], statuses.contains(value) {

@@ -6,7 +6,7 @@ import AppKit
 import Foundation
 
 nonisolated enum MCPClientKind: String, CaseIterable, Identifiable, Sendable {
-    case codex, claudeDesktop, claudeCode, cursor, omp
+    case codex, claudeDesktop, claudeCode, cursor
 
     var id: Self {
         self
@@ -22,8 +22,6 @@ nonisolated enum MCPClientKind: String, CaseIterable, Identifiable, Sendable {
             "Claude Code"
         case .cursor:
             "Cursor"
-        case .omp:
-            "omp.sh"
         }
     }
 
@@ -40,8 +38,6 @@ nonisolated enum MCPClientKind: String, CaseIterable, Identifiable, Sendable {
             return home.appending(path: ".claude.json")
         case .cursor:
             return home.appending(path: ".cursor/mcp.json")
-        case .omp:
-            return home.appending(path: ".omp/agent/mcp.json")
         }
     }
 }
@@ -66,10 +62,11 @@ enum MCPClientDiscovery {
             NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)
         }
         let appRoots = [URL(fileURLWithPath: "/Applications"), home.appending(path: "Applications")]
-        let applications = codexApps + appRoots.flatMap { root in
+        let bundled = (codexApps + appRoots.flatMap { root in
             [root.appending(path: "Codex.app"), root.appending(path: "ChatGPT.app")]
-        }
-        let codex = codexExecutable(home: home, environment: environment, applications: applications)
+        }).map { $0.appending(path: "Contents/Resources/codex") }
+        let codex = executable(named: "codex", home: home, environment: environment)
+            ?? bundled.first { FileManager.default.isExecutableFile(atPath: $0.path) }
 
         return MCPClientKind.allCases.map { kind in
             let url = kind.configurationURL(home: home, environment: environment)
@@ -85,32 +82,13 @@ enum MCPClientDiscovery {
             case .cursor:
                 installed = appRoots.contains { FileManager.default.fileExists(atPath: $0.appending(path: "Cursor.app").path) }
                     || NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.todesktop.230313mzl4w4u92") != nil
-            case .omp:
-                installed = executable(named: "omp", home: home, environment: environment) != nil
             }
             return MCPClientTarget(kind: kind, configurationURL: url, codexExecutable: codex,
                                    isDetected: installed || FileManager.default.fileExists(atPath: url.path))
         }
     }
 
-    nonisolated static func codexExecutable(home: URL, environment: [String: String], applications: [URL]) -> URL? {
-        executable(named: "codex", home: home, environment: environment)
-            ?? bundledCodexExecutable(in: applications)
-    }
-
-    nonisolated static func bundledCodexExecutable(in applications: [URL]) -> URL? {
-        for application in applications {
-            for path in ["Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "Contents/Resources/codex"] {
-                let candidate = application.appending(path: path)
-                if FileManager.default.isExecutableFile(atPath: candidate.path) {
-                    return candidate
-                }
-            }
-        }
-        return nil
-    }
-
-    nonisolated private static func executable(named name: String, home: URL, environment: [String: String]) -> URL? {
+    private static func executable(named name: String, home: URL, environment: [String: String]) -> URL? {
         let paths = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
             + [home.appending(path: ".local/bin").path, home.appending(path: ".npm-global/bin").path,
                "/opt/homebrew/bin", "/usr/local/bin", ]
@@ -147,27 +125,18 @@ nonisolated enum MCPClientConfiguration {
         Bundle.main.executableURL?.path ?? "/Applications/WSurf.app/Contents/MacOS/WSurf"
     }
 
-    static var arguments: [String] {
-        #if DEBUG
-        if StageMode.isActive {
-            return ["--mcp", "--mcp-socket", LocalMCPEndpoint.path]
-        }
-        #endif
-        return ["--mcp"]
-    }
-
-    static func entry(command: String, kind: MCPClientKind, arguments: [String] = MCPClientConfiguration.arguments) -> [String: Any] {
-        var value: [String: Any] = ["command": command, "args": arguments]
+    static func entry(command: String, kind: MCPClientKind) -> [String: Any] {
+        var value: [String: Any] = ["command": command, "args": ["--mcp"]]
         if kind == .claudeCode { value["type"] = "stdio" }
         return value
     }
 
-    static func matches(_ entry: [String: Any], command: String, arguments: [String] = MCPClientConfiguration.arguments) -> Bool {
-        entry["command"] as? String == command && entry["args"] as? [String] == arguments
+    static func matches(_ entry: [String: Any], command: String) -> Bool {
+        entry["command"] as? String == command && entry["args"] as? [String] == ["--mcp"]
             && entry["url"] == nil && (entry["type"] == nil || entry["type"] as? String == "stdio")
     }
 
-    static func addingJSON(to data: Data?, kind: MCPClientKind, command: String, arguments: [String] = MCPClientConfiguration.arguments) throws -> Data? {
+    static func addingJSON(to data: Data?, kind: MCPClientKind, command: String) throws -> Data? {
         var root: [String: Any] = [:]
         if let data {
             guard let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -181,12 +150,12 @@ nonisolated enum MCPClientConfiguration {
             servers = dictionary
         }
         if let existing = servers["wsurf"] {
-            guard let entry = existing as? [String: Any], matches(entry, command: command, arguments: arguments) else {
+            guard let entry = existing as? [String: Any], matches(entry, command: command) else {
                 throw MCPClientSetupError.conflictingServer
             }
             return nil
         }
-        servers["wsurf"] = entry(command: command, kind: kind, arguments: arguments)
+        servers["wsurf"] = entry(command: command, kind: kind)
         root["mcpServers"] = servers
         return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) + Data([10])
     }

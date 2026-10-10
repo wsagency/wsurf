@@ -6,16 +6,14 @@ import SwiftUI
 
 struct PaymentCardSettings: View {
     @Bindable var settings: BrowserSettings
-    let context: BrowserProfileContext
     @State private var model: PaymentCardSettingsModel
     @State private var showsAddCard = false
     @State private var editing: PaymentCard?
     @State private var removing: PaymentCard.Summary?
 
-    init(context: BrowserProfileContext) {
-        self.context = context
-        self.settings = context.settings
-        _model = State(initialValue: PaymentCardSettingsModel(profileID: context.profile.id))
+    init(settings: BrowserSettings, profileID: UUID) {
+        self.settings = settings
+        _model = State(initialValue: PaymentCardSettingsModel(profileID: profileID))
     }
 
     var body: some View {
@@ -27,7 +25,7 @@ struct PaymentCardSettings: View {
         }
         .disabled(model.profileID == Profile.privateID)
         .settingsAnchor("autofill.cards")
-        AutofillSavePromptReset(kind: .card, context: context)
+        AutofillSavePromptReset(kind: .card, profileID: model.profileID)
         SettingsSection(title: "Saved cards", symbol: "creditcard", footnote: "Cards are encrypted in Keychain.", accessory: {
             SettingsButton(title: "Add Card", symbol: "plus") { showsAddCard = true }
                 .disabled(model.cards == nil || model.isBusy)

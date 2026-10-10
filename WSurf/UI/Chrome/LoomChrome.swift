@@ -29,14 +29,6 @@ enum LoomChrome {
     }
 
     static func sampledColor(_ color: NSColor?, scheme: ColorScheme) -> NSColor {
-        let settings = BrowserSettings.application
-        if settings.themeCustomization(theme: settings.sidebarAppearance(scheme: scheme)).changesPalette {
-            var resolved = NSColor(Theme.windowBackground)
-            NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
-                resolved = NSColor(Theme.windowBackground).usingColorSpace(.sRGB) ?? resolved
-            }
-            return resolved
-        }
         let fallbackIsLight = scheme == .light
         guard let color = color?.usingColorSpace(.sRGB), color.alphaComponent > 0.05 else {
             return neutral(isLight: fallbackIsLight)
@@ -45,7 +37,7 @@ enum LoomChrome {
         // A real page chooses the chrome's tonal family too. In particular,
         // black and grey headers carry useful appearance information; treating
         // them as "no colour" leaves a light Loom around dark sites.
-        let isLight = Theme.isCalm ? fallbackIsLight : PageInk.isLight(color, scheme: scheme)
+        let isLight = PageInk.isLight(color, scheme: scheme)
         let neutral = neutral(isLight: isLight)
 
         let floor: CGFloat = isLight ? 0.55 : 0.02
@@ -56,24 +48,15 @@ enum LoomChrome {
             brightness: min(max(color.brightnessComponent, floor), ceiling),
             alpha: 1
         )
-        let tintFraction: CGFloat = Theme.isCalm ? 0.18 : 0.85
-        return neutral.blended(withFraction: tintFraction, of: tint) ?? neutral
+        return neutral.blended(withFraction: 0.85, of: tint) ?? neutral
     }
 
     private static func neutral(isLight: Bool) -> NSColor {
-        if Theme.isCalm {
-            var themed: NSColor?
-            NSAppearance(named: isLight ? .aqua : .darkAqua)?.performAsCurrentDrawingAppearance {
-                themed = NSColor(Theme.windowBackground).usingColorSpace(.sRGB)
-            }
-            if let themed {
-                return themed
-            }
-        }
         if isLight {
-            return NSColor(srgbRed: 0.94, green: 0.94, blue: 0.955, alpha: 1)
+            NSColor(srgbRed: 0.94, green: 0.94, blue: 0.955, alpha: 1)
+        } else {
+            NSColor(srgbRed: 0.105, green: 0.105, blue: 0.125, alpha: 1)
         }
-        return NSColor(srgbRed: 0.105, green: 0.105, blue: 0.125, alpha: 1)
     }
 }
 
@@ -211,9 +194,6 @@ private struct LoomTintedBackdrop: View {
     }
 
     private var washOpacity: CGFloat {
-        if Theme.isCalm {
-            return isFloating ? 0.92 : 0.96
-        }
         if sampledPageColor != nil {
             return isFloating ? 0.72 : 0.92
         }

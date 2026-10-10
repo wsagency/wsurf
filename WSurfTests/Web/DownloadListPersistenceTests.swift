@@ -32,13 +32,9 @@ struct DownloadListPersistenceTests {
         let view = WKWebView(frame: .zero, configuration: configuration)
         let downloads = DownloadManager(destinationFolder: destination, asksWhereToSave: false, file: file)
         for expected in 1...2 {
-            let download: WKDownload = await withCheckedContinuation { continuation in
-                view.startDownload(using: URLRequest(url: source)) { download in
-                    downloads.adopt(download, suggestedSource: source)
-                    downloads.adopt(download, suggestedSource: source)
-                    continuation.resume(returning: download)
-                }
-            }
+            let download = await view.startDownload(using: URLRequest(url: source))
+            downloads.adopt(download, suggestedSource: source)
+            downloads.adopt(download, suggestedSource: source)
             #expect(await waitUntil { downloads.items.filter { $0.state == .finished }.count == expected })
             #expect(downloads.items.count == expected)
             downloads.adopt(download, suggestedSource: source)
@@ -119,19 +115,6 @@ struct DownloadListPersistenceTests {
         let relaunched = DownloadManager(file: file)
 
         #expect(relaunched.items.isEmpty)
-    }
-
-    @Test func aNonpersistentContextNeverWritesItsDownloadList() {
-        let file = scratchFile()
-        defer { try? FileManager.default.removeItem(at: file) }
-
-        let downloads = DownloadManager(file: file, persists: false)
-        let id = downloads.beginItem(source: URL(string: "https://example.com/report.pdf"))
-        downloads.noteCancelRequested(id)
-        downloads.noteCancellation(id, resumeData: nil)
-        downloads.writeNow()
-
-        #expect(!FileManager.default.fileExists(atPath: file.path))
     }
 
     @Test func clearingTheListClearsWhatIsOnDisk() {

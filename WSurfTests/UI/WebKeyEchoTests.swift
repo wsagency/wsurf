@@ -19,8 +19,7 @@ struct WebKeyEchoTests {
             frame: NSRect(x: 0, y: 0, width: 100, height: 100),
             configuration: WebViewPool.makeConfiguration()
         )
-        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
-        #expect(WebKeyEcho.shouldSilenceUnhandledKey(from: page.webKit))
+        #expect(WebKeyEcho.shouldSilenceUnhandledKey(from: webView))
     }
 
     /// WebKit sometimes hands focus to an inner view of its own; anything
@@ -30,9 +29,8 @@ struct WebKeyEchoTests {
             frame: NSRect(x: 0, y: 0, width: 100, height: 100),
             configuration: WebViewPool.makeConfiguration()
         )
-        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
         let inner = NSView(frame: .zero)
-        page.webKit?.addSubview(inner)
+        webView.addSubview(inner)
         #expect(WebKeyEcho.shouldSilenceUnhandledKey(from: inner))
     }
 
@@ -64,9 +62,8 @@ struct WebKeyEchoTests {
             frame: NSRect(x: 0, y: 0, width: 150, height: 200),
             configuration: WebViewPool.makeConfiguration()
         )
-        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
         let sidebar = NSView(frame: NSRect(x: 150, y: 0, width: 150, height: 200))
-        container.addSubview(page)
+        container.addSubview(webView)
         container.addSubview(sidebar)
 
         #expect(WebKeyEcho.shouldSilenceUnhandledKey(from: webView))

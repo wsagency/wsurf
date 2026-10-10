@@ -3,14 +3,15 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import SwiftUI
+import WebKit
 
 struct WebViewRepresentable: NSViewRepresentable {
-    let page: BrowserPage
+    let webView: WKWebView
     var parksWhenIdle = false
     var onReady: (() -> Void)?
 
     func makeNSView(context: Context) -> WebViewContainer {
-        let container = WebViewContainer(page: page, onReady: onReady)
+        let container = WebViewContainer(webView: webView, onReady: onReady)
         container.parksWhenIdle = parksWhenIdle
         return container
     }
@@ -18,7 +19,7 @@ struct WebViewRepresentable: NSViewRepresentable {
     func updateNSView(_ nsView: WebViewContainer, context: Context) {
         nsView.parksWhenIdle = parksWhenIdle
         nsView.onReady = onReady
-        nsView.install(page)
+        nsView.install(webView)
     }
 
     static func dismantleNSView(_ nsView: WebViewContainer, coordinator: ()) {
@@ -30,15 +31,8 @@ struct WebViewRepresentable: NSViewRepresentable {
         nsView: WebViewContainer,
         context: Context
     ) -> CGSize? {
-        proposal.webViewSize
-    }
-}
-
-extension ProposedViewSize {
-    var webViewSize: CGSize? {
-        guard let width, let height, width.isFinite, height.isFinite else { return nil }
-        // Padding can leave a negative proposal during minimum-size layout passes.
-        return CGSize(width: max(0, width), height: max(0, height))
+        guard let width = proposal.width, let height = proposal.height else { return nil }
+        return CGSize(width: width, height: height)
     }
 }
 
@@ -47,7 +41,7 @@ enum WebKeyEcho {
     static func shouldSilenceUnhandledKey(from responder: NSResponder?) -> Bool {
         var view = responder as? NSView
         while let current = view {
-            if current is BrowserPage {
+            if current is WKWebView {
                 return true
             }
             view = current.superview
@@ -58,18 +52,18 @@ enum WebKeyEcho {
 
 @MainActor
 enum WebViewParking {
-    static func park(_ page: BrowserPage) {
-        guard let shelf = page.window?.contentView?.subviews
+    static func park(_ webView: WKWebView) {
+        guard let shelf = webView.window?.contentView?.subviews
             .first(where: { $0 is WebViewParkingShelf })
         else {
-            page.removeFromSuperview()
+            webView.removeFromSuperview()
             return
         }
-        let size = page.bounds.size
-        page.removeFromSuperview()
-        page.autoresizingMask = []
-        page.frame = NSRect(x: 0, y: 0, width: max(size.width, 1), height: max(size.height, 1))
-        shelf.addSubview(page)
+        let size = webView.bounds.size
+        webView.removeFromSuperview()
+        webView.autoresizingMask = []
+        webView.frame = NSRect(x: 0, y: 0, width: max(size.width, 1), height: max(size.height, 1))
+        shelf.addSubview(webView)
     }
 }
 
@@ -94,17 +88,17 @@ final class WebViewContainer: NSView {
     var parksWhenIdle = false
     var onReady: (() -> Void)?
 
-    private weak var installedPage: BrowserPage?
+    private weak var installedWebView: WKWebView?
     private var didReportReady = false
 
     override var preservesContentDuringLiveResize: Bool {
         true
     }
 
-    init(page: BrowserPage, onReady: (() -> Void)? = nil) {
+    init(webView: WKWebView, onReady: (() -> Void)? = nil) {
         self.onReady = onReady
         super.init(frame: .zero)
-        install(page)
+        install(webView)
     }
 
     @available(*, unavailable)
@@ -112,30 +106,30 @@ final class WebViewContainer: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func install(_ page: BrowserPage) {
-        if installedPage !== page {
+    func install(_ webView: WKWebView) {
+        if installedWebView !== webView {
             didReportReady = false
         }
-        if let installedPage, installedPage !== page, installedPage.superview === self {
+        if let installedWebView, installedWebView !== webView, installedWebView.superview === self {
             if parksWhenIdle {
-                WebViewParking.park(installedPage)
+                WebViewParking.park(installedWebView)
             } else {
-                installedPage.removeFromSuperview()
+                installedWebView.removeFromSuperview()
             }
         }
-        installedPage = page
+        installedWebView = webView
         attachIfHosted()
         reportReadyIfPossible()
     }
 
     private func attachIfHosted() {
-        guard window != nil, let page = installedPage, page.superview !== self else { return }
-        page.removeFromSuperview()
-        page.autoresizingMask = [.width, .height]
+        guard window != nil, let webView = installedWebView, webView.superview !== self else { return }
+        webView.removeFromSuperview()
+        webView.autoresizingMask = [.width, .height]
         if bounds.width > 0, bounds.height > 0 {
-            page.frame = page.frameInViewport(bounds)
+            webView.frame = bounds
         }
-        addSubview(page)
+        addSubview(webView)
         reportReadyIfPossible()
     }
 
@@ -148,41 +142,37 @@ final class WebViewContainer: NSView {
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         super.viewWillMove(toWindow: newWindow)
         guard newWindow == nil, parksWhenIdle,
-              let installedPage, installedPage.superview === self else { return }
-        WebViewParking.park(installedPage)
+              let installedWebView, installedWebView.superview === self else { return }
+        WebViewParking.park(installedWebView)
     }
 
     func uninstall() {
-        guard let installedPage else { return }
-        if installedPage.superview === self {
+        guard let installedWebView else { return }
+        if installedWebView.superview === self {
             if parksWhenIdle {
-                WebViewParking.park(installedPage)
+                WebViewParking.park(installedWebView)
             } else {
-                installedPage.removeFromSuperview()
+                installedWebView.removeFromSuperview()
             }
         }
-        self.installedPage = nil
+        self.installedWebView = nil
         didReportReady = false
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        guard let installedPage, installedPage.superview === self else { return }
-        let frame = installedPage.frameInViewport(bounds)
-        if installedPage.frame != frame {
-            installedPage.frame = frame
+        guard let installedWebView, installedWebView.superview === self else { return }
+        // Re-setting the frame rebuilds WebKit's tracking areas, which drops the
+        // link cursor for a frame.
+        if installedWebView.frame != bounds {
+            installedWebView.frame = bounds
         }
         reportReadyIfPossible()
     }
 
-    func layoutPage() {
-        guard let installedPage, installedPage.superview === self else { return }
-        installedPage.frame = installedPage.frameInViewport(bounds)
-    }
-
     private func reportReadyIfPossible() {
         guard !didReportReady, window != nil, bounds.width > 0, bounds.height > 0,
-              installedPage?.superview === self, let onReady
+              installedWebView?.superview === self, let onReady
         else { return }
         didReportReady = true
         onReady()

@@ -16,19 +16,19 @@ import WebKit
 @Suite(.serialized)
 struct BackForwardScrollTests {
 
-    private func scrollY(_ page: BrowserPage) async -> Double {
-        (try? await page.evaluateJavaScript("window.scrollY")) as? Double ?? -1
+    private func scrollY(_ webView: WKWebView) async -> Double {
+        (try? await webView.evaluateJavaScript("window.scrollY")) as? Double ?? -1
     }
 
-    private func window(hosting page: BrowserPage) -> NSWindow {
+    private func window(hosting webView: WKWebView) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
             styleMask: [.titled],
             backing: .buffered,
             defer: false
         )
-        page.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
-        window.contentView?.addSubview(page)
+        webView.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        window.contentView?.addSubview(webView)
         window.orderBack(nil)
         return window
     }
@@ -45,7 +45,6 @@ struct BackForwardScrollTests {
                 """),
             "/other": .html("<title>Other</title><h1>Other</h1>"),
         ])
-        defer { withExtendedLifetime(server) {} }
         let tall = try server.url("/tall")
         var other = try server.url("/other")
         if crossHost {
@@ -59,74 +58,30 @@ struct BackForwardScrollTests {
         )
         let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
         let tab = browser.newTab(url: tall)
-        let host = window(hosting: tab.page)
-        defer {
-            host.orderOut(nil)
-            browser.close(tab, recordForReopening: false)
-        }
+        let host = window(hosting: tab.webView)
+        defer { host.orderOut(nil) }
 
-        try #require(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
-        try #require(await waitUntil { tab.urlString == tall.absoluteString })
+        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
+        #expect(await waitUntil { tab.urlString == tall.absoluteString })
 
-        _ = try await tab.page.evaluateJavaScript("window.scrollTo(0, 1500)")
-        let before = await scrollY(tab.page)
-        try #require(before == 1500)
+        _ = try? await tab.webView.evaluateJavaScript("window.scrollTo(0, 1500)")
+        let before = await scrollY(tab.webView)
+        #expect(before == 1500)
         // The scroll monitor reports on a short throttle; leaving the page
         // before it fires is not the gesture under test.
-        try #require(await waitUntil { tab.lastReportedScrollY == before })
+        #expect(await waitUntil { tab.lastReportedScrollY == before })
 
-        _ = try await tab.page.evaluateJavaScript(
+        _ = try? await tab.webView.evaluateJavaScript(
             "document.getElementById('next').href = '\(other.absoluteString)'; document.getElementById('next').click()"
         )
-        try #require(await waitUntil { tab.urlString == other.absoluteString && tab.canGoBack })
-        try #require(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
+        #expect(await waitUntil { tab.urlString == other.absoluteString && tab.canGoBack })
+        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
 
         tab.goBack()
-        try #require(await waitUntil { tab.urlString == tall.absoluteString })
-        try #require(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
+        #expect(await waitUntil { tab.urlString == tall.absoluteString })
+        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
 
-        let restored = await waitUntil { await scrollY(tab.page) == before }
-        // Check after the bounded watcher, not a transient restoration.
-        let actual = try await tab.page.callAsyncJavaScript(
-            "await new Promise(resolve => setTimeout(resolve, 1400)); return window.scrollY;",
-            in: nil, contentWorld: .page
-        ) as? Double
-        #expect(restored && actual == before)
-    }
-
-    @Test(.boundedWebViews, arguments: [false, true])
-    func restorationSurvivesALateNativeReset(alreadyRestored: Bool) async throws {
-        let tab = BrowserTab(opensBlank: false)
-        let host = window(hosting: tab.page)
-        defer { host.orderOut(nil) }
-        tab.loadHTML("<div style='height: 8000px'>Tall</div>", baseURL: nil)
-        try #require(await waitUntil { !tab.page.isLoading })
-        let initial = alreadyRestored ? "window.scrollTo(0, 1500);" : ""
-        _ = try await tab.page.evaluateJavaScript(
-            initial + BrowserTab.restoreScrollScript(to: 1500) + "; window.scrollTo(0, 0);"
-        )
-        #expect(await waitUntil { await scrollY(tab.page) == 1500 })
-    }
-
-    @Test(.boundedWebViews, arguments: ["wheel", "keydown", "pointerdown", "touchstart", "pagehide", "page-scroll"])
-    func restorationRespectsSubsequentInput(event: String) async throws {
-        let tab = BrowserTab(opensBlank: false)
-        let host = window(hosting: tab.page)
-        defer { host.orderOut(nil) }
-        tab.loadHTML("<div style='height: 8000px'>Tall</div>", baseURL: nil)
-        try #require(await waitUntil { !tab.page.isLoading })
-        let target = event == "page-scroll" ? 700 : 0
-        let input = event == "page-scroll" ? "" : "window.dispatchEvent(new Event('\(event)'));"
-        let position = try await tab.page.callAsyncJavaScript(
-            BrowserTab.restoreScrollScript(to: 1500) + """
-                \(input)
-                window.scrollTo(0, \(target));
-                await new Promise(resolve => setTimeout(resolve, 1400));
-                return window.scrollY;
-                """,
-            in: nil, contentWorld: .page
-        )
-        #expect((position as? Double) == Double(target))
+        #expect(await waitUntil { await scrollY(tab.webView) == before })
     }
 
     // MARK: - The memory itself

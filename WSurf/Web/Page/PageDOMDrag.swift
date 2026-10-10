@@ -8,7 +8,7 @@ import WebKit
 extension PageDriver {
     /// AppKit's local mouse events do not set WebKit's held-button state. Use an explicit
     /// DOM event sequence for application drag handlers; these events are not trusted input.
-    static func dispatchDrag(path: [CGPoint], modifiers: NSEvent.ModifierFlags, in view: BrowserPage) async throws {
+    static func dispatchDrag(path: [CGPoint], modifiers: NSEvent.ModifierFlags, in view: WKWebView) async throws {
         let points = path.map { [Double($0.x / view.pageZoom), Double($0.y / view.pageZoom)] }
         let encoded = String(decoding: try JSONEncoder().encode(points), as: UTF8.self)
         let result = await evaluateJSON(scripted("""

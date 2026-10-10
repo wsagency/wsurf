@@ -10,11 +10,9 @@ import WebKit
 @Observable
 final class TabPopupPolicy {
     private let store: SitePermissions
-    private let settings: BrowserSettings
 
-    init(store: SitePermissions, settings: BrowserSettings) {
+    init(store: SitePermissions = .shared) {
         self.store = store
-        self.settings = settings
     }
 
     private(set) var origin = ""
@@ -25,7 +23,7 @@ final class TabPopupPolicy {
         if !origin.isEmpty, let recorded = store.popups(for: origin) {
             return recorded
         }
-        return settings.blocksPopups ? .blockAndNotify : .allow
+        return BrowserSettings.shared.blocksPopups ? .blockAndNotify : .allow
     }
 
     func pageChanged(url: URL?) -> Bool {
@@ -48,12 +46,12 @@ final class TabPopupPolicy {
 
 extension BrowserTab {
     func applySitePopups() {
-        guard popups.pageChanged(url: page.url) else { return }
+        guard popups.pageChanged(url: webView.url) else { return }
         refreshPopupPolicy()
     }
 
     func refreshPopupPolicy() {
         guard isMaterialised else { return }
-        page.webKit?.configuration.preferences.javaScriptCanOpenWindowsAutomatically = !popups.effective.blocks
+        webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically = !popups.effective.blocks
     }
 }

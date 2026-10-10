@@ -66,7 +66,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             rows: browser.sidebarItems.map { item in
                 SidebarSectionPlan.Row(
                     item: item,
-                    isKept: browser.isKept(item),
+                    isKept: browser.isKept(item, ignoring: carried),
                     isCarried: carried.contains(item)
                 )
             },
@@ -102,7 +102,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         }
 
         Button {
-            _ = browser.createFolderForRenaming(containing: [])
+            _ = browser.createFolder(containing: [] as [SidebarItem])
         } label: {
             Label("New Folder…", systemImage: "folder.badge.plus")
         }
@@ -119,9 +119,8 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
     }
 
     var body: some View {
-        ScrollViewReader { proxy in
         ScrollView {
-            VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: context.coordinator.context.settings)) {
+            VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: coordinator.settings)) {
                 let sections = sections
                 if !sections.kept.isEmpty {
                     SidebarRows(items: sections.kept, depth: 0, context: context)
@@ -139,13 +138,6 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             }
             .padding(.leading, contentInsets.leading)
             .padding(.trailing, contentInsets.trailing)
-        }
-        .onChange(of: browser.folderRenameID, initial: true) { _, id in
-            guard let id else { return }
-            Task { @MainActor in
-                await Task.yield()
-                proxy.scrollTo(SidebarItem.folder(id), anchor: .center)
-            }
         }
         .scrollIndicators(.never)
         .scrollEdgeEffectHidden(true, for: .bottom)
@@ -176,22 +168,12 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         .background {
             SidebarKeyCatcher(
                 isActive: selection.ownsKeyboard,
-                requestID: selection.keyboardRequestID,
-                history: browser.sidebarUndoManager,
-                onSelectAll: {
-                    selection.selectAll(in: browser.sidebarTree, isExpanded: isExpanded)
-                    selection.excludeFavorites(browser.favorites)
-                },
+                onSelectAll: { selection.selectAll(in: browser.sidebarTree, isExpanded: isExpanded) },
                 onClear: { selection.clear() }
             )
         }
         .onChange(of: browser.sidebarTree) { _, tree in
             selection.prune(to: Set(tree.walk()))
-            selection.excludeFavorites(browser.favorites)
-        }
-        .onChange(of: browser.favorites.map(\.id)) { _, _ in
-            selection.excludeFavorites(browser.favorites)
-        }
         }
     }
 
@@ -301,7 +283,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             coordinator.dropOnPage(tab, onto: model.targetPaneID, zone: model.zone)
             selection.clear()
         } else if newFolderDrop.isArmed {
-            browser.createFolderForRenaming(containing: drag.items)
+            browser.createFolder(containing: drag.items)
             selection.clear()
             settled = true
         } else if pinDrop.isArmed {
@@ -310,7 +292,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         }
 
         if !settled {
-            drag.settlePins(pinsCarried, in: browser)
+            browser.setPinned(pinsCarried, for: drag.items)
         }
 
         withAnimation(.spring(response: 0.24, dampingFraction: 0.85)) {
@@ -356,7 +338,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
     }
 
     private func keepsSection(_ item: SidebarItem) -> Bool {
-        browser.isKept(item)
+        browser.isKept(item, ignoring: drag?.covered ?? [])
     }
 
     private func lands(before isBefore: Bool, of anchor: SidebarItem) -> Bool {
@@ -547,17 +529,11 @@ struct SidebarDragChip: View {
         case .tab(let id):
             if let tab = browser.tab(id: id) {
                 HStack(spacing: 8) {
-                    TabIcon(tab: tab, tint: BrowserSettings.application.sidebarTextColor(
-                        isDeferred: tab.isDeferred,
-                        scheme: windowColorScheme
-                    ))
+                    TabIcon(tab: tab)
                     if sidebarStyle == .full {
                         Text(verbatim: tab.title)
-                            .font(BrowserSettings.application.sidebarFont)
-                            .foregroundStyle(BrowserSettings.application.sidebarTextColor(
-                                isDeferred: tab.isDeferred,
-                                scheme: windowColorScheme
-                            ))
+                            .font(BrowserSettings.shared.sidebarFont)
+                            .foregroundStyle(Color.primary)
                             .lineLimit(1)
                         Spacer(minLength: 0)
                     }
@@ -571,8 +547,8 @@ struct SidebarDragChip: View {
                         .foregroundStyle(folder.color.tint)
                     if sidebarStyle == .full {
                         Text(verbatim: folder.name)
-                            .font(BrowserSettings.application.sidebarFont)
-                            .foregroundStyle(BrowserSettings.application.sidebarTextColor(scheme: windowColorScheme))
+                            .font(BrowserSettings.shared.sidebarFont)
+                            .foregroundStyle(Color.primary)
                         Spacer(minLength: 0)
                     }
                 }
@@ -581,10 +557,8 @@ struct SidebarDragChip: View {
     }
 }
 
-struct SidebarKeyCatcher: NSViewRepresentable {
+private struct SidebarKeyCatcher: NSViewRepresentable {
     let isActive: Bool
-    let requestID: Int
-    let history: UndoManager
     let onSelectAll: () -> Void
     let onClear: () -> Void
 
@@ -595,49 +569,19 @@ struct SidebarKeyCatcher: NSViewRepresentable {
     func updateNSView(_ nsView: CatcherView, context: Context) {
         nsView.onSelectAll = onSelectAll
         nsView.onClear = onClear
-        nsView.history = history
         guard let window = nsView.window else { return }
-        if isActive && (!nsView.wasActive || nsView.lastRequestID != requestID) {
-            window.makeFirstResponder(nsView)
-        } else if !isActive && window.firstResponder === nsView {
+        if isActive {
+            if window.firstResponder !== nsView {
+                window.makeFirstResponder(nsView)
+            }
+        } else if window.firstResponder === nsView {
             window.makeFirstResponder(nil)
         }
-        nsView.wasActive = isActive
-        nsView.lastRequestID = requestID
     }
 
     final class CatcherView: NSView {
         var onSelectAll: (() -> Void)?
         var onClear: (() -> Void)?
-        var history: UndoManager?
-        var wasActive = false
-        var lastRequestID: Int?
-
-        override var undoManager: UndoManager? {
-            history
-        }
-
-        @objc func undo(_ sender: Any?) {
-            history?.undo()
-        }
-
-        @objc func redo(_ sender: Any?) {
-            history?.redo()
-        }
-
-        override func keyDown(with event: NSEvent) {
-            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if event.charactersIgnoringModifiers?.lowercased() == "z",
-               modifiers.contains(.control), !modifiers.contains(.command), !modifiers.contains(.option) {
-                if modifiers.contains(.shift) {
-                    history?.redo()
-                } else {
-                    history?.undo()
-                }
-                return
-            }
-            super.keyDown(with: event)
-        }
 
         override var acceptsFirstResponder: Bool {
             true

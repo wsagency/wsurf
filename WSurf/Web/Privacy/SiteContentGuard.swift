@@ -7,41 +7,62 @@ import WebKit
 
 /// WebKit fixes `mediaTypesRequiringUserActionForPlayback` when a web view is
 /// made, so a per-website auto-play answer can only be kept in the page.
-final class SiteContentGuard {
+final class SiteContentGuard: NSObject, WKScriptMessageHandlerWithReply {
     static let shared = SiteContentGuard()
 
     private static let handlerName = "wsurfSiteGuard"
+    private let installedControllers = NSHashTable<WKUserContentController>.weakObjects()
+    private let permissions: SitePermissions
+    private let settings: BrowserSettings
 
-    @MainActor
-    func install(in page: BrowserPage, permissions: SitePermissions, settings: BrowserSettings,
-                 onPopupBlocked: @escaping (URL?) -> Void = { _ in }) {
-        page.installScript(Self.script, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        page.addScriptMessageHandler(name: Self.handlerName, in: .page) { [permissions, settings] message in
-            guard let body = message.body as? [String: Any] else { return }
-            if let blocked = body["blocked"] as? String {
-                onPopupBlocked(URL(string: blocked))
-                return
-            }
-            let origin = SitePermissions.origin(for: message.page.url ?? message.frameInfo.request.url)
-            let autoplay = permissions.autoplay(for: origin) ?? settings.autoplay
-            let popups = permissions.popups(for: origin)
-                ?? (settings.blocksPopups ? PopupPolicy.blockAndNotify : .allow)
-            let payload = ["autoplay": autoplay.rawValue, "popups": popups.rawValue]
-            Task { @MainActor in
-                _ = try? await message.page.callAsyncJavaScript(
-                    "globalThis.__wsurfSiteGuard?.applyPolicy(policy);",
-                    arguments: ["policy": payload], in: message.frameInfo, contentWorld: .page
-                )
-            }
+    init(permissions: SitePermissions = .shared, settings: BrowserSettings = .shared) {
+        self.permissions = permissions
+        self.settings = settings
+        super.init()
+    }
+
+    func install(in webView: TabWebView) {
+        guard !webView.hasSiteGuard else { return }
+        webView.hasSiteGuard = true
+
+        let controller = webView.configuration.userContentController
+        guard !installedControllers.contains(controller) else { return }
+        installedControllers.add(controller)
+        controller.addUserScript(WKUserScript(
+            source: Self.script,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        controller.removeScriptMessageHandler(forName: Self.handlerName)
+        controller.addScriptMessageHandler(self, contentWorld: .page, name: Self.handlerName)
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) async -> (Any?, String?) {
+        guard let webView = message.webView as? TabWebView,
+              let body = message.body as? [String: Any]
+        else { return (nil, nil) }
+
+        if let blocked = body["blocked"] as? String {
+            webView.onPopupBlocked?(URL(string: blocked))
+            return (nil, nil)
         }
+
+        let origin = SitePermissions.origin(for: webView.url)
+        let autoplay = permissions.autoplay(for: origin) ?? settings.autoplay
+        let popups = permissions.popups(for: origin)
+            ?? (settings.blocksPopups ? PopupPolicy.blockAndNotify : .allow)
+        return (["autoplay": autoplay.rawValue, "popups": popups.rawValue], nil)
     }
 
     private static let script = #"""
     (() => {
       if (window.__wsurfSiteGuard) return;
 
-      const send = globalThis.__wsurfSend;
-      if (typeof send !== 'function') return;
+      const channel = window.webkit?.messageHandlers?.wsurfSiteGuard;
+      if (!channel) return;
 
       const state = { autoplay: null, popups: null, held: new Set() };
       window.__wsurfSiteGuard = state;
@@ -91,20 +112,20 @@ final class SiteContentGuard {
         if (!opened && state.popups === 'blockAndNotify') {
           try {
             const wanted = args[0] === undefined ? '' : String(args[0]);
-            send('wsurfSiteGuard', { blocked: new URL(wanted, location.href).href });
+            channel.postMessage({ blocked: new URL(wanted, location.href).href });
           } catch (_) {
-            try { send('wsurfSiteGuard', { blocked: '' }); } catch (_) {}
-        }
+            try { channel.postMessage({ blocked: '' }); } catch (_) {}
+          }
         }
         return opened;
       };
 
-      state.applyPolicy = (answer) => {
+      const settle = (answer) => {
         state.autoplay = answer && answer.autoplay ? answer.autoplay : 'block';
         state.popups = answer && answer.popups ? answer.popups : 'allow';
         release();
       };
-      send('wsurfSiteGuard', { ask: 'policy' });
+      channel.postMessage({ ask: 'policy' }).then(settle).catch(() => settle(null));
     })();
     """#
 }

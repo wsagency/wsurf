@@ -29,7 +29,7 @@ enum ConfirmAlert {
         return response == .alertFirstButtonReturn
     }
 
-    static func organize(folders: [(name: String, count: Int)], in window: NSWindow) async -> Bool {
+    static func organize(folders: [(name: String, count: Int)]) async -> Bool {
         let alert = NSAlert()
         alert.messageText = String(localized: "Organize your tabs into folders?")
         let lines = folders.map { folder in
@@ -40,13 +40,16 @@ enum ConfirmAlert {
         alert.addButton(withTitle: String(localized: "Organize"))
         alert.addButton(withTitle: String(localized: "Cancel"))
 
+        guard let window = NSApp.keyWindow else {
+            return alert.runModal() == .alertFirstButtonReturn
+        }
         let response = await withCheckedContinuation { continuation in
             alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
         }
         return response == .alertFirstButtonReturn
     }
 
-    static func clear(_ prompt: BrowsingData.ClearPrompt, in window: NSWindow) async -> BrowsingData.ClearChoice? {
+    static func clear(_ prompt: BrowsingData.ClearPrompt) async -> BrowsingData.ClearChoice? {
         let alert = NSAlert()
         alert.messageText = String(localized: prompt.question)
         alert.informativeText = String(localized: prompt.detail)
@@ -60,8 +63,13 @@ enum ConfirmAlert {
         alert.addButton(withTitle: String(localized: "Cancel"))
         accessory.confirmButton = confirm
 
-        let response = await withCheckedContinuation { continuation in
-            alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
+        let response: NSApplication.ModalResponse
+        if let window = NSApp.keyWindow {
+            response = await withCheckedContinuation { continuation in
+                alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
+            }
+        } else {
+            response = alert.runModal()
         }
 
         guard response == .alertFirstButtonReturn else { return nil }

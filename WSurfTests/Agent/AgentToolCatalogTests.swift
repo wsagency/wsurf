@@ -56,11 +56,12 @@ struct AgentToolCatalogTests {
 @Suite(.serialized)
 struct AgentToolPreferencesTests {
     @Test func aStoredSelectionWinsOverTheTierDefault() {
+        let previous = LLMSettings.defaults
         let suiteName = "agent-tool-preferences-tests"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
-        let settings = LLMSettings(defaults: defaults)
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let defaults = UserDefaults(suiteName: suiteName)
+        defaults?.removePersistentDomain(forName: suiteName)
+        LLMSettings.defaults = defaults ?? .standard
+        defer { LLMSettings.defaults = previous }
 
         let provider = Provider(
             id: "tools-test",
@@ -73,25 +74,25 @@ struct AgentToolPreferencesTests {
             isLocal: true
         )
 
-        #expect(settings.enabledAgentTools(for: provider) == nil)
+        #expect(LLMSettings.enabledAgentTools(for: provider) == nil)
         #expect(
-            AgentToolCatalog.resolvedIDs(for: provider, tier: .core, settings: settings)
+            AgentToolCatalog.resolvedIDs(for: provider, tier: .core)
                 == AgentToolCatalog.defaultIDs(for: .core)
         )
 
         let chosen: Set<String> = ["searchWeb", "readPage", "playVideo"]
-        settings.setEnabledAgentTools(chosen, for: provider)
-        #expect(AgentToolCatalog.resolvedIDs(for: provider, tier: .core, settings: settings) == chosen)
-        #expect(AgentToolCatalog.resolvedIDs(for: provider, tier: .full, settings: settings)
+        LLMSettings.setEnabledAgentTools(chosen, for: provider)
+        #expect(AgentToolCatalog.resolvedIDs(for: provider, tier: .core) == chosen)
+        #expect(AgentToolCatalog.resolvedIDs(for: provider, tier: .full)
             == chosen.union(AgentToolCatalog.visualToolIDs))
 
-        settings.setEnabledAgentTools(["not-a-tool"], for: provider)
+        LLMSettings.setEnabledAgentTools(["not-a-tool"], for: provider)
         #expect(
-            AgentToolCatalog.resolvedIDs(for: provider, tier: .core, settings: settings)
+            AgentToolCatalog.resolvedIDs(for: provider, tier: .core)
                 == AgentToolCatalog.defaultIDs(for: .core)
         )
 
-        settings.setEnabledAgentTools(nil, for: provider)
-        #expect(settings.enabledAgentTools(for: provider) == nil)
+        LLMSettings.setEnabledAgentTools(nil, for: provider)
+        #expect(LLMSettings.enabledAgentTools(for: provider) == nil)
     }
 }

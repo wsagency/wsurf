@@ -5,18 +5,34 @@
 import Foundation
 import WebKit
 
-final class FaviconWatcher {
+final class FaviconWatcher: NSObject, WKScriptMessageHandler {
     static let shared = FaviconWatcher()
 
     private static let handlerName = "wsurfFavicon"
+    private let installedControllers = NSHashTable<WKUserContentController>.weakObjects()
 
-    @MainActor
-    func install(in page: BrowserPage, onChange: @escaping () -> Void) {
-        page.installScript(Self.script, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        page.addScriptMessageHandler(name: Self.handlerName, in: .page) { message in
-            guard message.frameInfo.isMainFrame else { return }
-            onChange()
-        }
+    func install(in webView: TabWebView) {
+        guard !webView.hasFaviconWatcher else { return }
+        webView.hasFaviconWatcher = true
+
+        let controller = webView.configuration.userContentController
+        guard !installedControllers.contains(controller) else { return }
+        installedControllers.add(controller)
+        controller.addUserScript(WKUserScript(
+            source: Self.script,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        controller.removeScriptMessageHandler(forName: Self.handlerName)
+        controller.add(self, name: Self.handlerName)
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard let webView = message.webView as? TabWebView else { return }
+        webView.onFaviconDeclarationChange?()
     }
 
     private static let script = #"""
@@ -24,8 +40,8 @@ final class FaviconWatcher {
       if (window.__wsurfFavicon) return;
       window.__wsurfFavicon = true;
 
-      const send = globalThis.__wsurfSend;
-      if (typeof send !== 'function') return;
+      const channel = window.webkit?.messageHandlers?.wsurfFavicon;
+      if (!channel) return;
 
       const isIcon = node =>
         node?.tagName === 'LINK' && /(^|\s)(icon|apple-touch-icon)(\s|$)/i.test(node.rel || '');
@@ -33,7 +49,7 @@ final class FaviconWatcher {
       let pending = 0;
       const report = () => {
         clearTimeout(pending);
-        pending = setTimeout(() => send('wsurfFavicon', 1), 60);
+        pending = setTimeout(() => channel.postMessage(1), 60);
       };
 
       const observer = new MutationObserver(records => {

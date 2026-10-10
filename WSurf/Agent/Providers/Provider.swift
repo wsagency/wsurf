@@ -183,6 +183,14 @@ final class ProviderCatalog {
         all.first { $0.id == id }
     }
 
+    var selected: Provider {
+        provider(id: LLMSettings.providerID) ?? Self.openAI
+    }
+
+    func select(_ provider: Provider) {
+        LLMSettings.providerID = provider.id
+    }
+
     // MARK: Custom providers
 
     static func newCustom() -> Provider {
@@ -214,6 +222,9 @@ final class ProviderCatalog {
         guard provider.isCustom else { return }
         custom.removeAll { $0.id == provider.id }
         CredentialStore.delete(for: provider)
+        if LLMSettings.providerID == provider.id {
+            LLMSettings.providerID = Self.openAI.id
+        }
         refreshAll()
         persistCustom()
     }
@@ -241,40 +252,6 @@ final class ProviderCatalog {
         return elements.compactMap { element in
             guard let elementData = try? JSONSerialization.data(withJSONObject: element) else { return nil }
             return try? JSONDecoder().decode(Provider.self, from: elementData)
-        }
-    }
-}
-@MainActor
-final class ProfileProviderCatalog: ProviderCatalogProtocol {
-    private let settings: LLMSettings
-
-    init(settings: LLMSettings) {
-        self.settings = settings
-    }
-
-    var all: [Provider] {
-        ProviderCatalog.shared.all
-    }
-    var selected: Provider {
-        provider(id: settings.providerID) ?? ProviderCatalog.openAI
-    }
-
-    func provider(id: String) -> Provider? {
-        ProviderCatalog.shared.provider(id: id)
-    }
-
-    func select(_ provider: Provider) {
-        settings.providerID = provider.id
-    }
-
-    func save(_ provider: Provider) {
-        ProviderCatalog.shared.save(provider)
-    }
-
-    func remove(_ provider: Provider) {
-        ProviderCatalog.shared.remove(provider)
-        if settings.providerID == provider.id {
-            settings.providerID = ProviderCatalog.openAI.id
         }
     }
 }
@@ -457,23 +434,11 @@ extension ProviderCatalog {
 
 // MARK: - Settings
 
-/// UserDefaults synchronizes access; the store reference never changes within a profile.
-nonisolated final class LLMSettings: @unchecked Sendable {
-    @TaskLocal static var scoped: LLMSettings?
-    private static let fallback = LLMSettings(defaults: .standard)
-
-    static var current: LLMSettings {
-        scoped ?? fallback
-    }
-
-    let defaults: UserDefaults
-
-    init(defaults: UserDefaults) {
-        self.defaults = defaults
-    }
-
+nonisolated enum LLMSettings {
     private static let providerKey = "llm.provider"
     private static let reasoningKey = "llm.reasoningEffort"
+
+    nonisolated(unsafe) static var defaults: UserDefaults = .standard
 
     private static func modelKey(for provider: Provider) -> String {
         "llm.model.\(provider.id)"
@@ -483,22 +448,22 @@ nonisolated final class LLMSettings: @unchecked Sendable {
         "llm.reasoningEffort.\(provider.id)"
     }
 
-    var providerID: String {
-        get { defaults.string(forKey: Self.providerKey) ?? ProviderCatalog.openAI.id }
-        set { defaults.set(newValue, forKey: Self.providerKey) }
+    static var providerID: String {
+        get { defaults.string(forKey: providerKey) ?? ProviderCatalog.openAI.id }
+        set { defaults.set(newValue, forKey: providerKey) }
     }
 
-    func model(for provider: Provider) -> String {
-        let stored = defaults.string(forKey: Self.modelKey(for: provider))
+    static func model(for provider: Provider) -> String {
+        let stored = defaults.string(forKey: modelKey(for: provider))
         if let stored, !stored.isEmpty {
             return stored
         }
         return provider.defaultModel
     }
 
-    func setModel(_ model: String, for provider: Provider) {
+    static func setModel(_ model: String, for provider: Provider) {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        defaults.set(trimmed, forKey: Self.modelKey(for: provider))
+        defaults.set(trimmed, forKey: modelKey(for: provider))
     }
 
     enum ReasoningEffort: String, CaseIterable, Identifiable {
@@ -553,22 +518,22 @@ nonisolated final class LLMSettings: @unchecked Sendable {
         }
     }
 
-    var reasoningEffort: ReasoningEffort {
+    static var reasoningEffort: ReasoningEffort {
         get {
-            ReasoningEffort(rawValue: defaults.string(forKey: Self.reasoningKey) ?? "") ?? .low
+            ReasoningEffort(rawValue: defaults.string(forKey: reasoningKey) ?? "") ?? .low
         }
-        set { defaults.set(newValue.rawValue, forKey: Self.reasoningKey) }
+        set { defaults.set(newValue.rawValue, forKey: reasoningKey) }
     }
 
-    func reasoningEffort(for provider: Provider) -> ReasoningEffort {
-        let stored = defaults.string(forKey: Self.reasoningKey(for: provider))
+    static func reasoningEffort(for provider: Provider) -> ReasoningEffort {
+        let stored = defaults.string(forKey: reasoningKey(for: provider))
         guard let stored, let effort = ReasoningEffort(rawValue: stored) else {
             return reasoningEffort
         }
         return effort
     }
 
-    func setReasoningEffort(_ effort: ReasoningEffort, for provider: Provider) {
-        defaults.set(effort.rawValue, forKey: Self.reasoningKey(for: provider))
+    static func setReasoningEffort(_ effort: ReasoningEffort, for provider: Provider) {
+        defaults.set(effort.rawValue, forKey: reasoningKey(for: provider))
     }
 }

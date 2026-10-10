@@ -122,12 +122,7 @@ struct AgentSpaceTests {
         model.activate(right)
 
         let log = SpaceLog()
-        let turns = AgentTurnModel(
-            browser: model,
-            log: log,
-            speech: SilentSpeech(),
-            actionPolicy: AgentActionPolicy(storage: SessionAgentGrantStorage())
-        )
+        let turns = AgentTurnModel(browser: model, log: log, speech: SilentSpeech())
         turns.use(SpaceRunner())
 
         #expect(turns.run(utterance: "compare these two pages"))
@@ -210,12 +205,7 @@ struct AgentSpaceTests {
         let log = SpaceLog()
         let runner = SpaceRunner()
         runner.waitsForRelease = true
-        let turns = AgentTurnModel(
-            browser: model,
-            log: log,
-            speech: SilentSpeech(),
-            actionPolicy: AgentActionPolicy(storage: SessionAgentGrantStorage())
-        )
+        let turns = AgentTurnModel(browser: model, log: log, speech: SilentSpeech())
         turns.use(runner)
         #expect(turns.run(utterance: "compare them"))
         let task = try #require(turns.activeTask)
@@ -264,7 +254,7 @@ struct AgentSpaceTests {
         let left = model.newTab(url: try server.url("/departures"))
         let right = model.newTab(url: try server.url("/arrivals"))
         for tab in [left, right] {
-            #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
+            #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
             tab.assistantAccess.persistsAnswers = false
             tab.assistantAccess.pageChanged(url: try server.url())
             tab.assistantAccess.set(.control)
@@ -298,7 +288,7 @@ struct AgentSpaceTests {
         var panes: [BrowserTab] = []
         for path in ["/one", "/two", "/three", "/four"] {
             let tab = model.newTab(url: try server.url(path))
-            #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
+            #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
             tab.assistantAccess.persistsAnswers = false
             tab.assistantAccess.pageChanged(url: try server.url())
             tab.assistantAccess.set(.control)

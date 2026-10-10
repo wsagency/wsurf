@@ -132,20 +132,6 @@ struct ConversationLogTests {
         #expect(usage.cachedTokens == 40)
         #expect(usage.outputTokens == 20)
     }
-    @Test func aTaskTraceUsesItsScopedProviderSelection() {
-        let (log, _) = makeLog()
-        let suiteName = "ConversationLogTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let settings = LLMSettings(defaults: defaults)
-        settings.providerID = "anthropic"
-
-        let taskID = LLMSettings.$scoped.withValue(settings) {
-            log.beginTask("request", tabID: UUID())
-        }
-
-        #expect(log.traces.first(where: { $0.id == taskID })?.providerID == "anthropic")
-    }
 
     /// A crash mid-turn leaves a `.running` trace on disk. Loading it back as
     /// still-running would show a task spinning forever with nothing behind
@@ -238,33 +224,6 @@ struct ConversationLogTests {
 
         #expect(log.traces(forTab: orphan).isEmpty)
         #expect(log.traces(forTab: alive).count == 1)
-    }
-    @Test func retainingOneWindowKeepsConversationsFromOtherSavedWindows() throws {
-        let database = AppDatabase.temporary()
-        let log = ConversationLog(database: database)
-        let currentTab = UUID()
-        let otherWindowTab = UUID()
-        let closedWindowTab = UUID()
-        let orphanTab = UUID()
-        try database.writer.write { db in
-            for id in [otherWindowTab, closedWindowTab] {
-                try db.execute(
-                    sql: "INSERT INTO sessionTab (id, windowID, title, url, isActive) VALUES (?, ?, '', '', 1)",
-                    arguments: [id, UUID()]
-                )
-            }
-        }
-        for tabID in [currentTab, otherWindowTab, closedWindowTab, orphanTab] {
-            log.completeTask(log.beginTask("saved conversation", tabID: tabID), response: "finished")
-        }
-        log.saveBlocking()
-
-        log.retainSessionTabs(including: [currentTab])
-
-        #expect(log.traces(forTab: currentTab).count == 1)
-        #expect(log.traces(forTab: otherWindowTab).count == 1)
-        #expect(log.traces(forTab: closedWindowTab).count == 1)
-        #expect(log.traces(forTab: orphanTab).isEmpty)
     }
 
     @Test func seedsWhatTheAgentActuallySaid() {

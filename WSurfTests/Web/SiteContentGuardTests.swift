@@ -43,17 +43,14 @@ final class SiteContentGuardTests {
         </body></html>
         """
 
-    private func page(permissions: SitePermissions, reports: Reports? = nil, at address: URL? = nil) async -> BrowserPage {
+    private func page(guardedBy sentry: SiteContentGuard, at address: URL? = nil) async -> TabWebView {
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        let view = BrowserPage(webKit: TabWebView(
+        let view = TabWebView(
             frame: NSRect(x: 0, y: 0, width: 800, height: 600),
             configuration: configuration
-        ), context: BrowserProfileContext(profile: .privateBrowsing()))
-        SiteContentGuard.shared.install(in: view, permissions: permissions, settings: settings) {
-            reports?.url = $0
-            reports?.count += 1
-        }
+        )
+        sentry.install(in: view)
         if let address {
             view.load(URLRequest(url: address))
         } else {
@@ -74,7 +71,7 @@ final class SiteContentGuardTests {
 
     /// `pause` is replaced rather than watched: a player with no source throws
     /// on the real call, and the count is what the test is asking about.
-    private func play(in view: BrowserPage, startedByHand: Bool = false) async {
+    private func play(in view: TabWebView, startedByHand: Bool = false) async {
         _ = try? await view.evaluateJavaScript(
             """
             (() => {
@@ -92,12 +89,12 @@ final class SiteContentGuardTests {
         )
     }
 
-    private func pauses(in view: BrowserPage) async -> Int {
+    private func pauses(in view: TabWebView) async -> Int {
         let count = try? await view.evaluateJavaScript("window.__pauses")
         return (count as? NSNumber)?.intValue ?? -1
     }
 
-    private func isMuted(in view: BrowserPage) async -> Bool {
+    private func isMuted(in view: TabWebView) async -> Bool {
         let muted = try? await view.evaluateJavaScript("document.querySelector('video').muted")
         return (muted as? NSNumber)?.boolValue ?? false
     }
@@ -107,7 +104,7 @@ final class SiteContentGuardTests {
     @Test func aWebsiteToldNeverIsStopped() async {
         settings.autoplay = .block
 
-        let view = await page(permissions: temporaryPermissions())
+        let view = await page(guardedBy: SiteContentGuard(permissions: temporaryPermissions(), settings: settings))
         await play(in: view)
 
         #expect(await pauses(in: view) == 1)
@@ -117,7 +114,7 @@ final class SiteContentGuardTests {
     @Test func aWebsiteToldMutedPlaysWithoutSound() async {
         settings.autoplay = .silent
 
-        let view = await page(permissions: temporaryPermissions())
+        let view = await page(guardedBy: SiteContentGuard(permissions: temporaryPermissions(), settings: settings))
         await play(in: view)
 
         #expect(await pauses(in: view) == 0, "a muted player is still a playing one")
@@ -127,7 +124,7 @@ final class SiteContentGuardTests {
     @Test func aWebsiteToldAllowIsLeftAlone() async {
         settings.autoplay = .allow
 
-        let view = await page(permissions: temporaryPermissions())
+        let view = await page(guardedBy: SiteContentGuard(permissions: temporaryPermissions(), settings: settings))
         await play(in: view)
 
         #expect(await pauses(in: view) == 0)
@@ -139,7 +136,7 @@ final class SiteContentGuardTests {
     @Test func aPlayerThePersonStartedIsNeverStopped() async {
         settings.autoplay = .block
 
-        let view = await page(permissions: temporaryPermissions())
+        let view = await page(guardedBy: SiteContentGuard(permissions: temporaryPermissions(), settings: settings))
         await play(in: view, startedByHand: true)
 
         #expect(await pauses(in: view) == 0)
@@ -154,7 +151,7 @@ final class SiteContentGuardTests {
         let permissions = temporaryPermissions()
         permissions.setAutoplay(.block, for: SitePermissions.origin(for: address))
 
-        let view = await page(permissions: permissions, at: address)
+        let view = await page(guardedBy: SiteContentGuard(permissions: permissions, settings: settings), at: address)
         await play(in: view)
 
         #expect(await pauses(in: view) == 1)
@@ -165,8 +162,12 @@ final class SiteContentGuardTests {
     @Test func aBlockedPopUpIsReportedWithTheAddressItWanted() async {
         settings.blocksPopups = true
 
+        let view = await page(guardedBy: SiteContentGuard(permissions: temporaryPermissions(), settings: settings))
         let reports = Reports()
-        let view = await page(permissions: temporaryPermissions(), reports: reports)
+        view.onPopupBlocked = {
+            reports.url = $0
+            reports.count += 1
+        }
 
         _ = try? await view.evaluateJavaScript("window.open('https://example.com/popup'); true")
 
@@ -177,8 +178,9 @@ final class SiteContentGuardTests {
     @Test func aWebsiteAllowedItsPopUpsReportsNothing() async throws {
         settings.blocksPopups = false
 
+        let view = await page(guardedBy: SiteContentGuard(permissions: temporaryPermissions(), settings: settings))
         let reports = Reports()
-        let view = await page(permissions: temporaryPermissions(), reports: reports)
+        view.onPopupBlocked = { _ in reports.count += 1 }
 
         _ = try? await view.evaluateJavaScript("window.open('https://example.com/popup'); true")
         try await view.finishPendingPageMessages()

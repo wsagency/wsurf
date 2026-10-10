@@ -31,9 +31,9 @@ struct AgentContextBoundaryTests {
     @Test func switchTabStopsAtTheContextBoundaryWithoutLeakingTitles() {
         let browser = BrowserModel(database: .temporary())
         let secret = browser.newTab()
-        secret.customTitle = "Secret research"
+        secret.title = "Secret research"
         let taskTab = browser.newTab()
-        taskTab.customTitle = "Task page"
+        taskTab.title = "Task page"
 
         let subject = toolkit(browser: browser)
         subject.beginTask(task(on: taskTab))
@@ -49,9 +49,9 @@ struct AgentContextBoundaryTests {
     @Test func closeTabStopsAtTheContextBoundary() {
         let browser = BrowserModel(database: .temporary())
         let secret = browser.newTab()
-        secret.customTitle = "Secret research"
+        secret.title = "Secret research"
         let taskTab = browser.newTab()
-        taskTab.customTitle = "Task page"
+        taskTab.title = "Task page"
 
         let subject = toolkit(browser: browser)
         subject.beginTask(task(on: taskTab))
@@ -68,13 +68,13 @@ struct AgentContextBoundaryTests {
     @Test func closingTheActiveTabRequiresItToBeInContext() {
         let browser = BrowserModel(database: .temporary())
         let taskTab = browser.newTab()
-        taskTab.customTitle = "Task page"
+        taskTab.title = "Task page"
 
         let subject = toolkit(browser: browser)
         subject.beginTask(task(on: taskTab))
 
         let wandered = browser.newTab()
-        wandered.customTitle = "Private reading"
+        wandered.title = "Private reading"
 
         let output = subject.closeTab(matching: nil)
 
@@ -85,9 +85,9 @@ struct AgentContextBoundaryTests {
     @Test func switchTabReachesAMentionedTab() {
         let browser = BrowserModel(database: .temporary())
         let mentioned = browser.newTab()
-        mentioned.customTitle = "Nike Air Max"
+        mentioned.title = "Nike Air Max"
         let taskTab = browser.newTab()
-        taskTab.customTitle = "Task page"
+        taskTab.title = "Task page"
 
         let subject = toolkit(browser: browser)
         subject.beginTask(task(on: taskTab, mentioning: [mentioned.id]))
@@ -103,11 +103,10 @@ struct AgentContextBoundaryTests {
         let server = try await HTTPFixtureServer.start(routes: [
             "/": .html("<h1>Fresh page</h1>"),
         ])
-        defer { withExtendedLifetime(server) {} }
         let pageURL = try server.url()
         let browser = BrowserModel(database: .temporary())
         let origin = browser.newTab()
-        origin.customTitle = "Origin page"
+        origin.title = "Origin page"
 
         let subject = toolkit(browser: browser)
         subject.beginTask(task(on: origin))
@@ -133,7 +132,7 @@ struct AgentContextBoundaryTests {
     @Test func aFreshTaskDropsTabsFromAnEarlierOne() async throws {
         let browser = BrowserModel(database: .temporary())
         let first = browser.newTab()
-        first.customTitle = "Alpha notes"
+        first.title = "Alpha notes"
 
         let subject = toolkit(browser: browser)
         subject.beginTask(task(on: first))

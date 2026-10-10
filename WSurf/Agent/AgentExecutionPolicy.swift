@@ -26,7 +26,6 @@ nonisolated struct AgentExecutionPolicy: Equatable, Sendable {
 
 nonisolated enum AgentStopReason: String, Codable, Sendable {
     case requestLimit = "request_limit"
-    case rateLimited = "rate_limited"
     case noProgress = "no_progress"
     case contextLimit = "context_limit"
     case providerError = "provider_error"
@@ -42,8 +41,6 @@ nonisolated enum AgentStopReason: String, Codable, Sendable {
             String(localized: "The task needs your help. Unfinished outcomes and progress are saved.")
         case .requestLimit:
             String(localized: "Paused at your request limit. Your progress is saved; choose Continue to keep going.")
-        case .rateLimited:
-            String(localized: "Paused because the provider is rate limited. Your progress is saved; wait, then choose Continue.")
         case .noProgress:
             String(localized: "Paused because the last actions weren’t making progress. Your progress is saved; check the page, then choose Continue.")
         case .contextLimit:

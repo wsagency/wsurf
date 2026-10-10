@@ -17,34 +17,31 @@ import WebKit
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct NewTabChromeTests {
-    private func makeTab(opensBlank: Bool = true) -> BrowserTab {
-        BrowserTab(opensBlank: opensBlank, context: BrowserProfileContext(profile: .privateBrowsing()))
-    }
-
     /// The regression, stated as the thing the user saw: an empty tab must
     /// never pass through a loading state, at any point after it is made.
     @Test func anEmptyTabNeverReportsItselfLoading() async {
-        let tab = makeTab()
+        let tab = BrowserTab()
 
         let finished = await waitUntil {
             #expect(!tab.isLoading, "the warm-up page must not report a page load")
             #expect(tab.hasNoPageYet, "the start page must stay visible during warm-up")
-            return tab.page.url == SystemPages.start && !tab.page.isLoading
+            return tab.webView.url == SystemPages.start && !tab.webView.isLoading
         }
         #expect(finished)
         #expect(tab.urlString.isEmpty)
+        #expect(tab.title == "Start Page")
+        #expect(SystemPages.startSymbol == "house")
     }
 
     /// Several tabs at once is the launch case: the pool only holds a couple
     /// of warm views, so the third onward is built and handed over with its
     /// warm-up load definitely still running.
     @Test func aWholeSessionOfNewTabsStaysQuiet() async {
-        let context = BrowserProfileContext(profile: .privateBrowsing())
-        let tabs = (0..<5).map { _ in BrowserTab(context: context) }
+        let tabs = (0..<5).map { _ in BrowserTab() }
 
         let finished = await waitUntil {
             #expect(tabs.allSatisfy { $0.hasNoPageYet })
-            return tabs.allSatisfy { $0.page.url == SystemPages.start && !$0.page.isLoading }
+            return tabs.allSatisfy { $0.webView.url == SystemPages.start && !$0.webView.isLoading }
         }
         #expect(finished)
     }
@@ -53,10 +50,10 @@ struct NewTabChromeTests {
     /// rasterize. That colour must never reach the toolbar's tint - the bar
     /// takes its wash from the *site*, and an empty tab has no site.
     @Test func theWarmUpPageNeverTintsTheToolbar() async {
-        let tab = makeTab()
+        let tab = BrowserTab()
         let finished = await waitUntil {
             #expect(tab.pageColor == nil, "the pool's blank page washed the toolbar in its own backdrop")
-            return tab.page.url == SystemPages.start && !tab.page.isLoading
+            return tab.webView.url == SystemPages.start && !tab.webView.isLoading
         }
         #expect(finished)
     }
@@ -67,7 +64,7 @@ struct NewTabChromeTests {
     /// nothing. A real page still moves the tab out of the start-page state
     /// and leaves its address behind.
     @Test func arealPageStillEndsTheStartPageState() async {
-        let tab = makeTab()
+        let tab = BrowserTab()
         tab.loadHTML(
             "<!doctype html><html><body><h1>Arrived</h1></body></html>",
             baseURL: URL(string: "https://example.test/page")
@@ -83,12 +80,12 @@ struct NewTabChromeTests {
     /// Loading `about:blank` - which is how a closing tab is silenced - is
     /// not a page either, and must not light the chrome up on the way out.
     @Test func blankingATabIsNotAPageLoad() async {
-        let tab = makeTab()
+        let tab = BrowserTab()
         tab.load(URL(string: "about:blank")!)
 
         let finished = await waitUntil {
             #expect(!tab.isLoading)
-            return tab.page.url?.absoluteString == "about:blank" && !tab.page.isLoading
+            return tab.webView.url?.absoluteString == "about:blank" && !tab.webView.isLoading
         }
         #expect(finished)
         #expect(tab.hasNoPageYet)
@@ -110,7 +107,7 @@ struct NewTabChromeTests {
             )
             webView.appearance = NSAppearance(named: appearance)
             webView.loadHTMLString(WebViewPool.warmUpHTML, baseURL: nil)
-            #expect(await PageSettle.untilIdle(BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing())), timeout: .seconds(30)))
+            #expect(await PageSettle.untilIdle(webView, timeout: .seconds(30)))
 
             let css = try #require(
                 (try? await webView.evaluateJavaScript(
@@ -136,10 +133,10 @@ struct NewTabChromeTests {
     /// claim. While the warm-up page holds the view, the backdrop is the
     /// window's own background, never the warm-up's.
     @Test func theBackdropClaimsNothingBeforeARealPage() async {
-        let tab = makeTab()
+        let tab = BrowserTab()
         let finished = await waitUntil {
             #expect(tab.canvasColor == nil, "the warm-up page's backdrop leaked into the canvas colour")
-            return tab.page.url == SystemPages.start && !tab.page.isLoading
+            return tab.webView.url == SystemPages.start && !tab.webView.isLoading
         }
         #expect(finished)
     }
@@ -147,7 +144,7 @@ struct NewTabChromeTests {
     /// …and takes the site's colour once there is a site, which is what
     /// keeps a resize gap beside a dark page from flashing white.
     @Test func theBackdropTakesTheSitesColourOnceItArrives() async throws {
-        let tab = makeTab()
+        let tab = BrowserTab()
         tab.loadHTML(
             "<!doctype html><html><body style=\"background:#123456\"><p>Here</p></body></html>",
             baseURL: URL(string: "https://example.test/dark")
@@ -162,7 +159,7 @@ struct NewTabChromeTests {
     /// Back is dead. The start page is a real `wsurf://start` navigation now,
     /// so it is the first entry in WebKit's own back list.
     @Test func backReturnsToTheStartPageATabBeganOn() async throws {
-        let tab = makeTab()
+        let tab = BrowserTab()
         #expect(await settled(tab, at: SystemPages.start))
 
         tab.load(BrowserTab.InternalPage.history.url)
@@ -182,7 +179,7 @@ struct NewTabChromeTests {
 
     /// The start page covers the row's name and icon while it is on screen.
     @Test func theStartPageTakesTheRowBackFromThePageItCovers() async {
-        let tab = makeTab()
+        let tab = BrowserTab()
         #expect(await settled(tab, at: SystemPages.start))
 
         tab.load(BrowserTab.InternalPage.releaseNotes.url)
@@ -190,12 +187,12 @@ struct NewTabChromeTests {
 
         tab.goBack()
         #expect(await settled(tab, at: SystemPages.start))
-        #expect(tab.title == "Start Page")
+        #expect(tab.title == BrowserTab.placeholderTitle)
         #expect(tab.favicon == nil)
     }
 
     @Test func goingForwardGivesThePageItsNameBack() async {
-        let tab = makeTab()
+        let tab = BrowserTab()
         #expect(await settled(tab, at: SystemPages.start))
 
         tab.load(BrowserTab.InternalPage.downloads.url)
@@ -212,7 +209,7 @@ struct NewTabChromeTests {
     /// The failure that started the rewrite: one remembered page is not a
     /// stack. Two system pages deep, Back must walk both of them.
     @Test func backWalksEverySystemPageInTheTab() async {
-        let tab = makeTab()
+        let tab = BrowserTab()
         #expect(await settled(tab, at: SystemPages.start))
 
         tab.load(BrowserTab.InternalPage.history.url)
@@ -230,65 +227,36 @@ struct NewTabChromeTests {
     }
 
     @Test func aTabOpenedStraightOntoALinkHasNoStartPageBehindIt() async {
-        let tab = makeTab(opensBlank: false)
+        let tab = BrowserTab(opensBlank: false)
 
-        #expect(tab.title == "New Page")
         #expect(!tab.canGoBack)
         tab.goBack()
         #expect(await waitUntil { !tab.isShowingStartPage })
     }
 
-    @Test(arguments: ["", "<title></title>"])
-    func anUntitledWebsiteUsesTheNewPageTitle(titleMarkup: String) async {
-        let tab = makeTab(opensBlank: false)
-        let url = URL(string: "https://example.test/untitled")!
-        tab.loadHTML("<!doctype html>\(titleMarkup)<p>Page</p>", baseURL: url)
-        #expect(await settled(tab, at: url))
-        #expect(tab.title == "New Page")
-        #expect(!tab.isShowingStartPage)
+    // MARK: - The address field's rhythm
+
+    /// The new-tab field read lopsided: the mic sat in a 20pt slot, the
+    /// trailing icon in 16, with a stray 4pt pad between text and icons. Both
+    /// sides of the row now build from `iconSlot` and `controlSpacing` alone,
+    /// so an icon's distance to the field edge and to the text is the same
+    /// pair of numbers on either side.
+    @Test func theAddressFieldsGlyphSlotsAreOneSize() {
+        let toolbar = AskSurface.Placement.toolbar
+        #expect(toolbar.iconSlot == toolbar.orbSize + 2, "the slot is the mic's own; anything narrower clips the orb")
+        // The trailing badges are 16pt ChromeIcons; the shared slot must hold
+        // them without clipping.
+        #expect(toolbar.iconSlot >= 16)
+
+        let start = AskSurface.Placement.startPage
+        #expect(start.iconSlot == start.orbSize + 2)
     }
 
-    @Test func anUntitledWebsiteDoesNotKeepTheStartPagesTitle() async throws {
-        let server = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><p>Page</p>")])
-        defer { withExtendedLifetime(server) {} }
-        let url = try server.url()
-        let tab = makeTab()
-        #expect(tab.title == "Start Page")
-        #expect(await settled(tab, at: SystemPages.start))
-        tab.load(url)
-        #expect(await settled(tab, at: url))
-        #expect(tab.title == "New Page")
-        tab.goBack()
-        #expect(await settled(tab, at: SystemPages.start))
-        #expect(tab.title == "Start Page")
-        tab.goForward()
-        #expect(await settled(tab, at: url))
-        #expect(tab.title == "New Page")
-    }
-
-    @Test func removingAWebsiteTitleUsesNewPageAndPreservesACustomTitle() async throws {
-        let tab = makeTab(opensBlank: false)
-        let url = URL(string: "https://example.test/titled")!
-        tab.loadHTML("<!doctype html><title>Website</title><p>Page</p>", baseURL: url)
-        #expect(await settled(tab, at: url))
-        #expect(tab.title == "Website")
-        tab.customTitle = "My Page"
-        _ = try await tab.page.evaluateJavaScript("document.title = ''")
-        #expect(await waitUntil { tab.pageTitle == "New Page" })
-        #expect(tab.title == "My Page")
-        tab.customTitle = ""
-        #expect(tab.title == "New Page")
-    }
     @Test func typingAnAddressLeavesTheStartPageAgain() async throws {
-        let server = try await HTTPFixtureServer.start(routes: [
-            "/": .html("<!doctype html><html><body>Real page</body></html>")
-        ])
-        defer { withExtendedLifetime(server) {} }
-        let tab = makeTab()
+        let tab = BrowserTab()
         #expect(await settled(tab, at: SystemPages.start))
 
-        let address = try server.url()
-        tab.load(address)
-        #expect(await waitUntil { tab.page.url == address && !tab.isShowingStartPage })
+        tab.load(try #require(URL(string: "\(SystemPages.scheme)://stand-in.example/page")))
+        #expect(await waitUntil { !tab.isShowingStartPage })
     }
 }

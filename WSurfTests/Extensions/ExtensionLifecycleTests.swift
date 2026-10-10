@@ -37,16 +37,10 @@ struct ExtensionLifecycleTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let context = WKWebExtensionContext(for: try await WKWebExtension(resourceBaseURL: root))
         let browser = BrowserModel(database: .temporary())
-        let manager = ExtensionManager(profile: .original(), library: ExtensionLibrary(baseDirectory: root))
-        manager.register(browser: browser)
-        defer {
-            manager.unregister(browser: browser)
-            browser.closeAllTabs(saving: false)
-        }
-        let tab = browser.makeTab(restoring: true)
+        let manager = ExtensionManager(browser: browser, library: ExtensionLibrary(baseDirectory: root))
+        let tab = BrowserTab(restoring: true)
         tab.urlString = "https://example.com/restored"
         tab.title = "Restored tab"
-        browser.insert(tab, after: nil)
         let adapter = manager.adapter(for: tab)
 
         #expect(adapter.url(for: context)?.absoluteString == tab.urlString)
@@ -97,42 +91,39 @@ struct ExtensionLifecycleTests {
         let browser = BrowserModel(database: .temporary())
         let library = ExtensionLibrary(baseDirectory: root)
         library.recordInstall(id: id)
-        let manager = ExtensionManager(profile: .original(), dataStore: browser.context.dataStore, library: library)
-        browser.context.webViewPool.installExtensionController(manager.controller)
+        let manager = ExtensionManager(browser: browser, library: library)
+        WebViewPool.shared.installExtensionController(manager.controller)
+        let tab = browser.newTab(url: try server.url())
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 320, height: 200),
                               styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        let windowAdapter = manager.register(browser: browser, window: window)
-        let tab = browser.newTab(url: try server.url())
         let anchor = NSView(frame: CGRect(x: 20, y: 20, width: 30, height: 30))
         window.contentView?.addSubview(anchor)
         window.orderFront(nil)
         defer {
             manager.setEnabled(false, id: id)
             browser.close(tab)
-            manager.unregister(browser: browser)
             window.close()
-            browser.context.webViewPool.installExtensionController(nil)
+            WebViewPool.shared.installExtensionController(nil)
         }
         await manager.start()
-        manager.registerAnchor(anchor, for: id, inWindow: windowAdapter)
+        manager.registerAnchor(anchor, for: id)
         #expect(await waitUntil { !tab.isLoading && tab.committedURL != nil })
-        manager.performAction(for: id, inWindow: windowAdapter)
-        let action = try #require(manager.action(for: id, inWindow: windowAdapter))
+        manager.performAction(for: id)
+        let action = try #require(manager.action(for: id))
         #expect(try await waitUntil {
             try await action.popupWebView?.evaluateJavaScript("document.body.dataset.ready") as? String == "yes"
         })
         let view = try #require(action.popupWebView)
         let nonce = try #require(try await view.evaluateJavaScript("document.body.dataset.nonce") as? String)
         #expect(try await view.evaluateJavaScript("document.body.dataset.frames") as? String == "2")
-        #expect(try await tab.page.evaluateJavaScript(
+        #expect(try await tab.webView.evaluateJavaScript(
             "document.documentElement.dataset.injected === 'yes' && document.querySelector('iframe').contentDocument.documentElement.dataset.injected === 'yes'"
         ) as? Bool == true)
-        _ = try await tab.page.evaluateJavaScript("history.pushState({}, '', '/spa'); true")
+        _ = try await tab.webView.evaluateJavaScript("history.pushState({}, '', '/spa'); true")
         #expect(await waitUntil { adapterURL(manager, tab) == "/spa" })
         action.closePopup()
-        manager.registerAnchor(anchor, for: id, inWindow: windowAdapter)
-        manager.performAction(for: id, inWindow: windowAdapter)
+        manager.registerAnchor(anchor, for: id)
+        manager.contexts[id]?.performAction(for: manager.adapter(for: tab))
         #expect(try await waitUntil {
             try await action.popupWebView?.evaluateJavaScript("document.body.dataset.ready") as? String == "yes"
         })

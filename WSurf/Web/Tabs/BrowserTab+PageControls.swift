@@ -7,97 +7,90 @@ import WebKit
 
 extension BrowserTab {
     var isShowingRealPage: Bool {
-        guard let scheme = page.url?.scheme else { return false }
+        guard let scheme = webView.url?.scheme else { return false }
         return scheme != "about" && scheme != SystemPages.scheme
     }
 
-    var backList: [PageHistoryItem] {
+    var backList: [WKBackForwardListItem] {
         guard isMaterialised else { return [] }
-        return page.backForwardList.backList
+        return webView.backForwardList.backList
     }
 
     func goBack() {
-        page.stopLoading()
-        page.goBack()
+        webView.stopLoading()
+        webView.goBack()
     }
 
     func goForward() {
-        page.stopLoading()
-        page.goForward()
+        webView.stopLoading()
+        webView.goForward()
     }
 
     var zoomLevel: CGFloat {
         _ = zoomChanges
-        return page.pageZoom
+        return webView.pageZoom
     }
 
     var isZoomed: Bool {
         _ = zoomChanges
-        return abs(page.pageZoom - context.settings.pageZoom) > 0.005
-            || abs(page.magnification - 1) > 0.005
+        return abs(webView.pageZoom - BrowserSettings.shared.pageZoom) > 0.005
+            || abs(webView.magnification - 1) > 0.005
     }
 
     func zoomIn() {
-        setPageZoom(page.pageZoom + TabWebView.zoomStep)
+        setPageZoom(webView.pageZoom + TabWebView.zoomStep)
     }
 
     func zoomOut() {
-        setPageZoom(page.pageZoom - TabWebView.zoomStep)
+        setPageZoom(webView.pageZoom - TabWebView.zoomStep)
     }
 
     func resetZoom() {
-        page.magnification = 1
-        page.pageZoom = context.settings.pageZoom
+        webView.magnification = 1
+        webView.pageZoom = BrowserSettings.shared.pageZoom
         zoomDidChange()
     }
 
     private func setPageZoom(_ value: CGFloat) {
-        page.pageZoom = min(
+        webView.pageZoom = min(
             max(value, TabWebView.zoomRange.lowerBound),
             TabWebView.zoomRange.upperBound
         )
         zoomDidChange()
     }
 
-    static func applyObscuredInsets(to page: BrowserPage, isUnderTopBar: Bool = false) {
-        let top: CGFloat = page.isFullscreen || !isUnderTopBar ? 0 : Theme.topBarHeight
-        if let native = page.webKit {
-            native.obscuredContentInsets = NSEdgeInsets(top: top, left: 0, bottom: 0, right: 0)
-        } else {
-            page.topBarInset = top
+    static func applyObscuredInsets(
+        to webView: WKWebView,
+        isUnderTopBar: Bool = false
+    ) {
+        let isFullscreen = switch webView.fullscreenState {
+        case .enteringFullscreen, .inFullscreen:
+            true
+        default:
+            false
         }
+        webView.obscuredContentInsets = NSEdgeInsets(
+            top: isFullscreen || !isUnderTopBar ? 0 : Theme.topBarHeight,
+            left: 0,
+            bottom: 0,
+            right: 0
+        )
     }
 
     static func restoreScrollScript(to y: Double) -> String {
         """
         (() => {
           const target = \(y);
-          if (window.scrollY > 1 && Math.abs(window.scrollY - target) > 1) return;
+          if (window.scrollY > 1) return;
           let expected = window.scrollY;
           let tries = 20;
-          let timer;
-          const events = ['wheel', 'keydown', 'pointerdown', 'touchstart', 'pagehide'];
-          const stop = () => {
-            clearTimeout(timer);
-            for (const event of events) removeEventListener(event, stop, true);
-          };
           const step = () => {
-            // A process swap can reset to zero after didFinish, even after a
-            // successful scrollTo. Keep watching briefly, but yield to input
-            // or a page choosing another nonzero position.
-            if (window.scrollY > 1 && Math.abs(window.scrollY - expected) > 1) {
-              stop();
-              return;
-            }
-            if (Math.abs(window.scrollY - target) > 1) window.scrollTo(0, target);
+            if (Math.abs(window.scrollY - expected) > 1) return;
+            window.scrollTo(0, target);
             expected = window.scrollY;
-            if (--tries <= 0) {
-              stop();
-              return;
-            }
-            timer = setTimeout(step, 60);
+            if (Math.abs(expected - target) <= 1 || --tries <= 0) return;
+            setTimeout(step, 60);
           };
-          for (const event of events) addEventListener(event, stop, { capture: true, passive: true });
           step();
         })();
         """

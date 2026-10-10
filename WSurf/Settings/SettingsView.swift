@@ -13,29 +13,17 @@ final class SettingsWorkspace {
     var query = ""
     var highlight: String?
 
-    var intelligence: IntelligenceViewModel
+    let intelligence: IntelligenceViewModel
 
     @ObservationIgnored private var highlightTask: Task<Void, Never>?
 
     init(coordinator: AppCoordinator) {
-        intelligence = Self.makeIntelligence(coordinator: coordinator)
-    }
-
-    func adoptProfile(coordinator: AppCoordinator) {
-        intelligence = Self.makeIntelligence(coordinator: coordinator)
-    }
-
-    private static func makeIntelligence(coordinator: AppCoordinator) -> IntelligenceViewModel {
-        let context = coordinator.context
-        return IntelligenceViewModel(
-            settings: context.modelSettings,
-            actionPolicy: context.actionPolicy,
-            catalog: ProfileProviderCatalog(settings: context.modelSettings),
+        intelligence = IntelligenceViewModel(
             onVoiceConfigurationChanged: { [weak coordinator] in
                 guard let coordinator else { return }
                 coordinator.configureVoice()
             },
-            onConfigurationChanged: coordinator.reloadAssistantConfiguration
+            onConfigurationChanged: coordinator.configureEngines
         )
     }
 
@@ -163,40 +151,34 @@ private struct SettingsDetail: View {
                 VStack(alignment: .leading, spacing: SettingsMetrics.sectionSpacing) {
                     switch category {
                     case .general:
-                        GeneralSettings(coordinator: coordinator, settings: BrowserSettings.application)
+                        GeneralSettings(coordinator: coordinator, settings: coordinator.settings)
                     case .search:
-                        SearchSettings(coordinator: coordinator, settings: coordinator.context.settings)
+                        SearchSettings(coordinator: coordinator, settings: coordinator.settings)
                     case .appearance:
-                        AppearanceSettings(coordinator: coordinator, settings: BrowserSettings.application)
+                        AppearanceSettings(coordinator: coordinator, settings: coordinator.settings)
                     case .provider:
                         AssistantSettings(model: intelligence, coordinator: coordinator)
                     case .profiles:
                         ProfileSettings(coordinator: coordinator)
                     case .autofill:
-                        AutofillSettings(coordinator: coordinator, highlight: highlight)
+                        AutofillSettings(coordinator: coordinator, settings: coordinator.settings, highlight: highlight)
                     case .privacy:
-                        PrivacySettings(coordinator: coordinator, settings: coordinator.context.settings)
+                        PrivacySettings(coordinator: coordinator, settings: coordinator.settings)
                     case .websites:
                         WebsiteSettings(
-                            settings: coordinator.context.settings,
-                            permissions: coordinator.context.sitePermissions,
-                            browser: coordinator.browser
+                            settings: coordinator.settings,
+                            permissions: coordinator.browser.sitePermissions
                         )
                     case .downloads:
-                        DownloadsSettings(coordinator: coordinator, settings: BrowserSettings.application)
+                        DownloadsSettings(coordinator: coordinator, settings: coordinator.settings)
                     case .extensions:
                         ExtensionsSettings(coordinator: coordinator)
                     case .advanced:
-                        AdvancedSettings(
-                            settings: BrowserSettings.application,
-                            profileSettings: coordinator.context.settings,
-                            mcpServer: coordinator.mcpServer,
-                            highlight: highlight
-                        )
+                        AdvancedSettings(settings: coordinator.settings, mcpServer: coordinator.mcpServer, highlight: highlight)
                     case .experiments:
-                        ExperimentsSettings(settings: BrowserSettings.application)
+                        ExperimentsSettings(settings: coordinator.settings)
                     case .about:
-                        AboutSettings(coordinator: coordinator, settings: BrowserSettings.application)
+                        AboutSettings(coordinator: coordinator, settings: coordinator.settings)
                     }
                 }
                 .frame(maxWidth: SettingsMetrics.detailWidth, alignment: .leading)

@@ -17,10 +17,7 @@ final class AskSurfaceModel {
         didSet {
             if oldValue.text != interaction.text, !isPreviewingSelection {
                 suggestionPreview.clear()
-                suggestions.update(
-                    for: MentionText.stripped(interaction.text),
-                    settings: coordinator.context.settings
-                )
+                suggestions.update(for: MentionText.stripped(interaction.text))
             }
         }
     }
@@ -53,7 +50,7 @@ final class AskSurfaceModel {
         coordinator.state == .listening
     }
     var agentOnly: Bool {
-        Omnibox.isAgentOnly(settings: coordinator.context.settings)
+        Omnibox.isAgentOnly
     }
     var placeholder: String {
         agentOnly ? Omnibox.agentOnlyPlaceholder : placement.placeholder
@@ -63,10 +60,6 @@ final class AskSurfaceModel {
     }
     var security: PageSecurity {
         browser.activeTab?.security ?? .none
-    }
-    var addressEngine: BrowserEngine? {
-        guard case .address = restingContent else { return nil }
-        return browser.activeTab?.loadedEngine
     }
     var isPrivate: Bool {
         browser.activeTab?.isPrivate ?? false
@@ -92,9 +85,7 @@ final class AskSurfaceModel {
     }
 
     var accessibilityValue: String {
-        let value = restingContent?.accessibilityValue(fallback: interaction.text) ?? interaction.text
-        guard let engine = addressEngine else { return value }
-        return String(localized: "\(value), rendering engine: \(String(localized: engine.label))")
+        restingContent?.accessibilityValue(fallback: interaction.text) ?? interaction.text
     }
 
     var activity: AskSurfaceActivity {
@@ -136,7 +127,6 @@ final class AskSurfaceModel {
             isListening: isListening,
             currentURL: currentURL,
             agentOnly: agentOnly,
-            settings: coordinator.context.settings,
             agentName: coordinator.agentDisplayName,
             history: browser.history,
             tabs: browser.tabs,
@@ -295,7 +285,7 @@ final class AskSurfaceModel {
     }
 
     var pendingQuestion: AgentQuestionModel.Ask? {
-        coordinator.pendingAgentQuestion(inChrome: true)
+        coordinator.agentQuestions.ask(inSpace: activeSpaceID)
     }
 
     func answer(_ text: String) {

@@ -6,7 +6,7 @@ import SwiftUI
 
 struct AutofillSavePromptReset: View {
     let kind: AutofillSaveKind
-    let context: BrowserProfileContext
+    let profileID: UUID
     @State private var isBusy = false
     @State private var showsError = false
 
@@ -17,15 +17,15 @@ struct AutofillSavePromptReset: View {
                     isBusy = true
                     Task {
                         do {
-                            try await Task.detached { [kind, profileID = context.profile.id] in
+                            try await Task.detached { [kind, profileID] in
                                 try AutofillSaveIndex.resetBlocks(kind: kind, profileID: profileID)
                             }.value
-                            AutofillSaveCoordinator.shared.resetDismissals(kind: kind, context: context)
+                            AutofillSaveCoordinator.shared.resetDismissals(kind: kind, profileID: profileID)
                         } catch { showsError = true }
                         isBusy = false
                     }
                 }
-                .disabled(isBusy || context.profile.isPrivate)
+                .disabled(isBusy || profileID == Profile.privateID)
             }
         }
         .alert("Couldn’t Reset Save Suggestions", isPresented: $showsError) {

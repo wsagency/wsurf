@@ -25,7 +25,6 @@ struct StartPageSnapshotTests {
         let sites = StartPageSnapshot.frequentSites(
             from: visits,
             hiddenHosts: [],
-            settings: .application,
             calendar: calendar
         )
 
@@ -40,7 +39,7 @@ struct StartPageSnapshotTests {
 
     @Test func repeatedVisitsOnOneDayDoNotEarnAFrequentSite() {
         let visits = (1...8).map { visit(id: Int64($0), url: "https://docs.example/guide", day: 3) }
-        #expect(StartPageSnapshot.frequentSites(from: visits, hiddenHosts: [], settings: .application, calendar: calendar).isEmpty)
+        #expect(StartPageSnapshot.frequentSites(from: visits, hiddenHosts: [], calendar: calendar).isEmpty)
     }
 
     @Test func qualifyingSiteKeepsCountingVisitsAndChoosingItsMostVisitedHost() {
@@ -52,7 +51,7 @@ struct StartPageSnapshotTests {
             visit(id: 2, url: "https://www.example.com/older", day: 2),
             visit(id: 1, url: "https://docs.example.com/four", day: 1),
         ]
-        #expect(StartPageSnapshot.frequentSites(from: visits, hiddenHosts: [], settings: .application, calendar: calendar) == [
+        #expect(StartPageSnapshot.frequentSites(from: visits, hiddenHosts: [], calendar: calendar) == [
             StartPageSite(url: "https://www.example.com/latest", host: "docs.example.com", visits: 6),
         ])
     }
@@ -77,7 +76,6 @@ struct StartPageSnapshotTests {
         let sites = StartPageSnapshot.frequentSites(
             from: visits,
             hiddenHosts: ["hidden.example"],
-            settings: .application,
             calendar: calendar
         )
 
@@ -98,7 +96,6 @@ struct StartPageSnapshotTests {
         let sites = StartPageSnapshot.frequentSites(
             from: visits,
             hiddenHosts: [],
-            settings: .application,
             calendar: calendar
         )
 
@@ -118,7 +115,6 @@ struct StartPageSnapshotTests {
         let sites = StartPageSnapshot.frequentSites(
             from: visits,
             hiddenHosts: ["github.com"],
-            settings: .application,
             calendar: calendar
         )
 
@@ -168,7 +164,6 @@ struct StartPageSnapshotTests {
             downloads: downloads,
             tasks: tasks,
             hiddenFrequentHosts: [],
-            settings: .application,
             calendar: calendar
         )
 

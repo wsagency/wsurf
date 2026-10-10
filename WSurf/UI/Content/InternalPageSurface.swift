@@ -15,7 +15,7 @@ struct InternalPageSurface: View {
         case .settings:
             SettingsView(coordinator: coordinator, workspace: settingsWorkspace)
         case .history:
-            HistoryView(browser: browser, coordinator: coordinator)
+            HistoryView(browser: browser)
         case .downloads:
             DownloadsView(browser: browser)
         case .releaseNotes:

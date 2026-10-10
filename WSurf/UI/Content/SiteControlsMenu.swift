@@ -61,7 +61,7 @@ private struct SiteControlsPanel: View {
     }
 
     private var blockableHost: String? {
-        guard tab.context.settings.blocksTrackers,
+        guard BrowserSettings.shared.blocksTrackers,
               let host = URL(string: tab.urlString)?.host(),
               !host.isEmpty
         else { return nil }
@@ -248,34 +248,15 @@ private struct SiteHandlingSection: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if !siteOrigin.isEmpty {
-                SiteControlRow(symbol: "globe", title: "Browser Engine") {
-                    SitePolicyMenu(
-                        options: BrowserEngine.allCases.map {
-                            ($0, String(localized: $0.label))
-                        },
-                        selection: browser.engine(for: tab)
-                    ) { engine in
-                        Task { _ = await browser.setEngine(engine, for: siteOrigin) }
-                    }
-                }
-                .help("Changing engines reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL.")
-                if tab.isMaterialised, tab.engine != browser.engine(for: tab) {
-                    Text("Current page: \(String(localized: tab.engine.label)). Submitted requests stay in their original engine.")
-                        .font(Theme.Font.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, SiteControlsMetrics.inset)
-                }
-            }
-
             SiteZoomSection(tab: tab)
+
             if !tab.assistantAccess.origin.isEmpty {
                 SiteControlRow(symbol: "sparkles", title: "Assistant Access") {
                     AssistantAccessMenu(tab: tab)
                 }
             }
 
-            if BrowserSettings.application.sleepsInactiveTabs, !siteOrigin.isEmpty {
+            if BrowserSettings.shared.sleepsInactiveTabs, !siteOrigin.isEmpty {
                 SiteControlRow(symbol: "bolt", title: "Keep Website Loaded") {
                     SiteControlToggle(
                         isOn: browser.keepsActive(tab),
@@ -311,7 +292,7 @@ private struct SiteMediaSection: View {
                 }
             }
 
-            if BrowserSettings.application.automaticPictureInPicture {
+            if BrowserSettings.shared.automaticPictureInPicture {
                 SiteControlRow(symbol: "pip", title: "Auto Picture in Picture") {
                     SiteControlToggle(
                         isOn: browser.allowsAutomaticPicture(tab),
@@ -343,10 +324,10 @@ private struct SiteSafetySection: View {
                         TrackerInfoButton(tab: tab, host: blockableHost)
 
                         SiteControlToggle(
-                            isOn: !tab.context.contentBlocker.isExempt(blockableHost),
+                            isOn: !ContentBlocker.shared.isExempt(blockableHost),
                             set: { blocks in
-                                tab.context.contentBlocker.setExempt(!blocks, for: blockableHost)
-                                tab.page.reload()
+                                ContentBlocker.shared.setExempt(!blocks, for: blockableHost)
+                                tab.webView.reload()
                             }
                         )
                     }
@@ -444,7 +425,7 @@ private struct TrackerInfoButton: View {
     @State private var isPresented = false
 
     private var isBlocking: Bool {
-        !tab.context.contentBlocker.isExempt(host)
+        !ContentBlocker.shared.isExempt(host)
     }
 
     var body: some View {
@@ -499,7 +480,7 @@ private struct TrackerInfoPopover: View {
         .frame(width: 310)
         .background(.ultraThickMaterial)
         .task(id: tab.urlString) {
-            let result = await TrackerPageReport.matchingDomains(in: tab.page)
+            let result = await TrackerPageReport.matchingDomains(in: tab.webView)
             guard !Task.isCancelled else { return }
             domains = result
         }

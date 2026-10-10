@@ -39,28 +39,39 @@ struct ProfileSwitcher: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !profiles.isPrivate {
-                ForEach(profiles.profiles) { profile in
-                    ProfileSwitcherRow(
-                        profile: profile,
-                        isCurrent: profile.id == profiles.current.id
-                    ) {
-                        dismiss()
-                        Task { await coordinator.switchProfile(to: profile) }
-                    }
-                    .disabled(coordinator.isSwitchingProfile)
+            ForEach(profiles.profiles) { profile in
+                ProfileSwitcherRow(
+                    profile: profile,
+                    isCurrent: profile.id == profiles.current.id,
+                    caption: caption(for: profile)
+                ) {
+                    dismiss()
+                    Task { await coordinator.switchProfile(to: profile) }
                 }
-
-                Divider()
-                    .opacity(0.4)
-                    .padding(.vertical, 5)
+                .disabled(coordinator.isSwitchingProfile)
             }
 
-            ProfileActionRow(title: "New Private Window", symbol: "eyeglasses") {
+            Divider()
+                .opacity(0.4)
+                .padding(.vertical, 5)
+
+            ProfileSwitcherRow(
+                profile: profiles.privateBrowsing,
+                isCurrent: profiles.isPrivate,
+                caption: privateCaption
+            ) {
                 dismiss()
-                coordinator.requestNewWindow(isPrivate: true)
+                coordinator.enterPrivateBrowsing()
             }
             .disabled(coordinator.isSwitchingProfile)
+
+            if profiles.isPrivate || coordinator.hasPrivateSession {
+                ProfileActionRow(title: "Leave Private Browsing", symbol: "xmark.circle") {
+                    dismiss()
+                    coordinator.leavePrivateBrowsing()
+                }
+                .disabled(coordinator.isSwitchingProfile)
+            }
 
             ProfileActionRow(title: "Manage Profiles…", symbol: "person.2") {
                 dismiss()
@@ -73,11 +84,23 @@ struct ProfileSwitcher: View {
         .shadow(color: .black.opacity(0.3), radius: 22, y: 8)
     }
 
+    private func caption(for profile: Profile) -> LocalizedStringResource? {
+        guard profile.id == profiles.current.id else { return nil }
+        return "Browsing now"
+    }
+
+    private var privateCaption: LocalizedStringResource? {
+        if profiles.isPrivate {
+            return "Browsing now"
+        }
+        return coordinator.hasPrivateSession ? "Session waiting" : nil
+    }
 }
 
 private struct ProfileSwitcherRow: View {
     let profile: Profile
     let isCurrent: Bool
+    var caption: LocalizedStringResource?
     let action: () -> Void
 
     @Environment(\.isEnabled) private var isEnabled
@@ -89,11 +112,19 @@ private struct ProfileSwitcherRow: View {
             HStack(spacing: 9) {
                 ProfileGlyph(profile: profile, size: 26)
 
-                Text(verbatim: profile.name)
-                    .font(Theme.Font.rowTitle)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(verbatim: profile.name)
+                        .font(Theme.Font.rowTitle)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    if let caption {
+                        Text(caption)
+                            .font(Theme.Font.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
 
                 Spacer(minLength: 6)
 

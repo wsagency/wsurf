@@ -32,8 +32,8 @@ struct WebViewParkingTests {
         return window
     }
 
-    private func host(_ page: BrowserPage, in window: NSWindow) -> WebViewContainer {
-        let container = WebViewContainer(page: page)
+    private func host(_ webView: WKWebView, in window: NSWindow) -> WebViewContainer {
+        let container = WebViewContainer(webView: webView)
         container.parksWhenIdle = true
         container.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
         window.contentView?.addSubview(container)
@@ -46,16 +46,15 @@ struct WebViewParkingTests {
             frame: NSRect(x: 0, y: 0, width: 600, height: 400),
             configuration: WebViewPool.makeConfiguration()
         )
-        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
-        let container = host(page, in: window)
-        #expect(page.window === window)
+        let container = host(webView, in: window)
+        #expect(webView.window === window)
 
         // What SwiftUI does when Settings replaces the content area: the host
         // is detached, which is the last moment there is a window to park in.
         container.removeFromSuperview()
 
-        #expect(page.window === window)
-        #expect(page.superview is WebViewParkingShelf)
+        #expect(webView.window === window)
+        #expect(webView.superview is WebViewParkingShelf)
     }
 
     @Test func theNextHostTakesTheViewBackOffTheShelf() {
@@ -64,13 +63,12 @@ struct WebViewParkingTests {
             frame: NSRect(x: 0, y: 0, width: 600, height: 400),
             configuration: WebViewPool.makeConfiguration()
         )
-        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
-        host(page, in: window).removeFromSuperview()
+        host(webView, in: window).removeFromSuperview()
 
-        let second = host(page, in: window)
+        let second = host(webView, in: window)
 
-        #expect(page.superview === second)
-        // One page, one host: two would fight over it and the card goes
+        #expect(webView.superview === second)
+        // One web view, one host: two would fight over it and the card goes
         // black. See `MediaModel.pictureWebView`.
         #expect(window.contentView?.subviews.compactMap { $0 as? WebViewContainer }.count == 1)
         #expect(
@@ -88,13 +86,12 @@ struct WebViewParkingTests {
             frame: NSRect(x: 0, y: 0, width: 600, height: 400),
             configuration: WebViewPool.makeConfiguration()
         )
-        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
-        let container = WebViewContainer(page: page)
+        let container = WebViewContainer(webView: webView)
         container.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
         window.contentView?.addSubview(container)
 
         container.removeFromSuperview()
 
-        #expect(page.window == nil)
+        #expect(webView.window == nil)
     }
 }

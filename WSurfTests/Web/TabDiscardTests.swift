@@ -42,7 +42,7 @@ struct TabDiscardTests {
         #expect(model.tabs.contains { $0 === background })
     }
 
-    @Test func manualUnloadRetainsPinnedFolderLinkAndReloadsWithoutLosingWork() async {
+    @Test func manualUnloadRetainsPinnedFolderLinkAndReloadsWithoutLosingWork() {
         let model = makeModel()
         let tab = model.newTab(url: URL(string: "https://example.com/a"))
         tab.customTitle = "Saved page"
@@ -50,7 +50,7 @@ struct TabDiscardTests {
         model.setPinned(true, for: [.tab(tab.id)])
         let other = model.newTab(url: URL(string: "https://example.com/b"), activate: false)
         model.activate(tab)
-        let before = tab.page
+        let before = tab.webView
 
         #expect(model.unload(tab))
         #expect(!tab.isMaterialised)
@@ -61,11 +61,9 @@ struct TabDiscardTests {
         #expect(tab.customTitle == "Saved page")
         #expect(tab.pinnedURL?.absoluteString == "https://example.com/a")
 
-        await tab.waitForRetirement()
         model.activate(tab)
-        _ = await tab.waitForPendingNavigation()
         #expect(tab.isMaterialised)
-        #expect(tab.page !== before)
+        #expect(tab.webView !== before)
 
         let downloadID = model.downloads.beginItem(
             source: URL(string: "https://example.com/file.zip"),
@@ -86,46 +84,11 @@ struct TabDiscardTests {
         #expect(model.tabs.contains { $0 === splitPeer })
     }
 
-    @Test func bulkUnloadReachesNestedFoldersWithoutCrossingProtectionBoundary() {
-        let model = makeModel()
-        let direct = model.newTab(url: URL(string: "https://example.com/direct"), activate: false)
-        let nested = model.newTab(url: URL(string: "https://example.com/nested"), activate: false)
-        let protectedTab = model.newTab(url: URL(string: "https://example.com/protected"), activate: false)
-        model.activate(direct)
-        model.activate(nested)
-        model.activate(protectedTab)
-        let outside = model.newTab(url: URL(string: "https://example.com/outside"))
-        let inner = model.createFolder(named: "Inner", containing: [nested, protectedTab])
-        let outer = model.createFolder(named: "Outer", containing: [direct])
-        model.move([.folder(inner.id)], into: outer)
-        model.setPinned(true, for: [.tab(direct.id)])
-        let downloadID = model.downloads.beginItem(
-            source: URL(string: "https://example.com/protected.zip"),
-            sourceTabID: protectedTab.id
-        )
-        outer.isExpanded = false
-        inner.isExpanded = false
-
-        model.unload([.folder(outer.id)])
-
-        #expect(direct.isDeferred)
-        #expect(nested.isDeferred)
-        #expect(!protectedTab.isDeferred)
-        #expect(model.protectionReason(for: protectedTab) == .activeDownload)
-        #expect(model.activeTab === outside)
-        #expect(model.rows(in: outer) == [.tab(direct.id), .folder(inner.id)])
-        #expect(model.rows(in: inner) == [.tab(nested.id), .tab(protectedTab.id)])
-        #expect(model.folder(containing: nested) === inner)
-        #expect(direct.pinnedURL?.absoluteString == "https://example.com/direct")
-
-        model.downloads.noteFailure(downloadID, reason: "Stopped", resumeData: nil)
-    }
-
     @Test func discardingReleasesTheWebView() {
         let model = makeModel()
         let background = model.newTab(url: URL(string: "https://example.com/a"))
         _ = model.newTab(url: URL(string: "https://example.com/b"))
-        let before = background.page
+        let before = background.webView
 
         model.discardBackgroundTabs()
 
@@ -208,11 +171,11 @@ struct TabDiscardTests {
     /// Critical means the app is about to be killed, so recency stops earning
     /// anything.
     @Test func criticalPressureTakesEveryBackgroundTab() {
-        let model = makeModel()
-        let previousSleepSetting = model.context.settings.sleepsInactiveTabs
-        model.context.settings.sleepsInactiveTabs = true
-        defer { model.context.settings.sleepsInactiveTabs = previousSleepSetting }
+        let previousSleepSetting = BrowserSettings.shared.sleepsInactiveTabs
+        BrowserSettings.shared.sleepsInactiveTabs = true
+        defer { BrowserSettings.shared.sleepsInactiveTabs = previousSleepSetting }
 
+        let model = makeModel()
         let first = model.newTab(url: URL(string: "https://example.com/1"))
         let second = model.newTab(url: URL(string: "https://example.com/2"))
         let active = model.newTab(url: URL(string: "https://example.com/3"))
@@ -248,11 +211,11 @@ struct TabDiscardTests {
         _ = model.newTab(url: URL(string: "https://example.com/b"))
 
         model.discardBackgroundTabs()
-        let view = background.page
+        let view = background.webView
         #expect(!background.canDiscardWebContent)
 
         model.discardBackgroundTabs()
-        #expect(background.page === view)
+        #expect(background.webView === view)
         #expect(background.urlString == "https://example.com/a")
     }
 

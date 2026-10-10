@@ -4,6 +4,7 @@
 
 import AppKit
 import SwiftUI
+import WebKit
 
 struct PullState: Equatable {
     var offset: CGFloat = 0
@@ -37,7 +38,7 @@ nonisolated struct PullStartProbe: Equatable, Codable {
 @MainActor
 final class PullToRefreshMonitor {
     var onChange: ((PullState, Animation?) -> Void)?
-    var pageProvider: (() -> BrowserPage?)?
+    var webViewProvider: (() -> WKWebView?)?
     var isCovered: (() -> Bool)?
 
     private var monitor: Any?
@@ -117,19 +118,19 @@ final class PullToRefreshMonitor {
             }
             return
         }
-        guard let page = pageProvider?(),
-              let window = page.window,
+        guard let webView = webViewProvider?(),
+              let window = webView.window,
               event.window === window,
               Self.pageOwnsScroll(
                   hit: window.contentView?.hitTest(event.locationInWindow),
-                  page: page
+                  page: webView
               ),
               event.momentumPhase == []
         else { return }
 
         switch event.phase {
         case .began:
-            begin(on: page, at: event.locationInWindow)
+            begin(on: webView, at: event.locationInWindow)
 
         case .changed:
             guard !disqualified else { return }
@@ -142,7 +143,7 @@ final class PullToRefreshMonitor {
             publish()
 
         case .ended:
-            finish(on: page)
+            finish(on: webView)
 
         case .cancelled:
             reset()
@@ -152,7 +153,7 @@ final class PullToRefreshMonitor {
         }
     }
 
-    private func begin(on page: BrowserPage, at locationInWindow: NSPoint) {
+    private func begin(on webView: WKWebView, at locationInWindow: NSPoint) {
         topCheck?.cancel()
         reloadCheck?.cancel()
         accumulated = 0
@@ -161,14 +162,14 @@ final class PullToRefreshMonitor {
         startedAtTop = nil
         onChange?(.idle, nil)
 
-        let local = page.convert(locationInWindow, from: nil)
-        let zoom = page.pageZoom == 0 ? 1 : page.pageZoom
+        let local = webView.convert(locationInWindow, from: nil)
+        let zoom = webView.pageZoom == 0 ? 1 : webView.pageZoom
         let x = local.x / zoom
-        let y = (page.isFlipped ? local.y : page.bounds.height - local.y) / zoom
+        let y = (webView.isFlipped ? local.y : webView.bounds.height - local.y) / zoom
 
-        topCheck = Task { [weak self, weak page] in
-            guard let page else { return }
-            let answer = (try? await page.evaluateJavaScript(
+        topCheck = Task { [weak self, weak webView] in
+            guard let webView else { return }
+            let answer = (try? await webView.evaluateJavaScript(
                 Self.startProbeScript(x: x, y: y)
             )) as? String
             guard let self, !Task.isCancelled else { return }
@@ -209,7 +210,7 @@ final class PullToRefreshMonitor {
         onChange?(.idle, Self.settle)
     }
 
-    private func finish(on page: BrowserPage) {
+    private func finish(on webView: WKWebView) {
         let earned = startedAtTop == true
             && !disqualified
             && Self.stretch(for: accumulated) >= Self.restOffset
@@ -222,11 +223,11 @@ final class PullToRefreshMonitor {
         onChange?(.idle, Self.settle)
         guard earned else { return }
 
-        reloadCheck = Task { [weak page] in
-            guard let page else { return }
-            let y = (try? await page.evaluateJavaScript("window.scrollY")) as? Double ?? 1
+        reloadCheck = Task { [weak webView] in
+            guard let webView else { return }
+            let y = (try? await webView.evaluateJavaScript("window.scrollY")) as? Double ?? 1
             guard !Task.isCancelled, y <= Self.topSlack else { return }
-            page.reload()
+            webView.reload()
         }
     }
 

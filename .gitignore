@@ -14,9 +14,6 @@ DerivedData/
 *.dSYM.zip
 *.dSYM
 
-# Task worktrees
-/.worktrees/
-
 # Swift Package Manager
 .build/
 .swiftpm/

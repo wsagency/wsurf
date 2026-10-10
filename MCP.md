@@ -43,17 +43,12 @@ locations for these clients:
 | Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Claude Code | `~/.claude.json`, with the server added at user scope |
 | Cursor | `~/.cursor/mcp.json` |
-| omp.sh | `~/.omp/agent/mcp.json` |
 
 The **Copy Configuration** button sits above the client list. Use the
 **… → Choose Configuration…** action beside a client for an existing
 custom profile or another configuration location. WSurf does not scan your
 shell aliases or project directories. **… → Show Configuration** reveals the
 selected file in Finder; file paths are kept out of the client rows.
-
-omp.sh uses the same JSON configuration shown above. For a named profile,
-choose `~/.omp/profiles/<name>/agent/mcp.json`. After adding WSurf, run
-`/mcp reload` and `/mcp test wsurf` in omp to load and check the connection.
 
 The **Added** state is read from the saved configuration when this page opens
 and when WSurf becomes active again, including entries configured elsewhere.
@@ -79,32 +74,26 @@ its desktop app, to parse and edit a private temporary copy of its TOML. This
 preserves TOML syntax and comments without maintaining a second parser in
 WSurf. Setup does not launch a model, connect a server, import client history,
 or grant access to browser tabs.
-Both the nested `codex-cli/CodexCLI.app/Contents/MacOS/codex` bundle layout and
-the older `Contents/Resources/codex` layout are supported. An executable found
-through the existing CLI search still takes precedence.
-
 
 Configuration formats follow the official documentation for
 [Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli),
 [Claude Desktop](https://modelcontextprotocol.io/docs/develop/connect-local-servers),
-[Claude Code](https://code.claude.com/docs/en/mcp),
-[Cursor](https://cursor.com/docs/mcp), and
-[omp.sh](https://omp.sh/docs/mcp).
+[Claude Code](https://code.claude.com/docs/en/mcp), and
+[Cursor](https://cursor.com/docs/mcp).
 
 Clients with a different settings format need the same command and argument.
 Restart the client's connection after moving the app or enabling the server.
-The server is off until you enable it, then remembers your choice across launches
-and profile changes. Each connection binds to the regular window that owns it when
-it connects; focus changes never retarget it. Closing or switching that window
-disconnects its clients and clears their grants, without disrupting other windows.
-Private focus refuses new connections; it does not pause existing connections to
-regular windows. Consent sheets belong to the connection's originating window.
-
-After a browser restart, the relay reconnects on the next tool call and the client
-must request fresh sharing approval. Calls made while WSurf is unavailable return
-a tool error; interrupted calls are never replayed because an action may already
-have happened. Use **Disconnect** beside a connection in Advanced settings to
-revoke it immediately.
+The server is off until you enable it, then remembers your choice across
+launches and profile changes. Switching profiles or quitting disconnects clients
+and clears their tab-sharing grants. The listener resumes automatically in a
+normal profile; the relay reconnects on the next tool call and the client must
+request fresh sharing approval. Restarting the MCP client is not needed after
+a browser restart. Calls made while WSurf is unavailable return a tool error;
+interrupted calls are never replayed because an action may already have happened.
+Private browsing pauses the listener and grays out the toggle without changing
+its saved setting. Leaving private browsing resumes it automatically. Use
+**Disconnect** beside a connection in Advanced settings to revoke that
+connection immediately.
 
 ## Tools in this version
 
@@ -116,7 +105,7 @@ revoke it immediately.
 | `clickOnPage` | Click a numbered control from that observation. |
 | `typeOnPage` | Fill a nonsensitive field, optionally submitting it. |
 | `selectOption` | Choose an option in a select control. |
-| `fillFields` | Fill up to 32 distinct nonsensitive form controls without submitting; report exactly which refs retained their values. |
+| `fillFields` | Fill up to eight independent fields without submitting; report partial completion. |
 | `inspectControl` | Read control state and paginate dropdown options. |
 | `setChecked` | Set a checkbox, switch, or radio to the requested state. |
 | `waitForPage` | Wait for text, absent text, a URL substring, or document readiness, up to 15 seconds. |
@@ -130,22 +119,14 @@ revoke it immediately.
 | `switchTab` | Activate an already shared tab before controlling it. |
 | `closeTab` | Close an already shared, unpinned tab. |
 
-These tools cover browser page and tab actions. Assistant conversations, background
-research, the media player, arbitrary JavaScript, cookies, credential stores and
-filesystem access are not exposed.
+This first version covers browser page and tab actions. Assistant conversations,
+background research, the media player, arbitrary JavaScript, screenshots,
+cookies, credential stores, and filesystem access are not exposed.
 
-Successful page actions return fresh controls and an `observationID`; reuse that
-result for the next action. `fillFields` accepts positive, distinct refs from the
-latest observation: text, supported value controls, dropdowns and checked states
-(`true`/`false`). Password/payment controls remain blocked, disabled/read-only
-controls are skipped, and file pickers cannot be opened by a batch. No batch submits
-a form. Navigation, cancellation or access revocation stops remaining writes.
-
-A partial batch can return fresh controls without marking the whole call as an
-error. Check the verified ref list, not just `isError` or the completed count; do
-not replay verified refs or retry blocked controls through another tool.
-Reads and actions use document-bound references in the same isolated runtime.
-Replaced or unobserved targets are refused.
+Successful page actions return fresh controls and an `observationID`; reuse that result for
+the next action. A partial batch can also return fresh controls while `isError` remains true.
+Check the completed count before continuing. Reads and actions share the same isolated
+page runtime and document-bound references. A stale, replaced, or unobserved target is refused.
 
 Use `lookingFor` to search beyond the first excerpt, `scope` for a CSS control subtree,
 `viewportOnly` for visible controls, and `textOffset` / `controlOffset` to continue.
@@ -203,12 +184,6 @@ The socket lives in a directory owned by the current OS user with mode `0700`;
 the socket has mode `0600`. Directory and lock-file symlinks are rejected, and a
 file lock prevents another WSurf process from replacing the live endpoint.
 Message sizes, buffered messages, and concurrent connections are bounded.
-Stdio reads are event-driven rather than polled. The transport owns duplicated
-descriptors and fails on bounded-buffer overflow instead of dropping requests.
-At inbound SDK boundaries, an object-valued `initialize` experimental-capability
-field is removed for compatibility; standard capabilities and access policy are
-unchanged. Malformed messages still reach the normal protocol validation.
-
 
 `MCPBrowserSession` owns external grants, observations, and transient activity.
 It calls the existing `PageDriver` and honors `TabAssistantAccessCenter` policy.

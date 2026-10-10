@@ -70,7 +70,7 @@ struct BrowserPagesTests {
 
         model.handleAddressInput("swift concurrency")
 
-        #expect(tab.urlString == SearchURLBuilder.searchURL(for: "swift concurrency", settings: model.context.settings).absoluteString)
+        #expect(tab.urlString == SearchURLBuilder.searchURL(for: "swift concurrency").absoluteString)
     }
 
     @Test func surroundingSpaceIsTrimmedBeforeDeciding() {
@@ -356,8 +356,8 @@ struct BrowserPagesTests {
 
         // Busy the view without touching the address, which is the shape the
         // tab is in: showing History, WebKit part-way into something else.
-        tab.page.load(URLRequest(url: try server.url("/slow")))
-        #expect(await waitUntil { tab.page.isLoading })
+        tab.webView.load(URLRequest(url: try server.url("/slow")))
+        #expect(await waitUntil { tab.webView.isLoading })
 
         model.dismissInternalPage(.history)
 
@@ -402,8 +402,8 @@ struct BrowserPagesTests {
 
         tab.goBack()
 
-        #expect(await waitUntil { !tab.page.isLoading })
-        #expect(tab.committedURL == tab.page.url, "the list may lag; the view does not")
+        #expect(await waitUntil { !tab.webView.isLoading })
+        #expect(tab.committedURL == tab.webView.url, "the list may lag; the view does not")
         #expect(tab.committedURL == BrowserTab.InternalPage.history.url)
     }
 
@@ -432,7 +432,7 @@ struct BrowserPagesTests {
     @Test(.boundedWebViews) func backFromAPageReturnsTheTabToWhatItWasShowing() async {
         let model = makeModel()
         let tab = model.ensureActiveTab()
-        _ = tab.page
+        _ = tab.webView
         #expect(await waitUntil { tab.isShowingStartPage })
 
         let history = model.showHistory()
@@ -456,7 +456,7 @@ struct BrowserPagesTests {
 
         let fromHome = makeModel()
         let home = fromHome.ensureActiveTab()
-        _ = home.page
+        _ = home.webView
         #expect(await waitUntil { home.isShowingStartPage })
         _ = fromHome.showHistory()
         #expect(await settled(home, at: BrowserTab.InternalPage.history.url))
@@ -499,7 +499,7 @@ struct BrowserPagesTests {
     @Test(.boundedWebViews) func aSecondPageOpensItsOwnTabToo() async {
         let model = makeModel()
         let tab = model.ensureActiveTab()
-        _ = tab.page
+        _ = tab.webView
         #expect(await waitUntil { tab.isShowingStartPage })
 
         let history = model.showHistory()
@@ -531,7 +531,7 @@ struct BrowserPagesTests {
         #expect(model.tabs.count == 1)
         #expect(model.tabs.first === blank)
         #expect(blank.internalPage == nil)
-        #expect(blank.title == "Start Page")
+        #expect(blank.title == BrowserTab.placeholderTitle)
     }
 
     @Test func leavingAPageNobodyOpenedDoesNothing() {
@@ -604,13 +604,12 @@ struct BrowserPagesTests {
     /// An answer that matches the setting is not a website's own answer: it is
     /// the setting, and it must follow the setting when that changes.
     @Test func aWebsiteToldWhatEveryWebsiteIsToldRecordsNothing() {
-        let context = BrowserProfileContext(profile: .privateBrowsing())
-        let previous = context.settings.autoplay
-        context.settings.autoplay = .allow
-        defer { context.settings.autoplay = previous }
+        let previous = BrowserSettings.shared.autoplay
+        BrowserSettings.shared.autoplay = .allow
+        defer { BrowserSettings.shared.autoplay = previous }
 
         let permissions = permissionsFixture()
-        let model = BrowserModel(context: context, database: .temporary(), sitePermissions: permissions)
+        let model = BrowserModel(database: .temporary(), sitePermissions: permissions)
         let tab = model.newTab()
         tab.urlString = "https://example.com/page"
 
@@ -626,22 +625,21 @@ struct BrowserPagesTests {
     }
 
     @Test func aPopUpAnswerThatMatchesTheSettingRecordsNothing() {
-        let context = BrowserProfileContext(profile: .privateBrowsing())
         let permissions = permissionsFixture()
-        let model = BrowserModel(context: context, database: .temporary(), sitePermissions: permissions)
+        let model = BrowserModel(database: .temporary(), sitePermissions: permissions)
         let tab = model.newTab()
         tab.urlString = "https://example.com/page"
 
-        let previous = context.settings.blocksPopups
-        defer { context.settings.blocksPopups = previous }
+        let previous = BrowserSettings.shared.blocksPopups
+        defer { BrowserSettings.shared.blocksPopups = previous }
 
-        context.settings.blocksPopups = true
+        BrowserSettings.shared.blocksPopups = true
         model.setPopups(.allow, for: tab)
         #expect(permissions.popups(for: "https://example.com") == .allow)
         model.setPopups(.blockAndNotify, for: tab)
         #expect(permissions.popups(for: "https://example.com") == nil)
 
-        context.settings.blocksPopups = false
+        BrowserSettings.shared.blocksPopups = false
         model.setPopups(.blockAndNotify, for: tab)
         #expect(permissions.popups(for: "https://example.com") == .blockAndNotify)
         model.setPopups(.allow, for: tab)
@@ -649,13 +647,12 @@ struct BrowserPagesTests {
     }
 
     @Test func aTabWithNoWebsiteRecordsNoMediaAnswer() {
-        let context = BrowserProfileContext(profile: .privateBrowsing())
-        let previous = context.settings.autoplay
-        context.settings.autoplay = .allow
-        defer { context.settings.autoplay = previous }
+        let previous = BrowserSettings.shared.autoplay
+        BrowserSettings.shared.autoplay = .allow
+        defer { BrowserSettings.shared.autoplay = previous }
 
         let permissions = permissionsFixture()
-        let model = BrowserModel(context: context, database: .temporary(), sitePermissions: permissions)
+        let model = BrowserModel(database: .temporary(), sitePermissions: permissions)
         let tab = model.newTab()
         tab.urlString = "about:blank"
 

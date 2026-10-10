@@ -9,7 +9,7 @@ import Testing
 @testable import WSurf
 
 /// A restored tab is a row until you open it. Every sweep over `tabs` that
-/// reaches for `page` builds one, which is how a session of fourteen tabs
+/// reaches for `webView` builds one, which is how a session of fourteen tabs
 /// used to cost fourteen web views before the window could draw, so each of
 /// those sweeps is held to the promise here.
 @MainActor
@@ -124,7 +124,7 @@ struct LazyWebViewTests {
         first.urlString = "https://a.example/"
 
         #expect(first.isMaterialised)
-        let before = first.page
+        let before = first.webView
         first.discardWebContent()
 
         #expect(!first.isMaterialised)
@@ -132,19 +132,19 @@ struct LazyWebViewTests {
         #expect(first.isDeferred)
     }
 
-    @Test func aSleptTabComesBackWhenItIsOpenedAgain() async {
+    @Test func aSleptTabComesBackWhenItIsOpenedAgain() {
         let model = BrowserModel(database: .temporary())
         let first = model.newTab(url: URL(string: "https://a.example/"))
         let second = model.newTab(url: URL(string: "https://b.example/"))
         model.activeTabID = second.id
         first.urlString = "https://a.example/"
-        let before = first.page
+        let before = first.webView
         first.discardWebContent()
 
         model.activeTabID = first.id
 
-        #expect(await waitUntil { first.isMaterialised })
-        #expect(first.page !== before)
+        #expect(first.isMaterialised)
+        #expect(first.webView !== before)
         #expect(!first.isDeferred)
     }
 
@@ -156,7 +156,7 @@ struct LazyWebViewTests {
         }
         let toolkit = AgentToolkit(browser: reopened, media: MediaCenter(), log: ConversationLog(database: .temporary()))
 
-        #expect(toolkit.pageIdentifier(for: active.page) == active.id.uuidString)
+        #expect(toolkit.pageIdentifier(for: active.webView) == active.id.uuidString)
         #expect(reopened.tabs.filter(\.isMaterialised).map(\.id) == [active.id])
     }
 }

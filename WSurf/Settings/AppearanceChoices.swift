@@ -8,8 +8,6 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
     case system
     case light
     case dark
-    case lightCalm
-    case darkCalm
 
     var id: String {
         rawValue
@@ -23,10 +21,6 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
             "Light"
         case .dark:
             "Dark"
-        case .lightCalm:
-            "Light Calm"
-        case .darkCalm:
-            "Dark Calm"
         }
     }
 
@@ -34,9 +28,9 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
         switch self {
         case .system:
             nil
-        case .light, .lightCalm:
+        case .light:
             NSAppearance(named: .aqua)
-        case .dark, .darkCalm:
+        case .dark:
             NSAppearance(named: .darkAqua)
         }
     }

@@ -20,12 +20,12 @@ final class AgentToolkit {
     private var agentOpenedTabIDs: Set<UUID> = []
     private(set) var lastToolFailed = false
     var taskLedger = AgentTaskLedger()
-    var fileSelection: ((PageFileSelection.Parameters) async -> [URL]?)? {
+    var fileSelection: ((WKOpenPanelParameters) async -> [URL]?)? {
         services.chooseFiles
     }
     private var embeddedAccessCenters: [String: TabAssistantAccessCenter] = [:]
 
-    func embeddedAccess(for url: URL, in view: BrowserPage) -> TabAssistantAccessCenter? {
+    func embeddedAccess(for url: URL, in view: WKWebView) -> TabAssistantAccessCenter? {
         let key = SitePermissions.origin(for: url)
         if let access = embeddedAccessCenters[key] {
             return access
@@ -36,7 +36,7 @@ final class AgentToolkit {
         return access
     }
 
-    func taskDownloads(in view: BrowserPage) -> [DownloadManager.Item] {
+    func taskDownloads(in view: WKWebView) -> [DownloadManager.Item] {
         guard let tab = onScreenTab(for: view) ?? mentionedTab(for: view) else { return [] }
         let origin = SitePermissions.origin(for: view.url)
         return browser.downloads.items.filter {
@@ -53,12 +53,7 @@ final class AgentToolkit {
 
     func resetToolOutcome() {
         lastToolFailed = false
-        visualProgressPage = nil
-        visualProgressDocument = nil
     }
-
-    var visualProgressPage: String?
-    var visualProgressDocument: String?
 
     var outputBudget = ContextBudget.ToolOutputBudget.standard
     @TaskLocal static var requestedPage: String?
@@ -104,7 +99,7 @@ final class AgentToolkit {
 
     func pageOperation(
         name: String, readOnly: Bool = false,
-        operation: (BrowserPage) async -> String
+        operation: (WKWebView) async -> String
     ) async -> String {
         let step = beginTool(name: name, title: AgentDiagnosticPrivacy.title(for: name))
         if let cancelled = cancellationOutput(for: step) {
@@ -158,7 +153,7 @@ final class AgentToolkit {
     }
 
     func guardedPageOperation(
-        in view: BrowserPage, authorization: VisiblePageAuthorization?, capability: AssistantPageCapability,
+        in view: WKWebView, authorization: VisiblePageAuthorization?, capability: AssistantPageCapability,
         operation: () async -> String
     ) async -> String {
         let scope = PageAutomationGuard(documentURL: view.url?.absoluteString ?? "about:blank", snapshot: nil) { [weak self, weak view] in
@@ -312,9 +307,8 @@ final class AgentToolkit {
             completeTool(step, output: output, failed: true)
             return output
         }
-        let immediate = tab.load(url, transition: .agent)
-        let navigation = await tab.waitForPendingNavigation() ?? immediate
-        guard let navigation else {
+        let webView = tab.webView
+        guard let navigation = tab.load(url, transition: .agent) else {
             let output = "Couldn’t open the page in the active tab."
             completeTool(step, output: output, failed: true)
             return output
@@ -329,15 +323,14 @@ final class AgentToolkit {
             completeTool(step, output: output, failed: true)
             return output
         }
-        let page = tab.page
-        let access = await authorize(.read, in: page)
+        let access = await authorize(.read, in: webView)
         if let denial = access.denial {
             completeTool(step, output: denial, failed: true)
             return denial
         }
-        let output = await guardedPageOperation(in: page, authorization: access.authorization, capability: .read) {
+        let output = await guardedPageOperation(in: webView, authorization: access.authorization, capability: .read) {
             await PageDriver.readRenderedPage(
-                page,
+                webView,
                 maxTextLength: outputBudget.pageTextCharacters,
                 controlLimit: outputBudget.controlLimit
             )
@@ -346,7 +339,7 @@ final class AgentToolkit {
             tab.stopLoading()
             return cancelled
         }
-        if let denial = postflightDenial(for: access.authorization, in: page) {
+        if let denial = postflightDenial(for: access.authorization, in: webView) {
             completeTool(step, output: denial, failed: true)
             return denial
         }
@@ -374,7 +367,7 @@ final class AgentToolkit {
             let tab = browser.newTab(url: url, transition: .agent)
             agentOpenedTabIDs.insert(tab.id)
             tab.assistantAccess.pageChanged(url: url)
-            let access = await authorize(.read, in: tab.page, requiresTaskTab: false)
+            let access = await authorize(.read, in: tab.webView, requiresTaskTab: false)
             if let output = cancellationOutput(for: step) {
                 browser.close(tab, recordForReopening: false)
                 return output
@@ -384,7 +377,7 @@ final class AgentToolkit {
                 return output
             }
             let output = await PageDriver.readRenderedPage(
-                tab.page,
+                tab.webView,
                 maxTextLength: outputBudget.pageTextCharacters,
                 controlLimit: outputBudget.controlLimit
             )
@@ -392,7 +385,7 @@ final class AgentToolkit {
                 browser.close(tab, recordForReopening: false)
                 return cancelled
             }
-            if let output = postflightDenial(for: access.authorization, in: tab.page) {
+            if let output = postflightDenial(for: access.authorization, in: tab.webView) {
                 completeTool(step, output: output, failed: true)
                 return output
             }
@@ -487,7 +480,7 @@ final class AgentToolkit {
             let tab = browser.newTab(url: watch, activate: !media.isEnabled, transition: .agent)
             agentOpenedTabIDs.insert(tab.id)
             media.controlTab(
-                page: tab.page,
+                webView: tab.webView,
                 title: topic,
                 tabID: tab.id,
                 artwork: MediaCenter.poster(forPage: watch.absoluteString)
@@ -567,11 +560,11 @@ final class AgentToolkit {
 
     // MARK: - Helpers
 
-    var targetWebView: BrowserPage? {
+    var targetWebView: WKWebView? {
         if let page = Self.requestedPage, !page.isEmpty {
             return pageSurface(named: page)
         }
-        return browser.activeTab?.page
+        return browser.activeTab?.webView
     }
 
     private var visibleTaskTab: BrowserTab? {
@@ -581,11 +574,11 @@ final class AgentToolkit {
         return tab
     }
 
-    private func waitForVisibleNavigation(_ navigation: PageNavigation, in tab: BrowserTab) async -> Bool {
+    private func waitForVisibleNavigation(_ navigation: WKNavigation, in tab: BrowserTab) async -> Bool {
         let deadline = ContinuousClock.now.advanced(by: .seconds(15))
         while ContinuousClock.now < deadline, !Task.isCancelled {
             if tab.committedNavigation === navigation {
-                return await PageSettle.untilIdle(tab.page, timeout: .seconds(15)) && !tab.isShowingError
+                return await PageSettle.untilIdle(tab.webView, timeout: .seconds(15)) && !tab.isShowingError
             }
             try? await Task.sleep(for: .milliseconds(50))
         }
@@ -663,26 +656,26 @@ final class AgentToolkit {
         }
     }
 
-    func pageIdentifier(for view: BrowserPage) -> String {
-        browser.tabs.first { $0.isMaterialised && $0.page === view }?.id.uuidString ?? ""
+    func pageIdentifier(for view: WKWebView) -> String {
+        browser.tabs.first { $0.isMaterialised && $0.webView === view }?.id.uuidString ?? ""
     }
 
-    func pageSurface(named reference: String) -> BrowserPage? {
+    func pageSurface(named reference: String) -> WKWebView? {
         if reference.isEmpty || reference == "research" {
-            return browser.activeTab?.page
+            return browser.activeTab?.webView
         }
         let needle = reference.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let candidates = onScreenTabs + mentionedTabs.filter { mentioned in !onScreenTabs.contains { $0.id == mentioned.id } }
         if let exact = candidates.first(where: { $0.id.uuidString.lowercased() == needle }) {
             exact.realizeDeferredSession()
-            return exact.page
+            return exact.webView
         }
         if ["left", "right", "top", "bottom", "first", "second", "third", "fourth", "1", "2", "3", "4"].contains(needle),
-           let positional = onScreenTab(named: needle) { return positional.page }
+           let positional = onScreenTab(named: needle) { return positional.webView }
         let matches = candidates.filter { $0.title.lowercased().contains(needle) || $0.urlString.lowercased().contains(needle) }
         if matches.count == 1, let found = matches.first {
             found.realizeDeferredSession()
-            return found.page
+            return found.webView
         }
         return nil
     }
@@ -701,8 +694,8 @@ final class AgentToolkit {
         }
     }
 
-    private func mentionedTab(for webView: BrowserPage) -> BrowserTab? {
-        mentionedTabs.first { $0.page === webView }
+    private func mentionedTab(for webView: WKWebView) -> BrowserTab? {
+        mentionedTabs.first { $0.webView === webView }
     }
 
     func onScreenPageDenial(for reference: String) -> String {
@@ -719,13 +712,13 @@ final class AgentToolkit {
         let origin: String
     }
 
-    private func onScreenTab(for webView: BrowserPage) -> BrowserTab? {
-        onScreenTabs.first { $0.page === webView }
+    private func onScreenTab(for webView: WKWebView) -> BrowserTab? {
+        onScreenTabs.first { $0.webView === webView }
     }
 
     func authorize(
         _ capability: AssistantPageCapability,
-        in webView: BrowserPage,
+        in webView: WKWebView,
         requiresTaskTab: Bool = true
     ) async -> (authorization: VisiblePageAuthorization?, denial: String?) {
         let mentioned = capability == .read ? mentionedTab(for: webView) : nil
@@ -739,7 +732,7 @@ final class AgentToolkit {
         }
         syncAssistantOrigin(of: tab, with: webView)
         let requestedOrigin = tab.assistantAccess.origin
-        let allowed = await tab.assistantAccess.authorize(capability, in: webView, pageOrigin: requestedOrigin)
+        let allowed = await tab.assistantAccess.authorize(capability)
         syncAssistantOrigin(of: tab, with: webView)
         guard tab.assistantAccess.origin == requestedOrigin else {
             return (nil, String(localized: "The page changed before the assistant could use it."))
@@ -755,7 +748,7 @@ final class AgentToolkit {
 
     func postflightDenial(
         for authorization: VisiblePageAuthorization?,
-        in webView: BrowserPage
+        in webView: WKWebView
     ) -> String? {
         guard let authorization else { return nil }
         guard let tab = onScreenTab(for: webView) ?? mentionedTab(for: webView),
@@ -770,7 +763,7 @@ final class AgentToolkit {
         return nil
     }
 
-    private func syncAssistantOrigin(of tab: BrowserTab, with webView: BrowserPage) {
+    private func syncAssistantOrigin(of tab: BrowserTab, with webView: WKWebView) {
         guard let url = webView.url, url.absoluteString != "about:blank" else { return }
         tab.assistantAccess.pageChanged(url: url)
     }

@@ -112,7 +112,7 @@ struct Sidebar: View {
                             browser: browser,
                             coordinator: coordinator
                         ),
-                        settings: BrowserSettings.application
+                        settings: coordinator.settings
                     )
                 }
                 WindowDragArea()
@@ -147,7 +147,7 @@ private struct SidebarTopChrome: View {
                 newFolderDrop: newFolderDrop
             )
 
-            SidebarFavorites(browser: browser, coordinator: coordinator)
+            NewTabRow(coordinator: coordinator)
                 .opacity(offersPin ? 0 : 1)
                 .overlay {
                     if offersPin {
@@ -368,7 +368,7 @@ private struct SidebarTopActions: View {
                 isOn: newFolderDrop.isArmed,
                 help: String(localized: "New Folder")
             ) {
-                browser.createFolderForRenaming(containing: selection.items.isEmpty
+                browser.createFolder(containing: selection.items.isEmpty
                     ? []
                     : browser.sidebarTree.normalized(selection.items))
                 selection.clear()
@@ -400,69 +400,45 @@ struct SidebarStyleMenuItems: View {
     }
 }
 
-private struct SidebarFavorites: View {
-    let browser: BrowserModel
+struct NewTabRow: View {
     let coordinator: AppCoordinator
 
-    var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 32), spacing: 6)], spacing: 6) {
-            ForEach(browser.favorites) { tab in
-                SidebarFavoriteButton(tab: tab, browser: browser, coordinator: coordinator)
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text("Favorites"))
-    }
-}
+    static let shortcutHint = "⌘T"
 
-private struct SidebarFavoriteButton: View {
-    let tab: BrowserTab
-    let browser: BrowserModel
-    let coordinator: AppCoordinator
-
+    @Environment(\.sidebarStyle) private var sidebarStyle
     @State private var hovering = false
 
     var body: some View {
         Button {
-            coordinator.tabPreview.dismiss()
-            coordinator.openTab(tab)
+            coordinator.requestNewTab()
         } label: {
-            TabIcon(tab: tab)
-                .frame(maxWidth: .infinity)
-                .frame(height: 32)
-                .sidebarRowSelectionEffect(
-                    isSelected: coordinator.sidebarDestination == .tab(tab.id) && !coordinator.isNewTabPaletteOpen,
-                    isHovering: hovering
-                )
-                .contentShape(Rectangle())
+            HStack(spacing: 8) {
+                Image(systemName: "plus")
+                    .font(Theme.Font.control)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                if sidebarStyle == .full {
+                    Text("New Tab")
+                        .font(Theme.Font.title)
+                    Spacer(minLength: 0)
+                    Text(verbatim: Self.shortcutHint)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
+            .frame(maxWidth: .infinity)
+            .frame(height: 32)
+            .sidebarRowSelectionEffect(
+                isSelected: coordinator.isNewTabPaletteOpen,
+                isHovering: hovering
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(Text(verbatim: tab.title))
-        .accessibilityLabel(Text(verbatim: tab.title))
-        .accessibilityValue(tab.isDeferred ? Text("Unloaded") : Text("Loaded"))
-        .contextMenu {
-            SidebarLinkMenuItems(tabs: [tab], coordinator: coordinator)
-            if !tab.isDeferred {
-                Button {
-                    coordinator.tabPreview.dismiss()
-                    coordinator.unloadTab(tab)
-                } label: {
-                    Label("Unload Tab", systemImage: "arrow.uturn.down")
-                }
-            }
-            Button {
-                browser.removeFavorite(tab)
-            } label: {
-                Label("Remove Favorite", systemImage: "star.slash")
-            }
-            Button(role: .destructive) {
-                browser.close([.tab(tab.id)])
-            } label: {
-                Label("Remove Tab", systemImage: "xmark")
-            }
-        }
+        .animation(Theme.Motion.quick, value: hovering)
+        .help(sidebarStyle == .icons ? Text("New Tab (⌘T)") : Text(verbatim: ""))
     }
 }
 

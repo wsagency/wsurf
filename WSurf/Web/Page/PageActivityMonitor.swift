@@ -16,34 +16,52 @@ struct PageActivitySignal: Equatable {
     let isActive: Bool
 }
 
-final class PageActivityMonitor {
+final class PageActivityMonitor: NSObject, WKScriptMessageHandler {
     static let shared = PageActivityMonitor()
 
     private static let handlerName = "wsurfPageActivity"
     private static let maximumTokenLength = 100
+    private let installedControllers = NSHashTable<WKUserContentController>.weakObjects()
 
-    /// Installs through the owning page so Chromium receives the same callback.
-    @MainActor
-    func install(in page: BrowserPage, onActivity: @escaping (PageActivitySignal) -> Void) {
-        page.installScript(Self.script, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        page.addScriptMessageHandler(name: Self.handlerName, in: .page) { message in
-            guard let body = message.body as? [String: Any],
-                  let rawKind = body["kind"] as? String,
-                  let kind = PageActivityKind(rawValue: rawKind),
-                  let token = body["token"] as? String, !token.isEmpty,
-                  token.count <= Self.maximumTokenLength,
-                  let isActive = body["active"] as? Bool
-            else { return }
-            onActivity(PageActivitySignal(kind: kind, token: token, isActive: isActive))
-        }
+    func install(in webView: TabWebView) {
+        guard !webView.hasPageActivityMonitor else { return }
+        webView.hasPageActivityMonitor = true
+
+        let controller = webView.configuration.userContentController
+        guard !installedControllers.contains(controller) else { return }
+        installedControllers.add(controller)
+        controller.addUserScript(WKUserScript(
+            source: Self.script,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        controller.removeScriptMessageHandler(forName: Self.handlerName)
+        controller.add(self, name: Self.handlerName)
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard let webView = message.webView as? TabWebView,
+              let body = message.body as? [String: Any],
+              let rawKind = body["kind"] as? String,
+              let kind = PageActivityKind(rawValue: rawKind),
+              let token = body["token"] as? String,
+              !token.isEmpty,
+              token.count <= Self.maximumTokenLength,
+              let isActive = body["active"] as? Bool
+        else { return }
+
+        webView.onPageActivity?(PageActivitySignal(kind: kind, token: token, isActive: isActive))
     }
 
     private static let script = #"""
     (() => {
       if (window.__wsurfPageActivity) return;
 
-      const send = globalThis.__wsurfSend;
-      if (typeof send !== 'function') return;
+      const channel = window.webkit?.messageHandlers?.wsurfPageActivity;
+      if (!channel) return;
 
       const token = globalThis.crypto?.randomUUID?.()
         || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -54,7 +72,7 @@ final class PageActivityMonitor {
       const displayTracks = new Set();
 
       const post = (kind, active) => {
-        try { send('wsurfPageActivity', { kind, token, active: Boolean(active) }); }
+        try { channel.postMessage({ kind, token, active: Boolean(active) }); }
         catch (_) {}
       };
 
@@ -168,27 +186,46 @@ final class PageActivityMonitor {
     """#
 }
 
-final class ScrollPositionMonitor {
+final class ScrollPositionMonitor: NSObject, WKScriptMessageHandler {
     static let shared = ScrollPositionMonitor()
 
     private static let handlerName = "wsurfScrollPosition"
-    @MainActor
-    func install(in page: BrowserPage, onScroll: @escaping (Double, URL?) -> Void) {
-        page.installScript(Self.script, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        page.addScriptMessageHandler(name: Self.handlerName, in: .page) { message in
-            guard message.frameInfo.isMainFrame,
-                  let y = (message.body as? NSNumber)?.doubleValue,
-                  y.isFinite, y >= 0 else { return }
-            onScroll(y, message.frameInfo.request.url)
-        }
+    private let installedControllers = NSHashTable<WKUserContentController>.weakObjects()
+
+    func install(in webView: TabWebView) {
+        guard !webView.hasScrollPositionMonitor else { return }
+        webView.hasScrollPositionMonitor = true
+
+        let controller = webView.configuration.userContentController
+        guard !installedControllers.contains(controller) else { return }
+        installedControllers.add(controller)
+        controller.addUserScript(WKUserScript(
+            source: Self.script,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        controller.removeScriptMessageHandler(forName: Self.handlerName)
+        controller.add(self, name: Self.handlerName)
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard let webView = message.webView as? TabWebView,
+              message.frameInfo.isMainFrame,
+              let y = (message.body as? NSNumber)?.doubleValue,
+              y.isFinite, y >= 0
+        else { return }
+        webView.onScrollPosition?(y, message.frameInfo.request.url)
     }
 
     private static let script = #"""
     (() => {
       if (window.__wsurfScrollPosition) return;
 
-      const send = globalThis.__wsurfSend;
-      if (typeof send !== 'function') return;
+      const channel = window.webkit?.messageHandlers?.wsurfScrollPosition;
+      if (!channel) return;
 
       let reported = -1;
       let scheduled = false;
@@ -197,7 +234,7 @@ final class ScrollPositionMonitor {
         const y = window.scrollY;
         if (y === reported) return;
         reported = y;
-        try { send('wsurfScrollPosition', y); } catch (_) {}
+        try { channel.postMessage(y); } catch (_) {}
       };
       addEventListener('scroll', () => {
         if (scheduled) return;

@@ -3,62 +3,38 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import AppKit
-import PDFKit
 import WebKit
 
 @MainActor
 enum PagePrinting {
-    static func begin(for page: BrowserPage, then finished: (() -> Void)? = nil) {
-        let id = ObjectIdentifier(page)
-        guard let window = page.window, !page.isClosed,
-              !(page.superview is WebViewParkingShelf),
+    static func begin(for webView: WKWebView, then finished: (() -> Void)? = nil) {
+        let id = ObjectIdentifier(webView)
+        guard let window = webView.window,
+              !(webView.superview is WebViewParkingShelf),
               !printing.contains(id)
         else {
             finished?()
             return
         }
 
+        let info = NSPrintInfo.shared
+        info.horizontalPagination = .fit
+        info.isHorizontallyCentered = false
+        let operation = webView.printOperation(with: info)
+        operation.view?.frame = webView.bounds
+
         printing.insert(id)
-        Task {
-            do {
-                let info = NSPrintInfo.shared
-                info.horizontalPagination = .fit
-                info.isHorizontallyCentered = false
-                let operation: NSPrintOperation
-                if let webKit = page.webKit {
-                    operation = webKit.printOperation(with: info)
-                    operation.view?.frame = webKit.bounds
-                } else if let chromium = page.chromium {
-                    try await chromium.ensureReady()
-                    let result = try await chromium.command("Page.printToPDF", params: [
-                        "printBackground": true, "preferCSSPageSize": true
-                    ])
-                    guard let encoded = result["data"] as? String, let data = Data(base64Encoded: encoded),
-                          let document = PDFDocument(data: data),
-                          let printing = document.printOperation(for: info, scalingMode: .pageScaleToFit, autoRotate: true)
-                    else { throw ChromiumError.protocolFailure(String(localized: "Chromium did not return a printable page.")) }
-                    operation = printing
-                } else { throw ChromiumError.closed }
-                let sheet = PrintSheetDelegate {
-                    printing.remove(id)
-                    finished?()
-                }
-                sheets.append(sheet)
-                operation.runModal(
-                    for: window, delegate: sheet,
-                    didRun: #selector(PrintSheetDelegate.printOperationDidRun(_:success:contextInfo:)),
-                    contextInfo: nil
-                )
-            } catch {
-                printing.remove(id)
-                finished?()
-                let alert = NSAlert()
-                alert.alertStyle = .warning
-                alert.messageText = String(localized: "The page couldn’t be printed.")
-                alert.informativeText = error.localizedDescription
-                await alert.beginSheetModal(for: window)
-            }
+        let sheet = PrintSheetDelegate {
+            printing.remove(id)
+            finished?()
         }
+        sheets.append(sheet)
+        operation.runModal(
+            for: window,
+            delegate: sheet,
+            didRun: #selector(PrintSheetDelegate.printOperationDidRun(_:success:contextInfo:)),
+            contextInfo: nil
+        )
     }
 
     private static var printing: Set<ObjectIdentifier> = []

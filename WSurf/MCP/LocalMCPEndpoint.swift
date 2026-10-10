@@ -9,23 +9,8 @@ import Network
 
 nonisolated enum LocalMCPEndpoint {
     static var directory: String {
-        #if DEBUG
-        if StageMode.isActive, let home = StageMode.home {
-            return stageDirectory(for: home)
-        }
-        #endif
-        return "/tmp/wsurf-mcp-\(geteuid())"
+        "/tmp/wsurf-mcp-\(geteuid())"
     }
-
-    #if DEBUG
-    static func stagePath(for home: URL) -> String {
-        stageDirectory(for: home) + "/browser.sock"
-    }
-
-    private static func stageDirectory(for home: URL) -> String {
-        "/tmp/wsurf-mcp-\(geteuid())-\(StageMode.identity(for: home).prefix(32))"
-    }
-    #endif
 
     static var path: String {
         directory + "/browser.sock"
@@ -58,7 +43,7 @@ nonisolated enum LocalMCPEndpoint {
         Task.detached {
             let relay = MCPStdioRelay(socketPath: socketPath)
             do {
-                try await relay.run(transport: MCPStdioTransport())
+                try await relay.run(transport: StdioTransport())
                 exit(EXIT_SUCCESS)
             } catch {
                 let message = "WSurf MCP client connection closed.\n"

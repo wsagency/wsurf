@@ -15,10 +15,6 @@ struct CommandPaletteField: View {
     let onMoveSection: (Int) -> Void
     let onChipsChange: ([UUID]) -> Void
     let onDismiss: () -> Void
-    let searchSite: SearchEngine?
-    let suggestedSite: SearchEngine?
-    let onActivateSite: () -> Bool
-    let onRemoveSite: () -> Bool
 
     @State private var closeHovering = false
 
@@ -28,23 +24,6 @@ struct CommandPaletteField: View {
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
-            if let searchSite {
-                Button {
-                    _ = onRemoveSite()
-                    focused = true
-                } label: {
-                    Text(searchSite.name)
-                        .lineLimit(1)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(SiteSearchAppearance(site: searchSite).foreground)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(SiteSearchAppearance(site: searchSite).background, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .help("Remove \(searchSite.name) search")
-                .accessibilityLabel("Remove \(searchSite.name) search")
-            }
 
             MentionField(
                 text: $query,
@@ -52,8 +31,7 @@ struct CommandPaletteField: View {
                 placeholder: placeholder,
                 fontSize: 19,
                 isFocused: focused,
-                accessibilityLabel: searchSite.map { String(localized: "Search \($0.name)") }
-                    ?? String(localized: "Search tabs, history, and actions"),
+                accessibilityLabel: String(localized: "Search tabs, history, and actions"),
                 onFocusChange: { focused = $0 },
                 onChipsChange: onChipsChange,
                 onSubmit: onSubmit,
@@ -65,38 +43,15 @@ struct CommandPaletteField: View {
                     } else {
                         onMoveSelection(delta)
                     }
-                },
-                onTab: onActivateSite,
-                onDeleteBackward: onRemoveSite
+                }
             )
 
-            if let suggestedSite {
-                Button {
-                    _ = onActivateSite()
-                    focused = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Search \(suggestedSite.name)")
-                            .lineLimit(1)
-                        Text("Tab")
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 3)
-                            .background(.quaternary, in: .rect(cornerRadius: 4))
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Search \(suggestedSite.name)")
-                .accessibilityHint("Press Tab to search this site")
-            }
             Button {
-                if query.isEmpty && searchSite == nil {
+                if query.isEmpty {
                     onDismiss()
                 } else {
                     query = ""
                     onChipsChange([])
-                    _ = onRemoveSite()
                     focused = true
                 }
             } label: {
@@ -107,8 +62,8 @@ struct CommandPaletteField: View {
             }
             .buttonStyle(.plain)
             .onHover { closeHovering = $0 }
-            .help(query.isEmpty && searchSite == nil ? Text("Close (esc)") : Text("Clear"))
-            .accessibilityLabel(query.isEmpty && searchSite == nil ? Text("Close") : Text("Clear"))
+            .help(query.isEmpty ? Text("Close (esc)") : Text("Clear"))
+            .accessibilityLabel(query.isEmpty ? Text("Close") : Text("Clear"))
         }
         .padding(.horizontal, 20)
     }
@@ -116,7 +71,6 @@ struct CommandPaletteField: View {
 
 struct CommandPaletteResultsView: View {
     let sections: [OmniboxSection]
-    let settings: BrowserSettings
     let query: String
     let selection: Int
     let optionHeld: Bool
@@ -137,7 +91,6 @@ struct CommandPaletteResultsView: View {
                     ScrollView {
                         OmniboxList(
                             sections: sections,
-                            settings: settings,
                             query: query,
                             selection: selection,
                             optionHeld: optionHeld,

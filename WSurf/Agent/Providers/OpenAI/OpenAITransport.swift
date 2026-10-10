@@ -41,15 +41,11 @@ nonisolated struct OpenAIFailure: LocalizedError, Sendable {
     var code: String?
     var usage: OpenAIUsage?
     var retryAfter: Double?
+
     static func event(_ payload: OpenAIJSON) -> Self {
         let code = payload["error"]["code"].string ?? payload["code"].string
         return .init(kind: code == "context_length_exceeded" ? .contextLimit : .http,
                      status: payload["status"].int, code: code)
-    }
-
-    var isRateLimited: Bool {
-        (kind == .http || kind == .incomplete) && (status == 429 || code == "rate_limit_exceeded")
-            && !["insufficient_quota", "billing_hard_limit_reached"].contains(code ?? "")
     }
 
     var errorDescription: String? {

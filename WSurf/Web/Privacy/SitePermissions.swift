@@ -149,6 +149,14 @@ nonisolated enum AssistantAccessPolicy: String, Codable, CaseIterable, Sendable 
 @MainActor
 @Observable
 final class SitePermissions {
+    static private(set) var shared = SitePermissions()
+
+    @discardableResult
+    static func use(file: URL) -> SitePermissions {
+        let store = SitePermissions(storageURL: file)
+        shared = store
+        return store
+    }
 
     private(set) var records: [String: [WebPermission: PermissionPolicy]] = [:]
 
@@ -166,30 +174,12 @@ final class SitePermissions {
 
     private(set) var popupRecords: [String: PopupPolicy] = [:]
 
-    private(set) var externalAppRecords: [String: [ExternalAppPermission]] = [:]
-
-    /// Non-default raw engine identifiers are kept per canonical HTTP(S)
-    /// origin. Missing entries default to WebKit for old profile files.
-    private(set) var engineRecords: [String: String] = [:]
-    var engineOrigins: [String] {
-        engineRecords.keys.sorted()
-    }
-    func hasEngineSetting(for origin: String) -> Bool {
-        let key = normalizeEngineOrigin(origin)
-        return !key.isEmpty && engineRecords[key] != nil
-    }
-    var onEngineChanged: ((String) -> Void)?
-
     private let file: URL
-    private let persists: Bool
     private var saveTask: Task<Void, Never>?
 
-    init(storageURL: URL? = nil, persists: Bool = true) {
+    init(storageURL: URL? = nil) {
         file = storageURL ?? Self.defaultFile
-        self.persists = persists
-        if persists {
-            load()
-        }
+        load()
     }
 
     // MARK: - Reading
@@ -239,29 +229,6 @@ final class SitePermissions {
     func popups(for origin: String) -> PopupPolicy? {
         popupRecords[normalize(origin)]
     }
-    func engine(for origin: String) -> BrowserEngine {
-        let key = normalizeEngineOrigin(origin)
-        return BrowserEngine(rawValue: engineRecords[key] ?? "webkit") ?? .webKit
-    }
-
-    func setEngine(_ engine: BrowserEngine, for origin: String) {
-        let key = normalizeEngineOrigin(origin)
-        guard !key.isEmpty else { return }
-        if engine == .webKit {
-            engineRecords[key] = nil
-        } else {
-            engineRecords[key] = engine.rawValue
-        }
-        scheduleSave()
-        onEngineChanged?(key)
-    }
-    private func normalizeEngineOrigin(_ origin: String) -> String {
-        guard let url = URL(string: origin),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https"
-        else { return "" }
-        return normalize(Self.origin(for: url))
-    }
 
     var autoplayOrigins: [String] {
         autoplayRecords.keys.sorted()
@@ -269,34 +236,6 @@ final class SitePermissions {
 
     var popupOrigins: [String] {
         popupRecords.keys.sorted()
-    }
-
-    func externalApps(for origin: String) -> [ExternalAppPermission] {
-        externalAppRecords[Self.webOrigin(for: URL(string: origin))] ?? []
-    }
-
-    func allowExternalApp(_ app: ExternalAppPermission, for origin: String) {
-        let origin = Self.webOrigin(for: URL(string: origin))
-        guard !origin.isEmpty, !app.scheme.isEmpty, !app.bundleIdentifier.isEmpty else { return }
-        var apps = externalAppRecords[origin] ?? []
-        apps.removeAll { $0.id == app.id }
-        apps.append(app)
-        externalAppRecords[origin] = apps.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        scheduleSave()
-    }
-
-    func removeExternalApp(_ app: ExternalAppPermission, for origin: String) {
-        let origin = Self.webOrigin(for: URL(string: origin))
-        externalAppRecords[origin]?.removeAll { $0.id == app.id }
-        if externalAppRecords[origin]?.isEmpty == true {
-            externalAppRecords[origin] = nil
-        }
-        scheduleSave()
-    }
-
-    func removeExternalApps(for origin: String) {
-        externalAppRecords[Self.webOrigin(for: URL(string: origin))] = nil
-        scheduleSave()
     }
 
     // MARK: - Writing
@@ -386,8 +325,6 @@ final class SitePermissions {
         assistantRecords = [:]
         autoplayRecords = [:]
         popupRecords = [:]
-        engineRecords = [:]
-        externalAppRecords = [:]
         keptActiveOriginSet = []
         keptActiveOrigins = []
         noAutomaticPictureOriginSet = []
@@ -415,11 +352,6 @@ final class SitePermissions {
             return "\(scheme)://\(host)"
         }
         return "\(scheme)://\(host):\(port)"
-    }
-
-    nonisolated static func webOrigin(for url: URL?) -> String {
-        guard let scheme = url?.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return "" }
-        return origin(for: url)
     }
 
     private nonisolated static func defaultPort(for scheme: String) -> Int? {
@@ -471,8 +403,6 @@ final class SitePermissions {
         var noAutomaticPicture: Set<String> = []
         var autoplay: [String: AutoplayPolicy] = [:]
         var popups: [String: PopupPolicy] = [:]
-        var engines: [String: String] = [:]
-        var externalApps: [String: [ExternalAppPermission]] = [:]
 
         init(
             records: [String: [WebPermission: PermissionPolicy]],
@@ -482,9 +412,7 @@ final class SitePermissions {
             keptActive: Set<String>,
             noAutomaticPicture: Set<String>,
             autoplay: [String: AutoplayPolicy],
-            popups: [String: PopupPolicy],
-            engines: [String: String],
-            externalApps: [String: [ExternalAppPermission]]
+            popups: [String: PopupPolicy]
         ) {
             self.records = records
             self.defaults = defaults
@@ -493,8 +421,6 @@ final class SitePermissions {
             self.noAutomaticPicture = noAutomaticPicture
             self.autoplay = autoplay
             self.popups = popups
-            self.engines = engines
-            self.externalApps = externalApps
         }
 
         init(from decoder: Decoder) throws {
@@ -527,14 +453,6 @@ final class SitePermissions {
                 [String: PopupPolicy].self,
                 forKey: .popups
             ) ?? [:]
-            engines = try values.decodeIfPresent(
-                [String: String].self,
-                forKey: .engines
-            ) ?? [:]
-            externalApps = try values.decodeIfPresent(
-                [String: [ExternalAppPermission]].self,
-                forKey: .externalApps
-            ) ?? [:]
         }
     }
 
@@ -546,13 +464,10 @@ final class SitePermissions {
             .union(snapshot.assistantAccess.keys)
             .union(snapshot.autoplay.keys)
             .union(snapshot.popups.keys)
-            .union(snapshot.engines.keys)
-            .union(snapshot.externalApps.keys)
             .count
     }
 
     private func scheduleSave() {
-        guard persists else { return }
         saveTask?.cancel()
         let snapshot = Snapshot(
             records: records,
@@ -562,9 +477,7 @@ final class SitePermissions {
             keptActive: keptActiveOriginSet,
             noAutomaticPicture: noAutomaticPictureOriginSet,
             autoplay: autoplayRecords,
-            popups: popupRecords,
-            engines: engineRecords,
-            externalApps: externalAppRecords
+            popups: popupRecords
         )
         let url = file
         saveTask = Task {
@@ -573,8 +486,7 @@ final class SitePermissions {
     }
 
     private func load() {
-        guard persists,
-              let data = try? Data(contentsOf: file),
+        guard let data = try? Data(contentsOf: file),
               let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data)
         else { return }
         for (key, policies) in snapshot.records {
@@ -612,19 +524,6 @@ final class SitePermissions {
             let origin = normalize(key)
             if !origin.isEmpty, popupRecords[origin] == nil {
                 popupRecords[origin] = policy
-            }
-        }
-        for (key, rawEngine) in snapshot.engines {
-            let origin = normalizeEngineOrigin(key)
-            guard !origin.isEmpty, BrowserEngine(rawValue: rawEngine) != nil else { continue }
-            engineRecords[origin] = rawEngine
-        }
-        for (key, apps) in snapshot.externalApps {
-            let origin = Self.webOrigin(for: URL(string: key))
-            guard !origin.isEmpty else { continue }
-            let valid = apps.filter { !$0.scheme.isEmpty && !$0.bundleIdentifier.isEmpty }
-            if !valid.isEmpty {
-                externalAppRecords[origin] = valid
             }
         }
     }

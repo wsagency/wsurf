@@ -28,8 +28,7 @@ final class LinkPeekLoader {
     private static let quietCeiling: Duration = .milliseconds(700)
     private static let snapshotWidth: CGFloat = 640
 
-    private var context: BrowserProfileContext?
-    private var page: BrowserPage?
+    private var webView: WKWebView?
 
     static func canPeek(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased() else { return false }
@@ -37,19 +36,19 @@ final class LinkPeekLoader {
         return url.host() != nil && !SystemPages.isSystem(url)
     }
 
-    func load(_ url: URL, context: BrowserProfileContext) async throws -> LinkPeekPage {
-        let page = surface(context: context)
-        page.load(URLRequest(url: url))
+    func load(_ url: URL) async throws -> LinkPeekPage {
+        let view = surface()
+        view.load(URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 8))
 
-        let finished = await PageSettle.untilIdle(page, timeout: Self.loadCeiling)
+        let finished = await PageSettle.untilIdle(view, timeout: Self.loadCeiling)
         try Task.checkCancellation()
-        await PageSettle.untilQuiet(page, ceiling: Self.quietCeiling)
-        try Task.checkCancellation()
-
-        let object = await evaluate(Self.script, in: page)
+        await PageSettle.untilQuiet(view, ceiling: Self.quietCeiling)
         try Task.checkCancellation()
 
-        let snapshot = await WebViewSnapshot.capture(page, width: Self.snapshotWidth)
+        let object = await evaluate(Self.script, in: view)
+        try Task.checkCancellation()
+
+        let snapshot = await WebViewSnapshot.capture(view, width: Self.snapshotWidth)
         try Task.checkCancellation()
 
         return LinkPeekPage(
@@ -63,46 +62,43 @@ final class LinkPeekLoader {
     }
 
     func stop() {
-        page?.stopLoading()
+        webView?.stopLoading()
         guard let blank = URL(string: "about:blank") else { return }
-        page?.load(URLRequest(url: blank))
+        webView?.load(URLRequest(url: blank))
     }
 
     func release() {
         stop()
-        page = nil
-        context = nil
+        webView = nil
     }
 
-    private func surface(context: BrowserProfileContext) -> BrowserPage {
-        if let page, self.context === context {
-            return page
+    private func surface() -> WKWebView {
+        if let webView {
+            return webView
         }
-        release()
-        let configuration = Self.configuration(context: context)
+        let configuration = Self.configuration()
         let view = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 1000, height: 720),
             configuration: configuration
         )
-        context.settings.apply(to: view)
+        BrowserSettings.shared.apply(to: view)
         view.customUserAgent = WebViewPool.safariUserAgent
-        let page = BrowserPage(webKit: view, context: context)
-        self.context = context
-        self.page = page
-        return page
+        webView = view
+        return view
     }
 
-    static func configuration(context: BrowserProfileContext) -> WKWebViewConfiguration {
+    static func configuration() -> WKWebViewConfiguration {
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        context.settings.apply(to: configuration)
+        BrowserSettings.shared.apply(to: configuration)
         configuration.mediaTypesRequiringUserActionForPlayback = .all
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.preferences.inactiveSchedulingPolicy = .none
         return configuration
     }
 
-    private func evaluate(_ script: String, in page: BrowserPage) async -> [String: Any]? {
-        let value = try? await page.evaluateJavaScript(script)
+    private func evaluate(_ script: String, in webView: WKWebView) async -> [String: Any]? {
+        let value = try? await webView.evaluateJavaScript(script)
         guard let text = value as? String, let data = text.data(using: .utf8) else { return nil }
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }

@@ -10,7 +10,7 @@ enum StageRun {
     private static var tabs: [String: BrowserTab] = [:]
 
     static func startIfRequested(coordinator: AppCoordinator) {
-        guard StageMode.isActive, ProcessInfo.processInfo.environment["WSURF_STAGE_SEED"] != "0" else { return }
+        guard StageMode.isActive else { return }
         Task {
             try? await Task.sleep(for: .seconds(1.2))
             seed(into: coordinator)

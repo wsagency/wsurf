@@ -35,7 +35,7 @@ struct SidebarSplitRow: View {
     }
 
     private var lineHeight: CGFloat {
-        SidebarMetrics.rowHeight(settings: BrowserSettings.application)
+        SidebarMetrics.rowHeight(settings: coordinator.settings)
     }
 
     private var isLifted: Bool {
@@ -73,7 +73,7 @@ struct SidebarSplitRow: View {
 
     private var height: CGFloat {
         lineCount > 1
-            ? lineHeight * CGFloat(lineCount) + SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application) * CGFloat(lineCount - 1)
+            ? lineHeight * CGFloat(lineCount) + SidebarMetrics.rowVerticalSpacing(settings: coordinator.settings) * CGFloat(lineCount - 1)
             : lineHeight
     }
 
@@ -86,7 +86,7 @@ struct SidebarSplitRow: View {
             let layout = SplitLayout(
                 grid: shape,
                 size: proxy.size,
-                gutter: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)
+                gutter: SidebarMetrics.rowVerticalSpacing(settings: coordinator.settings)
             )
             ZStack(alignment: .topLeading) {
                 ForEach(split.tabs, id: \.self) { id in
@@ -183,7 +183,6 @@ struct SidebarSplitRow: View {
                 coordinator.openTab(opened)
             }
         }
-        context.selection.excludeFavorites(browser.favorites)
     }
 
     private var panes: [BrowserTab] {
@@ -193,7 +192,6 @@ struct SidebarSplitRow: View {
     @ViewBuilder
     private var menu: some View {
         SidebarLinkMenuItems(tabs: panes, coordinator: coordinator)
-        SidebarFavoriteMenuItems(tabs: panes, browser: browser)
 
         if let axis = split.axis {
             Button {
@@ -215,17 +213,12 @@ struct SidebarSplitRow: View {
 
         SidebarFolderMenuItems(items: carried, browser: browser)
 
-        if panes.contains(where: { !$0.isDeferred }) {
-            Button {
-                FolderContextMenu.unloadTabs(carried, coordinator: coordinator, browser: browser)
-            } label: {
-                Label("Unload Tabs", systemImage: "arrow.uturn.down")
-            }
-        }
         Button(role: .destructive) {
-            browser.close(panes.map { .tab($0.id) })
+            for tab in panes.reversed() {
+                browser.close(tab)
+            }
         } label: {
-            Label("Remove Tabs", systemImage: "xmark")
+            Label("Remove Tabs", systemImage: "trash")
         }
     }
 }
@@ -239,7 +232,6 @@ private struct SplitRowCell: View {
     let onTap: (BrowserTab) -> Void
 
     @Environment(\.sidebarStyle) private var sidebarStyle
-    @Environment(\.colorScheme) private var windowColorScheme
     @State private var hovering = false
     @State private var controlsWidth: CGFloat = 0
     @State private var windowFrame: CGRect = .zero
@@ -277,10 +269,7 @@ private struct SplitRowCell: View {
                     browser.returnToPin(tab)
                 }
             } else {
-                TabIcon(tab: tab, tint: BrowserSettings.application.sidebarTextColor(
-                    isDeferred: tab.isDeferred,
-                    scheme: windowColorScheme
-                ))
+                TabIcon(tab: tab)
             }
 
             if sidebarStyle == .full, tab.isPlayingAudio || tab.isMuted {
@@ -291,11 +280,8 @@ private struct SplitRowCell: View {
 
             if sidebarStyle == .full, !isNarrow {
                 Text(verbatim: tab.title)
-                    .font(BrowserSettings.application.sidebarFont)
-                    .foregroundStyle(BrowserSettings.application.sidebarTextColor(
-                        isDeferred: tab.isDeferred,
-                        scheme: windowColorScheme
-                    ))
+                    .font(coordinator.settings.sidebarFont)
+                    .foregroundStyle(Color.primary)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .mask(alignment: .leading) { titleMask }
@@ -305,7 +291,7 @@ private struct SplitRowCell: View {
             if sidebarStyle == .full, answersAlone {
                 SidebarTabActionButton(tab: tab, coordinator: coordinator)
                     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
-                        controlsWidth = $0
+                        controlsWidth = min($0, 20)
                     }
                     .opacity(hovering ? 1 : 0)
                     .allowsHitTesting(hovering)

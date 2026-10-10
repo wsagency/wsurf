@@ -17,19 +17,19 @@ func settled(
     sourceLocation: SourceLocation = #_sourceLocation
 ) async -> Bool {
     let reached = await waitUntil {
-        guard !tab.page.isLoading else { return false }
+        guard !tab.webView.isLoading else { return false }
         guard tab.committedURL != url else { return true }
         // Page-cache restores may skip navigation callbacks and leave `committedURL` stale.
         // Use the idle web view's URL as a fallback, as `internalPage` does.
-        return tab.isMaterialised && tab.page.url == url
+        return tab.isMaterialised && tab.webView.url == url
     }
     guard !reached else { return true }
     Issue.record(
         """
         settle timed out: standing at \(tab.committedURL?.absoluteString ?? "nothing"), \
-        view at \(tab.isMaterialised ? (tab.page.url?.absoluteString ?? "nothing") : "no view"), \
+        view at \(tab.isMaterialised ? (tab.webView.url?.absoluteString ?? "nothing") : "no view"), \
         wanted \(url?.absoluteString ?? "nothing"), \
-        Page loading \(tab.page.isLoading), tab loading \(tab.isLoading)
+        WebKit loading \(tab.webView.isLoading), tab loading \(tab.isLoading)
         """,
         sourceLocation: sourceLocation
     )

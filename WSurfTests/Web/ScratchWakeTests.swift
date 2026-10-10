@@ -25,10 +25,10 @@ struct ScratchWakeTests {
     /// discarding a tab does - crashes WebKit's display-link thread on a
     /// virtual display. A view in a window still presents, which is all the
     /// test asks of it.
-    private func host(_ page: BrowserPage, in window: NSWindow) {
-        page.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+    private func host(_ webView: WKWebView, in window: NSWindow) {
+        webView.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
         window.contentView?.subviews.forEach { $0.removeFromSuperview() }
-        window.contentView?.addSubview(page)
+        window.contentView?.addSubview(webView)
     }
 
     @Test(arguments: [false, true])
@@ -52,27 +52,27 @@ struct ScratchWakeTests {
             sleeper.detach()
             keeper.detach()
         }
-        host(sleeper.page, in: win)
-        #expect(await PageSettle.untilIdle(sleeper.page, timeout: .seconds(30)))
+        host(sleeper.webView, in: win)
+        #expect(await PageSettle.untilIdle(sleeper.webView, timeout: .seconds(30)))
         #expect(await waitUntil { sleeper.urlString == a.absoluteString })
 
         model.activate(keeper)
-        host(keeper.page, in: win)
+        host(keeper.webView, in: win)
         model.discardBackgroundTabs()
         #expect(sleeper.isDeferred, "the background tab must be asleep for this test to mean anything")
 
         if attachBeforeActivate {
-            host(sleeper.page, in: win)
+            host(sleeper.webView, in: win)
             model.activate(sleeper)
         } else {
             model.activate(sleeper)
-            host(sleeper.page, in: win)
+            host(sleeper.webView, in: win)
         }
 
         let woke = await waitUntil(timeout: .seconds(15)) {
-            sleeper.page.url?.absoluteString == a.absoluteString
+            sleeper.webView.url?.absoluteString == a.absoluteString
         }
-        #expect(woke, "the woken tab never loaded its page back (url = \(sleeper.page.url?.absoluteString ?? "nil"))")
+        #expect(woke, "the woken tab never loaded its page back (url = \(sleeper.webView.url?.absoluteString ?? "nil"))")
         #expect(await waitUntil { sleeper.hasPresentedContent }, "the woken tab never painted")
     }
 }

@@ -8,8 +8,6 @@ import WebKit
 extension AgentToolkit {
     func visualAction(name: String, action: OpenAIJSON) async -> String {
         setComputerScreenshot(nil)
-        visualProgressPage = nil
-        visualProgressDocument = nil
         return await pageOperation(name: name) { view in
             do {
                 guard let frame = computerObservation else { throw PageComputerFailure.stale }
@@ -27,7 +25,6 @@ extension AgentToolkit {
                     try await PageDriver.computerFrame(in: view)
                 }) {
                     computerObservation = nextFrame
-                    recordVisualProgress(for: nextFrame)
                     setComputerScreenshot(data)
                     return action["type"] == "drag_events"
                         ? "CONTROL: Drag events dispatched. Inspect the updated screenshot and verify the result; some sites ignore synthetic events."
@@ -47,7 +44,6 @@ extension AgentToolkit {
                         try await PageDriver.computerFrame(in: view)
                     }) {
                         computerObservation = nextFrame
-                        recordVisualProgress(for: nextFrame)
                         setComputerScreenshot(data)
                         return "Input was sent, but the page did not confirm the event. Check the updated screenshot before another action."
                     }
@@ -75,10 +71,5 @@ extension AgentToolkit {
                 }
             }
         }
-    }
-
-    private func recordVisualProgress(for frame: PageComputerFrame) {
-        visualProgressPage = frame.view.map { String(describing: ObjectIdentifier($0)) }
-        visualProgressDocument = frame.document
     }
 }

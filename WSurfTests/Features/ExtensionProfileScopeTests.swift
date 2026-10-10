@@ -174,60 +174,29 @@ struct ExtensionProfileScopeTests {
         #expect(library(directory, .original()).records.isEmpty)
     }
 
-    @Test func eachControllerIsConfiguredForItsProfile() {
+    @Test func theControllerFollowsTheProfileFromLaunchOnwards() {
         let directory = makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let work = makeProfile("Work")
-        let personal = ExtensionManager(
-            profile: .original(),
-            library: ExtensionLibrary(baseDirectory: directory, profile: .original())
-        )
-        let workManager = ExtensionManager(
-            profile: work,
+        let browser = BrowserModel(database: .temporary())
+        let manager = ExtensionManager(
+            browser: browser,
             library: ExtensionLibrary(baseDirectory: directory, profile: work)
         )
-        let privateManager = ExtensionManager(profile: .privateBrowsing())
 
-        #expect(personal.controller.configuration.identifier == nil)
-        #expect(personal.controller.configuration.isPersistent)
-        #expect(workManager.controller.configuration.identifier == work.id)
-        #expect(workManager.controller.configuration.isPersistent)
-        #expect(!privateManager.controller.configuration.isPersistent)
-    }
+        manager.useLibrary(for: .original())
+        #expect(manager.controller.configuration.identifier == nil)
 
-    @Test func concurrentlyOpenProfilesDoNotOverwriteEachOthersSettings() {
-        let directory = makeDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let personal = library(directory, .original())
-        personal.recordInstall(id: "example")
-        let work = makeProfile("Work")
-        let other = library(directory, work)
+        manager.useLibrary(for: work)
+        #expect(manager.controller.configuration.identifier == work.id)
+        #expect(manager.controller.configuration.isPersistent)
 
-        other.setEnabled(true, id: "example")
-        personal.setPinned(false, id: "example")
-        other.setPinned(false, id: "example")
-        personal.setEnabled(false, id: "example")
+        manager.useLibrary(for: .original())
+        #expect(manager.controller.configuration.identifier == nil)
+        #expect(manager.controller.configuration.isPersistent)
 
-        let savedPersonal = library(directory, .original()).placement(for: "example")
-        let savedWork = library(directory, work).placement(for: "example")
-        #expect(!savedPersonal.enabled)
-        #expect(!savedPersonal.isPinned)
-        #expect(savedWork.enabled)
-        #expect(!savedWork.isPinned)
-    }
-
-    @Test func anotherOpenProfileCannotRestoreAnUninstalledCatalogueEntry() {
-        let directory = makeDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let personal = library(directory, .original())
-        personal.recordInstall(id: "removed")
-        personal.recordInstall(id: "kept")
-        let work = library(directory, makeProfile("Work"))
-
-        personal.uninstall(id: "removed")
-        work.setEnabled(true, id: "kept")
-
-        #expect(library(directory, .original()).records.map(\.id) == ["kept"])
+        manager.useLibrary(for: .privateBrowsing())
+        #expect(!manager.controller.configuration.isPersistent)
     }
 
     @Test func eachProfileStoresItsExtensionDataSomewhereElse() {

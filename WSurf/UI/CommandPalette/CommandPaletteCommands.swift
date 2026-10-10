@@ -7,6 +7,7 @@ import Foundation
 struct CommandPaletteContext {
     var isSpeechMuted = false
     var isListening = false
+    var isPrivate = false
     var historyCount = 0
     var tabCount = 0
     var hasActiveTab = false
@@ -37,10 +38,10 @@ enum CommandPaletteAction: String, CaseIterable {
     ]
 
     case newTab
-    case newWindow
     case openStartPage
     case openLocation
     case privateBrowsing
+    case leavePrivateBrowsing
     case unloadTab
     case reopenTab
     case duplicateTab
@@ -243,6 +244,10 @@ enum CommandPaletteCatalog {
             .map(\.command)
     }
 
+    static func bestScore(_ query: String, in commands: [CommandPaletteCommand]) -> Int {
+        commands.compactMap { CommandMatch.score($0, for: query) }.max() ?? 0
+    }
+
     private struct Builder {
         let context: CommandPaletteContext
         let perform: (CommandPaletteAction) -> Void
@@ -279,19 +284,23 @@ enum CommandPaletteCatalog {
                     isSuggested: true
                 ),
                 make(
-                    .newWindow,
-                    group: .tabs,
-                    title: "New Window",
-                    symbol: "macwindow.badge.plus",
-                    shortcut: "⌘N"
-                ),
-                make(
                     .privateBrowsing,
                     group: .tabs,
-                    title: "New Private Window",
+                    title: "Private Browsing",
+                    detail: "nothing is kept",
                     symbol: "eyeglasses",
                     shortcut: "⇧⌘N",
-                    aliases: ["incognito", "private window"]
+                    aliases: ["incognito", "private window", "anonymous"],
+                    isAvailable: !context.isPrivate
+                ),
+                make(
+                    .leavePrivateBrowsing,
+                    group: .tabs,
+                    title: "Leave Private Browsing",
+                    symbol: "eyeglasses",
+                    aliases: ["exit incognito", "normal browsing"],
+                    isAvailable: context.isPrivate,
+                    isSuggested: true
                 ),
                 make(
                     .reopenTab,

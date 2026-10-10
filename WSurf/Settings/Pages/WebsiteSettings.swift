@@ -9,12 +9,10 @@ struct WebsiteSettings: View {
     @Bindable var settings: BrowserSettings
 
     let permissions: SitePermissions
-    let browser: BrowserModel
 
-    init(settings: BrowserSettings, permissions: SitePermissions, browser: BrowserModel) {
+    init(settings: BrowserSettings, permissions: SitePermissions = .shared) {
         self.settings = settings
         self.permissions = permissions
-        self.browser = browser
     }
 
     @State private var destination: Destination?
@@ -27,11 +25,11 @@ struct WebsiteSettings: View {
     }
 
     private var blocker: ContentBlocker {
-        browser.context.contentBlocker
+        .shared
     }
 
     private var grants: AgentActionPolicy {
-        browser.context.actionPolicy
+        .shared
     }
 
     private var entries: [SiteSettingsEntry] {
@@ -62,7 +60,6 @@ struct WebsiteSettings: View {
                 origin: origin,
                 settings: settings,
                 permissions: permissions,
-                browser: browser,
                 onBack: { destination = nil }
             )
         case nil:
@@ -258,17 +255,16 @@ private struct SiteDetailPage: View {
     let origin: String
     let settings: BrowserSettings
     let permissions: SitePermissions
-    let browser: BrowserModel
     let onBack: () -> Void
 
     @State private var confirmingReset = false
 
     private var blocker: ContentBlocker {
-        browser.context.contentBlocker
+        .shared
     }
 
     private var grants: AgentActionPolicy {
-        browser.context.actionPolicy
+        .shared
     }
 
     private var host: String {
@@ -338,10 +334,8 @@ private struct SiteDetailPage: View {
                 isPresented: $confirmingReset
             ) {
                 Button("Reset website", role: .destructive) {
-                    Task {
-                        guard await reset() else { return }
-                        onBack()
-                    }
+                    reset()
+                    onBack()
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -355,24 +349,6 @@ private struct SiteDetailPage: View {
         )
 
         SettingsCard {
-            DetailRow(
-                title: "Browser engine",
-                caption: "Changing this reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL."
-            ) {
-                SettingsMenu(
-                    options: BrowserEngine.allCases.map {
-                        .init(value: $0, label: String(localized: $0.label))
-                    },
-                    selection: Binding(
-                        get: { permissions.engine(for: origin) },
-                        set: { next in
-                            Task { _ = await browser.setEngine(next, for: origin) }
-                        }
-                    )
-                )
-            }
-            .settingsAnchor("websites.engine")
-            RowSeparator()
             DetailRow(title: "Assistant access") {
                 SettingsMenu(
                     options: AssistantAccessPolicy.allCases.map {
@@ -480,8 +456,6 @@ private struct SiteDetailPage: View {
             }
         }
 
-        ExternalAppsSection(origin: origin, permissions: permissions)
-
         SettingsSection(title: "Permissions", symbol: "hand.raised") {
             ForEach(Array(WebPermission.allCases.enumerated()), id: \.element) { index, permission in
                 if index > 0 {
@@ -512,8 +486,7 @@ private struct SiteDetailPage: View {
 
     }
 
-    private func reset() async -> Bool {
-        guard await browser.setEngine(.webKit, for: origin) else { return false }
+    private func reset() {
         for permission in WebPermission.allCases {
             permissions.set(.ask, for: origin, permission)
         }
@@ -522,35 +495,6 @@ private struct SiteDetailPage: View {
         permissions.setAllowsAutomaticPicture(true, for: origin)
         permissions.setAutoplay(nil, for: origin)
         permissions.setPopups(nil, for: origin)
-        permissions.removeExternalApps(for: origin)
         blocker.setExempt(false, for: host)
-        return true
-    }
-}
-
-private struct ExternalAppsSection: View {
-    let origin: String
-    let permissions: SitePermissions
-
-    var body: some View {
-        let apps = permissions.externalApps(for: origin)
-        if !apps.isEmpty {
-            SettingsSection(title: "Opening apps", symbol: "arrow.up.forward.app") {
-                ForEach(apps) { app in
-                    DetailRow(
-                        title: LocalizedStringResource("\(app.name)"),
-                        caption: "This website can open this app without asking."
-                    ) {
-                        SettingsButton(title: "Ask next time") {
-                            permissions.removeExternalApp(app, for: origin)
-                        }
-                        .accessibilityLabel("Ask before opening \(app.name)")
-                    }
-                    if app.id != apps.last?.id {
-                        RowSeparator()
-                    }
-                }
-            }
-        }
     }
 }

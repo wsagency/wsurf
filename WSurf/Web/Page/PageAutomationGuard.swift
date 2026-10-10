@@ -32,7 +32,7 @@ struct PageAutomationGuard: Sendable {
         return "if (\(condition)) { return JSON.stringify({ stale: true }); }\n"
     }
 
-    static func withCurrentDocument(in view: BrowserPage, operation: () async -> String) async -> String {
+    static func withCurrentDocument(in view: WKWebView, operation: () async -> String) async -> String {
         guard allowsExecution else { return PageDriver.staleMessage }
         guard let prior = current else { return await operation() }
         let updated = Self(documentURL: PageDriver.selectedFrame?.url.absoluteString ?? view.url?.absoluteString ?? prior.documentURL,

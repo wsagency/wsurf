@@ -16,29 +16,6 @@ private func temporaryStore() -> SitePermissions {
 /// The ledger's rules: ask is the unrecorded default, deny and allow are
 /// records, and setting ask again is how a record is forgotten.
 struct SitePermissionsStoreTests {
-    @Test func engineChoicePersistsPerOriginWithoutReplacingPermissions() async throws {
-        let file = FileManager.default.temporaryDirectory
-            .appendingPathComponent("SiteEngine-\(UUID().uuidString).json")
-        defer { try? FileManager.default.removeItem(at: file) }
-        let writer = SitePermissions(storageURL: file)
-        writer.set(.allow, for: "https://example.com", .camera)
-        writer.setEngine(.chromium, for: "HTTPS://Example.COM.:443")
-        await writer.waitForPendingSave()
-
-        let reader = SitePermissions(storageURL: file)
-        #expect(reader.engine(for: "https://example.com") == .chromium)
-        #expect(reader.policy(for: "https://example.com", .camera) == .allow)
-        #expect(reader.engine(for: "http://example.com") == .webKit)
-        #expect(reader.engine(for: "https://example.com:8443") == .webKit)
-        #expect(temporaryStore().engine(for: "https://example.com") == .webKit)
-
-        reader.setEngine(.webKit, for: "https://example.com")
-        await reader.waitForPendingSave()
-        let restored = SitePermissions(storageURL: file)
-        #expect(restored.engine(for: "https://example.com") == .webKit)
-        #expect(restored.policy(for: "https://example.com", .camera) == .allow)
-    }
-
     @Test func anUnknownSiteGetsAsked() {
         let store = temporaryStore()
         #expect(store.policy(for: "https://example.com", .camera) == .ask)
@@ -523,20 +500,5 @@ struct TabPermissionCenterTests {
         #expect(!center.live.contains(.microphone))
         // And the refusal is now the stored answer.
         #expect(await center.decide(.microphone) == false)
-    }
-
-    @Test func revokingPendingLocationNotifiesItsConsumer() async {
-        let center = TabPermissionCenter(store: temporaryStore())
-        center.pageChanged(url: URL(string: "https://example.com/")!)
-        #expect(await decide(.location, on: center, answering: .once))
-
-        var revoked: [WebPermission] = []
-        center.onRevoke = { revoked.append($0) }
-        center.set(.deny, for: .location)
-
-        #expect(revoked == [.location])
-        #expect(!center.isGranted(.location))
-        #expect(await center.decide(.location) == false)
-        #expect(center.pendingAsks.isEmpty)
     }
 }

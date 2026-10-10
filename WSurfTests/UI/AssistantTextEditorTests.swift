@@ -65,7 +65,7 @@ struct AssistantTextEditorTests {
         let chip = MentionChip(id: UUID(), title: "Example")
         let editor = AssistantInputTextView()
         editor.textStorage?.setAttributedString(MentionFieldRendering.attributed(
-            text: MentionText.marker + " hello", chips: [chip], fontSize: 12.5, isDark: false, favicons: FaviconLoader()
+            text: MentionText.marker + " hello", chips: [chip], fontSize: 12.5, isDark: false
         ))
         editor.setSelectedRange(NSRange(location: 7, length: 0))
         editor.keyDown(with: try returnEvent(modifiers: .shift))

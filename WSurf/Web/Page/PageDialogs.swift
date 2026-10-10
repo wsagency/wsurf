@@ -48,7 +48,7 @@ enum PageDialogs {
     // MARK: - File upload
 
     static func chooseFiles(
-        _ parameters: PageFileSelection.Parameters,
+        _ parameters: WKOpenPanelParameters,
         in window: NSWindow?,
         onPanel: ((NSOpenPanel) -> Void)? = nil
     ) async -> [URL]? {
@@ -58,22 +58,9 @@ enum PageDialogs {
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.canChooseDirectories = parameters.allowsDirectories
         onPanel?(panel)
-        return await presentFilePanel(panel, in: window)
-    }
-
-    static func presentFilePanel(_ panel: NSSavePanel, in window: NSWindow?) async -> [URL]? {
-        guard let window else { return nil }
         return await withCheckedContinuation { continuation in
             panel.beginSheetModal(for: window) { response in
-                guard response == .OK else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                if let open = panel as? NSOpenPanel {
-                    continuation.resume(returning: open.urls)
-                } else {
-                    continuation.resume(returning: panel.url.map { [$0] })
-                }
+                continuation.resume(returning: response == .OK ? panel.urls : nil)
             }
         }
     }

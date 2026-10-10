@@ -86,7 +86,7 @@ struct AutofillContactTests {
         #expect(storage.itemCount == 0)
     }
 
-    @Test func contactPreferencePersistsAndIsIsolatedBetweenProfiles() throws {
+    @Test func contactPreferencePersistsAndFollowsProfileSwitches() throws {
         let names = (0..<3).map { "ContactPreferenceTests.\(UUID().uuidString).\($0)" }
         defer { names.forEach { UserDefaults.standard.removePersistentDomain(forName: $0) } }
         let app = try #require(UserDefaults(suiteName: names[0]))
@@ -96,8 +96,9 @@ struct AutofillContactTests {
         #expect(settings.fillsContacts)
         settings.fillsContacts = false
         #expect(!BrowserSettings(defaults: app, sessionDefaults: first).fillsContacts)
-        let otherSettings = BrowserSettings(defaults: app, sessionDefaults: second)
-        #expect(otherSettings.fillsContacts)
+        settings.useSessionDefaults(second)
+        #expect(settings.fillsContacts)
+        settings.useSessionDefaults(first)
         #expect(!settings.fillsContacts)
     }
 

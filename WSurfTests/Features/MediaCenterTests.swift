@@ -11,51 +11,26 @@ import WebKit
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct MediaCenterTests {
-    private func page() -> BrowserPage {
-        BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
-    }
-
-    private func lend(_ media: MediaCenter, _ webView: BrowserPage, tabID: UUID) {
-        media.controlTab(page: webView, title: "Playing", tabID: tabID, artwork: nil)
-        media.model.picturePage = webView
-    }
-
-    @Test func switchingADockedTabsEngineReleasesPlaybackOwnership() async throws {
-        let coordinator = AppCoordinator()
-        coordinator.wireMedia()
-        let browser = coordinator.browser
-        defer {
-            browser.closeAllTabs()
-            browser.cancelPendingSave()
-        }
-        let tab = browser.newTab(adopting: WKWebView())
-        _ = browser.newTab()
-        coordinator.media.isEnabled = true
-        coordinator.controlPlayback(in: tab)
-        try #require(tab.isControlledByMediaDock)
-
-        try #require(await tab.switchEngine(to: .chromium))
-
-        #expect(!tab.isControlledByMediaDock)
-        #expect(coordinator.media.controlledTabID == nil)
-        #expect(!coordinator.media.model.isActive)
+    private func lend(_ media: MediaCenter, _ webView: WKWebView, tabID: UUID) {
+        media.controlTab(webView: webView, title: "Playing", tabID: tabID, artwork: nil)
+        media.model.pictureWebView = webView
     }
 
     @Test func takingOverAnotherTabDropsTheFirstPicture() {
         let media = MediaCenter()
         var changes: [[UUID?]] = []
         media.onControlledTabChanged = { changes.append([$0, $1]) }
-        let first = page()
-        let second = page()
+        let first = WKWebView()
+        let second = WKWebView()
         let firstID = UUID()
         let secondID = UUID()
 
         lend(media, first, tabID: firstID)
         media.model.playerViewportRect = CGRect(x: 0, y: 0, width: 640, height: 360)
-        media.controlTab(page: second, title: "Playing", tabID: secondID, artwork: nil)
+        media.controlTab(webView: second, title: "Playing", tabID: secondID, artwork: nil)
 
         #expect(changes == [[nil, firstID], [firstID, secondID]])
-        #expect(media.model.picturePage == nil)
+        #expect(media.model.pictureWebView == nil)
         #expect(media.model.playerViewportRect == nil)
     }
 
@@ -63,7 +38,7 @@ struct MediaCenterTests {
         let media = MediaCenter()
         var changes: [[UUID?]] = []
         media.onControlledTabChanged = { changes.append([$0, $1]) }
-        let webView = page()
+        let webView = WKWebView()
         let tabID = UUID()
 
         lend(media, webView, tabID: tabID)
@@ -71,13 +46,13 @@ struct MediaCenterTests {
         media.releaseControl()
 
         #expect(changes == [[nil, tabID], [tabID, nil]])
-        #expect(media.model.picturePage == nil)
+        #expect(media.model.pictureWebView == nil)
         #expect(media.model.playerViewportRect == nil)
     }
 
     @Test func rectReportFromTheControlledMainFramePlacesThePlayer() {
         let media = MediaCenter()
-        let webView = page()
+        let webView = WKWebView()
         lend(media, webView, tabID: UUID())
 
         media.receiveScriptMessage(
@@ -91,8 +66,8 @@ struct MediaCenterTests {
 
     @Test func rectReportsFromSubframesAndOtherTabsAreIgnored() {
         let media = MediaCenter()
-        let webView = page()
-        let other = page()
+        let webView = WKWebView()
+        let other = WKWebView()
         lend(media, webView, tabID: UUID())
 
         media.receiveScriptMessage(
@@ -111,7 +86,7 @@ struct MediaCenterTests {
 
     @Test func emptyRectReportClearsThePlacement() {
         let media = MediaCenter()
-        let webView = page()
+        let webView = WKWebView()
         lend(media, webView, tabID: UUID())
 
         media.receiveScriptMessage(
@@ -126,7 +101,7 @@ struct MediaCenterTests {
 
     @Test func zeroSizedAndMalformedRectsChangeNothing() {
         let media = MediaCenter()
-        let webView = page()
+        let webView = WKWebView()
         lend(media, webView, tabID: UUID())
         let placed = CGRect(x: 0, y: 0, width: 640, height: 360)
         media.receiveScriptMessage(
@@ -147,8 +122,8 @@ struct MediaCenterTests {
 
     @Test func stateWithAPictureLendsTheControlledView() {
         let media = MediaCenter()
-        let webView = page()
-        media.controlTab(page: webView, title: "Playing", tabID: UUID(), artwork: nil)
+        let webView = WKWebView()
+        media.controlTab(webView: webView, title: "Playing", tabID: UUID(), artwork: nil)
 
         media.receiveScriptMessage(
             "state:{\"t\":1,\"d\":100,\"l\":0,\"p\":1,\"v\":1,\"m\":0,\"w\":1280}",
@@ -156,7 +131,7 @@ struct MediaCenterTests {
             isMainFrame: true
         )
 
-        #expect(media.model.picturePage === webView)
+        #expect(media.model.pictureWebView === webView)
     }
 
     /// Read from a view body, so it has to live on the observable model: off
@@ -166,11 +141,11 @@ struct MediaCenterTests {
         let first = UUID()
         let second = UUID()
 
-        media.controlTab(page: page(), title: "One", tabID: first, artwork: nil)
+        media.controlTab(webView: WKWebView(), title: "One", tabID: first, artwork: nil)
         #expect(media.model.controlledTabID == first)
         #expect(media.controlledTabID == first)
 
-        media.controlTab(page: page(), title: "Two", tabID: second, artwork: nil)
+        media.controlTab(webView: WKWebView(), title: "Two", tabID: second, artwork: nil)
         #expect(media.model.controlledTabID == second)
         #expect(media.controlledTabID == second)
 
@@ -181,7 +156,7 @@ struct MediaCenterTests {
 
     @Test func aDeadContentProcessDropsThePictureAndTheClock() {
         let media = MediaCenter()
-        let webView = page()
+        let webView = WKWebView()
 
         lend(media, webView, tabID: UUID())
         media.model.playerViewportRect = CGRect(x: 0, y: 0, width: 640, height: 360)
@@ -192,7 +167,7 @@ struct MediaCenterTests {
 
         media.pageDidReset(webView)
 
-        #expect(media.model.picturePage == nil)
+        #expect(media.model.pictureWebView == nil)
         #expect(media.model.playerViewportRect == nil)
         #expect(media.model.currentTime == 0)
         #expect(media.model.duration == 0)
@@ -202,21 +177,21 @@ struct MediaCenterTests {
 
     @Test func anotherTabsDeadProcessLeavesTheDockAlone() {
         let media = MediaCenter()
-        let docked = page()
+        let docked = WKWebView()
 
         lend(media, docked, tabID: UUID())
         media.model.playerViewportRect = CGRect(x: 0, y: 0, width: 640, height: 360)
 
-        media.pageDidReset(page())
+        media.pageDidReset(WKWebView())
 
-        #expect(media.model.picturePage === docked)
+        #expect(media.model.pictureWebView === docked)
         #expect(media.model.playerViewportRect != nil)
     }
 
     @Test func aPageThatComesBackTakesThePictureAgain() {
         let media = MediaCenter()
-        let webView = page()
-        media.controlTab(page: webView, title: "Playing", tabID: UUID(), artwork: nil)
+        let webView = WKWebView()
+        media.controlTab(webView: webView, title: "Playing", tabID: UUID(), artwork: nil)
 
         media.receiveScriptMessage(
             "state:{\"t\":1,\"d\":100,\"l\":0,\"p\":1,\"v\":1,\"m\":0,\"w\":1280}",
@@ -224,7 +199,7 @@ struct MediaCenterTests {
             isMainFrame: true
         )
         media.receiveScriptMessage("hello", from: webView, isMainFrame: true)
-        #expect(media.model.picturePage == nil)
+        #expect(media.model.pictureWebView == nil)
 
         media.receiveScriptMessage(
             "state:{\"t\":3,\"d\":100,\"l\":0,\"p\":1,\"v\":1,\"m\":0,\"w\":1280}",
@@ -232,27 +207,27 @@ struct MediaCenterTests {
             isMainFrame: true
         )
 
-        #expect(media.model.picturePage === webView)
+        #expect(media.model.pictureWebView === webView)
         #expect(media.model.currentTime == 3)
     }
 
     @Test func aSubframeReloadIsNotThePageComingBack() {
         let media = MediaCenter()
-        let webView = page()
+        let webView = WKWebView()
 
         lend(media, webView, tabID: UUID())
         media.model.playerViewportRect = CGRect(x: 0, y: 0, width: 640, height: 360)
 
         media.receiveScriptMessage("hello", from: webView, isMainFrame: false)
 
-        #expect(media.model.picturePage === webView)
+        #expect(media.model.pictureWebView === webView)
         #expect(media.model.playerViewportRect != nil)
     }
 
     @Test func stateWithoutAPictureLendsNothing() {
         let media = MediaCenter()
-        let webView = page()
-        media.controlTab(page: webView, title: "Playing", tabID: UUID(), artwork: nil)
+        let webView = WKWebView()
+        media.controlTab(webView: webView, title: "Playing", tabID: UUID(), artwork: nil)
 
         media.receiveScriptMessage(
             "state:{\"t\":1,\"d\":100,\"l\":0,\"p\":1,\"v\":1,\"m\":0,\"w\":0}",
@@ -260,7 +235,7 @@ struct MediaCenterTests {
             isMainFrame: true
         )
 
-        #expect(media.model.picturePage == nil)
+        #expect(media.model.pictureWebView == nil)
     }
 
     // MARK: - The player turned off in Settings
@@ -311,8 +286,8 @@ struct MediaCenterTests {
     @Test func theStripNeverBorrowsAPictureWhileTheExperimentIsOff() {
         let media = MediaCenter()
         media.lendsPicture = false
-        let webView = page()
-        media.controlTab(page: webView, title: "Playing", tabID: UUID(), artwork: nil)
+        let webView = WKWebView()
+        media.controlTab(webView: webView, title: "Playing", tabID: UUID(), artwork: nil)
 
         media.receiveScriptMessage(
             "state:{\"t\":1,\"d\":100,\"l\":0,\"p\":1,\"v\":1,\"m\":0,\"w\":640}",
@@ -321,26 +296,26 @@ struct MediaCenterTests {
         )
 
         #expect(media.model.hasVideo, "the strip still owes the user a Picture in Picture button")
-        #expect(media.model.picturePage == nil)
+        #expect(media.model.pictureWebView == nil)
     }
 
     @Test func turningTheVideoOffTakesTheLentPictureBack() {
         let media = MediaCenter()
-        let webView = page()
+        let webView = WKWebView()
         lend(media, webView, tabID: UUID())
-        #expect(media.model.picturePage === webView)
+        #expect(media.model.pictureWebView === webView)
 
         media.lendsPicture = false
 
-        #expect(media.model.picturePage == nil)
+        #expect(media.model.pictureWebView == nil)
     }
 
     @Test func comingBackFromPictureInPictureNamesTheViewThatReturned() {
         let media = MediaCenter()
-        var returned: [BrowserPage] = []
+        var returned: [WKWebView?] = []
         media.onReturnedInline = { returned.append($0) }
-        let webView = page()
-        media.controlTab(page: webView, title: "Playing", tabID: UUID(), artwork: nil)
+        let webView = WKWebView()
+        media.controlTab(webView: webView, title: "Playing", tabID: UUID(), artwork: nil)
 
         media.receiveScriptMessage("picture-in-picture", from: webView, isMainFrame: true)
         media.receiveScriptMessage("inline", from: webView, isMainFrame: true)
@@ -354,8 +329,8 @@ struct MediaCenterTests {
         let media = MediaCenter()
         var returned = 0
         media.onReturnedInline = { _ in returned += 1 }
-        let webView = page()
-        media.controlTab(page: webView, title: "Playing", tabID: UUID(), artwork: nil)
+        let webView = WKWebView()
+        media.controlTab(webView: webView, title: "Playing", tabID: UUID(), artwork: nil)
 
         media.receiveScriptMessage("inline", from: webView, isMainFrame: true)
 
@@ -364,9 +339,9 @@ struct MediaCenterTests {
 
     @Test func aTabThatIsNotDockedAlsoReportsItsWayBack() {
         let media = MediaCenter()
-        var returned: [BrowserPage] = []
+        var returned: [WKWebView?] = []
         media.onReturnedInline = { returned.append($0) }
-        let webView = page()
+        let webView = WKWebView()
         media.requestNativePiP(on: webView)
 
         media.receiveScriptMessage("picture-in-picture", from: webView, isMainFrame: true)
@@ -381,7 +356,7 @@ struct MediaCenterTests {
         let media = MediaCenter()
         var returned = 0
         media.onReturnedInline = { _ in returned += 1 }
-        let webView = page()
+        let webView = WKWebView()
 
         media.requestNativePiP(on: webView)
         media.receiveScriptMessage("picture-in-picture", from: webView, isMainFrame: true)
@@ -395,7 +370,7 @@ struct MediaCenterTests {
         let media = MediaCenter()
         var returned = 0
         media.onReturnedInline = { _ in returned += 1 }
-        let webView = page()
+        let webView = WKWebView()
 
         media.requestNativePiP(on: webView)
         media.receiveScriptMessage("picture-in-picture", from: webView, isMainFrame: true)
@@ -408,15 +383,15 @@ struct MediaCenterTests {
     @Test func theTabWithTheFloatingWindowIsNamedToTheChrome() {
         let media = MediaCenter()
         var reports: [Bool] = []
-        let webView = page()
+        let webView = WKWebView()
         media.onPictureOutChanged = { view, isOut in
             guard view === webView else { return }
             reports.append(isOut)
         }
 
-        media.setPictureInPicture(true, for: webView)
-        media.setPictureInPicture(true, for: webView)
-        media.setPictureInPicture(false, for: webView)
+        media.setPictureInPicture(true, for: webView, source: .page)
+        media.setPictureInPicture(true, for: webView, source: .page)
+        media.setPictureInPicture(false, for: webView, source: .page)
 
         #expect(reports == [true, false], "the chrome must hear each change once")
     }
@@ -424,9 +399,9 @@ struct MediaCenterTests {
     @Test func aPageThatGrowsAVideoTellsItsTab() {
         let media = MediaCenter()
         var reports: [Bool] = []
-        let webView = page()
+        let webView = WKWebView()
         media.onTabVideoChanged = { _, hasVideo in reports.append(hasVideo) }
-        media.controlTab(page: webView, title: "Playing", tabID: UUID(), artwork: nil)
+        media.controlTab(webView: webView, title: "Playing", tabID: UUID(), artwork: nil)
 
         media.receiveScriptMessage("video:1", from: webView, isMainFrame: true)
         media.receiveScriptMessage("video:0", from: webView, isMainFrame: true)
@@ -439,10 +414,10 @@ struct MediaCenterTests {
     @Test func askingAPictureHomeWhenItIsAlreadyHomeSendsNothingOut() {
         let media = MediaCenter()
         var reports: [Bool] = []
-        let webView = page()
+        let webView = WKWebView()
         media.onPictureOutChanged = { _, isOut in reports.append(isOut) }
 
-        media.setPictureInPicture(true, for: webView)
+        media.setPictureInPicture(true, for: webView, source: .page)
         media.exitPictureInPicture(for: webView)
 
         #expect(reports == [true, false], "the belief must be corrected, not acted on")
@@ -452,10 +427,10 @@ struct MediaCenterTests {
     @Test func aPageThatDiesForgetsItsPicture() {
         let media = MediaCenter()
         var reports: [Bool] = []
-        let webView = page()
+        let webView = WKWebView()
         media.onPictureOutChanged = { _, isOut in reports.append(isOut) }
 
-        media.setPictureInPicture(true, for: webView)
+        media.setPictureInPicture(true, for: webView, source: .page)
         media.pageDidReset(webView)
 
         #expect(reports == [true, false])
@@ -464,13 +439,13 @@ struct MediaCenterTests {
 
     @Test func onlyOneTabCanHoldTheFloatingWindow() {
         let media = MediaCenter()
-        var reports: [(BrowserPage, Bool)] = []
-        let first = page()
-        let second = page()
+        var reports: [(WKWebView, Bool)] = []
+        let first = WKWebView()
+        let second = WKWebView()
         media.onPictureOutChanged = { view, isOut in reports.append((view, isOut)) }
 
-        media.setPictureInPicture(true, for: first)
-        media.setPictureInPicture(true, for: second)
+        media.setPictureInPicture(true, for: first, source: .page)
+        media.setPictureInPicture(true, for: second, source: .page)
 
         #expect(!media.isPictureOut(first), "the first tab must not still claim the window")
         #expect(media.isPictureOut(second))
@@ -482,10 +457,10 @@ struct MediaCenterTests {
     @Test func aFreshDocumentForgetsThePictureEverywhere() {
         let media = MediaCenter()
         var reports: [Bool] = []
-        let webView = page()
+        let webView = WKWebView()
         media.onPictureOutChanged = { _, isOut in reports.append(isOut) }
 
-        media.setPictureInPicture(true, for: webView)
+        media.setPictureInPicture(true, for: webView, source: .page)
         media.receiveScriptMessage("hello", from: webView, isMainFrame: true)
 
         #expect(reports == [true, false])
@@ -494,19 +469,19 @@ struct MediaCenterTests {
 
     @Test func dockingATabWhoseVideoIsOutSaysSo() {
         let media = MediaCenter()
-        let webView = page()
+        let webView = WKWebView()
 
-        media.setPictureInPicture(true, for: webView)
-        media.controlTab(page: webView, title: "Playing", tabID: UUID(), artwork: nil)
+        media.setPictureInPicture(true, for: webView, source: .page)
+        media.controlTab(webView: webView, title: "Playing", tabID: UUID(), artwork: nil)
 
         #expect(media.model.isInNativePiP, "the player would offer to send out what is already out")
     }
 
     @Test func anEmptyDockDescribesNoPicture() {
         let media = MediaCenter()
-        let webView = page()
-        media.controlTab(page: webView, title: "Playing", tabID: UUID(), artwork: nil)
-        media.setPictureInPicture(true, for: webView)
+        let webView = WKWebView()
+        media.controlTab(webView: webView, title: "Playing", tabID: UUID(), artwork: nil)
+        media.setPictureInPicture(true, for: webView, source: .page)
 
         media.releaseControl()
 
@@ -518,10 +493,10 @@ struct MediaCenterTests {
         let media = MediaCenter()
         var returned = 0
         media.onReturnedInline = { _ in returned += 1 }
-        let webView = page()
+        let webView = WKWebView()
 
-        media.setPictureInPicture(true, for: webView)
-        media.setPictureInPicture(false, for: webView)
+        media.setPictureInPicture(true, for: webView, source: .page)
+        media.setPictureInPicture(false, for: webView, source: .webKit)
 
         #expect(returned == 0)
         #expect(!media.isPictureOut(webView), "the state still has to settle")
@@ -532,10 +507,10 @@ struct MediaCenterTests {
         let media = MediaCenter()
         var returned = 0
         media.onReturnedInline = { _ in returned += 1 }
-        let webView = page()
+        let webView = WKWebView()
 
-        media.setPictureInPicture(true, for: webView)
-        media.receiveScriptMessage("inline", from: webView, isMainFrame: true)
+        media.setPictureInPicture(true, for: webView, source: .page)
+        media.setPictureInPicture(false, for: webView, source: .page)
 
         #expect(returned == 1)
     }
@@ -544,20 +519,20 @@ struct MediaCenterTests {
         let media = MediaCenter()
         var returned = 0
         media.onReturnedInline = { _ in returned += 1 }
-        let webView = page()
+        let webView = WKWebView()
 
-        media.setPictureInPicture(true, for: webView)
+        media.setPictureInPicture(true, for: webView, source: .page)
         media.togglePictureInPicture(for: webView)
-        media.setPictureInPicture(false, for: webView)
+        media.setPictureInPicture(false, for: webView, source: .webKit)
 
         #expect(returned == 1)
     }
 
     @Test func aPictureOnItsWayOutIsNotAskingToComeBack() {
         let media = MediaCenter()
-        let webView = page()
+        let webView = WKWebView()
 
-        media.setPictureInPicture(true, for: webView)
+        media.setPictureInPicture(true, for: webView, source: .page)
 
         #expect(!media.notePictureReturnAsk(for: webView))
     }
@@ -565,14 +540,14 @@ struct MediaCenterTests {
     @Test func nothingThatIsNotOutIsAskingToComeBack() {
         let media = MediaCenter()
 
-        #expect(!media.notePictureReturnAsk(for: page()))
+        #expect(!media.notePictureReturnAsk(for: WKWebView()))
     }
 
     @Test func aTabThatNeverLeftForThePictureReportsNothing() {
         let media = MediaCenter()
         var returned = 0
         media.onReturnedInline = { _ in returned += 1 }
-        let webView = page()
+        let webView = WKWebView()
         media.requestNativePiP(on: webView)
 
         media.receiveScriptMessage("inline", from: webView, isMainFrame: true)
@@ -582,8 +557,8 @@ struct MediaCenterTests {
 
     @Test func aRectFromThePictureTargetLeavesTheDockedRectAlone() {
         let media = MediaCenter()
-        let docked = page()
-        let other = page()
+        let docked = WKWebView()
+        let other = WKWebView()
         lend(media, docked, tabID: UUID())
         media.model.playerViewportRect = CGRect(x: 0, y: 0, width: 640, height: 360)
 
@@ -601,7 +576,7 @@ struct MediaCenterTests {
         let media = MediaCenter()
         media.isEnabled = false
 
-        media.controlTab(page: page(), title: "Playing", tabID: UUID(), artwork: nil)
+        media.controlTab(webView: WKWebView(), title: "Playing", tabID: UUID(), artwork: nil)
 
         #expect(!media.model.isActive)
         #expect(media.controlledTabID == nil)
@@ -609,7 +584,7 @@ struct MediaCenterTests {
 
     @Test func turningThePlayerOffLetsGoOfWhatWasDocked() {
         let media = MediaCenter()
-        media.controlTab(page: page(), title: "Playing", tabID: UUID(), artwork: nil)
+        media.controlTab(webView: WKWebView(), title: "Playing", tabID: UUID(), artwork: nil)
         #expect(media.model.isActive)
 
         media.isEnabled = false
@@ -621,9 +596,9 @@ struct MediaCenterTests {
     @Test func theTabYouAreLookingAtIsStillReadWithThePlayerOff() {
         let media = MediaCenter()
         media.isEnabled = false
-        let page = page()
+        let page = WKWebView()
 
-        media.watch(page: page, title: "Adele - Easy On Me", tabID: UUID(), artwork: nil)
+        media.watch(webView: page, title: "Adele - Easy On Me", tabID: UUID(), artwork: nil)
         media.receiveScriptMessage(
             "state:{\"t\":12,\"d\":331,\"l\":0,\"p\":1,\"v\":1,\"m\":0,\"w\":640}",
             from: page,
@@ -636,9 +611,9 @@ struct MediaCenterTests {
 
     @Test func lettingGoOfTheWatchedTabForgetsItsTrack() {
         let media = MediaCenter()
-        let page = page()
+        let page = WKWebView()
 
-        media.watch(page: page, title: "YouTube", tabID: UUID(), artwork: nil)
+        media.watch(webView: page, title: "YouTube", tabID: UUID(), artwork: nil)
         media.receiveScriptMessage(
             "meta:{\"t\":\"Ordinary\",\"a\":\"Alex Warren\",\"al\":\"\",\"art\":\"\",\"g\":\"0\"}",
             from: page,
@@ -646,7 +621,7 @@ struct MediaCenterTests {
         )
         #expect(media.watched.trackTitle == "Ordinary")
 
-        media.unwatch()
+        media.stopWatching()
 
         #expect(media.watched.controlledTabID == nil)
         #expect(media.watched.trackTitle.isEmpty, "a header must not keep a song nothing is watching")
@@ -670,11 +645,10 @@ struct MediaScriptRectTests {
         }
     }
 
-    private func playerWebView() async -> (BrowserPage, Collector) {
+    private func playerWebView() async -> (WKWebView, Collector) {
         let collector = Collector()
-        let configuration = interactiveWebViewConfiguration()
+        let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        BrowserPage.installBridge(in: configuration.userContentController, world: .page)
         configuration.userContentController.add(
             collector,
             name: MediaCenter.frameScriptHandlerName
@@ -686,10 +660,10 @@ struct MediaScriptRectTests {
                 forMainFrameOnly: false
             )
         )
-        let webView = BrowserPage(webKit: WKWebView(
+        let webView = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 800, height: 600),
             configuration: configuration
-        ), context: BrowserProfileContext(profile: .privateBrowsing()))
+        )
         webView.loadHTMLString(
             """
             <!doctype html><html><body style="margin:0">
@@ -699,11 +673,6 @@ struct MediaScriptRectTests {
             baseURL: nil
         )
         #expect(await PageSettle.untilIdle(webView, timeout: .seconds(30)))
-        _ = try? await webView.evaluateJavaScript("""
-        Object.defineProperty(document, 'hidden', { configurable: true, get() { return false; } });
-        document.dispatchEvent(new Event('visibilitychange'));
-        true
-        """)
         return (webView, collector)
     }
 
@@ -720,7 +689,7 @@ struct MediaScriptRectTests {
         await waitUntil { collector.messages.contains { $0.hasPrefix(prefix) } }
     }
 
-    private func settle(_ webView: BrowserPage, _ collector: Collector) async {
+    private func settle(_ webView: WKWebView, _ collector: Collector) async {
         collector.messages.removeAll { $0.hasPrefix("rect:") }
         _ = try? await webView.evaluateJavaScript("window.postMessage('wsurf-resend', '*')")
         _ = await waitForMessage(collector, prefix: "rect:")
@@ -832,8 +801,8 @@ struct MediaCropSurfaceTests {
         let media = MediaCenter()
         var asked = 0
         media.onPictureChanged = { asked += 1 }
-        let webView = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
-        media.controlTab(page: webView, title: "Playing", tabID: UUID(), artwork: nil)
+        let webView = WKWebView()
+        media.controlTab(webView: webView, title: "Playing", tabID: UUID(), artwork: nil)
 
         media.receiveScriptMessage(
             "state:{\"t\":1,\"d\":100,\"l\":0,\"p\":1,\"v\":1,\"m\":0,\"w\":1280}",

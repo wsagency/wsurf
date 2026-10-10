@@ -9,8 +9,7 @@ nonisolated enum PasswordAutofillScript {
     static let clientSource = #"""
     (() => {
       if (globalThis.__wsurfPasswords) return;
-      const channel = globalThis.__wsurfSend
-        ? { postMessage: value => globalThis.__wsurfSend('wsurfPasswords', value) } : null;
+      const channel = window.webkit?.messageHandlers?.wsurfPasswords;
       const state = {target:null, token:null, url:null};
       const forms = globalThis.__wsurfAutofillForms;
       let enabled = false;

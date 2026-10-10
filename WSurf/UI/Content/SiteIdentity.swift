@@ -52,7 +52,6 @@ struct RemoteSiteBadge: View {
     let host: String
     let size: CGFloat
 
-    @Environment(\.profileFavicons) private var profileFavicons
     @State private var icon: NSImage?
 
     var body: some View {
@@ -67,14 +66,11 @@ struct RemoteSiteBadge: View {
             }
         }
         .frame(width: size, height: size)
-        .task(id: "\(host)|\(profileFavicons.map { String(describing: ObjectIdentifier($0)) } ?? "")") {
-            guard let favicons = profileFavicons else { return }
-            if let cached = favicons.cached(for: host) {
+        .task(id: host) {
+            if let cached = FaviconLoader.shared.cached(for: host) {
                 icon = cached
             } else {
-                let loaded = await favicons.load(forHost: host)
-                guard profileFavicons === favicons else { return }
-                icon = loaded
+                icon = await FaviconLoader.shared.load(forHost: host)
             }
         }
     }

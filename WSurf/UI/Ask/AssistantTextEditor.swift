@@ -20,7 +20,6 @@ struct AssistantTextEditor: NSViewRepresentable {
     var onAttachmentPaste: ((NSPasteboard) -> Bool)?
 
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.profileFavicons) private var profileFavicons
 
     func makeNSView(context: Context) -> AssistantEditorScrollView {
         let scroll = AssistantEditorScrollView()
@@ -62,8 +61,6 @@ struct AssistantTextEditor: NSViewRepresentable {
         var parent: AssistantTextEditor
         private var renderedChips: [MentionChip] = []
         private var renderedDark: Bool?
-        private var requestedFaviconsID: ObjectIdentifier?
-        private var renderedFaviconsID: ObjectIdentifier?
         private var requestedHosts: Set<String> = []
         private var syncingFocus = false
 
@@ -73,27 +70,15 @@ struct AssistantTextEditor: NSViewRepresentable {
 
         func apply(to editor: AssistantInputTextView, isDark: Bool, refresh: Bool = false) {
             guard !editor.hasMarkedText() else { return }
-            let favicons = parent.profileFavicons
-            loadIcons(in: editor, favicons: favicons)
-            let faviconsID = favicons.map { ObjectIdentifier($0) }
+            loadIcons(in: editor)
             let changed = editor.string != parent.text
-            guard changed
-                || renderedChips != parent.chips
-                || renderedDark != isDark
-                || renderedFaviconsID != faviconsID
-                || refresh
-            else { return }
+            guard changed || renderedChips != parent.chips || renderedDark != isDark || refresh else { return }
             let selection = editor.selectedRange()
             editor.textStorage?.setAttributedString(MentionFieldRendering.attributed(
-                text: parent.text,
-                chips: parent.chips,
-                fontSize: parent.fontSize,
-                isDark: isDark,
-                favicons: favicons
+                text: parent.text, chips: parent.chips, fontSize: parent.fontSize, isDark: isDark
             ))
             renderedChips = parent.chips
             renderedDark = isDark
-            renderedFaviconsID = faviconsID
             let length = (editor.string as NSString).length
             editor.setSelectedRange(changed ? NSRange(location: length, length: 0) : NSRange(
                 location: min(selection.location, length),
@@ -106,25 +91,17 @@ struct AssistantTextEditor: NSViewRepresentable {
             }
         }
 
-        private func loadIcons(in editor: AssistantInputTextView, favicons: FaviconLoader?) {
-            let faviconsID = favicons.map { ObjectIdentifier($0) }
-            if requestedFaviconsID != faviconsID {
-                requestedFaviconsID = faviconsID
-                requestedHosts.removeAll()
-            }
-            guard let favicons else { return }
+        private func loadIcons(in editor: AssistantInputTextView) {
             let hosts = Set(parent.chips.compactMap(\.host)).filter {
-                favicons.cached(for: $0) == nil && !requestedHosts.contains($0)
+                FaviconLoader.shared.cached(for: $0) == nil && !requestedHosts.contains($0)
             }
             guard !hosts.isEmpty else { return }
             requestedHosts.formUnion(hosts)
             Task { [weak self, weak editor] in
                 for host in hosts {
-                    _ = await favicons.load(forHost: host)
+                    _ = await FaviconLoader.shared.load(forHost: host)
                 }
-                guard let self,
-                      let editor,
-                      self.parent.profileFavicons === favicons else { return }
+                guard let self, let editor else { return }
                 apply(to: editor, isDark: parent.colorScheme == .dark, refresh: true)
             }
         }

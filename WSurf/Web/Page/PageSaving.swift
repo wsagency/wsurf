@@ -9,41 +9,29 @@ import WebKit
 @MainActor
 enum PageSaving {
     static let archiveType = UTType("com.apple.webarchive") ?? .data
-    private static let mhtmlType = UTType(filenameExtension: "mhtml") ?? UTType(importedAs: "org.ietf.mhtml")
 
-    static func begin(for page: BrowserPage) {
-        guard let window = page.window, !(page.superview is WebViewParkingShelf), !page.isClosed else { return }
+    static func begin(for webView: WKWebView) {
+        guard let window = webView.window, !(webView.superview is WebViewParkingShelf) else { return }
 
         let panel = NSSavePanel()
         panel.title = String(localized: "Save Page As")
-        panel.allowedContentTypes = [page.engine == .webKit ? archiveType : mhtmlType]
-        panel.nameFieldStringValue = filename(for: page)
-        panel.directoryURL = page.context.settings.downloadFolder
+        panel.allowedContentTypes = [archiveType]
+        panel.nameFieldStringValue = filename(for: webView)
+        panel.directoryURL = BrowserSettings.shared.downloadFolder
         panel.canCreateDirectories = true
 
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
-            write(page, to: url, in: window)
+            write(webView, to: url, in: window)
         }
     }
 
-    private static func write(_ page: BrowserPage, to url: URL, in window: NSWindow) {
+    private static func write(_ webView: WKWebView, to url: URL, in window: NSWindow) {
         Task {
             do {
-                guard !page.isClosed else { throw ChromiumError.closed }
-                let data: Data
-                if let webKit = page.webKit {
-                    data = try await withCheckedThrowingContinuation { continuation in
-                        webKit.createWebArchiveData { continuation.resume(with: $0) }
-                    }
-                } else if let chromium = page.chromium {
-                    try await chromium.ensureReady()
-                    let result = try await chromium.command("Page.captureSnapshot", params: ["format": "mhtml"])
-                    guard let archive = result["data"] as? String else {
-                        throw ChromiumError.protocolFailure(String(localized: "Chromium did not return a page archive."))
-                    }
-                    data = Data(archive.utf8)
-                } else { throw ChromiumError.closed }
+                let data = try await withCheckedThrowingContinuation { continuation in
+                    webView.createWebArchiveData { continuation.resume(with: $0) }
+                }
                 try data.write(to: url, options: .atomic)
             } catch {
                 report(error, in: window)
@@ -60,12 +48,11 @@ enum PageSaving {
         alert.beginSheetModal(for: window)
     }
 
-    static func filename(for page: BrowserPage) -> String {
-        let title = page.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let host = page.url?.host()?.replacingOccurrences(of: "www.", with: "") ?? ""
+    static func filename(for webView: WKWebView) -> String {
+        let title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let host = webView.url?.host()?.replacingOccurrences(of: "www.", with: "") ?? ""
         let stem = title.isEmpty ? host : title
         let safe = DownloadManager.safeFilename(stem.isEmpty ? String(localized: "Untitled") : stem)
-        let ext = page.engine == .webKit ? (archiveType.preferredFilenameExtension ?? "webarchive") : "mhtml"
-        return "\(safe).\(ext)"
+        return "\(safe).\(archiveType.preferredFilenameExtension ?? "webarchive")"
     }
 }

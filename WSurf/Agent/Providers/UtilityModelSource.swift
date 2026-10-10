@@ -6,12 +6,7 @@ import AnyLanguageModel
 
 @MainActor
 enum UtilityModelSource {
-    private static let providers = ModelProviderRegistry()
-    @TaskLocal static var make: @MainActor @Sendable () -> (any LanguageModel)? = {
-        let settings = LLMSettings.current
-        let provider = ProviderCatalog.shared.provider(id: settings.providerID) ?? ProviderCatalog.openAI
-        return providers.resolve(provider).makeUtilityModel(model: settings.model(for: provider)) ?? onDevice()
-    }
+    static var make: () -> (any LanguageModel)? = onDevice
 
     static var isAvailable: Bool {
         make() != nil

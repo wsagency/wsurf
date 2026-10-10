@@ -33,14 +33,13 @@ struct PageColorHoldTests {
     }
 
     private func showing(_ tab: BrowserTab, in window: NSWindow) async -> Bool {
-        let page = tab.page
-        page.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
-        window.contentView?.addSubview(page)
+        tab.webView.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        window.contentView?.addSubview(tab.webView)
         window.orderBack(nil)
         tab.realizeDeferredSession()
-        guard await PageSettle.untilIdle(page, timeout: .seconds(30)) else { return false }
-        page.loadHTMLString(Self.page, baseURL: URL(string: "https://example.test/"))
-        guard await PageSettle.untilIdle(page, timeout: .seconds(30)) else { return false }
+        guard await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)) else { return false }
+        tab.webView.loadHTMLString(Self.page, baseURL: URL(string: "https://example.test/"))
+        guard await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)) else { return false }
         return await waitUntil { tab.isShowingRealPage && !tab.holdsPageColor }
     }
 

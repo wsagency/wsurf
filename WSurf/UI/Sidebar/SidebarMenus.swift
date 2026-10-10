@@ -69,34 +69,6 @@ struct SidebarPinMenuItems: View {
     }
 }
 
-struct SidebarFavoriteMenuItems: View {
-    let tabs: [BrowserTab]
-    let browser: BrowserModel
-
-    var body: some View {
-        if tabs.contains(where: { !$0.isFavorite }) {
-            Button {
-                for tab in tabs where !tab.isFavorite {
-                    browser.addFavorite(tab)
-                }
-            } label: {
-                Label("Add Favorite", systemImage: "star")
-            }
-            .disabled(tabs.allSatisfy { $0.urlString.isEmpty && $0.pinnedURL == nil })
-        }
-        if tabs.contains(where: \.isFavorite) {
-            Button {
-                for tab in tabs where tab.isFavorite {
-                    browser.removeFavorite(tab)
-                }
-            } label: {
-                Label("Remove Favorite", systemImage: "star.slash")
-            }
-        }
-        Divider()
-    }
-}
-
 struct SidebarUnpinButton: View {
     let tab: BrowserTab
     let browser: BrowserModel
@@ -136,22 +108,24 @@ struct SidebarFolderMenuItems: View {
         items.contains { browser.sidebarTree.parent(of: $0) != nil }
     }
 
-    static func targets(in parent: TabFolder?, for items: [SidebarItem], browser: BrowserModel) -> [TabFolder] {
-        browser.rows(in: parent).compactMap { item in
-            guard case .folder(let id) = item, browser.sidebarTree.canHold(id, items) else { return nil }
-            return browser.folder(id: id)
-        }
+    private var targets: [TabFolder] {
+        browser.folders.filter { browser.sidebarTree.canHold($0.id, items) }
     }
 
     var body: some View {
-        let targets = Self.targets(in: nil, for: items, browser: browser)
         Menu {
-            SidebarFolderTargetMenuItems(targets: targets, items: items, browser: browser)
+            ForEach(targets) { folder in
+                Button {
+                    browser.move(items, into: folder)
+                } label: {
+                    Text(verbatim: folder.name)
+                }
+            }
             if !targets.isEmpty {
                 Divider()
             }
             Button {
-                browser.createFolderForRenaming(containing: items)
+                browser.createFolder(containing: items)
             } label: {
                 Label("New Folder…", systemImage: "folder.badge.plus")
             }
@@ -169,37 +143,6 @@ struct SidebarFolderMenuItems: View {
     }
 }
 
-private struct SidebarFolderTargetMenuItems: View {
-    let targets: [TabFolder]
-    let items: [SidebarItem]
-    let browser: BrowserModel
-
-    var body: some View {
-        ForEach(targets) { folder in
-            let children = SidebarFolderMenuItems.targets(in: folder, for: items, browser: browser)
-            if children.isEmpty {
-                Button {
-                    browser.move(items, into: folder)
-                } label: {
-                    Text(verbatim: folder.name)
-                }
-            } else {
-                Menu {
-                    Button {
-                        browser.move(items, into: folder)
-                    } label: {
-                        Label("Move Here", systemImage: "folder")
-                    }
-                    Divider()
-                    AnyView(SidebarFolderTargetMenuItems(targets: children, items: items, browser: browser))
-                } label: {
-                    Text(verbatim: folder.name)
-                }
-            }
-        }
-    }
-}
-
 struct SidebarSelectionMenuItems: View {
     let items: [SidebarItem]
     let browser: BrowserModel
@@ -211,7 +154,6 @@ struct SidebarSelectionMenuItems: View {
 
     var body: some View {
         SidebarLinkMenuItems(tabs: tabs, coordinator: coordinator)
-        SidebarFavoriteMenuItems(tabs: tabs, browser: browser)
         SidebarFolderMenuItems(items: items, browser: browser)
         SidebarTabActions(items: items, browser: browser, coordinator: coordinator)
     }
@@ -228,7 +170,6 @@ struct SidebarTabActions: View {
 
     var body: some View {
         let count = tabs.count
-        let loadedCount = tabs.filter { !$0.isDeferred }.count
         let unloadLabel = count == 1 ? String(localized: "Unload Tab") : String(localized: "Unload \(count) Tabs")
         let removeLabel = count == 1 ? String(localized: "Remove Tab") : String(localized: "Remove \(count) Tabs")
         Button {
@@ -238,9 +179,9 @@ struct SidebarTabActions: View {
                 coordinator.unloadTab(tab)
             }
         } label: {
-            Label(unloadLabel, systemImage: "arrow.uturn.down")
+            Label(unloadLabel, systemImage: "minus")
         }
-        .disabled(loadedCount == 0)
+        .disabled(count == 0)
 
         Button(role: .destructive) {
             Task {
@@ -251,7 +192,7 @@ struct SidebarTabActions: View {
                 browser.close(items)
             }
         } label: {
-            Label(removeLabel, systemImage: "xmark")
+            Label(removeLabel, systemImage: "trash")
         }
         .disabled(count == 0)
     }

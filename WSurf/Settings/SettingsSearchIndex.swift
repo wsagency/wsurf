@@ -33,9 +33,7 @@ struct SettingsEntry: Identifiable, Hashable {
     }
 
     var targetAnchor: String {
-        if id == "appearance.transparency" { return "appearance.windowStyle" }
-        if id == "websites.engine" { return "websites.list" }
-        return id
+        id == "appearance.transparency" ? "appearance.windowStyle" : id
     }
 
     static func == (lhs: SettingsEntry, rhs: SettingsEntry) -> Bool {
@@ -114,13 +112,8 @@ enum SettingsIndex {
         SettingsEntry("general.defaultBrowser", .general, "Open links from other apps", "Whether WSurf is your default browser.",
                       ["default browser", "default", "links", "handler", "http", "https", "system"]),
 
-        SettingsEntry("appearance.theme", .appearance, "Theme", "Choose light, dark, pastel Calm, or match your Mac.",
-                      ["dark mode", "light mode", "calm", "pastel", "theme", "appearance", "colour", "color", "night"]),
-        SettingsEntry("appearance.themeCustomization", .appearance, "Theme customization",
-                      "Adjust brightness, hue, main color, control icons, and URL color and opacity.",
-                      ["theme", "brightness", "darker", "lighter", "hue", "color", "colour", "controls",
-                       "icons", "url", "opacity", "reset", "palette",
-                      ]),
+        SettingsEntry("appearance.theme", .appearance, "Theme", "Light, dark, or match your Mac.",
+                      ["dark mode", "light mode", "theme", "appearance", "colour", "color", "night"]),
         SettingsEntry("appearance.windowStyle", .appearance, "Window style", "Choose Standard or Transparent.",
                       ["loom", "window", "standard", "liquid glass", "clear", "opacity",
                        "transparency", "transparent", "translucent", "contrast", "toolbar",
@@ -150,13 +143,6 @@ enum SettingsIndex {
         SettingsEntry("appearance.sidebarFontSize", .appearance, "Sidebar font size",
                       "Adjust the text size in the sidebar.",
                       ["sidebar", "font", "size", "text", "larger", "smaller"]),
-        SettingsEntry("appearance.sidebarLoadedColor", .appearance, "Loaded tab color",
-                      "Text and icon color and opacity are saved separately for each theme.",
-                      ["sidebar", "font", "text", "color", "colour", "opacity", "loaded", "theme"]),
-        SettingsEntry("appearance.sidebarUnloadedColor", .appearance, "Unloaded tab color",
-                      "Text and icon color and opacity are saved separately for each theme.",
-                      ["sidebar", "font", "text", "color", "colour", "opacity", "unloaded", "sleep", "theme"]),
-
         SettingsEntry("appearance.sidebarRowSpacing", .appearance, "Sidebar row spacing",
                       "Add vertical breathing room between sidebar rows.",
                       ["sidebar", "spacing", "padding", "compact", "rows"]),
@@ -205,10 +191,6 @@ enum SettingsIndex {
                       ["permission", "location", "camera", "microphone", "mic", "notifications", "geolocation",
                        "gps", "webcam", "video call", "allow", "deny", "revoke", "getusermedia",
                        ]),
-        SettingsEntry("websites.engine", .websites, "Browser engine",
-                      "Choose WebKit or Chromium for each website.",
-                      ["engine", "webkit", "chromium", "browser", "rendering", "per website", "site setting",
-                       "reload", "sign-in", "login", ]),
         SettingsEntry("websites.list", .websites, "Websites you’ve changed", "View websites with custom settings.",
                       ["site settings", "per site", "exceptions", "assistant access", "read only", "control",
                        "keep active", "keep awake", "always active", "always loaded", "memory", "unload", "background",
@@ -222,7 +204,7 @@ enum SettingsIndex {
                       ["downloads", "history", "list", "clear", "remove", "keep", "retention", "quit"]),
         SettingsEntry("downloads.ask", .downloads, "Ask where to save each file", "Choose a location every time.",
                       ["ask", "prompt", "where", "save as"]),
-        SettingsEntry("downloads.list", .downloads, "Open downloads", "View downloads and their saved locations.",
+        SettingsEntry("downloads.list", .downloads, "Recent downloads", "View downloads and their saved locations.",
                       ["downloads", "files", "recent", "history"]),
 
         SettingsEntry("provider.model", .provider, "Model", "The model used by the assistant.",

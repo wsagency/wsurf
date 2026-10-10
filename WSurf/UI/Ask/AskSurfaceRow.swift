@@ -44,7 +44,6 @@ struct AskSurfaceRow: View {
                     isFocused: model.isFocused,
                     selectAllToken: model.selectAllToken,
                     accessibilityLabel: String(localized: placement.accessibilityLabel),
-                    textColor: placement == .toolbar ? Theme.urlOverride.map { NSColor($0) } : nil,
                     onFocusChange: { model.fieldFocusDidChange($0) },
                     onChipsChange: { model.mentionsDidChange($0) },
                     onSubmit: { model.submit(in: sections) },
@@ -66,8 +65,7 @@ struct AskSurfaceRow: View {
                     AskRestingLine(
                         placement: placement,
                         content: restingContent,
-                        security: security,
-                        engine: model.addressEngine
+                        security: security
                     )
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .allowsHitTesting(false)
@@ -79,7 +77,6 @@ struct AskSurfaceRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onTapGesture { model.focusForEditing() }
-            .help(Text(model.addressEngine?.label ?? ""))
 
             HStack(spacing: placement.controlSpacing) {
                 if placement.showsSiteControls {
@@ -106,8 +103,7 @@ struct AskSurfaceRow: View {
                 AskRestingLine(
                     placement: placement,
                     content: restingContent,
-                    security: security,
-                    engine: model.addressEngine
+                    security: security
                 )
                 .padding(.horizontal, Self.centredAddressInset)
                 .allowsHitTesting(false)

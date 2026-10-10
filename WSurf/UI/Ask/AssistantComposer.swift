@@ -36,7 +36,7 @@ struct AssistantComposer: View {
     }
 
     private var isAnsweringAQuestion: Bool {
-        coordinator.pendingAgentQuestion(inChrome: false) != nil
+        coordinator.agentQuestions.ask(inSpace: coordinator.browser.activeSpaceID) != nil
     }
 
     private var mentionFragment: String? {

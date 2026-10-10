@@ -8,6 +8,13 @@ import Observation
 @MainActor
 @Observable
 final class AgentActionPolicy {
+    static private(set) var shared = AgentActionPolicy()
+
+    @discardableResult
+    static func use(storage: any AgentGrantStorage) -> AgentActionPolicy {
+        shared = AgentActionPolicy(storage: storage)
+        return shared
+    }
 
     struct Grant: Identifiable, Hashable, Codable, Sendable {
         var host: String
@@ -80,11 +87,6 @@ final class AgentActionPolicy {
 @MainActor
 protocol AgentGrantStorage: AnyObject {
     var grantData: Data? { get set }
-}
-
-@MainActor
-final class SessionAgentGrantStorage: AgentGrantStorage {
-    var grantData: Data?
 }
 
 extension UserDefaults: AgentGrantStorage {

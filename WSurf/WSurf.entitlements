@@ -15,10 +15,9 @@
 	<true/>
 	<key>com.apple.security.personal-information.location</key>
 	<true/>
-	<!-- Required by the separate Data Protection Keychain vaults
-	     (SecureAutofillVault, PaymentCardVault, AutofillSaveIndex) and by legacy
-	     Data Protection Keychain credential migration. Canonical classic-keychain
-	     queries do not set an access group. -->
+	<!-- The data-protection keychain refuses an item from code with no access
+	     group: SecItemAdd answers errSecMissingEntitlement. This group is what
+	     CredentialStore's API keys are filed under. -->
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)io.wsagency.wsurf</string>

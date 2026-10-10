@@ -32,7 +32,6 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored private let consent: (String, [MCPAccessConsent.Page]) async -> MCPAccessConsent.Access?
     @ObservationIgnored private let openConsent: (String, URL) async -> Bool
     @ObservationIgnored private let actionPolicy = AgentActionPolicy(storage: MCPActionGrantStorage())
-    @ObservationIgnored private let consentWindow: ExtensionWindowAdapter?
     @ObservationIgnored private var observations: [UUID: PageObservation] = [:]
     @ObservationIgnored private var destinations: Set<String> = []
     @ObservationIgnored private var hasReadContent = false
@@ -50,21 +49,13 @@ final class MCPBrowserSession: Identifiable {
     init(
         browser: BrowserModel,
         available: @escaping () -> Bool,
-        consent: @escaping (String, [MCPAccessConsent.Page]) async -> MCPAccessConsent.Access? = { client, pages in
-            await MCPAccessConsent.share(client: client, pages: pages, in: nil)
-        },
-        openConsent: @escaping (String, URL) async -> Bool = { client, url in
-            await MCPAccessConsent.open(client: client, url: url, in: nil)
-        }
+        consent: @escaping (String, [MCPAccessConsent.Page]) async -> MCPAccessConsent.Access? = MCPAccessConsent.share,
+        openConsent: @escaping (String, URL) async -> Bool = MCPAccessConsent.open
     ) {
         self.browser = browser
         self.available = available
         self.consent = consent
         self.openConsent = openConsent
-        consentWindow = browser.context.extensions.adapter(for: browser)
-    }
-    func isBound(to browser: BrowserModel) -> Bool {
-        self.browser === browser
     }
 
     func revoke() {
@@ -92,9 +83,7 @@ final class MCPBrowserSession: Identifiable {
         }
         return await AgentActionConsent.$scopedPolicy.withValue(actionPolicy) {
             await AgentActionConsent.$externalClientName.withValue(clientName) {
-                await AgentActionConsent.$scopedWindow.withValue(consentWindow) {
-                    await execute(name: name, arguments: arguments)
-                }
+                await execute(name: name, arguments: arguments)
             }
         }
     }
@@ -135,7 +124,7 @@ final class MCPBrowserSession: Identifiable {
             return await navigate(arguments["url"]?.stringValue ?? "", tab: tab, grant: grant)
         }
         if name == "goBack" {
-            guard let destination = tab.page.backForwardList.backList.last?.url else {
+            guard let destination = tab.webView.backForwardList.backItem?.url else {
                 return failure("There is no page to go back to.")
             }
             guard SitePermissions.origin(for: destination) == grant.origin else {
@@ -192,7 +181,7 @@ final class MCPBrowserSession: Identifiable {
         tab.setExternalAutomationWorking(true)
         defer { tab.setExternalAutomationWorking(false) }
         tab.realizeDeferredSession()
-        let view = tab.page
+        let view = tab.webView
         guard let url = webURL(of: tab) else { return failure("The webpage is unavailable.") }
         let usesRef =
             ["clickOnPage", "typeOnPage", "selectOption", "fillFields", "inspectControl", "setChecked", "hoverOnPage", "pressKey"].contains(name)
@@ -233,9 +222,9 @@ final class MCPBrowserSession: Identifiable {
                     "PAGE TEXT:", "Clicked", "Typed", "Selected", "Scrolled", "Already at", "Went back.",
                     "CONTROL:", "Condition met.", "Set checked", "Checked state", "Screenshot captured.", "Dispatched hover", "Sent ",
                 ]
+                let filledCount = arguments["fields"]?.arrayValue?.count ?? 0
                 let succeeded =
-                    prefixes.contains { output.hasPrefix($0) }
-                    || (name == "fillFields" && output.hasPrefix("Filled "))
+                    prefixes.contains { output.hasPrefix($0) } || (name == "fillFields" && output.hasPrefix("Filled \(filledCount) of \(filledCount) fields."))
                 var content: [String: Value] = ["tabID": .string(tab.id.uuidString), "content": .string(AgentToolkit.untrusted(output))]
                 if let current = PageDriver.observation(in: view), current.url == webURL(of: tab)?.absoluteString,
                     output.contains("observationID: " + current.id) {
@@ -255,7 +244,7 @@ final class MCPBrowserSession: Identifiable {
         }
     }
 
-    private func pageAction(name: String, arguments: [String: Value], view: BrowserPage) async -> String {
+    private func pageAction(name: String, arguments: [String: Value], view: WKWebView) async -> String {
         let ref = arguments["ref"]?.intValue ?? 0
         switch name {
         case "readPage":
@@ -315,11 +304,7 @@ final class MCPBrowserSession: Identifiable {
         guard browser.sitePermissions.assistantAccess(for: origin) != .deny else { return failure("Assistant access is off for this website.") }
         observations[tab.id] = nil
         grants[tab.id] = Grant(origin: origin, access: grant.access)
-        let immediate = tab.load(url, transition: .agent)
-        let navigation = await tab.waitForPendingNavigation() ?? immediate
-        guard navigation != nil else {
-            return failure("Navigation could not be started.")
-        }
+        tab.load(url, transition: .agent)
         return success("Navigation started. Use readPage after the page loads. Redirects to a different website require new sharing.")
     }
 
@@ -372,7 +357,7 @@ final class MCPBrowserSession: Identifiable {
 
     private func webURL(of tab: BrowserTab) -> URL? {
         guard !tab.isShowingSystemPage else { return nil }
-        let url = tab.isMaterialised ? tab.page.url : URL(string: tab.urlString)
+        let url = tab.isMaterialised ? tab.webView.url : URL(string: tab.urlString)
         guard let url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }
         return url
     }

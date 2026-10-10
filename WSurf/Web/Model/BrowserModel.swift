@@ -3,7 +3,6 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import AppKit
-import CefKit
 import Foundation
 import GRDB
 import Observation
@@ -14,64 +13,33 @@ import WebKit
 @MainActor
 @Observable
 final class BrowserModel {
-    let windowID: UUID
-    var context: BrowserProfileContext {
-        didSet {
-            oldValue.unregister(self)
-            context.register(self)
-        }
-    }
     var tabs: [BrowserTab] = []
     var folders: [TabFolder] = []
     var storedTree = SidebarTree()
     var history: HistoryStore
     var sitePermissions: SitePermissions
-    var downloads: DownloadManager
-    let sidebarUndoManager = UndoManager()
-    var folderRenameID: UUID? {
-        didSet {
-            guard folderRenameID != oldValue, let id = folderRenameID else { return }
-            folder(id: id)?.nameRevision += 1
-        }
-    }
-
+    let downloads: DownloadManager
     private let webViewFactory: (@MainActor () -> WKWebView)?
 
     init(
-        context: BrowserProfileContext? = nil,
-        windowID: UUID = BrowserModel.legacyWindowID,
-        database: AppDatabase? = nil,
+        database: AppDatabase = .shared,
         history: HistoryStore? = nil,
-        sitePermissions: SitePermissions? = nil,
-        downloads: DownloadManager? = nil,
+        sitePermissions: SitePermissions = .shared,
+        downloads: DownloadManager = DownloadManager(),
         webViewFactory: (@MainActor () -> WKWebView)? = nil
     ) {
-        let selectedContext = context ?? .shared(for: .original())
-        let selectedDatabase = database ?? selectedContext.database
-        self.windowID = windowID
-        self.context = selectedContext
-        self.database = selectedDatabase
+        self.database = database
         self.webViewFactory = webViewFactory
-        if let history {
-            self.history = history
-        } else if (selectedContext.database.writer as AnyObject) === (selectedDatabase.writer as AnyObject) {
-            self.history = selectedContext.history
-        } else {
-            self.history = HistoryStore(database: selectedDatabase)
-        }
-        self.sitePermissions = sitePermissions ?? selectedContext.sitePermissions
-        self.downloads = downloads ?? context?.downloads ?? DownloadManager()
-        sessionRevision = Self.savedRevision(in: selectedDatabase, windowID: windowID)
-        selectedContext.register(self)
-        sidebarUndoManager.groupsByEvent = false
-        sidebarUndoManager.levelsOfUndo = 20
+        self.history = history ?? HistoryStore(database: database)
+        self.sitePermissions = sitePermissions
+        self.downloads = downloads
     }
     let sidebarSelection = SidebarSelection()
 
     var hasNoActiveTab = false
     var activeTabID: UUID? {
         didSet {
-            if activeTabID != nil, hasNoActiveTab {
+            if activeTabID != nil {
                 hasNoActiveTab = false
             }
             guard oldValue != activeTabID else { return }
@@ -97,17 +65,12 @@ final class BrowserModel {
     var onTabOpened: ((BrowserTab) -> Void)?
     var onNavigationStarted: ((BrowserTab, URL) -> Void)?
     var onTabClosed: ((BrowserTab) -> Void)?
-    var onTabWillTransferOut: ((BrowserTab) -> Void)?
-    var onTabTransferredOut: ((BrowserTab, Int) -> Void)?
-    var onTabTransferredIn: ((BrowserTab, BrowserModel, Int) -> Void)?
     var onActiveTabChanged: ((BrowserTab?, BrowserTab?) -> Void)?
     var onSpaceAnchorChanged: ((UUID, UUID) -> Void)?
     var onContentProcessTerminated: ((BrowserTab) -> Void)?
-    var onPageRetired: ((BrowserTab, BrowserPage) -> Void)?
     var onPictureInPictureChanged: ((BrowserTab, Bool) -> Void)?
     var onLinkHovered: ((BrowserTab, URL?, NSEvent.ModifierFlags, CGPoint) -> Void)?
     var onOpenInPeek: ((BrowserTab?, URL, CGPoint) -> Void)?
-    var onOpenInNewWindow: ((BrowserTab, URL, Bool) -> Void)?
     var onSummarizeLink: ((BrowserTab?, URL, CGPoint) -> Void)?
     var onPictureReturnExpected: ((BrowserTab) -> Void)?
 
@@ -123,6 +86,7 @@ final class BrowserModel {
         adopting: WKWebView? = nil,
         restoring: Bool = false
     ) -> BrowserTab {
+        let privately = opensPrivately
         let adopting = adopting ?? (restoring ? nil : webViewFactory?())
         let tab = BrowserTab(
             id: id,
@@ -130,17 +94,9 @@ final class BrowserModel {
             adopting: adopting,
             restoring: restoring,
             opensBlank: url == nil,
-            sitePermissions: sitePermissions,
-            context: context
+            privately: privately,
+            sitePermissions: sitePermissions
         )
-        bindCallbacks(to: tab)
-        if tab.isMaterialised {
-            context.settings.apply(to: tab.page)
-        }
-        return tab
-    }
-
-    func bindCallbacks(to tab: BrowserTab) {
         tab.onNavigationStarted = { [weak self, weak tab] url in
             guard let tab else { return }
             self?.onNavigationStarted?(tab, url)
@@ -170,10 +126,6 @@ final class BrowserModel {
             let opened = newTab(url: url, activate: activate, after: tab, transition: .link)
             guard let tab, let origin = lastVisitID[tab.id] else { return }
             lastVisitID[opened.id] = origin
-        }
-        tab.onOpenInNewWindow = { [weak self, weak tab] url, isPrivate in
-            guard let tab, !tab.isClosed else { return }
-            self?.onOpenInNewWindow?(tab, url, isPrivate)
         }
         tab.onOpenInPeek = { [weak self, weak tab] url, origin in
             self?.onOpenInPeek?(tab, url, origin)
@@ -205,55 +157,10 @@ final class BrowserModel {
                 privately: tab?.isPrivate ?? false
             )
         }
-        tab.onSaveDocument = { [weak self, weak tab] data, filename, source, opensAfterSaving in
-            guard let self, let tab, !tab.isClosed else { return }
-            let destination = await downloads.save(
-                data, suggestedFilename: filename, source: source,
-                sourceTabID: tab.id, privately: tab.isPrivate, on: tab.page.window
-            )
-            if opensAfterSaving, let destination {
-                NSWorkspace.shared.open(destination)
-            }
+        if tab.isMaterialised {
+            BrowserSettings.shared.apply(to: tab.webView)
         }
-        tab.onChromiumDownload = { [weak self, weak tab] page, download, name, completion in
-            guard let self, let tab, let chromium = page.chromium, !chromium.isClosed else {
-                completion(.deny)
-                return
-            }
-            let controls = ChromiumDownloadControls(
-                pageID: ObjectIdentifier(chromium),
-                isLive: { [weak page, weak chromium] in
-                    guard let page, let chromium else { return false }
-                    return !chromium.isClosed && page.chromium === chromium
-                },
-                cancel: { [weak chromium] id in chromium?.cancelDownload(id: id) },
-                pause: { [weak chromium] id in chromium?.pauseDownload(id: id) },
-                resume: { [weak chromium] id in chromium?.resumeDownload(id: id) }
-            )
-            self.downloads.decideChromiumDownload(
-                ChromiumDownloadRequest(
-                    download: download,
-                    suggestedName: name,
-                    sourceTabID: tab.id,
-                    isPrivate: page.isPrivate,
-                    window: page.window,
-                    controls: controls
-                ),
-                completion: completion
-            )
-        }
-        tab.onChromiumDownloadProgress = { [weak self] page, download in
-            self?.downloads.noteChromiumDownload(download, from: page)
-        }
-        tab.onPageRetired = { [weak self, weak tab] page in
-            self?.downloads.retireChromiumPage(page)
-            guard let tab else { return }
-            self?.onPageRetired?(tab, page)
-        }
-        tab.hasActiveDownload = { [weak self, weak tab] in
-            guard let self, let tab else { return false }
-            return self.downloads.hasActiveDownload(for: tab.id)
-        }
+        return tab
     }
 
     var lastVisitID: [UUID: Int64] = [:]
@@ -303,7 +210,7 @@ final class BrowserModel {
         return tab
     }
 
-    func insert(_ tab: BrowserTab, after opener: BrowserTab?) {
+    private func insert(_ tab: BrowserTab, after opener: BrowserTab?) {
         let keptRun = keptRunAtTop()
         if let anchor = opener.flatMap(insertionAnchor(after:)),
            !keptRun.contains(.tab(anchor.id)),
@@ -351,6 +258,11 @@ final class BrowserModel {
     }
 
     func dismissPeekTab(_ tab: BrowserTab) {
+        if tab.isMaterialised {
+            tab.webView.stopLoading()
+            tab.webView.load(URLRequest(url: URL(string: "about:blank")!))
+            tab.webView.removeFromSuperview()
+        }
         tab.detach()
     }
 
@@ -391,8 +303,11 @@ final class BrowserModel {
         copy.pageTitle = tab.pageTitle
         copy.customTitle = tab.customTitle
         copy.urlString = tab.urlString
-        copy.deferRestore(state: tab.sessionState, url: URL(string: tab.urlString))
-        copy.realizeDeferredSession()
+        if let state = tab.webView.interactionState as? Data {
+            copy.webView.interactionState = state
+        } else if let url = URL(string: tab.urlString), !tab.urlString.isEmpty {
+            copy.load(url)
+        }
         copy.pinnedURL = tab.pinnedURL
         copy.pinnedTitle = tab.pinnedTitle
 
@@ -427,8 +342,6 @@ final class BrowserModel {
     @ObservationIgnored var saveTask: Task<Void, Never>?
 
     @ObservationIgnored var saveChain: Task<Void, Never>?
-    @ObservationIgnored var sessionRevision: Int64 = 0
-    @ObservationIgnored var sessionClosedAt: Date?
 
     @ObservationIgnored var saveWaitingSince: ContinuousClock.Instant?
 
@@ -440,7 +353,5 @@ final class BrowserModel {
 
     var writtenStateGeneration: [UUID: Int] = [:]
 
-    var opensPrivately: Bool {
-        context.profile.isPrivate
-    }
+    var opensPrivately = false
 }

@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import CryptoKit
 import Foundation
 
 nonisolated struct AgentProgressMonitor {
-    private static let visualActions: Set<String> = ["clickAtPoint", "doubleClickAtPoint", "typeAtPointer", "dragOnPage"]
-
     private var recent: [String] = []
     private var failures = 0
     private var recoveryAttempts = 0
@@ -24,10 +23,7 @@ nonisolated struct AgentProgressMonitor {
         case pause
     }
 
-    mutating func observe(
-        name: String, arguments: String, output: String, failed: Bool,
-        visualPage: String? = nil, visualDocument: String? = nil
-    ) -> Decision {
+    mutating func observe(name: String, arguments: String, output: String, failed: Bool, images: [Data] = []) -> Decision {
         guard name != "askUser" else {
             recent = []
             failures = 0
@@ -36,14 +32,16 @@ nonisolated struct AgentProgressMonitor {
             progressKeys = []
             return .proceed
         }
-        let fingerprint: String
-        if Self.visualActions.contains(name) {
-            fingerprint = "visual-result\u{0}\(visualPage ?? "")\u{0}\(visualDocument ?? "")\u{0}\(failed)"
-        } else {
-            let comparison = Self.comparison(name: name, arguments: arguments, output: output)
-            fingerprint = name + "\u{0}" + comparison.arguments + "\u{0}" + comparison.output
+        let comparison = Self.comparison(name: name, arguments: arguments, output: output)
+        let bytes = Data((name + "\u{0}" + comparison.arguments + "\u{0}" + comparison.output).utf8)
+        var digest = SHA256()
+        digest.update(data: bytes)
+        // Visual tools return fixed status text. Compare their screenshots as well so
+        // advancing through pages at the same coordinates does not look like a loop.
+        for image in images {
+            digest.update(data: Data(SHA256.hash(data: image)))
         }
-        let key = fingerprint
+        let key = digest.finalize().map { String(format: "%02x", $0) }.joined()
         if recoveryAttempts > 0, !failed, !stalledKeys.contains(key) {
             progressKeys.insert(key)
             if progressKeys.count >= policy.repeatedActionLimit {

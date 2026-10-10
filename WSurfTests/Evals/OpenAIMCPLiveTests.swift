@@ -15,7 +15,7 @@ struct OpenAIMCPLiveTests {
         let path = try #require(ProcessInfo.processInfo.environment["WSURF_OPENAI_LIVE_CONFIG"])
         let config = try OpenAIJSON.decode(Data(contentsOf: URL(fileURLWithPath: path)))
         guard config["mcp_only"] == true, config["live"] == true else { return }
-        let model = config["model"].string ?? LLMSettings.current.model(for: ProviderCatalog.openAI)
+        let model = config["model"].string ?? LLMSettings.model(for: ProviderCatalog.openAI)
         let destination = URL(fileURLWithPath: try #require(config["report_path"].string))
         let recorder = OpenAILiveRecorder(requestLimit: 3)
         var report: OpenAIJSON = [

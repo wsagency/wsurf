@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
-import AppKit
 import Foundation
 import MCP
 import Network
@@ -23,8 +22,9 @@ final class BrowserMCPServer {
     private(set) var isPaused = false
     private(set) var status: String?
     private(set) var sessions: [MCPBrowserSession] = []
-    @ObservationIgnored private let target: () -> BrowserModel?
-    @ObservationIgnored private let available: (BrowserModel) -> Bool
+    @ObservationIgnored private let browser: BrowserModel
+    @ObservationIgnored private let available: () -> Bool
+    @ObservationIgnored private let canListen: () -> Bool
     @ObservationIgnored private let defaults: UserDefaults?
     @ObservationIgnored private let endpoint: String
     @ObservationIgnored private var listener: LocalMCPListener?
@@ -41,27 +41,21 @@ final class BrowserMCPServer {
     }
 
     init(
-        endpoint: String = LocalMCPEndpoint.path,
-        defaults: UserDefaults? = nil,
-        target: @escaping () -> BrowserModel?,
-        available: @escaping (BrowserModel) -> Bool
+        browser: BrowserModel, endpoint: String = LocalMCPEndpoint.path,
+        defaults: UserDefaults? = nil, canListen: (() -> Bool)? = nil,
+        available: @escaping () -> Bool
     ) {
+        self.browser = browser
         self.endpoint = endpoint
-        self.defaults = defaults
-        self.target = target
         self.available = available
+        self.canListen = canListen ?? available
+        self.defaults = defaults
         isEnabled = defaults?.bool(forKey: "mcp.enabled") ?? false
-    }
-
-    func disconnect(browser: BrowserModel) {
-        for session in sessions where session.isBound(to: browser) {
-            disconnect(session.id)
-        }
     }
 
     var configuration: String {
         let command = MCPClientConfiguration.command
-        let value: [String: Any] = ["mcpServers": ["wsurf": ["command": command, "args": MCPClientConfiguration.arguments]]]
+        let value: [String: Any] = ["mcpServers": ["wsurf": ["command": command, "args": ["--mcp"]]]]
         guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) else { return "" }
         return String(decoding: data, as: UTF8.self)
     }
@@ -77,12 +71,18 @@ final class BrowserMCPServer {
     }
 
     func resume() {
-        isPaused = false
-        guard isEnabled, listener == nil else { return }
+        isPaused = !canListen()
+        guard isEnabled else { return }
+        guard !isPaused else {
+            stop()
+            status = String(localized: "MCP is paused during private browsing.")
+            return
+        }
+        guard listener == nil else { return }
         status = nil
         let started = generation
         Task { [weak self] in
-            guard let self, started == generation, isEnabled, listener == nil else { return }
+            guard let self, started == generation, isEnabled, listener == nil, canListen() else { return }
             do {
                 let listener = try LocalMCPListener(path: endpoint) { [weak self] connection in
                     self?.accept(connection)
@@ -102,7 +102,7 @@ final class BrowserMCPServer {
     func stop() {
         generation = UUID()
         isListening = false
-        isPaused = false
+        isPaused = !canListen()
         status = nil
         listener?.stop()
         listener = nil
@@ -129,63 +129,12 @@ final class BrowserMCPServer {
         activeCall?.task.cancel()
     }
 
-    func makeSessionForConnection(
-        consent: @escaping (String, [MCPAccessConsent.Page], NSWindow?) async -> MCPAccessConsent.Access? = MCPAccessConsent.share,
-        openConsent: @escaping (String, URL, NSWindow?) async -> Bool = MCPAccessConsent.open
-    ) -> MCPBrowserSession? {
-        guard let browser = target(), !browser.opensPrivately, !browser.context.profile.isPrivate,
-              available(browser) else { return nil }
-        let context = browser.context
-        let adapter = context.extensions.adapter(for: browser)
-        let nativeWindow = adapter?.nativeWindow
-        let available = available
-        return MCPBrowserSession(
-            browser: browser,
-            available: { [weak browser, weak context, weak adapter] in
-                guard let browser, let context, let adapter, browser.context === context,
-                      context.extensions.adapter(for: browser) === adapter,
-                      adapter.nativeWindow === nativeWindow else { return false }
-                return available(browser)
-            },
-            consent: { [weak browser, weak context, weak adapter] client, pages in
-                guard let browser, let context, let adapter, let nativeWindow,
-                      browser.context === context,
-                      context.extensions.adapter(for: browser) === adapter,
-                      adapter.nativeWindow === nativeWindow,
-                      available(browser)
-                else { return nil }
-                let answer = await consent(client, pages, nativeWindow)
-                guard browser.context === context,
-                      context.extensions.adapter(for: browser) === adapter,
-                      adapter.nativeWindow === nativeWindow,
-                      available(browser)
-                else { return nil }
-                return answer
-            },
-            openConsent: { [weak browser, weak context, weak adapter] client, url in
-                guard let browser, let context, let adapter, let nativeWindow,
-                      browser.context === context,
-                      context.extensions.adapter(for: browser) === adapter,
-                      adapter.nativeWindow === nativeWindow,
-                      available(browser)
-                else { return false }
-                let approved = await openConsent(client, url, nativeWindow)
-                guard browser.context === context,
-                      context.extensions.adapter(for: browser) === adapter,
-                      adapter.nativeWindow === nativeWindow,
-                      available(browser)
-                else { return false }
-                return approved
-            }
-        )
-    }
-
     private func accept(_ connection: NWConnection) {
-        guard isEnabled, connections.count < 8,
-              let session = makeSessionForConnection() else {
+        guard isEnabled, available(), connections.count < 8 else {
             connection.cancel()
             return
         }
+        let session = MCPBrowserSession(browser: browser, available: available)
         let transport = LocalMCPTransport(connection: connection)
         let server = MCP.Server(
             name: "WSurf", version: "1.0.0",

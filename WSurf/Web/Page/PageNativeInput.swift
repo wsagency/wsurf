@@ -7,7 +7,7 @@ import Foundation
 import WebKit
 
 extension PageDriver {
-    static func hover(ref: Int, in view: BrowserPage) async -> String {
+    static func hover(ref: Int, in view: WKWebView) async -> String {
         guard await validateObservation(in: view, ref: ref) else { return staleMessage }
         await announce(ref: ref, in: view, pause: false)
         guard await validateObservation(in: view, ref: ref) else { return staleMessage }
@@ -39,7 +39,7 @@ extension PageDriver {
         return "Dispatched hover handlers. CSS-only hover is unavailable; check the observed result.\n" + (await settleAndSnippet(view))
     }
 
-    static func pressKey(_ key: String, ref: Int, in view: BrowserPage) async -> String {
+    static func pressKey(_ key: String, ref: Int, in view: WKWebView) async -> String {
         let keys: [String: (UInt16, String)] = [
             "Enter": (36, "\r"), "Tab": (48, "\t"), "Escape": (53, "\u{1b}"), "Space": (49, " "),
             "ArrowLeft": (123, "\u{f702}"), "ArrowRight": (124, "\u{f703}"),
@@ -57,7 +57,7 @@ extension PageDriver {
             guard
                 await AgentActionConsent.permit(
                     label: found.label, category: category, host: (selectedFrame?.url ?? view.url)?.host(),
-                    authoredByAI: AgentAuthoredText.isPresent(in: view), policy: view.context.actionPolicy)
+                    authoredByAI: AgentAuthoredText.isPresent(in: view))
             else {
                 return SensitiveAction.declined(found.label, category: category)
             }
@@ -85,7 +85,11 @@ extension PageDriver {
                     timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                     context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
             else { return "Could not create keyboard input." }
-            view.sendKeyEvent(event)
+            if type == .keyDown {
+                view.keyDown(with: event)
+            } else {
+                view.keyUp(with: event)
+            }
         }
         return "Sent \(key). Check the resulting page.\n" + (await settleAndSnippet(view))
     }

@@ -187,7 +187,7 @@ struct ContentNavBar: View {
 
 enum ChromeBand {
     static func measuredColor(browser: BrowserModel, coordinator: AppCoordinator) -> NSColor? {
-        guard BrowserSettings.application.matchesWebsiteColor else { return nil }
+        guard coordinator.settings.matchesWebsiteColor else { return nil }
         return pageColor(browser: browser, coordinator: coordinator)
     }
 

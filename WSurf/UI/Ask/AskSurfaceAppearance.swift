@@ -166,7 +166,6 @@ struct AskRestingLine: View {
     let placement: AskSurface.Placement
     let content: AskRestingContent
     let security: PageSecurity
-    let engine: BrowserEngine?
 
     var body: some View {
         HStack(spacing: 5) {
@@ -219,25 +218,11 @@ struct AskRestingLine: View {
                 if let symbol = security.symbol {
                     Image(systemName: symbol)
                         .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(Theme.controlOverride ?? security.tint)
-                }
-                if let engine {
-                    Text(verbatim: engine == .webKit ? "WK" : "Cr")
-                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Theme.controlOverride ?? .secondary)
-                        .padding(.horizontal, 3)
-                        .padding(.vertical, 1)
-                        .background(.quaternary, in: .rect(cornerRadius: 3))
-                        .fixedSize()
+                        .foregroundStyle(security.tint)
                 }
                 Text(verbatim: host)
                     .font(.system(size: placement.textSize))
-                    .foregroundStyle(
-                        placement == .toolbar
-                            ? Theme.urlOverride.map { AnyShapeStyle($0) }
-                                ?? (security == .insecure ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-                            : (security == .insecure ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-                    )
+                    .foregroundStyle(security == .insecure ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
                     .truncationMode(.tail)
             }

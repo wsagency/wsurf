@@ -78,19 +78,16 @@ struct AskPageChipView: View {
     let fontSize: CGFloat
 
     @State private var icon: NSImage?
-    @Environment(\.profileFavicons) private var profileFavicons
 
     var body: some View {
         AskPageChip(title: title, icon: icon, isAttached: isAttached, fontSize: fontSize)
-            .task(id: "\(host ?? "")|\(profileFavicons.map { String(describing: ObjectIdentifier($0)) } ?? "")") {
-                guard let host, let favicons = profileFavicons else { return }
-                if let hit = favicons.cached(for: host) {
+            .task(id: host) {
+                guard let host else { return }
+                if let hit = FaviconLoader.shared.cached(for: host) {
                     icon = hit
                     return
                 }
-                let loaded = await favicons.load(forHost: host)
-                guard profileFavicons === favicons else { return }
-                icon = loaded
+                icon = await FaviconLoader.shared.load(forHost: host)
             }
     }
 }

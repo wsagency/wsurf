@@ -185,7 +185,7 @@ struct CommandPaletteModelTests {
             let index = try #require(model.sections.flattened.firstIndex { $0.id == selectedID })
             model.hoverSuggestion(at: index)
 
-            model.suggestions.store(["project ideas", "project plan"], for: "project", engine: SearchURLBuilder.engine(settings: coordinator.browser.context.settings))
+            model.suggestions.store(["project ideas", "project plan"], for: "project", engine: SearchURLBuilder.engine)
             model.suggestionsDidChange()
 
             #expect(model.sections.flattened[model.interaction.selection].id == selectedID)
@@ -242,60 +242,6 @@ struct CommandPaletteModelTests {
         #expect(CommandPaletteShortcutPolicy.shouldDismiss(modifiers: .command, key: "l"))
         #expect(CommandPaletteShortcutPolicy.shouldDismiss(modifiers: .control, key: "f"))
         #expect(CommandPaletteShortcutPolicy.shouldDismiss(modifiers: .option, key: "p"))
-    }
-
-    @Test(arguments: [
-        NSEvent.ModifierFlags.capsLock,
-        .numericPad,
-        .function,
-        [.capsLock, .numericPad, .function],
-    ])
-    func shortcutPolicyIgnoresFlagsThatDoNotChangeTheCommand(incidentalFlags: NSEvent.ModifierFlags) {
-        for key in ["a", "c", "v", "x", "z", "V", "k", "t"] {
-            #expect(!CommandPaletteShortcutPolicy.shouldDismiss(modifiers: [.command, incidentalFlags], key: key))
-        }
-        #expect(CommandPaletteShortcutPolicy.shouldDismiss(modifiers: [.command, incidentalFlags], key: "l"))
-    }
-
-    @Test func pasteAndMatchStyleAndRedoKeepThePaletteOpen() {
-        for incidentalFlags: NSEvent.ModifierFlags in [[], .capsLock, .numericPad, .function] {
-            #expect(!CommandPaletteShortcutPolicy.shouldDismiss(
-                modifiers: [.command, .option, .shift, incidentalFlags], key: "V"
-            ))
-            #expect(!CommandPaletteShortcutPolicy.shouldDismiss(
-                modifiers: [.command, .shift, incidentalFlags], key: "Z"
-            ))
-            #expect(CommandPaletteShortcutPolicy.shouldDismiss(
-                modifiers: [.command, .shift, incidentalFlags], key: "C"
-            ))
-        }
-    }
-
-    @Test func commandShortcutsUseTheCommandLayoutInsteadOfTheTypingLayout() {
-        let keys = [
-            (typing: "м", command: "v"),
-            (typing: "с", command: "c"),
-            (typing: "ч", command: "x"),
-            (typing: "ф", command: "a"),
-            (typing: "я", command: "z"),
-            (typing: "л", command: "k"),
-            (typing: "е", command: "t"),
-            (typing: "k", command: "v"),
-        ]
-        for key in keys {
-            #expect(!CommandPaletteShortcutPolicy.shouldDismiss(
-                modifiers: .command, key: key.typing, commandKey: key.command
-            ))
-        }
-        #expect(!CommandPaletteShortcutPolicy.shouldDismiss(
-            modifiers: [.command, .option, .shift, .capsLock], key: "М", commandKey: "v"
-        ))
-        #expect(!CommandPaletteShortcutPolicy.shouldDismiss(
-            modifiers: [.command, .shift], key: "Я", commandKey: "z"
-        ))
-        #expect(CommandPaletteShortcutPolicy.shouldDismiss(modifiers: .command, key: "в", commandKey: "l"))
-        #expect(CommandPaletteShortcutPolicy.shouldDismiss(modifiers: .command, key: "v", commandKey: "l"))
-        #expect(CommandPaletteShortcutPolicy.shouldDismiss(modifiers: .control, key: "f", commandKey: "v"))
     }
 
     @Test func paletteShortcutsToggleAndNewTabSelectionTracksThePalette() {
@@ -404,9 +350,42 @@ struct CommandPaletteModelTests {
 
             let top = sections.first { $0.id == "top" }
             #expect(top?.items.map(\.id) == ["omnibox-search", "ask-agent"])
+            #expect(top?.items.first?.symbol == OmniboxItem.Kind.newTab.defaultSymbol)
             #expect(top?.items.first?.alternate != nil)
             #expect(!sections.flattened.contains { $0.id == "omnibox-new-tab" })
             #expect(sections.first { $0.id == "suggestions" }?.items.first?.alternate != nil)
+
+            let addressSections = CommandPaletteProjection.sections(
+                query: "example.com",
+                agentName: "Assistant",
+                history: fixtureHistory(count: 0),
+                tabs: [],
+                phrases: [],
+                actions: noOpActions()
+            )
+            #expect(addressSections.first?.items.first?.symbol == OmniboxItem.Kind.newTab.defaultSymbol)
+        }
+    }
+
+    @Test func holdingOptionChangesTheWebRowButNotTheAskRow() throws {
+        try Omnibox.$agentOnlyForTesting.withValue(false) {
+            let sections = CommandPaletteProjection.sections(
+                query: "example.com",
+                agentName: "Assistant",
+                history: fixtureHistory(count: 0),
+                tabs: [],
+                phrases: [],
+                actions: noOpActions()
+            )
+            let web = try #require(sections.first?.items.first)
+            let ask = try #require(sections.first?.items.dropFirst().first)
+
+            #expect(OmniboxRowPresentation(item: web, optionHeld: false).symbol == OmniboxItem.Kind.newTab.defaultSymbol)
+            let current = OmniboxRowPresentation(item: web, optionHeld: true)
+            #expect(current.symbol == "arrow.up.right")
+            #expect(current.detail == String(localized: "Open website in current tab"))
+            #expect(current.replacesFavicon)
+            #expect(OmniboxRowPresentation(item: ask, optionHeld: true).detail == "Ask Assistant")
         }
     }
 

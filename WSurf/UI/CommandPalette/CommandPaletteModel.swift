@@ -71,26 +71,11 @@ enum CommandPaletteShortcutPolicy {
         showsCurrentTab(modifiers: modifiers) && returnKeys.contains(key)
     }
 
-    static func shouldDismiss(_ event: NSEvent) -> Bool {
-        let commandKey = event.modifierFlags.contains(.command)
-            ? event.characters(byApplyingModifiers: .command)
-            : nil
-        return shouldDismiss(
-            modifiers: event.modifierFlags,
-            key: event.charactersIgnoringModifiers ?? "",
-            commandKey: commandKey
-        )
-    }
-
-    static func shouldDismiss(modifiers: NSEvent.ModifierFlags, key: String, commandKey: String? = nil) -> Bool {
-        // Caps Lock and key-type flags do not change an editing shortcut.
-        let modifiers = modifiers.intersection([.command, .control, .option, .shift])
+    static func shouldDismiss(modifiers: NSEvent.ModifierFlags, key: String) -> Bool {
+        let modifiers = modifiers.intersection(.deviceIndependentFlagsMask)
         let editingKeys: Set<String> = ["a", "c", "v", "x", "z"]
-        // Some layouts use different letters while Command is held.
-        let normalizedKey = (modifiers.contains(.command) ? commandKey ?? key : key).lowercased()
+        let normalizedKey = key.lowercased()
         let isTextEditing = modifiers == .command && editingKeys.contains(normalizedKey)
-            || modifiers == [.command, .shift] && normalizedKey == "z"
-            || modifiers == [.command, .option, .shift] && normalizedKey == "v"
         let isPaletteShortcut = modifiers == .command && (normalizedKey == "k" || normalizedKey == "t")
         let isListNavigation = arrowKeys.contains(key)
         let isRun = returnKeys.contains(key)
@@ -151,8 +136,7 @@ enum CommandPaletteProjection {
         activeTabID: UUID? = nil,
         recentTabIDs: [UUID] = [],
         phrases: [String],
-        actions: CommandPaletteActions,
-        settings: BrowserSettings = .application
+        actions: CommandPaletteActions
     ) -> [OmniboxSection] {
         let commands = CommandPaletteCatalog.commands(context: context, perform: actions.perform)
 
@@ -180,7 +164,6 @@ enum CommandPaletteProjection {
                 isListening: false,
                 currentURL: "",
                 agentOnly: false,
-                settings: settings,
                 agentName: agentName,
                 history: history,
                 tabs: tabs,
@@ -203,12 +186,10 @@ enum CommandPaletteProjection {
             return [askSection(prompt, agentName: agentName, ask: actions.ask)]
         }
 
-        let matching = CommandPaletteCatalog.matching(needle, in: commands)
-        let matched = actionsSection(matching)
-        let promoted = (matching.first.flatMap { CommandMatch.score($0, for: needle) } ?? 0) >= CommandMatch.strong
+        let matched = actionsSection(CommandPaletteCatalog.matching(needle, in: commands))
+        let promoted = CommandPaletteCatalog.bestScore(needle, in: commands) >= CommandMatch.strong
         let webItems = Omnibox.topSection(
             query: needle,
-            settings: settings,
             symbol: OmniboxItem.Kind.newTab.defaultSymbol,
             openInCurrentTab: actions.openCurrent,
             open: actions.openNew
@@ -232,7 +213,6 @@ enum CommandPaletteProjection {
                 query: needle,
                 phrases: phrases,
                 limit: 3,
-                settings: settings,
                 openInCurrentTab: actions.openCurrent,
                 open: actions.openNew
             ),
@@ -380,22 +360,14 @@ final class CommandPaletteModel {
         didSet {
             guard interaction.query != oldValue.query, !isPreviewingSelection else { return }
             suggestionPreview.clear()
-            if searchSite == nil {
-                suggestions.update(
-                    for: MentionText.stripped(
-                        CommandPaletteProjection.suggestionQuery(for: interaction.query)
-                    ),
-                    settings: coordinator.context.settings
-                )
-            } else {
-                suggestions.clear()
-            }
+            suggestions.update(for: MentionText.stripped(
+                CommandPaletteProjection.suggestionQuery(for: interaction.query)
+            ))
             refreshSections()
         }
     }
     private(set) var sections: [OmniboxSection] = []
     private(set) var mentionedTabIDs: [UUID] = []
-    private(set) var searchSite: SearchEngine?
     private var isPreviewingSelection = false
     private var suggestionPreview = OmniboxSuggestionPreview()
 
@@ -414,40 +386,7 @@ final class CommandPaletteModel {
     }
 
     var placeholder: String {
-        if let searchSite {
-            return String(localized: "Search \(searchSite.name)")
-        }
-        return CommandPaletteProjection.placeholder(agentOnly: Omnibox.isAgentOnly(settings: coordinator.context.settings))
-    }
-
-    var suggestedSite: SearchEngine? {
-        guard searchSite == nil, mentionedTabIDs.isEmpty else { return nil }
-        return SiteSearch.match(interaction.query, customEngine: coordinator.context.settings.searchEngine)
-    }
-
-    @discardableResult
-    func activateSiteSearch() -> Bool {
-        guard let site = suggestedSite else { return false }
-        searchSite = site
-        suggestionPreview.clear()
-        suggestions.clear()
-        interaction.query = ""
-        refreshSections()
-        return true
-    }
-
-    @discardableResult
-    func removeSearchSite() -> Bool {
-        guard searchSite != nil else { return false }
-        searchSite = nil
-        suggestionPreview.clear()
-        interaction.selection = 0
-        suggestions.update(
-            for: MentionText.stripped(CommandPaletteProjection.suggestionQuery(for: interaction.query)),
-            settings: coordinator.context.settings
-        )
-        refreshSections()
-        return true
+        CommandPaletteProjection.placeholder(agentOnly: Omnibox.isAgentOnly)
     }
 
     func prepare() {
@@ -491,20 +430,14 @@ final class CommandPaletteModel {
     }
 
     func submit() {
-        guard searchSite == nil || !sections.isEmpty else { return }
         run(at: interaction.selection)
     }
 
     func submitInCurrentTab() {
-        guard searchSite == nil || !sections.isEmpty else { return }
         runAlternate(at: interaction.selection)
     }
 
     func askWhateverIsTyped() {
-        if searchSite != nil {
-            submit()
-            return
-        }
         ask(interaction.query)
     }
 
@@ -540,10 +473,10 @@ final class CommandPaletteModel {
     }
 
     var contextPages: [AskContextPage] {
-        guard searchSite == nil, CommandPaletteProjection.isAssistantQuery(
+        guard CommandPaletteProjection.isAssistantQuery(
             interaction.query,
             hasMentions: !mentionedTabIDs.isEmpty,
-            agentOnly: Omnibox.isAgentOnly(settings: coordinator.context.settings)
+            agentOnly: Omnibox.isAgentOnly
         ) else { return [] }
         return AskContext.pages(browser: browser, mentionedTabIDs: mentionedTabIDs)
     }
@@ -563,28 +496,6 @@ final class CommandPaletteModel {
 
     private func refreshSections() {
         guard suggestionPreview.sections == nil else { return }
-        if let searchSite {
-            let query = interaction.query.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !query.isEmpty, let url = searchSite.searchURL(for: query) {
-                sections = [
-                    OmniboxSection(id: "site-search", title: "", items: [
-                        OmniboxItem(
-                            id: "site-search-\(searchSite.id)",
-                            kind: .search,
-                            title: query,
-                            detail: String(localized: "Search \(searchSite.name)"),
-                            iconHost: searchSite.host,
-                            alternate: { [weak self] in self?.openCurrent(url) },
-                            run: { [weak self] in self?.openNew(url) }
-                        ),
-                    ]),
-                ]
-            } else {
-                sections = []
-            }
-            interaction.clampSelection(to: sections.flattened.count)
-            return
-        }
         sections = CommandPaletteProjection.sections(
             query: interaction.query,
             agentName: coordinator.agentDisplayName,
@@ -595,8 +506,7 @@ final class CommandPaletteModel {
             activeTabID: browser.activeTab?.id,
             recentTabIDs: browser.recentlyActive,
             phrases: suggestions.phrases,
-            actions: projectionActions,
-            settings: coordinator.context.settings
+            actions: projectionActions
         )
         interaction.clampSelection(to: sections.flattened.count)
     }
@@ -605,10 +515,11 @@ final class CommandPaletteModel {
         let tab = browser.activeTab
         let page = coordinator.pageCommandTab
         let split = browser.activeSplit
-        let window = coordinator.nativeWindow
+        let window = NSApp.keyWindow ?? NSApp.mainWindow
         return CommandPaletteContext(
             isSpeechMuted: coordinator.isSpeechMuted,
             isListening: coordinator.voiceInput.phase == .listening,
+            isPrivate: coordinator.profiles.isPrivate,
             historyCount: browser.history.count,
             tabCount: browser.tabs.count,
             hasActiveTab: tab != nil,
@@ -627,7 +538,7 @@ final class CommandPaletteModel {
             isSidebarVisible: coordinator.sidebar.isVisible,
             isActivityVisible: coordinator.sidePanel.isShowing(.activity),
             isLyricsVisible: coordinator.sidePanel.isShowing(.lyrics),
-            canShowLyrics: BrowserSettings.application.showsLyrics,
+            canShowLyrics: coordinator.settings.showsLyrics,
             isFullScreen: window?.styleMask.contains(.fullScreen) ?? false,
             canCheckForUpdates: coordinator.updates.canCheck
         )
@@ -676,14 +587,14 @@ final class CommandPaletteModel {
         switch action {
         case .newTab:
             coordinator.requestNewTab()
-        case .newWindow:
-            coordinator.requestNewWindow()
         case .openStartPage:
             coordinator.openNewTab()
         case .openLocation:
             coordinator.focusAddressBar()
         case .privateBrowsing:
-            coordinator.requestNewWindow(isPrivate: true)
+            coordinator.enterPrivateBrowsing()
+        case .leavePrivateBrowsing:
+            coordinator.leavePrivateBrowsing()
         case .unloadTab:
             if !coordinator.closePeek(), let tab {
                 coordinator.unloadTab(tab)
@@ -715,7 +626,7 @@ final class CommandPaletteModel {
         case .reload:
             page?.reload()
         case .hardReload:
-            page?.page.reloadFromOrigin()
+            page?.webView.reloadFromOrigin()
         case .stopLoading:
             page?.stopLoading()
         case .goBack:

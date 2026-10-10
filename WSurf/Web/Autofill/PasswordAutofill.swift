@@ -6,69 +6,95 @@ import AppKit
 import Observation
 import WebKit
 
-@MainActor
 @Observable
-final class PasswordAutofill {
+final class PasswordAutofill: NSObject, WKScriptMessageHandler {
     static let shared = PasswordAutofill()
     static let world = AutofillPage.world
     private static let handlerName = "wsurfPasswords"
-    func isEnabled(in context: BrowserProfileContext) -> Bool {
-        !context.profile.isPrivate && context.settings.fillsPasswords
-            && PasswordExtensionPolicy.provider(
-                in: context.extensions.installed + context.extensions.systemExtensions,
-                selectedID: context.settings.passwordExtensionID
-            ) == nil
+
+    private(set) var profileID = Profile.originalID
+    var isPrivate: Bool {
+        profileID == Profile.privateID
     }
-    @ObservationIgnored private let pages = NSHashTable<BrowserPage>.weakObjects()
-    @ObservationIgnored private var frames: [ObjectIdentifier: [String: BrowserFrame]] = [:]
+
+    @ObservationIgnored var extensions: () -> [InstalledExtension] = { [] }
+    var isEnabled: Bool {
+        !isPrivate && BrowserSettings.shared.fillsPasswords
+            && PasswordExtensionPolicy.provider(in: extensions(), selectedID: BrowserSettings.shared.passwordExtensionID) == nil
+    }
+    @ObservationIgnored private let controllers = NSHashTable<WKUserContentController>.weakObjects()
+    @ObservationIgnored private let owners = NSMapTable<WKWebView, NSUUID>.weakToStrongObjects()
+    @ObservationIgnored private let frames = NSMapTable<WKWebView, FrameList>.weakToStrongObjects()
+
+    private final class FrameList: NSObject {
+        var values: [String: WKFrameInfo] = [:]
+        var mainDocumentID: String?
+    }
 
     func refreshPolicy() {
         AutofillSaveCoordinator.shared.refreshPolicy()
-        for page in pages.allObjects {
-            for frame in (frames[ObjectIdentifier(page)] ?? [:]).values {
-                applyPolicy(in: page, frame: frame)
-            }
-        }
-    }
-    private func applyPolicy(in page: BrowserPage, frame: BrowserFrame) {
-        let context = page.context
-        let enabled = isEnabled(in: context)
-        Task {
-            do {
-                guard page.context === context else { return }
-                _ = try await page.callAsyncJavaScript(
-                    "globalThis.__wsurfPasswords?.setEnabled(enabled);",
-                    arguments: ["enabled": enabled],
-                    in: frame,
-                    contentWorld: Self.world
-                )
-            } catch {
-                AutofillDiagnostics.policyFailed(.password, error: error, isMainFrame: frame.isMainFrame)
+        for view in frames.keyEnumerator().allObjects.compactMap({ $0 as? WKWebView }) {
+            for frame in frames.object(forKey: view)?.values.values.map({ $0 }) ?? [] {
+                applyPolicy(in: view, frame: frame)
             }
         }
     }
 
-    func install(in page: BrowserPage) {
-        pages.add(page)
-        page.installScript(AutofillFormScript.source + AutofillSuggestionScript.source, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        page.installScript(PasswordAutofillScript.clientSource, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        page.addScriptMessageHandler(name: Self.handlerName, in: Self.world) { [weak self] message in
-            guard let self else { return }
-            if let body = message.body as? [String: Any], body["action"] as? String == "ready" {
-                guard let documentID = body["documentID"] as? String, UUID(uuidString: documentID) != nil else { return }
-                var values = self.frames[ObjectIdentifier(message.page)] ?? [:]
-                values[documentID] = message.frameInfo
-                if message.frameInfo.isMainFrame {
-                    self.frames[ObjectIdentifier(message.page)] = [documentID: message.frameInfo]
-                } else {
-                    self.frames[ObjectIdentifier(message.page)] = values
-                }
-                AutofillDiagnostics.note(.scriptReady, kind: .password)
-                self.applyPolicy(in: message.page, frame: message.frameInfo)
-            } else {
-                AutofillSuggestions.shared.receive(message, kind: .password, world: Self.world, bridge: "__wsurfPasswords")
-            }
+    private func applyPolicy(in view: WKWebView, frame: WKFrameInfo) {
+        let enabled = isEnabled && owners.object(forKey: view) as UUID? == profileID
+        Task {
+            _ = try? await view.callAsyncJavaScript(
+                "globalThis.__wsurfPasswords?.setEnabled(enabled);", arguments: ["enabled": enabled],
+                in: frame, contentWorld: Self.world
+            )
         }
     }
-    static func isSecure(_ url: URL) -> Bool { url.scheme?.lowercased() == "https" && url.host != nil && url.user == nil && url.password == nil }
+
+    func use(profileID: UUID) {
+        self.profileID = profileID
+        refreshPolicy()
+    }
+
+    func install(in webView: WKWebView) {
+        owners.setObject(profileID as NSUUID, forKey: webView)
+        let controller = webView.configuration.userContentController
+        guard !controllers.contains(controller) else { return }
+        controllers.add(controller)
+        AutofillPage.install(in: controller)
+        controller.addUserScript(WKUserScript(
+            source: PasswordAutofillScript.clientSource,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false,
+            in: Self.world
+        ))
+        controller.add(self, contentWorld: Self.world, name: Self.handlerName)
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let webView = message.webView, owners.object(forKey: webView) as UUID? == profileID else { return }
+        if let body = message.body as? [String: Any], body["action"] as? String == "ready" {
+            AutofillDiagnostics.note(.scriptReady, kind: .password)
+            guard let documentID = body["documentID"] as? String, UUID(uuidString: documentID) != nil else { return }
+            let list = frames.object(forKey: webView) ?? FrameList()
+            if message.frameInfo.isMainFrame, list.mainDocumentID != documentID {
+                list.values = [:]
+                list.mainDocumentID = documentID
+            }
+            if list.values[documentID] == nil, list.values.count >= 100,
+               let oldest = list.values.keys.first(where: { $0 != list.mainDocumentID }) {
+                list.values[oldest] = nil
+            }
+            list.values[documentID] = message.frameInfo
+            frames.setObject(list, forKey: webView)
+            applyPolicy(in: webView, frame: message.frameInfo)
+            return
+        }
+        AutofillSuggestions.shared.receive(message, kind: .password, profileID: profileID,
+                                            world: Self.world, bridge: "__wsurfPasswords")
+    }
+
+    static func isSecure(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "https" && url.host != nil && url.user == nil && url.password == nil
+    }
+
 }

@@ -179,8 +179,8 @@ struct BrowserImportTests {
         #expect(folder?.isExpanded == false)
         #expect(folder.map { model.tabs(in: $0).count } == 2)
         // Imported in the background: nothing steals the active tab, and
-        // nothing has loaded - cold views have no loaded document until activated.
-        #expect(model.tabs.allSatisfy { $0.page.url == nil })
+        // nothing has loaded - cold views carry no page until activated.
+        #expect(model.tabs.allSatisfy { $0.webView.url == nil })
     }
 
     /// Reading and writing are two steps: the dialog counts a payload, and

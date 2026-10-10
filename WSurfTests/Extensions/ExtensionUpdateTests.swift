@@ -18,7 +18,7 @@ struct ExtensionUpdateTests {
 
     private func manager(_ defaults: UserDefaults) -> ExtensionManager {
         ExtensionManager.defaults = defaults
-        return ExtensionManager()
+        return ExtensionManager(browser: BrowserModel(database: .temporary()))
     }
 
     @Test func theFirstLaunchOfTheDayTakesTheSweep() async {

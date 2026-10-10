@@ -4,6 +4,7 @@
 
 import AnyLanguageModel
 import Foundation
+import WebKit
 
 nonisolated struct ListFramesTool: Tool {
     let name = "listFrames"
@@ -16,7 +17,7 @@ nonisolated struct ListFramesTool: Tool {
         await toolkit.withPageContext(page: arguments.page, observationID: nil) {
             await toolkit.pageOperation(name: name, readOnly: true) { view in
                 var rows: [String] = []
-                for target in await PageFrameRegistry.shared.targets(in: view) {
+                for target in PageFrameRegistry.shared.targets(in: view) {
                     guard await PageFrameRegistry.shared.isLive(target, in: view) else { continue }
                     rows.append("frameID: \(target.id) origin: \(SitePermissions.origin(for: target.url))")
                 }
@@ -91,18 +92,13 @@ nonisolated struct ActInFrameTool: Tool {
 }
 
 extension AgentToolkit {
-    func frameOperation(name: String, frameID: String, readOnly: Bool, operation: (BrowserPage) async -> String) async -> String {
+    func frameOperation(name: String, frameID: String, readOnly: Bool, operation: (WKWebView) async -> String) async -> String {
         await pageOperation(name: name, readOnly: readOnly) { view in
-            let target: PageFrameRegistry.Target?
-            if let stored = await PageFrameRegistry.shared.target(frameID, in: view) {
-                target = stored
-            } else {
-                target = (await PageFrameRegistry.shared.targets(in: view)).first(where: { $0.id == frameID })
-            }
-            guard let target, await PageFrameRegistry.shared.isLive(target, in: view),
+            guard let target = PageFrameRegistry.shared.target(frameID, in: view),
+                  await PageFrameRegistry.shared.isLive(target, in: view),
                   let access = embeddedAccess(for: target.url, in: view) else { return "Frame unavailable. List frames again." }
             let capability: AssistantPageCapability = readOnly ? .read : .control
-            guard await access.authorize(capability, in: view) else { return access.denialMessage(for: capability) }
+            guard await access.authorize(capability) else { return access.denialMessage(for: capability) }
             guard await PageFrameRegistry.shared.isLive(target, in: view), let parent = PageAutomationGuard.current,
                   parent.validate() else { return PageDriver.staleMessage }
             let guardScope = PageAutomationGuard(documentURL: target.url.absoluteString, snapshot: nil) {

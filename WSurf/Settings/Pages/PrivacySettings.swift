@@ -13,7 +13,6 @@ struct PrivacySettings: View {
     @State private var cleared = false
     @State private var siteCount: Int?
     @State private var showingWebsiteData = false
-    @State private var error: String?
 
     private var pageCount: Int {
         coordinator.browser.history.count
@@ -21,10 +20,7 @@ struct PrivacySettings: View {
 
     var body: some View {
         if showingWebsiteData {
-            WebsiteDataPage(
-                context: coordinator.context,
-                onBack: { showingWebsiteData = false }
-            )
+            WebsiteDataPage { showingWebsiteData = false }
         } else {
             page
         }
@@ -104,26 +100,8 @@ struct PrivacySettings: View {
             .disabled((siteCount ?? 0) == 0)
             .settingsAnchor("privacy.storage")
         }
-        .task(id: coordinator.context.contextID) {
-            siteCount = nil
-            let context = coordinator.context
-            do {
-                let count = try await BrowsingData.siteCount(context: context)
-                guard coordinator.context.contextID == context.contextID else { return }
-                siteCount = count
-            } catch {
-                guard coordinator.context.contextID == context.contextID else { return }
-                siteCount = nil
-                self.error = error.localizedDescription
-            }
-        }
-        .alert(
-            "Couldn’t clear browsing data",
-            isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(error ?? String(localized: "Try again."))
+        .task {
+            siteCount = await BrowsingData.siteCount()
         }
     }
 
@@ -145,31 +123,18 @@ struct PrivacySettings: View {
     }
 
     private func clear() async {
-        let context = coordinator.context
-        let tabs = coordinator.browser.tabs
-        guard let owner = context.extensions.adapter(for: coordinator.browser),
-              let window = owner.nativeWindow, context.isRegistered(coordinator.browser),
-              let choice = await ConfirmAlert.clear(.privacy(), in: window),
-              coordinator.context === context, context.isRegistered(coordinator.browser),
-              context.extensions.adapter(for: coordinator.browser) === owner,
-              owner.nativeWindow === window else { return }
+        guard let choice = await ConfirmAlert.clear(.privacy()) else { return }
         isClearing = true
         cleared = false
-        defer { isClearing = false }
-        do {
-            try await BrowsingData.clear(
-                choice.kinds,
-                range: choice.range,
-                history: context.history,
-                tabs: tabs,
-                context: context
-            )
-            guard coordinator.context.contextID == context.contextID else { return }
-            siteCount = try await BrowsingData.siteCount(context: context)
-            cleared = true
-        } catch {
-            guard coordinator.context.contextID == context.contextID else { return }
-            self.error = error.localizedDescription
-        }
+        await BrowsingData.clear(
+            choice.kinds,
+            range: choice.range,
+            history: coordinator.browser.history,
+            agent: coordinator.conversationLog,
+            tabs: coordinator.browser.tabs
+        )
+        siteCount = await BrowsingData.siteCount()
+        isClearing = false
+        cleared = true
     }
 }

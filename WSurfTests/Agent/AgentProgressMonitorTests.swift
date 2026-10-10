@@ -8,46 +8,35 @@ import Testing
 @testable import WSurf
 
 struct AgentProgressMonitorTests {
-    @Test func changedDocumentsKeepRepeatedVisualActionsMovingWithoutPageSelector() {
+    @Test func changedScreenshotsKeepRepeatedVisualActionsMoving() {
         var monitor = AgentProgressMonitor(policy: .interactive)
         for index in 1...8 {
             #expect(monitor.observe(
                 name: "clickAtPoint", arguments: "{\"x\":100,\"y\":100}",
                 output: "CONTROL: Browser action completed. Updated screenshot captured.",
-                failed: false, visualPage: "resolved-tab", visualDocument: "document-\(index)"
+                failed: false, images: [Data("page-\(index)".utf8)]
             ) == .proceed)
         }
     }
 
-    @Test func screenshotAndActionVariationsDoNotHideUnchangedVisualPage() {
+    @Test func unchangedScreenshotsStillRecoverThenPause() {
         var monitor = AgentProgressMonitor(policy: .interactive)
         let decisions = (1...6).map { index in
             monitor.observe(
-                name: index.isMultiple(of: 2) ? "clickAtPoint" : "typeAtPointer",
-                arguments: "{\"x\":\(index * 10),\"y\":100}",
-                output: "CONTROL: Browser action completed. Updated screenshot \(index).",
-                failed: false, visualPage: "resolved-tab", visualDocument: "same-document"
+                name: "clickAtPoint",
+                arguments: index.isMultiple(of: 2) ? "{\"x\":100,\"y\":100}" : "{\"y\":100,\"x\":100}",
+                output: "CONTROL: Browser action completed. Updated screenshot captured.",
+                failed: false, images: [Data("unchanged-page".utf8)]
             )
         }
         #expect(decisions == [.proceed, .proceed, .recover, .proceed, .proceed, .pause])
     }
 
-    @Test func resolvedTabChangeKeepsRepeatedVisualActionsMoving() {
-        var monitor = AgentProgressMonitor(policy: .interactive)
-        for index in 1...8 {
-            #expect(monitor.observe(
-                name: "clickAtPoint", arguments: "{}",
-                output: "CONTROL: Browser action completed.",
-                failed: false, visualPage: "tab-\(index)", visualDocument: "same-document"
-            ) == .proceed)
-        }
-    }
-
-    @Test func changedFailureStateStillRecoversThenPauses() {
+    @Test func changingScreenshotsDoNotExcuseConsecutiveFailures() {
         var monitor = AgentProgressMonitor(policy: .interactive)
         let decisions = (1...6).map { index in
             monitor.observe(name: "clickAtPoint", arguments: "{}", output: "Input unverified.",
-                            failed: true, visualPage: "resolved-tab", visualDocument: "document-\(index)")
+                            failed: true, images: [Data("page-\(index)".utf8)])
         }
         #expect(decisions == [.proceed, .proceed, .recover, .proceed, .proceed, .pause])
     }

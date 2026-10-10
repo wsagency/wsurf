@@ -106,30 +106,26 @@ struct PrivateBrowsingTests {
     /// Every tab in the session shares one store, so signing in and following
     /// a link from that page stays signed in. It falls out of the store
     /// belonging to the profile rather than to each tab.
-    @Test func everyTabInAPrivateSessionSharesItsStore() throws {
+    @Test func everyTabInAPrivateSessionSharesItsStore() {
         let model = makePrivateModel()
         let first = model.newTab()
         let second = model.newTab()
-        let firstView = try #require(first.page.webKit)
-        let secondView = try #require(second.page.webKit)
 
-        #expect(firstView.configuration.websiteDataStore
-            === secondView.configuration.websiteDataStore)
+        #expect(first.webView.configuration.websiteDataStore
+            === second.webView.configuration.websiteDataStore)
     }
 
     /// Closing tabs is not leaving. Ending the session when the last tab shut
     /// meant closing everything while still inside private browsing signed you
     /// out of what you were doing.
-    @Test func closingEveryTabDoesNotEndTheSession() throws {
+    @Test func closingEveryTabDoesNotEndTheSession() {
         let model = makePrivateModel()
         let first = model.newTab()
-        let firstView = try #require(first.page.webKit)
-        let store = firstView.configuration.websiteDataStore
+        let store = first.webView.configuration.websiteDataStore
         model.close(first)
 
         let later = model.newTab()
-        let laterView = try #require(later.page.webKit)
-        #expect(laterView.configuration.websiteDataStore === store)
+        #expect(later.webView.configuration.websiteDataStore === store)
         #expect(later.isPrivate)
     }
 
@@ -404,21 +400,19 @@ struct PrivateBrowsingTests {
     /// `window.open`, ⌘-click, "Open Link in New Tab": WebKit builds the new
     /// view from the opener's configuration and the model adopts it. The
     /// child must be private and must share the opener's store.
-    @Test func aTabAdoptedFromAPrivateOpenerIsPrivateAndSharesItsStore() throws {
+    @Test func aTabAdoptedFromAPrivateOpenerIsPrivateAndSharesItsStore() {
         let model = makePrivateModel()
         let opener = model.newTab()
-        let openerView = try #require(opener.page.webKit)
-        let openerStore = openerView.configuration.websiteDataStore
+        let openerStore = opener.webView.configuration.websiteDataStore
 
         let adopted = TabWebView(
             frame: .zero,
-            configuration: openerView.configuration
+            configuration: opener.webView.configuration
         )
         let child = model.newTab(activate: true, adopting: adopted)
 
         #expect(child.isPrivate)
-        let childView = try #require(child.page.webKit)
-        #expect(childView.configuration.websiteDataStore === openerStore)
+        #expect(child.webView.configuration.websiteDataStore === openerStore)
     }
 
     // MARK: - Ending the session
@@ -486,18 +480,44 @@ struct PageZoomStoreTests {
     }
 }
 
-/// A private window's warmed and newly acquired views stay in its own ephemeral store.
+/// The pool pre-warms views against one data store at a time. A view built
+/// for a persistent profile must never be handed to a private tab, nor the
+/// other way round.
 @MainActor
 struct WebViewPoolPrivacyTests {
-    @Test(.boundedWebViews) func everyPrivateViewUsesItsOwningContextsStore() async {
-        let context = BrowserProfileContext.shared(for: .privateBrowsing())
-        context.webViewPool.warmUp()
-        let first = context.webViewPool.acquire()
-        let second = context.webViewPool.acquire()
-        #expect(first.configuration.websiteDataStore === context.dataStore)
-        #expect(second.configuration.websiteDataStore === context.dataStore)
-        #expect(!first.configuration.websiteDataStore.isPersistent)
-        await context.endPrivateSession()
+    @Test func swappingTheStoreRetiresEveryWarmedView() {
+        let pool = WebViewPool()
+        pool.warmUp()
+
+        let ephemeral = WKWebsiteDataStore.nonPersistent()
+        pool.useDataStore(ephemeral)
+
+        let view = pool.acquire()
+        #expect(view.configuration.websiteDataStore === ephemeral)
+        #expect(!view.configuration.websiteDataStore.isPersistent)
+    }
+
+    @Test func swappingBackHandsOutPersistentViewsAgain() {
+        let pool = WebViewPool()
+        let ephemeral = WKWebsiteDataStore.nonPersistent()
+        pool.useDataStore(ephemeral)
+        pool.warmUp()
+
+        pool.useDataStore(.default())
+        let view = pool.acquire()
+        #expect(view.configuration.websiteDataStore === WKWebsiteDataStore.default())
+        #expect(view.configuration.websiteDataStore.isPersistent)
+    }
+
+    @Test func everyViewAcquiredWhilePrivateSharesTheOneEphemeralStore() {
+        let pool = WebViewPool()
+        let ephemeral = WKWebsiteDataStore.nonPersistent()
+        pool.useDataStore(ephemeral)
+
+        let first = pool.acquire()
+        let second = pool.acquire()
+        #expect(first.configuration.websiteDataStore === second.configuration.websiteDataStore)
+        #expect(first.configuration.websiteDataStore === ephemeral)
     }
 }
 

@@ -27,17 +27,17 @@ struct BrowserAgentBenchWorker {
 
     private func execute(_ start: BenchStart, client: BenchClient) async throws {
         let preferences = "WSurf.Benchmark.\(UUID().uuidString)"
+        let originalDefaults = LLMSettings.defaults
         let defaults = try #require(UserDefaults(suiteName: preferences))
-        defer { defaults.removePersistentDomain(forName: preferences) }
-        try await run(start, client: client, modelSettings: LLMSettings(defaults: defaults))
+        LLMSettings.defaults = defaults
+        defer {
+            LLMSettings.defaults = originalDefaults
+            defaults.removePersistentDomain(forName: preferences)
+        }
+        try await run(start, client: client)
     }
 
-    private func run(
-        _ start: BenchStart,
-        client: BenchClient,
-        modelSettings: LLMSettings
-    ) async throws {
-
+    private func run(_ start: BenchStart, client: BenchClient) async throws {
         let settings = start.config.settings ?? BenchSettings()
         let window = BenchWindow(headless: settings.headless)
         defer { window.close() }
@@ -64,10 +64,8 @@ struct BrowserAgentBenchWorker {
         let resolved = ModelProviderRegistry(credentials: BenchCredentials(environmentKey: "BAB_PROVIDER_KEY")).resolve(provider)
         try #require(resolved.availability == .available, "Requested provider is unavailable")
         let effort = LLMSettings.ReasoningEffort(rawValue: settings.reasoningEffort)
-        let runner = try LLMSettings.$scoped.withValue(modelSettings) {
-            try OpenAISettingsStore.$scoped.withValue(settings.openAIOptions(model: start.config.model, adapter: provider.adapter)) {
-                resolved.makeAgent(model: start.config.model, reasoningEffort: try #require(effort), toolkit: toolkit, log: log)
-            }
+        let runner = try OpenAISettingsStore.$scoped.withValue(settings.openAIOptions(model: start.config.model, adapter: provider.adapter)) {
+            resolved.makeAgent(model: start.config.model, reasoningEffort: try #require(effort), toolkit: toolkit, log: log)
         }
         let agent = try #require(runner as? AnyLanguageModelAgent)
         var telemetry = BenchTelemetry()
@@ -75,22 +73,41 @@ struct BrowserAgentBenchWorker {
             telemetry.events.append($0)
             window.update(browser)
         }
-        let turn = AgentTurnModel(
-            browser: browser,
-            log: log,
-            speech: BenchSpeech(),
-            modelSettings: modelSettings,
-            actionPolicy: AgentActionPolicy(storage: SessionAgentGrantStorage())
-        )
+        let turn = AgentTurnModel(browser: browser, log: log, speech: BenchSpeech())
         turn.use(agent)
         let tab = browser.newTab(url: start.url)
         window.update(browser)
-        try #require(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
+        try #require(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
         tab.assistantAccess.persistsAnswers = false
         tab.assistantAccess.pageChanged(url: start.url)
         tab.assistantAccess.set(.control)
         defer { stop(turn, questions: questions, agent: agent, browser: browser) }
-        try await client.post("ready", readiness(for: start, settings: settings, agent: agent, provider: provider))
+        let prompt = AgentInstructions.text(for: agent.budget.instructionTier)
+        let digest = SHA256.hash(data: Data(prompt.utf8)).map { String(format: "%02x", $0) }.joined()
+        let webKit = Bundle(for: WKWebView.self).object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        let capabilities = settings.headless ? ["web"] : ["web", "native-keyboard", "screenshots"]
+        try #require(Set(start.requiredCapabilities ?? ["web"]).isSubset(of: Set(capabilities)))
+        try await client.post("ready", BenchReady(capabilities: capabilities, metadata: [
+            "model": start.config.model,
+            "browser_version": "WebKit \(webKit)",
+            "agent_version": ProcessInfo.processInfo.environment["BAB_WSURF_REVISION"] ?? "unknown",
+            "source_sha256": ProcessInfo.processInfo.environment["BAB_WSURF_SOURCE_SHA256"] ?? "unknown",
+            "adapter_version": "5",
+            "openai_transport": provider.adapter == .openAIResponses ? "native_http_sse" : "unused",
+            "system_prompt_sha256": digest,
+            "observations": "WSurf page tools and screenshots",
+        ], settings: [
+            "headless": String(settings.headless),
+            "search_mode": settings.searchMode.rawValue,
+            "consent_policy": "deny_consequential",
+            "question_policy": "abandon_unexpected",
+            "reasoning_effort": settings.reasoningEffort,
+            "max_model_requests": settings.maxModelRequests.map(String.init) ?? "unlimited",
+            "tool_search": String(settings.toolSearch),
+            "hover_policy": "requires_user_foreground_window",
+            "preferences": "isolated_defaults",
+            "openai_options": "explicit_tool_search_otherwise_defaults_no_storage",
+        ]))
         let grants = BenchGrantStorage()
         let policy = AgentActionPolicy(storage: grants)
         var publishedEvents = 0
@@ -98,7 +115,7 @@ struct BrowserAgentBenchWorker {
         let started = ContinuousClock.now
         try await AgentExecutionPolicy.$scoped.withValue(.init(maxModelRequests: settings.maxModelRequests)) {
             try await AgentActionConsent.$scopedPolicy.withValue(policy) {
-                try await AgentActionConsent.$decisionForTesting.withValue(.init { _, _, _, _ in
+                try await AgentActionConsent.$decisionForTesting.withValue(.init { _, _, _ in
                     telemetry.consentRequests += 1
                     return .decline
                 }) {
@@ -138,43 +155,12 @@ struct BrowserAgentBenchWorker {
                                 status: telemetry.status(timedOut: timedOut, cancelled: cancelled), answer: turn.reply.text ?? "", usage: usage))
     }
 
-    private func readiness(
-        for start: BenchStart, settings: BenchSettings, agent: AnyLanguageModelAgent, provider: Provider
-    ) throws -> BenchReady {
-        let prompt = AgentInstructions.text(for: agent.budget.instructionTier)
-        let digest = SHA256.hash(data: Data(prompt.utf8)).map { String(format: "%02x", $0) }.joined()
-        let webKit = Bundle(for: WKWebView.self).object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
-        let capabilities = settings.headless ? ["web"] : ["web", "native-keyboard", "screenshots"]
-        try #require(Set(start.requiredCapabilities ?? ["web"]).isSubset(of: Set(capabilities)))
-        return BenchReady(capabilities: capabilities, metadata: [
-            "model": start.config.model,
-            "browser_version": "WebKit \(webKit)",
-            "agent_version": ProcessInfo.processInfo.environment["BAB_WSURF_REVISION"] ?? "unknown",
-            "source_sha256": ProcessInfo.processInfo.environment["BAB_WSURF_SOURCE_SHA256"] ?? "unknown",
-            "adapter_version": "5",
-            "openai_transport": provider.adapter == .openAIResponses ? "native_http_sse" : "unused",
-            "system_prompt_sha256": digest,
-            "observations": "WSurf page tools and screenshots",
-        ], settings: [
-            "headless": String(settings.headless),
-            "search_mode": settings.searchMode.rawValue,
-            "consent_policy": "deny_consequential",
-            "question_policy": "abandon_unexpected",
-            "reasoning_effort": settings.reasoningEffort,
-            "max_model_requests": settings.maxModelRequests.map(String.init) ?? "unlimited",
-            "tool_search": String(settings.toolSearch),
-            "hover_policy": "requires_user_foreground_window",
-            "preferences": "isolated_defaults",
-            "openai_options": "explicit_tool_search_otherwise_defaults_no_storage",
-        ])
-    }
-
     private func stop(_ turn: AgentTurnModel, questions: AgentQuestionModel, agent: AnyLanguageModelAgent, browser: BrowserModel) {
         turn.cancel()
         questions.abandon()
         agent.discardAllSessions()
         for tab in browser.tabs {
-            tab.page.stopLoading()
+            tab.webView.stopLoading()
         }
     }
 }
@@ -328,7 +314,5 @@ private nonisolated struct BenchCredentials: ProviderCredentialStore {
     func save(_ key: String, for provider: Provider) -> String? {
         "Read-only benchmark credentials"
     }
-    func delete(for provider: Provider) -> String? {
-        nil
-    }
+    func delete(for provider: Provider) {}
 }

@@ -22,19 +22,17 @@ struct ProfileHandoffTests {
         BrowserModel(database: database, sitePermissions: makePermissions())
     }
 
-    @Test func closingATabSilencesIt() throws {
+    @Test func closingATabSilencesIt() {
         let model = makeModel(.temporary())
         let tab = model.newTab()
-        let webKit = try #require(tab.page.webKit)
 
         model.close(tab)
 
         #expect(tab.isClosed)
         #expect(tab.onNavigationFinished == nil)
         #expect(tab.onDownload == nil)
-        #expect(tab.onSaveDocument == nil)
-        #expect(webKit.navigationDelegate == nil)
-        #expect(webKit.uiDelegate == nil)
+        #expect(tab.webView.navigationDelegate == nil)
+        #expect(tab.webView.uiDelegate == nil)
     }
 
     @Test func aClosedTabIgnoresItsContentProcessDying() {

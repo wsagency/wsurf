@@ -15,13 +15,12 @@ enum AgentActionConsent {
 
     @TaskLocal static var decisionForTesting: Stub?
     @TaskLocal static var scopedPolicy: AgentActionPolicy?
-    @TaskLocal static var scopedWindow: ExtensionWindowAdapter?
     @TaskLocal static var externalClientName: String?
 
     struct Stub: @unchecked Sendable {
-        let decide: @MainActor (String, SensitiveAction.Category, String?, NSWindow?) async -> Decision
+        let decide: (String, SensitiveAction.Category, String?) -> Decision
 
-        init(_ decide: @escaping @MainActor (String, SensitiveAction.Category, String?, NSWindow?) async -> Decision) {
+        init(_ decide: @escaping (String, SensitiveAction.Category, String?) -> Decision) {
             self.decide = decide
         }
     }
@@ -31,24 +30,26 @@ enum AgentActionConsent {
         category: SensitiveAction.Category,
         host: String?,
         authoredByAI: Bool = false,
-        policy: AgentActionPolicy? = nil
+        policy: AgentActionPolicy = .shared
     ) async -> Bool {
-        guard !Task.isCancelled, hasCurrentWindow, let policy = scopedPolicy ?? policy else { return false }
+        let policy = scopedPolicy ?? policy
         if policy.isAlwaysAllowed(category, host: host) {
             return true
         }
 
-        let window = scopedWindow?.nativeWindow
-        let decision: Decision
         if let stub = decisionForTesting {
-            decision = await stub.decide(label, category, host, window)
-        } else {
-            guard let window else { return false }
-            decision = await ask(label: label, category: category, host: host, authoredByAI: authoredByAI, in: window)
+            switch stub.decide(label, category, host) {
+            case .allowOnce:
+                return true
+            case .allowAlways:
+                policy.allowAlways(category, host: host)
+                return true
+            case .decline:
+                return false
+            }
         }
-        guard !Task.isCancelled, hasCurrentWindow, scopedWindow?.nativeWindow === window else { return false }
 
-        switch decision {
+        switch await ask(label: label, category: category, host: host, authoredByAI: authoredByAI) {
         case .allowOnce:
             return true
         case .allowAlways:
@@ -59,14 +60,7 @@ enum AgentActionConsent {
         }
     }
 
-    private static var hasCurrentWindow: Bool {
-        guard let scopedWindow else { return true }
-        guard let browser = scopedWindow.browser, browser.sessionClosedAt == nil,
-              browser.context.isRegistered(browser) else { return false }
-        return browser.context.extensions.adapter(for: browser) === scopedWindow
-    }
-
-    /// Never wait for an unanswered native authorization sheet in automated tests.
+    /// Deny requests in tests because `runModal()` would wait indefinitely for user input.
     private static var isRunningTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
@@ -75,8 +69,7 @@ enum AgentActionConsent {
         label: String,
         category: SensitiveAction.Category,
         host: String?,
-        authoredByAI: Bool = false,
-        in window: NSWindow
+        authoredByAI: Bool = false
     ) async -> Decision {
         guard !isRunningTests, !Task.isCancelled else { return .decline }
         let site = AgentActionPolicy.normalizedHost(host)
@@ -107,13 +100,24 @@ enum AgentActionConsent {
         alert.addButton(withTitle: String(localized: "Cancel"))
         alert.buttons.last?.keyEquivalent = "\u{1b}"
 
-        let response = await withTaskCancellationHandler {
-            guard !Task.isCancelled else { return NSApplication.ModalResponse.abort }
-            return await withCheckedContinuation { continuation in
-                alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
+        let window = NSApp.keyWindow ?? NSApp.mainWindow
+        if window == nil {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+
+        let response: NSApplication.ModalResponse
+        if let window {
+            response = await withTaskCancellationHandler {
+                guard !Task.isCancelled else { return .abort }
+                return await withCheckedContinuation { continuation in
+                    alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
+                }
+            } onCancel: {
+                Task { @MainActor in window.endSheet(alert.window, returnCode: .abort) }
             }
-        } onCancel: {
-            Task { @MainActor in window.endSheet(alert.window, returnCode: .abort) }
+        } else {
+            guard externalClientName == nil else { return .decline }
+            response = alert.runModal()
         }
 
         guard !Task.isCancelled else { return .decline }

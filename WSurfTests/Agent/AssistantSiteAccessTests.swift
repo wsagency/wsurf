@@ -188,9 +188,8 @@ struct AgentToolkitAccessTests {
         #expect(!output.contains("<page-content"))
     }
 
-    @Test @MainActor func linkPeekUsesAnEphemeralDataStore() {
-        let context = BrowserProfileContext(profile: .privateBrowsing())
-        let configuration = LinkPeekLoader.configuration(context: context)
+    @Test func linkPeekUsesAnEphemeralDataStore() {
+        let configuration = LinkPeekLoader.configuration()
         #expect(!configuration.websiteDataStore.isPersistent)
     }
 
@@ -241,8 +240,8 @@ struct AgentToolkitAccessTests {
         tab.assistantAccess.pageChanged(url: startURL)
         tab.assistantAccess.set(.readOnly)
 
-        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
-        #expect(SitePermissions.origin(for: tab.page.url) == SitePermissions.origin(for: destinationURL))
+        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
+        #expect(SitePermissions.origin(for: tab.webView.url) == SitePermissions.origin(for: destinationURL))
 
         let toolkit = AgentToolkit(
             browser: browser,
@@ -353,7 +352,7 @@ struct AgentToolkitAccessTests {
         tab.assistantAccess.persistsAnswers = false
         tab.assistantAccess.pageChanged(url: url)
         tab.assistantAccess.set(.readOnly)
-        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
 
         let toolkit = AgentToolkit(
             browser: browser,
@@ -388,7 +387,7 @@ struct AgentToolkitAccessTests {
         otherTab.assistantAccess.persistsAnswers = false
         otherTab.assistantAccess.pageChanged(url: try server.url())
         otherTab.assistantAccess.set(.control)
-        #expect(await PageSettle.untilIdle(otherTab.page, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(otherTab.webView, timeout: .seconds(30)))
 
         let toolkit = AgentToolkit(
             browser: browser,
@@ -415,7 +414,7 @@ struct AgentToolkitAccessTests {
         tab.assistantAccess.persistsAnswers = false
         tab.assistantAccess.pageChanged(url: try source.url())
         tab.assistantAccess.set(.readOnly)
-        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
 
         let toolkit = AgentToolkit(
             browser: browser,
@@ -450,7 +449,7 @@ struct AgentToolkitAccessTests {
         tab.assistantAccess.persistsAnswers = false
         tab.assistantAccess.pageChanged(url: try source.url())
         tab.assistantAccess.set(.readOnly)
-        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
 
         let toolkit = AgentToolkit(
             browser: browser,
@@ -478,7 +477,7 @@ struct AgentToolkitAccessTests {
         tab.assistantAccess.persistsAnswers = false
         tab.assistantAccess.pageChanged(url: sourceURL)
         tab.assistantAccess.set(.control)
-        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
+        #expect(await PageSettle.untilIdle(tab.webView, timeout: .seconds(30)))
 
         let toolkit = AgentToolkit(
             browser: browser,
@@ -487,7 +486,7 @@ struct AgentToolkitAccessTests {
         )
         let output = await toolkit.clickOnPage(ref: 0, label: "Continue")
 
-        #expect(SitePermissions.origin(for: tab.page.url) == SitePermissions.origin(for: destinationURL))
+        #expect(SitePermissions.origin(for: tab.webView.url) == SitePermissions.origin(for: destinationURL))
         #expect(output.contains("moved to another website"))
         #expect(!output.contains("Destination secret"))
         #expect(!output.contains("<page-content"))

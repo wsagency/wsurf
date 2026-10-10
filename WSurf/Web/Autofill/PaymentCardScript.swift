@@ -9,8 +9,7 @@ nonisolated enum PaymentCardScript {
     static let clientSource = #"""
     (() => {
       if (globalThis.__wsurfCardAutofill) return;
-      const channel = globalThis.__wsurfSend
-        ? { postMessage: value => globalThis.__wsurfSend('wsurfCardAutofill', value) } : null;
+      const channel = window.webkit?.messageHandlers?.wsurfCardAutofill;
       const state = { target: null, token: null, url: null };
       const forms = globalThis.__wsurfAutofillForms;
       const suggestions = globalThis.__wsurfAutofillSuggestions;

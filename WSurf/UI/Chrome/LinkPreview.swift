@@ -64,7 +64,7 @@ struct LinkPreview: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            if let shown, !obeysSetting || BrowserSettings.application.showsLinkPreview {
+            if let shown, !obeysSetting || BrowserSettings.shared.showsLinkPreview {
                 Text(label(shown))
                     .font(Theme.Font.caption)
                     .foregroundStyle(ink.opacity(0.92))

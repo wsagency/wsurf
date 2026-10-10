@@ -3,12 +3,13 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import Foundation
+import WebKit
 
 extension AgentToolkit {
     struct Services {
         var search: (String) async -> [SearchHit]
         var resolveVideo: (String) async -> ResolvedVideo
-        var chooseFiles: ((PageFileSelection.Parameters) async -> [URL]?)?
+        var chooseFiles: ((WKOpenPanelParameters) async -> [URL]?)?
 
         static var live: Self {
             Self(

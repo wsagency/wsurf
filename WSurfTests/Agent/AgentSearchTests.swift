@@ -48,7 +48,7 @@ struct AgentSearchTests {
         services.search = { _ in noResults ? [] : [SearchHit(title: "Support", url: "https://example.com/help", snippet: "Booking information")] }
         let fixture = try await ComputerWorkflowFixture(services: services)
         defer { fixture.close() }
-        let view = fixture.tab.page
+        let view = fixture.tab.webView
         _ = try await view.evaluateJavaScript("""
             document.querySelector('#query').value='Lviv';
             document.body.insertAdjacentHTML('beforeend', '<input id="date" aria-label="Departure date" readonly value="September 23">'

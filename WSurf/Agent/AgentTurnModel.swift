@@ -7,24 +7,13 @@ import Observation
 
 @MainActor
 protocol AgentTurnBrowsing: AnyObject {
-    var agentConsentWindow: ExtensionWindowAdapter? { get }
     func ensureAgentTabID() -> UUID
     func agentSpaceID(forTab tabID: UUID) -> UUID
     func agentContextSummary(mentionedTabIDs: [UUID]) -> String?
     func setAgentWorking(_ isWorking: Bool, inSpace spaceID: UUID)
 }
 
-extension AgentTurnBrowsing {
-    var agentConsentWindow: ExtensionWindowAdapter? {
-        nil
-    }
-}
-
 extension BrowserModel: AgentTurnBrowsing {
-    var agentConsentWindow: ExtensionWindowAdapter? {
-        context.extensions.adapter(for: self)
-    }
-
     func ensureAgentTabID() -> UUID {
         ensureActiveTab().id
     }
@@ -73,10 +62,8 @@ final class AgentTurnModel {
     private(set) var compactionMessageSpaceID: UUID?
 
     @ObservationIgnored private let browser: any AgentTurnBrowsing
-    @ObservationIgnored private var log: any AgentTurnLogging
+    @ObservationIgnored private let log: any AgentTurnLogging
     @ObservationIgnored private let speech: any SpeechOutput
-    @ObservationIgnored private var modelSettings: LLMSettings
-    @ObservationIgnored private var actionPolicy: AgentActionPolicy
     @ObservationIgnored private var runner: (any AgentRunner)?
     @ObservationIgnored private var runTask: Task<Void, Never>?
     @ObservationIgnored private var completion: ((Result<AgentTurnResult, any Error>) -> Void)?
@@ -90,42 +77,12 @@ final class AgentTurnModel {
         browser: any AgentTurnBrowsing,
         log: any AgentTurnLogging,
         speech: any SpeechOutput,
-        modelSettings: LLMSettings = .current,
-        actionPolicy: AgentActionPolicy,
         reply: AgentReplyModel = AgentReplyModel()
     ) {
         self.browser = browser
         self.log = log
         self.speech = speech
-        self.modelSettings = modelSettings
-        self.actionPolicy = actionPolicy
         self.reply = reply
-    }
-
-    func adopt(log: any AgentTurnLogging) {
-        guard self.log !== log else { return }
-        cancel()
-        forgetEveryConversation()
-        self.log = log
-        reply = AgentReplyModel()
-    }
-
-    func adopt(context: BrowserProfileContext) {
-        adopt(log: context.conversationLog)
-        modelSettings = context.modelSettings
-        actionPolicy = context.actionPolicy
-    }
-
-    /// Stop the old owner's work without deleting the transferred tab's conversation.
-    func detachTab(_ tabID: UUID, inSpace spaceID: UUID) {
-        cancel()
-        runner?.discardSession(forTab: tabID)
-        if spaceID != tabID {
-            runner?.discardSession(forTab: spaceID)
-        }
-        if reply.spaceID == tabID || reply.spaceID == spaceID {
-            reply = AgentReplyModel()
-        }
     }
 
     var isRunning: Bool {
@@ -150,20 +107,17 @@ final class AgentTurnModel {
         compactingSpaceID = spaceID
         compactionMessage = nil
         compactionMessageSpaceID = spaceID
-        let modelSettings = modelSettings
         compactionTask = Task { [weak self] in
             let message: LocalizedStringResource
             do {
-                let changed = try await LLMSettings.$scoped.withValue(modelSettings) {
-                    try await runner.compactContext(forTab: spaceID)
-                }
+                let changed = try await runner.compactContext(forTab: spaceID)
                 message = changed ? "Context compacted" : "No context to compact"
             } catch {
                 message = "Couldn’t compact. Context unchanged."
             }
             guard !Task.isCancelled, let self else { return }
-            compactingSpaceID = nil
             compactionMessage = message
+            compactingSpaceID = nil
             compactionTask = nil
         }
     }
@@ -203,11 +157,8 @@ final class AgentTurnModel {
         } else {
             contextualized = utterance
         }
-        let traceID = LLMSettings.$scoped.withValue(modelSettings) {
-            log.beginTask(isContinuation ? "" : utterance, tabID: spaceID)
-        }
         let task = AgentTaskContext(
-            id: traceID,
+            id: log.beginTask(isContinuation ? "" : utterance, tabID: spaceID),
             tabID: tabID,
             spaceID: spaceID,
             mentionedTabIDs: mentionedTabIDs,
@@ -220,23 +171,15 @@ final class AgentTurnModel {
         activeTask = task
         reply.bind(toSpace: spaceID, showsInChrome: showsInChrome)
 
+        let reply = reply
         let speech = speechOverride ?? speech
-        let modelSettings = modelSettings
-        let actionPolicy = actionPolicy
-        let consentWindow = browser.agentConsentWindow
-        runTask = Task { [weak self, reply] in
-            await LLMSettings.$scoped.withValue(modelSettings) {
-                await AgentActionConsent.$scopedPolicy.withValue(actionPolicy) {
-                    await AgentActionConsent.$scopedWindow.withValue(consentWindow) {
-                        await runner.run(
-                            utterance: contextualized,
-                            task: task,
-                            into: reply,
-                            speech: speech
-                        )
-                    }
-                }
-            }
+        runTask = Task { [weak self] in
+            await runner.run(
+                utterance: contextualized,
+                task: task,
+                into: reply,
+                speech: speech
+            )
             trace?.mark("turnComplete")
             trace?.end()
 

@@ -75,29 +75,4 @@ struct SettingsNavigatorTests {
         #expect(SettingsCategory.provider.matches("microphone"))
         #expect(SettingsCategory.provider.matches("push to talk"))
     }
-
-    @MainActor
-    @Test(.boundedWebViews) func downloadsBackReturnsToTheSettingsCategory() async {
-        let browser = BrowserModel(database: .temporary())
-        let settings = browser.showSettings()
-        let settingsURL = SystemPages.settingsURL(.downloads)
-        #expect(await settled(settings, at: BrowserTab.InternalPage.settings.url))
-        settings.load(settingsURL)
-        #expect(await settled(settings, at: settingsURL))
-
-        let downloads = browser.showDownloads()
-        #expect(await settled(downloads, at: BrowserTab.InternalPage.downloads.url))
-        #expect(browser.activeTab === downloads)
-        #expect(downloads !== settings)
-        #expect(settings.internalPage == .settings)
-
-        // Downloads' Back control dismisses its destination, rather than
-        // navigating the dedicated settings tab away from its category.
-        browser.dismissInternalPage(.downloads)
-
-        #expect(browser.activeTab === settings)
-        #expect(settings.urlString == settingsURL.absoluteString)
-        #expect(settings.internalPage == .settings)
-        #expect(!browser.tabs.contains { $0.id == downloads.id })
-    }
 }

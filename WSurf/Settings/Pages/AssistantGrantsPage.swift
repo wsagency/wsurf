@@ -5,11 +5,20 @@
 import SwiftUI
 
 struct AssistantGrantsPage: View {
-    let policy: AgentActionPolicy
     let onBack: () -> Void
+
+    private var policy: AgentActionPolicy {
+        .shared
+    }
 
     @State private var confirmingRevokeAll = false
     @State private var revokingHost: String?
+
+    @MainActor
+    static var summary: LocalizedStringResource {
+        let count = AgentActionPolicy.shared.grantsByHost.count
+        return count == 0 ? "None" : "\(count) websites"
+    }
 
     var body: some View {
         SubPageHeader(backTitle: "Assistant", onBack: onBack)

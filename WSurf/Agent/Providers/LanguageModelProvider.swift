@@ -53,7 +53,7 @@ nonisolated protocol ProviderCredentialStore: Sendable {
     func source(for provider: Provider) -> CredentialStore.Source
     func masked(for provider: Provider) -> String?
     func save(_ key: String, for provider: Provider) -> String?
-    func delete(for provider: Provider) -> String?
+    func delete(for provider: Provider)
 }
 
 nonisolated struct KeychainProviderCredentialStore: ProviderCredentialStore {
@@ -72,7 +72,7 @@ nonisolated struct KeychainProviderCredentialStore: ProviderCredentialStore {
     func save(_ key: String, for provider: Provider) -> String? {
         CredentialStore.save(key, for: provider)
     }
-    func delete(for provider: Provider) -> String? {
+    func delete(for provider: Provider) {
         CredentialStore.delete(for: provider)
     }
 }
@@ -136,12 +136,10 @@ private struct AnyLanguageModelProvider: ModelProvider {
         log: ConversationLog
     ) -> any AgentRunner {
         let reasoningEffort = ReasoningCatalog.resolve(reasoningEffort, for: configuration, model: model)
-        let settings = LLMSettings.current
-        let window = ContextWindow.tokens(for: configuration, model: model, settings: settings)
+        let window = ContextWindow.tokens(for: configuration, model: model)
         let toolIDs = AgentToolCatalog.resolvedIDs(
             for: configuration,
-            tier: ContextBudget.toolTier(forWindow: window),
-            settings: settings
+            tier: ContextBudget.toolTier(forWindow: window)
         )
         let budget = ContextBudget.resolve(
             windowTokens: window,
@@ -175,8 +173,8 @@ private struct AnyLanguageModelProvider: ModelProvider {
             options: runtime.options,
             answerOptions: runtime.answerOptions,
             budget: budget,
-            acceptsImages: ModelImageSupport.acceptsImages(for: configuration, model: model, settings: settings),
-            onImageInputUnsupported: { ModelImageSupport.record(false, for: configuration, model: model, settings: settings) },
+            acceptsImages: ModelImageSupport.acceptsImages(for: configuration, model: model),
+            onImageInputUnsupported: { ModelImageSupport.record(false, for: configuration, model: model) },
             enabledToolIDs: toolIDs,
             toolkit: toolkit,
             log: log
@@ -189,9 +187,8 @@ private struct AnyLanguageModelProvider: ModelProvider {
             let client = OpenAIResponsesClient(endpoint: endpoint, apiKey: credentials.key(for: configuration) ?? "", model: model)
             return OpenAIUtilityModel(client: client, maxTokens: 4_096)
         }
-        let settings = LLMSettings.current
         let budget = ContextBudget.resolve(
-            windowTokens: ContextWindow.tokens(for: configuration, model: model, settings: settings),
+            windowTokens: ContextWindow.tokens(for: configuration, model: model),
             desiredResponseTokens: LanguageModelRuntimeFactory.desiredResponseTokens(
                 for: .low,
                 adapter: configuration.adapter
@@ -449,3 +446,5 @@ protocol ProviderCatalogProtocol: AnyObject {
     func save(_ provider: Provider)
     func remove(_ provider: Provider)
 }
+
+extension ProviderCatalog: ProviderCatalogProtocol {}

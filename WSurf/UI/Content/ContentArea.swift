@@ -33,7 +33,7 @@ struct ContentArea: View {
             page
         }
         .onAppear {
-            pull.pageProvider = { browser.activeTab?.page }
+            pull.webViewProvider = { browser.activeTab?.webView }
             pull.isCovered = { coordinator.isPaletteOpen || coordinator.onboarding.isPresented }
             pull.onChange = { state, animation in
                 if let animation {
@@ -159,11 +159,11 @@ private struct KeptAliveTabs: View {
                 && tab.id != browser.activeTab?.id
                 && !browser.isVisibleInSplit(tab)
                 && tab.internalPage == nil
-                && (tab.isFavorite || tab.isPlayingAudio || media.controlledTabID == tab.id)
-                && tab.page !== media.model.picturePage
+                && (tab.isPlayingAudio || media.controlledTabID == tab.id)
+                && tab.webView !== media.model.pictureWebView
         }
         ForEach(kept) { tab in
-            WebViewRepresentable(page: tab.page, parksWhenIdle: true)
+            WebViewRepresentable(webView: tab.webView, parksWhenIdle: true)
                 .id(tab.id)
                 .opacity(0)
                 .allowsHitTesting(false)
@@ -177,7 +177,7 @@ private struct ActiveWebSurface: View {
 
     var body: some View {
         WebViewRepresentable(
-            page: tab.page,
+            webView: tab.webView,
             parksWhenIdle: true,
             onReady: { tab.webViewDidBecomeVisible() }
         )

@@ -3,73 +3,24 @@
 
 Keep changes focused, explain the user benefit, and keep the code testable.
 
-## Development workflow
-
-All changes, including fixes and documentation, must use a dedicated Git
-worktree and a unique `feature/<short-name>` branch based on the latest
-`origin/main`. Keep one task per worktree and branch. Do not develop in the
-`main` checkout, switch branches in a shared checkout, or stash, discard, move,
-or commit another task's uncommitted changes.
-
-Store task worktrees under `.worktrees/` in the project folder; this directory
-is gitignored. OMP creates the isolated worktree automatically. Reuse its
-`feature/<short-name>` branch and worktree rather than creating a second one.
-
-Keep build output and DerivedData inside your worktree; do not reuse another
-worktree's build directory. Local development builds, tests, and PR validation
-builds are allowed before merge.
-
-Submit changes through a pull request targeting `main`. Resolve review
-feedback and pass the required CI checks before merging. Do not commit or push
-changes directly to `main`.
-
-Release builds and deployments, including signed previews, must use a commit
-merged into `main` through a PR and wait for CI to pass on that commit. Never
-deploy a feature branch or an uncommitted working tree. Release tags must point
-to commits on `main`. See [Releasing](RELEASING.md) for the existing release and
-preview gates.
-
 ## Set up the project
 
-You need macOS 26 or later, Apple silicon, and Xcode 27.0 or later.
+You need macOS 26 or later, Apple silicon, and Xcode 26.5 or later.
 
 ```bash
 git clone https://github.com/wsagency/wsurf.git
 cd wsurf
-git fetch origin main
-git worktree add -b feature/my-change .worktrees/my-change origin/main
-cd .worktrees/my-change
-xcodebuild -downloadComponent MetalToolchain
-xcodebuild -resolvePackageDependencies \
-  -project WSurf.xcodeproj -scheme WSurf \
-  -derivedDataPath build/DD -onlyUsePackageVersionsFromResolvedFile
 xcodebuild test \
   -project WSurf.xcodeproj \
   -scheme WSurf \
   -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath build/DD \
-  -disableAutomaticPackageResolution \
   CODE_SIGN_STYLE=Manual \
   CODE_SIGN_IDENTITY=- \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGN_ENTITLEMENTS=
 ```
 
-The worktree creation commands above are for manual setup without OMP. When OMP
-has already supplied a worktree, skip them. Replace `my-change` with a unique
-name for your task and run development commands from that worktree, not from
-the original `main` checkout.
-
 The `WSurf` scheme runs the `WSurfTests` target from `WSurf.xctestplan`.
-
-Hosted native workflows use GitHub's documented `xcode-27` ARM64 runner
-([currently public preview](https://github.com/actions/runner-images/issues/14404))
-and require `/Applications/Xcode_27.0.app`; preflight fails if that toolchain is
-unavailable. The `macos-26` image contains only Xcode 26.x. Native Pro builds use
-`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` without changing the
-machine's selected developer directory. Keep the resolved package graph frozen
-for build/test runs; dependency updates must explicitly update the lockfile and
-regenerate `WSurf/Support/Acknowledgements.json`.
 
 The command removes the entitlements. The keychain access group and the passkey
 entitlement both need a provisioning profile. CI runs the same command. To build the app in Xcode,
@@ -129,8 +80,8 @@ identify a real format, service, import source, or compatibility contract.
 
 Run the full suite before opening a pull request. CI also measures app-target
 line coverage and rejects regressions below the repository floor. CI runs
-`Tools/check-format.sh`, which fails on SwiftLint violations. CI pins SwiftLint
-**0.65.1**; use the same version locally. The configuration is `.swiftlint.yml`. Put a
+`Tools/check-format.sh`, which fails on SwiftLint violations (`brew install
+swiftlint` to run it locally). The configuration is `.swiftlint.yml`. Put a
 switch case’s body on the line after the label. Do not write a declaration or
 control-flow body inside single-line braces; short closures, `guard … else
 { return }` and accessor lists (`{ get set }`) stay inline. Coverage thresholds
@@ -186,40 +137,22 @@ Stage mode loads sample browsing data for screenshots and recordings.
 Set the session in `WSurf/Stage/StageSet.swift`: pinned tabs, folders, loose
 tabs, history and downloads.
 
-Build an owned Debug app with `PRODUCT_BUNDLE_IDENTIFIER` set to
-`io.wsagency.wsurf.stage.<12-hex-home-suffix>`, copy the complete bundle away
-from the installed app, and launch only the required environment:
-
 ```bash
-stage_home="$PWD/build/stage-home"
-mkdir -p "$stage_home"
-env -i PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME="$stage_home" \
-  WSURF_STAGE=1 WSURF_STAGE_HOME="$stage_home" \
-  /path/to/owned/WSurf.app/Contents/MacOS/WSurf
+WSURF_STAGE=1 build/DD/Build/Products/Debug/WSurf.app/Contents/MacOS/WSurf
 ```
 
-The 12-hex bundle suffix is the start of `StageMode.identity(for:)`, which
-hashes the standardized stage-home path. `env -i` matters because stage mode
-alone does not clear provider-key environment variables. Staged tabs load real
-websites, which may show cookie banners and region prompts on first use.
+Prepare the session once. Staged tabs load real websites, which may show cookie
+banners and region prompts on first use.
 
-1. Launch with `WSURF_STAGE=1` and an owned `WSURF_STAGE_HOME`.
+1. Launch with `WSURF_STAGE=1`.
 2. Dismiss every banner on every staged tab.
-3. Quit. Stage state remains in that home.
-4. Relaunch with `WSURF_STAGE_SEED=0` to retain the existing session instead
-   of replacing tabs, history and downloads with sample data.
+3. Add a model API key in Settings if a recording needs an agent turn.
+4. Quit. Your choices are saved in the stage data store for the next launch.
 
-The standardized stage-home path supplies a stable per-home identity for the
-preference suite, WebKit data store, CredentialStore service and MCP socket.
-Release builds ignore stage mode. The stage app's MCP install action still
-targets real client configuration files, so do not use it here. Credential
-saving is not verified by this isolation check; do not use production keys.
-
-For migration and rollback checks, keep `WSURF_STAGE=1`, set an owned
-`WSURF_STAGE_HOME`, and set `WSURF_STAGE_SEED=0` before launching. Disabling
-sample seeding does not disable stage isolation. Restore a consistent
-pre-upgrade backup into a separate owned home for the old app; never open an
-upgraded database with the old version.
+A stage run writes to its own support directory, its own website data store and
+its own preference domain. It cannot change the real installation’s history,
+cookies, tabs or settings. Delete `$TMPDIR/wsurf-stage` to reset it, or set
+`WSURF_STAGE_HOME` to keep more than one staged session.
 
 ## Write commit messages
 
@@ -262,7 +195,6 @@ the release job ran the same suite a second time.
 
 ## Pull request checklist
 
-- The change uses a dedicated worktree and feature branch; the PR targets `main`.
 - The app builds without new warnings.
 - The full test suite passes locally.
 - New behavior has meaningful tests.

@@ -7,104 +7,6 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
-### 2026-10-09 — Actual engine beside address lock
-
-The address bar shows WK or Cr beside the lock for the active page's loaded engine.
-
-### 2026-10-09 — Classic Keychain credential storage
-
-Provider credentials, MCP authorization credentials, and OAuth credentials now
-share the classic macOS Keychain store. Durable tombstones keep deleted
-credentials from reappearing.
-
-### 2026-10-08 — Complete Linen integration
-
-Integrated all 31 changes from the pinned upstream range through
-[PR #8](https://github.com/wsagency/wsurf/pull/8). The list follows the
-[source manifest](docs/upstream-migrations.md#complete-source-manifest):
-
-1. Detect both standalone and ChatGPT-bundled Codex CLI layouts for MCP setup,
-   retaining WSurf configuration and safe TOML merging.
-2. Preserve command-palette editing shortcuts across keyboard layouts.
-3. Wait for focused autofill fields to finish layout before delivering input,
-   with bounded waits and cancellation.
-4. Stop media polling on idle players and hidden pages, including page-cache
-   transitions.
-5. Show PDF filenames and correct untitled-page names on WebKit and Chromium,
-   without overwriting custom tab titles.
-6. Remember external-app approvals per website origin and target app, with
-   revocation in website settings and session-only private-window grants.
-7. Save WebKit PDF viewer documents through the download manager, preserving
-   edited PDF bytes, filename reservations, quarantine and handoff deduplication.
-8. Open the actual Downloads page from download settings and settings search.
-9. Refresh the localization catalog while retaining WSurf-only strings and
-   branding.
-10. Align global-reset settings copy with the string catalog.
-11. Stabilize assistant context test titles while pages load and retain fixture
-    servers for their full lifetime.
-12. Test external navigation with real WebKit actions and requesting origins
-    rather than fabricated navigation objects.
-13. Measure result-ranking performance independently of WebKit page loading,
-    retaining WSurf performance budgets.
-14. Restore saved scroll positions after late WebKit resets; stop restoration
-    when the user scrolls, the page moves itself or the document is left.
-15. Wait for extension test replies from the expected page instead of accepting
-    unrelated responses.
-16. Keep headless automation fixtures active without changing production page
-    scheduling.
-17. Confirm assistant key delivery on trusted keydown, avoiding duplicate input
-    when a page consumes keyup.
-18. Move native CI to Xcode 27, refresh CI actions and SwiftLint, and upgrade
-    AnyLanguageModel to 0.15.1 and swift-collections to 1.7.1. Keep CefSwift pinned
-    and enforce locked package resolution.
-19. Update README behavior and privacy documentation for WSurf.
-20. Install and verify the Metal toolchain before release and preview builds,
-    retaining the existing CI setup and deployment gates.
-21. Support CPU fallback for OCR and active autofill fixtures on virtual macOS
-    runners.
-22. Exclude only four unsupported Vision OCR integration tests from hosted CI;
-    keep all four enabled in native Pro verification.
-23. Improve gray folder-preview icon contrast in dark mode while retaining
-    colored folders.
-24. Accept object-valued MCP experimental capabilities during initialization
-    without changing standard fields or permission grants.
-25. Add profile-aware browser windows, live same-profile tab transfer and
-    isolated private sessions on both WebKit and Chromium. Bind assistant,
-    MCP and extension operations to their owning window, profile and document.
-26. Show assistant questions only in the window, space and surface where the
-    request began.
-27. Fill up to 32 controls per guarded assistant or MCP operation without
-    submitting the form. Add bounded rate-limit recovery, pause/Continue and
-    visual no-progress detection without replaying completed actions.
-28. Reduce idle work and correct startup behavior: event-driven MCP stdio,
-    cached speech preparation, visible-playing synchronized lyrics, validated
-    media geometry, URL-correct favicons, privacy-safe autofill diagnostics and
-    engine-aware page-resource cleanup.
-29. Keep sidebar drop targets visible on light websites using the sidebar's own
-    appearance.
-30. Add Tab-to-search site chips with native editor safeguards and adaptive
-    command-palette sizing.
-31. Limit Window/Dock page-title labels to 40 grapheme clusters, retaining full
-    stored titles and profile/private suffixes.
-
-WSurf compatibility work preserves Favorites, pinned tabs and folders, sidebar
-Undo/Redo, split panes and per-website engine selection. History clearing removes
-only the owning profile's conversation log; link previews retain that profile's
-JavaScript settings. External-app decisions remain bound to live source
-documents, with one-time consent for ambiguous or opaque sources. Stage runs can
-retain restored sessions with `WSURF_STAGE_SEED=0` without disabling isolation.
-
-Native Pro verification recorded 3,016 passing tests and no failures, including
-the four OCR integrations. PR and merged-main CI passed. The
-[migration journal](docs/upstream-migrations.md) and
-[integration record](https://github.com/wsagency/wsurf/pull/8#issuecomment-6067821179)
-separate observed checks from the remaining manual UI checks accepted by the
-user. This entry records source integration, not a signed public release.
-
-### Earlier WSurf changes
-
-- Added repository-local omp worktree placement and documented feature-branch,
-  PR-only changes to `main`.
 - Independent WSurf product, app/project/module and `io.wsagency.wsurf`
   identity, with separate data/defaults and new wave artwork.
 - Preserves Apache-2.0 provenance and third-party notices; does not reuse
@@ -120,8 +22,6 @@ user. This entry records source integration, not a signed public release.
 - Builds extension ZIP test fixtures on the concurrent executor, avoiding
   MainActor Process run-loop reentrancy during WebKit teardown while retaining
   invalid-package and cleanup assertions.
-- Extension package extraction also runs off MainActor, with per-library
-  serialization so installs cannot overlap writes to the same staging paths.
 - Extension controller web views now reuse the browser's pooled configuration,
   preserving the controller's website data store while avoiding process-pool
   destruction during pending IPC callbacks.
@@ -132,77 +32,16 @@ user. This entry records source integration, not a signed public release.
 - Sidebar appearance now includes installed font families, size, weight,
   compact row spacing, and adjustable folder tint. Folder and link labels use
   primary text contrast; expanded folders no longer stack tinted glass.
-- Unpinned sidebar X now removes the tab and link; ⌘-click unloads instead.
-  Pinned controls unload or load by default and remove with ⌘. Removed the
-  obsolete unloaded-tab-action preference; context menus retain explicit actions.
-- Added per-profile, icon-only Favorites without duplicate sidebar rows.
-  Favorites never auto-sleep, support manual unload, and return to ordinary pins
-  when removed from Favorites.
-- New Folder and Move to Folder › New Folder reveal and focus inline rename,
-  including icons-only mode.
-- Native sidebar Undo/Redo restores deleted folders and removed links, including
-  names, tree positions, pins, and split panes. ⌘Z and Ctrl-Z preserve text Undo.
-- Themes now preview brightness, hue, and a primary-derived palette live, with
-  independent control-icon and URL-text colors/opacity, per-theme storage and reset.
-- Folder context menus now offer independent Pin/Unpin, including empty
-  folders. Pin state and sidebar order persist without changing child bookmarks.
-  Fixed context-menu hit testing for folder rows away from the top.
-  Child reordering preserves each bookmark; Delete Folder and Move Out keep
-  the root pinned section contiguous without changing child bookmarks.
+- Sidebar X/minus, middle-click, and ⌘W now unload page content without removing
+  links, pins, or folder membership. Selecting a retained link reloads it;
+  permanent removal uses explicit right-click Remove actions. Existing
+  unsaved-form, download, media, and other unload protections remain in force.
 - Initial icon markup no longer invalidates locally cached favicons on every
   navigation. The icon watcher starts after the initial DOM is ready and still
   refreshes icons when the page changes them later.
-- Added pastel Light Calm and Dark Calm themes. Light Calm uses a deeper muted
-  palette; Calm chrome stays light or dark independently of the website.
-- Loaded and unloaded sidebar text/icon colors and opacity persist separately
-  for each theme, defaulting to black on light surfaces and white on dark ones.
-  Favicons keep their original glyph in monochrome without an unloaded badge.
-- Sidebar and folder controls use X only for removal, the curved-down arrow
-  only for unload, and Play only for load. Folder unload retains descendant
-  links, pins, hierarchy, and existing unload protections.
-- Added the dependency-free `wsurf.app/` website and public `webcredentials`
-  association for the configured WSurf release identity. Includes responsive
-  source/build links, upstream attribution, and deployment requirements;
-  no signing secrets or vault data are hosted.
-- Move to Folder now follows the sidebar hierarchy instead of listing every
-  folder at the first level. Nested menus include Move Here for the parent
-  folder and keep invalid self/descendant destinations out of folder moves.
-- Added assets-only Cloudflare hosting for `wsurf.app/` with an exact JSON MIME
-  override for the hidden association file. Restricted Worker-only deployment
-  and public anonymous HTTPS GET/HEAD checks pass with the unchanged app
-  identity and domain/DNS binding. The sole GitHub Actions path waits for
-  successful CI on the exact PR-merged main SHA and skips superseded commits;
-  no PR/fork/tag deploy, account-wide token, DNS grant, native Workers Builds
-  connection, or GitHub App grant.
-- Added omp.sh to external MCP clients, with automatic CLI detection and setup
-  in `~/.omp/agent/mcp.json` using the existing safe JSON merge and backup.
-- Added per-website WebKit/Chromium selection with lazy embedded CEF startup,
-  separate engine website data, and profile-specific preferences.
-- Fixed native Chromium initial navigation, IO-thread tracker policy isolation,
-  canonical cache paths, and child-view teardown without closing the app window.
-  Native accessibility is enabled; CEF errors remain on standard error without
-  a persistent debug log file.
-- Engine changes reload rather than replaying submitted requests. Chromium
-  unloads restore the URL; WebKit extensions and native Picture in Picture remain
-  WebKit-only.
-- The WebKit autofill navigation adapter reads the source frame only for a form
-  submission, rather than eagerly reading it for unrelated navigation kinds.
-- Existing folder pins migrate without changing child bookmark identities.
-- Assistant input now targets the verified native page responder. Chromium text
-  uses browser-native input; trusted event receipts and sensitive-field checks
-  remain in force.
-- Engine replacement releases the old page's media-dock ownership. Native
-  Picture in Picture return guards and hover shielding remain engine-aware.
-- Chromium file dialogs use native content types for MIME and extension filters,
-  and request-handler ownership is synchronized with in-flight shutdown.
-- WebKit download callbacks acquire their delegates before yielding, including
-  resumed transfers. Assistant key presses finish their native press/release
-  pair before awaiting the select-all fallback.
-- Assistant input makes a final fresh trusted-event receipt check at the polling
-  deadline, so a wait or delayed IPC reply does not discard a delivered event.
-- Command-palette projection reuses its ranked command matches for promotion
-  instead of scoring the full catalog twice; ordering and performance budgets
-  remain unchanged.
+- 104 scoped sidebar, lazy-web-view, favicon, and command-palette checks pass;
+  SwiftLint reports no violations. Native UI smoke verifies appearance
+  persistence, X/minus link retention, explicit Remove, and cached-icon reload.
 
 No signed WSurf release has been published yet. Apple Passwords compatibility
 changes are present in source and fixtures, but real PIN, fill, save, OTP,

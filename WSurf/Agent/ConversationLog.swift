@@ -264,7 +264,7 @@ final class ConversationLog {
             response: "",
             state: .running,
             finishedAt: nil,
-            providerID: LLMSettings.current.providerID
+            providerID: LLMSettings.providerID
         ))
         scheduleSave(trace: taskID)
         return taskID
@@ -552,12 +552,6 @@ final class ConversationLog {
             _ = try TraceRecord.deleteAll(db)
             _ = try UsageRecord.deleteAll(db)
         }
-    }
-    func retainSessionTabs(including liveTabIDs: Set<UUID>) {
-        let stored = (try? database.writer.read { db in
-            try UUID.fetchAll(db, sql: "SELECT id FROM sessionTab")
-        }) ?? []
-        retainTabs(Set(stored).union(liveTabIDs))
     }
 
     func retainTabs(_ tabIDs: Set<UUID>) {

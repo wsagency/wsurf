@@ -47,9 +47,8 @@ final class TabPermissionCenter {
     var isPopoverPresented = false
 
     var onRevoke: ((WebPermission) -> Void)?
-    var onPolicyChanged: ((WebPermission, PermissionPolicy) -> Void)?
 
-    init(store: SitePermissions) {
+    init(store: SitePermissions = .shared) {
         self.store = store
     }
 
@@ -176,11 +175,7 @@ final class TabPermissionCenter {
     func siteDataCleared() {
         sessionGrants = []
         sessionDenies = []
-        var revoked = live
-        if touched.contains(.location) {
-            revoked.insert(.location)
-        }
-        for permission in revoked {
+        for permission in live {
             onRevoke?(permission)
         }
         live = []
@@ -218,12 +213,11 @@ final class TabPermissionCenter {
         }
         if policy != .allow {
             sessionGrants.remove(permission)
-            let wasLive = live.remove(permission) != nil
-            if wasLive || (permission == .location && touched.contains(.location)) {
+            if live.contains(permission) {
+                live.remove(permission)
                 onRevoke?(permission)
             }
         }
-        onPolicyChanged?(permission, policy)
     }
 
     // MARK: - What the badge and popover show

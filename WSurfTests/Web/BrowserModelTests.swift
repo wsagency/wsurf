@@ -322,8 +322,8 @@ struct BrowserModelTests {
     @Test func aRestoredTabsViewHasNeverLoaded() {
         let restored = BrowserTab(restoring: true)
 
-        #expect(restored.page.url == nil)
-        #expect(restored.page.backForwardList.currentItem == nil)
+        #expect(restored.webView.url == nil)
+        #expect(restored.webView.backForwardList.currentItem == nil)
     }
 
     @Test func aLargeImportStaysDeferredUntilOpened() {
@@ -338,9 +338,9 @@ struct BrowserModelTests {
 
         let folder = model.importBookmarksFolder(named: "Imported", entries: entries)
         let allDeferred = model.tabs.allSatisfy(\.isDeferred)
-        let allUnloaded = model.tabs.allSatisfy { $0.page.url == nil }
+        let allUnloaded = model.tabs.allSatisfy { $0.webView.url == nil }
         let allWithoutHistory = model.tabs.allSatisfy {
-            $0.page.backForwardList.currentItem == nil
+            $0.webView.backForwardList.currentItem == nil
         }
 
         #expect(folder != nil)
@@ -362,11 +362,11 @@ struct BrowserModelTests {
             // Sent the warm-up page at construction. It may still be in
             // flight - what matters is that it was given something to load,
             // which is what starts the process.
-            #expect(opened.page.url != nil || opened.page.isLoading)
+            #expect(opened.webView.url != nil || opened.webView.isLoading)
         } else {
             // The pool holds the views and WebKit holds the spare process. The
             // only thing a blank tab loads is its own start page.
-            #expect(opened.page.url == nil || opened.page.url == SystemPages.start)
+            #expect(opened.webView.url == nil || opened.webView.url == SystemPages.start)
         }
     }
 }

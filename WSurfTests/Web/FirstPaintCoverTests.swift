@@ -49,8 +49,8 @@ struct FirstPaintCoverTests {
         view.underPageBackgroundColor = inDark ? .white : .black
         #expect(BrowserTab.wouldFlash(painting: view.underPageBackgroundColor, inDark: inDark))
         #expect((view.value(forKey: "_webProcessIdentifier") as? NSNumber)?.int32Value == 0)
+
         let tab = BrowserTab(adopting: view)
-        window.contentView = tab.page
         tab.coverUntilPresented()
 
         #expect(tab.hasPresentedContent)
@@ -70,10 +70,8 @@ struct FirstPaintCoverTests {
         window.contentView = view
         let inDark = view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let tab = BrowserTab(adopting: view)
-        let page = tab.page
-        window.contentView = page
-        page.loadHTMLString("<html><body style='background:\(inDark ? "#fff" : "#000")'></body></html>", baseURL: nil)
-        try #require(await PageSettle.untilIdle(page))
+        view.loadHTMLString("<html><body style='background:\(inDark ? "#fff" : "#000")'></body></html>", baseURL: nil)
+        try #require(await PageSettle.untilIdle(view))
         let clock = TestClock()
         tab.presentationClock = clock
         view.underPageBackgroundColor = inDark ? .white : .black

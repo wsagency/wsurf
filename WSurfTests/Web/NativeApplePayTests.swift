@@ -22,8 +22,9 @@ struct NativeApplePayTests {
         settings.fillsPaymentCards = false
         let restored = BrowserSettings(defaults: app, sessionDefaults: work)
         #expect(!restored.fillsPaymentCards)
-        let personalSettings = BrowserSettings(defaults: app, sessionDefaults: personal)
-        #expect(personalSettings.fillsPaymentCards)
+        settings.useSessionDefaults(personal)
+        #expect(settings.fillsPaymentCards)
+        settings.useSessionDefaults(work)
         #expect(!settings.fillsPaymentCards)
     }
 
@@ -35,14 +36,10 @@ struct NativeApplePayTests {
                 configuration.preferences.setValue(enabled, forKey: "applePayEnabled")
             }
             NativeApplePay.apply(to: configuration.preferences)
-            let page = BrowserPage(
-                webKit: WKWebView(frame: .zero, configuration: configuration),
-                context: BrowserProfileContext(profile: .privateBrowsing())
-            )
-            page.loadHTMLString("<!doctype html><p>Payment capability test</p>", baseURL: URL(string: "https://checkout.example/"))
-            #expect(await PageSettle.untilIdle(page, timeout: .seconds(20)))
-            let webKit = try #require(page.webKit)
-            let type = try await webKit.evaluateJavaScript("typeof ApplePaySession") as? String
+            let view = WKWebView(frame: .zero, configuration: configuration)
+            view.loadHTMLString("<!doctype html><p>Payment capability test</p>", baseURL: URL(string: "https://checkout.example/"))
+            #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
+            let type = try await view.evaluateJavaScript("typeof ApplePaySession") as? String
             #expect(type == "undefined")
         }
     }

@@ -71,10 +71,13 @@ nonisolated enum ErrorPage {
 
     @discardableResult
     @MainActor
-    static func show(_ error: any Error, in page: BrowserPage, fallbackURL: URL?) -> URL? {
+    static func show(_ error: any Error, in webView: WKWebView, fallbackURL: URL?) -> URL? {
         guard !isSilent(error), let url = failedURL(from: error, fallback: fallbackURL) else { return nil }
         let (headline, detail) = explain(error)
-        page.loadHTMLString(html(headline: String(localized: headline), detail: detail, url: url), baseURL: url)
+        webView.loadSimulatedRequest(
+            URLRequest(url: url),
+            responseHTML: html(headline: String(localized: headline), detail: detail, url: url)
+        )
         return url
     }
 

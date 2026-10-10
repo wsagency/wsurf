@@ -9,8 +9,7 @@ nonisolated enum ContactAutofillScript {
     static let clientSource = #"""
     (() => {
       if (globalThis.__wsurfContactAutofill) return;
-      const channel = globalThis.__wsurfSend
-        ? { postMessage: value => globalThis.__wsurfSend('wsurfContactAutofill', value) } : null;
+      const channel = window.webkit?.messageHandlers?.wsurfContactAutofill;
       const state = { target: null, token: null, url: null };
       const forms = globalThis.__wsurfAutofillForms;
       const suggestions = globalThis.__wsurfAutofillSuggestions;

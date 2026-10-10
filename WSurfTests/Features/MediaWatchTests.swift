@@ -20,9 +20,9 @@ struct MediaWatchTests {
 
     @Test func aWatchedTabReportsItsOwnTimeAndTrack() {
         let media = MediaCenter()
-        let page = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
+        let page = WKWebView()
 
-        media.watch(page: page, title: "Adele - Easy On Me", tabID: UUID(), artwork: nil)
+        media.watch(webView: page, title: "Adele - Easy On Me", tabID: UUID(), artwork: nil)
         media.receiveScriptMessage(state(time: 128, duration: 331), from: page, isMainFrame: true)
         media.receiveScriptMessage(
             "meta:{\"t\":\"Easy On Me\",\"a\":\"Adele\",\"al\":\"30\",\"art\":\"\",\"g\":\"0\"}",
@@ -41,9 +41,9 @@ struct MediaWatchTests {
 
     @Test func theDockedModelIsLeftAloneByAWatchedTab() {
         let media = MediaCenter()
-        let page = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
+        let page = WKWebView()
 
-        media.watch(page: page, title: "Adele", tabID: UUID(), artwork: nil)
+        media.watch(webView: page, title: "Adele", tabID: UUID(), artwork: nil)
         media.receiveScriptMessage(state(time: 128, duration: 331), from: page, isMainFrame: true)
 
         #expect(media.model.currentTime == 0)
@@ -53,11 +53,11 @@ struct MediaWatchTests {
 
     @Test func aReleasedTabStopsBeingRead() {
         let media = MediaCenter()
-        let page = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
-        media.watch(page: page, title: "Adele", tabID: UUID(), artwork: nil)
+        let page = WKWebView()
+        media.watch(webView: page, title: "Adele", tabID: UUID(), artwork: nil)
         media.receiveScriptMessage(state(time: 30, duration: 331), from: page, isMainFrame: true)
 
-        media.unwatch()
+        media.stopWatching()
         media.receiveScriptMessage(state(time: 90, duration: 331), from: page, isMainFrame: true)
 
         #expect(media.watched.currentTime == 30)
@@ -66,9 +66,9 @@ struct MediaWatchTests {
 
     @Test func anotherTabIsNeverMistakenForTheWatchedOne() {
         let media = MediaCenter()
-        let page = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
-        let other = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
-        media.watch(page: page, title: "Adele", tabID: UUID(), artwork: nil)
+        let page = WKWebView()
+        let other = WKWebView()
+        media.watch(webView: page, title: "Adele", tabID: UUID(), artwork: nil)
 
         media.receiveScriptMessage(state(time: 90, duration: 331), from: other, isMainFrame: true)
 
@@ -77,8 +77,8 @@ struct MediaWatchTests {
 
     @Test func aSubframeNeverMovesTheClock() {
         let media = MediaCenter()
-        let page = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
-        media.watch(page: page, title: "Adele", tabID: UUID(), artwork: nil)
+        let page = WKWebView()
+        media.watch(webView: page, title: "Adele", tabID: UUID(), artwork: nil)
 
         media.receiveScriptMessage(state(time: 90, duration: 331), from: page, isMainFrame: false)
 
@@ -87,12 +87,12 @@ struct MediaWatchTests {
 
     @Test func watchingASecondTabForgetsTheFirst() {
         let media = MediaCenter()
-        let first = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
-        let second = BrowserPage(webKit: WKWebView(), context: BrowserProfileContext(profile: .privateBrowsing()))
-        media.watch(page: first, title: "One", tabID: UUID(), artwork: nil)
+        let first = WKWebView()
+        let second = WKWebView()
+        media.watch(webView: first, title: "One", tabID: UUID(), artwork: nil)
         media.receiveScriptMessage(state(time: 30, duration: 331), from: first, isMainFrame: true)
 
-        media.watch(page: second, title: "Two", tabID: UUID(), artwork: nil)
+        media.watch(webView: second, title: "Two", tabID: UUID(), artwork: nil)
 
         #expect(media.watched.currentTime == 0)
         #expect(media.watched.title == "Two")

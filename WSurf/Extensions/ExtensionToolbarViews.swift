@@ -13,19 +13,10 @@ struct ExtensionDrag {
     var landing = false
 }
 
-@MainActor
 struct ExtensionActionsCluster: View {
     let manager: ExtensionManager
     let browser: BrowserModel
     let availableWidth: CGFloat?
-    private let registration: ExtensionWindowAdapter?
-
-    init(manager: ExtensionManager, browser: BrowserModel, availableWidth: CGFloat?) {
-        self.manager = manager
-        self.browser = browser
-        self.availableWidth = availableWidth
-        registration = manager.adapter(for: browser)
-    }
 
     @State private var drag: ExtensionDrag?
     @State private var frames: [String: CGRect] = [:]
@@ -60,7 +51,6 @@ struct ExtensionActionsCluster: View {
                 ExtensionActionButton(
                     manager: manager,
                     browser: browser,
-                    window: registration,
                     record: record,
                     isLifted: drag?.id == record.id
                 )
@@ -71,7 +61,6 @@ struct ExtensionActionsCluster: View {
             if !overflowed.isEmpty || drag != nil {
                 ExtensionOverflowButton(
                     manager: manager,
-                    window: registration,
                     records: overflowed,
                     collapsedCount: collapsed.count,
                     isArmed: isOverOverflow,
@@ -93,7 +82,7 @@ struct ExtensionActionsCluster: View {
         .overlay {
             ClusterMenuCatcher(
                 extensionID: extensionID(atX:),
-                menuForExtension: { id in registration.flatMap { manager.contextMenu(for: id, inWindow: $0) } }
+                menuForExtension: { manager.contextMenu(for: $0) }
             )
         }
         .overlay(alignment: .topLeading) { chip }
@@ -109,7 +98,7 @@ struct ExtensionActionsCluster: View {
     @ViewBuilder
     private var chip: some View {
         if let drag, let record = pinned.first(where: { $0.id == drag.id }) {
-            ExtensionArtwork(manager: manager, record: record, window: registration)
+            ExtensionArtwork(manager: manager, record: record)
                 .frame(width: drag.origin.width, height: drag.origin.height)
                 .background(
                     Theme.windowBackground.opacity(0.82),
@@ -150,7 +139,6 @@ struct ExtensionActionsCluster: View {
     }
 
     private func dragChanged(_ value: DragGesture.Value) {
-        guard let registration, manager.owns(registration) else { return }
         if drag == nil || drag?.landing == true {
             let visibleIDs = Set(visible.map(\.id))
             guard let hit = frames.first(where: { entry in
@@ -165,7 +153,6 @@ struct ExtensionActionsCluster: View {
     }
 
     private func dragEnded(_ value: DragGesture.Value) {
-        guard let registration, manager.owns(registration) else { return }
         guard let drag, !drag.landing else { return }
         let id = drag.id
 
@@ -188,7 +175,6 @@ struct ExtensionActionsCluster: View {
     }
 
     private func reorder(around x: CGFloat) {
-        guard let registration, manager.owns(registration) else { return }
         guard let drag else { return }
         let visibleIDs = Set(visible.map(\.id))
         guard let hit = frames.first(where: { entry in
@@ -201,7 +187,6 @@ struct ExtensionActionsCluster: View {
     }
 
     private func place(_ id: String, before: Bool, of anchor: String) {
-        guard let registration, manager.owns(registration) else { return }
         let order = pinned.map(\.id)
         guard let anchorIndex = order.firstIndex(of: anchor) else { return }
         let current = order.firstIndex(of: id)
@@ -224,12 +209,11 @@ struct ExtensionArtwork: View {
     let manager: ExtensionManager
     let record: InstalledExtension
     var size: CGFloat = 16
-    var window: ExtensionWindowAdapter?
 
     var body: some View {
         _ = manager.actionRevision
         return Group {
-            if let icon = window.flatMap({ manager.action(for: record.id, inWindow: $0) })?
+            if let icon = manager.action(for: record.id)?
                 .icon(for: CGSize(width: size, height: size)) {
                 Image(nsImage: icon)
                     .resizable()
@@ -246,7 +230,6 @@ struct ExtensionArtwork: View {
 struct ExtensionActionButton: View {
     let manager: ExtensionManager
     let browser: BrowserModel
-    let window: ExtensionWindowAdapter?
     let record: InstalledExtension
     let isLifted: Bool
 
@@ -254,7 +237,7 @@ struct ExtensionActionButton: View {
 
     private var action: WKWebExtension.Action? {
         _ = manager.actionRevision
-        return window.flatMap { manager.action(for: record.id, inWindow: $0) }
+        return manager.action(for: record.id)
     }
 
     private var badge: String {
@@ -263,7 +246,7 @@ struct ExtensionActionButton: View {
 
     var body: some View {
         let action = action
-        ExtensionArtwork(manager: manager, record: record, window: window)
+        ExtensionArtwork(manager: manager, record: record)
             .frame(width: 30, height: 28)
             .overlay(alignment: .bottomTrailing) {
                 if !badge.isEmpty {
@@ -278,25 +261,20 @@ struct ExtensionActionButton: View {
             }
             .hoverBackground(isActive: hovering)
             .opacity(isLifted ? 0 : (action?.isEnabled == false ? 0.4 : 1))
-            .onTapGesture { if let window { manager.performAction(for: record.id, inWindow: window) } }
+            .onTapGesture { manager.performAction(for: record.id) }
             .onHover { hovering = $0 }
             .animation(Theme.Motion.quick, value: hovering)
             .help(action?.label ?? record.displayName)
             .accessibilityElement()
             .accessibilityAddTraits(.isButton)
             .accessibilityLabel(action?.label ?? record.displayName)
-            .accessibilityAction {
-                if let window {
-                    manager.performAction(for: record.id, inWindow: window)
-                }
-            }
-            .background { PopupAnchor(manager: manager, extensionID: record.id, window: window) }
+            .accessibilityAction { manager.performAction(for: record.id) }
+            .background { PopupAnchor(manager: manager, extensionID: record.id) }
     }
 }
 
 struct ExtensionOverflowButton: View {
     let manager: ExtensionManager
-    let window: ExtensionWindowAdapter?
     let records: [InstalledExtension]
     let collapsedCount: Int
     let isArmed: Bool
@@ -328,11 +306,10 @@ struct ExtensionOverflowButton: View {
         .onHover { hovering = $0 }
         .animation(Theme.Motion.quick, value: hovering)
         .help(Text(helpText))
-        .background { OverflowAnchor(manager: manager, window: window) }
+        .background { OverflowAnchor(manager: manager) }
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             ExtensionOverflowList(
                 manager: manager,
-                window: window,
                 records: records,
                 collapsedCount: collapsedCount,
                 isPresented: $isPresented
@@ -359,9 +336,7 @@ struct ExtensionOverflowButton: View {
 
     private var hasBadge: Bool {
         _ = manager.actionRevision
-        return records.contains { record in
-            !(window.flatMap { manager.action(for: record.id, inWindow: $0) }?.badgeText ?? "").isEmpty
-        }
+        return records.contains { !(manager.action(for: $0.id)?.badgeText ?? "").isEmpty }
     }
 
     private var helpText: LocalizedStringResource {
@@ -375,7 +350,6 @@ private struct ExtensionOverflowList: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     let manager: ExtensionManager
-    let window: ExtensionWindowAdapter?
     let records: [InstalledExtension]
     let collapsedCount: Int
     @Binding var isPresented: Bool
@@ -387,7 +361,6 @@ private struct ExtensionOverflowList: View {
             ForEach(records.enumerated(), id: \.element.id) { position, record in
                 ExtensionOverflowRow(
                     manager: manager,
-                    window: window,
                     record: record,
                     isCollapsedByWidth: position < collapsedCount,
                     isPresented: $isPresented
@@ -410,7 +383,6 @@ private struct ExtensionOverflowList: View {
 
 private struct ExtensionOverflowRow: View {
     let manager: ExtensionManager
-    let window: ExtensionWindowAdapter?
     let record: InstalledExtension
     let isCollapsedByWidth: Bool
     @Binding var isPresented: Bool
@@ -422,7 +394,7 @@ private struct ExtensionOverflowRow: View {
     var body: some View {
         HStack(spacing: 9) {
             HStack(spacing: 9) {
-                ExtensionArtwork(manager: manager, record: record, window: window)
+                ExtensionArtwork(manager: manager, record: record)
                 Text(verbatim: record.displayName)
                     .font(.system(size: 13))
                     .lineLimit(1)
@@ -443,7 +415,7 @@ private struct ExtensionOverflowRow: View {
         .overlay {
             ClusterMenuCatcher(
                 extensionID: { _ in record.id },
-                menuForExtension: { id in window.flatMap { manager.contextMenu(for: id, inWindow: $0) } }
+                menuForExtension: { manager.contextMenu(for: $0) }
             )
         }
         .animation(Theme.Motion.quick, value: hovering)
@@ -464,10 +436,8 @@ private struct ExtensionOverflowRow: View {
                 .foregroundStyle(.tertiary)
         } else {
             Button {
-                if let window, manager.owns(window) {
-                    manager.setPinned(true, id: record.id)
-                    isPresented = false
-                }
+                manager.setPinned(true, id: record.id)
+                isPresented = false
             } label: {
                 Text("Pin")
                     .font(.system(size: 11, weight: .medium))
@@ -487,66 +457,44 @@ private struct ExtensionOverflowRow: View {
 
     private func run() {
         isPresented = false
-        guard let window else { return }
         Task {
             try? await Task.sleep(for: .milliseconds(120))
-            manager.performAction(for: record.id, inWindow: window)
+            manager.performAction(for: record.id)
         }
     }
 }
 
 private struct OverflowAnchor: NSViewRepresentable {
     let manager: ExtensionManager
-    let window: ExtensionWindowAdapter?
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        if let window {
-            manager.registerOverflowAnchor(view, inWindow: window)
-        }
+        manager.registerOverflowAnchor(view)
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        if let window {
-            manager.registerOverflowAnchor(nsView, inWindow: window)
-        }
+        manager.registerOverflowAnchor(nsView)
     }
 }
 
 struct PopupAnchor: NSViewRepresentable {
     let manager: ExtensionManager
     let extensionID: String
-    let window: ExtensionWindowAdapter?
 
     func makeNSView(context: Context) -> ExtensionAnchorView {
         let view = ExtensionAnchorView()
         view.manager = manager
         view.extensionID = extensionID
-        view.windowAdapter = window
-        if let window {
-            manager.registerAnchor(view, for: extensionID, inWindow: window)
-        }
+        manager.registerAnchor(view, for: extensionID)
         return view
     }
 
-    func updateNSView(_ nsView: ExtensionAnchorView, context: Context) {
-        if let oldManager = nsView.manager, let oldWindow = nsView.windowAdapter,
-           oldManager !== manager || oldWindow !== window {
-            oldManager.registerAnchor(nil, for: nsView.extensionID, inWindow: oldWindow)
-        }
-        nsView.manager = manager
-        nsView.extensionID = extensionID
-        nsView.windowAdapter = window
-        if let window {
-            manager.registerAnchor(nsView, for: extensionID, inWindow: window)
-        }
-    }
+    func updateNSView(_ nsView: ExtensionAnchorView, context: Context) {}
 }
 
 final class ExtensionAnchorView: NSView {
     weak var manager: ExtensionManager?
-    weak var windowAdapter: ExtensionWindowAdapter?
     var extensionID = ""
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -554,11 +502,7 @@ final class ExtensionAnchorView: NSView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        SecondaryClick.present(
-            manager.flatMap { manager in windowAdapter.flatMap { manager.contextMenu(for: extensionID, inWindow: $0) } },
-            with: event,
-            in: self
-        )
+        SecondaryClick.present(manager?.contextMenu(for: extensionID), with: event, in: self)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -566,11 +510,11 @@ final class ExtensionAnchorView: NSView {
             super.mouseDown(with: event)
             return
         }
-        rightMouseDown(with: event)
+        SecondaryClick.present(manager?.contextMenu(for: extensionID), with: event, in: self)
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
-        manager.flatMap { manager in windowAdapter.flatMap { manager.contextMenu(for: extensionID, inWindow: $0) } }
+        manager?.contextMenu(for: extensionID)
     }
 }
 
