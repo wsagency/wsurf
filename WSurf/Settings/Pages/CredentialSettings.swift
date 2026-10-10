@@ -547,11 +547,10 @@ private struct CredentialEditorSheet: View {
                 }
                 Button("Cancel", role: .cancel) { pendingPasskeyRemoval = nil }
             } message: { passkey in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Remove passkey #\(passkey.shortID) for \(passkey.rpID) from this credential?")
-                    Text("Only this local copy is removed.")
-                    Text("The website registration and any other exported copies remain. Save to apply.")
-                }
+                Text("""
+                    Only this local copy is removed.
+                    The website registration and any other exported copies remain. Save to apply.
+                    """)
             }
         }
     }

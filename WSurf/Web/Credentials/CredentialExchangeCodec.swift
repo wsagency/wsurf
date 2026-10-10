@@ -363,6 +363,7 @@ nonisolated enum CredentialExchangeCodec {
             userName: value.userName,
             userDisplayName: value.userDisplayName,
             algorithm: -7,
+            privateKeyPKCS8: try PasskeyKeyEncoding.exportPKCS8(key),
             backupEligible: true,
             backupState: false,
             exchangeFIDO2Metadata: try importFIDO2Metadata(value, budget: &state.budget),
