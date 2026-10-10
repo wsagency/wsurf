@@ -39,8 +39,9 @@ checked by the independent verifier; the exchange review says when replacing a
 stored login removes its password; Chromium back/forward-cache restores keep
 isolated-world contexts and script messages, finish navigation state and
 publish correct history controls while credential contexts are still
-invalidated. Merge and deploy stay blocked on the unresolved unlock-passkey
-removal policy, and native handoff, signing, PRF and transfer gates remain open.
+invalidated. Merge and deploy stay blocked on the unresolved duplicate-passkey
+registration policy (D1: a second registration appends instead of overwriting),
+and native handoff, signing, PRF and transfer gates remain open.
 
 ### 2026-10-09 — Actual engine beside address lock
 

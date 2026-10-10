@@ -76,7 +76,7 @@ Source changes made after the Pro runs above; hosted PR CI is their test venue a
 
 **Open contract risks and gates (not accepted, not hidden):**
 
-- **D1 blocks merge and deploy.** Removing an unlock passkey does not rotate the vault key (see Source-status limits). The destructive policy is undecided; no key mutation was made and no conformance is claimed.
+- **D1 blocks merge and deploy.** Registering again for the same relying party and user handle appends a second passkey; WebAuthn requires the existing discoverable credential to be overwritten. Overwriting destroys a stored private key, so the policy needs an owner decision. This PR changes no stored key and claims no conformance. Separately, removing an unlock passkey does not rotate the vault key (see Source-status limits).
 - **Route reconciliation.** `WebAuthnAdapter.reconcileRoute` (`WebAuthnAdapter.swift` 141-165) stops on a failed `replaceScript` and does not retry. Legacy to manager: the document may keep routing passkey calls to the previous provider; no secret is exposed, but the choice is not applied. Manager to legacy: fails closed. This is a contract risk for a native check, not an accepted ceiling.
 - **Fill authority (M1) and superseded navigations (M4).** No test drives `AutofillSuggestions.fill` authority, and a superseded navigation entry could stay recorded. Native checks, not coverage.
 - **Native:** the real Apple credential-handoff delivery and its Info.plist registration, signed entitlement/provisioning eligibility, PRF/Touch ID, the six Apple Passwords transfers and the Chromium back/forward restore remain unverified.
