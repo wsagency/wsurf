@@ -182,6 +182,7 @@ struct MCPTransportTests {
         #expect(offline == true)
         let browser = BrowserModel(database: .temporary())
         registerNativeWindow(for: browser)
+        defer { browser.context.extensions.unregister(browser: browser) }
         let server = BrowserMCPServer(endpoint: endpoint, target: { browser }, available: { _ in true })
         defer { server.stop() }
         server.setEnabled(true)
@@ -273,6 +274,10 @@ struct MCPTransportTests {
         let privateBrowser = BrowserModel(context: .shared(for: .privateBrowsing()), windowID: UUID())
         registerNativeWindow(for: browser)
         registerNativeWindow(for: privateBrowser)
+        defer {
+            browser.context.extensions.unregister(browser: browser)
+            privateBrowser.context.extensions.unregister(browser: privateBrowser)
+        }
         var target = browser
         let server = BrowserMCPServer(
             endpoint: directory + "/browser.sock",
@@ -387,6 +392,7 @@ struct MCPTransportTests {
         defer { try? FileManager.default.removeItem(atPath: directory) }
         let browser = BrowserModel(database: .temporary())
         registerNativeWindow(for: browser)
+        defer { browser.context.extensions.unregister(browser: browser) }
         let server = BrowserMCPServer(endpoint: endpoint, target: { browser }, available: { _ in true })
         defer { server.stop() }
         server.setEnabled(true)
@@ -420,6 +426,7 @@ struct MCPTransportTests {
         defer { try? FileManager.default.removeItem(atPath: directory) }
         let browser = BrowserModel(database: .temporary())
         registerNativeWindow(for: browser)
+        defer { browser.context.extensions.unregister(browser: browser) }
         let server = BrowserMCPServer(endpoint: endpoint, target: { browser }, available: { _ in true })
         defer { server.stop() }
         server.setEnabled(true)

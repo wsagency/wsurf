@@ -7,6 +7,10 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-10 — Fresh window registration over a retired key
+
+Registering a browser over a retired extension-window key now retires the old entry and creates a fresh window adapter instead of returning the dead one. Consent captured for the retired window stays invalid. The MCP transport tests now unregister the extension windows they register.
+
 ### 2026-10-09 — Actual engine beside address lock
 
 The address bar shows WK or Cr beside the lock for the active page's loaded engine.
