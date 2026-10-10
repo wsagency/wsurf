@@ -33,6 +33,15 @@ unlock passkey does not rotate the vault key, so a removed passkey that still
 has an older copy of the vault file can decrypt later versions; this is a
 documented limit, not forward revocation.
 
+Review corrections on the draft PR, source only and unverified natively:
+WebAuthn client data is serialized in the specified order and its origin is
+checked by the independent verifier; the exchange review says when replacing a
+stored login removes its password; Chromium back/forward-cache restores keep
+isolated-world contexts and script messages, finish navigation state and
+publish correct history controls while credential contexts are still
+invalidated. Merge and deploy stay blocked on the unresolved unlock-passkey
+removal policy, and native handoff, signing, PRF and transfer gates remain open.
+
 ### 2026-10-09 — Actual engine beside address lock
 
 The address bar shows WK or Cr beside the lock for the active page's loaded engine.

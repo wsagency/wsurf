@@ -113,6 +113,19 @@ signature can only carry a restricted entitlement when an embedded profile
 authorizes it. Gatekeeper refuses to launch an app that declares an entitlement
 without the profile.
 
+Two things are separate here. What a feature needs: the new store, own relying
+party, and exchange do not need the managed browser capability, so nothing
+above asks Apple for more than the file already declares. What signing
+requires: while `WSurf.entitlements` still declares
+`com.apple.developer.web-browser.public-key-credential`, a signed build needs a
+profile that authorizes it, and the release and tip checks enforce that. An
+entitlement that no feature needs is still a signing requirement until someone
+removes the declaration, which is a separate decision this document does not
+make. Whether the host app, and not only the extension, needs
+`autofill-credential-provider` for the system's credential import and export
+calls is not established from documentation; it stays declared on both, and a
+signed native run decides.
+
 Once, in the Apple Developer portal:
 
 1. Open Certificates, Identifiers & Profiles › Identifiers.

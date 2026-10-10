@@ -64,3 +64,19 @@ Native originating page.context owns profile/settings/provider; no active-window
 ## Known merged contracts
 
 PR #8 (30069a194562057d65a2c56daaf72b4578eb5a2a) introduced BrowserApplication, BrowserProfileContext and per-context autofill. PR #10 (350de9362d09d7115517dfec865db08ae6121ae6) preserves password/payment/autofill vaults while fixing classic provider Keychain scope and per-home Stage isolation. PR #11 modifies BrowserTab/engine presentation. Revalidate remote main before any future PR integration; these references are not asserted latest remote HEAD.
+
+## Draft PR review corrections (2026-10-10)
+
+Source changes made after the Pro runs above; hosted PR CI is their test venue and no result is recorded here until it exists.
+
+- **WebAuthn client data.** `WebAuthnEncoding.clientDataJSON` now serializes the CollectedClientData in the specified order (`type`, `challenge`, `origin`, `crossOrigin`, optional `topOrigin`) and no longer throws. The independent verifier now compares the origin inside the client data, not only the claimed one, and runs a limited-verification check. RED (`beee128`): real encoder output was not accepted as limited-verifiable. GREEN: `fe92dba`.
+- **Exchange review.** Replacing a stored login with an item the other app exported without a password removes the stored password (authoritative-import semantics are unchanged). The review row now says so before the choice; Replace stays explicit, Add Separately and Skip keep the stored login (`627ef1e`). Its test needs the new `removesStoredPasswordOnReplace` field, so its RED is a compile failure, not a behavioural failure.
+- **Chromium back/forward cache.** `Page.frameNavigated` of type `BackForwardCacheRestore` keeps and rebinds isolated-world contexts, finishes navigation and publishes history state, while credential and WebAuthn contexts are still invalidated (`2176813`, hand-ported from `ad8638b`). The new `ChromiumPageTests` case drives embedded Chromium; it has not been run, and restore does not call `didChangeTitle()`.
+- **Docs.** NOTICE records the Public Suffix List provenance (MPL-2.0, snapshot 2026-10-07, upstream commit `3929462652695bad04f0a27afb600974014a3c8b`); the `.dat` is byte-identical to the one first imported (sha256 `10e60a1264d64b3d8f146eaee6173141c51ada774390b62870b669543b18ad04`). RELEASING separates what a feature needs from what signing requires for the declared browser entitlement; the entitlement and preflights are unchanged. The spec and parent plan state that the web-documented `ASCredentialExchangeActivityType` spelling differs from the SDK/runtime `ASCredentialExchangeActivity` the plist registers, and that real system delivery under it is unverified.
+
+**Open contract risks and gates (not accepted, not hidden):**
+
+- **D1 blocks merge and deploy.** Removing an unlock passkey does not rotate the vault key (see Source-status limits). The destructive policy is undecided; no key mutation was made and no conformance is claimed.
+- **Route reconciliation.** `WebAuthnAdapter.reconcileRoute` (`WebAuthnAdapter.swift` 141-165) stops on a failed `replaceScript` and does not retry. Legacy to manager: the document may keep routing passkey calls to the previous provider; no secret is exposed, but the choice is not applied. Manager to legacy: fails closed. This is a contract risk for a native check, not an accepted ceiling.
+- **Fill authority (M1) and superseded navigations (M4).** No test drives `AutofillSuggestions.fill` authority, and a superseded navigation entry could stay recorded. Native checks, not coverage.
+- **Native:** the real Apple credential-handoff delivery and its Info.plist registration, signed entitlement/provisioning eligibility, PRF/Touch ID, the six Apple Passwords transfers and the Chromium back/forward restore remain unverified.
