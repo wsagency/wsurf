@@ -251,6 +251,35 @@ extension CredentialExchangeCoordinatorTests {
         }
     }
 
+    /// Replacing takes the exporter's login as sent, so a login with no password removes the stored one. The review
+    /// must say so (and only then) before the user chooses, and the commit must do what it said.
+    @Test(arguments: [false, true])
+    func replacingALoginReportsWhetherItRemovesTheStoredPassword(incomingHasPassword: Bool) async throws {
+        try await withFixture { f in
+            try await f.seed(neighbours(1))
+            try await f.stage(handBuilt([item(id: 1, scoped: true, [password("old")])]))
+            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            let stored = try #require(try await f.stored().accounts.first { $0.password == "old" })
+
+            let usernameOnly = ASImportableCredential.basicAuthentication(.init(
+                userName: .init(id: nil, fieldType: .string, value: "ada", label: nil),
+                password: nil
+            ))
+            try await f.stage(handBuilt([item(id: 1, scoped: true, [incomingHasPassword ? password("new") : usernameOnly])]))
+            let conflict = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)?.conflicts.first)
+            #expect(conflict.kind == .password)
+            #expect(conflict.removesStoredPasswordOnReplace == !incomingHasPassword)
+
+            try f.coordinator.choose(.replace, for: conflict.incoming, owner: f.owner)
+            let chosen = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)?.conflicts.first)
+            #expect(chosen.removesStoredPasswordOnReplace == !incomingHasPassword)
+            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+
+            let replaced = try #require(try await f.stored().accounts.first { $0.id == stored.id })
+            #expect(replaced.password == (incomingHasPassword ? "new" : nil))
+        }
+    }
+
     // MARK: - Queued and ended imports in settings
 
     @Test func aQueuedImportCanBeDismissedWhileLockedAndStaysSpentWithoutTouchingAReview() async throws {

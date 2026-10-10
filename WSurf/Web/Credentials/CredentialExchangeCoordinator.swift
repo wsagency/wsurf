@@ -100,6 +100,10 @@ nonisolated struct CredentialImportReview: Sendable {
         /// `false` for a passkey whose credential ID a stored passkey already holds: the vault keeps those unique,
         /// so a second copy can't be added, and the choice is neither offered nor accepted.
         let canAddSeparately: Bool
+        /// `true` for a login conflict whose stored account has a password but whose incoming login has none. Replacing
+        /// takes the exporter's username and password as sent, so it removes the stored password; the review says so
+        /// before the user chooses, and `.addSeparately` or `.skip` keep it.
+        let removesStoredPasswordOnReplace: Bool
         /// `nil` for an unresolved conflict, or an automatic import for any other record.
         var choice: CredentialImportChoice?
         var isConflict: Bool {
@@ -676,6 +680,9 @@ final class CredentialExchangeCoordinator {
                     relyingParty: relyingParty,
                     destination: destination(existing, choice),
                     canAddSeparately: !credentialIDIsStored(incoming, in: preview),
+                    removesStoredPasswordOnReplace: kind(incoming) == .password
+                        && candidate.password == nil
+                        && existing.flatMap { stored[accountID($0)]?.password } != nil,
                     choice: choice
                 )
             }

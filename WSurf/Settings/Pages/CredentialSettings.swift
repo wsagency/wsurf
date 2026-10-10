@@ -827,6 +827,12 @@ private struct CredentialImportReviewSheet: View {
                     Text(verbatim: "\(kindLabel(record.kind)) · \(record.title)")
                     if let existing = record.existingTitle {
                         Text("Already saved as “\(existing)”").font(Theme.Font.label).foregroundStyle(.secondary)
+                        if record.removesStoredPasswordOnReplace {
+                            Text("Replace Saved removes the password saved for “\(existing)”. The other app’s login has none.")
+                                .font(Theme.Font.label)
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
                 Spacer(minLength: 8)
