@@ -607,9 +607,9 @@ private struct CredentialEditorSheet: View {
     private func passkeyMetadata(_ passkey: PasskeySummary) -> String {
         let source: String
         switch passkey.source {
-        case .created:
+        case .some(.created):
             source = String(localized: "Created here")
-        case .imported:
+        case .some(.imported):
             source = String(localized: "Imported")
         case nil:
             source = String(localized: "Source unknown")
