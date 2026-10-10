@@ -747,6 +747,8 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
             host: source.securityOrigin.host,
             port: source.securityOrigin.port
         )
+        let sourceURL = source.request.url
+        let sourceIsMain = source.isMainFrame
         var exact: (nonce: String, navigation: WKNavigation?)?
         var similar: (nonce: String, navigation: WKNavigation?)?
         var exactCount = 0
@@ -755,8 +757,8 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
             if frame.webKit === source || frame.webKit?.isEqual(source) == true {
                 exactCount += 1
                 exact = (nonce, navigation)
-            } else if frame.isMainFrame == source.isMainFrame
-                && frame.request.url == source.request.url
+            } else if frame.isMainFrame == sourceIsMain
+                && frame.request.url == sourceURL
                 && frame.securityOrigin == origin {
                 similarCount += 1
                 similar = (nonce, navigation)
