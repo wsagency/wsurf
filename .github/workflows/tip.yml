@@ -288,9 +288,13 @@ jobs:
           codesign -d --entitlements - --xml "build/export/$APP.app" 2>/dev/null \
             | plutil -extract keychain-access-groups raw -o - - > /dev/null 2>&1 \
             || { echo "::error::keychain-access-groups is missing: API keys cannot be saved."; exit 1; }
-          codesign -d --entitlements - --xml "build/export/$APP.app" 2>/dev/null \
-            | plutil -extract 'com\.apple\.developer\.web-browser\.public-key-credential' raw -o - - > /dev/null 2>&1 \
-            || { echo "::error::web-browser.public-key-credential is missing: passkeys cannot be used."; exit 1; }
+          for BUNDLE in "build/export/$APP.app" "build/export/$APP.app/Contents/PlugIns/WSurfCredentialExchange.appex"; do
+            if codesign -d --entitlements - --xml "$BUNDLE" 2>/dev/null \
+              | plutil -extract 'com\.apple\.developer\.web-browser\.public-key-credential' raw -o - - > /dev/null 2>&1; then
+              echo "::error::The signed entitlements of $BUNDLE must not request the managed browser passkey capability."
+              exit 1
+            fi
+          done
           PUBLIC_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "build/export/$APP.app/Contents/Info.plist" 2>/dev/null || true)"
           if [ -z "$PUBLIC_KEY" ] || [ "$PUBLIC_KEY" != "$WSURF_SPARKLE_PUBLIC_KEY" ]; then
             echo "::error::WSURF_SPARKLE_PUBLIC_KEY does not match the WSurf app's embedded public key."
