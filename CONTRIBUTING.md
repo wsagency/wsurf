@@ -71,10 +71,13 @@ machine's selected developer directory. Keep the resolved package graph frozen
 for build/test runs; dependency updates must explicitly update the lockfile and
 regenerate `WSurf/Support/Acknowledgements.json`.
 
-The command removes the entitlements. The keychain access group, the passkey
-entitlement, and the associated-domains and credential-provider entitlements
-need provisioning profiles; the credential exchange extension needs its own.
-CI runs the same command. To build the app in Xcode,
+The test command disables code signing and clears all entitlements; it is not a
+Developer ID release configuration. A normally signed app profile must
+authorize its `keychain-access-groups` and associated-domains
+(`webcredentials:wsurf.app` for WSurf's own passkey RP). The credential-provider
+entitlement needs a profile for both the app and the exchange extension. WSurf
+deliberately does not request the managed browser public-key-credential
+entitlement. CI runs the same unsigned test command. To build the app in Xcode,
 set **Team** in **Signing & Capabilities** to your own Apple developer team
 first. See [Building](README.md#building).
 

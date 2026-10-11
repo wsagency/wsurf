@@ -95,33 +95,30 @@ signs with `--timestamp`.
 
 ## One-time: the provisioning profile
 
-`WSurf/WSurf.entitlements` declares restricted entitlements. Provider API
-keys, MCP authorization tokens, and OAuth credentials use the encrypted
-classic Keychain, with migration for legacy Data Protection Keychain entries.
-The `keychain-access-groups` entitlement remains required for the separate Data
+`WSurf/WSurf.entitlements` declares restricted entitlements. Provider API keys,
+MCP authorization tokens, and OAuth credentials use the encrypted classic
+Keychain, with migration for legacy Data Protection Keychain entries. The
+`keychain-access-groups` entitlement remains required for the separate Data
 Protection Keychain used by the password/autofill/payment vaults and for legacy
-migration. The app also lets a website use a passkey, so the file declares
-`com.apple.developer.web-browser.public-key-credential`, which stays declared and
-is not stripped. The opt-in Credential Manager, WSurf's own store and relying
-party, and its exchange extension use separate standard entitlements:
-`com.apple.developer.associated-domains` (`webcredentials:wsurf.app`, see the
-README's website section for the AASA team identity) and
-`com.apple.developer.authentication-services.autofill-credential-provider`, on
-both the app and the extension. None of that is managed browser approval; do not
-claim the new store, own relying party, or exchange needs it. A Developer ID
-signature can only carry a restricted entitlement when an embedded profile
-authorizes it. Gatekeeper refuses to launch an app that declares an entitlement
+migration. The app's `webcredentials:wsurf.app` associated domain supports
+WSurf's own RP and PRF unlock. The credential-provider entitlement is declared
+on both the app and exchange extension; each needs its own authorized profile.
+WSurf deliberately does not declare Apple's managed
+`com.apple.developer.web-browser.public-key-credential` entitlement. This does
+not change routing: native system passkeys for arbitrary relying parties via
+WebKit are not guaranteed in legacy/default or private tabs. Vault-managed
+WebAuthn and Apple Passwords exchange use separate paths. A Developer ID
+signature needs a profile authorizing the restricted entitlements it declares.
+Gatekeeper refuses to launch an app that declares a restricted entitlement
 without the profile.
 
-Two things are separate here. What a feature needs: the new store, own relying
-party, and exchange do not need the managed browser capability, so nothing
-above asks Apple for more than the file already declares. What signing
-requires: while `WSurf.entitlements` still declares
-`com.apple.developer.web-browser.public-key-credential`, a signed build needs a
-profile that authorizes it, and the release and tip checks enforce that. An
-entitlement that no feature needs is still a signing requirement until someone
-removes the declaration, which is a separate decision this document does not
-make. Whether the host app, and not only the extension, needs
+The managed browser capability is not needed for WSurf's vault-managed WebAuthn,
+`wsurf.app` PRF unlock, or Apple Passwords exchange. Signing still requires
+profiles authorizing the remaining restricted entitlements: the release and tip
+checks verify the credential-provider grant on the app and extension, the
+`webcredentials:wsurf.app` associated domain, and the keychain access group.
+Those checks also require the managed browser entitlement to be absent from
+both signed bundles. Whether the host app, and not only the extension, needs
 `autofill-credential-provider` for the system's credential import and export
 calls is not established from documentation; it stays declared on both, and a
 signed native run decides.
@@ -129,21 +126,17 @@ signed native run decides.
 Once, in the Apple Developer portal:
 
 1. Open Certificates, Identifiers & Profiles › Identifiers.
-2. Select the `io.wsagency.wsurf` App ID, or register it. Also enable Associated
-   Domains and the credential provider capability on it.
-3. Enable the Web Browser Public Key Credential Requests capability. Apple
-   assigns this capability to the account. You must also enable it on the
-   App ID. This managed browser capability requires organization Account Holder
-   review; see https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.web-browser.public-key-credential.
-4. Open Profiles. Add a profile.
-5. Select the Developer ID type, under Distribution.
-6. Select the `io.wsagency.wsurf` App ID and your Developer ID Application
+2. Select the `io.wsagency.wsurf` App ID, or register it. Enable Associated
+   Domains and the credential provider capability on it. Do not enable the
+   managed Web Browser Public Key Credential Requests capability; WSurf does
+   not request it.
+3. Open Profiles and add a Developer ID profile.
+4. Select the `io.wsagency.wsurf` App ID and your Developer ID Application
    certificate.
-7. Give the profile a name, for example `WSurf Developer ID`. Do not use the
+5. Give the profile a name, for example `WSurf Developer ID`. Do not use the
    characters `&`, `<` or `>`. The export step puts the name in a plist.
-8. Download the profile as `WSurf.provisionprofile`.
-9. Run this command. The output must contain `keychain-access-groups`,
-   `com.apple.developer.web-browser.public-key-credential`,
+6. Download the profile as `WSurf.provisionprofile`.
+7. Run this command and confirm the profile grants `keychain-access-groups`,
    `com.apple.developer.associated-domains`, and
    `com.apple.developer.authentication-services.autofill-credential-provider`:
 
@@ -151,12 +144,17 @@ Once, in the Apple Developer portal:
    security cms -D -i WSurf.provisionprofile | plutil -extract Entitlements xml1 -o - -
    ```
 
-10. Put the profile in the `DEVELOPER_ID_PROVISIONING_PROFILE` secret below.
+   Release and tip validation separately require the exported app and exchange
+   extension's signed entitlements to omit the managed browser passkey
+   entitlement.
+
+8. Put the profile in the `DEVELOPER_ID_PROVISIONING_PROFILE` secret below.
 
 The App ID prefix gives the access group. The portal has no Keychain Sharing
-capability. That switch is in Xcode, and it only writes the entitlements file.
-The passkey capability is the opposite. Only the portal can enable it. A build
-fails at the provisioning step until you do.
+capability; that switch is in Xcode and writes the entitlements file. WSurf
+deliberately omits the managed browser capability. The profile still must grant
+the remaining restricted entitlements; release and tip checks fail if a grant
+is missing or if either signed bundle includes the browser entitlement.
 
 Make the profile again when it expires, and when you add a restricted
 entitlement. The release then fails at the Install provisioning profile step,
@@ -263,9 +261,8 @@ password also works, but you can revoke the API key on its own,
 and the API key does not give access to all of your Apple ID.
 
 The team ID is not a secret. The workflow contains WSurf's own team ID
-`5X68L55TNU`. Do not configure the workflows until the organization Account
-Holder has approved the managed browser capability and all nine own secrets
-exist in the protected release environment.
+`5X68L55TNU`. Do not configure the workflows until all nine own secrets exist
+in the protected release environment.
 
 ## Each release
 

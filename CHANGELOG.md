@@ -7,6 +7,16 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-11 — Remove managed browser passkey entitlement
+
+WSurf no longer declares or requests Apple's managed
+`com.apple.developer.web-browser.public-key-credential` entitlement. Release and
+tip validation require it to be absent from the signed app and credential
+exchange extension. Provider defaults, routing, data, and migrations do not
+change. Native system passkeys for arbitrary relying parties via WebKit are not
+guaranteed in legacy/default or private tabs. WSurf's vault-managed WebAuthn,
+`wsurf.app` PRF unlock, and Apple Passwords exchange use separate paths.
+
 ### 2026-10-11 — Website passkey metadata and Settings
 
 Website passkeys retain optional creation time, local creation/import provenance, and last local signature time in the encrypted vault; imported passkeys have unknown creation time. A local signature timestamp is committed under the expected vault revision and authorization epoch; it records local signing, not website receipt or sign-in success. After that commit succeeds, a later lock, cancellation, navigation, expiry, changed vault state, or vault read failure can still prevent assertion delivery. Stale-revision, authorization, and I/O commit failures refuse delivery; assertions are not retried from stale state.

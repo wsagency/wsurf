@@ -171,9 +171,11 @@ Report vulnerabilities privately through [Security](SECURITY.md).
   until quit. Adding it does not guarantee lower RAM, CPU, or faster websites.
   Unloaded Chromium tabs restore their URL, not a WebKit history stack.
 - Extension integration and native WebKit Picture in Picture remain WebKit-only.
-- The managed browser public-key-credential entitlement requires Apple's
-  organization Account Holder review. A local build may need that entitlement
-  removed, which disables passkeys; see [Releasing](RELEASING.md).
+- WSurf intentionally does not request Apple's managed browser passkey
+  entitlement. Native WebKit passkeys for arbitrary relying parties are not
+  guaranteed in legacy or private tabs; security-key and Chromium behavior is
+  unverified. Vault-managed WebAuthn and Apple Passwords exchange use separate
+  paths. See [Releasing](RELEASING.md).
 
 WSurf keeps its own data in `~/Library/Application Support/WSurf` and uses
 separate WSurf defaults, stage, native-host, MCP, logger, and `WSURF_*`
@@ -202,13 +204,10 @@ the CEF framework, helper apps, and licenses and signs them with the build's
 identity. A production distribution requires proper signing; an ad-hoc debug
 build is not a verified release.
 
-For a local team without the passkey entitlement, remove this entry from
-`WSurf/WSurf.entitlements`. Passkeys will be unavailable in that build:
-
-```xml
-<key>com.apple.developer.web-browser.public-key-credential</key>
-<true/>
-```
+WSurf intentionally omits Apple's managed browser passkey entitlement. The app
+still needs a Developer ID profile authorizing its associated-domains,
+keychain-access-groups, and credential-provider entitlements; the exchange
+extension needs its own profile. See [Releasing](RELEASING.md).
 
 Use a normally signed build for Keychain access and manual Apple Passwords
 compatibility checks. The current source/test checks do not establish real
