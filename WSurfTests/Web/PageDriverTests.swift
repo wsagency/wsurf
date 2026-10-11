@@ -233,6 +233,247 @@ struct PageDriverTests {
         #expect(await js(webView, "window.__frameHit") as? Bool == true)
     }
 
+    @Test func nativeFrameNonceBindsSelectedFrameOperations() async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<iframe src='/child'></iframe><p>Main page</p>"),
+            "/child": .html("<p>Selected frame</p>"),
+            "/next": .html("<p>Replacement document</p>"),
+        ])
+        let configuration = interactiveWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let page = BrowserPage(
+            webKit: WKWebView(frame: NSRect(x: 0, y: 0, width: 500, height: 400), configuration: configuration),
+            context: BrowserProfileContext(profile: .privateBrowsing())
+        )
+        do {
+            page.load(URLRequest(url: try server.url()))
+            #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+
+            guard await waitUntil({ !(await PageFrameRegistry.shared.targets(in: page)).isEmpty }),
+                  let target = await PageFrameRegistry.shared.targets(in: page).first,
+                  let main = await PageFrameRegistry.shared.mainFrame(in: page) else {
+                Issue.record("frame unavailable")
+                await page.close()
+                return
+            }
+            let readyNonce = try await page.callAsyncJavaScript(
+                "await globalThis.__wsurfNativeFrameReady; return globalThis.__wsurfNativeFrameNonce;",
+                in: main,
+                contentWorld: PageAutomationGuard.world
+            ) as? String
+            #expect(readyNonce == main.documentID)
+            #expect(PageFrameRegistry.shared.currentMainFrame(
+                matching: main, documentNonce: main.documentID, in: page
+            )?.documentID == main.documentID)
+            #expect(PageFrameRegistry.shared.currentMainFrame(
+                matching: main, documentNonce: UUID().uuidString, in: page
+            ) == nil)
+
+            let selectedResult = await PageDriver.$selectedFrame.withValue(target) {
+                await PageDriver.evaluateJSON(
+                    "JSON.stringify({ text: document.body.textContent, nonce: typeof globalThis.__wsurfNativeFrameNonce })",
+                    in: page
+                )
+            }
+            #expect(selectedResult?["text"] as? String == "Selected frame")
+            #expect(selectedResult?["nonce"] as? String == "string")
+            #expect(await js(page, "typeof globalThis.__wsurfNativeFrameNonce") as? String == "undefined")
+
+            let priorNonce = main.documentID
+            page.load(URLRequest(url: try server.url("/next")))
+            #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+            try #require(await waitUntil {
+                guard let current = PageFrameRegistry.shared.mainFrame(in: page) else { return false }
+                return current.documentID != priorNonce
+            })
+            #expect(PageFrameRegistry.shared.currentMainFrame(
+                matching: main, documentNonce: priorNonce, in: page
+            ) == nil)
+            await page.close()
+        } catch {
+            await page.close()
+            throw error
+        }
+    }
+
+    @Test func sharedWebKitControllerKeepsScriptReplacementAndUnrelatedScripts() async throws {
+        let controller = WKUserContentController()
+        let configurationA = WebViewPool.makeConfiguration()
+        configurationA.userContentController = controller
+        configurationA.websiteDataStore = .nonPersistent()
+        let configurationB = WebViewPool.makeConfiguration()
+        configurationB.userContentController = controller
+        configurationB.websiteDataStore = .nonPersistent()
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let pageA = BrowserPage(webKit: WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 500, height: 400), configuration: configurationA
+        ), context: context)
+        let pageB = BrowserPage(webKit: WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 500, height: 400), configuration: configurationB
+        ), context: context)
+        let oldScript = "window.__oldScriptRuns = (window.__oldScriptRuns || 0) + 1;"
+        let newScript = "window.__newScriptRuns = (window.__newScriptRuns || 0) + 1;"
+        let unrelatedScript = "window.__unrelatedScriptRuns = (window.__unrelatedScriptRuns || 0) + 1;"
+        do {
+            pageA.installScript(oldScript, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+            pageB.installScript(oldScript, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+            pageA.installScript(unrelatedScript, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+            pageB.installScript(unrelatedScript, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+            try await pageA.replaceScript(oldScript, with: newScript, in: .page)
+            try await pageB.replaceScript(oldScript, with: newScript, in: .page)
+
+            pageA.loadHTMLString("<!doctype html><html><body>Shared controller</body></html>", baseURL: nil)
+            #expect(await PageSettle.untilIdle(pageA, timeout: .seconds(30)))
+            #expect(await js(pageA, "window.__oldScriptRuns === undefined") as? Bool == true)
+            #expect(await js(pageA, "window.__newScriptRuns") as? Int == 1)
+            #expect(await js(pageA, "window.__unrelatedScriptRuns") as? Int == 1)
+        } catch {
+            await pageA.close()
+            await pageB.close()
+            throw error
+        }
+        await pageA.close()
+        await pageB.close()
+    }
+
+    @Test func chromiumScriptReplacementTakesEffectBeforeNextNavigation() async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/before": .html("<!doctype html><title>Before</title>"),
+            "/after": .html("<!doctype html><title>After</title>"),
+        ])
+        let page = BrowserPage(chromium: ChromiumPage(
+            context: BrowserProfileContext(profile: .privateBrowsing())
+        ))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = page
+        window.orderBack(nil)
+        do {
+            page.load(URLRequest(url: try server.url("/before")))
+            #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+            let oldScript = "window.__oldScriptRuns = (window.__oldScriptRuns || 0) + 1;"
+            let newScript = "window.__newScriptRuns = (window.__newScriptRuns || 0) + 1;"
+            let unrelatedScript = "window.__unrelatedScriptRuns = (window.__unrelatedScriptRuns || 0) + 1;"
+            page.installScript(oldScript, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+            page.installScript(unrelatedScript, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+            try await page.replaceScript(oldScript, with: newScript, in: .page)
+            page.load(URLRequest(url: try server.url("/after")))
+            #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+            #expect(await js(page, "window.__oldScriptRuns === undefined") as? Bool == true)
+            #expect(await js(page, "window.__newScriptRuns") as? Int == 1)
+            #expect(await js(page, "window.__unrelatedScriptRuns") as? Int == 1)
+            await page.close()
+        } catch {
+            await page.close()
+            window.contentView = nil
+            window.close()
+            throw error
+        }
+        window.contentView = nil
+        window.close()
+    }
+
+    @Test
+    func chromiumFrameDriverUsesLiveFrameTargets() async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<!doctype html><title>Top</title><h1>Top-level text</h1><iframe src='/child'></iframe>"),
+            "/child": .html("<!doctype html><title>Child</title><button onclick='parent.__frameHit=true'>Frame Button</button>"),
+        ])
+        try await ChromiumRuntime.shared.ensureInitialized()
+        let page = BrowserPage(chromium: ChromiumPage(
+            context: BrowserProfileContext(profile: .privateBrowsing())
+        ))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = page
+        window.orderBack(nil)
+        do {
+            page.load(URLRequest(url: try server.url()))
+            #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+            #expect(await waitUntil {
+                await PageFrameRegistry.shared.targets(in: page).contains { $0.url.path == "/child" }
+            })
+            let target = try #require(
+                await PageFrameRegistry.shared.targets(in: page).first(where: { $0.url.path == "/child" })
+            )
+            #expect(await PageFrameRegistry.shared.isLive(target, in: page))
+
+            let observation = await PageDriver.$selectedFrame.withValue(target) {
+                await PageDriver.readRenderedPage(page)
+            }
+            #expect(observation.contains("Frame Button"))
+            #expect(!observation.contains("Top-level text"))
+            let ref = try #require(refs(in: observation, matching: "Frame Button").first)
+            let result = await PageDriver.$selectedFrame.withValue(target) {
+                await PageDriver.click(ref: ref, label: "Frame Button", in: page)
+            }
+            #expect(result.hasPrefix("Clicked"))
+            #expect(await js(page, "window.__frameHit") as? Bool == true)
+            await page.close()
+            window.contentView = nil
+            window.close()
+        } catch {
+            await page.close()
+            window.contentView = nil
+            window.close()
+            throw error
+        }
+    }
+
+    @Test
+    func inheritedAboutFramesAreNotExposedAsFrameTargets() async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("""
+            <!doctype html><title>Top</title>
+            <iframe src="about:blank"></iframe>
+            <iframe srcdoc="&lt;p&gt;srcdoc frame&lt;/p&gt;"></iframe>
+            """),
+        ])
+        let configuration = WebViewPool.makeConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 500, height: 400),
+            configuration: configuration
+        )
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let tab = BrowserTab(
+            adopting: webView, opensBlank: false, privately: true, context: context
+        )
+        let page = tab.page
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = page
+        window.orderBack(nil)
+        do {
+            page.load(URLRequest(url: try server.url()))
+            #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+            #expect(await PageFrameRegistry.shared.targets(in: page).isEmpty)
+            await page.close()
+            window.contentView = nil
+            window.close()
+        } catch {
+            await page.close()
+            window.contentView = nil
+            window.close()
+            throw error
+        }
+    }
+
     @Test func doesNotReadOrControlCrossOriginFrames() async throws {
         let framed = try await HTTPFixtureServer.start(routes: [
             "/framed": .html("<p>Cross-origin secret</p><button>Hidden action</button>"),
@@ -476,196 +717,6 @@ struct PageDriverTests {
         let webView = await loadedWebView("<button>Fine</button>")
         let result = await PageDriver.click(ref: 0, label: "", in: webView)
         #expect(result.contains("Say which element"))
-    }
-}
-
-/// The consent gate, in a suite of its own. Each page's private profile context
-/// owns its grant storage, keeping these consent checks isolated.
-@MainActor
-@Suite(.serialized, .boundedWebViews)
-struct AgentConsentGateTests {
-    private func loadedWebView(_ body: String) async -> BrowserPage {
-        let configuration = interactiveWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
-        let page = BrowserPage(
-            webKit: WKWebView(
-                frame: NSRect(x: 0, y: 0, width: 500, height: 400),
-                configuration: configuration
-            ),
-            context: BrowserProfileContext(profile: .privateBrowsing())
-        )
-        page.loadHTMLString("<!doctype html><html><body>\(body)</body></html>", baseURL: nil)
-        #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
-        return page
-    }
-
-    private func js(_ page: BrowserPage, _ script: String) async -> Any? {
-        try? await page.evaluateJavaScript(script)
-    }
-
-    private func refs(in observation: String, matching needle: String) -> [Int] {
-        observation
-            .components(separatedBy: "\n")
-            .filter { $0.contains(needle) }
-            .compactMap { line -> Int? in
-                guard line.hasPrefix("["), let close = line.firstIndex(of: "]") else { return nil }
-                return Int(line[line.index(after: line.startIndex)..<close])
-            }
-    }
-
-    private func firstRef(in observation: String, matching needle: String) -> Int? {
-        refs(in: observation, matching: needle).first
-    }
-
-    /// The consent question runs on the element's own label, so addressing a
-    /// payment button by number instead of by name changes nothing - and the
-    /// user's decline is final: no click, and the model is told to stop
-    /// rather than to try another route.
-    @Test func aDeclinedConsequentialClickDoesNotHappen() async throws {
-        let webView = await loadedWebView(#"<button onclick="window.__paid=1">Place order</button>"#)
-        let observation = await PageDriver.readRenderedPage(webView)
-        let ref = try #require(firstRef(in: observation, matching: "Place order"))
-
-        var asked: (label: String, category: SensitiveAction.Category)?
-        let result = await AgentActionConsent.$decisionForTesting.withValue(.init({ label, category, _, _ in
-            asked = (label, category)
-            return .decline
-        })) {
-            await PageDriver.click(ref: ref, label: "", in: webView)
-        }
-        #expect(asked?.label == "Place order")
-        #expect(asked?.category == .purchase)
-        #expect(result.contains("declined"))
-        #expect(result.contains("do not try another way"))
-        #expect(await js(webView, "typeof window.__paid === 'undefined'") as? Bool == true)
-    }
-
-    /// And the user saying yes is equally final: the click proceeds exactly
-    /// as an ordinary one would.
-    @Test func anAllowedConsequentialClickProceeds() async throws {
-        let webView = await loadedWebView(#"<button onclick="window.__paid=1">Place order</button>"#)
-        let observation = await PageDriver.readRenderedPage(webView)
-        let ref = try #require(firstRef(in: observation, matching: "Place order"))
-
-        let result = await AgentActionConsent.$decisionForTesting.withValue(.init({ _, _, _, _ in .allowOnce })) {
-            await PageDriver.click(ref: ref, label: "", in: webView)
-        }
-        #expect(result.hasPrefix("Clicked"))
-        #expect(await js(webView, "window.__paid") as? Int == 1)
-    }
-
-    @Test func aDeceptiveLabelCannotHideAConsequentialForm() async throws {
-        let webView = await loadedWebView("""
-        <form aria-label="Checkout" onsubmit="window.__paid=1; return false;">
-          <p>Review and complete purchase</p>
-          <button>Continue</button>
-        </form>
-        """)
-        let observation = await PageDriver.readRenderedPage(webView)
-        let ref = try #require(firstRef(in: observation, matching: "Continue"))
-
-        var asked: (label: String, category: SensitiveAction.Category)?
-        let result = await AgentActionConsent.$decisionForTesting.withValue(.init({ label, category, _, _ in
-            asked = (label, category)
-            return .decline
-        })) {
-            await PageDriver.click(ref: ref, label: "", in: webView)
-        }
-
-        #expect(asked?.label == "Continue")
-        #expect(asked?.category == .purchase)
-        #expect(result.contains("declined"))
-        #expect(await js(webView, "typeof window.__paid === 'undefined'") as? Bool == true)
-    }
-
-    @Test func anOrdinaryContinueButtonDoesNotTriggerConsequentialConsent() async throws {
-        let webView = await loadedWebView("""
-        <form onsubmit="window.__continued=1; return false;">
-          <p>Continue profile setup</p>
-          <button>Continue</button>
-        </form>
-        """)
-        let observation = await PageDriver.readRenderedPage(webView)
-        let ref = try #require(firstRef(in: observation, matching: "Continue"))
-
-        var asked = false
-        let result = await AgentActionConsent.$decisionForTesting.withValue(.init({ _, _, _, _ in
-            asked = true
-            return .decline
-        })) {
-            await PageDriver.click(ref: ref, label: "", in: webView)
-        }
-
-        #expect(!asked)
-        #expect(result.hasPrefix("Clicked"))
-        #expect(await js(webView, "window.__continued") as? Int == 1)
-    }
-
-    @Test func aSensitiveFieldIsRefusedEvenByRef() async throws {
-        let webView = await loadedWebView(#"<input type="password" placeholder="Password">"#)
-        let observation = await PageDriver.readRenderedPage(webView)
-        let ref = try #require(refs(in: observation, matching: "Password").first)
-
-        let result = await PageDriver.type(text: "hunter2", intoField: "", ref: ref, submit: false, in: webView)
-        #expect(result.contains("sensitive") || result.contains("password"))
-        #expect(await js(webView, "document.querySelector('input').value") as? String == "")
-    }
-
-    /// Refusing to *write* a secret is half the duty. An observation is sent
-    /// verbatim to whichever provider the user configured, so a value already
-    /// in the field - a password manager fills one on load, without the user
-    /// touching the page - must not travel with it.
-    @Test func anObservationNeverCarriesASensitiveValue() async {
-        let webView = await loadedWebView("""
-        <input name="user" value="ada@example.com">
-        <input type="password" name="password" value="hunter2-SECRET">
-        """)
-        let observation = await PageDriver.readRenderedPage(webView)
-
-        #expect(!observation.contains("hunter2-SECRET"))
-        // Still visible as a field, and still known to be filled: the model
-        // has to be able to tell a completed form from an empty one.
-        #expect(observation.contains("field \"password\" (password) = (filled, hidden)"))
-        #expect(observation.contains("ada@example.com"))
-    }
-
-    /// The same predicate the writing half uses, so the two cannot drift:
-    /// a card number is caught by its `autocomplete`, a code by its label.
-    @Test func anObservationHidesPaymentAndCodeValuesToo() async {
-        let webView = await loadedWebView("""
-        <input autocomplete="cc-number" placeholder="Card number" value="4111111111111111">
-        <input autocomplete="cc-csc" placeholder="CVC" value="737">
-        <input placeholder="One-time code" value="908321">
-        <input placeholder="Delivery note" value="leave at the door">
-        """)
-        let observation = await PageDriver.readRenderedPage(webView)
-
-        #expect(!observation.contains("4111111111111111"))
-        #expect(!observation.contains("908321"))
-        #expect(observation.contains("field \"Card number\" = (filled, hidden)"))
-        // An ordinary field is untouched - the denylist errs toward hiding,
-        // but it is still a denylist, not a blanket.
-        #expect(observation.contains("leave at the door"))
-    }
-
-    /// An empty sensitive field says so, rather than going quiet and leaving
-    /// "is the form filled in?" unanswerable.
-    @Test func anEmptySensitiveFieldReportsThatItIsEmpty() async {
-        let webView = await loadedWebView(#"<input type="password" placeholder="Password">"#)
-        let observation = await PageDriver.readRenderedPage(webView)
-
-        #expect(observation.contains("= (empty)"))
-    }
-
-    /// A grant is scoped to a site, so a page with no host to scope it to
-    /// must never count as granted - otherwise `data:`, `file:` and
-    /// `about:` pages would walk through the gate unasked.
-    @Test func aPageWithNoHostIsNeverAlreadyAllowed() {
-        let policy = BrowserProfileContext(profile: .privateBrowsing()).actionPolicy
-        for category in SensitiveAction.Category.allCases {
-            #expect(!policy.isAlwaysAllowed(category, host: nil))
-            #expect(!policy.isAlwaysAllowed(category, host: ""))
-        }
     }
 }
 

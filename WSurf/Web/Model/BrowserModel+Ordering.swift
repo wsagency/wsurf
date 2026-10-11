@@ -185,12 +185,6 @@ extension BrowserModel {
         }
     }
 
-    func refreshTopBarCoverage() {
-        for tab in tabs {
-            tab.isUnderTopBar = false
-        }
-    }
-
     func split(_ anchor: BrowserTab, with tab: BrowserTab, axis: SplitAxis) {
         guard anchor !== tab else { return }
         splits = splits.splitting(anchor.id, with: tab.id, axis: axis)
@@ -223,7 +217,6 @@ extension BrowserModel {
     func dissolveSplit(containing tab: BrowserTab) {
         guard splits.contains(tab.id) else { return }
         splits = splits.dissolving(containing: tab.id)
-        refreshTopBarCoverage()
         scheduleSave()
     }
 
@@ -255,7 +248,6 @@ extension BrowserModel {
             }
             gather(split.tabs)
         }
-        refreshTopBarCoverage()
         reconcileSpaces()
         scheduleSave()
     }

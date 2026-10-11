@@ -185,21 +185,6 @@ struct SplitViewModelTests {
 
     // MARK: - A page in the air
 
-    /// Loom places the complete split canvas below its glass beam. Carrying a
-    /// pane can change the split geometry, but it must never reintroduce a
-    /// toolbar inset inside the remaining web page.
-    @Test func carryingAPaneKeepsTheOtherOneBelowTheBeam() {
-        let model = makeModel()
-        let top = model.newTab(url: URL(string: "https://a.example/"))
-        let bottom = model.newTab(url: URL(string: "https://b.example/"))
-        model.split(top, with: bottom, axis: .stacked)
-        model.activate(bottom)
-        #expect(!bottom.isUnderTopBar)
-
-        model.paneInAir = top.id
-        #expect(!bottom.isUnderTopBar)
-    }
-
     /// Putting the page down again restores every one of those answers. A
     /// drag that ends without moving anything has to leave the split exactly
     /// as it found it - see the grip in `SplitSurface`, which stays in the
@@ -216,8 +201,6 @@ struct SplitViewModelTests {
 
         #expect(model.activeSplit?.leader == top.id)
         #expect(model.splitPanes?.map(\.id) == [top.id, bottom.id])
-        #expect(!top.isUnderTopBar)
-        #expect(!bottom.isUnderTopBar)
     }
 
     // MARK: - Memory pressure

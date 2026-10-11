@@ -17,6 +17,13 @@ final class AutofillSaveSession: NSObject {
         let isUpdate: Bool
         let fingerprint: String
         let documentID: String
+        /// Password offers carry the store they were made for; a switch of provider retires them.
+        var provider: PasswordProvider = .legacy
+        /// Manager offers: what saving does, to which exact account, against which unlocked vault state.
+        var plan: CredentialSavePlan?
+        var managerEpoch: UInt64?
+        var managerRevision: UInt64?
+        var loginURL: URL?
     }
     private(set) var offers: [Offer] = []
     private(set) var isBusy = false
@@ -28,7 +35,13 @@ final class AutofillSaveSession: NSObject {
     @ObservationIgnored private var dismissed: [AutofillSaveKind: Set<String>] = [:]
     @ObservationIgnored private let fingerprintKey = SymmetricKey(size: .bits256)
     @ObservationIgnored private var expiry: Task<Void, Never>?
-    struct UsernameStep { let origin: String; let value: String; let documentID: String; let attemptID: UUID; let date = Date.now; var completed = false }
+    /// `accountID` and what follows are only set when the user picked a credential manager account. They carry
+    /// identity, never a secret or code, and `deadline` is fixed when the account is picked.
+    struct UsernameStep {
+        let origin: String; let value: String; let documentID: String; let attemptID: UUID; let date = Date.now; var completed = false
+        var accountID: UUID?; var contextID: UUID?; var tab: ObjectIdentifier?
+        var deadline: ContinuousClock.Instant?; var epoch: UInt64?
+    }
     @ObservationIgnored var username: UsernameStep?
     @ObservationIgnored let submissions = AutofillSubmissionTracker()
 
@@ -51,14 +64,69 @@ final class AutofillSaveSession: NSObject {
             isPopoverPresented = false
             return
         }
-        offers.removeAll { !AutofillSaveCoordinator.shared.isEnabled($0.candidate.kind, context: context) }
+        let provider = context.settings.passwordProvider
+        offers.removeAll {
+            !AutofillSaveCoordinator.shared.isEnabled($0.candidate.kind, context: context)
+                || ($0.candidate.kind == .password && $0.provider != provider)
+        }
         if offers.isEmpty {
             isPopoverPresented = false
         }
+        username?.accountID = nil
         if !AutofillSaveCoordinator.shared.isEnabled(.password, context: context) {
             username = nil
         }
     }
+
+    /// The account picked earlier in this tab for this origin, while the user is still on the same username.
+    /// Empty `enteredUsername` means the page has no username to compare, as on a verification-code step.
+    /// A step in this tab that no longer matches (another username, origin, a lock or re-unlock, or the fixed
+    /// deadline) invalidates the pick for good: only `selectAccount` can bring an account back. A query that
+    /// describes another tab, or an unlock older than the pick, says nothing about this pick and leaves it alone,
+    /// so callers must only ask on behalf of a request that is still live.
+    func selectedAccount(
+        in page: BrowserPage, origin: String, enteredUsername: String?,
+        now: ContinuousClock.Instant = .now, epoch: UInt64? = nil
+    ) -> UUID? {
+        guard self.page === page, let context, page.context === context, let step = username, let accountID = step.accountID,
+              step.contextID == context.contextID, step.tab == ObjectIdentifier(page) else { return nil }
+        if let epoch, let picked = step.epoch, epoch < picked {
+            return nil
+        }
+        guard let deadline = step.deadline, step.origin == origin, step.epoch == epoch, now < deadline,
+              enteredUsername.map({ $0.isEmpty || $0 == step.value }) ?? true else {
+            username?.accountID = nil
+            return nil
+        }
+        return accountID
+    }
+
+    /// Remember which account the user just picked. The 300 second deadline starts here and later steps never extend it.
+    func selectAccount(
+        _ id: UUID, username: String, in page: BrowserPage, origin: String,
+        now: ContinuousClock.Instant = .now, documentID: String = "", epoch: UInt64? = nil
+    ) {
+        guard self.page === page, let context, page.context === context, !username.isEmpty, username.count <= 500 else { return }
+        var step = UsernameStep(origin: origin, value: username, documentID: documentID, attemptID: UUID())
+        step.completed = true
+        step.accountID = id; step.contextID = context.contextID; step.tab = ObjectIdentifier(page)
+        step.deadline = now.advanced(by: .seconds(300)); step.epoch = epoch
+        self.username = step
+    }
+
+    /// A username seen on a submitted or interacted step. The picked account rides along only for the same tab,
+    /// context, origin and username, and keeps its original deadline; any other username starts a plain step.
+    func stageUsername(_ value: String, origin: String, documentID: String, attemptID: UUID, in page: BrowserPage) {
+        var step = UsernameStep(origin: origin, value: value, documentID: documentID, attemptID: attemptID)
+        if let previous = username, previous.accountID != nil, previous.origin == origin, previous.value == value,
+           let context, page.context === context, previous.contextID == context.contextID,
+           previous.tab == ObjectIdentifier(page), self.page === page {
+            step.accountID = previous.accountID; step.contextID = previous.contextID; step.tab = previous.tab
+            step.deadline = previous.deadline; step.epoch = previous.epoch
+        }
+        username = step
+    }
+
     func resetDismissals(kind: AutofillSaveKind) {
         dismissed[kind] = nil
     }
@@ -76,22 +144,75 @@ final class AutofillSaveSession: NSObject {
             }
         }
     }
+    private struct ManagedSave {
+        let plan: CredentialSavePlan
+        let epoch: UInt64
+        let revision: UInt64
+        let loginURL: URL?
+    }
+
+    private func managerOrigin(_ origin: String) -> String? {
+        URL(string: origin).flatMap(CredentialAccountSelection.origin(for:)) == origin ? origin : nil
+    }
+
+    private func manager(epoch: UInt64?) -> CredentialManager? {
+        guard let epoch, let context, !context.profile.isPrivate, context.settings.passwordProvider == .credentialManager,
+              page?.context === context,
+              let manager = try? CredentialManager.forProfile(context.profile), manager.authorizationEpoch == epoch else { return nil }
+        return manager
+    }
+
+    /// What the unlocked vault would do with `login`; `nil` when there is nothing to offer, including when locked.
+    /// The carry-over lookup can invalidate the picked account, so it runs only once the document is confirmed live
+    /// and with no suspension between the last `revision` check and the lookup.
+    private func managedPlan(for login: SavedPassword, origin: String, documentID: String, revision: Int) async -> ManagedSave? {
+        guard let context, !context.profile.isPrivate, context.settings.passwordProvider == .credentialManager,
+              let page, page.context === context, let origin = managerOrigin(origin),
+              documentID.isEmpty ? true : await AutofillSaveCoordinator.shared.isLive(page: page, documentID: documentID, origin: origin),
+              let manager = try? CredentialManager.forProfile(context.profile), let epoch = manager.authorizationEpoch,
+              let snapshot = try? await manager.snapshot(), self.manager(epoch: epoch) != nil,
+              revision == self.revision, self.page === page,
+              !snapshot.blockedPasswordOrigins.contains(origin) else { return nil }
+        let selected = selectedAccount(in: page, origin: origin, enteredUsername: login.username, epoch: epoch)
+        let plan = CredentialAccountSelection.savePlan(for: login, origin: origin, accountID: selected, in: snapshot.accounts)
+        guard plan != .unchanged, plan != .ambiguous else { return nil }
+        return ManagedSave(
+            plan: plan, epoch: epoch, revision: snapshot.revision,
+            loginURL: page.url.flatMap { CredentialAccountSelection.loginURL(for: $0, origin: origin) }
+        )
+    }
+
     func offer(_ candidate: AutofillSaveCandidate, origin: String, documentID: String = "") async {
         guard let context, AutofillSaveCoordinator.shared.isEnabled(candidate.kind, context: context) else { return }
         let bytes = (try? JSONEncoder().encode([origin, candidate.kind.rawValue] + candidate.values)) ?? Data()
         let fingerprint = Data(HMAC<SHA256>.authenticationCode(for: bytes, using: fingerprintKey)).base64EncodedString()
         guard dismissed[candidate.kind]?.contains(fingerprint) != true, !offers.contains(where: { $0.fingerprint == fingerprint }) else { return }
         let revision = revision, profileID = context.profile.id
-        let decision = await Task.detached { (try? AutofillSaveIndex.decision(for: candidate, origin: origin, profileID: profileID)) ?? .new }.value
+        let provider: PasswordProvider = candidate.kind == .password ? context.settings.passwordProvider : .legacy
+        var managed: ManagedSave?
+        let decision: AutofillSaveIndex.Decision
+        if provider == .credentialManager, case .password(let login) = candidate {
+            guard let found = await managedPlan(for: login, origin: origin, documentID: documentID, revision: revision) else { return }
+            managed = found
+            decision = found.plan == .create ? .new : .update
+        } else {
+            decision = await Task.detached { (try? AutofillSaveIndex.decision(for: candidate, origin: origin, profileID: profileID)) ?? .new }.value
+        }
         guard revision == self.revision, self.context === context, let page, page.context === context, !context.profile.isPrivate,
               page.url.flatMap(SavedPassword.origin(for:)) != nil,
+              candidate.kind != .password || context.settings.passwordProvider == provider,
               documentID.isEmpty ? true : await AutofillSaveCoordinator.shared.isLive(page: page, documentID: documentID, origin: origin),
               AutofillSaveCoordinator.shared.isEnabled(candidate.kind, context: context),
               dismissed[candidate.kind]?.contains(fingerprint) != true, !offers.contains(where: { $0.fingerprint == fingerprint }),
-              decision != .unchanged, decision != .blocked else { return }
+              decision != .unchanged, decision != .blocked,
+              managed.map({ manager(epoch: $0.epoch) != nil }) ?? true else { return }
         let previous = current?.id
         offers.removeAll { $0.candidate.kind == candidate.kind }
-        offers.append(Offer(candidate: candidate, origin: origin, isUpdate: decision == .update, fingerprint: fingerprint, documentID: documentID))
+        offers.append(Offer(
+            candidate: candidate, origin: origin, isUpdate: decision == .update, fingerprint: fingerprint, documentID: documentID,
+            provider: provider, plan: managed?.plan, managerEpoch: managed?.epoch, managerRevision: managed?.revision,
+            loginURL: managed?.loginURL
+        ))
         if current?.id != previous {
             isPopoverPresented = true
         }
@@ -113,21 +234,64 @@ final class AutofillSaveSession: NSObject {
         guard !isBusy, current?.id == offer.id, let context else { return }
         isBusy = true; let profileID = context.profile.id; defer { isBusy = false }
         do {
-            try await Task.detached { try AutofillSaveIndex.block(kind: offer.candidate.kind, origin: offer.origin, profileID: profileID) }.value
+            if offer.provider == .credentialManager {
+                try await blockManaged(offer)
+            } else {
+                try await Task.detached { try AutofillSaveIndex.block(kind: offer.candidate.kind, origin: offer.origin, profileID: profileID) }.value
+            }
             if self.context === context && current?.id == offer.id {
                 dismiss(offer)
             }
         } catch {
-            if self.context === context && current?.id == offer.id {
-                self.error = String(localized: "Couldn’t remember this choice. Try again.")
+            guard self.context === context && current?.id == offer.id else { return }
+            if Self.isLocked(error) {
+                dismiss(offer, rememberingChoice: false)
+                return
             }
+            self.error = String(localized: "Couldn’t remember this choice. Try again.")
         }
     }
+
+    private static func isLocked(_ error: any Error) -> Bool {
+        switch error {
+        case CredentialVaultError.unauthorized, CredentialVaultError.expired:
+            true
+        default:
+            false
+        }
+    }
+
+    private func blockManaged(_ offer: Offer) async throws {
+        guard let manager = self.manager(epoch: offer.managerEpoch), let epoch = offer.managerEpoch,
+              let origin = managerOrigin(offer.origin) else { throw CredentialVaultError.unauthorized }
+        let snapshot = try await manager.snapshot()
+        guard self.manager(epoch: epoch) != nil else { throw CredentialVaultError.unauthorized }
+        _ = try await manager.updatePasswordSavePolicy(
+            snapshot.blockedPasswordOrigins.union([origin]), expectedRevision: snapshot.revision, authorizedEpoch: epoch
+        )
+    }
+
+    /// Saves only into the exact account the user was shown. Whatever was typed in the review form, a different target
+    /// writes nothing here and is reported as `.needsReview` so the caller can show that target for confirmation.
+    private func saveManaged(_ login: SavedPassword, offer: Offer) async throws -> CredentialSaveOutcome {
+        guard let manager = self.manager(epoch: offer.managerEpoch), let epoch = offer.managerEpoch,
+              let origin = managerOrigin(offer.origin) else { throw CredentialVaultError.unauthorized }
+        let snapshot = try await manager.snapshot()
+        guard self.manager(epoch: epoch) != nil else { throw CredentialVaultError.unauthorized }
+        guard !snapshot.blockedPasswordOrigins.contains(origin) else { throw CredentialVaultError.staleRevision }
+        return try await CredentialAccountSelection.commitSave(
+            login, origin: origin, offered: offer.plan, loginURL: offer.loginURL, snapshot: snapshot, manager: manager, epoch: epoch
+        )
+    }
+
     func save(_ offer: Offer, replacement: AutofillSaveCandidate? = nil) async {
         guard !isBusy, current?.id == offer.id, let context,
               AutofillSaveCoordinator.shared.isEnabled(offer.candidate.kind, context: context),
+              offer.candidate.kind != .password || offer.provider == context.settings.passwordProvider,
               let page, page.context === context, page.window != nil,
-              await AutofillSaveCoordinator.shared.isLive(page: page, documentID: offer.documentID, origin: offer.origin) else { return }
+              await AutofillSaveCoordinator.shared.isLive(page: page, documentID: offer.documentID, origin: offer.origin),
+              self.context === context, current?.id == offer.id,
+              offer.candidate.kind != .password || offer.provider == context.settings.passwordProvider else { return }
         let candidate = replacement ?? offer.candidate
         guard candidate.kind == offer.candidate.kind else { return }
         if case .password(let password) = candidate, password.origin != offer.origin {
@@ -137,7 +301,18 @@ final class AutofillSaveSession: NSObject {
         do {
             switch candidate {
             case .password(let login):
-                _ = try await AutofillVaults.passwords(for: profileID).update { SavedPassword.merging(login, into: $0) }
+                if offer.provider == .credentialManager {
+                    if try await saveManaged(login, offer: offer) == .needsReview {
+                        // The save would land somewhere other than what this offer showed: nothing was written. Show the
+                        // new target through the normal offer so the user confirms that exact account.
+                        guard self.context === context, current?.id == offer.id else { return }
+                        dismiss(offer, rememberingChoice: false)
+                        await self.offer(candidate, origin: offer.origin, documentID: offer.documentID)
+                        return
+                    }
+                } else {
+                    _ = try await AutofillVaults.passwords(for: profileID).update { SavedPassword.merging(login, into: $0) }
+                }
             case .card(let card):
                 _ = try await AutofillVaults.cards(for: profileID).importCards([card], preservingMissingSecurityCodes: replacement == nil)
             case .contact(let contact):
@@ -152,9 +327,12 @@ final class AutofillSaveSession: NSObject {
                   current?.id == offer.id else { return }
             dismiss(offer, rememberingChoice: false)
         } catch {
-            if self.context === context && current?.id == offer.id {
-                self.error = String(localized: "Couldn’t save these details. Try again.")
+            guard self.context === context && current?.id == offer.id else { return }
+            if Self.isLocked(error) {
+                dismiss(offer, rememberingChoice: false)
+                return
             }
+            self.error = String(localized: "Couldn’t save these details. Try again.")
         }
     }
 }
@@ -216,9 +394,18 @@ final class AutofillSaveCoordinator {
             session.resetDismissals(kind: kind)
         }
     }
-    func rememberFilledUsername(_ value: String, origin: String, documentID: String, in page: BrowserPage) {
+    func session(for page: BrowserPage) -> AutofillSaveSession? {
+        sessions.object(forKey: page).flatMap { $0.context === page.context ? $0 : nil }
+    }
+    func rememberFilledUsername(
+        _ value: String, origin: String, documentID: String, in page: BrowserPage, accountID: UUID? = nil, epoch: UInt64? = nil
+    ) {
         guard !value.isEmpty, value.count <= 500, isEnabled(.password, context: page.context),
               let session = sessions.object(forKey: page), session.context === page.context else { return }
+        if let accountID {
+            session.selectAccount(accountID, username: value, in: page, origin: origin, documentID: documentID, epoch: epoch)
+            return
+        }
         var step = AutofillSaveSession.UsernameStep(origin: origin, value: value, documentID: documentID, attemptID: UUID()); step.completed = true; session.username = step
     }
     func isEnabled(_ kind: AutofillSaveKind, context: BrowserProfileContext) -> Bool {
@@ -242,13 +429,16 @@ final class AutofillSaveCoordinator {
 
     func refreshPolicy() {
         AutofillSuggestions.shared.reset()
-        for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? [] {
-            session.refreshPolicy()
-        }
-        for (key, list) in frames {
-            guard let page = sessions.keyEnumerator().allObjects.compactMap({ $0 as? BrowserPage })
-                .first(where: { ObjectIdentifier($0) == key }) else { continue }
-            for frame in list.values.values {
+        refreshSessions { _ in true }
+    }
+    /// A profile switched password provider: only that profile's tabs drop provider-bound offers and account picks.
+    func providerChanged(in context: BrowserProfileContext) {
+        refreshSessions { $0 === context }
+    }
+    private func refreshSessions(where matches: (BrowserProfileContext) -> Bool) {
+        for page in sessions.keyEnumerator().allObjects.compactMap({ $0 as? BrowserPage }) where matches(page.context) {
+            sessions.object(forKey: page)?.refreshPolicy()
+            for frame in frames[ObjectIdentifier(page)].map({ Array($0.values.values) }) ?? [] {
                 applyPolicy(in: page, frame: frame)
             }
         }
@@ -257,7 +447,7 @@ final class AutofillSaveCoordinator {
         let context = page.context
         guard let session = sessions.object(forKey: page), session.page === page, session.context === context else { return }
         let origin = frame.securityOrigin, topURL = page.url
-        let secure = origin.protocol == "https" && !origin.host.isEmpty && topURL.flatMap(SavedPassword.origin(for:)) != nil
+        let secure = frame.hasTrustedSecurityOrigin && origin.protocol == "https" && !origin.host.isEmpty && topURL.flatMap(SavedPassword.origin(for:)) != nil
         let policy = Dictionary(uniqueKeysWithValues: AutofillSaveKind.allCases.map { ($0.rawValue, secure && isEnabled($0, context: context)) })
         Task {
             do {
@@ -279,7 +469,7 @@ final class AutofillSaveCoordinator {
             guard page.context === context, session.context === context,
                   frames[ObjectIdentifier(page)] === list, list.mainDocumentID == mainID else { return nil }
             guard let state = AutofillSubmissionTracker.PageState(raw), state.documentID == id,
-                  frame.securityOrigin.protocol == state.url.scheme, frame.securityOrigin.host == state.url.host?.lowercased(),
+                  frame.hasTrustedSecurityOrigin, frame.securityOrigin.protocol == state.url.scheme, frame.securityOrigin.host == state.url.host?.lowercased(),
                   (frame.securityOrigin.port == 0 ? 443 : frame.securityOrigin.port) == (state.url.port ?? 443) else { if id == mainID { return nil }; list.values[id] = nil; continue }
             result.append(state)
         }
@@ -292,7 +482,7 @@ final class AutofillSaveCoordinator {
               page.url.flatMap(SavedPassword.origin(for:)) != nil,
               let expected = URL(string: origin), SavedPassword.origin(for: expected) == origin else { return false }
         func matches(_ frame: BrowserFrame) -> Bool {
-            frame.securityOrigin.protocol == expected.scheme?.lowercased()
+            frame.hasTrustedSecurityOrigin && frame.securityOrigin.protocol == expected.scheme?.lowercased()
                 && frame.securityOrigin.host == expected.host?.lowercased()
                 && (frame.securityOrigin.port == 0 ? 443 : frame.securityOrigin.port) == (expected.port ?? 443)
         }
@@ -325,7 +515,7 @@ final class AutofillSaveCoordinator {
               let documentID = body["documentID"] as? String, frames[key]?.values[documentID] != nil,
               let topURL = page.url, SavedPassword.origin(for: topURL) != nil,
               let rawURL = body["url"] as? String, let url = URL(string: rawURL), let origin = SavedPassword.origin(for: url),
-              message.frameInfo.securityOrigin.protocol == "https", message.frameInfo.securityOrigin.host == url.host?.lowercased(),
+              message.frameInfo.hasTrustedSecurityOrigin, message.frameInfo.securityOrigin.protocol == "https", message.frameInfo.securityOrigin.host == url.host?.lowercased(),
               (message.frameInfo.securityOrigin.port == 0 ? 443 : message.frameInfo.securityOrigin.port) == (url.port ?? 443) else { return }
         if action == "diagnostic", let value = body["event"] as? String,
            let event = AutofillDiagnostics.Event(rawValue: value),
@@ -352,12 +542,7 @@ final class AutofillSaveCoordinator {
               ["submit", "interaction", "automatic", "pagehide"].contains(source) else { return }
         if source != "pagehide", isEnabled(.password, context: context),
            let value = body["username"] as? String, !value.isEmpty, value.count <= 500 {
-            session.username = AutofillSaveSession.UsernameStep(
-                origin: origin,
-                value: value,
-                documentID: documentID,
-                attemptID: attemptID
-            )
+            session.stageUsername(value, origin: origin, documentID: documentID, attemptID: attemptID, in: page)
         }
         var candidates: [AutofillSaveCandidate] = []
         if isEnabled(.password, context: context), let login = body["password"] as? [String: String], let password = login["password"] {

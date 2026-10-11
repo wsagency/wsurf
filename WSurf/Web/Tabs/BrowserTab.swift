@@ -93,14 +93,6 @@ final class BrowserTab: Identifiable {
     /// `urlString` may include a provisional navigation; this URL reflects the committed page.
     private(set) var committedURL: URL?
 
-    var isUnderTopBar = false {
-        didSet {
-            guard isUnderTopBar != oldValue, isMaterialised else { return }
-            Self.applyObscuredInsets(to: page, isUnderTopBar: isUnderTopBar)
-            measureBandUnderBar()
-        }
-    }
-
     var isControlledByMediaDock = false
 
     private(set) var preview: NSImage?

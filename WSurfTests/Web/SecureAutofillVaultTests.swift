@@ -35,12 +35,16 @@ nonisolated final class MemoryAutofillStorage: AutofillSecureStorage {
 
 @MainActor
 struct SecureAutofillVaultTests {
-    @Test func passwordFillAuthenticationReusesOnlyTheSamePageAndOriginForFiveMinutes() async throws {
+    @Test(.boundedWebViews) func passwordFillAuthenticationReusesOnlyTheSamePageAndOriginForFiveMinutes() async throws {
         let cache = PasswordFillAuthenticationCache()
         let context = BrowserProfileContext(profile: .privateBrowsing())
         let otherContext = BrowserProfileContext(profile: .privateBrowsing())
-        let view = BrowserPage(webKit: WKWebView(), context: context)
-        let otherView = BrowserPage(webKit: WKWebView(), context: otherContext)
+        let configuration = WebViewPool.makeConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let otherConfiguration = WebViewPool.makeConfiguration()
+        otherConfiguration.websiteDataStore = .nonPersistent()
+        let view = BrowserPage(webKit: WKWebView(frame: .zero, configuration: configuration), context: context)
+        let otherView = BrowserPage(webKit: WKWebView(frame: .zero, configuration: otherConfiguration), context: otherContext)
         let start = Date(timeIntervalSince1970: 1_000)
         var created = 0
         func session(_ page: BrowserPage, _ documentID: String, _ origin: String, _ now: Date) async throws -> AutofillAuthenticationSession {
@@ -50,29 +54,37 @@ struct SecureAutofillVaultTests {
             }
         }
 
-        let first = try await session(view, "page-1", "https://example.test", start)
-        let authenticated = try await session(view, "page-1", "https://example.test", start)
-        #expect(authenticated !== first)
-        cache.markAuthenticated(authenticated, in: view, now: start)
-        #expect(try await session(view, "page-1", "https://example.test", start.addingTimeInterval(299)) === authenticated)
-        cache.markAuthenticated(authenticated, in: view, now: start.addingTimeInterval(299))
-        let timedOut = try await session(view, "page-1", "https://example.test", start.addingTimeInterval(300))
-        #expect(timedOut !== authenticated)
-        let otherOrigin = try await session(view, "page-1", "https://other.test", start)
-        #expect(otherOrigin !== timedOut)
-        cache.markAuthenticated(otherOrigin, in: view, now: start)
-        let otherPage = try await session(otherView, "page-2", "https://other.test", start)
-        #expect(otherPage !== otherOrigin)
-        cache.markAuthenticated(otherPage, in: otherView, now: start)
-        let otherContextSession = try await session(otherView, "page-2", "https://other.test", start)
-        #expect(otherContextSession === otherPage)
-        cache.markAuthenticated(otherPage, in: otherView, now: start)
-        let expired = try await session(otherView, "page-2", "https://other.test", start.addingTimeInterval(300))
-        #expect(expired !== otherContextSession)
-        cache.markAuthenticated(expired, in: otherView, now: start)
-        cache.clear()
-        #expect(try await session(otherView, "page-2", "https://other.test", start) !== expired)
-        #expect(created == 7)
+        do {
+            let first = try await session(view, "page-1", "https://example.test", start)
+            let authenticated = try await session(view, "page-1", "https://example.test", start)
+            #expect(authenticated !== first)
+            cache.markAuthenticated(authenticated, in: view, now: start)
+            #expect(try await session(view, "page-1", "https://example.test", start.addingTimeInterval(299)) === authenticated)
+            cache.markAuthenticated(authenticated, in: view, now: start.addingTimeInterval(299))
+            let timedOut = try await session(view, "page-1", "https://example.test", start.addingTimeInterval(300))
+            #expect(timedOut !== authenticated)
+            let otherOrigin = try await session(view, "page-1", "https://other.test", start)
+            #expect(otherOrigin !== timedOut)
+            cache.markAuthenticated(otherOrigin, in: view, now: start)
+            let otherPage = try await session(otherView, "page-2", "https://other.test", start)
+            #expect(otherPage !== otherOrigin)
+            cache.markAuthenticated(otherPage, in: otherView, now: start)
+            let otherContextSession = try await session(otherView, "page-2", "https://other.test", start)
+            #expect(otherContextSession === otherPage)
+            cache.markAuthenticated(otherPage, in: otherView, now: start)
+            let expired = try await session(otherView, "page-2", "https://other.test", start.addingTimeInterval(300))
+            #expect(expired !== otherContextSession)
+            cache.markAuthenticated(expired, in: otherView, now: start)
+            cache.clear()
+            #expect(try await session(otherView, "page-2", "https://other.test", start) !== expired)
+            #expect(created == 7)
+        } catch {
+            await view.close()
+            await otherView.close()
+            throw error
+        }
+        await view.close()
+        await otherView.close()
     }
 
     @Test func passwordsStayInSecureStorageAndAreIsolatedByProfile() async throws {
@@ -130,5 +142,29 @@ struct SecureAutofillVaultTests {
         #expect(PasswordExtensionPolicy.availableProviders(in: [other, password, apple]).map(\.id) == [apple.id])
         password.enabled = true
         #expect(PasswordExtensionPolicy.provider(in: [password, apple], selectedID: apple.id)?.id == apple.id)
+    }
+
+    @Test func anExplicitCredentialManagerChoiceIsNotSilencedByAnExtensionWhileLegacyKeepsItsPrecedence() {
+        let bitwarden = InstalledExtension(id: "nngceckbapebfimnlniiiahkandclblb", displayName: "Bitwarden", version: "1", enabled: true, installedAt: .now)
+        var disabled = bitwarden
+        disabled.enabled = false
+        let reader = InstalledExtension(id: "other", displayName: "Reader", version: "1", enabled: true, installedAt: .now)
+        let apple = InstalledExtension(id: "system", displayName: "Passwords", version: "1", enabled: true, installedAt: .now)
+
+        // Legacy: exactly the old rule - any enabled recognized extension (chosen or automatic) takes over.
+        #expect(PasswordExtensionPolicy.suppressesNativeFill(provider: .legacy, in: [reader, bitwarden]))
+        #expect(PasswordExtensionPolicy.suppressesNativeFill(provider: .legacy, in: [bitwarden, apple], selectedID: apple.id))
+        #expect(PasswordExtensionPolicy.suppressesNativeFill(provider: .legacy, in: [apple]))
+        #expect(!PasswordExtensionPolicy.suppressesNativeFill(provider: .legacy, in: [reader, disabled]))
+        #expect(!PasswordExtensionPolicy.suppressesNativeFill(provider: .legacy, in: []))
+
+        // Explicit manager choice: the same extensions never switch WSurf's own filling off.
+        #expect(!PasswordExtensionPolicy.suppressesNativeFill(provider: .credentialManager, in: [reader, bitwarden]))
+        #expect(!PasswordExtensionPolicy.suppressesNativeFill(provider: .credentialManager, in: [bitwarden, apple], selectedID: apple.id))
+        #expect(!PasswordExtensionPolicy.suppressesNativeFill(provider: .credentialManager, in: [apple]))
+        #expect(!PasswordExtensionPolicy.suppressesNativeFill(provider: .credentialManager, in: [reader, disabled]))
+
+        // The extension is still recognized for display and for the legacy page; only the suppression differs.
+        #expect(PasswordExtensionPolicy.provider(in: [reader, bitwarden], selectedID: "")?.id == bitwarden.id)
     }
 }

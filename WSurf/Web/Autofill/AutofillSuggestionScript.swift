@@ -67,7 +67,7 @@ nonisolated enum AutofillSuggestionScript {
         return {...rect,x:rect.x + frame.clientLeft*sx,y:rect.y + frame.clientTop*sy,
           width:frame.clientWidth*sx,height:frame.clientHeight*sy};
       };
-      const track = (channel, state, accepts) => {
+      const track = (channel, state, accepts, extra) => {
         let pending = null, timer = null;
         const cancelPending = () => {
           if (timer !== null) clearTimeout(timer);
@@ -94,7 +94,7 @@ nonisolated enum AutofillSuggestionScript {
             state.formID = formID;
             state.fieldID = forms.id(target);
           }
-          channel?.postMessage({action:'select',token:state.token,url:state.url,rect:geometry(target),
+          channel?.postMessage({...(extra?.(target) || {}),action:'select',token:state.token,url:state.url,rect:geometry(target),
             documentID:forms.documentID,formID:state.formID,fieldID:state.fieldID});
         };
         const selectTarget = target => {

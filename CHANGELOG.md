@@ -7,6 +7,69 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-11 — Website passkey metadata and Settings
+
+Website passkeys retain optional creation time, local creation/import provenance, and last local signature time in the encrypted vault; imported passkeys have unknown creation time. A local signature timestamp is committed under the expected vault revision and authorization epoch; it records local signing, not website receipt or sign-in success. After that commit succeeds, a later lock, cancellation, navigation, expiry, changed vault state, or vault read failure can still prevent assertion delivery. Stale-revision, authorization, and I/O commit failures refuse delivery; assertions are not retried from stale state.
+
+Credential Settings and the assertion picker show the full immutable passkey UUID; removal confirmation names that exact UUID and RP ID, then removes only that local copy through the existing draft Save. Same-RP/same-user-handle registrations retain each passkey separately; `excludeCredentials` still rejects a matching credential. The user explicitly approved this retain-all deviation for the bounded metadata design and merge/deploy for manual testing; it is not a claim of WebAuthn conformance. Code `21ff6c801659e4129c342332149b199350dfc9ec` passed hosted run 38095943728 (3,019 tests in 334 suites, coverage 52.47%, format and every performance budget; overall success; 500 tab activations averaged 0.004793 s against 0.035 s); the final PR head still needs its own checks. The earlier run 38092727778 on `2c8949e` failed only the performance-budget step (0.036752 s) and is historical, not a current blocker. A dead top-bar coverage state in the tab/split model was removed (the always-false `isUnderTopBar` flag, its refresh loop and 4 calls); the explicit zero-inset resets on page adoption and on fullscreen changes, the `topBarInset` API and the split geometry stay, and one test that only asserted the default flag was removed, not skipped. No cross-run speed-up is claimed. Native acceptance remains pending.
+
+### 2026-10-10 — Credential Manager in source
+
+Implemented in source, not released, and not natively accepted: an opt-in
+per-profile encrypted Credential Manager for passwords, ES256 passkeys, and
+one-time codes, plus an exchange-only credential-exchange extension. Legacy
+SavedPassword, SecureAutofillVault, settings, data and the default provider are
+unchanged; the manager is used only when a profile selects it.
+`CredentialManager.commit` and `updatePasswordSavePolicy` require the
+authorization epoch captured at decision time and refuse with `unauthorized`
+after a lock or re-unlock. Verified on the integration branch: WebAuthn nonce, history
+(back/forward cache root) and late-resume handling, plus escaped
+Permissions-Policy denial. The current proof is the joined 17-suite run, the
+strict lint gate and a built-module CLI smoke (synthetic password, passkey and
+one-time code through encrypted save, reopen, exchange export/preview/apply
+and ES256 verification), recorded in the current-main integration appendix
+(`docs/superpowers/plans/2026-10-10-credential-current-main-integration.md`).
+Fill delivery (manager, legacy, card and contact) checks the request's
+authority at the final dispatch point with no suspension before the engine
+send; this is source-traced, with no actual UI fill. Autofill and save refuse
+frames the engine flags as untrusted-origin, as WebAuthn already did (source
+only). Native PRF, real user presence and verification, Apple Passwords
+transfers, Settings accessibility and Stage remain unverified. Removing an
+unlock passkey does not rotate the vault key, so a removed passkey that still
+has an older copy of the vault file can decrypt later versions; this is a
+documented limit, not forward revocation.
+
+Review corrections on the draft PR, source only and unverified natively:
+WebAuthn client data is serialized in the specified order and its origin is
+checked by the independent verifier; the exchange review says when replacing a
+stored login removes its password; Chromium back/forward-cache restores keep
+isolated-world contexts and script messages, finish navigation state and
+publish correct history controls while credential contexts are still
+invalidated. Merge and deploy stay blocked on the unresolved duplicate-passkey
+registration policy (D1: a second registration appends instead of overwriting),
+and native handoff, signing, PRF and transfer gates remain open. (Superseded
+2026-10-11: the user approved the retain-all registration policy for merge/deploy
+to manual testing; D1 is no longer a gate. Capability-bearing signing/provisioning
+remains a deployment prerequisite.)
+
+External-app offers from a web page no longer depend on a race with the frame
+handshake: the navigation decision records the exact document nonce the
+registry issued or acknowledged for the source frame and that document's own
+navigation, then waits for that frame's native readiness proof of the same
+nonce before the offer is shown. A cancelled in-flight navigation no longer
+invalidates an offer from the already-loaded page. Pending frames are never
+treated as acknowledged, and stale or replaced frames still refuse. Verified
+in hosted CI on `5649bbe` (3012 tests, including all handoff, stale-frame and
+back/forward-cache cases); the performance-budget step of that run failed
+(0.1019 s against 0.100 s) and its cause is unresolved. On `9253f7d` (main
+`a2ab7b6` merged in), run 38075169484 passed 3014 tests in 334 suites, all
+budgets (start page 0.0774 s) and coverage; the same run started the built
+Debug app in an isolated Stage home and drove its bundled MCP relay through
+initialize, the 19-tool listing, `listTabs` and EOF. That proves app startup
+and relay IPC only, not the credential UI, native user presence or
+verification, or the other tools; the earlier performance failure did not
+recur but was not explained.
+
 ### 2026-10-10 — Tab title test waits for the website title
 
 The website-title removal test now waits for the page's initial title before removing it, instead of reading the tab title the moment loading settles. This is a test-readiness correction; no tab title behavior changed.

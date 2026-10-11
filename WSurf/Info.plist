@@ -73,5 +73,12 @@
 		</dict>
 	</array>
 
+	<!-- The activity the system sends when another app exports credentials to WSurf: the SDK constant
+	     ASCredentialExchangeActivity, whose runtime value is the string "ASCredentialExchangeActivity". -->
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>ASCredentialExchangeActivity</string>
+	</array>
+
 </dict>
 </plist>

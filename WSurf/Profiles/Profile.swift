@@ -102,6 +102,9 @@ extension Profile {
     static func erase(_ profile: Profile) async {
         guard !profile.isOriginal else { return }
         if !profile.isPrivate {
+            // Revokes issued access and drains vault work before anything is deleted; never wipes the vault itself (the
+            // support directory removal below does). First in this branch so no caller of `erase` can bypass it.
+            await CredentialManager.retire(profileID: profile.id)
             try? await WKWebsiteDataStore.remove(forIdentifier: profile.id)
             try? await AutofillVaults.cards(for: profile.id).erase()
             try? await AutofillVaults.contacts(for: profile.id).erase()

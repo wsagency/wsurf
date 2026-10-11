@@ -50,6 +50,31 @@ final class BrowserPage: NSView {
     var onHistoryChanged: (() -> Void)?
     var onLinkHovered: ((URL?) -> Void)?
     var onZoomChanged: (() -> Void)?
+    private(set) var credentialGeneration: UInt64 = 0
+    private var credentialInvalidationObservers: [UUID: @MainActor @Sendable (BrowserPage, String?) -> Void] = [:]
+
+    @discardableResult
+    func addCredentialInvalidationObserver(
+        _ handler: @escaping @MainActor @Sendable (BrowserPage, String?) -> Void
+    ) -> UUID {
+        let id = UUID()
+        credentialInvalidationObservers[id] = handler
+        return id
+    }
+
+    func removeCredentialInvalidationObserver(_ id: UUID) {
+        credentialInvalidationObservers[id] = nil
+    }
+
+    func invalidateCredentialContexts(documentID: String? = nil) {
+        if documentID == nil {
+            precondition(credentialGeneration < .max, "WebAuthn context generation exhausted.")
+            credentialGeneration += 1
+        }
+        for handler in Array(credentialInvalidationObservers.values) {
+            handler(self, documentID)
+        }
+    }
 
     private var observations: [NSKeyValueObservation] = []
     private let navigations = NSMapTable<WKNavigation, PageNavigation>(keyOptions: .weakMemory, valueOptions: .weakMemory)
@@ -411,6 +436,145 @@ final class BrowserPage: NSView {
         }
     }
 
+    func callAsyncJavaScript(
+        _ body: String,
+        in frame: BrowserFrame?,
+        contentWorld: WKContentWorld,
+        prepareArguments: @escaping @MainActor @Sendable () throws -> [String: Any],
+        dispatchCheck: @escaping @MainActor @Sendable () throws -> Void = {}
+    ) async throws -> Any {
+        guard !closed else { throw ChromiumError.closed }
+        if let webKit {
+            if let frame, frame.webKit == nil {
+                throw ChromiumError.staleFrame
+            }
+            guard PageAutomationGuard.allowsExecution else { throw ChromiumError.staleFrame }
+            if let selected = PageDriver.selectedFrame {
+                guard let frame, selected.frame === frame,
+                      PageFrameRegistry.shared.isCurrent(selected.frame, in: self) else {
+                    throw ChromiumError.staleFrame
+                }
+            }
+            let arguments = try prepareArguments()
+            try dispatchCheck()
+            var result: Result<Any, Error>!
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                webKit.callAsyncJavaScript(body, arguments: arguments, in: frame?.webKit, in: contentWorld, completionHandler: {
+                    result = $0
+                    continuation.resume()
+                })
+            }
+            return try result.get()
+        }
+        guard let chromium else { throw ChromiumError.closed }
+        try await chromium.ensureReady()
+        return try await chromium.devTools.callAsync(
+            body, in: frame, world: contentWorld,
+            prepareArguments: prepareArguments, dispatchCheck: dispatchCheck
+        )
+    }
+
+    func validateCredentialContext(_ context: WebAuthnContext) async throws {
+        guard context.belongs(to: self) else { throw WebAuthnContextError.staleFrame }
+        guard !isClosed else { throw WebAuthnContextError.closedPage }
+        guard !isPrivate else { throw WebAuthnContextError.privateProfile }
+        guard !isLoading, context.credentialGeneration == credentialGeneration,
+              context.profileID == profileID, !context.isPrivate,
+              context.frame.documentID == context.frameDocumentID,
+              context.frame.securityOrigin == context.originEvidence,
+              context.frame.hasTrustedSecurityOrigin else {
+            throw WebAuthnContextError.staleFrame
+        }
+        let origin = try Self.credentialOrigin(context.frame.securityOrigin)
+        guard origin.serialized == context.origin else { throw WebAuthnContextError.untrustedOrigin }
+        if let chromium {
+            let chain = try await chromium.devTools.frameChain(for: context.frame)
+            guard let topFrame = chain.last, topFrame.isMainFrame,
+                  chain.first?.documentID == context.frameDocumentID else {
+                throw WebAuthnContextError.staleFrame
+            }
+            let top = try Self.credentialOrigin(topFrame.securityOrigin)
+            let crossOrigin = try chain.contains { candidate in
+                try Self.credentialOrigin(candidate.securityOrigin).serialized != origin.serialized
+            }
+            guard crossOrigin == context.crossOrigin,
+                  (crossOrigin ? top.serialized : nil) == context.topOrigin,
+                  let executionContextID = context.executionContextID else {
+                throw WebAuthnContextError.staleFrame
+            }
+            guard try await chromium.devTools.permissionsPolicyAllows(
+                frame: context.frame, feature: context.policyFeature
+            ) else { throw WebAuthnContextError.policyDenied }
+            let currentContextID = try await chromium.devTools.executionContextIdentity(
+                for: context.frame, world: PageAutomationGuard.world
+            )
+            guard currentContextID == executionContextID else { throw WebAuthnContextError.staleFrame }
+        } else {
+            guard context.frame.isMainFrame, context.executionContextID == nil,
+                  !context.crossOrigin, context.topOrigin == nil,
+                  PageFrameRegistry.shared.isCurrent(context.frame, in: self),
+                  await PageFrameRegistry.shared.isLive(context.frame, in: self) else {
+                throw WebAuthnContextError.staleFrame
+            }
+            guard PageFrameRegistry.shared.mainFramePolicyAllows(
+                context.frame, feature: context.policyFeature, in: self
+            ) == true else { throw WebAuthnContextError.policyDenied }
+        }
+        guard !isClosed, !isLoading, credentialGeneration == context.credentialGeneration else {
+            throw WebAuthnContextError.staleFrame
+        }
+    }
+
+    func validateCredentialContextForDispatch(_ context: WebAuthnContext) throws {
+        guard context.belongs(to: self), !isClosed else { throw WebAuthnContextError.closedPage }
+        guard !isPrivate, !isLoading,
+              credentialGeneration == context.credentialGeneration,
+              context.profileID == profileID, !context.isPrivate,
+              context.frame.documentID == context.frameDocumentID,
+              context.frame.securityOrigin == context.originEvidence,
+              context.frame.hasTrustedSecurityOrigin else {
+            throw WebAuthnContextError.staleFrame
+        }
+        let origin = try Self.credentialOrigin(context.frame.securityOrigin)
+        guard origin.serialized == context.origin else { throw WebAuthnContextError.untrustedOrigin }
+        if let chromium {
+            guard let executionContextID = context.executionContextID,
+                  chromium.devTools.isCurrentCredentialContext(
+                    frame: context.frame, executionContextID: executionContextID
+                  ) else { throw WebAuthnContextError.staleFrame }
+        } else {
+            guard context.frame.isMainFrame, context.executionContextID == nil,
+                  !context.crossOrigin, context.topOrigin == nil,
+                  PageFrameRegistry.shared.isCurrent(context.frame, in: self) else {
+                throw WebAuthnContextError.staleFrame
+            }
+            guard PageFrameRegistry.shared.mainFramePolicyAllows(
+                context.frame, feature: context.policyFeature, in: self
+            ) == true else { throw WebAuthnContextError.policyDenied }
+        }
+    }
+
+    static func credentialOrigin(_ origin: BrowserSecurityOrigin) throws -> (url: URL, serialized: String) {
+        guard let scheme = ["https", "http"].first(where: { $0 == origin.protocol }),
+              let host = RelyingPartyPolicy.canonicalDomain(origin.host),
+              scheme == "https" || (scheme == "http" && host == "localhost"),
+              (0...65_535).contains(origin.port) else {
+            throw WebAuthnContextError.insecureOrigin
+        }
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = host
+        let standardPort = scheme == "https" ? 443 : 80
+        if origin.port != 0, origin.port != standardPort {
+            components.port = origin.port
+        }
+        guard let url = components.url else { throw WebAuthnContextError.untrustedOrigin }
+        let serialized = url.absoluteString.hasSuffix("/")
+            ? String(url.absoluteString.dropLast())
+            : url.absoluteString
+        return (url, serialized)
+    }
+
     private final class MessageAdapter: NSObject, WKScriptMessageHandler {
         let world: WKContentWorld
         init(world: WKContentWorld) {
@@ -467,6 +631,41 @@ final class BrowserPage: NSView {
             chromium?.devTools.installScript(source, in: world, injectionTime: injectionTime, forMainFrameOnly: forMainFrameOnly)
         }
     }
+    func replaceScript(_ old: String, with new: String, in world: WKContentWorld) async throws {
+        guard !closed else { throw ChromiumError.closed }
+        if let webKit {
+            let controller = webKit.configuration.userContentController
+            var scripts = controller.userScripts
+            let oldSource = Self.bridgeSource + "\n" + old
+            let newSource = Self.bridgeSource + "\n" + new
+            guard let index = scripts.firstIndex(where: {
+                $0.source == oldSource && Self.scriptWorlds.object(forKey: $0) === world
+            }) else {
+                guard scripts.contains(where: {
+                    $0.source == newSource && Self.scriptWorlds.object(forKey: $0) === world
+                }) else { throw ChromiumError.staleFrame }
+                return
+            }
+            let previous = scripts[index]
+            let replacement = WKUserScript(
+                source: newSource,
+                injectionTime: previous.injectionTime,
+                forMainFrameOnly: previous.isForMainFrameOnly,
+                in: world
+            )
+            Self.scriptWorlds.setObject(world, forKey: replacement)
+            // Mutate before clearing the controller so bridged storage is copied while its elements still exist.
+            scripts[index] = replacement
+            controller.removeAllUserScripts()
+            for script in scripts {
+                controller.addUserScript(script)
+            }
+        } else if let chromium {
+            try await chromium.devTools.replaceScript(old, with: new, in: world)
+        } else {
+            throw ChromiumError.closed
+        }
+    }
 
     func addScriptMessageHandler(name: String, in world: WKContentWorld, handler: @escaping (BrowserScriptMessage) -> Void) {
         handlers[Self.handlerKey(name: name, world: world)] = handler
@@ -489,6 +688,8 @@ final class BrowserPage: NSView {
     func close() async {
         guard !closed else { return }
         closed = true
+        invalidateCredentialContexts()
+        PageFrameRegistry.shared.retire(self)
         stopLoading()
         handlers.removeAll()
         observations.removeAll()
