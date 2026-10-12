@@ -50,7 +50,6 @@ nonisolated enum StoreAnchors {
     }
 
     private static let stubFormat = 2
-    private static let sqliteMagic = Data("SQLite format 3\0".utf8)
 
     // MARK: Evaluation (§6.3)
 
@@ -176,11 +175,11 @@ nonisolated enum StoreAnchors {
         }
     }
 
-    /// Present = SQLite header and a readable `store_meta`, read through a read-only `immutable=1` connection: it never creates
-    /// `-wal`/`-shm`, and (creation checkpoints) ignores any WAL. Reads only the 16 header bytes before opening.
+    /// Present = a readable `store_meta`, read through a read-only `immutable=1` connection: it never creates `-wal`/`-shm`, and
+    /// (creation checkpoints) ignores any WAL. No separate header read: SQLite validates the header itself, and a second descriptor
+    /// on a file other connections may hold open is avoidable I/O that SQLite §2.2 (POSIX advisory locks) says to avoid for portability.
     private static func readStore(_ file: URL) -> Store {
         guard exists(file) else { return .absent }
-        guard (try? readPrefix(file, count: sqliteMagic.count)) == sqliteMagic else { return .unreadable }
         var configuration = Configuration()
         configuration.readonly = true
         do {
