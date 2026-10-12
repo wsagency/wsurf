@@ -146,8 +146,8 @@ nonisolated enum CredentialDiff {
             return true
         }
 
-        /// A passkey has no revisions: a removed one (or one whose key material changed under the same id) is a removal, an
-        /// added one supersedes nothing.
+        /// A passkey has no revisions and no replacement: a removed one is a removal, an added one supersedes nothing, and
+        /// changed key material, credential id, rpID or user handle under the same passkey id is refused (§13.3).
         private mutating func comparePasskeys(_ old: CredentialAccount, _ new: CredentialAccount) throws -> Bool {
             // Ids are unique here: `plan` refuses duplicate passkey ids before any comparison.
             var newPosition: [UUID: Int] = [:]
@@ -156,7 +156,8 @@ nonisolated enum CredentialDiff {
             }
             var changed = false
             for passkey in old.passkeys {
-                if let position = newPosition[passkey.id], try !Self.keyMaterialChanged(passkey, new.passkeys[position]) {
+                if let position = newPosition[passkey.id] {
+                    guard try !Self.keyMaterialChanged(passkey, new.passkeys[position]) else { throw CredentialVaultError.invalidData }
                     continue
                 }
                 removals.append(.credential(ownerID: old.id, subject: .passkey, passkeyID: passkey.id))

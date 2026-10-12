@@ -546,4 +546,34 @@ struct VaultDiffTests {
             #expect { try CredentialDiff.plan(old: [old], new: [new]) } throws: { Self.isInvalidData($0) }
         }
     }
+
+    // MARK: A passkey id never changes identity or key material (§13.3: no passkey replace)
+
+    nonisolated enum SamePasskeyIDMutation: CaseIterable, Sendable {
+        case credentialID, rpID, userHandle, privateKey
+
+        func apply(to passkey: inout WebsitePasskey) throws {
+            switch self {
+            case .credentialID:
+                passkey.credentialID = Data([9, 9, 9])
+            case .rpID:
+                passkey.rpID = "other.test"
+            case .userHandle:
+                passkey.userHandle = Data([7, 7])
+            case .privateKey:
+                passkey.privateKeyPKCS8 = try VaultFixtures.passkey().privateKeyPKCS8
+            }
+        }
+    }
+
+    @Test(arguments: SamePasskeyIDMutation.allCases)
+    func changedSemanticMaterialUnderTheSamePasskeyIDIsRefused(mutation: SamePasskeyIDMutation) throws {
+        let old = try rich()
+        var new = old
+        try mutation.apply(to: &new.passkeys[0])
+        #expect(new.passkeys[0].id == old.passkeys[0].id)
+
+        #expect { try CredentialDiff.plan(old: [old], new: [new]) } throws: { Self.isInvalidData($0) }
+        #expect { try CredentialDiff.plan(old: [new], new: [old]) } throws: { Self.isInvalidData($0) }
+    }
 }
