@@ -25,6 +25,29 @@ nonisolated struct CredentialBasicAuthenticationMetadata: Codable, Sendable, Equ
     var password: CredentialEditableFieldMetadata?
 }
 
+/// Observations that never change a credential's content hash (§11.1 "never" row).
+nonisolated struct CredentialEvents: Codable, Equatable, Sendable {
+    var lastImportedAt: Date?
+    var lastExportHandoffAt: Date?
+    var remoteLastObservedAt: Date?
+}
+
+/// The accepted remote observation of a credential (§13.2a): its content hash and the remote item it came from.
+nonisolated struct ExchangeBase: Codable, Equatable, Sendable {
+    var contentHash: Data
+    var itemID: Data?
+}
+
+nonisolated extension CredentialAccount {
+    /// A freshly created account: `createdAt` and `modifiedAt` are `now`; migration and import paths leave both nil.
+    func stampingCreation(at now: Date) -> CredentialAccount {
+        var account = self
+        account.createdAt = now
+        account.modifiedAt = now
+        return account
+    }
+}
+
 nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable {
     var id: UUID
     var username: String
@@ -38,6 +61,13 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
     var exchangeItemID: Data?
     var exchangeMetadata: Data?
     var basicAuthenticationMetadata: CredentialBasicAuthenticationMetadata?
+    var createdAt: Date?
+    var modifiedAt: Date?
+    var migratedAt: Date?
+    var passwordEvents: CredentialEvents?
+    var totpEvents: CredentialEvents?
+    var passwordBase: ExchangeBase?
+    var totpBase: ExchangeBase?
 
     func validate() throws {
         guard !username.isEmpty || password != nil || !passkeys.isEmpty || totp != nil,
@@ -129,6 +159,8 @@ nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
     var createdAt: Date?
     var source: WebsitePasskeySource?
     var lastSignedAt: Date?
+    var events: CredentialEvents?
+    var base: ExchangeBase?
 
     func validate() throws {
         guard algorithm == -7,
