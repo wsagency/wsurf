@@ -25,8 +25,11 @@ nonisolated extension UUID {
 /// reproduce every history row and every MOVE pair, and the registry. Nothing here uses the code under test.
 ///
 /// Layout (the tamper tests rely on it):
-/// - Both vaults have ordinal 1 and head revision 2. The wrappers of the source vault are opaque bytes (Task 5 never opens
-///   them), the Trash vault holds a real key wrap of `trashDEK` under `dek`.
+/// - Both vaults have ordinal 1 and head revision 2. The wrappers of the source vault are the real binary property list of
+///   `[CredentialVaultCrypto.wrap(dek, with: proof, ...)]` (`encodeWrapperList`); the Trash vault holds a real key wrap of
+///   `trashDEK` under `dek`. Unless `stubAbsent`, `Credentials.vault` holds the v2 stub, and A3 is always set, so the open
+///   state is `.provisional`. `secondVault` adds active vault B (ordinal 2, name "Second", same registry key) with its own
+///   linked Trash, and the registry covers all four vaults.
 /// - `accounts` are live rows (`recordID == account.id`, version `accountVersion`).
 /// - `historyRows` are `.revision` rows owned by `accounts[0]` (subject `.password`, version `index + 1`), journalled in
 ///   the source journal (chunks of at most 1,000 ops, no transfer header).
@@ -54,9 +57,24 @@ nonisolated struct VaultStoreFixture {
     let accounts: [CredentialAccount]
     let sourceDigests: HeadDigests
     let trashDigests: HeadDigests
+    let stubAbsent: Bool
+    let sharedProof: Bool
+    /// `secondVault: true` only: active vault B (ordinal 2) and its linked Trash vault.
+    let secondVaultID: UUID?
+    let secondTrashID: UUID?
+    let secondDEK: SymmetricKey?
+    let secondTrashDEK: SymmetricKey?
+    /// B's own proof; nil when B shares `proof` (`sharedProof`) or there is no B.
+    let secondProof: VaultUnlockProof?
+    let secondDigests: HeadDigests?
+    let secondTrashDigests: HeadDigests?
+    /// Every `ProfileVaultStore` made through `makeStore`/`unlocked` is registered here; `with` closes them all before cleanup.
+    let tracker: StoreTracker
     /// The heads as currently stored: `editHead` keeps them in step with the file, raw tampering does not.
     private(set) var sourceHead: VaultHead
     private(set) var trashHead: VaultHead
+    private(set) var secondHead: VaultHead?
+    private(set) var secondTrashHead: VaultHead?
 
     var directory: URL {
         env.directory
@@ -70,85 +88,141 @@ nonisolated struct VaultStoreFixture {
         historyRows: Int = 0,
         historyRowBytes: Int = 32,
         moves: Int = 0,
-        vaultName: String = "Personal"
+        vaultName: String = "Personal",
+        stubAbsent: Bool = false,
+        secondVault: Bool = false,
+        sharedProof: Bool = false,
+        secondAccounts: [CredentialAccount] = []
     ) throws -> VaultStoreFixture {
         precondition(moves == 0 || !accounts.isEmpty, "a MOVE needs an account")
         let env = try VaultTestEnvironment.make()
-        let ids = StoreIDs(storeID: UUID(), profileID: env.profile.id)
+        let ids = StoreIDs(storeID: UUID(), profileID: env.profileID)
         let storeURL = env.directory.appendingPathComponent("Credentials.store")
-        let vaultID = UUID(), trashID = UUID()
-        let dek = SymmetricKey(size: .bits256), trashDEK = SymmetricKey(size: .bits256)
         let registryKey = Data((0..<32).map { _ in UInt8.random(in: .min ... .max) })
-        let nonce = Data((0..<16).map { _ in UInt8.random(in: .min ... .max) })
-        let wrappers = Data("fixture wrapper list".utf8)
-        let keyWrap = try StoreSeal.wrapTrashKey(trashDEK, under: dek, ids: ids, source: vaultID, trash: trashID, nonce: nonce)
-        let sourceDigests = HeadDigests(wrappers: StoreSeal.digest(wrappers), keyWrap: StoreSeal.digestOrZero(nil))
-        let trashDigests = HeadDigests(wrappers: StoreSeal.digestOrZero(nil), keyWrap: StoreSeal.digest(keyWrap))
-        let created = Date(timeIntervalSinceReferenceDate: 1_000)
+        let proof = VaultFixtures.proof()
+        let secondProof: VaultUnlockProof? = secondVault && !sharedProof ? VaultFixtures.proof(2) : nil
+        let first = PairSeed(
+            vaultID: UUID(), trashID: UUID(), dek: SymmetricKey(size: .bits256), trashDEK: SymmetricKey(size: .bits256),
+            ordinal: 1, name: vaultName, proof: proof,
+            load: PairLoad(accounts: accounts, blockedOrigins: blockedOrigins, historyRows: historyRows, moves: moves)
+        )
+        let second = secondVault
+            ? PairSeed(
+                vaultID: UUID(), trashID: UUID(), dek: SymmetricKey(size: .bits256), trashDEK: SymmetricKey(size: .bits256),
+                ordinal: 2, name: "Second", proof: secondProof ?? proof,
+                load: PairLoad(accounts: secondAccounts, blockedOrigins: [], historyRows: 0, moves: 0)
+            )
+            : nil
 
         let pool = try DatabasePool(path: storeURL.path)
-        let heads = try pool.write { db -> (VaultHead, VaultHead) in
+        let pairs = try pool.write { db -> (first: PairResult, second: PairResult?) in
             try StoreTables.create(in: db, ids: ids)
-            try StoreTables.insertVault(
-                db, StoreTables.VaultRow(vaultID: vaultID, role: .active, ordinal: 1, createdAt: created, wrappers: wrappers, keyWrap: nil)
-            )
-            try StoreTables.insertVault(
-                db, StoreTables.VaultRow(vaultID: trashID, role: .trash, ordinal: 1, createdAt: created, wrappers: nil, keyWrap: keyWrap)
-            )
-            let builder = Builder(
-                db: db, ids: ids, rowBytes: historyRowBytes, sides: [Side(id: vaultID, key: dek), Side(id: trashID, key: trashDEK)]
-            )
-            for account in accounts {
-                try builder.putLive(account)
+            let firstPair = try writePair(first, in: db, ids: ids, registryKey: registryKey, rowBytes: historyRowBytes)
+            let secondPair = try second.map {
+                try writePair($0, in: db, ids: ids, registryKey: registryKey, rowBytes: historyRowBytes)
             }
-            try builder.addHistory(count: historyRows, owner: accounts.first?.id ?? UUID())
-            for index in 0..<moves {
-                try builder.move(accounts[0], delete: index % 2 == 0)
-            }
-            let link = VaultLink(peerVaultID: trashID, nonce: nonce)
-            let source = builder.head(
-                0, role: .active, name: vaultName, registryKey: registryKey, blockedOrigins: blockedOrigins, link: link
-            )
-            let trash = builder.head(
-                1, role: .trash, name: "Trash", registryKey: nil, blockedOrigins: [], link: VaultLink(peerVaultID: vaultID, nonce: nonce)
-            )
-            let sealedSource = try StoreSeal.sealHead(source, key: dek, wrappersDigest: sourceDigests.wrappers, keyWrapDigest: sourceDigests.keyWrap)
-            let sealedTrash = try StoreSeal.sealHead(trash, key: trashDEK, wrappersDigest: trashDigests.wrappers, keyWrapDigest: trashDigests.keyWrap)
-            try StoreTables.putHead(db, vaultID: vaultID, revision: source.revision, sealed: sealedSource)
-            try StoreTables.putHead(db, vaultID: trashID, revision: trash.revision, sealed: sealedTrash)
-            let catalog = RegistryCatalog(
-                ids: ids,
-                revision: 1,
-                vaults: [
-                    RegistryEntry(
-                        vaultID: vaultID, role: .active, ordinal: 1, createdAt: created, wrappersDigest: sourceDigests.wrappers,
-                        keyWrapDigest: sourceDigests.keyWrap, headRevision: source.revision, headDigest: StoreSeal.digest(sealedSource)
-                    ),
-                    RegistryEntry(
-                        vaultID: trashID, role: .trash, ordinal: 1, createdAt: created, wrappersDigest: trashDigests.wrappers,
-                        keyWrapDigest: trashDigests.keyWrap, headRevision: trash.revision, headDigest: StoreSeal.digest(sealedTrash)
-                    ),
-                ]
-            ).encode()
+            let catalog = RegistryCatalog(ids: ids, revision: 1, vaults: firstPair.entries + (secondPair?.entries ?? [])).encode()
             try StoreTables.putRegistry(db, revision: 1, catalog: catalog, mac: StoreSeal.registryMAC(rk: registryKey, catalog: catalog))
-            return (source, trash)
+            return (firstPair, secondPair)
         }
+        try pool.close()  // observed: GRDB's DatabasePool.close() leaves Credentials.store-wal/-shm on disk; tests compare sidecar sets to a baseline
+        if !stubAbsent {
+            try StoreAnchors.stubBytes(ids: ids).write(to: env.directory.appendingPathComponent("Credentials.vault"))
+        }
+        _ = StoreAnchors.setWitnessIfAbsent(ids.storeID, defaults: env.defaults)
         return VaultStoreFixture(
             env: env,
             ids: ids,
             storeURL: storeURL,
-            vaultID: vaultID,
-            trashID: trashID,
-            dek: dek,
-            trashDEK: trashDEK,
+            vaultID: first.vaultID,
+            trashID: first.trashID,
+            dek: first.dek,
+            trashDEK: first.trashDEK,
             registryKey: registryKey,
-            proof: VaultFixtures.proof(),
+            proof: proof,
             accounts: accounts,
-            sourceDigests: sourceDigests,
-            trashDigests: trashDigests,
-            sourceHead: heads.0,
-            trashHead: heads.1
+            sourceDigests: pairs.first.sourceDigests,
+            trashDigests: pairs.first.trashDigests,
+            stubAbsent: stubAbsent,
+            sharedProof: sharedProof,
+            secondVaultID: second?.vaultID,
+            secondTrashID: second?.trashID,
+            secondDEK: second?.dek,
+            secondTrashDEK: second?.trashDEK,
+            secondProof: secondProof,
+            secondDigests: pairs.second?.sourceDigests,
+            secondTrashDigests: pairs.second?.trashDigests,
+            tracker: StoreTracker(),
+            sourceHead: pairs.first.sourceHead,
+            trashHead: pairs.first.trashHead,
+            secondHead: pairs.second?.sourceHead,
+            secondTrashHead: pairs.second?.trashHead
         )
+    }
+
+    /// One vault with its linked Trash, written inside the caller's transaction: real wrapper list, trash key wrap, rows,
+    /// journals, sealed heads. Returns the heads, the digests they were sealed under and the registry entries.
+    private static func writePair(
+        _ seed: PairSeed,
+        in db: Database,
+        ids: StoreIDs,
+        registryKey: Data,
+        rowBytes: Int
+    ) throws -> PairResult {
+        let created = Date(timeIntervalSinceReferenceDate: 1_000)
+        let nonce = Data((0..<16).map { _ in UInt8.random(in: .min ... .max) })
+        let wrappers = try encodeWrapperList([
+            CredentialVaultCrypto.wrap(seed.dek, with: seed.proof, profileID: ids.profileID, vaultID: seed.vaultID),
+        ])
+        let keyWrap = try StoreSeal.wrapTrashKey(seed.trashDEK, under: seed.dek, ids: ids, source: seed.vaultID, trash: seed.trashID, nonce: nonce)
+        let sourceDigests = HeadDigests(wrappers: StoreSeal.digest(wrappers), keyWrap: StoreSeal.digestOrZero(nil))
+        let trashDigests = HeadDigests(wrappers: StoreSeal.digestOrZero(nil), keyWrap: StoreSeal.digest(keyWrap))
+        try StoreTables.insertVault(
+            db, StoreTables.VaultRow(vaultID: seed.vaultID, role: .active, ordinal: seed.ordinal, createdAt: created, wrappers: wrappers, keyWrap: nil)
+        )
+        try StoreTables.insertVault(
+            db, StoreTables.VaultRow(vaultID: seed.trashID, role: .trash, ordinal: seed.ordinal, createdAt: created, wrappers: nil, keyWrap: keyWrap)
+        )
+        let builder = Builder(
+            db: db, ids: ids, rowBytes: rowBytes,
+            sides: [Side(id: seed.vaultID, key: seed.dek), Side(id: seed.trashID, key: seed.trashDEK)]
+        )
+        for account in seed.load.accounts {
+            try builder.putLive(account)
+        }
+        try builder.addHistory(count: seed.load.historyRows, owner: seed.load.accounts.first?.id ?? UUID())
+        for index in 0..<seed.load.moves {
+            try builder.move(seed.load.accounts[0], delete: index % 2 == 0)
+        }
+        let source = builder.head(
+            0, role: .active, name: seed.name, registryKey: registryKey, blockedOrigins: seed.load.blockedOrigins,
+            link: VaultLink(peerVaultID: seed.trashID, nonce: nonce)
+        )
+        let trash = builder.head(
+            1, role: .trash, name: "Trash", registryKey: nil, blockedOrigins: [], link: VaultLink(peerVaultID: seed.vaultID, nonce: nonce)
+        )
+        let sealedSource = try StoreSeal.sealHead(source, key: seed.dek, wrappersDigest: sourceDigests.wrappers, keyWrapDigest: sourceDigests.keyWrap)
+        let sealedTrash = try StoreSeal.sealHead(trash, key: seed.trashDEK, wrappersDigest: trashDigests.wrappers, keyWrapDigest: trashDigests.keyWrap)
+        try StoreTables.putHead(db, vaultID: seed.vaultID, revision: source.revision, sealed: sealedSource)
+        try StoreTables.putHead(db, vaultID: seed.trashID, revision: trash.revision, sealed: sealedTrash)
+        let entries = [
+            RegistryEntry(
+                vaultID: seed.vaultID, role: .active, ordinal: seed.ordinal, createdAt: created, wrappersDigest: sourceDigests.wrappers,
+                keyWrapDigest: sourceDigests.keyWrap, headRevision: source.revision, headDigest: StoreSeal.digest(sealedSource)
+            ),
+            RegistryEntry(
+                vaultID: seed.trashID, role: .trash, ordinal: seed.ordinal, createdAt: created, wrappersDigest: trashDigests.wrappers,
+                keyWrapDigest: trashDigests.keyWrap, headRevision: trash.revision, headDigest: StoreSeal.digest(sealedTrash)
+            ),
+        ]
+        return PairResult(sourceHead: source, trashHead: trash, sourceDigests: sourceDigests, trashDigests: trashDigests, entries: entries)
+    }
+
+    /// The stored form of a wrapper list: a binary property list of the wrappers in order (independent of the production codec).
+    static func encodeWrapperList(_ wrappers: [CredentialKeyWrapper]) throws -> Data {
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        return try encoder.encode(wrappers)
     }
 
     // MARK: Raw access
@@ -168,15 +242,42 @@ nonisolated struct VaultStoreFixture {
     }
 
     func key(of vault: UUID) -> SymmetricKey {
-        vault == vaultID ? dek : trashDEK
+        if vault == vaultID {
+            return dek
+        }
+        if vault == secondVaultID, let secondDEK {
+            return secondDEK
+        }
+        if vault == secondTrashID, let secondTrashDEK {
+            return secondTrashDEK
+        }
+        return trashDEK
     }
 
     func head(of vault: UUID) -> VaultHead {
-        vault == vaultID ? sourceHead : trashHead
+        if vault == vaultID {
+            return sourceHead
+        }
+        if vault == secondVaultID, let secondHead {
+            return secondHead
+        }
+        if vault == secondTrashID, let secondTrashHead {
+            return secondTrashHead
+        }
+        return trashHead
     }
 
     func digests(of vault: UUID) -> HeadDigests {
-        vault == vaultID ? sourceDigests : trashDigests
+        if vault == vaultID {
+            return sourceDigests
+        }
+        if vault == secondVaultID, let secondDigests {
+            return secondDigests
+        }
+        if vault == secondTrashID, let secondTrashDigests {
+            return secondTrashDigests
+        }
+        return trashDigests
     }
 
     func storedRecord(_ vault: UUID, _ recordID: UUID) throws -> StoreTables.RecordRow {
@@ -234,6 +335,10 @@ nonisolated struct VaultStoreFixture {
         try putHead(sealed, vault: vault, revision: edited.revision)
         if vault == vaultID {
             sourceHead = edited
+        } else if vault == secondVaultID {
+            secondHead = edited
+        } else if vault == secondTrashID {
+            secondTrashHead = edited
         } else {
             trashHead = edited
         }
@@ -329,6 +434,270 @@ nonisolated struct VaultStoreFixture {
         var copy = data
         copy[copy.endIndex - 1] ^= 0x01
         return copy
+    }
+}
+
+// MARK: - Lifetime, store helpers, registry and readback
+
+private nonisolated struct FixtureFailure: Error {
+    let message: String
+}
+
+/// The synthetic content one pair is built with.
+private nonisolated struct PairLoad {
+    let accounts: [CredentialAccount]
+    let blockedOrigins: [String]
+    let historyRows: Int
+    let moves: Int
+}
+
+private nonisolated struct PairSeed {
+    let vaultID: UUID
+    let trashID: UUID
+    let dek: SymmetricKey
+    let trashDEK: SymmetricKey
+    let ordinal: Int
+    let name: String
+    let proof: VaultUnlockProof
+    let load: PairLoad
+}
+
+private nonisolated struct PairResult {
+    let sourceHead: VaultHead
+    let trashHead: VaultHead
+    let sourceDigests: VaultStoreFixture.HeadDigests
+    let trashDigests: VaultStoreFixture.HeadDigests
+    let entries: [RegistryEntry]
+}
+
+/// Owns every `ProfileVaultStore` a test creates, so each one is `await close()`d before its directory is removed (the
+/// fixture is a value type; copies share this tracker).
+nonisolated final class StoreTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stores: [ProfileVaultStore] = []
+
+    func makeStore(
+        env: VaultTestEnvironment,
+        fileOps: StoreFileOps = .live,
+        lockWait: Duration = StoreFormat.lockWait,
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now }
+    ) -> ProfileVaultStore {
+        let store = ProfileVaultStore(
+            profileID: env.profileID, directory: env.directory, defaults: env.defaults, fileOps: fileOps, lockWait: lockWait, now: now
+        )
+        lock.withLock { stores.append(store) }
+        return store
+    }
+
+    /// Awaits `close()` on every registered store (idempotent on the store side), newest first.
+    func closeAll() async {
+        let all = lock.withLock { () -> [ProfileVaultStore] in
+            defer { stores = [] }
+            return stores
+        }
+        for store in all.reversed() {
+            await store.close()
+        }
+    }
+}
+
+nonisolated extension VaultStoreFixture {
+    /// Builds the fixture, runs `body`, then (success or throw) awaits `close()` on every store made through
+    /// `makeStore`/`unlocked`, and only then removes the directory. Rethrows `body`'s error. Same parameters as `make`.
+    static func with(
+        accounts: [CredentialAccount] = [],
+        blockedOrigins: [String] = [],
+        historyRows: Int = 0,
+        historyRowBytes: Int = 32,
+        moves: Int = 0,
+        vaultName: String = "Personal",
+        stubAbsent: Bool = false,
+        secondVault: Bool = false,
+        sharedProof: Bool = false,
+        secondAccounts: [CredentialAccount] = [],
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: (VaultStoreFixture) async throws -> Void
+    ) async throws {
+        let f = try make(
+            accounts: accounts, blockedOrigins: blockedOrigins, historyRows: historyRows, historyRowBytes: historyRowBytes,
+            moves: moves, vaultName: vaultName, stubAbsent: stubAbsent, secondVault: secondVault, sharedProof: sharedProof,
+            secondAccounts: secondAccounts
+        )
+        do {
+            try await body(f)
+        } catch {
+            await f.tracker.closeAll()
+            f.env.cleanUp()
+            throw error
+        }
+        await f.tracker.closeAll()
+        f.env.cleanUp()
+    }
+
+    /// The same close-then-cleanup guarantee for tests that arrange a directory by hand (legacy, first-run, resume, v1 beside a
+    /// store): stores come from `tracker.makeStore(env:)`.
+    static func withEnvironment(
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: (VaultTestEnvironment, StoreTracker) async throws -> Void
+    ) async throws {
+        let env = try VaultTestEnvironment.make()
+        let tracker = StoreTracker()
+        do {
+            try await body(env, tracker)
+        } catch {
+            await tracker.closeAll()
+            env.cleanUp()
+            throw error
+        }
+        await tracker.closeAll()
+        env.cleanUp()
+    }
+
+    // MARK: Store helpers
+
+    /// A store on this fixture's profile, directory and defaults, registered for closing by `with`.
+    func makeStore(
+        fileOps: StoreFileOps = .live,
+        lockWait: Duration = StoreFormat.lockWait,
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now }
+    ) -> ProfileVaultStore {
+        tracker.makeStore(env: env, fileOps: fileOps, lockWait: lockWait, now: now)
+    }
+
+    func beginAccess(lifetime: Duration = .seconds(300)) -> VaultAccess {
+        VaultAccess(profileID: env.profileID, epoch: 1, deadline: ContinuousClock().now.advanced(by: lifetime))
+    }
+
+    /// The proof that opens `vault`: `secondProof` for vault B unless B shares `proof`.
+    func proof(for vault: UUID) -> VaultUnlockProof {
+        if vault == secondVaultID, let secondProof {
+            return secondProof
+        }
+        return proof
+    }
+
+    /// A fresh store unlocked on `vaultID` (default: vault A) through the public `unlockInitialized`.
+    func unlocked(vaultID: UUID? = nil) async throws -> (ProfileVaultStore, VaultAccess) {
+        let target = vaultID ?? self.vaultID
+        let unlocking = proof(for: target)
+        let store = makeStore()
+        let access = beginAccess()
+        try await store.unlockInitialized(
+            vaultID: target, credentialID: unlocking.credentialID, prf: unlocking.prf, access: access, verifying: nil, scratchWarning: nil
+        )
+        return (store, access)
+    }
+
+    // MARK: Anchors
+
+    var vaultFile: URL {
+        directory.appendingPathComponent("Credentials.vault", isDirectory: false)
+    }
+
+    func evaluate() -> StoreOpenState {
+        StoreAnchors.evaluate(directory: directory, profileID: env.profileID, defaults: env.defaults)
+    }
+
+    // MARK: Registry
+
+    func storedRegistry() throws -> (revision: UInt64, catalog: RegistryCatalog, mac: Data) {
+        guard let stored = try read({ try StoreTables.registry($0) }) else { throw FixtureFailure(message: "no registry row") }
+        return (stored.revision, try RegistryCatalog.decode(stored.catalog), stored.mac)
+    }
+
+    /// `mac == nil` signs with `registryKey`; pass explicit bytes to forge. The row's revision column is `catalog.revision`.
+    func putRegistry(_ catalog: RegistryCatalog, mac: Data?) throws {
+        let encoded = catalog.encode()
+        let signature = mac ?? StoreSeal.registryMAC(rk: registryKey, catalog: encoded)
+        try mutate { try StoreTables.putRegistry($0, revision: catalog.revision, catalog: encoded, mac: signature) }
+    }
+
+    /// The catalog a correct writer would store for the CURRENT vault rows and heads (ordinal and createdAt from the rows).
+    func rebuiltRegistry(revision: UInt64? = nil) throws -> RegistryCatalog {
+        let storedRevision = try storedRegistry().revision
+        let entries = try read { db -> [RegistryEntry] in
+            try StoreTables.vaultRows(db).map { row in
+                guard let head = try StoreTables.head(db, vaultID: row.vaultID) else {
+                    throw FixtureFailure(message: "vault \(row.vaultID) has no head")
+                }
+                return RegistryEntry(
+                    vaultID: row.vaultID,
+                    role: row.role,
+                    ordinal: row.ordinal,
+                    createdAt: row.createdAt,
+                    wrappersDigest: StoreSeal.digestOrZero(row.wrappers),
+                    keyWrapDigest: StoreSeal.digestOrZero(row.keyWrap),
+                    headRevision: head.revision,
+                    headDigest: StoreSeal.digest(head.sealed)
+                )
+            }
+        }
+        return RegistryCatalog(ids: ids, revision: revision ?? storedRevision, vaults: entries)
+    }
+
+    // MARK: Readback
+
+    /// Relative path → bytes of every regular file under `directory` (nothing excluded).
+    func directoryImage() throws -> [String: Data] {
+        try Self.directoryImage(of: directory)
+    }
+
+    static func directoryImage(of directory: URL) throws -> [String: Data] {
+        let manager = FileManager.default
+        var image: [String: Data] = [:]
+        for relative in try manager.subpathsOfDirectory(atPath: directory.path) {
+            let file = directory.appendingPathComponent(relative)
+            let type = try manager.attributesOfItem(atPath: file.path)[.type] as? FileAttributeType
+            if type == .typeRegular {
+                image[relative] = try Data(contentsOf: file)
+            }
+        }
+        return image
+    }
+
+    /// Every key of the test suite's defaults with a textual form of its value.
+    func defaultsImage() -> [String: String] {
+        Self.defaultsImage(of: env.defaults)
+    }
+
+    static func defaultsImage(of defaults: UserDefaults) -> [String: String] {
+        defaults.dictionaryRepresentation().mapValues { String(describing: $0) }
+    }
+
+    func storedWrappersBytes(of vault: UUID) throws -> Data {
+        let rows = try read { try StoreTables.vaultRows($0) }
+        guard let bytes = rows.first(where: { $0.vaultID == vault })?.wrappers else {
+            throw FixtureFailure(message: "vault \(vault) has no wrapper list")
+        }
+        return bytes
+    }
+
+    func wrapperRows(of vault: UUID) throws -> [CredentialKeyWrapper] {
+        try PropertyListDecoder().decode([CredentialKeyWrapper].self, from: try storedWrappersBytes(of: vault))
+    }
+
+    func headRevision(of vault: UUID) throws -> UInt64 {
+        guard let stored = try read({ try StoreTables.head($0, vaultID: vault) }) else {
+            throw FixtureFailure(message: "vault \(vault) has no head")
+        }
+        return stored.revision
+    }
+
+    /// Every `record` and `journal` row serialised, keyed by table and identity: equal images mean no row changed.
+    func recordAndJournalImage() throws -> [String: Data] {
+        try read { db in
+            var image: [String: Data] = [:]
+            for row in try Row.fetchAll(db, sql: "SELECT vaultID, recordID, kind, ownerID, subject, version, sealed FROM record") {
+                let vault: String = row["vaultID"], record: String = row["recordID"], sealed: Data = row["sealed"]
+                let kind: String = row["kind"], owner: String = row["ownerID"], subject: String = row["subject"], version: Int64 = row["version"]
+                image["record/\(vault)/\(record)"] = Data("\(kind)|\(owner)|\(subject)|\(version)|".utf8) + sealed
+            }
+            for row in try Row.fetchAll(db, sql: "SELECT vaultID, seq, sealed FROM journal") {
+                let vault: String = row["vaultID"], seq: Int64 = row["seq"], sealed: Data = row["sealed"]
+                image["journal/\(vault)/\(seq)"] = sealed
+            }
+            return image
+        }
     }
 }
 

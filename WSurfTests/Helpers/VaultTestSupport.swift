@@ -6,11 +6,13 @@ import Foundation
 
 @testable import WSurf
 
-nonisolated struct VaultTestEnvironment {
+// @unchecked: every field is an immutable `let`; Foundation documents UserDefaults as thread-safe and TestClock is itself checked
+// `Sendable` (Mutex-guarded). The SDK just does not annotate UserDefaults `Sendable`.
+nonisolated struct VaultTestEnvironment: @unchecked Sendable {
     let directory: URL
     let defaults: UserDefaults
     let clock: TestClock
-    let profile: Profile
+    let profileID: UUID
     private let suiteName: String
 
     static func make() throws -> VaultTestEnvironment {
@@ -21,7 +23,7 @@ nonisolated struct VaultTestEnvironment {
             directory: directory,
             defaults: UserDefaults(suiteName: suiteName)!,
             clock: TestClock(),
-            profile: Profile(id: UUID(), name: "Test", symbol: "key", color: .blue),
+            profileID: UUID(),
             suiteName: suiteName
         )
     }

@@ -57,8 +57,8 @@ private nonisolated struct StateFixture {
 
     init() throws {
         env = try VaultTestEnvironment.make()
-        ids = StoreIDs(storeID: Self.storeID, profileID: env.profile.id)
-        foreign = StoreIDs(storeID: Self.otherStoreID, profileID: env.profile.id)
+        ids = StoreIDs(storeID: Self.storeID, profileID: env.profileID)
+        foreign = StoreIDs(storeID: Self.otherStoreID, profileID: env.profileID)
         strangerProfile = StoreIDs(storeID: Self.storeID, profileID: UUID())
     }
 
