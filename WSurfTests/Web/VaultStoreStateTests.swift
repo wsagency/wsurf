@@ -110,9 +110,14 @@ private nonisolated struct StateFixture {
 
     func writeStore(_ name: String = Names.store, ids stored: StoreIDs? = nil) throws {
         let file = url(name)
-        // Observed natively: fresh WAL connections report SQLITE_FCNTL_PERSIST_WAL=1 and close() then leaves -wal/-shm; GRDB does not set the flag. Clear it on this RW connection.
+        // Observed natively (evidence/task4-wal-close-probe, task4-vnode-unlink-probe): flag 0 alone makes close() unlink -shm while still open (SQLite API-violation log);
+        // EXCLUSIVE locking before WAL never creates -shm, so with flag 0 the close leaves only the database. Creator connection only; runtime NORMAL connections keep defaults.
         var configuration = Configuration()
         configuration.prepareDatabase { (db: Database) throws in
+            let locking = try String.fetchOne(db, sql: "PRAGMA locking_mode = EXCLUSIVE")
+            guard locking?.lowercased() == "exclusive" else {
+                throw FixtureError(message: "locking_mode=EXCLUSIVE refused (\(locking ?? "nil"))")
+            }
             var zero: Int32 = 0
             let status = sqlite3_file_control(db.sqliteConnection, "main", SQLITE_FCNTL_PERSIST_WAL, &zero)
             if status != SQLITE_OK {
