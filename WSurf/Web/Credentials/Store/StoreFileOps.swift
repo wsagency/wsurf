@@ -12,7 +12,7 @@ nonisolated struct StoreFileOps: Sendable {
     var renameSwap: @Sendable (_ a: URL, _ b: URL) throws -> Void  // RENAME_SWAP; ENOTSUP/EINVAL ⇒ .unsupported
     var fullFsync: @Sendable (_ file: URL) throws -> Void  // open + fcntl(F_FULLFSYNC)
     var fsyncDirectory: @Sendable (_ directory: URL) throws -> Void
-    var afterMigrationStep: (@Sendable (_ step: Int) throws -> Void)?  // test seam, nil in production; Task 9 calls it after each step 1-10
+    var afterMigrationStep: (@Sendable (_ step: Int) throws -> Void)?  // test seam, nil in production; Task 9: 0 = after route, before lock; 1-10 = migration steps
 
     // ponytail: directories also use F_FULLFSYNC; a filesystem that refuses it surfaces as .io, add an fsync(2) fallback if one ever does.
     static let live = StoreFileOps(
