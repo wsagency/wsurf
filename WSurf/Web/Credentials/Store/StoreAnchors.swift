@@ -14,7 +14,7 @@ nonisolated enum StoreOpenState: Equatable, Sendable {
 nonisolated enum StoreAnchors {
     static let witnessKey = "io.wsagency.wsurf.credentialVault.storeID"
 
-    private nonisolated enum Names {
+    nonisolated enum Names {
         static let store = "Credentials.store"
         static let vault = "Credentials.vault"
         static let migrating = "Credentials.store.migrating"

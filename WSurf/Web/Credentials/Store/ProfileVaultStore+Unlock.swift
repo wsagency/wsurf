@@ -65,7 +65,8 @@ extension ProfileVaultStore {
 
     // MARK: Steps 1-8
 
-    /// The unlock with the operation lock already held in `mode` by the caller, who releases it afterwards.
+    /// The unlock with the operation lock already held in `mode` by the caller, who releases it afterwards: steps 1-7 (`verifyHeld`),
+    /// then step 8, the only publish.
     func unlockHeld(
         _ held: OperationLockHold,
         mode: OperationLock.Mode,
@@ -76,6 +77,32 @@ extension ProfileVaultStore {
         verifying: (@Sendable (Bool) -> Void)?,
         scratchWarning: (@Sendable (URL) -> Void)?
     ) throws {
+        let verifiedGrant = try verifyHeld(
+            held, mode: mode, vaultID: vaultID, credentialID: credentialID, prf: prf, access: access,
+            verifying: verifying, scratchWarning: scratchWarning
+        )
+        // Step 8: publish, last, only for a still-valid access.
+        try access.withAuthorization(now: now) {
+            if let previous = grants[vaultID], previous.access !== access {
+                previous.access.revoke()
+            }
+            grants[vaultID] = verifiedGrant
+            verified.insert(vaultID)
+        }
+    }
+
+    /// Steps 1-7 with the operation lock `held` (taken in `mode` by the caller, who keeps it for the whole call and releases it):
+    /// the verified grant, which this function never publishes. This function neither acquires, upgrades nor releases the hold.
+    func verifyHeld(
+        _ held: OperationLockHold,
+        mode: OperationLock.Mode,
+        vaultID: UUID,
+        credentialID: Data,
+        prf: SymmetricKey,
+        access: VaultAccess,
+        verifying: (@Sendable (Bool) -> Void)?,
+        scratchWarning: (@Sendable (URL) -> Void)?
+    ) throws -> VaultGrant {
         guard access.profileID == profileID else { throw CredentialVaultError.unauthorized }
         // Leftover scratch goes only under EXCLUSIVE and before the anchors are re-checked or anything is granted.
         if mode == .exclusive {
@@ -141,14 +168,7 @@ extension ProfileVaultStore {
         // Step 7: A3 only if absent.
         _ = StoreAnchors.setWitnessIfAbsent(ids.storeID, defaults: defaults)
 
-        // Step 8: publish, last, only for a still-valid access.
-        try access.withAuthorization(now: now) {
-            if let previous = grants[vaultID], previous.access !== access {
-                previous.access.revoke()
-            }
-            grants[vaultID] = verifiedGrant
-            verified.insert(vaultID)
-        }
+        return verifiedGrant
     }
 
     // MARK: Steps 2-5
