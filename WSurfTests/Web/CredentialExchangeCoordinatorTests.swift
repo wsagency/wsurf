@@ -711,7 +711,9 @@ struct CredentialExchangeCoordinatorTests {
         }
     }
 
-    @Test func aPasskeyWhoseCredentialIDIsStoredCanOnlyBeReplacedOrSkipped() async throws {
+    /// A stored passkey's cryptographic identity is fixed (§13.3): the credential ID is held, so the import can only
+    /// be skipped. Replacing and adding are both refused and leave the review as it was.
+    @Test func aPasskeyWhoseCredentialIDIsStoredCanOnlyBeSkipped() async throws {
         try await withFixture { f in
             let id = UUID()
             let stored = account(id: id, username: "", password: nil, passkeys: [try passkey(5)])
@@ -722,16 +724,18 @@ struct CredentialExchangeCoordinatorTests {
             let record = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)?.conflicts.first)
             #expect(!record.canAddSeparately)
             #expect(f.coordinator.mergeTargets(for: record.incoming, owner: f.owner).isEmpty)
-            #expect(throws: CredentialExchangeCoordinatorError.invalidChoice) {
-                try f.coordinator.choose(.addSeparately, for: record.incoming, owner: f.owner)
+            for refused: CredentialImportChoice in [.addSeparately, .replace] {
+                #expect(throws: CredentialExchangeCoordinatorError.invalidChoice) {
+                    try f.coordinator.choose(refused, for: record.incoming, owner: f.owner)
+                }
             }
             #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.isResolved == false)
 
-            try f.coordinator.choose(.replace, for: record.incoming, owner: f.owner)
+            try f.coordinator.choose(.skip, for: record.incoming, owner: f.owner)
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             let after = try await f.stored().accounts
             #expect(after.count == 2)
-            #expect(after.first { $0.id == id }?.passkeys.map(\.privateKeyPKCS8) == [incomingKey.privateKeyPKCS8])
+            #expect(after.first { $0.id == id }?.passkeys.map(\.privateKeyPKCS8) == [stored.passkeys[0].privateKeyPKCS8])
         }
     }
 

@@ -53,7 +53,12 @@ nonisolated extension CredentialExchangeCodec {
                 break
             case let .add(_, targetAccountID):
                 guard targetAccountID.map(baseAccountIDs.contains) ?? true else { throw CredentialVaultError.invalidData }
+                try rejectStoredPasskeyWrite(incoming, in: preview)
             case let .replace(_, target):
+                // A passkey is never replaced: its cryptographic identity is fixed (§13.3).
+                if case .passkey = incoming {
+                    throw CredentialVaultError.invalidData
+                }
                 // A conflict is replaced only at the stored credential it matched; any other replacement
                 // needs a stored credential of the same kind to overwrite.
                 if let conflict = conflictByIncoming[incoming] {
@@ -286,7 +291,7 @@ nonisolated extension CredentialExchangeCodec {
         case let .passkey(_, passkeyID):
             guard let value = source.passkeys.first(where: { $0.id == passkeyID }),
                   !target.passkeys.contains(where: {
-                      $0.credentialID == value.credentialID && $0.rpID == value.rpID
+                      $0.credentialID == value.credentialID && $0.rpID.lowercased() == value.rpID.lowercased()
                   }) else {
                 throw CredentialVaultError.duplicateIdentifier
             }
@@ -313,15 +318,9 @@ nonisolated extension CredentialExchangeCodec {
         }
         switch (incoming, target) {
         case (.password, .password):
+            // An incoming login without a password never removes or hides a stored one (§13.3).
+            guard source.password != nil || accounts[index].password == nil else { throw CredentialVaultError.invalidData }
             copyBasicAuthentication(from: source, to: &accounts[index])
-        case let (.passkey(_, incomingID), .passkey(_, targetID)):
-            guard let sourcePasskey = source.passkeys.first(where: { $0.id == incomingID }),
-                  let targetIndex = accounts[index].passkeys.firstIndex(where: { $0.id == targetID }) else {
-                throw CredentialVaultError.invalidData
-            }
-            var replacement = sourcePasskey
-            replacement.id = targetID
-            accounts[index].passkeys[targetIndex] = replacement
         case (.totp, .totp):
             accounts[index].totp = source.totp
         default:

@@ -251,8 +251,9 @@ extension CredentialExchangeCoordinatorTests {
         }
     }
 
-    /// Replacing takes the exporter's login as sent, so a login with no password removes the stored one. The review
-    /// must say so (and only then) before the user chooses, and the commit must do what it said.
+    /// Replacing takes the exporter's login as sent, except that a login with no password never removes or hides
+    /// the stored one (§13.3): that replace is refused before anything is staged, and the stored password stays.
+    /// The review's `removesStoredPasswordOnReplace` is retired by Task 12.
     @Test(arguments: [false, true])
     func replacingALoginReportsWhetherItRemovesTheStoredPassword(incomingHasPassword: Bool) async throws {
         try await withFixture { f in
@@ -268,15 +269,20 @@ extension CredentialExchangeCoordinatorTests {
             try await f.stage(handBuilt([item(id: 1, scoped: true, [incomingHasPassword ? password("new") : usernameOnly])]))
             let conflict = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)?.conflicts.first)
             #expect(conflict.kind == .password)
-            #expect(conflict.removesStoredPasswordOnReplace == !incomingHasPassword)
 
-            try f.coordinator.choose(.replace, for: conflict.incoming, owner: f.owner)
-            let chosen = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)?.conflicts.first)
-            #expect(chosen.removesStoredPasswordOnReplace == !incomingHasPassword)
-            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            if incomingHasPassword {
+                try f.coordinator.choose(.replace, for: conflict.incoming, owner: f.owner)
+                _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            } else {
+                #expect(throws: CredentialExchangeCoordinatorError.invalidChoice) {
+                    try f.coordinator.choose(.replace, for: conflict.incoming, owner: f.owner)
+                }
+                let unchanged = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)?.conflicts.first)
+                #expect(unchanged.choice == nil)
+            }
 
             let replaced = try #require(try await f.stored().accounts.first { $0.id == stored.id })
-            #expect(replaced.password == (incomingHasPassword ? "new" : nil))
+            #expect(replaced.password == (incomingHasPassword ? "new" : "old"))
         }
     }
 
