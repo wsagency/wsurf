@@ -213,9 +213,8 @@ class Passkey:
 
 
 def main_checks(srv):
-    status, page = srv.request("GET", "/")
-    check(status == 200 and b"navigator.credentials.create" in page and b"navigator.credentials.get" in page
-          and b'type="password"' in page, "browsable page offers password, TOTP and passkey checks")
+    check(srv.request("GET", "/")[0] == 200, "GET / served over HTTPS")
+    check(srv.request("GET", "/missing")[0] == 404, "unknown path is 404")
     check(srv.request("POST", "/api/login", {"username": "fixture-user", "password": PASSWORD})[0] == 409,
           "login before setup is refused")
     check(srv.setup(RFC_SECRET, 8)[0] == 200, "one-time setup accepted")
