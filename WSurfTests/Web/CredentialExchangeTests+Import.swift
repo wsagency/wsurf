@@ -678,8 +678,16 @@ extension CredentialExchangeTests {
         }
     }
 
-    @Test func olderSystemsRejectFIDO2MetadataInsteadOfDroppingIt() throws {
-        guard #unavailable(macOS 26.4) else { return }
+    /// Reported as SKIPPED (not passed) on macOS 26.4 and later, where FIDO2 metadata is exportable.
+    nonisolated static let isOlderThanFIDO2Metadata: Bool = {
+        if #available(macOS 26.4, *) {
+            return false
+        }
+        return true
+    }()
+
+    @Test(.enabled(if: CredentialExchangeTests.isOlderThanFIDO2Metadata))
+    func olderSystemsRejectFIDO2MetadataInsteadOfDroppingIt() throws {
         let key = try PasskeyKeyEncoding.exportPKCS8(P256.Signing.PrivateKey())
         let metadataPasskey = WebsitePasskey(
             id: passkeyID,
@@ -695,12 +703,15 @@ extension CredentialExchangeTests {
             exchangeFIDO2Metadata: Data([0x7b, 0x7d])
         )
         let source = account(id: accountID, passkeys: [metadataPasskey])
-        #expect(throws: (any Error).self) {
+        #expect {
             try CredentialExchangeCodec.export(
                 snapshot([source]),
                 selection: [.init(accountID: accountID, password: false, passkeyIDs: [passkeyID], totp: false)],
                 format: .v1
             )
+        } throws: { error in
+            guard case CredentialVaultError.invalidData = error else { return false }
+            return true
         }
     }
 }
