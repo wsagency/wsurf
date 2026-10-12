@@ -732,10 +732,16 @@ struct CredentialExchangeCoordinatorTests {
             #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.isResolved == false)
 
             try f.coordinator.choose(.skip, for: record.incoming, owner: f.owner)
-            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
-            let after = try await f.stored().accounts
-            #expect(after.count == 2)
-            #expect(after.first { $0.id == id }?.passkeys.map(\.privateKeyPKCS8) == [stored.passkeys[0].privateKeyPKCS8])
+            // Skipping the only conflict leaves nothing to write: the vault is untouched.
+            let before = try f.diskBytes()
+            await #expect(throws: CredentialExchangeCoordinatorError.nothingToImport) {
+                _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            }
+            #expect(try f.diskBytes() == before)
+            let after = try await f.stored()
+            #expect(after.revision == 1)
+            #expect(after.accounts.count == 2)
+            #expect(after.accounts.first { $0.id == id }?.passkeys.map(\.privateKeyPKCS8) == [stored.passkeys[0].privateKeyPKCS8])
         }
     }
 
