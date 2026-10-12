@@ -17,7 +17,6 @@ import http.server
 import json
 import os
 import re
-import shutil
 import signal
 import ssl
 import struct
@@ -103,13 +102,23 @@ class Reject(Exception):
 
 
 def b64u_decode(s):
-    if not isinstance(s, str) or len(s) > 8192 or not re.fullmatch(r"[A-Za-z0-9_-]*", s):
+    if not isinstance(s, str) or len(s) > 8192 or len(s) % 4 == 1 or not re.fullmatch(r"[A-Za-z0-9_-]*", s):
         raise Reject(400, "base64url")
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
 def b64u(b):
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def utf8(v, limit=256):
+    """Non-empty str of bounded length that encodes as UTF-8 (lone surrogates cannot) -> bytes."""
+    if not isinstance(v, str) or not 0 < len(v) <= limit:
+        raise Reject(400, "fields")
+    try:
+        return v.encode("utf-8")
+    except UnicodeEncodeError:
+        raise Reject(400, "fields")
 
 
 def cbor(data, off=0, depth=0):
@@ -147,6 +156,8 @@ def cbor(data, off=0, depth=0):
             items.append(item)
         if major == 4:
             return items, off
+        if not all(isinstance(k, (int, str, bytes)) for k in items[0::2]):  # arrays/maps are not valid keys here
+            raise Reject(400, "cbor")
         return dict(zip(items[0::2], items[1::2])), off
     raise Reject(400, "cbor")
 
@@ -158,7 +169,7 @@ def totp(secret, at, digits, algorithm):
 
 
 def spki_pem(x, y):
-    if len(x) != 32 or len(y) != 32:
+    if not (isinstance(x, bytes) and isinstance(y, bytes) and len(x) == len(y) == 32):
         raise Reject(400, "cose-key")
     xi, yi = int.from_bytes(x, "big"), int.from_bytes(y, "big")
     if xi >= P or yi >= P or (yi * yi - (xi ** 3 - 3 * xi + B)) % P:
@@ -172,15 +183,18 @@ class Fixture:
         u = urllib.parse.urlsplit(origin)
         if u.scheme != "https" or not u.hostname or u.path or u.query or u.fragment or u.username or u.password:
             raise SystemExit("--origin must look like https://HOST[:PORT]")
-        self.origin = "https://" + u.netloc.lower()
+        try:
+            self.port = u.port or 443
+        except ValueError:
+            raise SystemExit("--origin must look like https://HOST[:PORT]")
         self.rp_id = u.hostname.lower()
-        self.port = u.port or 443
+        host = "[%s]" % self.rp_id if ":" in self.rp_id else self.rp_id
+        self.origin = "https://" + (host if self.port == 443 else "%s:%d" % (host, self.port))  # browsers omit :443
         self.now = now  # fixed clock only for the selftest harness; None = real clock
         self.lock = threading.Lock()
         self.user = None  # {username, password, secret, digits, algorithm, handle}
         self.credentials = {}  # credential id -> {pem, counter}
         self.challenges = {}  # challenge -> (kind, monotonic expiry)
-        self.tmp = tempfile.mkdtemp(prefix="credfixture-")  # 0700
 
     def clock(self):
         return time.time() if self.now is None else self.now
@@ -205,9 +219,9 @@ class Fixture:
             raise Reject(409, "already-set-up")
         username, password, secret = body.get("username"), body.get("password"), body.get("totpSecret")
         digits, algorithm = body.get("totpDigits", 6), body.get("totpAlgorithm", "SHA1")
-        if not all(isinstance(v, str) and 0 < len(v) <= 256 for v in (username, password, secret)):
-            raise Reject(400, "fields")
-        if digits not in (6, 8) or algorithm not in ("SHA1", "SHA256", "SHA512"):
+        for v in (username, password, secret):
+            utf8(v)
+        if type(digits) is not int or digits not in (6, 8) or algorithm not in ("SHA1", "SHA256", "SHA512"):
             raise Reject(400, "totp-parameters")
         s = re.sub(r"[\s=]", "", secret).upper()
         try:
@@ -222,11 +236,9 @@ class Fixture:
 
     def login(self, body):
         u = self.require_user()
-        username, password = body.get("username"), body.get("password")
-        if not isinstance(username, str) or not isinstance(password, str):
-            raise Reject(400, "fields")
-        ok = hmac.compare_digest(username.encode(), u["username"].encode())
-        ok &= hmac.compare_digest(password.encode(), u["password"].encode())
+        username, password = utf8(body.get("username")), utf8(body.get("password"))
+        ok = hmac.compare_digest(username, u["username"].encode())
+        ok &= hmac.compare_digest(password, u["password"].encode())
         if not ok:
             raise Reject(401, "invalid-credentials")
         return 200, {"ok": True}
@@ -260,7 +272,7 @@ class Fixture:
         raw = b64u_decode(response.get("clientDataJSON"))
         try:
             cd = json.loads(raw.decode("utf-8"))
-        except ValueError:
+        except (ValueError, RecursionError):
             raise Reject(400, "client-data")
         if not isinstance(cd, dict) or cd.get("type") != "webauthn." + kind:
             raise Reject(400, "type")
@@ -328,7 +340,7 @@ class Fixture:
         return 200, {"ok": True, "counter": counter, "userVerified": bool(flags & 0x04)}
 
     def verify_signature(self, pem, sig, data):
-        with tempfile.TemporaryDirectory(dir=self.tmp) as d:
+        with tempfile.TemporaryDirectory() as d:  # 0700, removed before the reply
             pub, sigfile = os.path.join(d, "pub.pem"), os.path.join(d, "sig.der")
             with open(pub, "w") as f:
                 f.write(pem)
@@ -374,13 +386,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if name is None:
                 raise Reject(404, "not-found")
             length = self.headers.get("Content-Length", "")
-            if not length.isdigit():
+            if not re.fullmatch(r"[0-9]{1,9}", length):  # isdigit() also accepts e.g. superscripts
                 raise Reject(411, "length-required")
             if int(length) > MAX_BODY:
                 raise Reject(413, "too-large")
             try:
                 body = json.loads(self.rfile.read(int(length)).decode("utf-8"))
-            except ValueError:
+            except (ValueError, RecursionError):  # RecursionError: deeply nested JSON
                 raise Reject(400, "json")
             if not isinstance(body, dict):
                 raise Reject(400, "json")
@@ -423,19 +435,18 @@ def main():
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.load_cert_chain(args.cert, args.key)
     httpd = Server((args.bind, fixture.port), Handler)
-    # handshake lazily in the handler thread (bounded by Handler.timeout), not in the accept loop
-    httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True, do_handshake_on_connect=False)
-    httpd.fixture = fixture
-    signal.signal(signal.SIGTERM, stop)
-    print("fixture relying party: origin=%s rpId=%s listening=%s:%d" % (fixture.origin, fixture.rp_id, args.bind, fixture.port),
-          flush=True)
     try:
+        # handshake lazily in the handler thread (bounded by Handler.timeout), not in the accept loop
+        httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True, do_handshake_on_connect=False)
+        httpd.fixture = fixture
+        signal.signal(signal.SIGTERM, stop)
+        print("fixture relying party: origin=%s rpId=%s listening=%s:%d" % (fixture.origin, fixture.rp_id, args.bind, fixture.port),
+              flush=True)
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         httpd.server_close()
-        shutil.rmtree(fixture.tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
