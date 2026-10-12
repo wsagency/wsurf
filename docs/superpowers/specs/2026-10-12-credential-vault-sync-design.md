@@ -151,7 +151,7 @@ A3 is non-cryptographic; it detects accidental loss and replacement, not an adve
 
 ### 6.3 State machine at open, before any unlock (reads never write)
 
-Inputs: A2 ∈ {v1 envelope, stub, absent, unreadable}, A1 ∈ {present, absent, unreadable} (present = file opens as SQLite with `store_meta`), A3 ∈ {absent, present}. "agree" = every present `storeID` (stub, `store_meta`, A3) and `profileID` equal. Everything before an unlock is **provisional**: lists show ordinals and "not yet verified".
+Inputs: A2 ∈ {v1 envelope, stub, absent, unreadable}, A1 ∈ {present, absent, unreadable} (present = file opens as SQLite with `store_meta`), A3 ∈ {absent, present}. "agree" = every present `storeID` (stub, `store_meta`, A3) and `profileID` equal. Everything before an unlock is **provisional**: lists show ordinals and "not yet verified". **Presence rules (Director clarification, 2026-10-12):** A3 is **present** when its `UserDefaults` object exists, whatever its type or content; an object that is not a parsable `storeID` string is present and can never agree, so it is never "absent" (it never permits first run, row 7/4's absent branch, or `setWitnessIfAbsent`). A1 and A2 are **absent** only when the file verifiably does not exist; any existing file whose open, read, header, decode or `store_meta` read fails is **unreadable** (rows 11/12). Failing to enumerate the directory (permissions, not a directory) proves neither absence nor "no leftovers": it fails closed (`unreadableStore`) before the table, never `firstRun`/resume; only a directory that verifiably does not exist reads as empty.
 
 | # | A2 | A1 | A3 | Outcome |
 |---|---|---|---|---|
@@ -160,7 +160,7 @@ Inputs: A2 ∈ {v1 envelope, stub, absent, unreadable}, A1 ∈ {present, absent,
 | 3 | v1 | present | any | **fail closed**: old build wrote after migration, or a restore. Never merge, never overwrite |
 | 4 | stub | present | absent, or present and agrees | **provisional**: unlock runs §6.8 |
 | 5 | stub | present | any storeID differs | **fail closed** (foreign/replaced store) |
-| 6 | stub | absent | any | if `Credentials.store.migrating` exists with the stub's `storeID` and no `Credentials.vault.cutover-v1*` exists: **resume** inside the next unlock (§10 steps 8–10, displaced-file check first); else **fail closed** (store missing) |
+| 6 | stub | absent | any | A **present** A3 whose `storeID` differs from the stub's (or cannot be parsed) **fails closed first** (`witnessMismatch`), before any resume is considered, even if `Credentials.store.migrating` carries the stub's `storeID`. Otherwise (A3 absent or agreeing): if `Credentials.store.migrating` is readable and carries the stub's `storeID` and `profileID`, and no `Credentials.vault.cutover-v1*` exists: **resume** inside the next unlock (§10 steps 8–10, displaced-file check first); else **fail closed** (store missing) |
 | 7 | absent | present | absent, or present and agrees | **provisional, stubMissing**: no mutation and no usable access until the unlock verified the store and the stub was re-created under the exclusive lock (§6.8 step 6) |
 | 8 | absent | present | present, differs | **fail closed** |
 | 9 | absent | absent | present | **fail closed** (store missing; the witness remembers one) |
