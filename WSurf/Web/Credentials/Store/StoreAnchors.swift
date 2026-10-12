@@ -138,7 +138,7 @@ nonisolated enum StoreAnchors {
     }
 
     /// Absent only when `lstat` says `ENOENT`; any other outcome counts as existing.
-    private static func exists(_ url: URL) -> Bool {
+    static func exists(_ url: URL) -> Bool {
         url.withUnsafeFileSystemRepresentation { path in
             guard let path else { return true }
             var info = stat()

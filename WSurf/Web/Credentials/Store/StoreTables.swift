@@ -120,7 +120,26 @@ nonisolated enum StoreTables {
     static func record(_ db: Database, vaultID: UUID, recordID: UUID) throws -> RecordRow? {
         let sql = "SELECT vaultID, recordID, kind, ownerID, subject, version, sealed FROM record WHERE vaultID = ? AND recordID = ?"
         guard let row = try Row.fetchOne(db, sql: sql, arguments: [vaultID.sqlText, recordID.sqlText]) else { return nil }
-        return RecordRow(
+        return try recordRow(row)
+    }
+
+    static func recordCount(_ db: Database, vaultID: UUID, kind: RecordKind) throws -> Int {
+        try Int.fetchOne(
+            db, sql: "SELECT COUNT(*) FROM record WHERE vaultID = ? AND kind = ?", arguments: [vaultID.sqlText, kind.sqlName]
+        ) ?? 0
+    }
+
+    /// Streams every non-account (history) row of one vault, one row in memory at a time.
+    static func forEachHistoryRecord(_ db: Database, vaultID: UUID, _ body: (RecordRow) throws -> Void) throws {
+        let sql = "SELECT vaultID, recordID, kind, ownerID, subject, version, sealed FROM record WHERE vaultID = ? AND kind != ?"
+        let cursor = try Row.fetchCursor(db, sql: sql, arguments: [vaultID.sqlText, RecordKind.account.sqlName])
+        while let row = try cursor.next() {
+            try body(try recordRow(row))
+        }
+    }
+
+    private static func recordRow(_ row: Row) throws -> RecordRow {
+        RecordRow(
             vaultID: try Stored.uuid(row[0]),
             recordID: try Stored.uuid(row[1]),
             kind: try Stored.kind(row[2]),
@@ -139,6 +158,14 @@ nonisolated enum StoreTables {
             sql: "INSERT INTO journal(vaultID, seq, sealed) VALUES (?, ?, ?)",
             arguments: [vaultID.sqlText, try Stored.bind(seq), sealed]
         )
+    }
+
+    /// Streams one vault's journal rows in `seq` order, one row in memory at a time.
+    static func forEachJournal(_ db: Database, vaultID: UUID, _ body: (_ seq: UInt64, _ sealed: Data) throws -> Void) throws {
+        let cursor = try Row.fetchCursor(db, sql: "SELECT seq, sealed FROM journal WHERE vaultID = ? ORDER BY seq", arguments: [vaultID.sqlText])
+        while let row = try cursor.next() {
+            try body(try Stored.counter(row[0]), try Stored.blob(row[1]))
+        }
     }
 
     static func putRegistry(_ db: Database, revision: UInt64, catalog: Data, mac: Data) throws {
