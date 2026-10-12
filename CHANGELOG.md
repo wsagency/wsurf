@@ -7,6 +7,10 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-12 — Credential editor website fields
+
+Both website fields of the credential editor (websites and other HTTPS origins) are now plain-text list editors: Return, Shift-Return and keypad Enter insert a new line and never save, a typed comma or Space after a valid address starts the next line, and valid addresses are underlined like links but a click only places the caret and never opens anything. Paste, drop and input-method text are inserted as typed, and save-time validation is unchanged. This is source-level only; the on-screen behaviour has not been exercised in a running app.
+
 ### 2026-10-11 — Remove managed browser passkey entitlement
 
 WSurf no longer declares or requests Apple's managed
