@@ -160,6 +160,9 @@ struct VaultPrimitivesTests {
         for (value, name, tag) in subjects {
             #expect(value.sqlName == name && value.rawValue == tag && RecordSubject(sqlName: name) == value)
         }
+        #expect(JournalOpKind.add.rawValue == 1 && JournalOpKind.remove.rawValue == 2)
+        #expect(TransferDirection.in.rawValue == 1 && TransferDirection.out.rawValue == 2)
+        #expect(TransferScope.account.rawValue == 1 && TransferScope.credential.rawValue == 2)
     }
 
     @Test func sqlNameParsersRejectUnknownAndDifferentlyCasedStrings() {
