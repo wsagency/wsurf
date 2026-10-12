@@ -18,10 +18,15 @@ import struct
 import subprocess
 import sys
 import tempfile
+import signal
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.join(HERE, "server.py")
+sys.dont_write_bytecode = True
+sys.path.insert(0, HERE)
+import server as fixture_server  # noqa: E402  (origin canonicalization check only; the rest runs over HTTPS)
+
 PASSWORD = "correct-horse-FIXTURE-1"
 WRONG_PASSWORD = "wrong-horse-FIXTURE-2"
 RFC_SECRET = base64.b32encode(b"12345678901234567890").decode()  # RFC 6238 SHA-1 test key
@@ -99,6 +104,7 @@ class Server:
             procs.append(self.proc)
             if self._wait_ready():
                 return
+            self.stop()
         raise AssertionError("server did not start:\n" + self.output())
 
     def _wait_ready(self):
@@ -141,6 +147,13 @@ class Server:
     def post(self, path, body):
         return self.request("POST", path, body)
 
+    def raw_status(self, headers):
+        """POST /api/login with hand-built header bytes (http.client cannot send them); returns the status."""
+        with socket.create_connection(("127.0.0.1", self.port), 10) as s, \
+                self.ctx.wrap_socket(s, server_hostname=RP_HOST) as t:
+            t.sendall(b"POST /api/login HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n" + headers + b"\r\n\r\n")
+            return int(t.recv(64).split()[1])
+
     def setup(self, secret, digits):
         return self.post("/api/setup", {"username": "fixture-user", "password": PASSWORD,
                                         "totpSecret": secret, "totpDigits": digits})
@@ -166,9 +179,21 @@ def authenticator_data(rp_id, flags, counter, attested=None):
     return out + attested if attested else out
 
 
-def cbor_bytes(b):
-    assert len(b) < 256
-    return (b"\x58" + bytes([len(b)]) if len(b) > 23 else bytes([0x40 + len(b)])) + b
+def enc(v):
+    """Minimal CBOR encoder for test vectors (int, bytes, str, list, dict)."""
+    def head(major, n):
+        if n < 24:
+            return bytes([major << 5 | n])
+        return bytes([major << 5 | 24, n]) if n < 256 else bytes([major << 5 | 25]) + struct.pack(">H", n)
+    if isinstance(v, int):
+        return head(0, v) if v >= 0 else head(1, -1 - v)
+    if isinstance(v, bytes):
+        return head(2, len(v)) + v
+    if isinstance(v, str):
+        return head(3, len(v.encode())) + v.encode()
+    if isinstance(v, list):
+        return head(4, len(v)) + b"".join(map(enc, v))
+    return head(5, len(v)) + b"".join(enc(k) + enc(x) for k, x in v.items())
 
 
 class Passkey:
@@ -187,21 +212,24 @@ class Passkey:
     def sign(self, data):
         return openssl("dgst", "-sha256", "-sign", self.key, data=data)
 
-    def cose(self):
-        return b"\xa5\x01\x02\x03\x26\x20\x01\x21" + cbor_bytes(self.x) + b"\x22" + cbor_bytes(self.y)
+    def cose(self, x=None, y=None, alg=-7, crv=1):
+        return enc({1: 2, 3: alg, -1: crv, -2: self.x if x is None else x, -3: self.y if y is None else y})
 
-    def registration(self, srv, challenge, rp_id=RP_HOST, origin=None, flags=0x45, typ="webauthn.create"):
-        attested = b"\0" * 16 + struct.pack(">H", len(self.cred_id)) + self.cred_id + self.cose()
-        auth = authenticator_data(rp_id, flags, 0, attested)
-        att = (b"\xa3\x63fmt\x64none\x67attStmt\xa0\x68authData\x58" + bytes([len(auth)]) + auth)
+    def registration(self, srv, challenge, rp_id=RP_HOST, origin=None, flags=0x45, typ="webauthn.create",
+                     cose=None, cred_id=None, fmt="none", auth_cut=None):
+        cid = self.cred_id if cred_id is None else cred_id
+        auth = authenticator_data(rp_id, flags, 0, b"\0" * 16 + struct.pack(">H", len(cid)) + cid
+                                  + (self.cose() if cose is None else cose))
+        att = enc({"fmt": fmt, "attStmt": {}, "authData": auth[:auth_cut]})
         cd = json.dumps({"type": typ, "challenge": challenge, "origin": origin or srv.origin}).encode()
-        return {"id": b64u(self.cred_id), "rawId": b64u(self.cred_id), "type": "public-key",
+        return {"id": b64u(cid), "rawId": b64u(cid), "type": "public-key",
                 "response": {"clientDataJSON": b64u(cd), "attestationObject": b64u(att)}}
 
-    def assertion(self, srv, challenge, counter, origin=None, flags=0x05, typ="webauthn.get",
-                  cred_id=None, tamper=False, signer=None, user_handle=None):
-        auth = authenticator_data(RP_HOST, flags, counter)
-        cd = json.dumps({"type": typ, "challenge": challenge, "origin": origin or srv.origin}).encode()
+    def assertion(self, srv, challenge, counter, origin=None, flags=0x05, typ="webauthn.get", cred_id=None,
+                  tamper=False, signer=None, user_handle=None, rp_id=RP_HOST, client_extra=None):
+        auth = authenticator_data(rp_id, flags, counter)
+        cd = json.dumps({"type": typ, "challenge": challenge, "origin": origin or srv.origin,
+                         **(client_extra or {})}).encode()
         sig = (signer or self).sign(auth + hashlib.sha256(cd).digest())
         if tamper:
             sig = sig[:-1] + bytes([sig[-1] ^ 1])
@@ -217,10 +245,19 @@ def main_checks(srv):
     check(srv.request("GET", "/missing")[0] == 404, "unknown path is 404")
     check(srv.request("POST", "/api/login", {"username": "fixture-user", "password": PASSWORD})[0] == 409,
           "login before setup is refused")
-    check(srv.setup(RFC_SECRET, 8)[0] == 200, "one-time setup accepted")
+    good = {"username": "fixture-user", "password": PASSWORD, "totpSecret": RFC_SECRET, "totpDigits": 8}
+    bad_setups = [{"totpDigits": 6.0}, {"totpDigits": True}, {"totpAlgorithm": "MD5"}, {"username": "\ud800"},
+                  {"password": "\udc00"}, {"totpSecret": 7}]
+    got = [srv.post("/api/setup", {**good, **b})[0] for b in bad_setups]
+    check(got == [400] * len(bad_setups), "malformed setup values rejected with 400 (got %s)" % got)
+    check(srv.post("/api/setup", good)[0] == 200, "valid setup still accepted after the rejected attempts")
     check(srv.setup(RFC_SECRET, 8)[0] == 409, "second setup refused")
     check(srv.request("POST", "/api/login", raw=b"x" * 20000)[0] == 413, "oversized body refused")
-    check(srv.request("POST", "/api/login", raw=b"{not json")[0] == 400, "malformed JSON refused")
+    check(err(srv.request("POST", "/api/login", raw=b"{not json")) == (400, "json"), "malformed JSON refused")
+    check(err(srv.request("POST", "/api/login", raw=b"[" * 6000)) == (400, "json"), "deeply nested JSON refused")
+    check(srv.raw_status(b"Content-Length: \xb2") == 411, "non-ASCII Content-Length digit refused")
+    check(err(srv.post("/api/login", {"username": "\ud800", "password": PASSWORD})) == (400, "fields"),
+          "lone-surrogate login refused")
     check(srv.post("/api/login", {"username": "fixture-user", "password": WRONG_PASSWORD})[0] == 401,
           "wrong password rejected")
     check(srv.post("/api/login", {"username": "other", "password": PASSWORD})[0] == 401, "wrong username rejected")
@@ -237,8 +274,7 @@ def main_checks(srv):
     check(srv.post("/api/totp", {"code": "94287082"})[0] == 401, "RFC code for t=59 rejected at t=1111111109")
     check(srv.post("/api/totp", {"code": "7081804"})[0] == 400, "wrong-length code refused")
 
-    pk = Passkey("synthetic-passkey")
-    other = Passkey("synthetic-other")
+    pk, other, zero = Passkey("synthetic-passkey"), Passkey("synthetic-other"), Passkey("synthetic-zero")
 
     def challenge(kind):
         s, o = srv.post("/api/webauthn/%s/options" % kind, {})
@@ -248,48 +284,116 @@ def main_checks(srv):
     reg = challenge("register")
     check(reg["rp"]["id"] == RP_HOST and reg["pubKeyCredParams"] == [{"type": "public-key", "alg": -7}],
           "registration options carry rpID and ES256 only")
+    handle = unb64u(reg["user"]["id"])
+    reg_url, login_url = "/api/webauthn/register/verify", "/api/webauthn/login/verify"
 
     def register(**kw):
-        return srv.post("/api/webauthn/register/verify",
-                        pk.registration(srv, kw.pop("challenge", None) or challenge("register")["challenge"], **kw))
+        return srv.post(reg_url, pk.registration(srv, kw.pop("challenge", None) or challenge("register")["challenge"], **kw))
 
     check(err(register(origin="https://evil.example")) == (400, "origin"), "registration with wrong origin rejected")
     check(err(register(rp_id="evil.example")) == (400, "rp-id-hash"), "registration with wrong rpIdHash rejected")
     check(err(register(flags=0x44)) == (400, "flags"), "registration without user presence rejected")
     check(err(register(typ="webauthn.get")) == (400, "type"), "registration with wrong clientData type rejected")
     check(err(register(challenge=b64u(b"\1" * 32))) == (400, "challenge"), "registration with unissued challenge rejected")
+    check(err(register(challenge=challenge("login")["challenge"])) == (400, "challenge"),
+          "registration with a login challenge rejected")
+
+    def set_resp(k, v):
+        return lambda b: b["response"].__setitem__(k, v)
+
+    flip_y = pk.y[:-1] + bytes([pk.y[-1] ^ 1])
+    malformed = [
+        ("base64url", {}, set_resp("attestationObject", "AAAAA")),
+        ("base64url", {}, set_resp("clientDataJSON", "AAAAA")),
+        ("client-data", {}, set_resp("clientDataJSON", b64u(b"[" * 6000))),
+        ("cbor", {}, lambda b: set_resp("attestationObject", b64u(unb64u(b["response"]["attestationObject"])[:20]))(b)),
+        ("cbor", {"cose": b"\xa1\x81\x01\x01"}, None),  # map whose key is an array
+        ("attestation", {}, set_resp("attestationObject", b64u(b"\x80"))),
+        ("attestation", {"fmt": "packed"}, None),
+        ("auth-data", {"auth_cut": 40}, None),
+        ("credential-id", {"cred_id": b"\1" * 8}, None),
+        ("credential-id", {}, lambda b: b.__setitem__("id", b64u(b"\3" * 16))),
+        ("cose-key", {"cose": pk.cose(x=5)}, None),
+        ("cose-key", {"cose": pk.cose(y="abc")}, None),
+        ("cose-key", {"cose": pk.cose(x=[1])}, None),
+        ("cose-key", {"cose": pk.cose(alg=-257)}, None),
+        ("cose-key", {"cose": pk.cose(crv=2)}, None),
+        ("cose-key", {"cose": pk.cose(x=pk.x[:31])}, None),
+        ("cose-key", {"cose": pk.cose(y=flip_y)}, None),  # not on the curve
+    ]
+    failed = []
+    for reason, kw, mutate in malformed:
+        body = pk.registration(srv, challenge("register")["challenge"], **kw)
+        if mutate:
+            mutate(body)
+        got = err(srv.post(reg_url, body))
+        if got != (400, reason):
+            failed.append((reason, got))
+    check(not failed, "%d malformed registrations rejected with their typed reason (mismatches: %s)" % (len(malformed), failed))
+    check(srv.request("GET", "/")[0] == 200, "server still answers after the malformed registrations")
+
     reg = challenge("register")
-    check(srv.post("/api/webauthn/register/verify", pk.registration(srv, reg["challenge"]))[0] == 200,
-          "signed registration accepted")
-    check(err(srv.post("/api/webauthn/register/verify", pk.registration(srv, reg["challenge"]))) == (400, "challenge"),
+    check(srv.post(reg_url, pk.registration(srv, reg["challenge"]))[0] == 200, "signed registration accepted")
+    check(err(srv.post(reg_url, pk.registration(srv, reg["challenge"]))) == (400, "challenge"),
           "registration challenge is single-use")
     check(register()[0] == 409, "duplicate credential id rejected")
     impostor = Passkey("synthetic-impostor")
     impostor.cred_id = pk.cred_id  # same id, different key: a failing ceremony must not replace the stored key
-    check(srv.post("/api/webauthn/register/verify",
-                   impostor.registration(srv, challenge("register")["challenge"]))[0] == 409,
+    check(srv.post(reg_url, impostor.registration(srv, challenge("register")["challenge"]))[0] == 409,
           "registration of an existing id with another key rejected")
+    check(srv.post(reg_url, zero.registration(srv, challenge("register")["challenge"]))[0] == 200,
+          "second credential registered (counter 0)")
 
-    def assert_(counter, **kw):
+    def assert_(counter, key=pk, **kw):
         c = challenge("login")["challenge"]
-        return srv.post("/api/webauthn/login/verify", pk.assertion(srv, c, counter, **kw))
+        return srv.post(login_url, key.assertion(srv, c, counter, **kw))
 
     check(assert_(1)[0] == 200, "signed assertion accepted (counter 1)")
     check(err(assert_(2, origin="https://evil.example")) == (400, "origin"), "assertion with wrong origin rejected")
+    check(err(assert_(2, client_extra={"crossOrigin": True})) == (400, "origin"), "cross-origin assertion rejected")
+    check(err(assert_(2, rp_id="evil.example")) == (400, "rp-id-hash"), "assertion with wrong rpIdHash rejected")
     check(err(assert_(2, flags=0x04)) == (400, "flags"), "assertion without user presence rejected")
     check(err(assert_(2, typ="webauthn.create")) == (400, "type"), "assertion with wrong clientData type rejected")
+    check(err(srv.post(login_url, pk.assertion(srv, b64u(b"\1" * 32), 2))) == (400, "challenge"),
+          "assertion with unissued challenge rejected")
+    check(err(srv.post(login_url, pk.assertion(srv, challenge("register")["challenge"], 2))) == (400, "challenge"),
+          "assertion with a registration challenge rejected")
     check(err(assert_(2, cred_id=b"\2" * 16)) == (400, "unknown-credential"), "assertion for unknown credential rejected")
     check(err(assert_(2, signer=other)) == (400, "signature"), "assertion signed by another key rejected")
     check(err(assert_(2, signer=impostor)) == (400, "signature"), "stored key was not overwritten by the failed registration")
     check(err(assert_(2, user_handle=b"not-the-user")) == (400, "user-handle"), "assertion with foreign user handle rejected")
     check(err(assert_(2, tamper=True)) == (400, "signature"), "tampered signature rejected")
-    c = challenge("login")["challenge"]
-    body = pk.assertion(srv, c, 2)
-    check(srv.post("/api/webauthn/login/verify", body)[0] == 200, "failed attempts did not advance the counter (2 accepted)")
-    check(err(srv.post("/api/webauthn/login/verify", body)) == (400, "challenge"), "identical assertion replay rejected (challenge consumed)")
+    malformed = [
+        ("base64url", set_resp("clientDataJSON", "AAAAA")),
+        ("base64url", set_resp("authenticatorData", "AAAAA")),
+        ("base64url", set_resp("signature", "AAAAA")),
+        ("base64url", set_resp("userHandle", "AAAAA")),
+        ("base64url", lambda b: b.__setitem__("id", "AAAAA")),
+        ("base64url", lambda b: b.__setitem__("id", 7)),
+        ("client-data", set_resp("clientDataJSON", b64u(b"[" * 6000))),
+        ("rp-id-hash", set_resp("authenticatorData", b64u(b"\0" * 10))),
+        ("signature", set_resp("signature", b64u(b"junk"))),
+        ("user-handle", set_resp("userHandle", 7)),
+        ("fields", lambda b: b.__setitem__("response", "x")),
+    ]
+    failed = []
+    for reason, mutate in malformed:
+        body = pk.assertion(srv, challenge("login")["challenge"], 2)
+        mutate(body)
+        got = err(srv.post(login_url, body))
+        if got != (400, reason):
+            failed.append((reason, got))
+    check(not failed, "%d malformed assertions rejected with their typed reason (mismatches: %s)" % (len(malformed), failed))
+    body = pk.assertion(srv, challenge("login")["challenge"], 2, user_handle=handle)
+    check(srv.post(login_url, body)[0] == 200,
+          "assertion with the correct userHandle accepted after failed attempts (counter 2: none advanced it)")
+    check(err(srv.post(login_url, body)) == (400, "challenge"), "identical assertion replay rejected (challenge consumed)")
     check(err(assert_(2)) == (400, "counter"), "replayed counter 2 rejected")
     check(err(assert_(1)) == (400, "counter"), "decreasing counter rejected")
     check(assert_(3)[0] == 200, "counter 3 accepted")
+    check(err(assert_(0)) == (400, "counter"), "counter 0 after a positive stored counter rejected")
+    check(assert_(0, key=zero)[0] == 200 and assert_(0, key=zero)[0] == 200,
+          "counter 0 then 0 accepted for an authenticator without a counter (fresh challenges)")
 
 
 def totp_at(t):
@@ -302,12 +406,15 @@ def totp_at(t):
 
 def main():
     global tmp
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))  # a parent timeout still runs the cleanup below
     tmp = tempfile.mkdtemp(prefix="credfixture-selftest-")  # mkdtemp: owner-only 0700
     servers = []
     try:
-        check(os.stat(tmp).st_mode & 0o777 == 0o700, "tempdir is 0700")
+        origins = [fixture_server.Fixture(o, None).origin
+                   for o in ("https://LocalHost:443", "https://localhost", "https://localhost:8443")]
+        check(origins == ["https://localhost", "https://localhost", "https://localhost:8443"],
+              "origin canonicalization drops the default port and keeps another one")
         ca, crt, key = make_certs()
-        check(os.stat(key).st_mode & 0o777 == 0o600, "private key is 0600")
         srv = Server(ca, crt, key, 1111111109)
         servers.append(srv)
         main_checks(srv)
@@ -315,11 +422,10 @@ def main():
         servers.append(totp_vector(ca, crt, key, 1234567890, "89005924"))
         for s in servers:
             s.stop()
-        for s in servers:
+        for i, s in enumerate(servers, 1):
             out = s.output()
-            for secret in LOG_SECRETS:
-                check(secret not in out, "server output does not contain a test secret")
-        check(all(p.poll() is not None for p in procs), "all subprocesses stopped")
+            check("listening" in out and not any(secret in out for secret in LOG_SECRETS),
+                  "server %d output is non-empty and contains none of the test passwords or secrets" % i)
     finally:
         for p in procs:
             if p.poll() is None:

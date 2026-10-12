@@ -9,7 +9,8 @@ python3 Tools/CredentialFixture/server.py --origin https://HOST[:PORT] --cert PE
 ```
 
 You provide `HOST`, its certificate (trusted by the machine that browses it) and its DNS/hosts
-entry; none are created or changed here. `HOST` is the WebAuthn rpID. The server listens on
+entry; none are created or changed here. `HOST` is the WebAuthn rpID; a `:443` in `--origin` is
+normalised away (browsers omit it), any other port is part of the expected origin. The server listens on
 `127.0.0.1` unless `--bind` is given, and on the origin's port (443 if omitted).
 
 Open the origin in the browser under test: set up the username, password and TOTP secret once per
