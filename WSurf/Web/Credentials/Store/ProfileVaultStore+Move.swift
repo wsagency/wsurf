@@ -92,7 +92,9 @@ nonisolated extension CommitTransaction {
             deletedAt: wall, scope: header.scope, ownerID: ownerID, subject: subject, passkeyID: passkeyID,
             label: subject == nil ? nil : Self.label(removed),
             snapshot: subject == nil ? removed : nil,
-            credentialValue: try subject.map { try Self.credentialValue(of: removed, subject: $0, passkeyID: passkeyID) }
+            credentialValue: try subject.map { try Self.credentialValue(of: removed, subject: $0, passkeyID: passkeyID) },
+            exchangeAccountID: subject == nil ? nil : removed.exchangeAccountID,
+            exchangeItemID: subject == nil ? nil : removed.exchangeItemID
         )
         let entryPlaintext = try CredentialContent.canonicalJSON(body)
         guard entryPlaintext.count <= StoreFormat.historyRowBytes else { throw CredentialStoreError.limit(.historyRow) }
@@ -151,35 +153,12 @@ nonisolated extension CommitTransaction {
         trash = trashState
     }
 
-    /// The linked Trash as this transaction sees it, opened on first use: its key unwrapped under the grant's DEK, and its stored
-    /// head checked against the registry entry the session verified before it opens.
+    /// The linked Trash as this transaction sees it, opened on first use (`ProfileVaultStore.openTrash`).
     private func openedTrash() throws -> TrashState {
         if let trash {
             return trash
         }
-        let trashEntry = opened.trashEntry
-        return try mapIntegrity(grant.ordinal) {
-            guard let row = try StoreTables.vaultRows(db).first(where: { $0.vaultID == grant.trashID && $0.role == .trash }),
-                let keyWrap = row.keyWrap, StoreSeal.digest(keyWrap) == trashEntry.keyWrapDigest,
-                StoreSeal.digestOrZero(row.wrappers) == trashEntry.wrappersDigest,
-                let stored = try StoreTables.head(db, vaultID: grant.trashID),
-                stored.revision == trashEntry.headRevision, StoreSeal.digest(stored.sealed) == trashEntry.headDigest
-            else { throw CredentialStoreError.malformed }
-            let key = try StoreSeal.unwrapTrashKey(
-                keyWrap, under: grant.dek, ids: ids, source: opened.head.vaultID, trash: grant.trashID, nonce: opened.head.link.nonce
-            )
-            let head = try StoreSeal.openHead(
-                stored.sealed, key: key, ids: ids, vaultID: grant.trashID, revision: stored.revision,
-                wrappersDigest: trashEntry.wrappersDigest, keyWrapDigest: trashEntry.keyWrapDigest
-            )
-            guard head.role == .trash, head.link.peerVaultID == opened.head.vaultID, head.link.nonce == opened.head.link.nonce else {
-                throw CredentialStoreError.malformed
-            }
-            return TrashState(
-                head: head,
-                side: WriteSide(vaultID: head.vaultID, key: key, journalSeq: head.journalSeq, chainTip: head.chainTip, counts: head.historyCounts)
-            )
-        }
+        return try ProfileVaultStore.openTrash(db, grant: grant, opened: opened)
     }
 
     /// `subject == nil` is a whole account; the passkey id only exists for a passkey.
@@ -212,7 +191,7 @@ nonisolated extension CommitTransaction {
 
     /// The owner's display name and first origin, each cut to 256 UTF-8 bytes on a character boundary, so a Trash row is identifiable
     /// without reading the credential value.
-    private static func label(_ account: CredentialAccount) -> String? {
+    static func label(_ account: CredentialAccount) -> String? {
         let parts = [account.displayName, account.origins.first].compactMap { $0 }.map { cut($0, bytes: 256) }.filter { !$0.isEmpty }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -228,5 +207,35 @@ nonisolated extension CommitTransaction {
             result.append(character)
         }
         return result
+    }
+}
+
+extension ProfileVaultStore {
+    /// The linked Trash of an opened vault: its key unwrapped under the grant's DEK, and its stored head checked against the registry
+    /// entry the session verified before it opens. Transactions and reads share this one path.
+    nonisolated static func openTrash(_ db: Database, grant: VaultGrant, opened: OpenedVault) throws -> TrashState {
+        let trashEntry = opened.trashEntry
+        return try mapIntegrity(grant.ordinal) {
+            guard let row = try StoreTables.vaultRows(db).first(where: { $0.vaultID == grant.trashID && $0.role == .trash }),
+                let keyWrap = row.keyWrap, StoreSeal.digest(keyWrap) == trashEntry.keyWrapDigest,
+                StoreSeal.digestOrZero(row.wrappers) == trashEntry.wrappersDigest,
+                let stored = try StoreTables.head(db, vaultID: grant.trashID),
+                stored.revision == trashEntry.headRevision, StoreSeal.digest(stored.sealed) == trashEntry.headDigest
+            else { throw CredentialStoreError.malformed }
+            let key = try StoreSeal.unwrapTrashKey(
+                keyWrap, under: grant.dek, ids: grant.ids, source: opened.head.vaultID, trash: grant.trashID, nonce: opened.head.link.nonce
+            )
+            let head = try StoreSeal.openHead(
+                stored.sealed, key: key, ids: grant.ids, vaultID: grant.trashID, revision: stored.revision,
+                wrappersDigest: trashEntry.wrappersDigest, keyWrapDigest: trashEntry.keyWrapDigest
+            )
+            guard head.role == .trash, head.link.peerVaultID == opened.head.vaultID, head.link.nonce == opened.head.link.nonce else {
+                throw CredentialStoreError.malformed
+            }
+            return TrashState(
+                head: head,
+                side: WriteSide(vaultID: head.vaultID, key: key, journalSeq: head.journalSeq, chainTip: head.chainTip, counts: head.historyCounts)
+            )
+        }
     }
 }

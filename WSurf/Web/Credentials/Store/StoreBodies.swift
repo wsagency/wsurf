@@ -25,6 +25,11 @@ nonisolated struct TrashEntryBody: Codable, Equatable, Sendable {
     var label: String?
     var snapshot: CredentialAccount?
     var credentialValue: Data?
+    /// A credential entry's owner's raw `exchangeAccountID`/`exchangeItemID` as they were when the credential was removed (non-secret;
+    /// `nil` is a native owner that had none). A whole-account entry reads them from `snapshot` and leaves these `nil`. Never read from
+    /// the live owner later: it can change or be deleted before a restore, a purge or a re-import.
+    var exchangeAccountID: Data?
+    var exchangeItemID: Data?
 }
 
 /// What survives a purge: identity only. No secret field exists.

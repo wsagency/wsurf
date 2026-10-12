@@ -20,7 +20,8 @@ nonisolated struct OpenedVault {
 nonisolated struct CommitIntent {
     let vaultID: UUID
     let access: VaultAccess
-    let expectedRevision: UInt64
+    /// `nil` skips the compare-and-set (purge has no revision argument; it still opens against the entries the session verified).
+    let expectedRevision: UInt64?
     let cause: String?
     /// `commit` validates the proposed accounts and enforces the live caps; `delete` never does, so a delete always works.
     let isCommit: Bool
@@ -37,6 +38,8 @@ nonisolated struct CommitRequest {
 nonisolated struct Proposal {
     let accounts: [CredentialAccount]
     let requires: RemovalScope?
+    /// The account an explicit earlier-revision restore applies to: its changes are revisions, never removals (see `CredentialDiff.plan`).
+    var restoring: UUID?
 }
 
 /// `entry == nil` means nothing was written (a true no-op).
@@ -68,6 +71,21 @@ extension ProfileVaultStore {
     }
 
     private func perform(_ intent: CommitIntent, derive: ([CredentialAccount]) throws -> Proposal) async throws -> VaultCommitReceipt {
+        try await run(intent, ledgerOnDemand: intent.isCommit) { db, request, ledgerAttached in
+            try Self.transact(db, request, derive: derive, ledgerAttached: ledgerAttached)
+        }.receipt
+    }
+
+    /// The one write runner: authorize, take the operation lock, run `step` in one `BEGIN IMMEDIATE` transaction on the pool's writer,
+    /// publish the new registry entries to the grant. A removal needs the verification scratch attached to the connection before
+    /// `BEGIN IMMEDIATE` (a transaction cannot attach), so `ledgerOnDemand == false` always starts with it; `true` learns it from the
+    /// plan, which writes nothing before that, and runs again with the scratch attached. A scratch cleanup failure never changes the
+    /// outcome (the next EXCLUSIVE unlock finds and reports the file); `scratchNeedsExclusive` already keeps a live scratch away from
+    /// other processes' cleanup. `checkpoint` is the best-effort `wal_checkpoint(TRUNCATE)` of a purge.
+    func run(
+        _ intent: CommitIntent, ledgerOnDemand: Bool, checkpoint: Bool = false,
+        _ step: (Database, CommitRequest, Bool) throws -> CommitOutcome
+    ) async throws -> CommitOutcome {
         _ = try authorizedGrant(intent.vaultID, intent.access)
         let clock = now
         let wallClock = wall
@@ -77,23 +95,19 @@ extension ProfileVaultStore {
             func write(_ db: Database, ledgerAttached: Bool) throws -> CommitOutcome? {
                 var committed: CommitOutcome?
                 try db.inTransaction(.immediate) {
-                    let outcome = try Self.transact(db, request, derive: derive, ledgerAttached: ledgerAttached)
+                    let outcome = try step(db, request, ledgerAttached)
                     committed = outcome
                     return outcome.entry == nil ? .rollback : .commit
                 }
                 return committed
             }
-            // A removal needs the verification scratch attached to this connection before `BEGIN IMMEDIATE` (a transaction cannot
-            // attach). A delete always removes, so it starts with it; a commit learns it from its plan, writes nothing before that,
-            // and runs again with the scratch attached. A scratch cleanup failure never changes the outcome (the next EXCLUSIVE
-            // unlock finds and reports the file); `scratchNeedsExclusive` already keeps a live scratch away from other processes' cleanup.
             func withLedger() throws -> CommitOutcome? {
                 try VerificationScratch.attached(on: pool, supportDirectory: directory, cleanupFailed: { _ in }) {
                     try write($0, ledgerAttached: true)
                 }
             }
             var committed: CommitOutcome?
-            if intent.isCommit {
+            if ledgerOnDemand {
                 do {
                     committed = try pool.writeWithoutTransaction { try write($0, ledgerAttached: false) }
                 } catch is LedgerRequired {
@@ -103,6 +117,9 @@ extension ProfileVaultStore {
                 committed = try withLedger()
             }
             guard let committed else { throw CredentialStoreError.integrityFailure(vaultOrdinal: grant.ordinal) }
+            if checkpoint, committed.entry != nil {
+                try? pool.writeWithoutTransaction { try $0.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)") }
+            }
             return committed
         }
         if let entry = outcome.entry, grants[intent.vaultID]?.access === intent.access {
@@ -111,7 +128,7 @@ extension ProfileVaultStore {
                 grants[intent.vaultID]?.trashEntry = trashEntry
             }
         }
-        return outcome.receipt
+        return outcome
     }
 
     /// Everything inside the write transaction, in the order of §7: authenticate, CAS, read the live rows, plan, (a removal) verify the
@@ -120,26 +137,39 @@ extension ProfileVaultStore {
     nonisolated static func transact(
         _ db: Database, _ request: CommitRequest, derive: ([CredentialAccount]) throws -> Proposal, ledgerAttached: Bool
     ) throws -> CommitOutcome {
+        let (transaction, snapshot) = try begin(db, request)
+        return try apply(try derive(snapshot.accounts), snapshot: snapshot, transaction, request, ledgerAttached: ledgerAttached)
+    }
+
+    /// Authenticate, CAS, read the live rows. Nothing is written.
+    nonisolated static func begin(_ db: Database, _ request: CommitRequest) throws -> (CommitTransaction, StoreSnapshot) {
         let intent = request.intent
         let opened = try openVault(db, grant: request.grant, vaultID: intent.vaultID, access: intent.access, now: request.now)
-        guard intent.expectedRevision == opened.head.revision else { throw CredentialVaultError.staleRevision }
+        if let expected = intent.expectedRevision, expected != opened.head.revision {
+            throw CredentialVaultError.staleRevision
+        }
         guard opened.head.revision < UInt64(Int64.max), opened.catalog.revision < UInt64(Int64.max) else { throw CredentialVaultError.invalidData }
-
         let snapshot = try readSnapshot(db, grant: request.grant, vaultID: intent.vaultID)
-        let proposal = try derive(snapshot.accounts)
+        return (CommitTransaction(db, request: request, opened: opened, snapshot: snapshot), snapshot)
+    }
+
+    /// Plan, (a removal) verify both histories, write, seal. A caller that already ran `verifyHistories` is not charged twice.
+    nonisolated static func apply(
+        _ proposal: Proposal, snapshot: StoreSnapshot, _ transaction: CommitTransaction, _ request: CommitRequest, ledgerAttached: Bool
+    ) throws -> CommitOutcome {
+        let intent = request.intent
         if intent.isCommit {
-            try validate(proposal.accounts, blockedOrigins: opened.head.blockedOrigins)
+            try validate(proposal.accounts, blockedOrigins: transaction.opened.head.blockedOrigins)
         }
         // §11.1: the plan is classified on the complete payload bytes, never on `==`.
-        let plan = try CredentialDiff.plan(old: snapshot.accounts, new: proposal.accounts)
+        let plan = try CredentialDiff.plan(old: snapshot.accounts, new: proposal.accounts, restoring: proposal.restoring)
         if let required = proposal.requires {
             guard plan.removals.contains(required) else { throw CredentialVaultError.invalidData }
         }
         guard plan.persistence != .noop, !plan.touched.isEmpty || !plan.removals.isEmpty else {
-            return CommitOutcome(receipt: VaultCommitReceipt(revision: opened.head.revision), entry: nil, trashEntry: nil)
+            return CommitOutcome(receipt: VaultCommitReceipt(revision: transaction.opened.head.revision), entry: nil, trashEntry: nil)
         }
-        let transaction = CommitTransaction(db, request: request, opened: opened, snapshot: snapshot)
-        if !plan.removals.isEmpty {
+        if !plan.removals.isEmpty, transaction.trash == nil {
             // Once, before this transaction's first write: the rows a MOVE selects and journals on either side must be the ones the
             // authenticated heads' journals replay to. Errors map as everywhere else: a full disk or a busy database stays operational,
             // a decode, crypto or ledger mismatch is an integrity failure.
@@ -152,7 +182,7 @@ extension ProfileVaultStore {
 
     /// The v1 payload rules at the boundary: distinct ids, `CredentialAccount.validate()`, the live byte budget (blocked origins
     /// included). A live limit names itself.
-    nonisolated private static func validate(_ accounts: [CredentialAccount], blockedOrigins: [String]) throws {
+    nonisolated static func validate(_ accounts: [CredentialAccount], blockedOrigins: [String]) throws {
         do {
             try CredentialVaultCrypto.validate(CredentialVaultPayload(revision: 0, accounts: accounts, blockedPasswordOrigins: Set(blockedOrigins)))
         } catch CredentialVaultError.oversized {
@@ -307,7 +337,7 @@ nonisolated final class CommitTransaction {
         }
     }
 
-    private func putLive(_ proposed: CredentialAccount, stampsModifiedAt: Bool) throws {
+    func putLive(_ proposed: CredentialAccount, stampsModifiedAt: Bool) throws {
         var account = proposed
         if stampsModifiedAt {
             account.modifiedAt = wall

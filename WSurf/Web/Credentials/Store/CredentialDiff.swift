@@ -37,7 +37,11 @@ nonisolated enum CredentialDiff {
     /// account (never first-wins, even when the lists are byte-identical, and without validating keys or metadata, so the
     /// byte-identical bypass stays intact); `CredentialStoreError.metadataUndecodable` when a metadata change would
     /// supersede exchange bytes that do not decode; `CredentialVaultError.invalidData` for a changed passkey that cannot be hashed.
-    static func plan(old: [CredentialAccount], new: [CredentialAccount]) throws -> CredentialChangePlan {
+    ///
+    /// `restoring` names the account an explicit earlier-revision restore applies to: its password slot is never a removal there (a
+    /// restored username-only or basic-auth revision leaves no password, yet the current password is superseded, not deleted), so the
+    /// current value becomes a new revision and nothing goes to the Trash. An ordinary edit or clear passes `nil` and still removes.
+    static func plan(old: [CredentialAccount], new: [CredentialAccount], restoring: UUID? = nil) throws -> CredentialChangePlan {
         let oldIndex = try indexByID(old)
         var newIDs = Set<UUID>()
         newIDs.reserveCapacity(new.count)
@@ -49,7 +53,7 @@ nonisolated enum CredentialDiff {
         guard try CredentialContent.canonicalJSON(old) != CredentialContent.canonicalJSON(new) else {
             return CredentialChangePlan(persistence: .noop, revisions: [], removals: [], touched: [], setsModifiedAt: [])
         }
-        var plan = Accumulator()
+        var plan = Accumulator(restoring: restoring)
         for account in new {
             if let position = oldIndex[account.id] {
                 try plan.compare(old[position], account)
@@ -92,6 +96,7 @@ nonisolated enum CredentialDiff {
     }
 
     private struct Accumulator {
+        let restoring: UUID?
         var semantic = false
         var revisions: [RevisionDraft] = []
         var removals: [RemovalScope] = []
@@ -113,7 +118,7 @@ nonisolated enum CredentialDiff {
 
         private mutating func comparePassword(_ old: CredentialAccount, _ new: CredentialAccount) throws -> Bool {
             guard try CredentialContent.hash(.password(old)) != CredentialContent.hash(.password(new)) else { return false }
-            if old.password != nil, new.password == nil {
+            if old.password != nil, new.password == nil, old.id != restoring {
                 removals.append(.credential(ownerID: old.id, subject: .password, passkeyID: nil))
             } else if old.password != nil || !old.username.isEmpty || old.basicAuthenticationMetadata != nil {
                 let value = PasswordValue(
