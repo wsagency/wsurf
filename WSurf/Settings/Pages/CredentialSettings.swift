@@ -504,10 +504,16 @@ private struct CredentialEditorSheet: View {
                             model.error = String(localized: "Couldn’t generate a password.")
                         }
                     }
-                    TextField("Websites (one HTTPS address per line)", text: text(\.websites), axis: .vertical)
-                        .lineLimit(1...4)
-                    TextField("Other HTTPS origins (one per line)", text: text(\.extraOrigins), axis: .vertical)
-                        .lineLimit(1...3)
+                    LabeledContent("Websites (one HTTPS address per line)") {
+                        WebsiteListField(
+                            kind: .websites, label: "Websites (one HTTPS address per line)", lineLimit: 1...4, text: text(\.websites)
+                        )
+                    }
+                    LabeledContent("Other HTTPS origins (one per line)") {
+                        WebsiteListField(
+                            kind: .extraOrigins, label: "Other HTTPS origins (one per line)", lineLimit: 1...3, text: text(\.extraOrigins)
+                        )
+                    }
                 }
                 .textFieldStyle(.roundedBorder)
                 totp(draft)
