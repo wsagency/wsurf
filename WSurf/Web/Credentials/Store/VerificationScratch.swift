@@ -39,6 +39,25 @@ nonisolated enum VerificationScratch {
         cleanupFailed: @Sendable (URL) -> Void,
         _ body: (Database) throws -> T
     ) throws -> T {
+        try attached(on: writer, supportDirectory: supportDirectory, cleanupFailed: cleanupFailed) { db in
+            var value: T?
+            try db.inTransaction(.deferred) {
+                value = try body(db)
+                return .rollback
+            }
+            return value.unsafelyUnwrapped  // `inTransaction` either threw above or ran `body`
+        }
+    }
+
+    /// The same lifecycle with `body` running in autocommit on the attached connection, for a caller that opens its own transaction
+    /// (a write transaction cannot attach, so a MOVE's ledger preflight needs the scratch attached before `BEGIN IMMEDIATE`).
+    /// `body` owns its transaction; whatever it leaves in `scratch` is discarded with the file.
+    static func attached<T>(
+        on writer: any DatabaseWriter,
+        supportDirectory: URL,
+        cleanupFailed: @Sendable (URL) -> Void,
+        _ body: (Database) throws -> T
+    ) throws -> T {
         let file = try create(in: directory(in: supportDirectory))
         var detachFailed = false
         let outcome: Result<T, Error> = writer.writeWithoutTransaction { db in
@@ -52,12 +71,7 @@ nonisolated enum VerificationScratch {
                 }
                 try db.execute(sql: "PRAGMA scratch.synchronous = OFF")  // illegal inside a transaction
                 try db.execute(sql: ledgerTables)
-                var value: T?
-                try db.inTransaction(.deferred) {
-                    value = try body(db)
-                    return .rollback
-                }
-                return value.unsafelyUnwrapped  // `inTransaction` either threw above or ran `body`
+                return try body(db)
             }
             if attached {
                 do {

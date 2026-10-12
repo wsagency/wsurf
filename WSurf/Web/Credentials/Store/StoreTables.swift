@@ -138,6 +138,28 @@ nonisolated enum StoreTables {
         }
     }
 
+    /// The next `revision` row of one vault owned by `ownerID` (and of `subject`, when given) after `previous` in `recordID` order, or
+    /// `nil`. One statement, one row, finished before it returns: a MOVE writes and deletes between calls, never under an open
+    /// cursor, and the keyset (`recordID > previous`) walks the primary key forward, so the rows it already moved are never
+    /// revisited and none is skipped. Memory is one row.
+    ///
+    /// `ownerID`, `subject` and `kind` are clear columns that only the AEAD's AAD authenticates. The caller must already have run
+    /// `StoreVerifier.verifyHistories` in this transaction, which binds every stored row's columns and ciphertext to its vault's journal.
+    static func nextOwnedRevision(
+        _ db: Database, vaultID: UUID, ownerID: UUID, subject: RecordSubject?, after previous: UUID?
+    ) throws -> RecordRow? {
+        var sql = """
+            SELECT vaultID, recordID, kind, ownerID, subject, version, sealed FROM record
+            WHERE vaultID = ? AND kind = ? AND ownerID = ? AND recordID > ?
+            """
+        var arguments: StatementArguments = [vaultID.sqlText, RecordKind.revision.sqlName, ownerID.sqlText, previous?.sqlText ?? ""]
+        if let subject {
+            sql += " AND subject = ?"
+            arguments += [subject.sqlName]
+        }
+        return try Row.fetchOne(db, sql: sql + " ORDER BY recordID LIMIT 1", arguments: arguments).map(recordRow)
+    }
+
     private static func recordRow(_ row: Row) throws -> RecordRow {
         RecordRow(
             vaultID: try Stored.uuid(row[0]),

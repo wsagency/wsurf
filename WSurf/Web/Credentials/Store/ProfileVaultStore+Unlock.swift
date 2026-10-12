@@ -271,7 +271,7 @@ extension ProfileVaultStore {
         }
     }
 
-    nonisolated private static func readSnapshot(_ db: Database, grant: VaultGrant, vaultID: UUID) throws -> StoreSnapshot {
+    nonisolated static func readSnapshot(_ db: Database, grant: VaultGrant, vaultID: UUID) throws -> StoreSnapshot {
         let row = try activeRow(vaultID, in: db)
         let head = try openStoredHead(db, row: row, key: grant.dek, ids: grant.ids, ordinal: grant.ordinal)
         return try mapIntegrity(grant.ordinal) {

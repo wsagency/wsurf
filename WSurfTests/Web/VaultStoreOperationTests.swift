@@ -20,6 +20,20 @@ private func isIntegrityFailure(_ error: (any Error)?) -> Bool {
     return false
 }
 
+/// The error `body` throws when it runs in a task that is already cancelled (`nil` when it returns). Cancellation is only observed at
+/// suspension points that check it (`Task.sleep`), so this tells a code path that sleeps from one that does not, with no clock.
+private func inCancelledTask(_ body: @escaping @Sendable () async throws -> some Sendable) async -> (any Error)? {
+    await Task {
+        withUnsafeCurrentTask { $0?.cancel() }
+        do {
+            _ = try await body()
+            return nil
+        } catch {
+            return error
+        }
+    }.value
+}
+
 private nonisolated enum ListingLapse: CaseIterable, Sendable {
     case revoked, pastTheDeadline
 }
@@ -317,11 +331,23 @@ extension VaultStoreUnlockTests {
             let sidecarsBefore = try sidecars(f)
             let defaultsBefore = f.defaultsImage()
 
-            // Bounded by `lockWait` (150 ms), never the default 5 s, and never reading while another process holds the lock.
+            // Each call keeps trying for the injected `lockWait` (150 ms) and then refuses, and never reads while another process holds
+            // the lock. The elapsed time only has a lower bound: an upper bound measures how fast the test process can resume a sleeping
+            // task, which the other (blocking) tests in a parallel run starve for seconds, so "bounded by `lockWait`, never the default
+            // 5 s" is proven by the two scheduler-independent probes below instead.
             let started = ContinuousClock().now
             await #expect(throws: CredentialStoreError.storeBusy) { _ = try await store.listing() }
             await #expect(throws: CredentialStoreError.storeBusy) { _ = try await store.discovery(vaultID: f.vaultID) }
-            #expect(ContinuousClock().now - started < .seconds(3))
+            #expect(ContinuousClock().now - started >= Self.lockWait * 2)
+
+            // Honours the injected wait: with `.zero` the refusal comes before any sleep, so a task that is already cancelled still gets
+            // `storeBusy`; a store that used any positive wait (the 5 s default included) would reach `Task.sleep` and throw cancellation.
+            let impatient = f.makeStore(lockWait: .zero)
+            #expect(await inCancelledTask { try await impatient.listing() } as? CredentialStoreError == .storeBusy)
+            #expect(await inCancelledTask { try await impatient.discovery(vaultID: f.vaultID) } as? CredentialStoreError == .storeBusy)
+            // And it does wait: a positive wait sleeps between attempts, so the same cancelled task is cancelled out of that sleep.
+            #expect(await inCancelledTask { try await store.listing() } is CancellationError)
+            #expect(await inCancelledTask { try await store.discovery(vaultID: f.vaultID) } is CancellationError)
 
             #expect(try sidecars(f) == sidecarsBefore)
             #expect(try settledImage(f) == before)
@@ -424,6 +450,9 @@ extension VaultStoreUnlockTests {
             #expect(await unlockResult(f, store, access: access) == nil)
             let extra = VaultFixtures.proof(9)
             _ = try await store.addUnlock(vaultID: f.vaultID, extra, using: access)
+            let impatient = f.makeStore(lockWait: .zero)
+            let impatientAccess = f.beginAccess()
+            #expect(await unlockResult(f, impatient, access: impatientAccess) == nil)
             let imageBefore = try f.headWriteImage()
             let revision = try f.headRevision(of: f.vaultID)
             let defaultsBefore = f.defaultsImage()
@@ -439,9 +468,27 @@ extension VaultStoreUnlockTests {
             let elapsed = ContinuousClock().now - started
             hold.release()
 
-            // Bounded by `lockWait` (150 ms), never the default 5 s; nothing logical changed.
+            // The injected `lockWait` is honoured, nothing logical changed. The elapsed time only has a lower bound (an upper bound
+            // measures how fast a sleeping task resumes, which blocking tests in a parallel run starve for seconds); the bound itself
+            // is the two probes below, which need no clock.
             #expect(failure as? CredentialStoreError == .storeBusy, "\(operation)")
-            #expect(elapsed < .seconds(3), "\(operation)")
+            #expect(elapsed >= Self.lockWait, "\(operation)")
+            #expect(try f.headWriteImage() == imageBefore, "\(operation)")
+            #expect(f.defaultsImage() == defaultsBefore, "\(operation)")
+
+            // `.zero` refuses before any sleep (a cancelled task still gets `storeBusy`; the 5 s default would reach `Task.sleep`), while
+            // the 150 ms store does sleep between attempts (the cancelled task is cancelled out of it).
+            let busy = try await OperationLock.acquire(in: f.directory, mode: .exclusive)
+            #expect(
+                await inCancelledTask { try await operation.run(impatient, f, impatientAccess, extra: extra, revision: revision) }
+                    as? CredentialStoreError == .storeBusy,
+                "\(operation)"
+            )
+            #expect(
+                await inCancelledTask { try await operation.run(store, f, access, extra: extra, revision: revision) } is CancellationError,
+                "\(operation)"
+            )
+            busy.release()
             #expect(try f.headWriteImage() == imageBefore, "\(operation)")
             #expect(f.defaultsImage() == defaultsBefore, "\(operation)")
 

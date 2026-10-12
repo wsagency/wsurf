@@ -44,6 +44,19 @@ nonisolated struct StoreVerifier: Sendable {
         }
     }
 
+    /// V3 and V4 of both vaults of the pair (each whole journal chain against the head the caller authenticated, then every history row
+    /// against the ledger that journal replays to; side 0 the source, side 1 its Trash). A MOVE runs it before its first write, inside
+    /// its write transaction: it selects the source rows by clear columns, journals source digests as `remove`, and extends the Trash
+    /// journal, so both ledgers must be the ones the heads authenticate. V1, V2 and V5 are not repeated: the heads are the caller's,
+    /// and V5 compares only authenticated journal rows with each other. Unlike `verify` it does not map its errors: the caller runs it
+    /// under `mapIntegrity`, so a full disk or a busy database stays operational there.
+    func verifyHistories(in db: Database, source: Vault, trash: Vault, isCancelled: () -> Bool) throws {
+        try checkJournal(db, source, ledger: 0, isCancelled)
+        try checkHistory(db, source, ledger: 0, isCancelled)
+        try checkJournal(db, trash, ledger: 1, isCancelled)
+        try checkHistory(db, trash, ledger: 1, isCancelled)
+    }
+
     // MARK: V1
 
     private func checkHeads(_ db: Database, source: Vault, trash: Vault) throws {

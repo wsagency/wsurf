@@ -106,37 +106,9 @@ extension ProfileVaultStore {
         now: @Sendable () -> ContinuousClock.Instant,
         edit: (VaultHead, [CredentialKeyWrapper]) throws -> HeadChange?
     ) throws -> (receipt: VaultCommitReceipt, entry: RegistryEntry?) {
-        try access.checkAuthorization(at: now())
-        let ordinal = grant.ordinal
-        let integrity = CredentialStoreError.integrityFailure(vaultOrdinal: ordinal)
-
-        // The registry as it is now: authenticated, and still the entries this session verified.
-        let catalog = try mapIntegrity(nil) { () throws -> RegistryCatalog in
-            guard let stored = try StoreTables.registry(db), StoreSeal.verifyRegistryMAC(rk: grant.registryKey, catalog: stored.catalog, mac: stored.mac) else {
-                throw CredentialStoreError.malformed
-            }
-            let catalog = try RegistryCatalog.decode(stored.catalog)
-            guard catalog.ids == grant.ids, catalog.revision == stored.revision else { throw CredentialStoreError.malformed }
-            return catalog
-        }
-        guard let entry = catalog.vaults.first(where: { $0.vaultID == vaultID }),
-            let trashEntry = catalog.vaults.first(where: { $0.vaultID == grant.trashID })
-        else { throw integrity }
-        guard entry == grant.entry, trashEntry == grant.trashEntry else { throw CredentialVaultError.staleRevision }
-
-        // The stored vault and head are what that entry says; then the head opens under the session's key.
-        let row = try activeRow(vaultID, in: db)
-        guard let storedHead = try mapIntegrity(ordinal, { try StoreTables.head(db, vaultID: vaultID) }),
-            StoreSeal.digestOrZero(row.wrappers) == entry.wrappersDigest, StoreSeal.digestOrZero(row.keyWrap) == entry.keyWrapDigest,
-            storedHead.revision == entry.headRevision, StoreSeal.digest(storedHead.sealed) == entry.headDigest
-        else { throw integrity }
-        let (head, wrappers) = try mapIntegrity(ordinal) { () throws -> (VaultHead, [CredentialKeyWrapper]) in
-            let head = try StoreSeal.openHead(
-                storedHead.sealed, key: grant.dek, ids: grant.ids, vaultID: vaultID, revision: storedHead.revision,
-                wrappersDigest: entry.wrappersDigest, keyWrapDigest: entry.keyWrapDigest
-            )
-            return (head, try VaultWrapperList.decode(row.wrappers))
-        }
+        let integrity = CredentialStoreError.integrityFailure(vaultOrdinal: grant.ordinal)
+        let opened = try openVault(db, grant: grant, vaultID: vaultID, access: access, now: now)
+        let (catalog, entry, head, wrappers) = (opened.catalog, opened.entry, opened.head, opened.wrappers)
 
         guard let change = try edit(head, wrappers) else { return (VaultCommitReceipt(revision: head.revision), nil) }
 
@@ -155,13 +127,7 @@ extension ProfileVaultStore {
         nextEntry.headRevision = next.revision
         nextEntry.headDigest = StoreSeal.digest(sealed)
 
-        var nextCatalog = catalog
-        nextCatalog.revision += 1
-        nextCatalog.vaults = catalog.vaults.map { $0.vaultID == vaultID ? nextEntry : $0 }
-        let encoded = nextCatalog.encode()
-        try StoreTables.putRegistry(
-            db, revision: nextCatalog.revision, catalog: encoded, mac: StoreSeal.registryMAC(rk: grant.registryKey, catalog: encoded)
-        )
+        try storeRegistry(db, grant: grant, catalog: catalog, replacing: [nextEntry])
         return (VaultCommitReceipt(revision: next.revision), nextEntry)
     }
 }

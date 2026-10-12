@@ -70,6 +70,12 @@ nonisolated struct VaultStoreFixture {
     let secondTrashDigests: HeadDigests?
     /// Every `ProfileVaultStore` made through `makeStore`/`unlocked` is registered here; `with` closes them all before cleanup.
     let tracker: StoreTracker
+    /// The source vault's history rows exactly as first written, before the first of `moves` re-sealed them (empty without moves): real
+    /// ciphertext that opens under the vault's key and each row's own AAD, but whose digest the journal no longer expects.
+    let preMoveSourceHistory: [StoreTables.RecordRow]
+    /// The Trash's history rows as the first move (a delete) wrote them: after a delete/undelete/delete the Trash holds the same
+    /// `recordID`s re-sealed again, so these are real Trash ciphertext whose digest the Trash journal no longer expects.
+    let firstDeleteTrashHistory: [StoreTables.RecordRow]
     /// The heads as currently stored: `editHead` keeps them in step with the file, raw tampering does not.
     private(set) var sourceHead: VaultHead
     private(set) var trashHead: VaultHead
@@ -92,7 +98,9 @@ nonisolated struct VaultStoreFixture {
         stubAbsent: Bool = false,
         secondVault: Bool = false,
         sharedProof: Bool = false,
-        secondAccounts: [CredentialAccount] = []
+        secondAccounts: [CredentialAccount] = [],
+        extraVaults: Int = 0,
+        extraHistory: [FixtureHistoryRun] = []
     ) throws -> VaultStoreFixture {
         precondition(moves == 0 || !accounts.isEmpty, "a MOVE needs an account")
         let env = try VaultTestEnvironment.make()
@@ -104,7 +112,7 @@ nonisolated struct VaultStoreFixture {
         let first = PairSeed(
             vaultID: UUID(), trashID: UUID(), dek: SymmetricKey(size: .bits256), trashDEK: SymmetricKey(size: .bits256),
             ordinal: 1, name: vaultName, proof: proof,
-            load: PairLoad(accounts: accounts, blockedOrigins: blockedOrigins, historyRows: historyRows, moves: moves)
+            load: PairLoad(accounts: accounts, blockedOrigins: blockedOrigins, historyRows: historyRows, moves: moves, extraHistory: extraHistory)
         )
         let second = secondVault
             ? PairSeed(
@@ -113,6 +121,14 @@ nonisolated struct VaultStoreFixture {
                 load: PairLoad(accounts: secondAccounts, blockedOrigins: [], historyRows: 0, moves: 0)
             )
             : nil
+        // `extraVaults` more active vaults (ordinals after B's), each with its own linked Trash, same registry key, no content.
+        let extras = (0..<extraVaults).map { index in
+            PairSeed(
+                vaultID: UUID(), trashID: UUID(), dek: SymmetricKey(size: .bits256), trashDEK: SymmetricKey(size: .bits256),
+                ordinal: (secondVault ? 3 : 2) + index, name: "Extra \(index + 1)", proof: proof,
+                load: PairLoad(accounts: [], blockedOrigins: [], historyRows: 0, moves: 0)
+            )
+        }
 
         let pool = try DatabasePool(path: storeURL.path)
         let pairs = try pool.write { db -> (first: PairResult, second: PairResult?) in
@@ -121,7 +137,9 @@ nonisolated struct VaultStoreFixture {
             let secondPair = try second.map {
                 try writePair($0, in: db, ids: ids, registryKey: registryKey, rowBytes: historyRowBytes)
             }
-            let catalog = RegistryCatalog(ids: ids, revision: 1, vaults: firstPair.entries + (secondPair?.entries ?? [])).encode()
+            let extraPairs = try extras.map { try writePair($0, in: db, ids: ids, registryKey: registryKey, rowBytes: historyRowBytes) }
+            let entries = firstPair.entries + (secondPair?.entries ?? []) + extraPairs.flatMap(\.entries)
+            let catalog = RegistryCatalog(ids: ids, revision: 1, vaults: entries).encode()
             try StoreTables.putRegistry(db, revision: 1, catalog: catalog, mac: StoreSeal.registryMAC(rk: registryKey, catalog: catalog))
             return (firstPair, secondPair)
         }
@@ -153,6 +171,8 @@ nonisolated struct VaultStoreFixture {
             secondDigests: pairs.second?.sourceDigests,
             secondTrashDigests: pairs.second?.trashDigests,
             tracker: StoreTracker(),
+            preMoveSourceHistory: pairs.first.preMoveSource,
+            firstDeleteTrashHistory: pairs.first.firstDeleteTrash,
             sourceHead: pairs.first.sourceHead,
             trashHead: pairs.first.trashHead,
             secondHead: pairs.second?.sourceHead,
@@ -190,9 +210,23 @@ nonisolated struct VaultStoreFixture {
         for account in seed.load.accounts {
             try builder.putLive(account)
         }
-        try builder.addHistory(count: seed.load.historyRows, owner: seed.load.accounts.first?.id ?? UUID())
+        let owner = seed.load.accounts.first?.id ?? UUID()
+        try builder.addHistory(count: seed.load.historyRows, owner: owner)
+        for run in seed.load.extraHistory {
+            try builder.addHistory(
+                count: run.count, owner: seed.load.accounts[run.ownerIndex].id, subject: run.subject, plaintext: run.plaintext
+            )
+        }
+        var preMoveSource: [StoreTables.RecordRow] = []
+        var firstDeleteTrash: [StoreTables.RecordRow] = []
+        if seed.load.moves > 0 {
+            try StoreTables.forEachHistoryRecord(db, vaultID: seed.vaultID) { preMoveSource.append($0) }
+        }
         for index in 0..<seed.load.moves {
             try builder.move(seed.load.accounts[0], delete: index % 2 == 0)
+            if index == 0 {
+                try StoreTables.forEachHistoryRecord(db, vaultID: seed.trashID) { firstDeleteTrash.append($0) }
+            }
         }
         let source = builder.head(
             0, role: .active, name: seed.name, registryKey: registryKey, blockedOrigins: seed.load.blockedOrigins,
@@ -215,7 +249,10 @@ nonisolated struct VaultStoreFixture {
                 keyWrapDigest: trashDigests.keyWrap, headRevision: trash.revision, headDigest: StoreSeal.digest(sealedTrash)
             ),
         ]
-        return PairResult(sourceHead: source, trashHead: trash, sourceDigests: sourceDigests, trashDigests: trashDigests, entries: entries)
+        return PairResult(
+            sourceHead: source, trashHead: trash, sourceDigests: sourceDigests, trashDigests: trashDigests, entries: entries,
+            preMoveSource: preMoveSource, firstDeleteTrash: firstDeleteTrash
+        )
     }
 
     /// The stored form of a wrapper list: a binary property list of the wrappers in order (independent of the production codec).
@@ -449,6 +486,7 @@ private nonisolated struct PairLoad {
     let blockedOrigins: [String]
     let historyRows: Int
     let moves: Int
+    var extraHistory: [FixtureHistoryRun] = []
 }
 
 private nonisolated struct PairSeed {
@@ -468,6 +506,8 @@ private nonisolated struct PairResult {
     let sourceDigests: VaultStoreFixture.HeadDigests
     let trashDigests: VaultStoreFixture.HeadDigests
     let entries: [RegistryEntry]
+    let preMoveSource: [StoreTables.RecordRow]
+    let firstDeleteTrash: [StoreTables.RecordRow]
 }
 
 /// Owns every `ProfileVaultStore` a test creates, so each one is `await close()`d before its directory is removed (the
@@ -515,13 +555,15 @@ nonisolated extension VaultStoreFixture {
         secondVault: Bool = false,
         sharedProof: Bool = false,
         secondAccounts: [CredentialAccount] = [],
+        extraVaults: Int = 0,
+        extraHistory: [FixtureHistoryRun] = [],
         isolation: isolated (any Actor)? = #isolation,
         _ body: (VaultStoreFixture) async throws -> Void
     ) async throws {
         let f = try make(
             accounts: accounts, blockedOrigins: blockedOrigins, historyRows: historyRows, historyRowBytes: historyRowBytes,
             moves: moves, vaultName: vaultName, stubAbsent: stubAbsent, secondVault: secondVault, sharedProof: sharedProof,
-            secondAccounts: secondAccounts
+            secondAccounts: secondAccounts, extraVaults: extraVaults, extraHistory: extraHistory
         )
         do {
             try await body(f)
@@ -811,12 +853,12 @@ private nonisolated final class Builder {
         }
     }
 
-    func addHistory(count: Int, owner: UUID) throws {
+    func addHistory(count: Int, owner: UUID, subject: RecordSubject = .password, plaintext: Data? = nil) throws {
         var ops: [JournalOp] = []
         for index in 0..<count {
-            let row = HistoryRow(recordID: UUID(), kind: .revision, ownerID: owner, subject: .password, version: UInt64(index + 1))
-            let plaintext = Data(repeating: UInt8(truncatingIfNeeded: index), count: rowBytes)
-            ops.append(try putHistory(0, row, plaintext: plaintext))
+            let row = HistoryRow(recordID: UUID(), kind: .revision, ownerID: owner, subject: subject, version: UInt64(index + 1))
+            let bytes = plaintext ?? Data(repeating: UInt8(truncatingIfNeeded: index), count: rowBytes)
+            ops.append(try putHistory(0, row, plaintext: bytes))
         }
         try journal(0, transfer: nil, ops: ops)
     }
