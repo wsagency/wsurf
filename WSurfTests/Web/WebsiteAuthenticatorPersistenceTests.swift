@@ -26,11 +26,13 @@ extension WebsiteAuthenticatorCeremonyTests {
                 path: fixture.profile.supportDirectory.appendingPathComponent("Credentials.store").path, configuration: configuration
             )
             do {
-                defer {
+                // A synchronous helper: in an async body `writeWithoutTransaction` resolves to GRDB's async overload, which a `defer` cannot await.
+                func release() {
                     try? holder.writeWithoutTransaction { try $0.rollback() }
                     try? holder.close()
                 }
-                try holder.writeWithoutTransaction { try $0.beginTransaction(.immediate) }
+                defer { release() }
+                try await holder.writeWithoutTransaction { try $0.beginTransaction(.immediate) }
 
                 await #expect(throws: (any Error).self) {
                     _ = try await get(fixture, user, request: assertion(userVerification: .required))
