@@ -426,13 +426,7 @@ nonisolated final class CommitTransaction {
     }
 
     private func reconcileHistory(_ side: WriteSide) throws {
-        for (kind, expected) in [
-            (RecordKind.revision, side.counts.revision), (.trashEntry, side.counts.trashEntry), (.tombstone, side.counts.tombstone),
-        ] {
-            guard try mapIntegrity(grant.ordinal, { try StoreTables.recordCount(db, vaultID: side.vaultID, kind: kind) }) == expected else {
-                throw integrity
-            }
-        }
+        guard try side.counts.matchesRows(db, vaultID: side.vaultID, ordinal: grant.ordinal) else { throw integrity }
     }
 }
 

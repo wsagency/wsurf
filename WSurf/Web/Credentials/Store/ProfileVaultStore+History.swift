@@ -35,6 +35,16 @@ nonisolated struct RevisionPage: Sendable {
     let next: Int?
 }
 
+nonisolated extension HistoryCounts {
+    /// Whether the stored rows of `vaultID` number exactly what this (head-authenticated) count says: three `COUNT(*)` reads, no row decoded.
+    func matchesRows(_ db: Database, vaultID: UUID, ordinal: Int) throws -> Bool {
+        for (kind, expected) in [(RecordKind.revision, revision), (.trashEntry, trashEntry), (.tombstone, tombstone)] {
+            guard try mapIntegrity(ordinal, { try StoreTables.recordCount(db, vaultID: vaultID, kind: kind) }) == expected else { return false }
+        }
+        return true
+    }
+}
+
 nonisolated struct UndeletePreview: Sendable {
     let entry: TrashItem
     let block: UndeleteBlock?
@@ -70,6 +80,19 @@ extension ProfileVaultStore {
                 try Self.trashItem(db, try Self.storedEntry(db, id, trash: trash, grant: grant), grant: grant)
             }
             return TrashPage(items: items, next: page.next)
+        }
+    }
+
+    /// How many earlier versions, Trash entries and purge tombstones the vault and its Trash hold, as the authenticated heads count
+    /// them. Each head's count is checked against the stored rows (three `COUNT(*)` reads per side, no decoding), so a missing or
+    /// extra row is an integrity failure, not a number. Integers only: no content, and not bounded by the page size.
+    func historyCounts(vaultID: UUID, using access: VaultAccess) async throws -> (live: HistoryCounts, trash: HistoryCounts) {
+        try await readHistory(vaultID, access) { db, grant, opened in
+            let trash = try Self.openTrash(db, grant: grant, opened: opened)
+            guard try opened.head.historyCounts.matchesRows(db, vaultID: opened.head.vaultID, ordinal: grant.ordinal),
+                try trash.side.counts.matchesRows(db, vaultID: trash.side.vaultID, ordinal: grant.ordinal)
+            else { throw CredentialStoreError.integrityFailure(vaultOrdinal: grant.ordinal) }
+            return (opened.head.historyCounts, trash.side.counts)
         }
     }
 
