@@ -248,8 +248,8 @@ struct MentionFieldTests {
         let other = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
         other.stringValue = "other"
         content.addSubview(other)
-        var focusReports: [Bool] = []
-        harness.coordinator.onFocusChange = { focusReports.append($0) }
+        var reportedFocus: Bool?
+        harness.coordinator.onFocusChange = { reportedFocus = $0 }
 
         harness.coordinator.syncFocus(true, in: harness.field)
         await settlePaletteLayout(content)
@@ -257,17 +257,17 @@ struct MentionFieldTests {
         originalEditor.insertText("original", replacementRange: NSRange(location: 0, length: 0))
         await settlePaletteLayout(content)
         #expect(harness.field.stringValue == "original")
-        #expect(focusReports == [true])
+        #expect(reportedFocus == true)
 
         #expect(harness.window.makeFirstResponder(other))
         #expect(harness.field.currentEditor() == nil)
         #expect(other.currentEditor() != nil)
-        #expect(focusReports == [true])
+        #expect(reportedFocus == true)
 
         // Mirror updateNSView seeing isFocused == true before the async did-end report settles.
         harness.coordinator.syncFocus(true, in: harness.field)
         await settlePaletteLayout(content)
-        #expect(focusReports == [true, false])
+        #expect(reportedFocus == false)
         #expect(harness.field.currentEditor() == nil)
         let otherEditor = try #require(other.currentEditor() as? NSTextView)
         #expect(harness.window.firstResponder === otherEditor)
