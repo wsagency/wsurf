@@ -43,9 +43,16 @@ extension WebAuthnAdapterTests {
             return try #require(components.url)
         }
 
-        /// A fresh regular profile with its own context and the provider chosen before any page exists.
-        func context(_ provider: PasswordProvider) -> BrowserProfileContext {
-            let profile = Profile(id: UUID(), name: "Provider \(profiles.count)", symbol: "key", color: .blue)
+        /// A fresh regular profile with its own context and the provider chosen before any page exists, holding `vaults` (real
+        /// managers in the registry, made with `passkeys`). It holds the registry gate (shared) until `close`: a ceremony here can
+        /// register a store, which a session-wide lock elsewhere would reach.
+        func context(_ provider: PasswordProvider, passkeys: VaultPasskeys = VaultPasskeys(), vaults: [VaultState] = []) async throws -> BrowserProfileContext {
+            let profile: Profile
+            if vaults.isEmpty {
+                profile = try await VaultManagerFixture.newProfile("Provider \(profiles.count)")
+            } else {
+                profile = try await VaultManagerFixture.make(passkeys: passkeys, vaults: vaults).profile
+            }
             profiles.append(profile)
             let context = BrowserProfileContext(profile: profile)
             context.settings.passwordProvider = provider
@@ -82,6 +89,15 @@ extension WebAuthnAdapterTests {
             windows.append(window)
             try await navigate(tab.page, to: targetURL)
             return tab.page
+        }
+
+        /// The page's view moves to another window of its own: the page is the same, its window is not.
+        func moveToNewWindow(_ page: BrowserPage) {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 400), styleMask: .borderless, backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = page
+            window.orderBack(nil)
+            windows.append(window)
         }
 
         /// Loads `url` and returns once the document is ready to carry requests: its native frame handshake has resolved in
@@ -123,7 +139,7 @@ extension WebAuthnAdapterTests {
                 await context.endPrivateSession()
             }
             for profile in profiles {
-                await Profile.erase(profile)
+                await VaultManagerFixture.erase(profile)
             }
         }
     }
@@ -230,7 +246,7 @@ extension WebAuthnAdapterTests {
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
     func changingOneContextsProviderCancelsOnlyItsOwnPendingCeremonies(engine: BrowserEngine) async throws {
         try await withRealm(engine) { realm in
-            let contextA = realm.context(.credentialManager), contextB = realm.context(.credentialManager)
+            let contextA = try await realm.context(.credentialManager), contextB = try await realm.context(.credentialManager)
             let a1 = try await realm.open(contextA), a2 = try await realm.open(contextA), b = try await realm.open(contextB)
             // Each request is past the fence, so native has registered it (a rejection would already be an outcome).
             for page in [a1, a2, b] {
@@ -275,7 +291,8 @@ extension WebAuthnAdapterTests {
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
     func aProviderChangeFlipsOnlyItsOwnContextsLivePagesAndNewDocuments(engine: BrowserEngine) async throws {
         try await withRealm(engine) { realm in
-            let contextA = realm.context(.legacy), contextB = realm.context(.credentialManager), contextC = realm.context(.legacy)
+            let contextA = try await realm.context(.legacy), contextB = try await realm.context(.credentialManager)
+            let contextC = try await realm.context(.legacy)
             let a1 = try await realm.open(contextA), a2 = try await realm.open(contextA)
             let b = try await realm.open(contextB), c = try await realm.open(contextC)
             #expect(try await routes(a1, a2, b, c) == ["legacy", "legacy", "manager", "legacy"])
@@ -314,7 +331,7 @@ extension WebAuthnAdapterTests {
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
     func aPrivateContextNeverServesManagerRequestsEvenWhenItsSettingsSayCredentialManager(engine: BrowserEngine) async throws {
         try await withRealm(engine) { realm in
-            let regular = realm.context(.credentialManager)
+            let regular = try await realm.context(.credentialManager)
             let privateContext = realm.privateContext(.credentialManager)
             let control = try await realm.open(regular)
             let page = try await realm.open(privateContext)
@@ -361,7 +378,7 @@ extension WebAuthnAdapterTests {
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
     func cancellingByProfileIDRefusesOnlyThatProfilesPendingCeremonies(engine: BrowserEngine) async throws {
         try await withRealm(engine) { realm in
-            let contextA = realm.context(.credentialManager), contextB = realm.context(.credentialManager)
+            let contextA = try await realm.context(.credentialManager), contextB = try await realm.context(.credentialManager)
             let a1 = try await realm.open(contextA), a2 = try await realm.open(contextA), b = try await realm.open(contextB)
             for page in [a1, a2, b] {
                 try await requestConditionalGet(in: page)
@@ -388,6 +405,123 @@ extension WebAuthnAdapterTests {
                 try await fence(page)
                 #expect(try await outcomes(of: page) == ["NotAllowedError"], "no second outcome for A")
             }
+        }
+    }
+
+    // MARK: Route and vault choice
+
+    /// A modal `get` the page leaves pending. Unlike a conditional one it runs the ceremony at once: route, choice, then the ceremony.
+    private func requestModalGet(in page: BrowserPage) async throws {
+        _ = try await page.evaluateJavaScript("""
+        window.outcomes = [];
+        navigator.credentials.get({ publicKey: { challenge: new Uint8Array(4) } })
+          .then(() => outcomes.push('resolved'), e => outcomes.push(e.name)); true
+        """)
+    }
+
+    /// A "which vault?" answer that waits for the test, like a prompt the user has not answered yet.
+    @MainActor private final class OpenChoice {
+        private(set) var isOpen = false
+        private var continuation: CheckedContinuation<Void, Never>?
+
+        func wait() async {
+            isOpen = true
+            await withCheckedContinuation { continuation = $0 }
+        }
+
+        func answer() {
+            continuation?.resume()
+            continuation = nil
+        }
+    }
+
+    /// No usable vault: the page's modal request is refused as `NotAllowedError`, never handed to the engine and never answered
+    /// by a native prompt.
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
+    func aModalRequestWithNoUsableVaultIsRefusedAndNeverFallsBackToTheEngine(engine: BrowserEngine) async throws {
+        try await withRealm(engine) { realm in
+            let context = try await realm.context(.credentialManager)
+            let page = try await realm.open(context)
+            try await requestModalGet(in: page)
+            #expect(try await waitUntil { try await outcomes(of: page) == ["NotAllowedError"] }, "the unavailable route refuses")
+            #expect(provider(of: try await fence(page)) == "manager", "the page is still the manager's, not rerouted to the engine")
+            #expect(try await outcomes(of: page) == ["NotAllowedError"], "exactly one refusal and nothing after it")
+            #expect(CredentialManager.unlockedManagers(for: context.profile).isEmpty)
+        }
+    }
+
+    /// What happens to the page while the "which vault?" prompt is open.
+    enum WhileChoosing: CaseIterable {
+        case theViewMovesToAnotherWindow, theProviderChanges, theProfileLocks
+    }
+
+    /// The route is `needsChoice` (two locked vaults) and the prompt suspends the run before any manager is bound. Whatever then
+    /// invalidates the request, the answer that arrives afterwards binds nothing: the page gets one `NotAllowedError`, no native
+    /// unlock follows, and no vault is unlocked.
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium], WhileChoosing.allCases)
+    func aVaultChoiceAnsweredAfterTheRequestWasInvalidatedBindsNothing(engine: BrowserEngine, change: WhileChoosing) async throws {
+        try await withRealm(engine) { realm in
+            let passkeys = VaultPasskeys()
+            let context = try await realm.context(.credentialManager, passkeys: passkeys, vaults: [.locked, .locked])
+            let profileID = context.profile.id
+            let page = try await realm.open(context)
+            let choice = OpenChoice()
+            VaultChoicePrompt.answersForTesting[profileID] = { candidates in
+                await choice.wait()
+                return candidates.first?.vaultID
+            }
+            defer { VaultChoicePrompt.answersForTesting[profileID] = nil }
+            let before = passkeys.assertions.count
+
+            try await requestModalGet(in: page)
+            #expect(await waitUntil { choice.isOpen }, "the run reached the vault choice")
+            #expect(try await outcomes(of: page).isEmpty, "the request is pending while the user chooses")
+
+            switch change {
+            case .theViewMovesToAnotherWindow:
+                realm.moveToNewWindow(page)
+            case .theProviderChanges:
+                context.settings.passwordProvider = .legacy
+            case .theProfileLocks:
+                CredentialManager.lock(profileID: profileID, reason: .profileSwitch)
+            }
+            choice.answer()
+
+            #expect(try await waitUntil { try await outcomes(of: page) == ["NotAllowedError"] }, "the late answer is refused")
+            try await fence(page)
+            #expect(try await outcomes(of: page) == ["NotAllowedError"], "exactly one refusal and nothing after it")
+            #expect(passkeys.assertions.count == before, "no native unlock follows the invalidation")
+            #expect(CredentialManager.unlockedManagers(for: context.profile).isEmpty)
+        }
+    }
+
+    /// A vault-level cancel only reaches ceremonies already bound to that vault: one still choosing has no vault yet, and only the
+    /// profile's own access ending stops it.
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
+    func aVaultCancelLeavesARequestStillChoosingItsVaultAndAProfileCancelStopsIt(engine: BrowserEngine) async throws {
+        try await withRealm(engine) { realm in
+            let passkeys = VaultPasskeys()
+            let context = try await realm.context(.credentialManager, passkeys: passkeys, vaults: [.locked, .locked])
+            let profileID = context.profile.id
+            let page = try await realm.open(context)
+            let choice = OpenChoice()
+            VaultChoicePrompt.answersForTesting[profileID] = { candidates in
+                await choice.wait()
+                return candidates.first?.vaultID
+            }
+            defer { VaultChoicePrompt.answersForTesting[profileID] = nil }
+
+            try await requestModalGet(in: page)
+            #expect(await waitUntil { choice.isOpen })
+            let listing = try await CredentialManager.store(for: context.profile).listing()
+            let vault = try CredentialManager.forVault(context.profile, vaultID: try #require(listing.first).vaultID)
+            WebAuthnAdapter.cancel(manager: vault)
+            try await fence(page)
+            #expect(try await outcomes(of: page).isEmpty, "a request with no bound vault is not a vault's ceremony")
+
+            WebAuthnAdapter.cancel(profileID: profileID)
+            #expect(try await waitUntil { try await outcomes(of: page) == ["NotAllowedError"] })
+            choice.answer()
         }
     }
 }

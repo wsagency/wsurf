@@ -45,7 +45,7 @@ extension ProfileVaultStore {
             // The routing read: a non-provisional or fail-closed state takes no lock and touches nothing.
             let routedMissing = try provisionalStubMissing()
             let mode: OperationLock.Mode = routedMissing || scratchNeedsExclusive() ? .exclusive : .shared
-            let hold = try await OperationLock.acquire(in: directory, mode: mode, wait: lockWait)
+            let hold = try await acquireOperation(mode: mode)
             defer { hold.release() }
             let missing = try provisionalStubMissing()
             if mode == .shared, missing || scratchNeedsExclusive() {

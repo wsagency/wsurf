@@ -10,7 +10,7 @@ import Testing
 @testable import WSurf
 
 // Crypto/settings verification only: unlock keys are test-only in-memory PRF material handed to the shared
-// `completeCreate`/`completeUnlock` transition. Nothing here is evidence of Apple provider behavior, and no
+// `completeUnlock` transition. Nothing here is evidence of Apple provider behavior, and no
 // native ceremony is started.
 
 private nonisolated let settingsLockReasons: [CredentialLockReason] = [
@@ -23,36 +23,33 @@ struct CredentialSettingsTests {
     private static let concealed = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
 
     private final class Fixture {
-        let profile = Profile(id: UUID(), name: "Settings", symbol: "key", color: .blue)
+        let profile: Profile
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("io.wsagency.wsurf.tests.\(UUID().uuidString)"))
-        let proof = VaultUnlockProof(
-            credentialID: Data(repeating: 1, count: 32),
-            prfInput: Data(repeating: 2, count: 32),
-            prf: SymmetricKey(size: .bits256)
-        )
+        private let vault: FixtureVault
         let manager: CredentialManager
         let model: CredentialSettingsModel
 
-        @MainActor init() throws {
-            manager = try CredentialManager.forProfile(profile)
-            model = CredentialSettingsModel(profile: profile, pasteboard: pasteboard)
+        /// One locked vault on a fresh profile; the model is bound to its manager.
+        @MainActor init() async throws {
+            let profile = Profile(id: UUID(), name: "Settings", symbol: "key", color: .blue)
+            vault = try #require(try await VaultManagerFixture.make(profile: profile, vaults: [.locked]).vaults.first)
+            self.profile = profile
+            manager = vault.manager
+            model = CredentialSettingsModel(profile: profile, pasteboard: pasteboard, manager: manager)
         }
 
-        @MainActor func create() async throws {
-            try await manager.completeCreate(proof, access: manager.beginAccess())
-        }
-
+        /// A fresh unlock of the vault (a new authorization epoch every time).
         @MainActor func unlock() async throws {
-            try await manager.completeUnlock(credentialID: proof.credentialID, prf: proof.prf, access: manager.beginAccess())
+            try await VaultManagerFixture.unlock(vault)
         }
 
-        /// Writes accounts straight through the manager so tests start from known stored state.
+        /// Unlocks the vault and writes accounts straight through the manager so tests start from known stored state.
         @MainActor func seed(_ accounts: [CredentialAccount]) async throws {
-            try await create()
-            _ = try await manager.commit(accounts, expectedRevision: 0, authorizedEpoch: try #require(manager.authorizationEpoch))
+            try await unlock()
+            try await VaultManagerFixture.save(accounts, in: vault)
         }
 
-        @MainActor func stored() async throws -> VaultSnapshot {
+        @MainActor func stored() async throws -> StoreSnapshot {
             try await manager.snapshot()
         }
 
@@ -64,13 +61,12 @@ struct CredentialSettingsTests {
 
         @MainActor func cleanup() async {
             pasteboard.releaseGlobally()
-            await CredentialManager.retire(profileID: profile.id)
-            try? FileManager.default.removeItem(at: profile.supportDirectory)
+            await VaultManagerFixture.cleanup(profile)
         }
     }
 
     private func withFixture(_ body: (Fixture) async throws -> Void) async throws {
-        let fixture = try Fixture()
+        let fixture = try await Fixture()
         do { try await body(fixture) } catch { await fixture.cleanup(); throw error }
         await fixture.cleanup()
     }
@@ -163,17 +159,22 @@ struct CredentialSettingsTests {
             try await f.model.beginEditing(accountID: accounts[1].id)
             f.model.draft?.password = "new-selected-password"
             let receipt = try await f.model.commitDraft()
-            #expect(receipt.revision == 2)
+            #expect(receipt.revision == 3)
             #expect(f.model.draft == nil)
 
-            let after = try await f.stored().accounts
-            #expect(after.map(\.id) == accounts.map(\.id))
-            #expect(after[1].password == "new-selected-password")
+            let after = Dictionary(uniqueKeysWithValues: try await f.stored().accounts.map { ($0.id, $0) })
+            #expect(Set(after.keys) == Set(accounts.map(\.id)))
+            let edited = try #require(after[accounts[1].id])
+            #expect(edited.password == "new-selected-password")
+            // A semantic edit stamps the account's modifiedAt; a seeded account carries none.
+            #expect(edited.modifiedAt != nil)
             var expected = accounts[1]
             expected.password = "new-selected-password"
-            #expect(try bytes(after[1]) == bytes(expected))
+            expected.modifiedAt = edited.modifiedAt
+            #expect(try bytes(edited) == bytes(expected))
             for index in accounts.indices where index != 1 {
-                #expect(try bytes(after[index]) == original[index], "account \(index) changed")
+                let neighbour = try #require(after[accounts[index].id])
+                #expect(try bytes(neighbour) == original[index], "account \(index) changed")
             }
         }
     }
@@ -268,18 +269,19 @@ struct CredentialSettingsTests {
                 f.model.draft?.displayName = "Renamed \(target.username)"
                 _ = try await f.model.commitDraft()
             }
-            let after = try await f.stored().accounts
-            #expect(after[0].password == nil)
-            #expect(after[1].password == "")
-            #expect(after[0].displayName == "Renamed ada" && after[1].displayName == "Renamed grace")
-            #expect(after[0].passkeys.map(\.credentialID) == absent.passkeys.map(\.credentialID))
-            #expect(after[0].passkeys.map(\.privateKeyPKCS8) == absent.passkeys.map(\.privateKeyPKCS8))
+            let after = Dictionary(uniqueKeysWithValues: try await f.stored().accounts.map { ($0.id, $0) })
+            let storedAbsent = try #require(after[absent.id]), storedEmpty = try #require(after[empty.id])
+            #expect(storedAbsent.password == nil)
+            #expect(storedEmpty.password == "")
+            #expect(storedAbsent.displayName == "Renamed ada" && storedEmpty.displayName == "Renamed grace")
+            #expect(storedAbsent.passkeys.map(\.credentialID) == absent.passkeys.map(\.credentialID))
+            #expect(storedAbsent.passkeys.map(\.privateKeyPKCS8) == absent.passkeys.map(\.privateKeyPKCS8))
         }
     }
 
     @Test func standaloneCredentialsRemainEditable() async throws {
         try await withFixture { f in
-            try await f.create()
+            try await f.unlock()
             await f.model.load()
             let passkeyOnly = CredentialAccount(
                 id: UUID(), username: "", displayName: "Example passkey", origins: [], loginURLs: [],
@@ -302,11 +304,12 @@ struct CredentialSettingsTests {
                 f.model.draft?.displayName = "Edited"
                 _ = try await f.model.commitDraft()
             }
-            let after = try await f.stored().accounts
-            #expect(after.map(\.password) == [nil, nil])
-            #expect(after.map(\.displayName) == ["Edited", "Edited"])
-            #expect(after[0].passkeys.map(\.privateKeyPKCS8) == passkeyOnly.passkeys.map(\.privateKeyPKCS8))
-            #expect(after[1].totp?.secret == Self.rfcSeed)
+            let after = Dictionary(uniqueKeysWithValues: try await f.stored().accounts.map { ($0.id, $0) })
+            let storedPasskeyOnly = try #require(after[passkeyOnly.id]), storedTOTPOnly = try #require(after[totpOnly.id])
+            #expect(storedPasskeyOnly.password == nil && storedTOTPOnly.password == nil)
+            #expect(storedPasskeyOnly.displayName == "Edited" && storedTOTPOnly.displayName == "Edited")
+            #expect(storedPasskeyOnly.passkeys.map(\.privateKeyPKCS8) == passkeyOnly.passkeys.map(\.privateKeyPKCS8))
+            #expect(storedTOTPOnly.totp?.secret == Self.rfcSeed)
         }
     }
 
@@ -324,7 +327,8 @@ struct CredentialSettingsTests {
             try await f.model.beginEditing(accountID: two.id)
             f.model.draft?.removePasskey(first.id)
             _ = try await f.model.commitDraft()
-            #expect(try await f.stored().accounts[0].passkeys.map(\.credentialID) == [second.credentialID])
+            let editedTwo = try #require(try await f.stored().accounts.first { $0.id == two.id })
+            #expect(editedTwo.passkeys.map(\.credentialID) == [second.credentialID])
 
             let before = try await f.stored()
             try await f.model.beginEditing(accountID: only.id)
@@ -342,10 +346,10 @@ struct CredentialSettingsTests {
             await f.model.load()
 
             let receipt = try await f.model.remove(accountID: accounts[1].id, expectedRevision: f.model.revision)
-            #expect(receipt.revision == 2)
+            #expect(receipt.revision == 3)
             let after = try await f.stored().accounts
-            #expect(after.map(\.id) == [accounts[0].id, accounts[2].id])
-            #expect(after.map(\.password) == ["a", "c"])
+            #expect(Set(after.map(\.id)) == [accounts[0].id, accounts[2].id])
+            #expect(Dictionary(uniqueKeysWithValues: after.map { ($0.id, $0.password) }) == [accounts[0].id: "a", accounts[2].id: "c"])
 
             await #expect(throws: (any Error).self) {
                 _ = try await f.model.remove(accountID: UUID(), expectedRevision: receipt.revision)
@@ -371,8 +375,8 @@ struct CredentialSettingsTests {
                 _ = try await f.model.remove(accountID: existing.id, expectedRevision: stale)
             }
             let after = try await f.stored()
-            #expect(after.revision == 2)
-            #expect(after.accounts.map(\.password) == ["old", "other"])
+            #expect(after.revision == 3)
+            #expect(Set(after.accounts.compactMap(\.password)) == ["old", "other"])
         }
     }
 
@@ -579,37 +583,37 @@ struct CredentialSettingsTests {
     }
 
     @Test func aCodeWhoseClockReadCrossesTheAuthorizationDeadlineNeverReachesThePasteboard() async throws {
-        let profile = Profile(id: UUID(), name: "Settings", symbol: "key", color: .blue)
         let clock = TestClock()
+        let standalone = try await VaultManagerFixture.standalone(clock: clock)
+        let manager = standalone.manager
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("io.wsagency.wsurf.tests.\(UUID().uuidString)"))
-        let manager = try CredentialManager(profile: profile, directory: profile.supportDirectory, now: { clock.now })
-        let model = CredentialSettingsModel(profile: profile, pasteboard: pasteboard, manager: manager)
-        defer {
+        let model = CredentialSettingsModel(profile: standalone.profile, pasteboard: pasteboard, manager: manager)
+        func cleanup() async {
             manager.lock(reason: .manual)
             pasteboard.releaseGlobally()
-            try? FileManager.default.removeItem(at: profile.supportDirectory)
+            await standalone.cleanup()
         }
-        let proof = VaultUnlockProof(
-            credentialID: Data(repeating: 1, count: 32),
-            prfInput: Data(repeating: 2, count: 32),
-            prf: SymmetricKey(size: .bits256)
-        )
-        try await manager.completeCreate(proof, access: manager.beginAccess())
-        let record = account("ada", totp: rfcGenerator)
-        _ = try await manager.commit([record], expectedRevision: 0, authorizedEpoch: try #require(manager.authorizationEpoch))
-        await model.load()
-        pasteboard.clearContents()
-        pasteboard.setString("sentinel-not-a-secret", forType: .string)
+        do {
+            let record = account("ada", totp: rfcGenerator)
+            _ = try await manager.commit([record], expectedRevision: try await manager.snapshot().revision, authorizedEpoch: try #require(manager.authorizationEpoch))
+            await model.load()
+            pasteboard.clearContents()
+            pasteboard.setString("sentinel-not-a-secret", forType: .string)
 
-        // The clock is read while the code is produced, after every suspension. It passes the 300 s deadline there.
-        await #expect(throws: CredentialVaultError.unauthorized) {
-            try await model.copyTOTP(accountID: record.id) {
-                clock.advance(by: .seconds(301))
-                return 59
+            // The clock is read while the code is produced, after every suspension. It passes the 300 s deadline there.
+            await #expect(throws: CredentialVaultError.unauthorized) {
+                try await model.copyTOTP(accountID: record.id) {
+                    clock.advance(by: .seconds(301))
+                    return 59
+                }
             }
+            #expect(pasteboard.string(forType: .string) == "sentinel-not-a-secret")
+            #expect(!model.isUnlocked)
+        } catch {
+            await cleanup()
+            throw error
         }
-        #expect(pasteboard.string(forType: .string) == "sentinel-not-a-secret")
-        #expect(!model.isUnlocked)
+        await cleanup()
     }
 
     // MARK: - Imported BasicAuth metadata
@@ -633,11 +637,16 @@ struct CredentialSettingsTests {
             try await f.seed([concealed, plain, email])
             await f.model.load()
 
-            #expect(f.model.summaries.map(\.usernameIsConcealed) == [true, false, false])
-            #expect(f.model.summaries.map(\.username) == [nil, "visible-login", "visible@example.test"])
+            let summaries = Dictionary(uniqueKeysWithValues: f.model.summaries.map { ($0.id, $0) })
+            #expect(summaries.count == 3)
+            #expect(summaries[concealed.id]?.usernameIsConcealed == true)
+            #expect(summaries[plain.id]?.usernameIsConcealed == false && summaries[email.id]?.usernameIsConcealed == false)
+            #expect(summaries[concealed.id]?.username == nil)
+            #expect(summaries[plain.id]?.username == "visible-login" && summaries[email.id]?.username == "visible@example.test")
             // A username-only login is still a login record, so export can select it.
-            #expect(f.model.summaries.map(\.hasLogin) == [true, true, true])
-            #expect(f.model.summaries.map(\.hasPassword) == [true, true, false])
+            #expect(summaries.values.allSatisfy { $0.hasLogin })
+            #expect(summaries[concealed.id]?.hasPassword == true && summaries[plain.id]?.hasPassword == true)
+            #expect(summaries[email.id]?.hasPassword == false)
             #expect(f.model.revealedUsername == nil)
 
             try await f.model.revealUsername(accountID: concealed.id)
@@ -697,26 +706,29 @@ struct CredentialSettingsTests {
             try await f.model.beginEditing(accountID: withBoth.id)
             f.model.draft?.password = nil
             _ = try await f.model.commitDraft()
-            var stored = try await f.stored().accounts
-            #expect(stored[0].password == nil && stored[0].basicAuthenticationMetadata?.password == nil)
-            #expect(stored[0].basicAuthenticationMetadata?.username?.id == Data([1]))
+            func storedAccount(_ id: UUID) async throws -> CredentialAccount {
+                try #require(try await f.stored().accounts.first { $0.id == id })
+            }
+            var stored = try await storedAccount(withBoth.id)
+            #expect(stored.password == nil && stored.basicAuthenticationMetadata?.password == nil)
+            #expect(stored.basicAuthenticationMetadata?.username?.id == Data([1]))
 
             try await f.model.beginEditing(accountID: usernameOnly.id)
             f.model.draft?.password = "added-password"
             _ = try await f.model.commitDraft()
-            stored = try await f.stored().accounts
-            #expect(stored[1].password == "added-password")
-            #expect(stored[1].basicAuthenticationMetadata?.password?.fieldType == .concealedString)
-            #expect(stored[1].basicAuthenticationMetadata?.username?.id == Data([1]))
-            #expect(stored[1].basicAuthenticationMetadata?.username?.fieldType == .email)
+            stored = try await storedAccount(usernameOnly.id)
+            #expect(stored.password == "added-password")
+            #expect(stored.basicAuthenticationMetadata?.password?.fieldType == .concealedString)
+            #expect(stored.basicAuthenticationMetadata?.username?.id == Data([1]))
+            #expect(stored.basicAuthenticationMetadata?.username?.fieldType == .email)
 
             try await f.model.beginEditing(accountID: usernameOnly.id)
             f.model.draft?.username = ""
             _ = try await f.model.commitDraft()
-            stored = try await f.stored().accounts
-            #expect(stored[1].username.isEmpty && stored[1].basicAuthenticationMetadata?.username == nil)
-            #expect(stored[1].basicAuthenticationMetadata?.password != nil)
-            #expect(stored[2].basicAuthenticationMetadata == nil)
+            stored = try await storedAccount(usernameOnly.id)
+            #expect(stored.username.isEmpty && stored.basicAuthenticationMetadata?.username == nil)
+            #expect(stored.basicAuthenticationMetadata?.password != nil)
+            #expect(try await storedAccount(plain.id).basicAuthenticationMetadata == nil)
         }
     }
 
@@ -743,7 +755,7 @@ struct CredentialSettingsTests {
             await #expect(throws: CredentialVaultError.unauthorized) { try await f.model.revealPassword(accountID: record.id) }
             await #expect(throws: CredentialVaultError.unauthorized) { try await f.model.copyPassword(accountID: record.id) }
             await #expect(throws: CredentialVaultError.unauthorized) { try await f.model.copyTOTP(accountID: record.id) { 59 } }
-            await #expect(throws: CredentialVaultError.unauthorized) { _ = try await f.model.save(record, expectedRevision: 1) }
+            await #expect(throws: CredentialVaultError.unauthorized) { _ = try await f.model.save(record, expectedRevision: 2) }
             #expect(f.pasteboard.string(forType: .string) == sentinel)
 
             // A new unlock is a new authorization: nothing shown before the lock may reappear.
@@ -759,7 +771,7 @@ struct CredentialSettingsTests {
 
     @Test func lockedModelLoadsNothingAndPrivateProfilesAreUnavailable() async throws {
         try await withFixture { f in
-            try await f.create()
+            try await f.unlock()
             f.manager.lock(reason: .manual)
             await f.model.load()
             #expect(!f.model.isLoaded && f.model.summaries.isEmpty)
@@ -769,6 +781,8 @@ struct CredentialSettingsTests {
         let privateModel = CredentialSettingsModel(profile: .privateBrowsing(), pasteboard: NSPasteboard(name: NSPasteboard.Name("io.wsagency.wsurf.tests.\(UUID().uuidString)")))
         await privateModel.load()
         #expect(!privateModel.isAvailable && !privateModel.isLoaded)
-        #expect(!FileManager.default.fileExists(atPath: Profile.privateBrowsing().supportDirectory.appendingPathComponent("Credentials.vault").path))
+        for anchor in ["Credentials.vault", "Credentials.store"] {
+            #expect(!FileManager.default.fileExists(atPath: Profile.privateBrowsing().supportDirectory.appendingPathComponent(anchor).path))
+        }
     }
 }

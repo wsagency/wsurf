@@ -42,7 +42,7 @@ struct VaultStoreCreateTests {
             let proof = VaultFixtures.proof()
             let crashing = tracker.makeStore(env: env, fileOps: probingOps(in: env.directory, hook: stopping(after: step)))
             await #expect(throws: SeamStop(step: step)) {
-                _ = try await crashing.createVault(name: "Personal", unlock: proof, authorizedBy: .firstVault)
+                _ = try await crashing.createVault(name: "Personal", unlock: proof, authorizedBy: .firstVault(lease: newAccess(env.profileID)))
             }
             let evaluate = { StoreAnchors.evaluate(directory: env.directory, profileID: env.profileID, defaults: env.defaults) }
 
@@ -58,7 +58,9 @@ struct VaultStoreCreateTests {
                 // No create path exists: a second bootstrap is refused and touches nothing.
                 let image = try directoryImage(env.directory)
                 let again = tracker.makeStore(env: env)
-                let failure = await Result { try await again.createVault(name: "Again", unlock: proof, authorizedBy: .firstVault) }.error
+                let failure = await Result {
+                    try await again.createVault(name: "Again", unlock: proof, authorizedBy: .firstVault(lease: newAccess(env.profileID)))
+                }.error
                 #expect(failClosedCause(failure)?.cause == .leftoversWithoutAuthority)
                 #expect(try directoryImage(env.directory) == image)
             case 7:
@@ -82,11 +84,87 @@ struct VaultStoreCreateTests {
         }
     }
 
+    /// The pending store's own self-verification fails (its wrapper no longer unwraps): that is evidence, not a cancelled creation, so
+    /// the pending file stays byte for byte and the next bootstrap is refused instead of silently retrying over it.
+    @Test func aSelfVerificationFailureOfTheNewPendingStoreIsPreservedAsFailClosedEvidence() async throws {
+        try await VaultStoreFixture.withEnvironment { env, tracker in
+            let pending = anchorURL(env.directory, "Credentials.store.migrating")
+            let tampering: @Sendable (Int) throws -> Void = { step in
+                guard step == 4 else { return }
+                let queue = try PendingStore.open(at: pending)
+                try queue.write { (db: Database) throws in
+                    let stored: Data = try #require(try Data.fetchOne(db, sql: "SELECT wrappers FROM vault WHERE role = 'active'"))
+                    let wrappers = try VaultWrapperList.decode(stored).map {
+                        CredentialKeyWrapper(
+                            credentialID: $0.credentialID, prfInput: $0.prfInput, nonce: $0.nonce, ciphertext: $0.ciphertext,
+                            tag: VaultStoreFixture.flipped($0.tag)
+                        )
+                    }
+                    try db.execute(sql: "UPDATE vault SET wrappers = ? WHERE role = 'active'", arguments: [try VaultWrapperList.encode(wrappers)])
+                }
+                try PendingStore.finish(queue, at: pending)
+            }
+            let store = tracker.makeStore(env: env, fileOps: probingOps(in: env.directory, hook: tampering))
+            let proof = VaultFixtures.proof()
+            let failure = await Result {
+                try await store.createVault(name: "Personal", unlock: proof, authorizedBy: .firstVault(lease: newAccess(env.profileID)))
+            }.error
+            #expect(failure as? CredentialVaultError == .authenticationFailed)
+
+            #expect(StoreAnchors.exists(pending), "the failed pending store is kept")
+            #expect(!StoreAnchors.exists(anchorURL(env.directory, "Credentials.vault")))
+            #expect(!StoreAnchors.exists(anchorURL(env.directory, "Credentials.vault.swap")))
+            guard case .failClosed(let closed) = StoreAnchors.evaluate(directory: env.directory, profileID: env.profileID, defaults: env.defaults)
+            else { throw VaultStoreCreateFailure("not fail-closed") }
+            #expect(closed.cause == .leftoversWithoutAuthority)
+
+            let image = try directoryImage(env.directory)
+            let again = await Result {
+                try await tracker.makeStore(env: env).createVault(name: "Again", unlock: proof, authorizedBy: .firstVault(lease: newAccess(env.profileID)))
+            }.error
+            #expect(failClosedCause(again)?.cause == .leftoversWithoutAuthority)
+            #expect(try directoryImage(env.directory) == image, "the refused retry touched nothing")
+        }
+    }
+
+    /// A task cancelled after its pending store exists removes exactly what it created and the next creation succeeds.
+    @Test func aCancellationAfterThePendingStoreExistsRemovesItAndAllowsARetry() async throws {
+        try await VaultStoreFixture.withEnvironment { env, tracker in
+            let pending = anchorURL(env.directory, "Credentials.store.migrating")
+            let cancelling: @Sendable (Int) throws -> Void = { step in
+                if step == 4 {
+                    withUnsafeCurrentTask { $0?.cancel() }
+                }
+            }
+            let store = tracker.makeStore(env: env, fileOps: probingOps(in: env.directory, hook: cancelling))
+            let proof = VaultFixtures.proof()
+            // Its own task: the hook cancels the creation, never the test.
+            let running = Task {
+                try await store.createVault(name: "Personal", unlock: proof, authorizedBy: .firstVault(lease: newAccess(env.profileID)))
+            }
+            let failure = await Result { try await running.value }.error
+            #expect(failure is CancellationError)
+
+            for name in ["Credentials.store.migrating", "Credentials.vault.swap", "Credentials.vault", "Credentials.store"] {
+                #expect(!StoreAnchors.exists(anchorURL(env.directory, name)), "\(name)")
+            }
+            #expect(!StoreAnchors.exists(pending))
+            #expect(pendingSidecars(in: env.directory).isEmpty)
+            #expect(env.defaults.object(forKey: StoreAnchors.witnessKey) == nil)
+
+            _ = try await tracker.makeStore(env: env).createVault(
+                name: "Personal", unlock: proof, authorizedBy: .firstVault(lease: newAccess(env.profileID))
+            )
+        }
+    }
+
     @Test func completedBootstrapUnlocksAndLeavesNoSidecarOrLeftover() async throws {
         try await VaultStoreFixture.withEnvironment { env, tracker in
             let proof = VaultFixtures.proof()
             let store = tracker.makeStore(env: env)
-            let vaultID = try await store.createVault(name: "  Personal  ", unlock: proof, authorizedBy: .firstVault)
+            let vaultID = try await store.createVault(
+                name: "  Personal  ", unlock: proof, authorizedBy: .firstVault(lease: newAccess(env.profileID))
+            )
 
             #expect(StoreAnchors.evaluate(directory: env.directory, profileID: env.profileID, defaults: env.defaults) == .provisional(
                 storeID: try #require(UUID(uuidString: env.defaults.string(forKey: StoreAnchors.witnessKey) ?? "")), stubMissing: false
@@ -114,7 +192,7 @@ struct VaultStoreCreateTests {
         try await VaultStoreFixture.with { f in
             let image = try settledImage(f)
             let failure = await Result {
-                try await f.makeStore().createVault(name: "Again", unlock: VaultFixtures.proof(3), authorizedBy: .firstVault)
+                try await f.makeStore().createVault(name: "Again", unlock: VaultFixtures.proof(3), authorizedBy: .firstVault(lease: f.beginAccess()))
             }.error
             #expect(failure as? CredentialStoreError == .noAuthority)
             #expect(try settledImage(f) == image)
@@ -193,7 +271,7 @@ struct VaultStoreCreateTests {
             let (store, access) = try await f.unlocked()
             let created = try await store.createVault(
                 name: "Passkey", unlock: f.proof,
-                authorizedBy: .existingPasskey(vaultID: f.vaultID, credentialID: f.proof.credentialID, prf: f.proof.prf)
+                authorizedBy: .existingPasskey(vaultID: f.vaultID, credentialID: f.proof.credentialID, prf: f.proof.prf, lease: f.beginAccess())
             )
 
             #expect(try await store.snapshot(vaultID: f.vaultID, using: access).accounts == f.accounts)  // the same grant, still usable
@@ -209,7 +287,7 @@ struct VaultStoreCreateTests {
             let access = f.beginAccess()
             let created = try await store.createVault(
                 name: "Passkey", unlock: f.proof,
-                authorizedBy: .existingPasskey(vaultID: f.vaultID, credentialID: f.proof.credentialID, prf: f.proof.prf)
+                authorizedBy: .existingPasskey(vaultID: f.vaultID, credentialID: f.proof.credentialID, prf: f.proof.prf, lease: f.beginAccess())
             )
 
             // Nothing was published for the source vault or the new one, and the fixture's A3 witness is kept.
@@ -239,7 +317,8 @@ struct VaultStoreCreateTests {
             // Consistent but wrong: the source vault does not open.
             let wrongPRF = await Result {
                 try await store.createVault(
-                    name: "X", unlock: wrong, authorizedBy: .existingPasskey(vaultID: f.vaultID, credentialID: wrong.credentialID, prf: wrong.prf)
+                    name: "X", unlock: wrong,
+                    authorizedBy: .existingPasskey(vaultID: f.vaultID, credentialID: wrong.credentialID, prf: wrong.prf, lease: f.beginAccess())
                 )
             }.error
             #expect(wrongPRF as? CredentialStoreError == .passkeyUnusable)
@@ -248,7 +327,7 @@ struct VaultStoreCreateTests {
             let mismatched = await Result {
                 try await store.createVault(
                     name: "X", unlock: wrong,
-                    authorizedBy: .existingPasskey(vaultID: f.vaultID, credentialID: f.proof.credentialID, prf: f.proof.prf)
+                    authorizedBy: .existingPasskey(vaultID: f.vaultID, credentialID: f.proof.credentialID, prf: f.proof.prf, lease: f.beginAccess())
                 )
             }.error
             #expect(mismatched as? CredentialStoreError == .passkeyUnusable)
@@ -261,7 +340,7 @@ struct VaultStoreCreateTests {
             let inputMismatch = await Result {
                 try await store.createVault(
                     name: "X", unlock: otherInput,
-                    authorizedBy: .existingPasskey(vaultID: f.vaultID, credentialID: f.proof.credentialID, prf: f.proof.prf)
+                    authorizedBy: .existingPasskey(vaultID: f.vaultID, credentialID: f.proof.credentialID, prf: f.proof.prf, lease: f.beginAccess())
                 )
             }.error
             #expect(inputMismatch as? CredentialStoreError == .passkeyUnusable)
@@ -362,16 +441,8 @@ private nonisolated struct VaultStoreCreateFailure: Error, CustomStringConvertib
     }
 }
 
-/// `Result` from an async throwing body, so a test can look at the error without `do`/`catch`.
+/// The error of a `Result` built with the standard library's async `Result(catching:)`, so a test can look at it without `do`/`catch`.
 nonisolated extension Result where Failure == any Error {
-    init(_ body: () async throws -> Success) async {
-        do {
-            self = .success(try await body())
-        } catch {
-            self = .failure(error)
-        }
-    }
-
     var error: (any Error)? {
         if case .failure(let error) = self {
             return error

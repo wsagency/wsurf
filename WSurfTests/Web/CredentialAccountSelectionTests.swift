@@ -243,29 +243,33 @@ struct CredentialAccountSelectionTests {
         let profile: Profile
         let manager: CredentialManager
         let gate: VaultClockGate?
-        private let credentialID = Data(repeating: 1, count: 32)
-        private let prf = SymmetricKey(size: .bits256)
+        private let vault: FixtureVault
+        private let gatedStore: ProfileVaultStore?
 
-        /// With a `gate`, the manager is private to this fixture and its vault reads the gate's clock.
-        init(gate: VaultClockGate? = nil, profile: Profile = Profile(id: UUID(), name: "Selection", symbol: "key", color: .blue)) throws {
+        /// With a `gate`, the manager is private to this fixture and its store reads the gate's clock.
+        init(gate: VaultClockGate? = nil, profile: Profile = Profile(id: UUID(), name: "Selection", symbol: "key", color: .blue)) async throws {
             self.profile = profile
             self.gate = gate
             if let gate {
-                manager = try CredentialManager(profile: profile, directory: profile.supportDirectory, now: { gate.now() })
+                let made = try await gate.makeVault(profile: profile, passkeys: VaultPasskeys())
+                vault = made.vault
+                gatedStore = made.store
             } else {
-                manager = try CredentialManager.forProfile(profile)
+                vault = try #require(try await VaultManagerFixture.make(profile: profile, vaults: [.locked]).vaults.first)
+                gatedStore = nil
             }
+            manager = vault.manager
         }
 
+        /// Unlocks the vault and saves `accounts` as revision 1.
         func seed(_ accounts: [CredentialAccount]) async throws {
-            let proof = VaultUnlockProof(credentialID: credentialID, prfInput: Data(repeating: 2, count: 32), prf: prf)
-            try await manager.completeCreate(proof, access: manager.beginAccess())
-            _ = try await manager.commit(accounts, expectedRevision: 0, authorizedEpoch: try #require(manager.authorizationEpoch))
+            try await VaultManagerFixture.unlock(vault)
+            _ = try await manager.commit(accounts, expectedRevision: try await manager.snapshot().revision, authorizedEpoch: try #require(manager.authorizationEpoch))
         }
 
         /// A fresh unlock with the same unlock material, as after a lock.
         func unlockAgain() async throws {
-            try await manager.completeUnlock(credentialID: credentialID, prf: prf, access: manager.beginAccess())
+            try await VaultManagerFixture.unlock(vault)
         }
 
         func cleanup() async {
@@ -273,7 +277,8 @@ struct CredentialAccountSelectionTests {
             if gate != nil {
                 manager.lock(reason: .manual)
             }
-            await Profile.erase(profile)
+            await gatedStore?.close()
+            await VaultManagerFixture.erase(profile)
         }
     }
 
@@ -284,7 +289,7 @@ struct CredentialAccountSelectionTests {
     }
 
     @Test func passwordUpdatePlansTouchOnlyTheExactAccountInARealVault() async throws {
-        let vault = try Vault()
+        let vault = try await Vault()
         do {
             var accounts = (0..<10).map { account("user\($0)@example.test", password: "pw-\($0)") }
             accounts[3].passkeys = [try passkey(3)]
@@ -363,8 +368,8 @@ struct CredentialAccountSelectionTests {
     }
     // MARK: - Reviewed saves
 
-    private func withSeeded(_ accounts: [CredentialAccount], _ body: (Vault, VaultSnapshot) async throws -> Void) async throws {
-        let vault = try Vault()
+    private func withSeeded(_ accounts: [CredentialAccount], _ body: (Vault, StoreSnapshot) async throws -> Void) async throws {
+        let vault = try await Vault()
         do {
             try await vault.seed(accounts)
             try await body(vault, try await vault.manager.snapshot())
@@ -376,7 +381,7 @@ struct CredentialAccountSelectionTests {
     }
 
     private func save(
-        _ username: String, _ password: String, offered: CredentialSavePlan?, in vault: Vault, _ snapshot: VaultSnapshot
+        _ username: String, _ password: String, offered: CredentialSavePlan?, in vault: Vault, _ snapshot: StoreSnapshot
     ) async throws -> CredentialSaveOutcome {
         try await CredentialAccountSelection.commitSave(
             try SavedPassword(website: Self.origin, username: username, password: password),
@@ -385,7 +390,7 @@ struct CredentialAccountSelectionTests {
         )
     }
 
-    private func untouched(_ vault: Vault, _ before: VaultSnapshot, except changed: UUID? = nil) async throws {
+    private func untouched(_ vault: Vault, _ before: StoreSnapshot, except changed: UUID? = nil) async throws {
         let after = try await vault.manager.snapshot()
         for old in before.accounts where old.id != changed {
             let new = try #require(after.accounts.first { $0.id == old.id })
@@ -436,7 +441,8 @@ struct CredentialAccountSelectionTests {
             #expect(try await save("linus@example.test", "fresh", offered: .create, in: vault, edited) == .saved)
             let created = try await vault.manager.snapshot()
             #expect(created.accounts.count == 3)
-            #expect(created.accounts.last?.username == "linus@example.test" && created.accounts.last?.password == "fresh")
+            let linus = try #require(created.accounts.first { $0.username == "linus@example.test" })
+            #expect(linus.password == "fresh")
             try await untouched(vault, edited)
 
             // Nothing to change is not a write.
@@ -456,7 +462,7 @@ struct CredentialAccountSelectionTests {
     /// different once any write has run. The write is parked inside the vault, so it is genuinely in flight.
     @Test func aWriteInFlightHidesTheVaultGenerationAndEveryWriteChangesIt() async throws {
         let gate = VaultClockGate()
-        let vault = try Vault(gate: gate)
+        let vault = try await Vault(gate: gate)
         do {
             try await vault.seed([account("ada@example.test")])
             let manager = vault.manager
@@ -562,7 +568,7 @@ struct CredentialAccountSelectionTests {
     /// Leaving the credential manager locks that profile's vault before anything can suspend; entering it, or switching
     /// another profile, leaves an unlocked vault alone.
     @Test func leavingTheManagerLocksOnlyThatProfilesVault() async throws {
-        let vault = try Vault(), other = try Vault()
+        let vault = try await Vault(), other = try await Vault()
         let context = BrowserProfileContext(profile: vault.profile), otherContext = BrowserProfileContext(profile: other.profile)
         do {
             try await vault.seed([account("ada")]); try await other.seed([account("grace")])

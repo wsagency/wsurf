@@ -35,6 +35,12 @@ final class AutofillSaveSession: NSObject {
     @ObservationIgnored private var dismissed: [AutofillSaveKind: Set<String>] = [:]
     @ObservationIgnored private let fingerprintKey = SymmetricKey(size: .bits256)
     @ObservationIgnored private var expiry: Task<Void, Never>?
+    @ObservationIgnored private var choosing: Task<CredentialManager?, Never>?
+    @ObservationIgnored private var accessGeneration = 0
+    /// Whether the page still shows this document at this origin; tests replace it, since a loaded document is its only proof.
+    @ObservationIgnored var liveness: (BrowserPage, String, String) async -> Bool = {
+        await AutofillSaveCoordinator.shared.isLive(page: $0, documentID: $1, origin: $2)
+    }
     /// `accountID` and what follows are only set when the user picked a credential manager account. They carry
     /// identity, never a secret or code, and `deadline` is fixed when the account is picked.
     struct UsernameStep {
@@ -55,6 +61,13 @@ final class AutofillSaveSession: NSObject {
     func clear() {
         revision += 1; offers = []; isPopoverPresented = false; username = nil; submissions.clear(); error = nil
         expiry?.cancel(); expiry = nil
+        vaultAccessEnded()
+    }
+    /// Vault access ended (lock, sleep, profile switch, retire) or the offers were dropped: a vault choice still open is dismissed,
+    /// and an answer already given is stale and unlocks nothing.
+    func vaultAccessEnded() {
+        accessGeneration &+= 1
+        choosing?.cancel()
     }
     func refreshPolicy() {
         revision += 1; submissions.clear()
@@ -144,10 +157,13 @@ final class AutofillSaveSession: NSObject {
             }
         }
     }
+
+    /// `epoch` and `revision` are nil while the route still needs the user's choice or an unlock: the vault is picked when they
+    /// click Save or Never, and nothing is read from a locked vault before that.
     private struct ManagedSave {
         let plan: CredentialSavePlan
-        let epoch: UInt64
-        let revision: UInt64
+        let epoch: UInt64?
+        let revision: UInt64?
         let loginURL: URL?
     }
 
@@ -155,34 +171,51 @@ final class AutofillSaveSession: NSObject {
         URL(string: origin).flatMap(CredentialAccountSelection.origin(for:)) == origin ? origin : nil
     }
 
+    /// The one manager that owns `epoch`: epochs are process-unique, so another vault's epoch never selects it.
     private func manager(epoch: UInt64?) -> CredentialManager? {
         guard let epoch, let context, !context.profile.isPrivate, context.settings.passwordProvider == .credentialManager,
-              page?.context === context,
-              let manager = try? CredentialManager.forProfile(context.profile), manager.authorizationEpoch == epoch else { return nil }
-        return manager
+              page?.context === context else { return nil }
+        return CredentialManager.unlockedManagers(for: context.profile).first { $0.authorizationEpoch == epoch }
     }
 
-    /// What the unlocked vault would do with `login`; `nil` when there is nothing to offer, including when locked.
-    /// The carry-over lookup can invalidate the picked account, so it runs only once the document is confirmed live
-    /// and with no suspension between the last `revision` check and the lookup.
-    private func managedPlan(for login: SavedPassword, origin: String, documentID: String, revision: Int) async -> ManagedSave? {
+    /// What the routed vault would do with `login`; `nil` when there is nothing to offer, including when the browser has no
+    /// usable vault. `target` (the vault the user already chose) skips the route. The carry-over lookup can invalidate the
+    /// picked account, so it runs only once the document is confirmed live and with no suspension between the last `revision`
+    /// check and the lookup.
+    private func managedPlan(
+        for login: SavedPassword, origin: String, documentID: String, revision: Int, target: CredentialManager? = nil
+    ) async -> ManagedSave? {
         guard let context, !context.profile.isPrivate, context.settings.passwordProvider == .credentialManager,
               let page, page.context === context, let origin = managerOrigin(origin),
-              documentID.isEmpty ? true : await AutofillSaveCoordinator.shared.isLive(page: page, documentID: documentID, origin: origin),
-              let manager = try? CredentialManager.forProfile(context.profile), let epoch = manager.authorizationEpoch,
-              let snapshot = try? await manager.snapshot(), self.manager(epoch: epoch) != nil,
-              revision == self.revision, self.page === page,
+              documentID.isEmpty ? true : await liveness(page, documentID, origin)
+        else { return nil }
+        let route: VaultRoute
+        if let target {
+            route = .manager(target)
+        } else {
+            route = await CredentialRouting.route(profile: context.profile, origin: origin, username: login.username)
+        }
+        guard revision == self.revision, self.page === page else { return nil }
+        let loginURL = page.url.flatMap { CredentialAccountSelection.loginURL(for: $0, origin: origin) }
+        let manager: CredentialManager
+        switch route {
+        case .unavailable:
+            return nil
+        case .needsChoice, .needsUnlock:
+            return ManagedSave(plan: .create, epoch: nil, revision: nil, loginURL: loginURL)
+        case .manager(let routed):
+            manager = routed
+        }
+        guard let epoch = manager.authorizationEpoch, let snapshot = try? await manager.snapshot(),
+              self.manager(epoch: epoch) === manager, revision == self.revision, self.page === page,
               !snapshot.blockedPasswordOrigins.contains(origin) else { return nil }
         let selected = selectedAccount(in: page, origin: origin, enteredUsername: login.username, epoch: epoch)
         let plan = CredentialAccountSelection.savePlan(for: login, origin: origin, accountID: selected, in: snapshot.accounts)
         guard plan != .unchanged, plan != .ambiguous else { return nil }
-        return ManagedSave(
-            plan: plan, epoch: epoch, revision: snapshot.revision,
-            loginURL: page.url.flatMap { CredentialAccountSelection.loginURL(for: $0, origin: origin) }
-        )
+        return ManagedSave(plan: plan, epoch: epoch, revision: snapshot.revision, loginURL: loginURL)
     }
 
-    func offer(_ candidate: AutofillSaveCandidate, origin: String, documentID: String = "") async {
+    func offer(_ candidate: AutofillSaveCandidate, origin: String, documentID: String = "", target: CredentialManager? = nil) async {
         guard let context, AutofillSaveCoordinator.shared.isEnabled(candidate.kind, context: context) else { return }
         let bytes = (try? JSONEncoder().encode([origin, candidate.kind.rawValue] + candidate.values)) ?? Data()
         let fingerprint = Data(HMAC<SHA256>.authenticationCode(for: bytes, using: fingerprintKey)).base64EncodedString()
@@ -192,7 +225,7 @@ final class AutofillSaveSession: NSObject {
         var managed: ManagedSave?
         let decision: AutofillSaveIndex.Decision
         if provider == .credentialManager, case .password(let login) = candidate {
-            guard let found = await managedPlan(for: login, origin: origin, documentID: documentID, revision: revision) else { return }
+            guard let found = await managedPlan(for: login, origin: origin, documentID: documentID, revision: revision, target: target) else { return }
             managed = found
             decision = found.plan == .create ? .new : .update
         } else {
@@ -201,11 +234,11 @@ final class AutofillSaveSession: NSObject {
         guard revision == self.revision, self.context === context, let page, page.context === context, !context.profile.isPrivate,
               page.url.flatMap(SavedPassword.origin(for:)) != nil,
               candidate.kind != .password || context.settings.passwordProvider == provider,
-              documentID.isEmpty ? true : await AutofillSaveCoordinator.shared.isLive(page: page, documentID: documentID, origin: origin),
+              documentID.isEmpty ? true : await liveness(page, documentID, origin),
               AutofillSaveCoordinator.shared.isEnabled(candidate.kind, context: context),
               dismissed[candidate.kind]?.contains(fingerprint) != true, !offers.contains(where: { $0.fingerprint == fingerprint }),
               decision != .unchanged, decision != .blocked,
-              managed.map({ manager(epoch: $0.epoch) != nil }) ?? true else { return }
+              managed?.epoch.map({ manager(epoch: $0) != nil }) ?? true else { return }
         let previous = current?.id
         offers.removeAll { $0.candidate.kind == candidate.kind }
         offers.append(Offer(
@@ -261,11 +294,52 @@ final class AutofillSaveSession: NSObject {
         }
     }
 
+    /// The vault a save or a "never" acts on. An offer made against one unlocked vault names it by its lease. An offer made while
+    /// the route needed a choice or an unlock asks now, on the user's click, and unlocks the choice through that vault's manager;
+    /// the page and the offer are checked again before the result is used.
+    func target(for offer: Offer, username: String) async throws -> CredentialManager {
+        if let epoch = offer.managerEpoch {
+            guard let manager = manager(epoch: epoch) else { throw CredentialVaultError.unauthorized }
+            return manager
+        }
+        guard let context, let page, let window = page.window, let origin = managerOrigin(offer.origin) else {
+            throw CredentialVaultError.unauthorized
+        }
+        let generation = accessGeneration
+        let route = await CredentialRouting.route(profile: context.profile, origin: origin, username: username)
+        // The choice runs as a task `vaultAccessEnded` can cancel: a lock, profile switch or retire dismisses the open prompt.
+        let picking = Task { await route.resolve(profile: context.profile, in: window) }
+        choosing = picking
+        let selected = await picking.value
+        choosing = nil
+        // Authority is checked again after every suspension, and the last check is synchronous with the unlock's start: a vault the
+        // user locked (or whose profile was left) while choosing is never unlocked by that old answer.
+        func authorized(_ chosen: CredentialManager) -> Bool {
+            generation == accessGeneration && self.context === context && page.context === context && page.window === window
+                && current?.id == offer.id && !context.profile.isPrivate && context.settings.passwordProvider == .credentialManager
+                && chosen.profileID == context.profile.id
+        }
+        guard let chosen = selected, authorized(chosen),
+              await liveness(page, offer.documentID, offer.origin),
+              authorized(chosen) else { throw CredentialVaultError.unauthorized }
+        if !chosen.isUnlocked {
+            do { try await chosen.unlock(in: window) } catch { throw CredentialVaultError.unauthorized }
+        }
+        guard generation == accessGeneration, manager(epoch: chosen.authorizationEpoch) === chosen,
+              self.context === context, page.context === context, current?.id == offer.id else { throw CredentialVaultError.unauthorized }
+        return chosen
+    }
+
     private func blockManaged(_ offer: Offer) async throws {
-        guard let manager = self.manager(epoch: offer.managerEpoch), let epoch = offer.managerEpoch,
-              let origin = managerOrigin(offer.origin) else { throw CredentialVaultError.unauthorized }
+        guard case .password(let login) = offer.candidate, let origin = managerOrigin(offer.origin) else {
+            throw CredentialVaultError.unauthorized
+        }
+        let manager = try await target(for: offer, username: login.username)
+        guard let epoch = offer.managerEpoch ?? manager.authorizationEpoch, self.manager(epoch: epoch) === manager else {
+            throw CredentialVaultError.unauthorized
+        }
         let snapshot = try await manager.snapshot()
-        guard self.manager(epoch: epoch) != nil else { throw CredentialVaultError.unauthorized }
+        guard self.manager(epoch: epoch) === manager else { throw CredentialVaultError.unauthorized }
         _ = try await manager.updatePasswordSavePolicy(
             snapshot.blockedPasswordOrigins.union([origin]), expectedRevision: snapshot.revision, authorizedEpoch: epoch
         )
@@ -273,11 +347,11 @@ final class AutofillSaveSession: NSObject {
 
     /// Saves only into the exact account the user was shown. Whatever was typed in the review form, a different target
     /// writes nothing here and is reported as `.needsReview` so the caller can show that target for confirmation.
-    private func saveManaged(_ login: SavedPassword, offer: Offer) async throws -> CredentialSaveOutcome {
-        guard let manager = self.manager(epoch: offer.managerEpoch), let epoch = offer.managerEpoch,
+    private func saveManaged(_ login: SavedPassword, offer: Offer, manager: CredentialManager) async throws -> CredentialSaveOutcome {
+        guard let epoch = offer.managerEpoch ?? manager.authorizationEpoch, self.manager(epoch: epoch) === manager,
               let origin = managerOrigin(offer.origin) else { throw CredentialVaultError.unauthorized }
         let snapshot = try await manager.snapshot()
-        guard self.manager(epoch: epoch) != nil else { throw CredentialVaultError.unauthorized }
+        guard self.manager(epoch: epoch) === manager else { throw CredentialVaultError.unauthorized }
         guard !snapshot.blockedPasswordOrigins.contains(origin) else { throw CredentialVaultError.staleRevision }
         return try await CredentialAccountSelection.commitSave(
             login, origin: origin, offered: offer.plan, loginURL: offer.loginURL, snapshot: snapshot, manager: manager, epoch: epoch
@@ -289,7 +363,7 @@ final class AutofillSaveSession: NSObject {
               AutofillSaveCoordinator.shared.isEnabled(offer.candidate.kind, context: context),
               offer.candidate.kind != .password || offer.provider == context.settings.passwordProvider,
               let page, page.context === context, page.window != nil,
-              await AutofillSaveCoordinator.shared.isLive(page: page, documentID: offer.documentID, origin: offer.origin),
+              await liveness(page, offer.documentID, offer.origin),
               self.context === context, current?.id == offer.id,
               offer.candidate.kind != .password || offer.provider == context.settings.passwordProvider else { return }
         let candidate = replacement ?? offer.candidate
@@ -302,12 +376,13 @@ final class AutofillSaveSession: NSObject {
             switch candidate {
             case .password(let login):
                 if offer.provider == .credentialManager {
-                    if try await saveManaged(login, offer: offer) == .needsReview {
+                    let manager = try await target(for: offer, username: login.username)
+                    if try await saveManaged(login, offer: offer, manager: manager) == .needsReview {
                         // The save would land somewhere other than what this offer showed: nothing was written. Show the
                         // new target through the normal offer so the user confirms that exact account.
                         guard self.context === context, current?.id == offer.id else { return }
                         dismiss(offer, rememberingChoice: false)
-                        await self.offer(candidate, origin: offer.origin, documentID: offer.documentID)
+                        await self.offer(candidate, origin: offer.origin, documentID: offer.documentID, target: manager)
                         return
                     }
                 } else {
@@ -323,7 +398,7 @@ final class AutofillSaveSession: NSObject {
                 }
             }
             guard self.context === context, page.context === context,
-                  await AutofillSaveCoordinator.shared.isLive(page: page, documentID: offer.documentID, origin: offer.origin),
+                  await liveness(page, offer.documentID, offer.origin),
                   current?.id == offer.id else { return }
             dismiss(offer, rememberingChoice: false)
         } catch {
@@ -386,6 +461,13 @@ final class AutofillSaveCoordinator {
         AutofillSuggestions.shared.reset(); frames.removeAll()
         for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? [] {
             session.clear()
+        }
+    }
+    /// The profile's vault access ended: every pending vault choice of its pages is withdrawn synchronously.
+    func vaultAccessEnded(profileID: UUID) {
+        for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? []
+        where session.context?.profile.id == profileID {
+            session.vaultAccessEnded()
         }
     }
     func resetDismissals(kind: AutofillSaveKind, context: BrowserProfileContext) {
