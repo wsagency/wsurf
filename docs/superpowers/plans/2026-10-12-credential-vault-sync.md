@@ -752,6 +752,8 @@ The routed `unlock(..., confirmMigration: true)` on `.legacy` performs §10 step
 
 ### Task 10: Manager, routing and consumer cutover
 
+**Status: landed** as feature commits `a2e1e56` and `cf4e5b7` on `feature/credential-vault-sync-20261012` (unreleased; the whole feature is still in progress). Native evidence: OV11 ran 523 tests in 38 suites with two failing fixtures, corrected in tests only; OV13 on `cf4e5b7` passed `WebAuthnAdapterTests` + `WebsiteAuthenticatorCeremonyTests` (80 tests, 2 suites, 0 failures). Production source did not change between the two runs; the other suites were not rerun on `cf4e5b7`. Still pending: real UI, passkey/PRF hardware unlock and Apple-exchange user acceptance, and the full Task 16 verification.
+
 **Files:**
 - Create: `WSurf/Web/Credentials/CredentialRouting.swift`, `VaultChoicePrompt.swift`; `WSurfTests/Helpers/VaultManagerFixture.swift`
 - Modify: `WSurf/Web/Credentials/CredentialManager.swift`; `CredentialSettingsModel.swift:289,404,519` (minimal real edits: operate on the selected vault via `forVault`/`createVault`; the Settings UI is Task 14); `WSurf/Web/Autofill/AutofillSuggestions.swift:184,196`; `AutofillSaveCoordinator.swift:161,172`; `WSurf/Web/Credentials/WebAuthnAdapter.swift:400`; `WSurf/App/AppCoordinator+Profiles.swift:27,68`; `WSurf/App/BrowserApplication.swift:295`; `WSurf/Profiles/Profile.swift:107`; existing tests constructing `CredentialManager(profile:directory:now:)` (`WebsiteAuthenticatorCeremonyTests.swift:137,498`, `CredentialExchangeCoordinatorTests.swift:42`, `CredentialAccountSelectionTests.swift:254`, `CredentialSettingsTests.swift:585`, `CredentialLifecycleTests.swift:30,314,343,389,568`) → `VaultManagerFixture`
