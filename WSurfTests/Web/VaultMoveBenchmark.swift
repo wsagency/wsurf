@@ -101,7 +101,9 @@ struct VaultMoveBenchmark {
         try f.read { db in
             var keys: Set<MoveRowKey> = []
             try StoreTables.forEachHistoryRecord(db, vaultID: vault) { row in
-                if row.kind == .revision && row.ownerID == owner { keys.insert(row.moveKey) }
+                if row.kind == .revision && row.ownerID == owner {
+                    keys.insert(row.moveKey)
+                }
             }
             return keys
         }

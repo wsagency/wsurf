@@ -59,14 +59,20 @@ private nonisolated func retrying<T>(
             return try await body()
         } catch CredentialStoreError.storeBusy {
             busy += 1
-            if busy > busyRetries { throw CredentialStoreError.storeBusy }
+            if busy > busyRetries {
+                throw CredentialStoreError.storeBusy
+            }
         } catch CredentialVaultError.staleRevision {
             stale += 1
-            if stale > staleRetries { throw CredentialVaultError.staleRevision }
+            if stale > staleRetries {
+                throw CredentialVaultError.staleRevision
+            }
             needsRefresh = true
         } catch CredentialStoreError.stateChanged {
             changed += 1
-            if changed > stateChangedRetries { throw CredentialStoreError.stateChanged }
+            if changed > stateChangedRetries {
+                throw CredentialStoreError.stateChanged
+            }
         }
     }
 }
@@ -180,10 +186,18 @@ struct VaultConcurrencyTests {
             }
 
             let revisions = outcomes.compactMap { outcome -> UInt64? in
-                if case .committed(let revision) = outcome { revision } else { nil }
+                if case .committed(let revision) = outcome {
+                    revision
+                } else {
+                    nil
+                }
             }
             let created = outcomes.compactMap { outcome -> UUID? in
-                if case .created(let id) = outcome { id } else { nil }
+                if case .created(let id) = outcome {
+                    id
+                } else {
+                    nil
+                }
             }
             #expect(revisions.count == committerCount * perCommitter)
             #expect(Set(revisions).count == revisions.count, "each commit won its own revision")

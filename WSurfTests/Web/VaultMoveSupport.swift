@@ -335,3 +335,77 @@ nonisolated extension VaultStoreFixture {
         #expect(Set(outKeys) == expected.movedKeys)
     }
 }
+
+/// One hidden-history scenario. A commit that never reaches the Trash cannot notice a hidden Trash row, so the Trash rows are only
+/// paired with the operations that MOVE.
+nonisolated struct HiddenHistoryCase: Sendable, CustomTestStringConvertible {
+    let hidden: HiddenHistory
+    let operation: HiddenHistoryOperation
+
+    var testDescription: String { "\(hidden) / \(operation)" }
+
+    static let all: [HiddenHistoryCase] = HiddenHistory.allCases.flatMap { hidden in
+        HiddenHistoryOperation.allCases
+            .filter { !hidden.inTrash || $0 != .commitPasswordChange }
+            .map { HiddenHistoryCase(hidden: hidden, operation: $0) }
+    }
+}
+
+/// A history row made invisible to a scan of its vault after unlock: deleted, or its `vaultID` changed.
+nonisolated enum HiddenHistory: CaseIterable, Sendable {
+    case sourceOwnedDeleted, sourceBystanderDeleted, sourceOwnedReparented, sourceBystanderReparented, trashDeleted, trashReparented
+
+    var inTrash: Bool {
+        self == .trashDeleted || self == .trashReparented
+    }
+
+    /// The vault the row is in and the owner of the revision rows to pick from.
+    func target(_ f: VaultStoreFixture, victim: UUID, bystander: UUID) -> (vault: UUID, owner: UUID) {
+        switch self {
+        case .sourceOwnedDeleted, .sourceOwnedReparented:
+            (f.vaultID, victim)
+        case .sourceBystanderDeleted, .sourceBystanderReparented:
+            (f.vaultID, bystander)
+        case .trashDeleted, .trashReparented:
+            (f.trashID, victim)
+        }
+    }
+
+    /// Bound to `(vaultID, recordID)`.
+    var sql: String {
+        switch self {
+        case .sourceOwnedDeleted, .sourceBystanderDeleted, .trashDeleted:
+            "DELETE FROM record WHERE vaultID = ? AND recordID = ?"
+        case .sourceOwnedReparented, .sourceBystanderReparented, .trashReparented:
+            "UPDATE record SET vaultID = '\(UUID().lowerText)' WHERE vaultID = ? AND recordID = ?"
+        }
+    }
+}
+
+/// Every route that writes: both removal scopes, and an ordinary commit that only appends a revision.
+nonisolated enum HiddenHistoryOperation: CaseIterable, Sendable {
+    case deleteAccount, deletePassword, commitPasswordChange
+
+    func run(
+        _ store: ProfileVaultStore, _ access: VaultAccess, _ f: VaultStoreFixture, _ snapshot: StoreSnapshot, _ victim: CredentialAccount
+    ) async throws -> VaultCommitReceipt {
+        switch self {
+        case .deleteAccount:
+            return try await store.delete(vaultID: f.vaultID, scope: .account(victim.id), expectedRevision: snapshot.revision, using: access)
+        case .deletePassword:
+            return try await store.delete(
+                vaultID: f.vaultID, scope: .credential(ownerID: victim.id, subject: .password, passkeyID: nil),
+                expectedRevision: snapshot.revision, using: access
+            )
+        case .commitPasswordChange:
+            let changed = snapshot.accounts.map { account -> CredentialAccount in
+                var copy = account
+                if copy.id == victim.id {
+                    copy.password = "changed-after-hide"
+                }
+                return copy
+            }
+            return try await store.commit(vaultID: f.vaultID, changed, expectedRevision: snapshot.revision, cause: nil, using: access)
+        }
+    }
+}
