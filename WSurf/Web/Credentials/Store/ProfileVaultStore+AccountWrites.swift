@@ -24,8 +24,10 @@ extension ProfileVaultStore {
     /// item identity (`exchangeAccountID` + `exchangeItemID`, as the codec derives it) that two accounts would share is
     /// `duplicateIdentifier`. Untouched rows and the head's policy are never rewritten; an all-unchanged write changes nothing.
     func commitAccounts(vaultID: UUID, _ writes: [AccountWrite], cause: String?, using access: VaultAccess) async throws -> VaultCommitReceipt {
-        guard !writes.isEmpty, Set(writes.map(\.accountID)).count == writes.count, writes.allSatisfy({ $0.replacement.id == $0.accountID }) else {
-            throw CredentialStoreError.malformed
+        guard !writes.isEmpty else { throw CredentialStoreError.malformed }
+        var ids = Set<UUID>(minimumCapacity: writes.count)
+        for write in writes {
+            guard ids.insert(write.accountID).inserted, write.replacement.id == write.accountID else { throw CredentialStoreError.malformed }
         }
         let intent = CommitIntent(vaultID: vaultID, access: access, expectedRevision: nil, cause: cause, isCommit: true)
         // The scratch is attached up front (`ledgerOnDemand: false`): a removal inside a write verifies in this one transaction and
