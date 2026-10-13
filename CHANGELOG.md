@@ -26,13 +26,16 @@ keep favicon caches under their per-process test directory instead of
 the full suite is not claimed here). Other profile test preference domains still
 use random UUID names, not per-process ones. The CI job now selects Xcode through
 `DEVELOPER_DIR` without `sudo xcode-select`, installs SwiftLint under
-`RUNNER_TEMP`, only verifies the Metal toolchain on the runner, no longer passes
+`RUNNER_TEMP`, downloads the Metal toolchain only when `runner.environment` is
+`github-hosted` and otherwise only verifies it, no longer passes
 `-skipMacroValidation -skipPackagePluginValidation`, no longer uploads every
 host crash report, and runs a watchdog check; the watchdog now samples only its
 own child and never lists host processes. A final step removes the run's own
 preferences, WebKit, Caches, HTTPStorages and Saved Application State by exact
-identifier. Limits: this runner is the persistent Pro machine, not a disposable
-or independent host, and the suffix is namespacing, not OS isolation. macOS-managed
+identifier. Limits: the Pro machine's own Gitea runners are distinct from this GitHub
+Actions job, whose advertised runtime was GitHub-hosted (`runner.environment`
+`github-hosted`); that job's OS isolation and account are not verified here, and the
+suffix is namespacing, not OS isolation. macOS-managed
 `~/Library/Containers/<id>.CredentialExchange` cannot be removed by `rm` and
 stays; a hard-killed runner skips cleanup; the registered-extension `pluginkit -r`
 branch has not been exercised. GitHub's fork pull-request approval policy is
@@ -63,7 +66,10 @@ not show that all production data stays unchanged. A later diagnostic build of
 `WebAuthnContextBackForwardTests` (extra instrumentation only, not a product fix)
 passed its build and artifact guard and the 30-test `WebAuthnContextTests` run, but
 the cause of the full-run failure is still unknown and was not reproduced by that
-targeted run. No CI run of this change has completed yet.
+targeted run. The first CI run of this change failed at the Metal
+toolchain step (the hosted image lacks it and the verify-only replacement removed the
+download); that step is fixed in source and awaits a new run, so no CI result for
+this change exists yet.
 
 ### 2026-10-11 — Remove managed browser passkey entitlement
 

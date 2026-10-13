@@ -49,11 +49,18 @@ jobs:
           echo "::error::Required Xcode ${XCODE} not found at /Applications/Xcode_${XCODE}.app or /Applications/Xcode.app."
           exit 1
 
-      # Verify only: this job never installs into a shared host. The runner must already carry the toolchain.
-      - name: Verify Metal toolchain
+      # The observed GitHub-hosted xcode-27 image (run 38326639712) lacks the Metal toolchain, so only
+      # runner.environment == github-hosted downloads it, as before. Any other or unknown environment
+      # verifies only and fails with an actionable message: this job never installs into a host it does not own.
+      - name: Install or verify Metal toolchain
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: |
+          if [ "$RUNNER_ENVIRONMENT" = "github-hosted" ]; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
           xcrun metal --version || {
-            echo "::error::Metal toolchain missing for Xcode ${XCODE} (xcrun metal failed); install it on the runner."
+            echo "::error::Metal toolchain missing for Xcode ${XCODE} (xcrun metal failed; runner.environment=${RUNNER_ENVIRONMENT:-unknown}); install it on the runner."
             exit 1
           }
 
@@ -104,8 +111,8 @@ jobs:
       # identity, so this is not a claim that nothing touches the keychain.
       # The four -skip-testing OCR exclusions below were inherited when this job was
       # assumed to run on hosted Xcode 27 VMs that cannot load Vision's OCR backend.
-      # The runner is the persistent Pro machine; those exclusions stay until OCR is
-      # verified under this runner's account. A native Pro full run did execute all four
+      # The runner's account and OS isolation are unverified; those exclusions stay until OCR is
+      # verified under the runner that executes this job. A native Pro full run did execute all four
       # (its one failure was a different case). Keep them enabled in the native test plan.
       # Build once, verify the built artifact, then run that exact generated .xctestrun
       # without rebuilding. A CLI build setting alone is not trusted: the guard refuses
