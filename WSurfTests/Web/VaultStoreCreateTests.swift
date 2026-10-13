@@ -362,16 +362,8 @@ private nonisolated struct VaultStoreCreateFailure: Error, CustomStringConvertib
     }
 }
 
-/// `Result` from an async throwing body, so a test can look at the error without `do`/`catch`.
+/// The error of a `Result` built with the standard library's async `Result(catching:)`, so a test can look at it without `do`/`catch`.
 nonisolated extension Result where Failure == any Error {
-    init(_ body: () async throws -> Success) async {
-        do {
-            self = .success(try await body())
-        } catch {
-            self = .failure(error)
-        }
-    }
-
     var error: (any Error)? {
         if case .failure(let error) = self {
             return error
