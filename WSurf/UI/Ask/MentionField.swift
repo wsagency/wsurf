@@ -299,11 +299,11 @@ struct MentionField: NSViewRepresentable {
         }
 
         func syncFocus(_ isFocused: Bool, in field: NSTextField) {
-            guard holdsFocus(field) != isFocused, !isSyncingFocus else { return }
+            guard !isReportingFocus, holdsFocus(field) != isFocused, !isSyncingFocus else { return }
             isSyncingFocus = true
             DispatchQueue.main.async { [weak field] in
                 defer { self.isSyncingFocus = false }
-                guard let field, let window = field.window else { return }
+                guard !self.isReportingFocus, let field, let window = field.window else { return }
                 if isFocused {
                     window.makeFirstResponder(field)
                 } else if window.firstResponder === field.currentEditor() {

@@ -242,6 +242,32 @@ struct MentionFieldTests {
         #expect(field.currentEditor() == nil)
     }
 
+    @Test func aPendingNativeBlurReportWinsOverAStaleFocusUpdate() async throws {
+        let harness = harness()
+        let content = try #require(harness.window.contentView)
+        let other = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        content.addSubview(other)
+
+        harness.coordinator.syncFocus(true, in: harness.field)
+        await settlePaletteLayout(content)
+        let fieldEditor = try #require(harness.field.currentEditor() as? NSTextView)
+        #expect(harness.window.firstResponder === fieldEditor)
+
+        #expect(harness.window.makeFirstResponder(other))
+        let otherEditor = try #require(other.currentEditor() as? NSTextView)
+        #expect(harness.window.firstResponder === otherEditor)
+
+        // Mirror updateNSView seeing isFocused == true before the async did-end report settles.
+        harness.coordinator.syncFocus(true, in: harness.field)
+        await settlePaletteLayout(content)
+        #expect(harness.window.firstResponder === otherEditor)
+
+        // A fresh explicit request after the blur report still focuses the field.
+        harness.coordinator.syncFocus(true, in: harness.field)
+        await settlePaletteLayout(content)
+        #expect(harness.window.firstResponder === harness.field.currentEditor())
+    }
+
     @Test func sitePlaceholderUpdatesWhileClearingTheFocusedField() async throws {
         let window = NSWindow(
             contentRect: CGRect(x: 0, y: 0, width: 500, height: 40),
