@@ -185,6 +185,11 @@ struct CredentialExchangeCoordinatorTests {
         TOTPGenerator(secret: Data(seed.utf8), algorithm: .sha256, period: 45, digits: 8, issuer: "Example", userName: "ada")
     }
 
+    /// The account counts of an import outcome, `[added, updated]`; its `results` list is asserted where it matters.
+    func counts(_ outcome: CredentialImportOutcome?) -> [Int]? {
+        outcome.map { [$0.added, $0.updated] }
+    }
+
     func neighbours(_ count: Int) -> [CredentialAccount] {
         (0..<count).map { account(username: "neighbour-\($0)", password: "neighbour-pw-\($0)") }
     }
@@ -309,7 +314,7 @@ struct CredentialExchangeCoordinatorTests {
             #expect(f.coordinator.receive(Self.activity(token: revoked)))
             try f.coordinator.claimImport(token: revoked, for: f.manager, owner: f.owner)
             f.manager.lock(reason: .screenLock)
-            await #expect(throws: CredentialVaultError.unauthorized) { try await f.coordinator.stage(incoming, into: f.manager, owner: f.owner) }
+            await #expect(throws: CredentialTransferFailure.self) { try await f.coordinator.stage(incoming, into: f.manager, owner: f.owner) }
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
 
             // A fresh unlock is a new authorization epoch, not the one the token was bound to.
@@ -319,15 +324,15 @@ struct CredentialExchangeCoordinatorTests {
             try f.coordinator.claimImport(token: reunlocked, for: f.manager, owner: f.owner)
             f.manager.lock(reason: .manual)
             try await f.unlock(f.manager)
-            await #expect(throws: CredentialVaultError.unauthorized) { try await f.coordinator.stage(incoming, into: f.manager, owner: f.owner) }
+            await #expect(throws: CredentialTransferFailure.self) { try await f.coordinator.stage(incoming, into: f.manager, owner: f.owner) }
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
 
-            // A vault that changed after the preview is never overwritten by it.
+            // Another writer's change to an account the import does not touch survives it: only the touched accounts are compared and written.
             try await f.stage(incoming)
             _ = try await f.manager.commit(existing + [account(username: "newer", password: "newer")], expectedRevision: 2, authorizedEpoch: try #require(f.manager.authorizationEpoch))
-            let afterNewer = try f.diskBytes()
-            await #expect(throws: CredentialVaultError.staleRevision) { _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner) }
-            #expect(try f.diskBytes() == afterNewer)
+            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            let usernames = try await f.stored().accounts.map(\.username)
+            #expect(usernames.contains("newer") && usernames.contains("grace"))
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
         }
     }
@@ -344,7 +349,8 @@ struct CredentialExchangeCoordinatorTests {
                 withUnsafeCurrentTask { $0?.cancel() }
                 return try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
-            await #expect(throws: CancellationError.self) { _ = try await cancelled.value }
+            let failure = await #expect(throws: CredentialTransferFailure.self) { _ = try await cancelled.value }
+            #expect(failure?.message.kind == .discarded)
             #expect(try f.diskBytes() == before)
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
         }
@@ -359,7 +365,7 @@ struct CredentialExchangeCoordinatorTests {
             let before = try f.diskBytes()
             try await f.stage(try exported([account(username: "grace", password: "incoming")]))
 
-            gate.holdNextVaultRead()
+            gate.holdImportWrite(of: f.coordinator)
             let committing = Task { @MainActor in try await f.coordinator.commitImport(into: f.manager, owner: f.owner) }
             // The write is parked inside the vault: cancel first, then release. Nothing here touches the manager.
             gate.whenParked {
@@ -371,7 +377,9 @@ struct CredentialExchangeCoordinatorTests {
                 gate.release()
             }
 
-            await #expect(throws: CancellationError.self) { _ = try await committing.value }
+            let failure = await #expect(throws: CredentialTransferFailure.self) { _ = try await committing.value }
+            // The write had started when the cancel arrived, so only "may have landed" is true, even though the vault is unchanged.
+            #expect(failure?.message.kind == .mayHaveLanded)
             #expect(gate.hasParked)
             #expect(try f.diskBytes() == before)
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
@@ -385,7 +393,7 @@ struct CredentialExchangeCoordinatorTests {
             let before = try f.diskBytes()
             try await f.stage(try exported([account(username: "grace", password: "incoming")]))
 
-            gate.holdNextVaultRead()
+            gate.holdImportWrite(of: f.coordinator)
             let committing = Task { @MainActor in try await f.coordinator.commitImport(into: f.manager, owner: f.owner) }
             // The callback holds the main actor from the release until the cancel, so the commit task cannot finish
             // in between: it releases the parked write, waits for the store to commit its rows, then cancels.
@@ -417,9 +425,13 @@ struct CredentialExchangeCoordinatorTests {
             do {
                 try await f.stage(mixed)
                 Issue.record("A malformed record must abort the whole import")
-            } catch let error as CredentialExchangeError {
-                #expect(error.reason == .invalidData)
-                #expect(error.record.description.hasPrefix("account[0]/item[1]"))
+            } catch let failure as CredentialTransferFailure {
+                // The message carries the position only, never the credential's content.
+                guard case let .malformed(record?) = failure.message.kind else {
+                    Issue.record("A malformed record must end the transfer as malformed, with its position")
+                    return
+                }
+                #expect(record.description.hasPrefix("account[0]/item[1]"))
             }
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
             #expect(try f.diskBytes() == before)
@@ -462,9 +474,11 @@ struct CredentialExchangeCoordinatorTests {
             #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.isResolved == true)
 
             if choice == .skip {
-                await #expect(throws: CredentialExchangeCoordinatorError.nothingToImport) {
+                let failure = await #expect(throws: CredentialTransferFailure.self) {
                     _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
                 }
+                #expect(failure?.message.kind == .nothingImported)
+                #expect(f.coordinator.importReview(for: f.manager, owner: f.owner) != nil)
                 #expect(try await f.stored().revision == 2)
                 return
             }
@@ -500,7 +514,7 @@ struct CredentialExchangeCoordinatorTests {
 
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.revision == 2 && review.candidates.count == 2 && review.isResolved)
-            #expect(review.outcome == CredentialImportOutcome(added: 2, updated: 0))
+            #expect(counts(review.outcome) == [2, 0])
 
             let receipt = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             #expect(receipt.revision == 3)
@@ -561,14 +575,16 @@ struct CredentialExchangeCoordinatorTests {
 
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.isResolved && review.conflicts.isEmpty)
-            #expect(review.outcome == CredentialImportOutcome(added: 1, updated: 0))
+            #expect(counts(review.outcome) == [1, 0] && review.outcome?.results.map(\.action) == [.added])
 
             let record = try #require(review.candidates.first?.records.first)
             try f.coordinator.choose(.skip, for: record.incoming, owner: f.owner)
-            #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome == CredentialImportOutcome(added: 0, updated: 0))
-            await #expect(throws: CredentialExchangeCoordinatorError.nothingToImport) {
+            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [0, 0])
+            #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome?.results.map(\.action) == [.skipped])
+            let failure = await #expect(throws: CredentialTransferFailure.self) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
+            #expect(failure?.message.kind == .nothingImported)
             #expect(try f.diskBytes() == before)
         }
     }
@@ -588,7 +604,7 @@ struct CredentialExchangeCoordinatorTests {
             #expect(targets.first?.allowedOrigins == [Self.origin, "https://other.test"])
 
             try f.coordinator.choose(.merge(into: bare.id), for: record.incoming, owner: f.owner)
-            #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome == CredentialImportOutcome(added: 0, updated: 1))
+            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [0, 1])
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
 
             let after = try await f.stored().accounts
@@ -673,7 +689,7 @@ struct CredentialExchangeCoordinatorTests {
             #expect(merged.exchangeItemID == Data([0xB0, 1]))
             let reexported = try await f.coordinator.prepareExport(
                 selection: [CredentialExportSelection(accountID: bare.id, password: true, passkeyIDs: [], totp: true)],
-                expectedRevision: stored.revision, format: .v1, from: f.manager, epoch: try #require(f.manager.authorizationEpoch)
+                expectedStamps: stored.stamps, format: .v1, from: f.manager, epoch: try #require(f.manager.authorizationEpoch)
             )
             let exportedItem = try #require(reexported.accounts.first?.items.first)
             #expect(exportedItem.id == Data([0xB0, 1]) && exportedItem.tags == ["work", "shared"])
@@ -693,7 +709,7 @@ struct CredentialExchangeCoordinatorTests {
             #expect(throws: CredentialExchangeCoordinatorError.invalidChoice) {
                 try f.coordinator.choose(.merge(into: first.id), for: record.incoming, owner: f.owner)
             }
-            #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome == CredentialImportOutcome(added: 1, updated: 0))
+            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [1, 0])
         }
     }
 
@@ -708,7 +724,7 @@ struct CredentialExchangeCoordinatorTests {
             #expect(f.coordinator.mergeTargets(for: login.incoming, owner: f.owner).map(\.accountID) == [destination.id])
             // The full plan, with the code left to import by itself, is valid: the choice is accepted.
             try f.coordinator.choose(.merge(into: destination.id), for: login.incoming, owner: f.owner)
-            #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome == CredentialImportOutcome(added: 1, updated: 1))
+            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [1, 1])
 
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             let stored = try await f.stored().accounts
@@ -721,7 +737,7 @@ struct CredentialExchangeCoordinatorTests {
             // Both still export, each under its own identifiers, with the item's tags.
             let reexported = try await f.coordinator.prepareExport(
                 selection: stored.map { CredentialExportSelection(accountID: $0.id, password: $0.password != nil, passkeyIDs: [], totp: $0.totp != nil) },
-                expectedRevision: try await f.stored().revision, format: .v1, from: f.manager,
+                expectedStamps: try await f.stored().stamps, format: .v1, from: f.manager,
                 epoch: try #require(f.manager.authorizationEpoch)
             )
             let items = reexported.accounts.flatMap(\.items)
@@ -767,9 +783,10 @@ struct CredentialExchangeCoordinatorTests {
             try f.coordinator.choose(.skip, for: record.incoming, owner: f.owner)
             // Skipping the only conflict leaves nothing to write: the vault is untouched.
             let before = try f.diskBytes()
-            await #expect(throws: CredentialExchangeCoordinatorError.nothingToImport) {
+            let failure = await #expect(throws: CredentialTransferFailure.self) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
+            #expect(failure?.message.kind == .nothingImported)
             #expect(try f.diskBytes() == before)
             let after = try await f.stored()
             #expect(after.revision == 2)
@@ -869,6 +886,14 @@ nonisolated final class VaultClockGate: Sendable {
 
     func release() {
         released.signal()
+    }
+}
+
+extension VaultClockGate {
+    /// Holds the first vault read after the import's last re-check: the account write itself, not the fresh snapshot the
+    /// re-check takes first.
+    @MainActor func holdImportWrite(of coordinator: CredentialExchangeCoordinator) {
+        coordinator.afterLastCheck = { [self] in holdNextVaultRead() }
     }
 }
 
