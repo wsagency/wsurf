@@ -116,13 +116,15 @@ nonisolated enum TrashFixtures {
     /// What a re-import of `owner`'s password or one-time code is: the file `owner` exports (raw exchange ids as stored), previewed
     /// against an empty vault, and the credential's identity in it.
     static func incoming(of owner: CredentialAccount, _ subject: RecordSubject) throws -> (preview: CredentialImportPreview, identity: CredentialIdentity) {
-        let source = VaultSnapshot(revision: 1, accounts: [owner], blockedPasswordOrigins: [])
+        func snapshot(_ accounts: [CredentialAccount]) -> StoreSnapshot {
+            StoreSnapshot(vaultID: UUID(), revision: 1, accounts: accounts, blockedPasswordOrigins: [], stamps: [:])
+        }
         let data = try CredentialExchangeCodec.export(
-            source,
+            snapshot([owner]),
             selection: [CredentialExportSelection(accountID: owner.id, password: subject == .password, passkeyIDs: [], totp: subject == .totp)],
             format: .v1
         )
-        let preview = try CredentialExchangeCodec.preview(data, against: VaultSnapshot(revision: 1, accounts: [], blockedPasswordOrigins: []))
+        let preview = try CredentialExchangeCodec.preview(data, against: snapshot([]))
         let identities = preview.candidates.flatMap(CredentialExchangeCodec.identities(in:))
         let identity = identities.first { identity in
             switch identity {

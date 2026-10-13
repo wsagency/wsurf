@@ -22,7 +22,7 @@ nonisolated enum CredentialImportDecision: Sendable {
 }
 
 nonisolated struct CredentialImportPreview: Sendable {
-    let base: VaultSnapshot
+    let base: StoreSnapshot
     let candidates: [CredentialAccount]
     let conflicts: [CredentialImportConflict]
 
@@ -166,7 +166,7 @@ nonisolated enum CredentialExchangeCodec {
         var record = CredentialExchangeError.Record.exporter
     }
 
-    static func preview(_ data: ASExportedCredentialData, against base: VaultSnapshot) throws -> CredentialImportPreview {
+    static func preview(_ data: ASExportedCredentialData, against base: StoreSnapshot) throws -> CredentialImportPreview {
         guard data.formatVersion == .v1 else { throw CredentialVaultError.invalidData }
         try validateAccounts(base.accounts)
         guard base.accounts.count <= CredentialVaultLimits.accounts,

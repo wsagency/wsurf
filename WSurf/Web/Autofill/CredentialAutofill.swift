@@ -81,7 +81,7 @@ nonisolated enum CredentialAccountSelection {
             let detail = totals[key, default: 1] > 1
                 ? [row.detail, String(localized: "Account \(seen[key, default: 1])")].filter { !$0.isEmpty }.joined(separator: " · ")
                 : row.detail
-            return AutofillSuggestion(accountID: row.account.id, title: row.title, detail: detail, origin: origin)
+            return AutofillSuggestion(id: row.account.id, title: row.title, detail: detail, origin: origin)
         }
     }
 
@@ -154,7 +154,7 @@ nonisolated enum CredentialAccountSelection {
     @MainActor
     static func commitSave(
         _ login: SavedPassword, origin: String, offered: CredentialSavePlan?, loginURL: URL?,
-        snapshot: VaultSnapshot, manager: CredentialManager, epoch: UInt64
+        snapshot: StoreSnapshot, manager: CredentialManager, epoch: UInt64
     ) async throws -> CredentialSaveOutcome {
         let selected: UUID? = if case .update(let id) = offered { id } else { nil }
         let plan = savePlan(for: login, origin: origin, accountID: selected, in: snapshot.accounts)
@@ -200,8 +200,8 @@ nonisolated enum CredentialAccountSelection {
 }
 
 nonisolated extension AutofillSuggestion {
-    init(accountID: UUID, title: String, detail: String, origin: String) {
-        id = accountID
+    init(id: UUID, title: String, detail: String, origin: String) {
+        self.id = id
         self.title = title
         self.detail = detail
         self.origin = origin

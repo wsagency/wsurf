@@ -74,13 +74,7 @@ nonisolated final class VaultAccess: Sendable {
     }
 }
 
-nonisolated struct VaultSnapshot: Sendable {
-    let revision: UInt64
-    let accounts: [CredentialAccount]
-    let blockedPasswordOrigins: Set<String>
-}
-
-nonisolated struct VaultCommitReceipt: Sendable {
+nonisolated struct VaultCommitReceipt: Sendable, Equatable {
     let revision: UInt64
 }
 

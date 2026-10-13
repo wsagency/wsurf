@@ -67,8 +67,8 @@ struct CredentialExchangeTests {
         return derValue(0x30, body)
     }
 
-    func snapshot(_ accounts: [CredentialAccount], revision: UInt64 = 3) -> VaultSnapshot {
-        VaultSnapshot(revision: revision, accounts: accounts, blockedPasswordOrigins: [])
+    func snapshot(_ accounts: [CredentialAccount], revision: UInt64 = 3) -> StoreSnapshot {
+        StoreSnapshot(vaultID: UUID(), revision: revision, accounts: accounts, blockedPasswordOrigins: [], stamps: [:])
     }
 
     func account(

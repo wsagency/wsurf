@@ -81,7 +81,7 @@ extension ProfileVaultStore {
         try fileOps.fsyncDirectory(directory)
     }
 
-    private func removeIfPresent(_ name: String) throws {
+    func removeIfPresent(_ name: String) throws {
         let target = file(name)
         if StoreAnchors.exists(target) {
             try FileManager.default.removeItem(at: target)

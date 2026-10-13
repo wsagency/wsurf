@@ -10,7 +10,7 @@ nonisolated struct AccountStamp: Equatable, Sendable {
     let digest: Data
 }
 
-/// The v2 snapshot of one unlocked vault (v1 `VaultSnapshot` is deleted in Task 10).
+/// The v2 snapshot of one unlocked vault.
 nonisolated struct StoreSnapshot: Sendable {
     let vaultID: UUID
     let revision: UInt64

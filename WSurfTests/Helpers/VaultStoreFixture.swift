@@ -697,13 +697,14 @@ nonisolated extension VaultStoreFixture {
         return image
     }
 
-    /// Every key of the test suite's defaults with a textual form of its value.
+    /// Every key the store keeps in the test suite's defaults with a textual form of its value. `dictionaryRepresentation()` also merges
+    /// the process-wide domains, which other tests (any `NSWindow`) write to concurrently, so only the app's own keys are compared.
     func defaultsImage() -> [String: String] {
         Self.defaultsImage(of: env.defaults)
     }
 
     static func defaultsImage(of defaults: UserDefaults) -> [String: String] {
-        defaults.dictionaryRepresentation().mapValues { String(describing: $0) }
+        defaults.dictionaryRepresentation().filter { $0.key.hasPrefix("io.wsagency.") }.mapValues { String(describing: $0) }
     }
 
     func storedWrappersBytes(of vault: UUID) throws -> Data {

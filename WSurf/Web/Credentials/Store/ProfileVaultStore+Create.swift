@@ -8,10 +8,14 @@ import SQLite3
 
 /// Who authorizes creating a vault (spec §8): nobody for the very first one, a vault already unlocked in this session, or a passkey
 /// enrolled in an existing vault whose assertion is verified internally (§6.8 steps 1-7) and never published as a grant.
+/// Every case carries a creation-scoped `VaultAccess` the caller can revoke; the store checks it under the operation lock before each
+/// durable write and again at the commit point, so a revocation that lands while creation waits or runs writes nothing more. For
+/// `.unlockedVault` that access is the source vault's own grant (never revoked or extended here); for the other two it is a lease the
+/// store never keeps.
 enum VaultCreationAuthority: Sendable {
-    case firstVault
+    case firstVault(lease: VaultAccess)
     case unlockedVault(vaultID: UUID, access: VaultAccess)
-    case existingPasskey(vaultID: UUID, credentialID: Data, prf: SymmetricKey)
+    case existingPasskey(vaultID: UUID, credentialID: Data, prf: SymmetricKey, lease: VaultAccess)
 }
 
 /// Everything one new vault and its linked Trash are built from.
@@ -231,12 +235,12 @@ extension ProfileVaultStore {
         try CredentialVaultCrypto.validateProof(proof)
         do {
             switch authorizedBy {
-            case .firstVault:
-                return try await bootstrapFirstVault(name: trimmed, proof: proof)
+            case .firstVault(let lease):
+                return try await bootstrapFirstVault(name: trimmed, proof: proof, lease: lease)
             case .unlockedVault(let sourceID, let access):
                 return try await createWithUnlockedVault(sourceID, access: access, name: trimmed, proof: proof)
-            case .existingPasskey(let sourceID, let credentialID, let prf):
-                return try await createWithExistingPasskey(sourceID, credentialID: credentialID, prf: prf, name: trimmed, proof: proof)
+            case .existingPasskey(let sourceID, let credentialID, let prf, let lease):
+                return try await createWithExistingPasskey(sourceID, credentialID: credentialID, prf: prf, lease: lease, name: trimmed, proof: proof)
             }
         } catch let error as DatabaseError {
             throw storeError(error, ordinal: nil)
@@ -260,18 +264,26 @@ extension ProfileVaultStore {
         }
     }
 
+    /// The creation lease must name this profile and still be live. Called under the operation hold, before the first durable write.
+    private func checkLease(_ lease: VaultAccess) throws {
+        try Task.checkCancellation()
+        guard lease.profileID == profileID else { throw CredentialVaultError.unauthorized }
+        try lease.checkAuthorization(at: now())
+    }
+
     /// §6.8 steps 1-7 on the source vault under EXCLUSIVE, with an operation-scoped access that is revoked at the end and never
     /// published; the creation transaction runs under the same hold. `proof` must describe the very passkey that just opened the source
     /// vault: same credential id, same PRF output, and the PRF input the source vault stored for that credential. Anything else would wrap
     /// the new vault under a combination the chosen passkey cannot reproduce.
     private func createWithExistingPasskey(
-        _ sourceID: UUID, credentialID: Data, prf: SymmetricKey, name: String, proof: VaultUnlockProof
+        _ sourceID: UUID, credentialID: Data, prf: SymmetricKey, lease: VaultAccess, name: String, proof: VaultUnlockProof
     ) async throws -> UUID {
         guard proof.credentialID == credentialID, proof.prf.withUnsafeBytes({ Data($0) }) == prf.withUnsafeBytes({ Data($0) }) else {
             throw CredentialStoreError.passkeyUnusable
         }
-        let hold = try await OperationLock.acquire(in: directory, mode: .exclusive, wait: lockWait)
+        let hold = try await acquireOperation(mode: .exclusive)
         defer { hold.release() }
+        try checkLease(lease)
         let clock = now
         let access = VaultAccess(profileID: profileID, epoch: 0, deadline: clock().advanced(by: .seconds(300)))
         defer { access.revoke() }
@@ -292,7 +304,11 @@ extension ProfileVaultStore {
             guard stored.first(where: { $0.credentialID == credentialID })?.prfInput == proof.prfInput else {
                 throw CredentialStoreError.passkeyUnusable
             }
-            return try Self.insertNewVault(pool, grant: grant, access: access, name: name, proof: proof, now: clock, createdAt: createdAt)
+            // The commit: the lease is checked and the transaction runs under the lease's lock (the source access differs from the lease,
+            // so `openVault`'s own check cannot deadlock on it).
+            return try lease.withAuthorization(now: clock) {
+                try Self.insertNewVault(pool, grant: grant, access: access, name: name, proof: proof, now: clock, createdAt: createdAt)
+            }
         }
     }
 
@@ -329,8 +345,10 @@ extension ProfileVaultStore {
 
     /// Spec §8 item 1 under EXCLUSIVE: build and verify the pending store, write the stub to `.swap`, create `Credentials.vault` with
     /// `RENAME_EXCL`, rename the pending store, set A3. The seam numbers are the migration's steps 4-7, 9 and 10. Publishes no grant.
-    private func bootstrapFirstVault(name: String, proof: VaultUnlockProof) async throws -> UUID {
-        let hold = try await OperationLock.acquire(in: directory, mode: .exclusive, wait: lockWait)
+    /// A cancellation or a dead lease before the commit-point rename removes exactly the files this call created (`created`), so the
+    /// next open is `.firstRun` again; any other failure, and a crash, leaves them for the fail-closed states.
+    private func bootstrapFirstVault(name: String, proof: VaultUnlockProof, lease: VaultAccess) async throws -> UUID {
+        let hold = try await acquireOperation(mode: .exclusive)
         defer { hold.release() }
         switch openState() {
         case .firstRun:
@@ -340,23 +358,34 @@ extension ProfileVaultStore {
         case .legacy, .provisional, .resumeMigration:
             throw CredentialStoreError.noAuthority
         }
+        try checkLease(lease)
         let ids = StoreIDs(storeID: UUID(), profileID: profileID)
         let registryKey = VaultBuild.randomBytes(32)
         let vault = try NewVault.fresh(ordinal: 1, name: name, proof: proof, profileID: profileID, createdAt: wall())
-        try buildPending(ids: ids, registryKey: registryKey, vault: vault)
-        try seam(4)
-        try verifyBootstrapped(ids: ids, vaultID: vault.vaultID, proof: proof)
-        try seam(5)
-        try writeStubToSwap(ids: ids)
-        try seam(6)
+        var created: [String] = []
         do {
-            try fileOps.renameExclusive(file(StoreAnchors.Names.swap), file(StoreAnchors.Names.vault))
-        } catch StoreFileError.exists {
-            // A v1 file appeared meanwhile: nothing was overwritten, and the §6.3 state applies.
-            if case .failClosed(let closed) = openState() {
-                throw CredentialStoreError.failClosed(closed)
+            try buildPending(ids: ids, registryKey: registryKey, vault: vault)
+            created.append(StoreAnchors.Names.migrating)
+            try seam(4)
+            try verifyBootstrapped(ids: ids, vaultID: vault.vaultID, proof: proof)
+            try seam(5)
+            try writeStubToSwap(ids: ids)
+            created.append(StoreAnchors.Names.swap)
+            try seam(6)
+            do {
+                // The commit point: from the rename on, the bootstrap is observable and a later unlock resumes it. The check and the rename
+                // run under the lease's lock, so a revoke that returns before it blocks the rename and one after it finds the bootstrap done.
+                try lease.withAuthorization(now: now) { try fileOps.renameExclusive(file(StoreAnchors.Names.swap), file(StoreAnchors.Names.vault)) }
+            } catch StoreFileError.exists {
+                // A v1 file appeared meanwhile: nothing was overwritten, and the §6.3 state applies.
+                if case .failClosed(let closed) = openState() {
+                    throw CredentialStoreError.failClosed(closed)
+                }
+                throw CredentialStoreError.stateChanged
             }
-            throw CredentialStoreError.stateChanged
+        } catch where Self.endsOwnCreation(error) {
+            try discardOwnBootstrap(created)
+            throw error
         }
         try fileOps.fsyncDirectory(directory)
         try seam(7)
@@ -365,5 +394,35 @@ extension ProfileVaultStore {
         _ = StoreAnchors.setWitnessIfAbsent(ids.storeID, defaults: defaults)
         try seam(10)
         return vault.vaultID
+    }
+
+    /// Only a normal cancellation or a dead creation lease (`unauthorized`, `expired`) says the pending store this call built was never
+    /// wanted. Every other failure, such as its own self-verification failing, keeps the files as evidence for the fail-closed states.
+    nonisolated private static func endsOwnCreation(_ error: any Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        guard let dead = error as? CredentialVaultError else { return false }
+        return dead == .unauthorized || dead == .expired
+    }
+
+    /// Removes the swap stub and the pending store (with the SQLite sidecars its own connection may have left) that this call created,
+    /// then fsyncs the directory. A file that cannot be removed is reported as a fail-closed abort naming it, never ignored.
+    private func discardOwnBootstrap(_ created: [String]) throws {
+        guard !created.isEmpty else { return }
+        let pending = StoreAnchors.Names.migrating
+        let names = created.contains(StoreAnchors.Names.swap) ? [StoreAnchors.Names.swap] : []
+        for name in names + PendingStore.sidecars.map({ pending + $0 }) + [pending] {
+            do {
+                try removeIfPresent(name)
+            } catch {
+                throw CredentialStoreError.migrationAborted(path: file(name))
+            }
+        }
+        do {
+            try fileOps.fsyncDirectory(directory)
+        } catch {
+            throw CredentialStoreError.migrationAborted(path: directory)
+        }
     }
 }

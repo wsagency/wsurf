@@ -107,6 +107,8 @@ actor ProfileVaultStore {
     var grants: [UUID: VaultGrant] = [:]
     /// Vaults whose verification succeeded in this session (stays true after `lock`).
     var verified: Set<UUID> = []
+    /// Set by `close()`, never cleared: this instance serves no operation afterwards.
+    private var closed = false
 
     init(
         profileID: UUID,
@@ -173,12 +175,25 @@ actor ProfileVaultStore {
         return result
     }
 
+    /// The only place the store takes the operation lock. `closed` is checked in the same actor segment as `OperationLock.acquire`'s
+    /// directory and lock-file creation (it runs on this actor up to its first suspension), and again after the wait: a store closed
+    /// meanwhile never touches the directory again and gives the lock back at once.
+    func acquireOperation(mode: OperationLock.Mode) async throws -> OperationLockHold {
+        guard !closed else { throw CredentialVaultError.unauthorized }
+        let hold = try await OperationLock.acquire(in: directory, mode: mode, wait: lockWait)
+        guard !closed else {
+            hold.release()
+            throw CredentialVaultError.unauthorized
+        }
+        return hold
+    }
+
     /// Spec §15: take the operation lock (SHARED: SQLite's own write lock serializes writers), re-read the anchors under it, run `body` on
     /// a pool opened for this operation, and close that pool before the lock is released. A state other than `.provisional` is
     /// `stateChanged` (the caller routed on an earlier read) and a closed one its `failClosed` error, both before any database is
     /// opened.
     func withOperation<T>(_ body: (DatabasePool) throws -> T) async throws -> T {
-        let hold = try await OperationLock.acquire(in: directory, mode: .shared, wait: lockWait)
+        let hold = try await acquireOperation(mode: .shared)
         defer { hold.release() }
         switch openState() {
         case .provisional:
@@ -216,7 +231,7 @@ actor ProfileVaultStore {
         case .firstRun:
             return []
         case .legacy, .resumeMigration:
-            let hold = try await OperationLock.acquire(in: directory, mode: .shared, wait: lockWait)
+            let hold = try await acquireOperation(mode: .shared)
             defer { hold.release() }
             switch openState() {
             case .legacy:
@@ -349,8 +364,12 @@ actor ProfileVaultStore {
         }
     }
 
-    /// Drops every grant; idempotent. No connection outlives an operation, so there is nothing else to release.
+    /// Permanent lifecycle guard, then drops every grant; idempotent. An operation that has not yet taken the operation lock refuses once
+    /// `closed` is set, but only after its lock wait ends: it acquires the flock and gives it back at once, or `lockWait` runs out with
+    /// `storeBusy`. An operation already holding the lock runs to completion, so a caller about to erase the directory must first drain
+    /// the operations it started (the manager's retire does); `close()` alone does not stop them. No connection outlives an operation.
     func close() {
+        closed = true
         lockAll()
     }
 

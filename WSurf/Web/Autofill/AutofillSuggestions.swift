@@ -32,8 +32,14 @@ final class AutofillSuggestions {
         let provider: PasswordProvider
         let field: CredentialAutofillField
         let enteredUsername: String?
-        var epoch: UInt64?
-        var revision: UInt64?
+        /// One unlocked vault the request read, with the lease and revision it read it under.
+        struct Grant {
+            let epoch: UInt64
+            let revision: UInt64
+        }
+        var grants: [UUID: Grant] = [:]
+        /// What the panel returns (a fresh id per row) -> the owning vault and its account. Two vaults may hold the same account id.
+        var rows: [UUID: (vaultID: UUID, accountID: UUID)] = [:]
 
         init(page: BrowserPage, context: BrowserProfileContext, frame: BrowserFrame, token: String, kind: AutofillSaveKind,
              frameURL: URL, topURL: URL, world: WKContentWorld, bridge: String,
@@ -176,53 +182,90 @@ final class AutofillSuggestions {
         }
     }
 
-    /// The one manager that may answer `request`: same provider, same profile, and still the unlock it was made under.
-    private func manager(for request: Request) -> CredentialManager? {
+    /// The manager that may answer for `vaultID`: same provider, same profile, and still the unlock the request read it under.
+    private func manager(for request: Request, vault vaultID: UUID) -> CredentialManager? {
         let context = request.context
         guard request.provider == .credentialManager, context.settings.passwordProvider == .credentialManager,
-              !context.profile.isPrivate, request.page.context === context, let epoch = request.epoch,
-              let manager = try? CredentialManager.forProfile(context.profile), manager.authorizationEpoch == epoch else { return nil }
-        return manager
+              !context.profile.isPrivate, request.page.context === context, let epoch = request.grants[vaultID]?.epoch else { return nil }
+        return CredentialManager.unlockedManagers(for: context.profile).first { $0.vaultID == vaultID && $0.authorizationEpoch == epoch }
     }
 
-    /// Account choices for `request`, read only while the vault is explicitly unlocked. Locked, stale or mis-originated
-    /// requests get no dropdown; unlocking happens in settings. The picked-account lookup can invalidate the carry-over,
-    /// so it runs only while this is still the page's current request and presentation.
+    /// Every vault the request read is still the unlock it was read under.
+    private func managersAreCurrent(for request: Request) -> Bool {
+        !request.grants.isEmpty && request.grants.keys.allSatisfy { manager(for: request, vault: $0) != nil }
+    }
+
+    /// Account choices for `request`: the union over the profile's unlocked vaults, each read under its own lease. A locked
+    /// vault is never read; unlocking happens in settings. Locked, stale or mis-originated requests get no dropdown. The
+    /// picked-account lookup can invalidate the carry-over, so it runs only while this is still the page's current request
+    /// and presentation.
     private func managerSuggestions(for request: Request, origin: String, presentation: UUID) async -> [AutofillSuggestion]? {
         let context = request.context
         guard request.provider == .credentialManager, context.settings.passwordProvider == .credentialManager,
               !context.profile.isPrivate, request.page.context === context,
-              CredentialAccountSelection.origin(for: request.frameURL) == origin,
-              let manager = try? CredentialManager.forProfile(context.profile), let epoch = manager.authorizationEpoch,
-              let snapshot = try? await manager.snapshot(), manager.authorizationEpoch == epoch,
-              context.settings.passwordProvider == .credentialManager, request.page.context === context,
+              CredentialAccountSelection.origin(for: request.frameURL) == origin else { return nil }
+        // Vaults in ordinal order; a vault the listing does not know (or a locked one) is never read.
+        let listing = (try? await CredentialManager.store(for: context.profile).listing()) ?? []
+        let unlocked = CredentialManager.unlockedManagers(for: context.profile)
+        struct Read {
+            let manager: CredentialManager
+            let epoch: UInt64
+            let snapshot: StoreSnapshot
+            let label: String
+        }
+        var reads: [Read] = []
+        for vault in listing.sorted(by: { $0.ordinal < $1.ordinal }) {
+            if let manager = unlocked.first(where: { $0.vaultID == vault.vaultID }), let epoch = manager.authorizationEpoch,
+               let snapshot = try? await manager.snapshot(), manager.authorizationEpoch == epoch {
+                reads.append(Read(manager: manager, epoch: epoch, snapshot: snapshot, label: vault.name ?? String(localized: "Vault \(vault.ordinal)")))
+            }
+        }
+        guard !reads.isEmpty, context.settings.passwordProvider == .credentialManager, request.page.context === context,
               presentation == presentationID, requests[ObjectIdentifier(request.page)] === request else { return nil }
-        request.epoch = epoch; request.revision = snapshot.revision
+        request.grants = Dictionary(
+            uniqueKeysWithValues: reads.map { ($0.manager.vaultID, Request.Grant(epoch: $0.epoch, revision: $0.snapshot.revision)) })
         // Frame, focus and field must still be the ones asked about before the pick is read (and possibly invalidated).
         guard (try? await validate(request, in: request.page, requiresFocus: true)) != nil,
               presentation == presentationID, requests[ObjectIdentifier(request.page)] === request else { return nil }
-        let pinned = AutofillSaveCoordinator.shared.session(for: request.page)?.selectedAccount(
-            in: request.page, origin: origin, enteredUsername: request.enteredUsername, epoch: epoch)
-        return CredentialAccountSelection.suggestions(
-            snapshot.accounts, origin: origin, pageURL: request.topURL, entered: request.enteredUsername,
-            field: request.field, pinned: pinned)
+        // A picked account names exactly one lease (epochs are process-unique): ask on its owner's behalf while that lease is
+        // live, otherwise on any live lease's, which retires the pick. A live pick answers alone, from its own vault.
+        let session = AutofillSaveCoordinator.shared.session(for: request.page)
+        let owner = reads.first { $0.epoch == session?.username?.epoch } ?? reads[0]
+        let pinned = session?.selectedAccount(
+            in: request.page, origin: origin, enteredUsername: request.enteredUsername, epoch: owner.epoch)
+        var result: [AutofillSuggestion] = []
+        for read in pinned == nil ? reads : [owner] {
+            for row in CredentialAccountSelection.suggestions(
+                read.snapshot.accounts, origin: origin, pageURL: request.topURL, entered: request.enteredUsername,
+                field: request.field, pinned: pinned
+            ) {
+                let rowID = UUID()
+                request.rows[rowID] = (read.manager.vaultID, row.id)
+                // With several vaults open, a row says which one it is in.
+                let detail = reads.count > 1 ? [row.detail, read.label].filter { !$0.isEmpty }.joined(separator: " · ") : row.detail
+                result.append(AutofillSuggestion(id: rowID, title: row.title, detail: detail, origin: origin))
+            }
+        }
+        return result
     }
 
-    /// What may be delivered for `id` now: the account must still exist, still be associated with this origin, and the
-    /// vault must be the same unlock and revision the choice was shown under. The returned generation is the vault
-    /// content generation the answer is valid for: it was available (no write in flight) before the read and is
-    /// unchanged after it, and the caller must see it unchanged again immediately before delivering.
+    /// What may be delivered for the row `rowID` now: the account must still exist in the vault that owns the row, still be
+    /// associated with this origin, and that vault must be the same unlock and revision the choice was shown under. The
+    /// returned generation is the vault content generation the answer is valid for: it was available (no write in flight)
+    /// before the read and is unchanged after it, and the caller must see it unchanged again immediately before delivering.
     private func managerAccount(
-        _ id: UUID, request: Request, origin: String
-    ) async throws -> (account: CredentialAccount, generation: UInt64) {
-        guard let manager = manager(for: request), let epoch = request.epoch,
+        _ rowID: UUID, request: Request, origin: String
+    ) async throws -> (manager: CredentialManager, account: CredentialAccount, generation: UInt64) {
+        guard let row = request.rows[rowID], let manager = manager(for: request, vault: row.vaultID),
+              let grant = request.grants[row.vaultID],
               CredentialAccountSelection.origin(for: request.frameURL) == origin,
               let generation = manager.stableGeneration else { throw ContactAutofillError.changedPage }
         let snapshot = try await manager.snapshot()
-        guard manager.authorizationEpoch == epoch, manager.stableGeneration == generation, snapshot.revision == request.revision,
-              let account = snapshot.accounts.first(where: { $0.id == id }),
+        guard manager.authorizationEpoch == grant.epoch, manager.stableGeneration == generation,
+              snapshot.vaultID == row.vaultID, snapshot.revision == grant.revision,
+              let account = snapshot.accounts.first(where: { $0.id == row.accountID }),
               account.origins.contains(origin) else { throw ContactAutofillError.changedPage }
-        return (account, generation)
+        return (manager, account, generation)
     }
 
     private func awaitRect(_ value: Any?, requestPage: BrowserPage, frame: BrowserFrame,
@@ -357,7 +400,7 @@ final class AutofillSuggestions {
     private func requireAuthority(_ request: Request, in page: BrowserPage) throws {
         guard requests[ObjectIdentifier(page)] === request, request.context === page.context,
               request.kind != .password || request.provider == request.context.settings.passwordProvider,
-              request.provider == .legacy || manager(for: request) != nil,
+              request.provider == .legacy || managersAreCurrent(for: request),
               AutofillSaveCoordinator.shared.isEnabled(request.kind, context: request.context), page.url == request.topURL,
               page.hasOnlySecureContent, page.window != nil, !page.isHiddenOrHasHiddenAncestor else { throw ContactAutofillError.changedPage }
     }
@@ -456,13 +499,14 @@ final class AutofillSuggestions {
                 try await self.validate(request, in: page)
                 if request.kind == .password, request.field == .password, let username = filledUsername,
                    let origin = SavedPassword.origin(for: request.frameURL) {
+                    let picked = request.rows[id]
                     AutofillSaveCoordinator.shared.rememberFilledUsername(
                         username,
                         origin: origin,
                         documentID: request.documentID,
                         in: page,
-                        accountID: request.provider == .credentialManager ? id : nil,
-                        epoch: request.epoch
+                        accountID: picked?.accountID,
+                        epoch: picked.flatMap { request.grants[$0.vaultID]?.epoch }
                     )
                 }
             } catch {
@@ -486,16 +530,17 @@ final class AutofillSuggestions {
     private func managerFill(
         _ id: UUID, request: Request, in page: BrowserPage
     ) async throws -> (prepare: @MainActor @Sendable () throws -> [String: Any], username: String?) {
-        guard let origin = SavedPassword.origin(for: request.frameURL), let manager = manager(for: request) else {
+        guard let origin = SavedPassword.origin(for: request.frameURL), let row = request.rows[id] else {
             throw ContactAutofillError.changedPage
         }
-        let (account, generation) = try await managerAccount(id, request: request, origin: origin)
+        let (manager, account, generation) = try await managerAccount(id, request: request, origin: origin)
         let field = request.field
+        let epoch = request.grants[row.vaultID]?.epoch
         let prepare: @MainActor @Sendable () throws -> [String: Any] = { [weak self, weak page] in
             guard let self, let page else { throw ContactAutofillError.changedPage }
             try self.requireAuthority(request, in: page)
-            guard self.manager(for: request) === manager, manager.stableGeneration == generation,
-                  manager.authorizationEpoch == request.epoch else {
+            guard self.manager(for: request, vault: row.vaultID) === manager, manager.stableGeneration == generation,
+                  manager.authorizationEpoch == epoch else {
                 throw ContactAutofillError.changedPage
             }
             var delivered: [String: Any]
