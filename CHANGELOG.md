@@ -7,6 +7,10 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-13 — Credential store: Trash and earlier-version counts (source only)
+
+The v2 credential store can now report how many Trash entries and earlier versions a vault holds without paging or decoding them. The counts come from the authenticated vault and Trash heads and are checked against the stored rows (a missing or extra row is an integrity failure, never a number), through the same unlocked, unrevoked access every other read needs. A Trash of more than 50 entries is counted in full, not as one page. This is source and component-test level only; no Settings view reads it yet.
+
 ### 2026-10-13 — Credential store: vault creation and v1 migration (source only)
 
 The v2 credential store can now create a vault three ways: the first vault of a profile (built and verified as a closed pending file, then published by an exclusive rename), a new vault authorized by an unlocked one, and a new vault authorized by an existing passkey, which opens the source vault with that passkey's own proof and wraps the new vault under the same credential id, PRF input and PRF output, publishing no unlock for either vault. A single routed unlock now covers every state: it unlocks a v2 store, refuses a first-run or fail-closed directory without writing, and, after explicit confirmation, migrates a v1 vault in one exclusive pass (verified backup, verified pending store, a stub that old builds reject, then the store rename) and resumes an interrupted migration. The migrated vault keeps its wrappers, accounts, passkeys, exchange values and blocked-password origins unchanged, and is named "Personal". An old-build write that lands during the cutover is kept as `Credentials.vault.cutover-v1` and the store fails closed instead of merging or rolling back. This is source-level only; nothing in the app calls it yet.
