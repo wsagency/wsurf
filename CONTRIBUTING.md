@@ -146,6 +146,39 @@ baseline to allow for roughly 50% variation on shared runners. These checks
 detect large regressions rather than small percentage changes. Change a budget
 only with measurements that justify it.
 
+Debug builds take their bundle identifier from `WSURF_BUNDLE_ID_SUFFIX`, empty by
+default, so a Debug app is `io.wsagency.wsurf` and its extension
+`io.wsagency.wsurf.CredentialExchange`; Release identifiers never change. CI
+builds with `WSURF_BUNDLE_ID_SUFFIX=.ci-<run_id>-<run_attempt>` on the
+`xcodebuild` command line (an environment variable loses to the project setting),
+runs `Tools/check-built-identity.py` on the built artifact, and launches the test
+host only if it passes: the app, extension, five helpers and test bundle must carry
+that identity, the deep strict signature must verify, the one generated
+`.xctestrun` must name this app and its test bundle, and no `WSURF_STAGE*`
+variable may be set. The tests then run with `test-without-building -xctestrun` on
+that exact file. Do the same from your own `build-for-testing` output: export
+`WSURF_BUNDLE_ID_SUFFIX`, pass the DerivedData path and the `.xctestrun` path to the
+check, and launch only that file. The tests then use that identifier's
+standard preferences and default WebKit data instead of the installed app's. A
+one-off check on a build made with a unique suffix confirmed this for a preferences
+key and a `localStorage` key. Only the favicon cache is known to move under the
+per-process test directory; other profile test preference domains use random UUID
+names, not per-process ones. The Pro machine's Gitea runners are distinct from this GitHub
+Actions job, and the job's own account and OS isolation are not verified, so this is namespacing, not OS isolation. The last CI step
+removes only that exact identifier's preferences, WebKit, Caches, HTTPStorages and
+Saved Application State, and unregisters its app and extension when present. It
+does not clean everything: macOS creates `~/Library/Containers/<id>.CredentialExchange`
+for the extension and protects it from `rm`, and a hard-killed runner skips the
+step. Do not delete those by glob or prefix. The one-off checks were narrow: a full
+native run later found tests writing the production `SitePermissions.json` through
+an implicit default, now removed (`SitePermissions` requires an explicit URL, so a
+test must own its file). A targeted native run of the changed callers and their
+neighbours passed with known production metadata unchanged. A later full native run
+(3244 tests) also left known production metadata unchanged but failed one test, a
+separate, not yet diagnosed failure, so the full suite has not passed under this change. The file's
+earlier content was not recorded, so nothing here says all production data is
+unchanged.
+
 A case that builds a live WebKit view takes `.boundedWebViews`, which holds one
 of a small number of slots — half the machine’s cores. Starting every case
 together exhausts WebContent processes and turns resource pressure into

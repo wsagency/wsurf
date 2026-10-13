@@ -29,7 +29,7 @@ signOptions=(--options runtime --timestamp)
 # Match Xcode's ad-hoc builds; hardened library validation requires a real signing team.
 [[ "$identity" != - ]] || signOptions=(--timestamp=none)
 helperHash=$(/usr/bin/shasum -a 256 "$helper")
-fingerprint="$version|$identity|${helperHash%% *}|${signOptions[*]}"
+fingerprint="$version|$identity|${helperHash%% *}|${signOptions[*]}|$PRODUCT_BUNDLE_IDENTIFIER"
 contents="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH"
 frameworks="$contents/Frameworks"
 resources="$contents/Resources"

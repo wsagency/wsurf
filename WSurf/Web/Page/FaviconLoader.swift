@@ -19,10 +19,7 @@ final class FaviconLoader {
     private var cacheGeneration = 0
 
     static func cacheDirectory(for profile: Profile) -> URL {
-        let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("WSurf", isDirectory: true)
-            .appendingPathComponent("Favicons", isDirectory: true)
-        return profile.isOriginal ? root : root.appendingPathComponent(profile.id.uuidString, isDirectory: true)
+        profile.isOriginal ? defaultCacheDirectory : defaultCacheDirectory.appendingPathComponent(profile.id.uuidString, isDirectory: true)
     }
 
     private var sessionOnly: [String: NSImage] = [:]
@@ -388,9 +385,12 @@ final class FaviconLoader {
             .appendingPathExtension(isGuess ? Self.guessExtension : "favicon")
     }
 
+    /// Tests keep their icons under the per-process test directory, never in the user's real cache.
     private static var defaultCacheDirectory: URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("WSurf", isDirectory: true)
-            .appendingPathComponent("Favicons", isDirectory: true)
+        let base = AppDatabase.isRunningTests
+            ? AppDatabase.supportDirectory
+            : FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("WSurf", isDirectory: true)
+        return base.appendingPathComponent("Favicons", isDirectory: true)
     }
 }

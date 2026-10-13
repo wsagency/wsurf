@@ -184,8 +184,8 @@ final class SitePermissions {
     private let persists: Bool
     private var saveTask: Task<Void, Never>?
 
-    init(storageURL: URL? = nil, persists: Bool = true) {
-        file = storageURL ?? Self.defaultFile
+    init(storageURL: URL, persists: Bool = true) {
+        file = storageURL
         self.persists = persists
         if persists {
             load()
@@ -627,12 +627,5 @@ final class SitePermissions {
                 externalAppRecords[origin] = valid
             }
         }
-    }
-
-    private static var defaultFile: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("WSurf", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        return base.appendingPathComponent("SitePermissions.json")
     }
 }
