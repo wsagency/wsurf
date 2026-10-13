@@ -21,32 +21,19 @@ TOTAL_LIMIT_SECONDS = int(os.getenv("WSURF_CI_TEST_LIMIT_SECONDS", 20 * 60))
 FINALIZATION_LIMIT_SECONDS = int(os.getenv("WSURF_CI_FINALIZATION_LIMIT_SECONDS", 2 * 60))
 
 
-def capture_diagnostics(process_id: int) -> None:
+def capture_diagnostics(process: subprocess.Popen[str]) -> None:
+    # Samples only the child this watchdog launched; never lists or samples other host processes.
+    if process.poll() is not None:
+        return
     directory = Path("build/ci-diagnostics")
     directory.mkdir(parents=True, exist_ok=True)
-    processes = subprocess.run(
-        ["ps", "-axo", "pid,ppid,stat,etime,command"],
-        capture_output=True,
-        text=True,
+    subprocess.run(
+        ["sample", str(process.pid), "5", "-file", str(directory / "xcodebuild.txt")],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
         check=False,
-    ).stdout
-    (directory / "processes.txt").write_text(processes)
-    targets = [("xcodebuild", process_id)]
-    for line in processes.splitlines():
-        if "/WSurf.app/Contents/MacOS/WSurf" in line:
-            targets.append(("WSurf", int(line.split()[0])))
-            break
-    for name, pid in targets:
-        try:
-            subprocess.run(
-                ["sample", str(pid), "5", "-file", str(directory / f"{name}.txt")],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=15,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+    )
 
 
 def stop(process: subprocess.Popen[str]) -> None:
@@ -111,7 +98,7 @@ def main() -> int:
             reason = "test result finalization" if saw_summary else "test command"
             print(f"::error::{reason} exceeded its time limit; saving process diagnostics", flush=True)
             try:
-                capture_diagnostics(process.pid)
+                capture_diagnostics(process)
             except (OSError, ValueError, subprocess.TimeoutExpired) as error:
                 print(f"::warning::could not save all process diagnostics: {error}", flush=True)
             finally:

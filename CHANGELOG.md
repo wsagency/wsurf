@@ -7,6 +7,64 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-13 — CI tests no longer share the installed app's identity
+
+Debug builds take their bundle identifier from `WSURF_BUNDLE_ID_SUFFIX`, empty by
+default; Release identifiers, the tests target and default Debug identifiers do
+not change. CI builds with a unique `.ci-<run_id>-<run_attempt>` suffix, then
+`Tools/check-built-identity.py` refuses to launch the test host unless the built
+app, extension, five Chromium helpers and test bundle carry that identity, the one
+generated `.xctestrun` names that app and test bundle, and no Stage environment is
+set; only then does `test-without-building -xctestrun` run that exact file, inside
+the same total watchdog budget. The test host's standard
+preferences and default WebKit data then use that identifier instead of
+`io.wsagency.wsurf`. A throwaway check on a uniquely suffixed build confirmed a
+preferences key and a `localStorage` key stay in that namespace and that the
+production preferences, WebKit and Caches metadata did not change. Test hosts also
+keep favicon caches under their per-process test directory instead of
+`~/Library/Caches/WSurf/Favicons` (a focused regression and its neighbours passed;
+the full suite is not claimed here). Other profile test preference domains still
+use random UUID names, not per-process ones. The CI job now selects Xcode through
+`DEVELOPER_DIR` without `sudo xcode-select`, installs SwiftLint under
+`RUNNER_TEMP`, only verifies the Metal toolchain on the runner, no longer passes
+`-skipMacroValidation -skipPackagePluginValidation`, no longer uploads every
+host crash report, and runs a watchdog check; the watchdog now samples only its
+own child and never lists host processes. A final step removes the run's own
+preferences, WebKit, Caches, HTTPStorages and Saved Application State by exact
+identifier. Limits: this runner is the persistent Pro machine, not a disposable
+or independent host, and the suffix is namespacing, not OS isolation. macOS-managed
+`~/Library/Containers/<id>.CredentialExchange` cannot be removed by `rm` and
+stays; a hard-killed runner skips cleanup; the registered-extension `pluginkit -r`
+branch has not been exercised. GitHub's fork pull-request approval policy is
+unchanged and lets prior contributors' fork runs start without approval, which
+stays unsafe until the owner permits a change, so only trusted-branch work may use
+this runner.
+
+The narrow probes above passed, but a full native test run then found a real
+write to the production `~/Library/Application Support/WSurf/SitePermissions.json`:
+two tests built `SitePermissions(storageURL: nil)`, whose implicit default pointed
+at the installed app's file. The default is removed. `SitePermissions` now requires
+an explicit file URL and those tests use their own, under the per-process test
+directory. A targeted native run of the changed callers and their neighbours
+(131 tests in 8 suites, including `FormConsumerBoundaryTests`,
+`MCPPrivacyTests` and `SitePermissionsTests`) passed, and known production
+metadata, including that file and its parent directory, was unchanged across it.
+A later full native run on the fixed source ran 3244 tests in 351 suites in about
+939 seconds, inside the watchdog budget, with 14 existing disabled tests and no new
+skips. One test failed, a separate, not yet diagnosed failure in
+`WebAuthnContextBackForwardTests` (its first `route == manager` check, before any
+back/forward navigation), so the
+full suite did not pass and CI is not green. The privacy part of that run held:
+known production metadata, including that file and its parent directory, was
+unchanged, and only owned namespace paths were created and cleaned. What the
+earlier write changed is unknown: the file's content before it was never recorded,
+and it was left untouched. Only the paths named above were checked, so this does
+not show that all production data stays unchanged. A later diagnostic build of
+`WebAuthnContextBackForwardTests` (extra instrumentation only, not a product fix)
+passed its build and artifact guard and the 30-test `WebAuthnContextTests` run, but
+the cause of the full-run failure is still unknown and was not reproduced by that
+targeted run. No CI run of this change has completed yet.
+
 ### 2026-10-11 — Remove managed browser passkey entitlement
 
 WSurf no longer declares or requests Apple's managed

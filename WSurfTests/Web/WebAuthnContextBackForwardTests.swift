@@ -8,6 +8,71 @@ import WebKit
 
 @testable import WSurf
 
+/// What the first navigation of a fixture page did, recorded behind the tab's own callbacks (each is chained, none replaced).
+/// Metadata only: flags, an HTTP status, an error domain and code. Never page content, URLs of other hosts or credential values.
+@MainActor
+private final class NavigationOutcome {
+    private var tracked: PageNavigation?
+    private(set) var committed = false
+    private(set) var finished = false
+    private(set) var failure: String?
+    private(set) var responseStatus: Int?
+    private(set) var processTerminated = false
+
+    init(observing page: BrowserPage) {
+        let priorCommitted = page.onNavigationCommitted
+        page.onNavigationCommitted = { [weak self] navigation in
+            if self?.isTracked(navigation) == true {
+                self?.committed = true
+            }
+            priorCommitted?(navigation)
+        }
+        let priorFinished = page.onNavigationFinished
+        page.onNavigationFinished = { [weak self] navigation in
+            if self?.isTracked(navigation) == true {
+                self?.finished = true
+            }
+            priorFinished?(navigation)
+        }
+        let priorFailed = page.onNavigationFailed
+        page.onNavigationFailed = { [weak self] navigation, error in
+            if self?.isTracked(navigation) == true {
+                let nsError = error as NSError
+                self?.failure = "\(nsError.domain)#\(nsError.code)"
+            }
+            priorFailed?(navigation, error)
+        }
+        let priorResponse = page.onMainFrameResponse
+        page.onMainFrameResponse = { [weak self] response in
+            self?.responseStatus = (response as? HTTPURLResponse)?.statusCode
+            priorResponse?(response)
+        }
+        let priorTerminated = page.onContentProcessTerminated
+        page.onContentProcessTerminated = { [weak self] in
+            self?.processTerminated = true
+            priorTerminated?()
+        }
+    }
+
+    /// Keeps the navigation alive: the page's table holds it weakly, so a dropped one would reappear under a new identity.
+    func track(_ navigation: PageNavigation?) {
+        tracked = navigation
+    }
+
+    private func isTracked(_ navigation: PageNavigation?) -> Bool {
+        tracked != nil && navigation === tracked
+    }
+
+    var isSettled: Bool {
+        finished || failure != nil
+    }
+
+    var summary: String {
+        "navigation committed=\(committed) finished=\(finished) failure=\(failure ?? "none") "
+            + "responseStatus=\(responseStatus.map(String.init) ?? "none") processTerminated=\(processTerminated)"
+    }
+}
+
 extension WebAuthnContextTests {
     @Test(.requiresBackForwardCache)
     func mainFrameHistoryEntryCreatedBeforeRegistryAcknowledgmentRestoresItsDocument() async throws {
@@ -519,6 +584,8 @@ extension WebAuthnContextTests {
         let tab = ownedWebKitTab(webView)
         let page = tab.page
         let window = host(page)
+        let scriptsAtAdoption = page.webKit?.configuration.userContentController.userScripts.count ?? -1
+        let outcome = NavigationOutcome(observing: page)
         var messages: [[String: Any]] = []
         let world = PageAutomationGuard.world
         page.addScriptMessageHandler(name: WebAuthnScript.handlerName, in: world) { [weak page] message in
@@ -544,8 +611,14 @@ extension WebAuthnContextTests {
         }
         try await withPage(page, window: window, tab: tab) {
             page.context.settings.passwordProvider = .credentialManager
-            page.load(URLRequest(url: try localURL(server, path: "/")))
+            outcome.track(page.load(URLRequest(url: try localURL(server, path: "/"))))
             #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+            // `untilIdle` is also true after a failed or cancelled load; the navigation's own outcome is what proves this one.
+            let navigationSettled = await waitUntil { outcome.isSettled }
+            try #require(
+                navigationSettled && outcome.committed && outcome.failure == nil,
+                Comment(rawValue: "The initial fixture load did not commit and finish: \(outcome.summary)")
+            )
             let routeScript = """
             (() => { let route = null; const note = event => { route = event.detail; };
               document.addEventListener('wsurf-webauthn-route', note);
@@ -554,9 +627,27 @@ extension WebAuthnContextTests {
               return route;
             })()
             """
-            try #require(await waitUntil {
-                (try? await page.evaluateJavaScript(routeScript)) as? String == "manager"
-            })
+            var lastRoute: String?
+            var lastRouteError: String?
+            let routed = await waitUntil {
+                do {
+                    lastRoute = try await page.evaluateJavaScript(routeScript) as? String
+                    lastRouteError = nil
+                } catch {
+                    let failure = error as NSError
+                    lastRoute = nil
+                    lastRouteError = "\(failure.domain)#\(failure.code)"
+                }
+                return lastRoute == "manager"
+            }
+            var routeDetail = ""
+            if !routed {
+                routeDetail = await initialRouteDiagnostics(
+                    page: page, outcome: outcome, scriptsAtAdoption: scriptsAtAdoption,
+                    lastRoute: lastRoute, lastRouteError: lastRouteError
+                )
+            }
+            try #require(routed, Comment(rawValue: routeDetail))
             let original = try await mainFrame(in: page)
             let nonce = original.documentID
             _ = try await page.evaluateJavaScript("""
@@ -584,6 +675,37 @@ extension WebAuthnContextTests {
                 }.count == 1
             }, "The first relay request waits for the native registry proof.")
         }
+    }
+
+    /// Evidence for a document that never announced the `manager` route. A null route makes `evaluateJavaScript` throw
+    /// WKErrorDomain#5 (unsupported result type), so `lastRouteError` alone cannot tell a missing relay from a missing
+    /// route; the isolated-world fence type and the page-script marker can. Types, flags and counts only.
+    private func initialRouteDiagnostics(
+        page: BrowserPage, outcome: NavigationOutcome, scriptsAtAdoption: Int,
+        lastRoute: String?, lastRouteError: String?
+    ) async -> String {
+        func probe(_ script: String, in world: WKContentWorld) async -> String {
+            do {
+                return String(describing: try await page.evaluateJavaScript(script, in: nil, contentWorld: world))
+            } catch {
+                let failure = error as NSError
+                return "error \(failure.domain)#\(failure.code)"
+            }
+        }
+        let document = await probe("document.readyState + '|' + location.href", in: .page)
+        let isolated = await probe(
+            "[typeof globalThis.__wsurfWebAuthnFence, typeof globalThis.__wsurfNativeFrameReady, typeof globalThis.__wsurfNativeFrameNonce].join(',')",
+            in: PageAutomationGuard.world
+        )
+        let pageScript = await probe("String(navigator.credentials?.__wsurfWebAuthn)", in: .page)
+        let scriptsNow = page.webKit?.configuration.userContentController.userScripts.count ?? -1
+        return """
+        The initial route never became manager. lastRoute=\(lastRoute ?? "nil") lastRouteError=\(lastRouteError ?? "none") \
+        visibleURL=\(page.url?.absoluteString ?? "nil") isLoading=\(page.isLoading) document=\(document) \
+        isolated[fence,frameReady,frameNonce]=\(isolated) pageScriptInstalled=\(pageScript) \
+        provider=\(page.context.settings.passwordProvider) mainFrameRegistered=\(PageFrameRegistry.shared.mainFrame(in: page) != nil) \
+        userScripts[atAdoption=\(scriptsAtAdoption),now=\(scriptsNow)] \(outcome.summary)
+        """
     }
 
     @Test(arguments: BrowserEngine.allCases)

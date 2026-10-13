@@ -28,22 +28,34 @@ jobs:
     name: Build and test
     runs-on: xcode-27
     timeout-minutes: 45
+    env:
+      # Shared by the build, the identity guard and the cleanup: one exact test identity per run attempt.
+      WSURF_BUNDLE_ID_SUFFIX: .ci-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Scoped to this job: no xcode-select, no sudo, no change to the shared host.
       - name: Select Xcode ${{ env.XCODE }}
         run: |
-          if [ ! -d "/Applications/Xcode_${XCODE}.app" ]; then
-            echo "::error::Required Xcode ${XCODE} is unavailable at /Applications/Xcode_${XCODE}.app."
-            exit 1
-          fi
-          sudo xcode-select -s "/Applications/Xcode_${XCODE}.app"
+          for dir in "/Applications/Xcode_${XCODE}.app" /Applications/Xcode.app; do
+            [ -d "$dir" ] || continue
+            first="$(DEVELOPER_DIR="$dir/Contents/Developer" xcodebuild -version | head -n 1)"
+            if [ "$first" = "Xcode ${XCODE}" ]; then
+              echo "DEVELOPER_DIR=$dir/Contents/Developer" >> "$GITHUB_ENV"
+              exit 0
+            fi
+          done
+          echo "::error::Required Xcode ${XCODE} not found at /Applications/Xcode_${XCODE}.app or /Applications/Xcode.app."
+          exit 1
 
-      - name: Install Metal toolchain
+      # Verify only: this job never installs into a shared host. The runner must already carry the toolchain.
+      - name: Verify Metal toolchain
         run: |
-          xcodebuild -downloadComponent MetalToolchain
-          xcrun metal --version
+          xcrun metal --version || {
+            echo "::error::Metal toolchain missing for Xcode ${XCODE} (xcrun metal failed); install it on the runner."
+            exit 1
+          }
 
       - name: Install SwiftLint ${{ env.SWIFTLINT }}
         run: |
@@ -51,12 +63,15 @@ jobs:
             "https://github.com/realm/SwiftLint/releases/download/$SWIFTLINT/portable_swiftlint.zip"
           echo "$SWIFTLINT_SHA256  $RUNNER_TEMP/swiftlint.zip" | shasum -a 256 -c -
           unzip -q "$RUNNER_TEMP/swiftlint.zip" -d "$RUNNER_TEMP/swiftlint"
-          sudo install "$RUNNER_TEMP/swiftlint/swiftlint" /usr/local/bin/swiftlint
-          test "$(/usr/local/bin/swiftlint version)" = "$SWIFTLINT"
-          echo /usr/local/bin >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/swiftlint/swiftlint"
+          test "$("$RUNNER_TEMP/swiftlint/swiftlint" version)" = "$SWIFTLINT"
+          echo "$RUNNER_TEMP/swiftlint" >> "$GITHUB_PATH"
 
       - name: Check format
         run: Tools/check-format.sh
+
+      - name: Check watchdog
+        run: python3 Tools/check-watchdog.py
 
       - name: Cache Swift packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -85,29 +100,54 @@ jobs:
 
       # No entitlements: `keychain-access-groups` needs a provisioning profile,
       # and demanding one here would mean a signing certificate for every test
-      # run. Nothing under test reaches the keychain.
-      # Hosted Xcode 27 VMs cannot load Vision's OCR backend even with CPU selection.
-      # Keep these integrations enabled in the native test plan and Pro runs.
-      # Remove these four exclusions when hosted runners support Vision OCR.
+      # run. Some tests exercise security code under their own namespaced test
+      # identity, so this is not a claim that nothing touches the keychain.
+      # The four -skip-testing OCR exclusions below were inherited when this job was
+      # assumed to run on hosted Xcode 27 VMs that cannot load Vision's OCR backend.
+      # The runner is the persistent Pro machine; those exclusions stay until OCR is
+      # verified under this runner's account. A native Pro full run did execute all four
+      # (its one failure was a different case). Keep them enabled in the native test plan.
+      # Build once, verify the built artifact, then run that exact generated .xctestrun
+      # without rebuilding. A CLI build setting alone is not trusted: the guard refuses
+      # to launch unless the app, extension and helpers carry the suffixed identity and
+      # the test bundle (which keeps io.wsagency.wsurf.tests) belongs to that verified host.
+      # One total watchdog budget (default 1200s, inherited and unchanged) covers both
+      # xcodebuild phases. Risk: manual cold build (832s) plus full test (838s) exceeded
+      # 1200s under different base and probe conditions; revisit only after a real CI run.
       - name: Test
         run: |
-          python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test \
+          total="${WSURF_CI_TEST_LIMIT_SECONDS:-1200}"
+          start=$SECONDS
+          python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild build-for-testing \
             -project "$PROJECT" -scheme "$SCHEME" \
             -destination 'platform=macOS,arch=arm64' \
             -derivedDataPath "$DD" \
-            -resultBundlePath build/TestResults.xcresult \
             -enableCodeCoverage YES \
-            -parallel-testing-enabled NO \
             -disableAutomaticPackageResolution \
-            -skipMacroValidation -skipPackagePluginValidation \
-            '-skip-testing:WSurfTests/AttachmentTests/normalizesImagesAndRecognizesText()' \
-            '-skip-testing:WSurfTests/AttachmentTests/recognizesTextWithoutANeuralEngine()' \
-            '-skip-testing:WSurfTests/AttachmentTests/recognizesScannedPDFPages()' \
-            '-skip-testing:WSurfTests/AttachmentTests/pastingAnImageCreatesARemovableAttachment()' \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_ENTITLEMENTS=
+            CODE_SIGN_ENTITLEMENTS= \
+            WSURF_BUNDLE_ID_SUFFIX="$WSURF_BUNDLE_ID_SUFFIX"
+          set -- "$DD"/Build/Products/*.xctestrun
+          [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "::error::expected exactly one generated .xctestrun in $DD/Build/Products"; exit 1; }
+          xctestrun="$1"
+          python3 Tools/check-built-identity.py "$DD" "$xctestrun"
+          remaining=$((total - (SECONDS - start)))
+          if [ "$remaining" -le 0 ]; then
+            echo "::error::test budget of ${total}s spent before the tests started"
+            exit 124
+          fi
+          WSURF_CI_TEST_LIMIT_SECONDS="$remaining" python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-building \
+            -xctestrun "$xctestrun" \
+            -destination 'platform=macOS,arch=arm64' \
+            -resultBundlePath build/TestResults.xcresult \
+            -enableCodeCoverage YES \
+            -parallel-testing-enabled NO \
+            '-skip-testing:WSurfTests/AttachmentTests/normalizesImagesAndRecognizesText()' \
+            '-skip-testing:WSurfTests/AttachmentTests/recognizesTextWithoutANeuralEngine()' \
+            '-skip-testing:WSurfTests/AttachmentTests/recognizesScannedPDFPages()' \
+            '-skip-testing:WSurfTests/AttachmentTests/pastingAnImageCreatesARemovableAttachment()'
 
       - name: Check coverage
         run: Tools/check-coverage.sh build/TestResults.xcresult 24.0
@@ -159,11 +199,25 @@ jobs:
           path: build/TestResults.xcresult.zip
           if-no-files-found: ignore
 
-      - name: Upload crash reports
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: CrashReports
-          path: ~/Library/Logs/DiagnosticReports/*.ips
-          if-no-files-found: ignore
-          retention-days: 14
+      # Removes only this run's own test identity (exact ids, no globs, never the production domain).
+      # A hard-killed runner can leave it behind; nothing sweeps by prefix. macOS also creates and protects
+      # ~/Library/Containers/<id>.CredentialExchange for the extension (observed: `rm` is refused), so that stays.
+      - name: Remove this run's test identity
+        if: always()
+        run: |
+          [[ "$WSURF_BUNDLE_ID_SUFFIX" =~ ^\.ci-[0-9]+-[0-9]+$ ]] || { echo "::error::invalid test identity suffix"; exit 1; }
+          id="io.wsagency.wsurf$WSURF_BUNDLE_ID_SUFFIX"
+          app="$DD/Build/Products/Debug/WSurf.app"
+          appex="$app/Contents/PlugIns/WSurfCredentialExchange.appex"
+          if [ -d "$appex" ] && [ -n "$(pluginkit -m -A -D -i "$id.CredentialExchange")" ]; then
+            pluginkit -r "$appex" || echo "::warning::could not unregister $id.CredentialExchange"
+          fi
+          if [ -d "$app" ]; then
+            /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$app" \
+              || echo "::warning::could not unregister $id"
+          fi
+          defaults delete "$id" 2>/dev/null || true
+          for path in "Preferences/$id.plist" "WebKit/$id" "Caches/$id" "HTTPStorages/$id" \
+                      "HTTPStorages/$id.binarycookies" "Saved Application State/$id.savedState"; do
+            rm -rf "$HOME/Library/$path"
+          done
