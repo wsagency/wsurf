@@ -77,8 +77,6 @@ struct CommandPalette: View {
         }
         .task {
             focused = true
-            try? await Task.sleep(for: .milliseconds(120))
-            focused = true
         }
         .onDisappear {
             if let shortcutMonitor {
