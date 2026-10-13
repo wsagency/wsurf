@@ -30,6 +30,13 @@ nonisolated struct CredentialEvents: Codable, Equatable, Sendable {
     var lastImportedAt: Date?
     var lastExportHandoffAt: Date?
     var remoteLastObservedAt: Date?
+    /// `CredentialContent.hash` of the part last handed to the system exchange sheet. Local handoff evidence only: never an
+    /// accepted remote base, so it advances no `*Base` and no content/history state.
+    var lastExportHandoffHash: Data?
+
+    func validate() throws {
+        guard lastExportHandoffHash == nil || lastExportHandoffHash?.count == 32 else { throw CredentialVaultError.invalidData }
+    }
 }
 
 /// The accepted remote observation of a credential (§13.2a): its content hash and the remote item it came from.
@@ -105,6 +112,8 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
         if let totp {
             try totp.validate()
         }
+        try passwordEvents?.validate()
+        try totpEvents?.validate()
         for data in [exchangeAccountID, exchangeItemID].compactMap({ $0 }) where data.count > CredentialVaultLimits.payloadBytes {
             throw CredentialVaultError.invalidData
         }
@@ -181,6 +190,7 @@ nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
         if let metadata = exchangeFIDO2Metadata, metadata.count > CredentialVaultLimits.payloadBytes {
             throw CredentialVaultError.invalidData
         }
+        try events?.validate()
     }
 }
 

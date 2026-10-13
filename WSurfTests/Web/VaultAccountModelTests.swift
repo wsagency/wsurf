@@ -56,7 +56,8 @@ struct VaultAccountModelTests {
         let events = CredentialEvents(
             lastImportedAt: VaultFixtures.reference(1),
             lastExportHandoffAt: VaultFixtures.reference(2),
-            remoteLastObservedAt: VaultFixtures.reference(3)
+            remoteLastObservedAt: VaultFixtures.reference(3),
+            lastExportHandoffHash: Data(repeating: 0x5A, count: 32)
         )
         account.createdAt = VaultFixtures.reference(10)
         account.modifiedAt = VaultFixtures.reference(11)
@@ -73,6 +74,30 @@ struct VaultAccountModelTests {
         #expect(decoded == account)
         #expect(decoded.totpEvents?.lastExportHandoffAt == nil)
         #expect(decoded.totpBase?.itemID == nil)
+    }
+
+    @Test func handoffHashMissingFromOldPayloadsDecodesNil() throws {
+        let legacy = try JSONDecoder().decode(CredentialEvents.self, from: Data(#"{"lastImportedAt":1}"#.utf8))
+        #expect(legacy.lastExportHandoffHash == nil)
+        try legacy.validate()
+    }
+
+    @Test(arguments: [0, 31, 33])
+    func handoffHashOfWrongLengthIsInvalidOnEveryEventsOwner(length: Int) throws {
+        let bad = CredentialEvents(lastExportHandoffHash: Data(repeating: 1, count: length))
+        let edits: [(inout CredentialAccount) -> Void] = [
+            { $0.passwordEvents = bad },
+            { $0.totpEvents = bad },
+            { $0.passkeys[0].events = bad },
+        ]
+        for edit in edits {
+            var account = try VaultFixtures.richAccount()
+            edit(&account)
+            #expect(throws: CredentialVaultError.invalidData) { try account.validate() }
+        }
+        var valid = try VaultFixtures.richAccount()
+        valid.passwordEvents = CredentialEvents(lastExportHandoffHash: Data(repeating: 1, count: 32))
+        try valid.validate()
     }
 
     @Test func stampingCreationSetsOnlyCreatedAtAndModifiedAt() throws {

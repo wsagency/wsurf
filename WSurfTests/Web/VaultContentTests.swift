@@ -115,7 +115,8 @@ struct VaultContentTests {
         let events = CredentialEvents(
             lastImportedAt: VaultFixtures.reference(1),
             lastExportHandoffAt: VaultFixtures.reference(2),
-            remoteLastObservedAt: VaultFixtures.reference(3)
+            remoteLastObservedAt: VaultFixtures.reference(3),
+            lastExportHandoffHash: Data(repeating: 9, count: 32)
         )
         let exchangeBase = ExchangeBase(contentHash: Data(repeating: 7, count: 32), itemID: Data([1]))
 
