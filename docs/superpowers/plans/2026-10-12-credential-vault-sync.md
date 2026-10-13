@@ -866,7 +866,7 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
   let kind: Kind; let action: Action; let receipt: VaultCommitReceipt?                    // receipt non-nil ONLY for .succeeded; nil for every other kind (no claim that anything landed)
   let text: String }                                                                       // wording per spec §13.5, owned by production code; tests never assert on it (Gate B operator reads it)
 // CredentialImportReview += let profileName: String; let vaultName: String?; each Record += let classification: CredentialImportClass
-// CredentialExchangeCoordinator.receive(_:) -> Bool is unchanged; the second-token message is delivered through
+// CredentialExchangeCoordinator.receive(_:) -> ReceiveResult (`accepted` queued, `refused` a second token while one is open, `ignored` a non-exchange activity or a token already queued or spent); the second-token message is delivered through
 var onMessage: (@MainActor (CredentialTransferMessage) -> Void)?
 
 // Per-account transactional write (ProfileVaultStore+AccountWrites.swift), the ONLY write path for import apply and the export handoff stamp
@@ -897,7 +897,7 @@ Message routing for `commitImport` (import-only kinds). Classify by the error's 
   - `unrelatedWriteAfterTheLastCheckIsPreservedAndTheImportSucceeds`: `afterLastCheck` commits a change to an **unrelated** account through the real manager ⇒ `commitImport` returns a receipt; the final snapshot contains that unrelated change **and** every import result; the unrelated row and the policy set are byte-identical to their post-seam state; no retry happened (`commitAccounts` call count 1).
   - `touchedAccountChangedAfterTheLastCheckWritesNothing`: `afterLastCheck` changes a touched account ⇒ `.discarded`, `receipt == nil`, store rows/heads/registry equal the post-seam bytes (no import row), staged import cleared, token not reusable.
   - `newIDCollisionAfterTheLastCheckWritesNothing` (parameterized: same account id, same `(exchangeAccountID, exchangeItemID)` pair, added concurrently by the seam; same origin+username is NOT a collision): `.discarded`/`.applyFailed`, `receipt == nil`, nothing of the import landed, post-seam bytes unchanged.
-  - `secondTokenWhilePendingClaimedOrStagedIsNotSilentlyDropped`: `receive` returns false **and** `onMessage` gets exactly one message with `kind == .alreadyInProgress`, `action == .none`, `receipt == nil`; the pending/staged import is unchanged.
+  - `secondTokenWhilePendingClaimedOrStagedIsNotSilentlyDropped`: `receive` returns `.refused` **and** `onMessage` gets exactly one message with `kind == .alreadyInProgress`, `action == .none`, `receipt == nil`; the pending/staged import is unchanged.
   - `twoWindowsOnlyTheFirstClaimerProceeds`: two managers for different profiles; the second `claimImport` fails visibly.
   - `everyFailedCancelledOrStaleStateSaysDiscardedAndNeverErased`: lock, epoch change, lease expiry, cancel, stale preview, apply failure (capacity/collision/write error) each emit exactly one message with `kind` `.discarded` or `.applyFailed(operation:)`, `action == .exportAgain`, `receipt == nil`; consumer state afterwards: `hasStagedImport` false, the token refused, store bytes unchanged. (No assertion on message text.)
   - `successCarriesTheReceiptAndTheResultList`: `kind == .succeeded`, `action == .none`, `receipt?.revision` equals the store's head revision, the result list equals the applied records; `allSkippedIsNothingImportedNotSuccess`: `kind == .nothingImported`, `receipt == nil`, store unchanged.

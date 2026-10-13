@@ -180,6 +180,11 @@ nonisolated struct CredentialImportReview: Sendable {
 final class CredentialExchangeCoordinator {
     static let shared = CredentialExchangeCoordinator()
 
+    /// Tells the window that began an import how it ended when that happened outside its own call (a lock that dropped its
+    /// review). The window builds it with a weak capture of itself and the vault it began in, so a window that is gone hears
+    /// nothing and another window never does.
+    typealias Ending = @MainActor (CredentialTransferMessage) -> Void
+
     /// `owner` is the settings model that began the import. One profile has one shared manager, but every settings
     /// page builds its own model, so the manager alone does not say whose review this is.
     private struct Claim {
@@ -187,6 +192,7 @@ final class CredentialExchangeCoordinator {
         let manager: ObjectIdentifier
         let owner: UUID
         let epoch: UInt64
+        let ending: Ending?
     }
 
     /// What the review shows beyond the preview itself, read once when it is staged.
@@ -199,6 +205,7 @@ final class CredentialExchangeCoordinator {
     private struct Session {
         let manager: CredentialManager
         let owner: UUID
+        let ending: Ending?
         let epoch: UInt64
         let generation: Int
         let preview: CredentialImportPreview
@@ -229,47 +236,38 @@ final class CredentialExchangeCoordinator {
     @ObservationIgnored var afterLastCheck: (@MainActor () async -> Void)?
     /// The clock for the export hand-off stamp.
     @ObservationIgnored var now: @MainActor () -> Date = { Date() }
-    /// The last ending that has no window to throw to, with the window it belongs to: a lock that dropped one window's review
-    /// (that window's `owner`), or a second token refused while one is open (no owner: it belongs to the intake). One slot, so
-    /// a newer notice replaces an older one. Read it with `notice(for:)`.
-    private var notice: (message: CredentialTransferMessage, owner: UUID?)?
+    /// The refusal of a second token while one is open. It belongs to no window (the token is the system's), so it is the only
+    /// ending kept here; every window's own ending lives in that window.
+    private(set) var refusal: CredentialTransferMessage?
 
-    /// What `owner` is told about the last unowned ending: its own, or the intake's refusal; never another window's.
-    func notice(for owner: UUID) -> CredentialTransferMessage? {
-        guard let notice, notice.owner == nil || notice.owner == owner else { return nil }
-        return notice.message
-    }
-
-    /// Whether the intake's refusal of a second token is showing, for the intake to decide to bring the credential page forward.
-    var hasRefusal: Bool {
-        notice != nil && notice?.owner == nil
+    func dismissRefusal() {
+        refusal = nil
     }
 
     // MARK: Pending token
 
+    /// What `receive` did with an activity: queued its token, refused it because another import is open (said so, once), or
+    /// ignored it (not an exchange activity, or a token already queued or spent), which says nothing and opens nothing.
+    enum ReceiveResult: Equatable {
+        case accepted, refused, ignored
+    }
+
     /// Queues the token carried by the system's exchange activity. One import at a time, each token once. A new token that
     /// arrives while another is pending, claimed or staged is refused and says so; the open import is untouched.
     @discardableResult
-    func receive(_ activity: NSUserActivity) -> Bool {
+    func receive(_ activity: NSUserActivity) -> ReceiveResult {
         guard activity.activityType == ASCredentialExchangeActivity,
               let token = activity.userInfo?[ASCredentialImportToken] as? UUID,
-              token != pendingToken, !consumed.contains(token) else { return false }
+              token != pendingToken, !consumed.contains(token) else { return .ignored }
         guard pendingToken == nil, claim == nil, session == nil else {
             let message = CredentialTransferMessage.alreadyInProgress()
-            notice = (message: message, owner: nil)
+            refusal = message
             onMessage?(message)
-            return false
+            return .refused
         }
-        dismissNotice(for: nil)
+        refusal = nil
         pendingToken = token
-        return true
-    }
-
-    /// Clears the notice if it is the intake's or `owner`'s; another window's ending stays. Pass `nil` for the intake.
-    func dismissNotice(for owner: UUID?) {
-        if let notice, notice.owner == nil || notice.owner == owner {
-            self.notice = nil
-        }
+        return .accepted
     }
 
     /// Declines the queued token the caller rendered. A button drawn for an earlier token must not decline a later one.
@@ -280,13 +278,13 @@ final class CredentialExchangeCoordinator {
     }
 
     /// Binds the queued token to `manager`'s current authorization. A locked manager leaves the token queued.
-    func claimImport(token: UUID, for manager: CredentialManager, owner: UUID) throws {
+    func claimImport(token: UUID, for manager: CredentialManager, owner: UUID, onEnding: Ending? = nil) throws {
         guard pendingToken == token else { throw CredentialExchangeCoordinatorError.tokenMismatch }
         guard claim == nil, session == nil else { throw CredentialExchangeCoordinatorError.busy }
         guard let epoch = manager.authorizationEpoch else { throw CredentialVaultError.unauthorized }
         pendingToken = nil
         consumed.insert(token)
-        claim = Claim(token: token, manager: ObjectIdentifier(manager), owner: owner, epoch: epoch)
+        claim = Claim(token: token, manager: ObjectIdentifier(manager), owner: owner, epoch: epoch, ending: onEnding)
     }
 
     // MARK: Import
@@ -302,8 +300,8 @@ final class CredentialExchangeCoordinator {
     }
 
     /// Fetches the system's payload for `token` and stages it for review.
-    func beginImport(token: UUID, into manager: CredentialManager, owner: UUID) async throws {
-        try claimImport(token: token, for: manager, owner: owner)
+    func beginImport(token: UUID, into manager: CredentialManager, owner: UUID, onEnding: @escaping Ending) async throws {
+        try claimImport(token: token, for: manager, owner: owner, onEnding: onEnding)
         guard let bound = claim, bound.token == token else { throw CredentialExchangeCoordinatorError.busy }
         let data: ASExportedCredentialData
         do {
@@ -368,7 +366,7 @@ final class CredentialExchangeCoordinator {
         generation += 1
         let review = try Self.review(for: preview, choices: [:], context)
         session = Session(
-            manager: manager, owner: bound.owner, epoch: bound.epoch, generation: generation,
+            manager: manager, owner: bound.owner, ending: bound.ending, epoch: bound.epoch, generation: generation,
             preview: preview, context: context, choices: [:], review: review
         )
         watch(manager, generation: generation)
@@ -738,15 +736,14 @@ final class CredentialExchangeCoordinator {
         return CredentialTransferFailure(message: message)
     }
 
-    /// Ends the review when the manager locks or re-unlocks: the copy is dropped and nobody else will say so. A running
-    /// commit reports its own ending instead.
+    /// Ends the review when the manager locks or re-unlocks: the copy is dropped and the window that began it is told once.
+    /// A running commit reports its own ending instead.
     private func lose(_ generation: Int) {
         guard let lost = session, lost.generation == generation else { return }
-        let owner = lost.owner
         session = nil
         if committing?.generation != generation {
             let message = CredentialTransferMessage.discarded()
-            notice = (message: message, owner: owner)
+            lost.ending?(message)
             onMessage?(message)
         }
     }

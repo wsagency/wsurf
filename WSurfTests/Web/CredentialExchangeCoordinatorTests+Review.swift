@@ -304,14 +304,14 @@ extension CredentialExchangeCoordinatorTests {
         try await withFixture { f in
             let model = CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager)
             let first = UUID()
-            #expect(f.coordinator.receive(Self.activity(token: first)))
+            #expect(f.coordinator.receive(Self.activity(token: first)) == .accepted)
             #expect(!model.isUnlocked && model.pendingImportToken == first)
 
             model.discardPendingImport(token: first)
             #expect(model.pendingImportToken == nil)
-            #expect(!f.coordinator.receive(Self.activity(token: first)))
+            #expect(f.coordinator.receive(Self.activity(token: first)) == .ignored)
             let second = UUID()
-            #expect(f.coordinator.receive(Self.activity(token: second)))
+            #expect(f.coordinator.receive(Self.activity(token: second)) == .accepted)
             #expect(model.pendingImportToken == second)
 
             model.discardPendingImport(token: second)
@@ -389,7 +389,7 @@ extension CredentialExchangeCoordinatorTests {
             let model = CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager)
             // Locked: the claim is refused and the token stays queued.
             let queued = UUID()
-            #expect(f.coordinator.receive(Self.activity(token: queued)))
+            #expect(f.coordinator.receive(Self.activity(token: queued)) == .accepted)
             await model.beginImport()
             #expect(model.pendingImportToken == queued)
             model.discardPendingImport(token: queued)
@@ -475,9 +475,9 @@ extension CredentialExchangeCoordinatorTests {
         let coordinator = CredentialExchangeCoordinator()
         let first = UUID()
         let second = UUID()
-        #expect(coordinator.receive(Self.activity(token: first)))
+        #expect(coordinator.receive(Self.activity(token: first)) == .accepted)
         coordinator.discardPendingImport(token: first)
-        #expect(coordinator.receive(Self.activity(token: second)))
+        #expect(coordinator.receive(Self.activity(token: second)) == .accepted)
 
         // A button drawn for the first token is clicked after the second arrived.
         coordinator.discardPendingImport(token: first)
@@ -485,14 +485,14 @@ extension CredentialExchangeCoordinatorTests {
 
         coordinator.discardPendingImport(token: second)
         #expect(coordinator.pendingToken == nil)
-        #expect(!coordinator.receive(Self.activity(token: second)))
+        #expect(coordinator.receive(Self.activity(token: second)) == .ignored)
     }
 
     @Test func aClaimIsStagedOnlyByTheOwnerThatMadeIt() async throws {
         try await withFixture { f in
             try await f.seed(neighbours(1))
             let token = UUID()
-            #expect(f.coordinator.receive(Self.activity(token: token)))
+            #expect(f.coordinator.receive(Self.activity(token: token)) == .accepted)
             try f.coordinator.claimImport(token: token, for: f.manager, owner: f.owner)
             let data = try exported([account(username: "grace", password: "incoming")])
             let stranger = UUID()
