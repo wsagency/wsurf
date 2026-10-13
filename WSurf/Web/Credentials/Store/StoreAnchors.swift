@@ -7,6 +7,14 @@ import GRDB
 nonisolated enum StoreOpenState: Equatable, Sendable {
     case legacy(vaultID: UUID), firstRun, provisional(storeID: UUID, stubMissing: Bool), resumeMigration(storeID: UUID)
     case failClosed(StoreFailClosed)
+
+    var isProvisional: Bool {
+        if case .provisional = self {
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// The three anchors of §6.2 and the §6.3 state machine. Evaluation reads and never writes. Only a verified absence

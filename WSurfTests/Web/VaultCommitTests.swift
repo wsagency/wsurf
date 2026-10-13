@@ -165,6 +165,42 @@ struct VaultCommitTests {
         }
     }
 
+    /// The handoff hash is local evidence: it persists across a reopen as a persist-only commit (no history, no `modifiedAt`,
+    /// no base), and a wrong-length hash is refused before anything is written.
+    @Test func exportHandoffHashPersistsAsPersistOnlyAndRejectsBadLength() async throws {
+        let owner = VaultFixtures.account(username: "ada", passkeys: [try VaultFixtures.passkey()])
+        try await VaultStoreFixture.with(accounts: [owner], historyRows: 1) { f in
+            let probe = CommitProbe(f: f)
+            let (store, access) = try await f.unlocked()
+            let before = try await store.snapshot(vaultID: f.vaultID, using: access)
+            let hash = Data((0..<32).map(UInt8.init))
+
+            let wrong = commitEditing(before.accounts, owner.id) { $0.passwordEvents = CredentialEvents(lastExportHandoffHash: Data(repeating: 1, count: 31)) }
+            let image = try f.headWriteImage()
+            let failure = await store.vaultCommitFailure(vaultID: f.vaultID, wrong, expectedRevision: before.revision, using: access)
+            #expect(failure as? CredentialVaultError == .invalidData)
+            #expect(try f.headWriteImage() == image)
+
+            let headsBefore = try probe.heads()
+            let proposed = commitEditing(before.accounts, owner.id) {
+                $0.passwordEvents = CredentialEvents(lastExportHandoffHash: hash)
+                $0.passkeys[0].events = CredentialEvents(lastExportHandoffHash: hash)
+            }
+            let receipt = try await store.commit(vaultID: f.vaultID, proposed, expectedRevision: before.revision, cause: nil, using: access)
+            #expect(receipt.revision == before.revision + 1)
+            #expect(try probe.heads().source.historyCounts == headsBefore.source.historyCounts)
+
+            let (fresh, freshAccess) = try await f.reopenedStore(proving: f.proof)
+            let reloaded = try await fresh.snapshot(vaultID: f.vaultID, using: freshAccess)
+            let account = try #require(reloaded.accounts.first { $0.id == owner.id })
+            #expect(account.passwordEvents?.lastExportHandoffHash == hash)
+            #expect(account.passkeys[0].events?.lastExportHandoffHash == hash)
+            #expect(account.modifiedAt == nil)
+            #expect(account.passwordBase == nil)
+            try f.verify()
+        }
+    }
+
     @Test func twentyTOTPCopiesAndFiveSignInsCreateZeroRevisions() async throws {
         var owner = VaultFixtures.account(username: "ada", passkeys: [try VaultFixtures.passkey()])
         owner.totp = VaultFixtures.totp()

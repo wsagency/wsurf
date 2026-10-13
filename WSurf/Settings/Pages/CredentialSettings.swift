@@ -58,7 +58,7 @@ struct CredentialSettings: View {
             CredentialImportReviewSheet(model: model, run: run)
         }
         .sheet(item: $exportContext) { context in
-            CredentialExportSheet(model: model, context: context) { selection in
+            CredentialExportSheet(model: model) { selection in
                 withWindow { window in
                     let outcome = await model.exportCredentials(
                         selection: selection, epoch: context.epoch, in: window
@@ -226,7 +226,7 @@ struct CredentialSettings: View {
 
     private func openExport() {
         guard let epoch = model.authorizationEpoch else { return }
-        exportContext = CredentialExportContext(epoch: epoch, summaries: model.summaries)
+        exportContext = CredentialExportContext(epoch: epoch)
     }
 
     private func resultCaption(_ result: CredentialImportOutcome.Result) -> String {

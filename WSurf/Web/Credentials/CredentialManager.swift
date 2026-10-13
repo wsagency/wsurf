@@ -186,6 +186,15 @@ final class CredentialManager {
         (managers[profile.id]?.values.filter(\.isUnlocked) ?? []).sorted { $0.vaultID.uuidString < $1.vaultID.uuidString }
     }
 
+    /// `selected` if it is unlocked and listed, else the lowest-numbered listed vault that is unlocked.
+    static func unlockedAuthorizer(in listing: [VaultListing], selected: CredentialManager?, profile: Profile) -> CredentialManager? {
+        if let selected, selected.isUnlocked, listing.contains(where: { $0.vaultID == selected.vaultID }) {
+            return selected
+        }
+        let open = unlockedManagers(for: profile)
+        return listing.sorted { $0.ordinal < $1.ordinal }.lazy.compactMap { vault in open.first { $0.vaultID == vault.vaultID } }.first
+    }
+
     /// Locks every live manager and stops every vault creation, for events that affect the whole session (sleep, screen lock,
     /// termination).
     static func lockAll(reason: CredentialLockReason) {
@@ -497,6 +506,21 @@ final class CredentialManager {
         try await authorizedWrite(epoch: authorizedEpoch) { access in
             try await store.commit(vaultID: vaultID, accounts, expectedRevision: expectedRevision, cause: cause, using: access)
         }
+    }
+
+    /// The per-account write of spec §13.5: only the touched accounts are compared and written, so an unrelated concurrent
+    /// write survives. The lease and epoch rules are `commit`'s: a caller whose decision was made under another lease is refused
+    /// before anything starts.
+    func commitAccounts(_ writes: [AccountWrite], authorizedEpoch: UInt64, cause: String? = nil) async throws -> VaultCommitReceipt {
+        try await authorizedWrite(epoch: authorizedEpoch) { access in
+            try await store.commitAccounts(vaultID: vaultID, writes, cause: cause, using: access)
+        }
+    }
+
+    /// The names a transfer header shows: this profile's, and this vault's, which stays `nil` unless the lease is still current.
+    func displayNames() async throws -> (profile: String, vault: String?) {
+        let listing = try await reading { _ in try await store.listing() }
+        return (profile.name, listing.first { $0.vaultID == vaultID }?.name)
     }
 
     func delete(_ scope: RemovalScope, expectedRevision: UInt64, authorizedEpoch: UInt64) async throws -> VaultCommitReceipt {

@@ -7,22 +7,31 @@ import SwiftUI
 
 /// What the export sheet was opened for. The epoch travels with the selection, so a lock or re-unlock makes the export
 /// fail instead of sending a different vault than the user chose from; the model also refuses a selection whose accounts
-/// changed since.
+/// changed since. The sheet reads the credentials from the model, so a refresh after a refused export is what it shows.
 struct CredentialExportContext: Identifiable {
     let id = UUID()
     let epoch: UInt64
-    let summaries: [CredentialSummary]
 }
 
 struct CredentialExportSheet: View {
     let model: CredentialSettingsModel
-    let context: CredentialExportContext
     let export: ([CredentialExportSelection]) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var selection: [UUID: CredentialExportSelection] = [:]
+    /// The credentials as the user last saw them: a refresh is compared against this to name what changed.
+    @State private var shown: [CredentialSummary]
+    @State private var review: CredentialExportReview?
+    /// Set once the user asked to export from this sheet, so only that attempt's ending is shown here.
+    @State private var attempted = false
+
+    init(model: CredentialSettingsModel, export: @escaping ([CredentialExportSelection]) -> Void) {
+        self.model = model
+        self.export = export
+        _shown = State(initialValue: model.summaries)
+    }
 
     private var chosen: [CredentialExportSelection] {
-        context.summaries.compactMap { selection[$0.id] }.filter { $0.password || $0.totp || !$0.passkeyIDs.isEmpty }
+        model.summaries.compactMap { selection[$0.id] }.filter(\.hasParts)
     }
 
     /// Whose vault the selection leaves from: the profile, and the vault when its name is readable.
@@ -46,9 +55,18 @@ struct CredentialExportSheet: View {
                 """)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if attempted, let message = model.transferMessage {
+                Text(verbatim: message.text)
+                    .fontWeight(.medium)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityElement(children: .combine)
+            }
+            if let review, !review.isEmpty {
+                reviewNotice(review)
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    ForEach(context.summaries) { summary in
+                    ForEach(model.summaries) { summary in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(verbatim: summary.title).font(Theme.Font.rowTitle)
                             if summary.hasLogin {
@@ -75,13 +93,46 @@ struct CredentialExportSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { model.error = nil; dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Export…") { export(chosen) }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(chosen.isEmpty || model.isBusy)
+                Button("Export…") {
+                    attempted = true
+                    review = nil
+                    export(chosen)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(chosen.isEmpty || model.isBusy)
             }
         }
         .padding(24)
         .frame(width: 520)
+        .onChange(of: model.summaries) { _, fresh in reconcile(with: fresh) }
+    }
+
+    /// What the refresh did to the chosen credentials. Nothing is sent by it: the user reads this, checks the selection
+    /// below, and clicks Export again.
+    private func reviewNotice(_ review: CredentialExportReview) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("The vault changed. Review your selection before exporting again.").fontWeight(.medium)
+            if !review.changed.isEmpty {
+                Text(verbatim: "\(String(localized: "Changed")): \(review.changed.joined(separator: ", "))")
+            }
+            if !review.deleted.isEmpty {
+                Text(verbatim: "\(String(localized: "No longer in the vault")): \(review.deleted.joined(separator: ", "))")
+            }
+        }
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The selection follows the vault: parts that are gone leave it, and what changed is named, so a later click sends
+    /// exactly what the sheet shows.
+    private func reconcile(with fresh: [CredentialSummary]) {
+        let result = CredentialExportReview.reconcile(selection: selection, shown: shown, fresh: fresh)
+        selection = result.selection
+        shown = fresh
+        if !result.isEmpty {
+            review = result
+        }
     }
 
     private func update(_ accountID: UUID, _ change: (inout CredentialExportSelection) -> Void) {

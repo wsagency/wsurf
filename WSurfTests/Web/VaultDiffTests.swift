@@ -337,7 +337,8 @@ struct VaultDiffTests {
         let events = CredentialEvents(
             lastImportedAt: VaultFixtures.reference(1),
             lastExportHandoffAt: VaultFixtures.reference(2),
-            remoteLastObservedAt: VaultFixtures.reference(3)
+            remoteLastObservedAt: VaultFixtures.reference(3),
+            lastExportHandoffHash: Data(repeating: 4, count: 32)
         )
         let edits: [(inout CredentialAccount) -> Void] = [
             { $0.passkeys[0].lastSignedAt = VaultFixtures.reference(5) },
