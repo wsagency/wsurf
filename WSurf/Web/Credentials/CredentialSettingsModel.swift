@@ -459,7 +459,11 @@ final class CredentialSettingsModel {
     }
 
     private var isProvisional: Bool {
-        if case .provisional? = openState { true } else { false }
+        if case .provisional? = openState {
+            true
+        } else {
+            false
+        }
     }
 
     /// A new passkey needs a first run, or room for another vault and an already unlocked one to approve it.
@@ -875,7 +879,9 @@ final class CredentialSettingsModel {
         let report: @Sendable (Bool) -> Void = { [weak self] active in
             verifying?(active)
             Task { @MainActor in
-                if self?.unlockInFlight == true { self?.isVerifying = active }
+                if self?.unlockInFlight == true {
+                    self?.isVerifying = active
+                }
             }
         }
         if await perform({ try await $0.unlock(in: anchor, confirmMigration: confirmMigration, verifying: report) }) {

@@ -70,7 +70,6 @@ extension CredentialSettings {
     }
 }
 
-
 /// The name, the creation choice and the warning in one step, so nothing is chosen before the user has read what losing
 /// every unlock passkey means. Exactly two ways to protect the vault: a new passkey, or a passkey already enrolled in one of
 /// this profile's vaults (also while that vault is locked: it is asserted again for this creation). Neither falls back to the
@@ -184,7 +183,9 @@ struct CredentialNewVaultSheet: View {
         .frame(width: 460)
         // A refresh that no longer lists the picked passkey drops the pick; nothing else is chosen in its place.
         .onChange(of: listed) {
-            if let picked, !listed.contains(picked) { self.picked = nil }
+            if let picked, !listed.contains(picked) {
+                self.picked = nil
+            }
         }
     }
 

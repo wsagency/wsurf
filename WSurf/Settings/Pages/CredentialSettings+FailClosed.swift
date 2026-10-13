@@ -103,14 +103,22 @@ private struct FailClosedPath: View {
 extension StoreFailCause {
     var explanation: LocalizedStringResource {
         switch self {
-        case .foreignStore: "The credential store belongs to another profile or installation."
-        case .wrongProfile: "The credential store was made for a different profile."
-        case .v1AfterMigration: "An older-format vault file reappeared after the vault was upgraded, so WSurf can’t tell which one is current."
-        case .storeMissing: "The credential store’s files are missing or incomplete, but parts of it remain."
-        case .leftoversWithoutAuthority: "Files from an earlier vault were found without the store that owns them."
-        case .unreadableVault, .unreadableStore: "The credential store couldn’t be read. It may be damaged."
-        case .cutoverV1Present, .migrationLeftover: "An upgrade of the older vault didn’t finish."
-        case .witnessMismatch: "The credential store doesn’t match its own records, so it may have been replaced or rolled back."
+        case .foreignStore:
+            "The credential store belongs to another profile or installation."
+        case .wrongProfile:
+            "The credential store was made for a different profile."
+        case .v1AfterMigration:
+            "An older-format vault file reappeared after the vault was upgraded, so WSurf can’t tell which one is current."
+        case .storeMissing:
+            "The credential store’s files are missing or incomplete, but parts of it remain."
+        case .leftoversWithoutAuthority:
+            "Files from an earlier vault were found without the store that owns them."
+        case .unreadableVault, .unreadableStore:
+            "The credential store couldn’t be read. It may be damaged."
+        case .cutoverV1Present, .migrationLeftover:
+            "An upgrade of the older vault didn’t finish."
+        case .witnessMismatch:
+            "The credential store doesn’t match its own records, so it may have been replaced or rolled back."
         }
     }
 }

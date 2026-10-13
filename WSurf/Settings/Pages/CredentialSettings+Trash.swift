@@ -6,11 +6,16 @@ import SwiftUI
 extension RecordSubject {
     var label: LocalizedStringResource {
         switch self {
-        case .account: "Credential"
-        case .password: "Password"
-        case .totp: "Verification code"
-        case .passkey: "Passkey"
-        case .metadata: "Details"
+        case .account:
+            "Credential"
+        case .password:
+            "Password"
+        case .totp:
+            "Verification code"
+        case .passkey:
+            "Passkey"
+        case .metadata:
+            "Details"
         }
     }
 }
@@ -30,11 +35,16 @@ extension TrashItem {
 extension UndeleteBlock {
     var explanation: LocalizedStringResource {
         switch self {
-        case .ownerMissing: "The credential this belongs to is no longer in the vault."
-        case .idCollision, .exchangeIDCollision: "A credential with the same identity is already in the vault."
-        case .originUsernameOverlap: "A saved credential already uses this username on the same website."
-        case .passkeyCollision, .passkeyIdentityConflict: "A saved passkey for the same website and account already exists."
-        case .slotOccupied: "The credential already has one of these, and restoring would replace it."
+        case .ownerMissing:
+            "The credential this belongs to is no longer in the vault."
+        case .idCollision, .exchangeIDCollision:
+            "A credential with the same identity is already in the vault."
+        case .originUsernameOverlap:
+            "A saved credential already uses this username on the same website."
+        case .passkeyCollision, .passkeyIdentityConflict:
+            "A saved passkey for the same website and account already exists."
+        case .slotOccupied:
+            "The credential already has one of these, and restoring would replace it."
         }
     }
 }
@@ -47,7 +57,9 @@ extension CredentialSettings {
             selection: showsTrash,
             onSelect: { next in
                 showsTrash = next
-                if next { run { try await model.loadTrash() } }
+                if next {
+                    run { try await model.loadTrash() }
+                }
             }
         )
         .fixedSize()
@@ -123,7 +135,10 @@ extension CredentialSettings {
     /// replace what is in the vault.
     private func restoreBlockedRow(_ blocked: RestoreBlocked) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(verbatim: String(localized: "This can’t be restored right now.") + " " + String(localized: blocked.block.explanation) + " " + String(localized: "Nothing was changed."))
+            Text(
+                verbatim: String(localized: "This can’t be restored right now.") + " " + String(localized: blocked.block.explanation)
+                    + " " + String(localized: "Nothing was changed.")
+            )
                 .font(Theme.Font.label)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -145,7 +160,10 @@ extension CredentialSettings {
     private func purgeMessage(_ pending: PendingPurge) -> Text {
         var parts = [
             pending.emptyAll
-                ? String(localized: "This permanently deletes everything in Trash, including anything added to it before you confirm (\(pending.count) items right now), and all their earlier versions.")
+                ? String(localized: """
+                    This permanently deletes everything in Trash, including anything added to it before you confirm \
+                    (\(pending.count) items right now), and all their earlier versions.
+                    """)
                 : String(localized: "This permanently deletes \(pending.count) item(s) from Trash, including their earlier versions."),
             String(localized: "It can’t be undone, and you’ll confirm with an unlock passkey."),
         ]
