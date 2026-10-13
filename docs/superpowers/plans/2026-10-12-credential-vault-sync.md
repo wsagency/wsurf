@@ -630,6 +630,8 @@ Task 7's public `commit` boundary validates every proposed account (`CredentialA
 
 ### Task 8: Undelete, earlier versions, purge, listings, removed identifiers
 
+**Status: landed** as `f34be02` (parent `ca4037f`), pushed to `feature/credential-vault-sync-20261012`; combined with Task 9 `ba59cb2` (parent `f34be02`), Air-component 219 tests / 19 suites. Real signatures match the block below except that `trashPage`, `revisionPage`, `previewUndelete`, `previewRestoreRevision` and `removedIdentifiers` are `async throws` (actor-isolated). Pro/full-app gate not yet run.
+
 **Files:**
 - Create: `WSurf/Web/Credentials/Store/ProfileVaultStore+History.swift`, `ProfileVaultStore+Purge.swift`
 - Test: `WSurfTests/Web/VaultTrashTests.swift`, `VaultPurgeTests.swift`, `VaultResidueTests.swift`
@@ -685,6 +687,8 @@ Typed superseded values (one nonisolated `Codable, Equatable, Sendable` type per
 - [ ] **Step 5: Commit** — `git add WSurf/Web/Credentials/Store WSurfTests && git commit -m "feat(credentials): undelete, earlier versions, purge and listings"`. Review gate (§Execution).
 
 ### Task 9: Vault creation and v1 migration
+
+**Status: cherry-picked, NOT consumer-ready.** Reviewed child `4803e99` (parent `976c65e`) landed as `ba59cb2` on top of Task 8 (`f34be02`), pushed; Air-component 219 tests / 19 suites. Open gap found by Task 10 prep: in `.legacy` / `.resumeMigration` the store has no `hasStore`, so `listing()` is empty and discovery throws; the resume state carries only a storeID, so a caller has no vaultID or wrappers for an assertion. A read-only legacy/resume pending-vault discovery follow-up (Task 9 owner) must land before Task 10 starts. Task 10 also owns the `confirmMigration` / native-prompt ordering (no default-false assertion first).
 
 **Files:**
 - Create: `WSurf/Web/Credentials/Store/LegacyVaultV1.swift`, `ProfileVaultStore+Create.swift`, `ProfileVaultStore+Migrate.swift`, `ProfileVaultStore+UnlockRouting.swift`
