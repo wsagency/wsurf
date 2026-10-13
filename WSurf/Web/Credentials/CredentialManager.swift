@@ -499,6 +499,21 @@ final class CredentialManager {
         }
     }
 
+    /// The per-account write of spec §13.5: only the touched accounts are compared and written, so an unrelated concurrent
+    /// write survives. The lease and epoch rules are `commit`'s: a caller whose decision was made under another lease is refused
+    /// before anything starts.
+    func commitAccounts(_ writes: [AccountWrite], authorizedEpoch: UInt64, cause: String? = nil) async throws -> VaultCommitReceipt {
+        try await authorizedWrite(epoch: authorizedEpoch) { access in
+            try await store.commitAccounts(vaultID: vaultID, writes, cause: cause, using: access)
+        }
+    }
+
+    /// The names a transfer header shows: this profile's, and this vault's, which stays `nil` unless the lease is still current.
+    func displayNames() async throws -> (profile: String, vault: String?) {
+        let listing = try await reading { _ in try await store.listing() }
+        return (profile.name, listing.first { $0.vaultID == vaultID }?.name)
+    }
+
     func delete(_ scope: RemovalScope, expectedRevision: UInt64, authorizedEpoch: UInt64) async throws -> VaultCommitReceipt {
         try await authorizedWrite(epoch: authorizedEpoch) { access in
             try await store.delete(vaultID: vaultID, scope: scope, expectedRevision: expectedRevision, using: access)

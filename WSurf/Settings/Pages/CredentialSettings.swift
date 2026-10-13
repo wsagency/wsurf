@@ -56,7 +56,7 @@ struct CredentialSettings: View {
             CredentialExportSheet(model: model, context: context) { selection in
                 withWindow { window in
                     let outcome = await model.exportCredentials(
-                        selection: selection, expectedRevision: context.revision, epoch: context.epoch, in: window
+                        selection: selection, epoch: context.epoch, in: window
                     )
                     // Cancelled before any data was passed leaves the sheet for another try; every other result is
                     // reported on the page, so the sheet closes instead of inviting a second export.

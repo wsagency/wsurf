@@ -28,7 +28,7 @@ extension CredentialExchangeCoordinatorTests {
                     CredentialExportSelection(accountID: linked.id, password: true, passkeyIDs: [key.id], totp: false),
                     CredentialExportSelection(accountID: totpOwner.id, password: false, passkeyIDs: [], totp: true),
                 ],
-                expectedRevision: 2,
+                expectedStamps: try await f.stored().stamps,
                 format: .v1,
                 from: f.manager,
                 epoch: try #require(f.manager.authorizationEpoch)
@@ -58,36 +58,48 @@ extension CredentialExchangeCoordinatorTests {
         }
     }
 
-    @Test func exportRevalidatesSelectionRevisionAndAuthorization() async throws {
+    @Test func exportRevalidatesSelectionStampsAndAuthorization() async throws {
         try await withFixture { f in
             let only = account(password: "pw", totp: generator())
-            try await f.seed([only])
+            let bystander = account(username: "bystander", password: "bystander-pw")
+            try await f.seed([only, bystander])
             let selection = [CredentialExportSelection(accountID: only.id, password: true, passkeyIDs: [], totp: true)]
             let epoch = try #require(f.manager.authorizationEpoch)
+            let stamps = try await f.stored().stamps
 
             await #expect(throws: CredentialExchangeCoordinatorError.emptySelection) {
                 _ = try await f.coordinator.prepareExport(
                     selection: [CredentialExportSelection(accountID: only.id, password: false, passkeyIDs: [], totp: false)],
-                    expectedRevision: 2, format: .v1, from: f.manager, epoch: epoch
+                    expectedStamps: stamps, format: .v1, from: f.manager, epoch: epoch
                 )
-            }
-            await #expect(throws: CredentialVaultError.staleRevision) {
-                _ = try await f.coordinator.prepareExport(selection: selection, expectedRevision: 1, format: .v1, from: f.manager, epoch: epoch)
             }
             await #expect(throws: CredentialVaultError.invalidData) {
                 _ = try await f.coordinator.prepareExport(
                     selection: [CredentialExportSelection(accountID: UUID(), password: true, passkeyIDs: [], totp: false)],
-                    expectedRevision: 2, format: .v1, from: f.manager, epoch: epoch
+                    expectedStamps: stamps, format: .v1, from: f.manager, epoch: epoch
                 )
             }
 
+            // A write to an account that is not selected does not matter; a change to a selected one does.
+            let before = try await f.stored()
+            var accounts = before.accounts
+            accounts[try #require(accounts.firstIndex { $0.id == bystander.id })].password = "bystander-changed"
+            let receipt = try await f.manager.commit(accounts, expectedRevision: before.revision, authorizedEpoch: epoch)
+            _ = try await f.coordinator.prepareExport(selection: selection, expectedStamps: stamps, format: .v1, from: f.manager, epoch: epoch)
+            accounts[try #require(accounts.firstIndex { $0.id == only.id })].password = "changed"
+            _ = try await f.manager.commit(accounts, expectedRevision: receipt.revision, authorizedEpoch: epoch)
+            await #expect(throws: CredentialVaultError.staleRevision) {
+                _ = try await f.coordinator.prepareExport(selection: selection, expectedStamps: stamps, format: .v1, from: f.manager, epoch: epoch)
+            }
+
+            let fresh = try await f.stored().stamps
             f.manager.lock(reason: .manual)
             await #expect(throws: CredentialVaultError.unauthorized) {
-                _ = try await f.coordinator.prepareExport(selection: selection, expectedRevision: 2, format: .v1, from: f.manager, epoch: epoch)
+                _ = try await f.coordinator.prepareExport(selection: selection, expectedStamps: fresh, format: .v1, from: f.manager, epoch: epoch)
             }
             try await f.unlock(f.manager)
             await #expect(throws: CredentialVaultError.unauthorized) {
-                _ = try await f.coordinator.prepareExport(selection: selection, expectedRevision: 2, format: .v1, from: f.manager, epoch: epoch)
+                _ = try await f.coordinator.prepareExport(selection: selection, expectedStamps: fresh, format: .v1, from: f.manager, epoch: epoch)
             }
         }
     }
@@ -103,23 +115,23 @@ extension CredentialExchangeCoordinatorTests {
             await #expect(throws: CredentialExchangeCoordinatorError.emptySelection) {
                 _ = try await f.coordinator.exportCredentials(
                     selection: [CredentialExportSelection(accountID: only.id, password: false, passkeyIDs: [], totp: false)],
-                    expectedRevision: 2, epoch: epoch, from: f.manager, in: window
+                    expectedStamps: [:], epoch: epoch, from: f.manager, in: window
                 )
             }
 
             let cancelled = Task { @MainActor in
                 withUnsafeCurrentTask { $0?.cancel() }
                 return try await f.coordinator.exportCredentials(
-                    selection: selection, expectedRevision: 2, epoch: epoch, from: f.manager, in: window
+                    selection: selection, expectedStamps: [:], epoch: epoch, from: f.manager, in: window
                 )
             }
             await #expect(throws: CancellationError.self) { _ = try await cancelled.value }
 
             f.manager.lock(reason: .manual)
             try await f.unlock(f.manager)
-            await #expect(throws: CredentialVaultError.unauthorized) {
+            await #expect(throws: CredentialTransferFailure.self) {
                 _ = try await f.coordinator.exportCredentials(
-                    selection: selection, expectedRevision: 2, epoch: epoch, from: f.manager, in: window
+                    selection: selection, expectedStamps: [:], epoch: epoch, from: f.manager, in: window
                 )
             }
         }
@@ -134,7 +146,7 @@ extension CredentialExchangeCoordinatorTests {
 
             let data = try await f.coordinator.prepareExport(
                 selection: [CredentialExportSelection(accountID: usernameOnly.id, password: summary.hasLogin, passkeyIDs: [], totp: false)],
-                expectedRevision: 2, format: .v1, from: f.manager, epoch: try #require(f.manager.authorizationEpoch)
+                expectedStamps: try await f.stored().stamps, format: .v1, from: f.manager, epoch: try #require(f.manager.authorizationEpoch)
             )
             guard case let .basicAuthentication(login)? = data.accounts.first?.items.first?.credentials.first else {
                 Issue.record("A username-only login must export as basic authentication")
@@ -324,14 +336,16 @@ extension CredentialExchangeCoordinatorTests {
             let second = CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager)
             try await f.stage(try exported([account(username: "grace", password: "incoming")]), owner: second.owner)
 
-            gate.holdNextVaultRead()
+            gate.holdImportWrite(of: f.coordinator)
             let commit = Task { @MainActor in try await f.coordinator.commitImport(into: f.manager, owner: second.owner) }
             let log = CallbackLog()
             gate.whenParked {
                 log.received = !second.isBusy && second.cancelImport() == .commitCancellationRequested && second.error == nil
                 gate.release()
             }
-            await #expect(throws: CancellationError.self) { _ = try await commit.value }
+            let failure = await #expect(throws: CredentialTransferFailure.self) { _ = try await commit.value }
+            // Never "nothing was saved": the write had started, so only "may have landed" is true.
+            #expect(failure?.message.kind == .mayHaveLanded)
             #expect(gate.hasParked && log.received)
             #expect(try f.diskBytes() == before)
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: second.owner))
@@ -352,7 +366,7 @@ extension CredentialExchangeCoordinatorTests {
             #expect(f.coordinator.hasStagedImport(for: f.manager, owner: f.owner) && stale.error == nil)
 
             // So does it while the commit is parked inside its vault read: the write lands and its receipt returns.
-            gate.holdNextVaultRead()
+            gate.holdImportWrite(of: f.coordinator)
             let commit = Task { @MainActor in try await f.coordinator.commitImport(into: f.manager, owner: f.owner) }
             let log = CallbackLog()
             gate.whenParked {
@@ -521,7 +535,7 @@ extension CredentialExchangeCoordinatorTests {
             let second = CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager)
             try await f.stage(try exported([account(username: "grace", password: "incoming")]), owner: owning.owner)
 
-            gate.holdNextVaultRead()
+            gate.holdImportWrite(of: f.coordinator)
             let commit = Task { @MainActor in try await f.coordinator.commitImport(into: f.manager, owner: owning.owner) }
             let log = CallbackLog()
             gate.whenParked {

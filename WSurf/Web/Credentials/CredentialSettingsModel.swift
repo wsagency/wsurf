@@ -229,6 +229,9 @@ final class CredentialSettingsModel {
     private struct Session {
         let epoch: UInt64
         var revision: UInt64
+        /// The accounts' stamps as of `stampsRevision`; an export binds its selection to them.
+        var stamps: [UUID: AccountStamp]
+        var stampsRevision: UInt64
         var summaries: [CredentialSummary]
         var revealedPassword: RevealedPassword?
         var revealedUsername: RevealedUsername?
@@ -240,6 +243,8 @@ final class CredentialSettingsModel {
         init(epoch: UInt64, snapshot: StoreSnapshot) {
             self.epoch = epoch
             revision = snapshot.revision
+            stamps = snapshot.stamps
+            stampsRevision = snapshot.revision
             summaries = snapshot.accounts.map(CredentialSummary.init)
         }
 
@@ -250,6 +255,8 @@ final class CredentialSettingsModel {
                 shownTOTP = nil
             }
             revision = snapshot.revision
+            stamps = snapshot.stamps
+            stampsRevision = snapshot.revision
             summaries = snapshot.accounts.map(CredentialSummary.init)
         }
     }
@@ -277,11 +284,19 @@ final class CredentialSettingsModel {
     /// Identifies this model to the exchange coordinator. One profile has one shared manager but every settings page
     /// builds its own model, so the import this model began is the only one it may see, decide, commit or cancel.
     @ObservationIgnored let owner = UUID()
-    private(set) var lastImport: CredentialImportOutcome?
+    /// The finished import's per-credential results, bound to the authorization they were produced under.
+    private var importResult: (outcome: CredentialImportOutcome, epoch: UInt64)?
+    /// What the last import did to each credential (titles and sites, never secret values). Dropped when the vault locks
+    /// or re-unlocks, like every other name shown from it; the transfer message keeps only the counts.
+    var lastImport: CredentialImportOutcome? {
+        importResult.flatMap { $0.epoch == manager?.authorizationEpoch ? $0.outcome : nil }
+    }
     /// What the last export can truthfully say; see `CredentialExportOutcome`. `nil` before any export or after the
     /// user dismisses it. It is kept apart from the authorization session because it holds nothing secret and can
     /// arrive after a lock.
     private(set) var lastExport: CredentialExportOutcome?
+    /// How this window's last import or export ended (spec §13.5); `nil` before any, or after the user dismisses it.
+    private var ownMessage: CredentialTransferMessage?
 
     /// `manager` and `native` are seams for tests that need their own clock or passkeys; production selects the profile's
     /// default vault (else the lowest-ordinal one) through the shared registry once `load()` has listed the vaults.
@@ -658,9 +673,26 @@ final class CredentialSettingsModel {
         manager.flatMap { exchange.importReview(for: $0, owner: owner) }
     }
 
+    /// How the last transfer ended, or the coordinator's refusal of a second token (spec §13.5). Production wording, nothing
+    /// secret; the page shows it until the user dismisses it.
+    var transferMessage: CredentialTransferMessage? {
+        ownMessage ?? (isAvailable ? exchange.notice(for: owner) : nil)
+    }
+
+    func dismissTransferMessage() {
+        ownMessage = nil
+        exchange.dismissNotice(for: owner)
+    }
+
+    /// The unlocked vault's name, for the transfer header; `nil` while it is locked.
+    var vaultName: String? {
+        vaults.first { $0.vaultID == manager?.vaultID }?.name
+    }
+
     func beginImport() async {
         guard let token = exchange.pendingToken else { return }
-        lastImport = nil
+        importResult = nil
+        ownMessage = nil
         _ = await perform(describe: importMessage(for:)) { try await self.exchange.beginImport(token: token, into: $0, owner: self.owner) }
     }
 
@@ -675,22 +707,27 @@ final class CredentialSettingsModel {
 
     func commitImport() async {
         let expected = importReview?.outcome
-        let committed = await perform(describe: importMessage(for:)) { _ = try await self.exchange.commitImport(into: $0, owner: self.owner) }
-        guard committed else { return }
-        lastImport = expected
+        let epoch = manager?.authorizationEpoch
+        var receipt: VaultCommitReceipt?
+        ownMessage = nil
+        let committed = await perform(describe: importMessage(for:)) { receipt = try await self.exchange.commitImport(into: $0, owner: self.owner) }
+        guard committed, let receipt, let expected else { return }
+        if let epoch, epoch == manager?.authorizationEpoch {
+            importResult = (expected, epoch)
+        }
+        ownMessage = .succeeded(expected, receipt: receipt)
         await load()
     }
 
-    /// Ends the review. The system's token for it was used up when the import began, so the user is told that
-    /// importing these credentials again means sending them again from the other app. Only a review that had no
-    /// commit running can say nothing was saved: cancelling a commit asks the vault not to write, and a write that
-    /// already started may still land.
+    /// Ends the review. The system's token for it was used up when the import began, so the message says the import was
+    /// discarded and has to be sent again. Only a review that had no commit running can say nothing was saved: cancelling a
+    /// commit asks the vault not to write, and a write that already started may still land (its own ending says so).
     @discardableResult
     func cancelImport() -> CredentialImportCancellation {
         guard let manager else { return .nothingOwned }
         let outcome = exchange.cancelImport(for: manager, owner: owner)
         if outcome == .reviewCancelled {
-            error = String(localized: "The import was cancelled and nothing was saved. To import these credentials, send them again from the other app.")
+            ownMessage = .discarded()
         }
         return outcome
     }
@@ -702,32 +739,53 @@ final class CredentialSettingsModel {
     }
 
     func dismissImportResult() {
-        lastImport = nil
+        importResult = nil
     }
 
     func dismissExportResult() {
         lastExport = nil
     }
 
-    /// `revision` and `epoch` are the ones the selection was made at; a lock, re-unlock or later write rejects it.
-    /// A cancel before any data was passed is `.cancelled` and leaves no status; every other result is recorded.
+    /// `epoch` is the one the selection was made at; a lock or re-unlock rejects it, and so does a change to a selected
+    /// account since the page last read it (a write to any other account does not). A cancel before any data was passed is
+    /// `.cancelled` and leaves no status; every other result is recorded.
     func exportCredentials(
         selection: [CredentialExportSelection],
-        expectedRevision: UInt64,
         epoch: UInt64,
         in anchor: ASPresentationAnchor
     ) async -> CredentialExportOutcome? {
         lastExport = nil
+        ownMessage = nil
         var outcome: CredentialExportOutcome?
-        _ = await perform(epoch: epoch) {
+        let sent = await perform(epoch: epoch) {
+            let stamps = try await self.exportStamps(epoch: epoch)
             outcome = try await self.exchange.exportCredentials(
-                selection: selection, expectedRevision: expectedRevision, epoch: epoch, from: $0, in: anchor
+                selection: selection, expectedStamps: stamps, epoch: epoch, from: $0, in: anchor
             )
+        }
+        // The page showed an older vault than the one on disk: read it again, or every retry would fail the same way.
+        if !sent, ownMessage?.kind == .exportSelectionChanged {
+            await load()
         }
         if let outcome, outcome != .cancelled {
             lastExport = outcome
+            ownMessage = outcome.message
         }
         return outcome
+    }
+
+    /// The stamps the user's selection was made against. After this page's own write they are unknown, and a fresh read
+    /// stands in for them only while the vault has not moved past the revision the page showed.
+    private func exportStamps(epoch: UInt64) async throws -> [UUID: AccountStamp] {
+        guard let live, live.epoch == epoch else { throw CredentialVaultError.unauthorized }
+        if live.stampsRevision == live.revision {
+            return live.stamps
+        }
+        let (_, snapshot) = try await authorizedSnapshot(epoch: epoch)
+        guard snapshot.revision == live.revision else {
+            throw CredentialTransferFailure(message: .exportSelectionChanged())
+        }
+        return snapshot.stamps
     }
 
     // MARK: Private
@@ -743,12 +801,17 @@ final class CredentialSettingsModel {
         guard let manager else { return }
         if let session, session.epoch != manager.authorizationEpoch {
             self.session = nil
+            importResult = nil
         }
         // A manager the page has since left is neither watched nor allowed to drop the new binding's session.
         withObservationTracking {
             _ = manager.authorizationEpoch
         } onChange: { [weak self] in
-            MainActor.assumeIsolated { if self?.manager === manager { self?.session = nil } }
+            MainActor.assumeIsolated {
+                guard self?.manager === manager else { return }
+                self?.session = nil
+                self?.importResult = nil
+            }
             Task { @MainActor [weak self] in if self?.manager === manager { self?.watchAuthorization() } }
         }
     }
@@ -823,6 +886,9 @@ final class CredentialSettingsModel {
         do {
             try await work()
             return true
+        } catch let failure as CredentialTransferFailure {
+            ownMessage = failure.message
+            return false
         } catch {
             if case CredentialStoreError.migrationNeedsConfirmation = error {
                 needsMigrationConfirmation = true
@@ -914,8 +980,6 @@ final class CredentialSettingsModel {
             return String(localized: "Choose what to do with every conflict first.")
         case CredentialExchangeCoordinatorError.invalidChoice:
             return String(localized: "That choice isn’t available for this credential.")
-        case CredentialExchangeCoordinatorError.nothingToImport:
-            return String(localized: "There is nothing new to import.")
         case CredentialExchangeCoordinatorError.emptySelection:
             return String(localized: "Select at least one credential to export.")
         case CredentialExchangeCoordinatorError.systemRejected:
