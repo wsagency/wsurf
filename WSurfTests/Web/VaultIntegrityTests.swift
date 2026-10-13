@@ -80,7 +80,10 @@ nonisolated func residentBytes() -> Int64 {
             task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
         }
     }
-    return result == KERN_SUCCESS ? Int64(info.resident_size) : 0
+    // A silent 0 would make every "bounded growth" benchmark pass vacuously (and `precondition` is the only failure that works from a
+    // detached sampler), so an unreadable or zero size stops the run.
+    precondition(result == KERN_SUCCESS && info.resident_size > 0, "task_info(MACH_TASK_BASIC_INFO) failed: \(result)")
+    return Int64(info.resident_size)
 }
 
 /// A support directory whose `Credentials.scratch` is a symlink to a directory OUTSIDE it that holds one SENTINEL file. The

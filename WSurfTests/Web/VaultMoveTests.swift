@@ -830,32 +830,63 @@ struct VaultMoveTests {
     }
 
     @Test(arguments: MoveNearCapScope.allCases)
-    func nearCapAccountWithComparableRevisionsDeletes(_ scope: MoveNearCapScope) async throws {
+    func nearCapAccountWithComparableRevisionsDeletesAndUndeletes(_ scope: MoveNearCapScope) async throws {
         let victim = try MoveFixtures.payloadCapAccount()
-        try await VaultStoreFixture.with(accounts: [victim], historyRows: 3, historyRowBytes: Self.comparableRowBytes) { f in
+        let policy = ["https://blocked.example"]
+        try await VaultStoreFixture.with(
+            accounts: [victim], blockedOrigins: policy, historyRows: 3, historyRowBytes: Self.comparableRowBytes
+        ) { f in
             let removal: RemovalScope = scope == .account
                 ? .account(victim.id)
                 : .credential(ownerID: victim.id, subject: .password, passkeyID: nil)
+            let entrySubject: RecordSubject? = scope == .account ? nil : .password
+            let originalRevisions = try f.moveRevisions(in: f.vaultID, owner: victim.id).map(\.moveKey)
+            let revisions = try f.moveHeadRevisions()
+            let catalog = try f.storedRegistry().catalog
             try await f.withWallStore { store, access in
                 let snapshot = try await store.snapshot(vaultID: f.vaultID, using: access)
                 let receipt = try await store.delete(vaultID: f.vaultID, scope: removal, expectedRevision: snapshot.revision, using: access)
                 #expect(receipt.revision == snapshot.revision + 1)
-            }
+                #expect(try await store.snapshot(vaultID: f.vaultID, using: access).blockedPasswordOrigins == Set(policy))
 
-            let rows = try f.moveHistoryRows(of: f.trashID)
-            #expect(rows.count == 4)
-            for row in rows {
-                let plaintext = try f.movePlaintext(of: row).count
-                #expect(plaintext <= StoreFormat.historyRowBytes, "a Trash row holds \(plaintext) plaintext bytes")
-                if row.kind == .revision {
-                    #expect(plaintext == Self.comparableRowBytes)
+                let rows = try f.moveHistoryRows(of: f.trashID)
+                #expect(rows.count == 4)
+                for row in rows {
+                    let plaintext = try f.movePlaintext(of: row).count
+                    #expect(plaintext <= StoreFormat.historyRowBytes, "a Trash row holds \(plaintext) plaintext bytes")
+                    if row.kind == .revision {
+                        #expect(plaintext == Self.comparableRowBytes)
+                    } else {
+                        // The snapshot (whole account) or the base64 PasswordValue (username alone is about 4 MB) fills the entry.
+                        #expect(plaintext > Self.comparableRowBytes)
+                    }
+                }
+                #expect(try f.moveOwnedRowCount(in: f.vaultID, owner: victim.id) == (scope == .account ? 0 : 1))
+                #expect(try f.moveRevisions(in: f.vaultID, owner: victim.id).isEmpty)
+                #expect(try f.moveHeadRevisions() == revisions.advanced())
+                try f.expectMoveRegistryMatchesHeads()
+                try f.verify()
+
+                // The reverse MOVE of the very same near-cap rows.
+                let entry = try f.trashEntry(of: victim.id, subject: entrySubject)
+                let restoredReceipt = try await f.undelete(store, access, entry.row.recordID)
+                #expect(restoredReceipt.revision == receipt.revision + 1)
+                let after = try await store.snapshot(vaultID: f.vaultID, using: access)
+                #expect(after.accounts.map(\.id) == [victim.id])
+                #expect(after.blockedPasswordOrigins == Set(policy))
+                let restored = try #require(after.accounts.first)
+                if scope == .account {
+                    #expect(restored == victim)
                 } else {
-                    // The snapshot (whole account) or the base64 PasswordValue (username alone is about 4 MB) fills the entry.
-                    #expect(plaintext > Self.comparableRowBytes)
+                    #expect(restored.username == victim.username && restored.password == victim.password)
                 }
             }
-            #expect(try f.moveOwnedRowCount(in: f.vaultID, owner: victim.id) == (scope == .account ? 0 : 1))
-            #expect(try f.moveRevisions(in: f.vaultID, owner: victim.id).isEmpty)
+
+            #expect(try f.moveHistoryRows(of: f.trashID).isEmpty)
+            #expect(try f.moveOwnedRowCount(in: f.trashID, owner: victim.id) == 0)
+            #expect(Set(try f.moveRevisions(in: f.vaultID, owner: victim.id).map(\.moveKey)) == Set(originalRevisions))
+            #expect(try f.moveHeadRevisions() == revisions.advanced(by: 2))
+            #expect(try f.storedRegistry().catalog.vaults.count == catalog.vaults.count)
             try f.expectMoveRegistryMatchesHeads()
             try f.verify()
         }
