@@ -7,9 +7,11 @@ import SwiftUI
 /// Account, passkey and verification-code management for one profile's vault. Reached from `AutofillSettings`
 /// as its own entry, separate from the legacy Passwords page.
 struct CredentialSettings: View {
-    @State private var model: CredentialSettingsModel
+    @State var model: CredentialSettingsModel
     @State private var anchor = CredentialWindowAnchor()
-    @State private var showsCreateWarning = false
+    @State var showsCreateWarning = false
+    @State var showsMigrationConfirmation = false
+    @State var showsTrash = false
     @State private var work: Task<Void, Never>?
     @State private var exportContext: CredentialExportContext?
 
@@ -19,8 +21,11 @@ struct CredentialSettings: View {
 
     var body: some View {
         SettingsPageHeader(title: "Credentials")
+        scratchWarnings
         Group {
-            if !model.isAvailable {
+            if let failClosed = model.failClosed {
+                failClosedContent(failClosed)
+            } else if !model.isAvailable {
                 SettingsCard {
                     SettingsEmptyState(
                         symbol: "lock",
@@ -56,7 +61,7 @@ struct CredentialSettings: View {
             CredentialExportSheet(model: model, context: context) { selection in
                 withWindow { window in
                     let outcome = await model.exportCredentials(
-                        selection: selection, expectedRevision: context.revision, epoch: context.epoch, in: window
+                        selection: selection, epoch: context.epoch, in: window
                     )
                     // Cancelled before any data was passed leaves the sheet for another try; every other result is
                     // reported on the page, so the sheet closes instead of inviting a second export.
@@ -67,7 +72,10 @@ struct CredentialSettings: View {
             }
         }
         // The sheet's revision and epoch are only meaningful for the authorization it was opened under.
-        .onChange(of: model.authorizationEpoch) { exportContext = nil }
+        .onChange(of: model.authorizationEpoch) {
+            exportContext = nil
+            showsTrash = false
+        }
         .confirmationDialog(
             "Remove Credential?",
             isPresented: Binding(get: { model.pendingRemoval != nil }, set: { if !$0 { model.cancelRemoval() } }),
@@ -83,33 +91,42 @@ struct CredentialSettings: View {
         }
         .confirmationDialog(
             "Remove Unlock Passkey?",
-            isPresented: Binding(get: { model.pendingUnlockRemoval != nil }, set: { if !$0 { model.cancelUnlockRemoval() } }),
+            isPresented: Binding(get: { model.pendingUnlockRemoval != nil && !model.isBusy }, set: { _ in }),
             presenting: model.pendingUnlockRemoval
         ) { pending in
             Button("Remove Unlock Passkey", role: .destructive) {
                 withWindow { window in await model.confirmUnlockRemoval(pending, in: window) }
             }
-            Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("""
-                You’ll confirm with one of the remaining unlock passkeys. The passkey itself stays in your passkey \
-                provider. Removing it does not change the vault’s encryption key. Someone with that passkey and an \
-                older vault file can still decrypt later copies of this vault they obtain.
-                """)
+            Button("Cancel", role: .cancel) { model.cancelUnlockRemoval() }
+        } message: { pending in
+            // The model words the request, so the confirmation and what it will do come from one place.
+            Text(verbatim: pending.text)
         }
-        .confirmationDialog("Create Credential Vault?", isPresented: $showsCreateWarning) {
-            Button("Create Vault") {
-                withWindow { window in await model.createVault(in: window) }
+        .confirmationDialog("Upgrade This Vault?", isPresented: $showsMigrationConfirmation) {
+            Button("Upgrade and Unlock") {
+                withWindow { window in await model.unlock(in: window, confirmMigration: true) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("""
-                The vault is encrypted with your unlock passkeys. If you lose every unlock passkey, WSurf cannot \
-                recover the vault or anything stored in it, and there is no recovery option. Removing an unlock \
-                passkey does not change the vault’s encryption key. Someone with that passkey and an older vault \
-                file can still decrypt later copies of this vault they obtain. Deleting the vault does not delete \
-                backups.
+                This vault was saved by an older version of WSurf. Unlocking it upgrades it to a new format that every \
+                other WSurf build, including older ones, cannot read. A copy from before the upgrade is kept next to \
+                the vault, but it won’t include anything you change afterwards.
                 """)
+        }
+        .sheet(isPresented: $showsCreateWarning) {
+            CredentialNewVaultSheet(
+                canUseNewPasskey: model.canCreateWithNewPasskey,
+                existingPasskeys: model.existingPasskeys
+            ) { name, choice in
+                showsCreateWarning = false
+                withWindow { window in await model.createVault(name: name, choice: choice, in: window) }
+            } cancel: {
+                showsCreateWarning = false
+            }
+        }
+        .sheet(isPresented: Binding(get: { model.versionsAccountID != nil }, set: { if !$0 { model.closeVersions() } })) {
+            CredentialVersionsSheet(model: model, run: run)
         }
     }
 
@@ -117,11 +134,21 @@ struct CredentialSettings: View {
 
     @ViewBuilder
     private var lockedContent: some View {
+        if model.vaults.count > 1 {
+            vaultsSection
+        }
         SettingsCard {
             VStack(spacing: 12) {
                 if model.isBusy {
                     Spinner(size: 22)
-                    Text("Accessing credentials…").font(Theme.Font.row)
+                    if model.isVerifying {
+                        Text("Verifying your credentials…").font(Theme.Font.row)
+                        Text("WSurf is checking the vault before opening it. This can take a moment.")
+                            .font(Theme.Font.label)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("Accessing credentials…").font(Theme.Font.row)
+                    }
                 } else {
                     Image(systemName: "lock")
                         .font(.system(size: 26))
@@ -146,31 +173,16 @@ struct CredentialSettings: View {
                             .font(Theme.Font.label)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    if let export = model.lastExport {
-                        let status = exportStatus(export)
-                        Text(status.title).font(Theme.Font.label).fontWeight(.medium)
-                        Text(status.note)
-                            .font(Theme.Font.label)
-                            .fixedSize(horizontal: false, vertical: true)
-                        SettingsButton(title: "Dismiss Export Status") { model.dismissExportResult() }
+                    if let message = model.transferMessage {
+                        Text(verbatim: message.text).font(Theme.Font.label).fontWeight(.medium).fixedSize(horizontal: false, vertical: true)
+                        SettingsButton(title: "Dismiss") { model.dismissTransferMessage() }
                     }
                     if let error = model.error {
                         Text(verbatim: error)
                             .font(Theme.Font.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    switch model.vaultExists {
-                    case .some(true):
-                        SettingsButton(title: "Unlock Credentials", isProminent: true) {
-                            withWindow { window in await model.unlock(in: window) }
-                        }
-                    case .some(false):
-                        SettingsButton(title: "Create Credential Vault", isProminent: true) {
-                            showsCreateWarning = true
-                        }
-                    case .none:
-                        SettingsButton(title: "Try Again") { run { await model.load() } }
-                    }
+                    lockedAction
                 }
             }
             .foregroundStyle(.secondary)
@@ -180,39 +192,59 @@ struct CredentialSettings: View {
         }
     }
 
-    private var lockedCaption: LocalizedStringResource {
+    var lockedCaption: LocalizedStringResource {
         switch model.vaultExists {
         case .some(true):
-            "Unlock with a passkey to view and edit your credentials."
+            model.needsMigrationConfirmation
+                ? "This vault was saved by an older version of WSurf. Unlocking it upgrades it to the new format."
+                : "Unlock with a passkey to view and edit your credentials."
         case .some(false):
             "Create a vault protected by a passkey to store passwords, passkeys and verification codes."
         case .none:
-            "WSurf is checking for your credential vault."
+            model.error == nil
+                ? "WSurf is checking for your credential vault."
+                : "WSurf can’t tell whether a credential vault exists, so it won’t offer to create one. Nothing was changed."
         }
     }
 
-    /// Neutral and secret-free. The system reports no receipt, so neither case claims the other app accepted anything.
-    private func exportStatus(
-        _ outcome: CredentialExportOutcome
-    ) -> (title: LocalizedStringResource, note: LocalizedStringResource, symbol: String) {
-        if outcome == .transferred {
-            return (
-                "The system accepted the export",
-                "WSurf can’t see whether the other app has received or imported anything.",
-                "checkmark.circle"
-            )
+    /// The one next step a transfer ending allows. The model decides which; this only draws it.
+    @ViewBuilder
+    private func nextStep(_ action: CredentialTransferMessage.Action) -> some View {
+        switch action {
+        case .none:
+            EmptyView()
+        case .exportAgain:
+            Button("Export Again…") { openExport() }
+                .disabled(model.isBusy || model.summaries.isEmpty)
+        case .checkSavedCredentials:
+            Button("Check Saved Credentials") {
+                showsTrash = false
+                model.dismissTransferMessage()
+            }
         }
-        return (
-            "The export may not have completed",
-            "The system stopped after your selection was passed to it, so it may or may not have reached the other app. Check there before exporting again. WSurf didn’t retry.",
-            "exclamationmark.triangle"
-        )
+    }
+
+    private func openExport() {
+        guard let epoch = model.authorizationEpoch else { return }
+        exportContext = CredentialExportContext(epoch: epoch, summaries: model.summaries)
+    }
+
+    private func resultCaption(_ result: CredentialImportOutcome.Result) -> String {
+        let action: String = switch result.action {
+        case .added: String(localized: "Added")
+        case .updated: String(localized: "Updated")
+        case .unchanged: String(localized: "Already saved")
+        case .skipped: String(localized: "Skipped")
+        }
+        let parts = [action, result.kind.label, result.relyingParty].compactMap { $0 }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: Unlocked
 
     @ViewBuilder
     private var unlockedContent: some View {
+        vaultsSection
         if let token = model.pendingImportToken {
             SettingsSection(
                 title: "Credentials waiting to import",
@@ -251,49 +283,64 @@ struct CredentialSettings: View {
                 }
             }
         }
-        if let result = model.lastImport {
-            SettingsSection(title: "Import complete", symbol: "checkmark.circle") {
-                DetailRow(verbatimTitle: String(localized: "Added \(result.added), updated \(result.updated)")) {
-                    Button("Dismiss") { model.dismissImportResult() }.buttonStyle(.bordered)
+        // One ending for a transfer, from the model: its text, the one next step it allows, and (after a saved import) what
+        // became of each credential. Dismissing it removes all of it; nothing here repeats it.
+        if let message = model.transferMessage {
+            SettingsSection(
+                title: message.kind == .succeeded ? "Transfer finished" : "Transfer",
+                symbol: message.kind == .succeeded ? "checkmark.circle" : "exclamationmark.triangle"
+            ) {
+                DetailRow(verbatimTitle: message.text) {
+                    HStack(spacing: 8) {
+                        nextStep(message.action)
+                        Button("Dismiss") { model.dismissTransferMessage() }
+                    }
+                    .buttonStyle(.bordered)
+                }
+                if message.receipt != nil, let results = model.lastImport?.results {
+                    ForEach(results) { result in
+                        RowSeparator()
+                        DetailRow(verbatimTitle: result.title, verbatimCaption: resultCaption(result)) { EmptyView() }
+                    }
                 }
             }
         }
-        if let export = model.lastExport {
-            let status = exportStatus(export)
-            SettingsSection(title: "Last export", symbol: status.symbol, footnote: status.note) {
-                DetailRow(title: status.title) {
-                    Button("Dismiss") { model.dismissExportResult() }.buttonStyle(.bordered)
+        if showsTrash {
+            trashSection
+        } else {
+            SettingsSection(
+                title: "Saved credentials",
+                symbol: "key",
+                footnote: "Passwords, passkeys and verification codes stay hidden until you reveal or copy them.",
+                accessory: {
+                    HStack(spacing: 10) {
+                        listSwitch
+                        ToolbarChip(symbol: "plus", label: "Add Credential") {
+                            run { try await model.beginEditing(accountID: nil) }
+                        }
+                        .disabled(model.isBusy)
+                        ToolbarChip(symbol: "square.and.arrow.up", label: "Export…") {
+                            openExport()
+                        }
+                        .disabled(model.isBusy || model.summaries.isEmpty)
+                        ToolbarChip(symbol: "lock", label: "Lock") { model.lock() }
+                    }
+                },
+                content: {
+                    if model.summaries.isEmpty {
+                        SettingsEmptyState(symbol: "key", title: "No saved credentials", caption: "Add a login, passkey or verification code to see it here.")
+                    }
+                    ForEach(model.summaries) { summary in
+                        CredentialRow(
+                            model: model, summary: summary, run: run,
+                            remove: { model.requestRemoval(accountID: summary.id) },
+                            versions: { run { try await model.loadVersions(accountID: summary.id) } }
+                        )
+                    }
+                    AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .password)
                 }
-            }
+            )
         }
-        SettingsSection(
-            title: "Saved credentials",
-            symbol: "key",
-            footnote: "Passwords, passkeys and verification codes stay hidden until you reveal or copy them.",
-            accessory: {
-                HStack(spacing: 10) {
-                    ToolbarChip(symbol: "plus", label: "Add Credential") {
-                        run { try await model.beginEditing(accountID: nil) }
-                    }
-                    .disabled(model.isBusy)
-                    ToolbarChip(symbol: "square.and.arrow.up", label: "Export…") {
-                        guard let epoch = model.authorizationEpoch else { return }
-                        exportContext = CredentialExportContext(revision: model.revision, epoch: epoch, summaries: model.summaries)
-                    }
-                    .disabled(model.isBusy || model.summaries.isEmpty)
-                    ToolbarChip(symbol: "lock", label: "Lock") { model.lock() }
-                }
-            },
-            content: {
-                if model.summaries.isEmpty {
-                    SettingsEmptyState(symbol: "key", title: "No saved credentials", caption: "Add a login, passkey or verification code to see it here.")
-                }
-                ForEach(model.summaries) { summary in
-                    CredentialRow(model: model, summary: summary, run: run, remove: { model.requestRemoval(accountID: summary.id) })
-                }
-                AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .password)
-            }
-        )
         SettingsSection(
             title: "Unlock passkeys",
             symbol: "person.badge.key",
@@ -325,7 +372,7 @@ struct CredentialSettings: View {
 
     /// One cancellable UI task; leaving the page cancels it. A mutation that already committed still returns
     /// its receipt to the model, so cancellation only skips presentation.
-    private func run(_ operation: @escaping () async throws -> Void) {
+    func run(_ operation: @escaping () async throws -> Void) {
         let epoch = model.authorizationEpoch
         work?.cancel()
         work = Task {
@@ -335,7 +382,7 @@ struct CredentialSettings: View {
         }
     }
 
-    private func withWindow(_ operation: @escaping (NSWindow) async -> Void) {
+    func withWindow(_ operation: @escaping (NSWindow) async -> Void) {
         guard let window = anchor.window, window.isVisible else {
             model.error = String(localized: "Couldn’t find this window to show the passkey prompt. Bring it to the front and try again.")
             return
@@ -356,6 +403,7 @@ private struct CredentialRow: View {
     let summary: CredentialSummary
     let run: (@escaping () async throws -> Void) -> Void
     let remove: () -> Void
+    let versions: () -> Void
 
     private var host: String {
         summary.origins.lazy.compactMap { URL(string: $0)?.host }.first ?? summary.title
@@ -420,13 +468,13 @@ private struct CredentialRow: View {
                     Button("Show Verification Code") { run { try await model.showTOTP(accountID: summary.id) } }
                 }
             }
+            Button("Earlier Versions…", action: versions)
         } label: {
             Image(systemName: "ellipsis.circle")
                 .accessibilityLabel("More actions for \(summary.title)")
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .disabled(!summary.hasPassword && !summary.hasTOTP && !summary.usernameIsConcealed)
     }
 
     @ViewBuilder
@@ -711,11 +759,11 @@ private struct CredentialWindowAnchorView: NSViewRepresentable {
 
 // MARK: - Exchange
 
-/// What the export sheet was opened for. The revision and epoch travel with the selection, so a lock, re-unlock or
-/// later write makes the export fail instead of sending a different vault state than the user chose from.
+/// What the export sheet was opened for. The epoch travels with the selection, so a lock or re-unlock makes the export
+/// fail instead of sending a different vault than the user chose from; the model also refuses a selection whose accounts
+/// changed since.
 private struct CredentialExportContext: Identifiable {
     let id = UUID()
-    let revision: UInt64
     let epoch: UInt64
     let summaries: [CredentialSummary]
 }
@@ -731,9 +779,20 @@ private struct CredentialExportSheet: View {
         context.summaries.compactMap { selection[$0.id] }.filter { $0.password || $0.totp || !$0.passkeyIDs.isEmpty }
     }
 
+    /// Whose vault the selection leaves from: the profile, and the vault when its name is readable.
+    private var exportSource: String {
+        guard let vault = model.vaultName else {
+            return String(localized: "Exporting from the profile “\(model.profile.name)”.")
+        }
+        return String(localized: "Exporting from the vault “\(vault)” of the profile “\(model.profile.name)”.")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Export Credentials").font(.headline)
+            Text(verbatim: exportSource)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Text("""
                 Choose what to send to another app. The system passes your selection to the app you pick next, and \
                 that app can read it: any passwords, passkeys and verification code setups you select aren’t \
@@ -817,10 +876,7 @@ private struct CredentialImportReviewSheet: View {
         if let review = model.importReview {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Review Import").font(.headline)
-                Text("""
-                    Importing into the profile “\(model.profile.name)”. Nothing is saved until you choose Import. \
-                    Imported passwords, passkeys and verification codes are encrypted in that profile’s vault.
-                    """)
+                Text(verbatim: destination(review))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 ScrollView {
@@ -831,7 +887,7 @@ private struct CredentialImportReviewSheet: View {
                 }
                 .frame(maxHeight: 360)
                 if let outcome = review.outcome {
-                    Text("Adds \(outcome.added) and updates \(outcome.updated).").foregroundStyle(.secondary)
+                    Text(verbatim: importSummary(outcome)).foregroundStyle(.secondary)
                 } else {
                     Text("Choose what to do with each credential that already exists here.").foregroundStyle(.secondary)
                 }
@@ -850,6 +906,26 @@ private struct CredentialImportReviewSheet: View {
             .padding(24)
             .frame(width: 520)
         }
+    }
+
+    private func destination(_ review: CredentialImportReview) -> String {
+        guard let vault = review.vaultName else {
+            return String(localized: "Importing into the profile “\(review.profileName)”. Nothing is saved until you choose Import. Imported passwords, passkeys and verification codes are encrypted in that profile’s vault.")
+        }
+        return String(localized: "Importing into the vault “\(vault)” of the profile “\(review.profileName)”. Nothing is saved until you choose Import. Imported passwords, passkeys and verification codes are encrypted in that vault.")
+    }
+
+    private func importSummary(_ outcome: CredentialImportOutcome) -> String {
+        var text = String(localized: "Adds \(outcome.added) and updates \(outcome.updated).")
+        let unchanged = outcome.results.filter { $0.action == .unchanged }.count
+        let skipped = outcome.results.filter { $0.action == .skipped }.count
+        if unchanged > 0 {
+            text += " " + String(localized: "\(unchanged) already saved.")
+        }
+        if skipped > 0 {
+            text += " " + String(localized: "\(skipped) won’t be imported.")
+        }
+        return text
     }
 
     @ViewBuilder
@@ -876,7 +952,7 @@ private struct CredentialImportReviewSheet: View {
         return VStack(alignment: .leading, spacing: 2) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: "\(kindLabel(record.kind)) · \(record.title)")
+                    Text(verbatim: "\(record.kind.label) · \(record.title)")
                     if let existing = record.existingTitle {
                         Text("Already saved as “\(existing)”").font(Theme.Font.label).foregroundStyle(.secondary)
                         if record.removesStoredPasswordOnReplace {
@@ -958,17 +1034,6 @@ private struct CredentialImportReviewSheet: View {
         }
     }
 
-    private func kindLabel(_ kind: CredentialImportReview.Record.Kind) -> String {
-        switch kind {
-        case .password:
-            String(localized: "Login")
-        case .passkey:
-            String(localized: "Passkey")
-        case .totp:
-            String(localized: "Verification code")
-        }
-    }
-
     private func choiceLabel(_ record: CredentialImportReview.Record) -> LocalizedStringResource {
         switch record.choice {
         case nil:
@@ -981,6 +1046,19 @@ private struct CredentialImportReviewSheet: View {
             "Add Separately"
         case .merge:
             "Merge"
+        }
+    }
+}
+
+extension CredentialImportReview.Record.Kind {
+    var label: String {
+        switch self {
+        case .password:
+            String(localized: "Login")
+        case .passkey:
+            String(localized: "Passkey")
+        case .totp:
+            String(localized: "Verification code")
         }
     }
 }

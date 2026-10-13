@@ -521,6 +521,15 @@ final class CredentialManager {
         try await reading { access in try await store.revisionPage(vaultID: vaultID, accountID: accountID, after: after, using: access) }
     }
 
+    /// Verified Trash and earlier-version counts: integers from the sealed heads, each checked against the stored rows.
+    func historyCounts() async throws -> (live: HistoryCounts, trash: HistoryCounts) {
+        try await reading { access in try await store.historyCounts(vaultID: vaultID, using: access) }
+    }
+
+    var preMigrationBackup: URL? {
+        store.preMigrationBackup()
+    }
+
     func previewUndelete(entryID: UUID) async throws -> UndeletePreview {
         try await reading { access in try await store.previewUndelete(vaultID: vaultID, entryID: entryID, using: access) }
     }
