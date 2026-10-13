@@ -136,6 +136,26 @@ struct FaviconLoaderTests {
         #expect(!FileManager.default.fileExists(atPath: directory.path))
     }
 
+    /// The default and per-profile caches must never be the user's real `~/Library/Caches`; a test host reads
+    /// and writes only its own per-process directory.
+    @Test func defaultAndProfileCachesStayInTheOwnedTestDirectory() throws {
+        let owned = AppDatabase.supportDirectory.path + "/"
+        let userCaches = (FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].path) + "/"
+        let work = Profile(id: UUID(), name: "Work", symbol: "briefcase", color: .blue)
+        for profile in [Profile.original(), work] {
+            let directory = FaviconLoader.cacheDirectory(for: profile).path
+            try #require(directory.hasPrefix(owned) && !directory.hasPrefix(userCaches), "\(directory)")
+        }
+        #expect(FaviconLoader.cacheDirectory(for: work).deletingLastPathComponent().standardizedFileURL.path
+            == FaviconLoader.cacheDirectory(for: .original()).standardizedFileURL.path)
+
+        let host = "\(UUID().uuidString.lowercased()).invalid"
+        let loader = FaviconLoader()
+        defer { loader.forget(host: host) }
+        try #require(loader.store(try iconData(), forHost: host) != nil)
+        #expect(FaviconLoader().cached(for: host) != nil)
+    }
+
     private func makeDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("wsurf-favicons-\(UUID().uuidString)", isDirectory: true)

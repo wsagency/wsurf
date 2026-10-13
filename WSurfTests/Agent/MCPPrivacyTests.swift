@@ -25,7 +25,13 @@ struct MCPPrivacyTests {
         let server = try await HTTPFixtureServer.start(routes: [
             "/": .html(Self.html), "/next": .html("<p>Next page</p>"),
         ])
-        let browser = BrowserModel(database: .temporary(), sitePermissions: SitePermissions(storageURL: nil))
+        let browser = BrowserModel(
+            database: .temporary(),
+            sitePermissions: SitePermissions(
+                storageURL: AppDatabase.supportDirectory
+                    .appendingPathComponent("MCPPrivacy-\(UUID().uuidString).json")
+            )
+        )
         let url = try server.url()
         let tab = browser.newTab(url: url)
         #expect(await PageSettle.untilIdle(tab.page))
