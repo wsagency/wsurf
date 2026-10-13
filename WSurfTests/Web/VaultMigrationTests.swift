@@ -624,6 +624,192 @@ struct VaultMigrationTests {
     }
 }
 
+/// Before any unlock, a v1 directory and an interrupted migration or first-vault bootstrap still show their vault: locked, ordinal 1, with the
+/// wrapper plaintext the passkey prompt needs. Reading it changes no credential or pending-store byte, takes a SHARED lock (which may create
+/// the empty lock file) and never recovers a pending store.
+struct VaultPreUnlockDiscoveryTests {
+    private static let lockWait: Duration = .milliseconds(150)
+
+    private func expectLockedVault(_ store: ProfileVaultStore, _ vaultID: UUID, credentials: [Data]) async throws {
+        #expect(try await store.listing() == [VaultListing(vaultID: vaultID, ordinal: 1, name: nil, isUnlocked: false, isVerified: false)])
+        let discovery = try await store.discovery(vaultID: vaultID)
+        #expect(discovery.vaultID == vaultID)
+        #expect(discovery.unlocks.map(\.credentialID) == credentials)
+    }
+
+    @Test func aLegacyDirectoryListsItsVaultLockedAndDiscoversTheOldWrappers() async throws {
+        try await VaultStoreFixture.withEnvironment { env, tracker in
+            let second = VaultFixtures.proof(3)
+            let legacy = try LegacyV1.make(profileID: env.profileID, extraProofs: [second])
+            try legacy.write(to: env.directory)
+            let image = try directoryImage(env.directory)
+            let store = tracker.makeStore(env: env)
+
+            try await expectLockedVault(store, legacy.vaultID, credentials: legacy.wrappers.map(\.credentialID))
+            #expect(try await store.discovery(vaultID: legacy.vaultID).unlocks.map(\.prfInput) == legacy.wrappers.map(\.prfInput))
+            let unknown = await Result { try await store.discovery(vaultID: UUID()) }.error
+            #expect(unknown as? CredentialStoreError == .noSuchVault)
+            #expect(try directoryImage(env.directory) == image)  // nothing written, nothing migrated
+            guard case .legacy = state(env) else { throw MigrationTestFailure("not legacy") }
+
+            // The vault the listing named is the one the confirmed unlock opens, with the passkey the discovery listed.
+            let chosen = try #require(try await store.listing().first).vaultID
+            let access = newAccess(env.profileID)
+            try await routed(store, chosen, second, confirm: true, access: access)
+            #expect(try await store.snapshot(vaultID: chosen, using: access).accounts == legacy.accounts)
+            #expect(try await store.discovery(vaultID: chosen).unlocks.map(\.credentialID) == legacy.wrappers.map(\.credentialID))
+        }
+    }
+
+    @Test func aMigrationInterruptedAfterStepSevenListsTheSameVaultWithoutChangingAnything() async throws {
+        try await VaultStoreFixture.withEnvironment { env, tracker in
+            let legacy = try arrangeLegacy(env)
+            let crash = tracker.makeStore(env: env, fileOps: probingOps(in: env.directory, hook: stopping(after: 7)))
+            await #expect(throws: SeamStop(step: 7)) {
+                try await routed(crash, legacy.vaultID, legacy.proof, confirm: true, access: newAccess(env.profileID))
+            }
+            guard case .resumeMigration = state(env) else { throw MigrationTestFailure("not a resume state") }
+            let image = try directoryImage(env.directory)
+            let store = tracker.makeStore(env: env, lockWait: Self.lockWait)
+
+            try await expectLockedVault(store, legacy.vaultID, credentials: legacy.wrappers.map(\.credentialID))
+            #expect(try directoryImage(env.directory) == image)
+            #expect(pendingSidecars(in: env.directory).isEmpty)
+
+            // A migration holding the lock is waited for, never read through.
+            let hold = try await OperationLock.acquire(in: env.directory, mode: .exclusive)
+            let busy = await Result { try await store.listing() }.error
+            hold.release()
+            #expect(busy as? CredentialStoreError == .storeBusy)
+            #expect(try directoryImage(env.directory) == image)
+
+            let chosen = try #require(try await store.listing().first).vaultID
+            try await routed(store, chosen, legacy.proof, confirm: true, access: newAccess(env.profileID))
+            guard case .provisional = state(env) else { throw MigrationTestFailure("resume did not publish") }
+        }
+    }
+
+    @Test func aFirstVaultBootstrapInterruptedAfterStepSevenListsItsVault() async throws {
+        try await VaultStoreFixture.withEnvironment { env, tracker in
+            let proof = VaultFixtures.proof()
+            let crash = tracker.makeStore(env: env, fileOps: probingOps(in: env.directory, hook: stopping(after: 7)))
+            await #expect(throws: SeamStop(step: 7)) {
+                _ = try await crash.createVault(name: "Personal", unlock: proof, authorizedBy: .firstVault)
+            }
+            guard case .resumeMigration = state(env) else { throw MigrationTestFailure("not a resume state") }
+            let image = try directoryImage(env.directory)
+            let store = tracker.makeStore(env: env)
+
+            // The crashed creator never returned an id: the listing is the only way to learn it.
+            let listed = try #require(try await store.listing().first)
+            #expect(listed.ordinal == 1 && listed.name == nil && !listed.isUnlocked)
+            let discovery = try await store.discovery(vaultID: listed.vaultID)
+            #expect(discovery.unlocks.map(\.credentialID) == [proof.credentialID])
+            #expect(discovery.unlocks.map(\.prfInput) == [proof.prfInput])
+            #expect(try directoryImage(env.directory) == image)
+
+            let access = newAccess(env.profileID)
+            try await routed(store, listed.vaultID, proof, confirm: true, access: access)
+            #expect(try await store.snapshot(vaultID: listed.vaultID, using: access).accounts.isEmpty)
+        }
+    }
+
+    @Test func aPendingStoreWithASidecarIsRefusedAndLeftAlone() async throws {
+        try await VaultStoreFixture.withEnvironment { env, tracker in
+            let legacy = try arrangeLegacy(env)
+            let crash = tracker.makeStore(env: env, fileOps: probingOps(in: env.directory, hook: stopping(after: 7)))
+            await #expect(throws: SeamStop(step: 7)) {
+                try await routed(crash, legacy.vaultID, legacy.proof, confirm: true, access: newAccess(env.profileID))
+            }
+            let wal = anchorURL(env.directory, "Credentials.store.migrating-wal")
+            try Data([9]).write(to: wal)
+            let image = try directoryImage(env.directory)
+            let store = tracker.makeStore(env: env)
+
+            let listing = await Result { try await store.listing() }.error
+            let discovery = await Result { try await store.discovery(vaultID: legacy.vaultID) }.error
+            #expect(listing as? CredentialStoreError == .migrationAborted(path: wal))
+            #expect(discovery as? CredentialStoreError == .migrationAborted(path: wal))
+            #expect(try directoryImage(env.directory) == image)
+        }
+    }
+
+    @Test func aPendingStoreWhoseWrappersDoNotDecodeIsRefused() async throws {
+        try await VaultStoreFixture.withEnvironment { env, tracker in
+            let legacy = try arrangeLegacy(env)
+            let crash = tracker.makeStore(env: env, fileOps: probingOps(in: env.directory, hook: stopping(after: 7)))
+            await #expect(throws: SeamStop(step: 7)) {
+                try await routed(crash, legacy.vaultID, legacy.proof, confirm: true, access: newAccess(env.profileID))
+            }
+            let pending = anchorURL(env.directory, Name.migrating)
+            let queue = try PendingStore.open(at: pending)  // the no-persist recipe: no sidecar is left behind
+            try await queue.write { try $0.execute(sql: "UPDATE vault SET wrappers = ? WHERE wrappers IS NOT NULL", arguments: [Data([0])]) }
+            try PendingStore.finish(queue, at: pending)
+            let image = try directoryImage(env.directory)
+            let store = tracker.makeStore(env: env)
+
+            let failure = await Result { try await store.listing() }.error
+            #expect(failure as? CredentialStoreError == .integrityFailure(vaultOrdinal: 1))
+            #expect(try directoryImage(env.directory) == image)
+        }
+    }
+
+    /// A valid pending store holds exactly one active vault; none or several is corruption, never `[]` and never a way to a new vault.
+    @Test(arguments: ["UPDATE vault SET role = 'trash'", "UPDATE vault SET role = 'active'"])
+    func aPendingStoreWithoutExactlyOneActiveVaultIsRefused(corruption: String) async throws {
+        try await VaultStoreFixture.withEnvironment { env, tracker in
+            let legacy = try arrangeLegacy(env)
+            let crash = tracker.makeStore(env: env, fileOps: probingOps(in: env.directory, hook: stopping(after: 7)))
+            await #expect(throws: SeamStop(step: 7)) {
+                try await routed(crash, legacy.vaultID, legacy.proof, confirm: true, access: newAccess(env.profileID))
+            }
+            let pending = anchorURL(env.directory, Name.migrating)
+            let queue = try PendingStore.open(at: pending)
+            try await queue.write { try $0.execute(sql: corruption) }
+            try PendingStore.finish(queue, at: pending)
+            guard case .resumeMigration = state(env) else { throw MigrationTestFailure("not a resume state") }
+            let image = try directoryImage(env.directory)
+            let store = tracker.makeStore(env: env)
+
+            let listing = await Result { try await store.listing() }.error
+            let discovery = await Result { try await store.discovery(vaultID: legacy.vaultID) }.error
+            #expect(listing as? CredentialStoreError == .integrityFailure(vaultOrdinal: nil))
+            #expect(discovery as? CredentialStoreError == .integrityFailure(vaultOrdinal: nil))
+            #expect(try directoryImage(env.directory) == image)
+            #expect(!present(env, Name.store))  // nothing published
+            let access = newAccess(env.profileID)
+            let snapshot = await Result { try await store.snapshot(vaultID: legacy.vaultID, using: access) }.error
+            #expect(snapshot as? CredentialVaultError == .unauthorized)  // no grant
+        }
+    }
+
+    @Test func failClosedLayoutsStayRefusedInsteadOfBeingDiscovered() async throws {
+        try await VaultStoreFixture.withEnvironment { env, tracker in
+            // Another profile's v1 file.
+            let foreign = try LegacyV1.make(profileID: UUID())
+            try foreign.write(to: env.directory)
+            let image = try directoryImage(env.directory)
+            let store = tracker.makeStore(env: env)
+            let wrongProfile = await Result { try await store.listing() }.error
+            #expect(failClosedCause(wrongProfile)?.cause == .wrongProfile)
+            let wrongDiscovery = await Result { try await store.discovery(vaultID: foreign.vaultID) }.error
+            #expect(failClosedCause(wrongDiscovery)?.cause == .wrongProfile)
+            #expect(try directoryImage(env.directory) == image)
+        }
+        try await VaultStoreFixture.withEnvironment { env, tracker in
+            // A v1 file beside a witness: a migration happened before (row 2), so the old file is not a vault to offer.
+            let legacy = try arrangeLegacy(env)
+            #expect(StoreAnchors.setWitnessIfAbsent(UUID(), defaults: env.defaults))
+            let image = try directoryImage(env.directory)
+            let failure = await Result { try await tracker.makeStore(env: env).listing() }.error
+            #expect(failClosedCause(failure)?.cause == .v1AfterMigration)
+            let discovery = await Result { try await tracker.makeStore(env: env).discovery(vaultID: legacy.vaultID) }.error
+            #expect(failClosedCause(discovery)?.cause == .v1AfterMigration)
+            #expect(try directoryImage(env.directory) == image)
+        }
+    }
+}
+
 private nonisolated func failClosedCause(_ error: (any Error)?) -> StoreFailClosed? {
     if case .failClosed(let closed)? = error as? CredentialStoreError {
         return closed
