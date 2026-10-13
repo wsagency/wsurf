@@ -18,10 +18,15 @@ nonisolated struct CredentialExportReview: Sendable {
     }
 
     /// `shown` is what the user saw when choosing; `fresh` is the vault now. Credentials nobody selected are not reported.
+    /// The stamps are the vault's own per-account version and digest, so a secret-only change, which no summary shows,
+    /// still counts as changed. `freshStamps` is nil when the page cannot vouch for them (after its own write); the summaries
+    /// alone decide then, and the next fresh stamps are compared against `shownStamps`, which are kept from the last known read.
     static func reconcile(
         selection: [UUID: CredentialExportSelection],
         shown: [CredentialSummary],
-        fresh: [CredentialSummary]
+        fresh: [CredentialSummary],
+        shownStamps: [UUID: AccountStamp],
+        freshStamps: [UUID: AccountStamp]?
     ) -> Self {
         var result = Self(selection: [:], changed: [], deleted: [])
         for before in shown {
@@ -36,7 +41,8 @@ nonisolated struct CredentialExportReview: Sendable {
             kept.passkeyIDs = chosen.passkeyIDs.intersection(now.passkeys.map(\.id))
             let partsChanged = kept.password != chosen.password || kept.totp != chosen.totp
                 || kept.passkeyIDs != chosen.passkeyIDs
-            if partsChanged || now != before {
+            let stampChanged = freshStamps.map { $0[before.id] != shownStamps[before.id] } ?? false
+            if partsChanged || now != before || stampChanged {
                 result.changed.append(now.title)
             }
             if kept.hasParts {

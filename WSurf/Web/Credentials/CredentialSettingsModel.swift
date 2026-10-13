@@ -102,6 +102,9 @@ final class CredentialSettingsModel {
     var summaries: [CredentialSummary] {
         live?.summaries ?? []
     }
+    var exportStamps: [UUID: AccountStamp]? {
+        live?.knownStamps
+    }
     var revealedPassword: RevealedPassword? {
         live?.revealedPassword
     }
@@ -844,9 +847,8 @@ final class CredentialSettingsModel {
         exchange.discardPendingImport(token: token)
     }
 
-    /// `epoch` is the one the selection was made at; a lock or re-unlock rejects it, and so does a change to a selected
-    /// account since the page last read it (a write to any other account does not). A cancel before any data was passed is
-    /// `.cancelled` and leaves no status; every other result is recorded.
+    /// `epoch` is the one the selection was made at; a lock, a re-unlock or a change to a selected account since the page
+    /// read it rejects it. A cancel before any data was passed is `.cancelled` and leaves no status; every other result is recorded.
     func exportCredentials(
         selection: [CredentialExportSelection],
         epoch: UInt64,
@@ -871,12 +873,11 @@ final class CredentialSettingsModel {
         return outcome
     }
 
-    /// The stamps the user's selection was made against. After this page's own write they are unknown, and a fresh read
-    /// stands in for them only while the vault has not moved past the revision the page showed.
+    /// The stamps the selection was made against; after this page's own write, a fresh read of the same revision stands in.
     private func exportStamps(epoch: UInt64) async throws -> [UUID: AccountStamp] {
         guard let live, live.epoch == epoch else { throw CredentialTransferFailure(message: .exportSelectionChanged()) }
-        if live.stampsRevision == live.revision {
-            return live.stamps
+        if let known = live.knownStamps {
+            return known
         }
         let (_, snapshot) = try await authorizedSnapshot(epoch: epoch)
         guard snapshot.revision == live.revision else {

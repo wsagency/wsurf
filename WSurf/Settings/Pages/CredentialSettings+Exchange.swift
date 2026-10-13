@@ -20,6 +20,8 @@ struct CredentialExportSheet: View {
     @State private var selection: [UUID: CredentialExportSelection] = [:]
     /// The credentials as the user last saw them: a refresh is compared against this to name what changed.
     @State private var shown: [CredentialSummary]
+    /// The vault's own stamps for those credentials, from the last read that could vouch for them.
+    @State private var shownStamps: [UUID: AccountStamp]
     @State private var review: CredentialExportReview?
     /// Set once the user asked to export from this sheet, so only that attempt's ending is shown here.
     @State private var attempted = false
@@ -28,6 +30,7 @@ struct CredentialExportSheet: View {
         self.model = model
         self.export = export
         _shown = State(initialValue: model.summaries)
+        _shownStamps = State(initialValue: model.exportStamps ?? [:])
     }
 
     private var chosen: [CredentialExportSelection] {
@@ -104,7 +107,8 @@ struct CredentialExportSheet: View {
         }
         .padding(24)
         .frame(width: 520)
-        .onChange(of: model.summaries) { _, fresh in reconcile(with: fresh) }
+        .onChange(of: model.summaries) { reconcile() }
+        .onChange(of: model.exportStamps) { reconcile() }
     }
 
     /// What the refresh did to the chosen credentials. Nothing is sent by it: the user reads this, checks the selection
@@ -126,10 +130,15 @@ struct CredentialExportSheet: View {
 
     /// The selection follows the vault: parts that are gone leave it, and what changed is named, so a later click sends
     /// exactly what the sheet shows.
-    private func reconcile(with fresh: [CredentialSummary]) {
-        let result = CredentialExportReview.reconcile(selection: selection, shown: shown, fresh: fresh)
+    private func reconcile() {
+        let fresh = model.summaries
+        let freshStamps = model.exportStamps
+        let result = CredentialExportReview.reconcile(
+            selection: selection, shown: shown, fresh: fresh, shownStamps: shownStamps, freshStamps: freshStamps
+        )
         selection = result.selection
         shown = fresh
+        shownStamps = freshStamps ?? shownStamps
         if !result.isEmpty {
             review = result
         }
