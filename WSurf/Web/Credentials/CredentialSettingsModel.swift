@@ -364,18 +364,10 @@ final class CredentialSettingsModel {
         watchAuthorization()
     }
 
-    /// The page is leaving `old`: this window's ending and staged import belong to that vault, so neither may read as the next
-    /// vault's. Only this window's own import is cancelled; other windows' claims and reviews are left alone, and the ending
-    /// is shown again only if the page comes back to `old`.
+    /// The page leaves `old`: only this window's own import is cancelled there, and its ending shows again if the page returns.
     private func leave(_ old: CredentialManager) {
-        var ending = transferMessage
-        if exchange.cancelImport(for: old, owner: owner) == .reviewCancelled {
-            ending = .discarded()
-        }
-        exchange.dismissNotice(for: owner)
-        if let ending {
-            ownMessage = (ending, old.vaultID)
-        }
+        guard exchange.cancelImport(for: old, owner: owner) == .reviewCancelled else { return }
+        ownMessage = (.discarded(), old.vaultID)
     }
 
     private func vaultManager(_ vaultID: UUID) throws -> CredentialManager {
@@ -778,18 +770,25 @@ final class CredentialSettingsModel {
         manager.flatMap { exchange.importReview(for: $0, owner: owner) }
     }
 
-    /// How the last transfer ended, or the coordinator's refusal of a second token (spec §13.5). Production wording, nothing
-    /// secret; the page shows it until the user dismisses it.
-    var transferMessage: CredentialTransferMessage? {
-        if let ownMessage, ownMessage.vaultID == manager?.vaultID {
-            return ownMessage.message
-        }
-        return isAvailable ? exchange.notice(for: owner) : nil
+    /// This window's own ending, only while the vault it happened in is the selected one.
+    private var visibleEnding: CredentialTransferMessage? {
+        ownMessage.flatMap { $0.vaultID == manager?.vaultID ? $0.message : nil }
     }
 
+    /// Its own ending, else the refusal of a second token (spec §13.5). Production wording, nothing secret.
+    var transferMessage: CredentialTransferMessage? {
+        visibleEnding ?? (isAvailable ? exchange.refusal : nil)
+    }
+
+    /// Dismisses exactly what `transferMessage` shows, never a shadowed refusal or another vault's ending.
     func dismissTransferMessage() {
+        guard visibleEnding != nil else { return exchange.dismissRefusal() }
         ownMessage = nil
-        exchange.dismissNotice(for: owner)
+    }
+
+    /// Tells this window how an import it began in `manager`'s vault ended outside its own call; weak, bound to that vault.
+    func importEnding(in manager: CredentialManager) -> CredentialExchangeCoordinator.Ending {
+        { [weak self, vault = manager.vaultID] in self?.ownMessage = ($0, vault) }
     }
 
     /// The unlocked vault's name, for the transfer header; `nil` while it is locked.
@@ -801,7 +800,7 @@ final class CredentialSettingsModel {
         guard let token = exchange.pendingToken else { return }
         importResult = nil
         ownMessage = nil
-        _ = await perform(describe: importMessage(for:)) { try await self.exchange.beginImport(token: token, into: $0, owner: self.owner) }
+        _ = await perform(describe: importMessage(for:)) { try await self.exchange.beginImport(token: token, into: $0, owner: self.owner, onEnding: self.importEnding(in: $0)) }
     }
 
     func chooseImport(_ choice: CredentialImportChoice, for incoming: CredentialIdentity) {

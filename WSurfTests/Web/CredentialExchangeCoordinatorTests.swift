@@ -110,7 +110,7 @@ struct CredentialExchangeCoordinatorTests {
             let target = target ?? manager
             let owner = owner ?? self.owner
             let token = UUID()
-            #expect(coordinator.receive(CredentialExchangeCoordinatorTests.activity(token: token)))
+            #expect(coordinator.receive(CredentialExchangeCoordinatorTests.activity(token: token)) == .accepted)
             try coordinator.claimImport(token: token, for: target, owner: owner)
             try await coordinator.stage(data, into: target, owner: owner)
         }
@@ -263,15 +263,15 @@ struct CredentialExchangeCoordinatorTests {
         let coordinator = CredentialExchangeCoordinator()
         let token = UUID()
 
-        #expect(!coordinator.receive(Self.activity(type: "com.example.other", token: token)))
-        #expect(!coordinator.receive(Self.activity(token: nil)))
-        #expect(!coordinator.receive(Self.activity(token: "not-a-uuid")))
+        #expect(coordinator.receive(Self.activity(type: "com.example.other", token: token)) == .ignored)
+        #expect(coordinator.receive(Self.activity(token: nil)) == .ignored)
+        #expect(coordinator.receive(Self.activity(token: "not-a-uuid")) == .ignored)
         #expect(coordinator.pendingToken == nil)
 
-        #expect(coordinator.receive(Self.activity(token: token)))
+        #expect(coordinator.receive(Self.activity(token: token)) == .accepted)
         #expect(coordinator.pendingToken == token)
-        #expect(!coordinator.receive(Self.activity(token: token)))
-        #expect(!coordinator.receive(Self.activity(token: UUID())))
+        #expect(coordinator.receive(Self.activity(token: token)) == .ignored)
+        #expect(coordinator.receive(Self.activity(token: UUID())) == .refused)
         #expect(coordinator.pendingToken == token)
 
         coordinator.discardPendingImport(token: token)
@@ -288,7 +288,7 @@ struct CredentialExchangeCoordinatorTests {
             // A locked target never claims the token, and the queued token survives for a retry.
             f.manager.lock(reason: .manual)
             let queued = UUID()
-            #expect(f.coordinator.receive(Self.activity(token: queued)))
+            #expect(f.coordinator.receive(Self.activity(token: queued)) == .accepted)
             #expect(throws: CredentialVaultError.unauthorized) { try f.coordinator.claimImport(token: queued, for: f.manager, owner: f.owner) }
             #expect(f.coordinator.pendingToken == queued)
             try await f.unlock(f.manager)
@@ -301,7 +301,7 @@ struct CredentialExchangeCoordinatorTests {
             try f.coordinator.claimImport(token: queued, for: f.manager, owner: f.owner)
             #expect(f.coordinator.pendingToken == nil)
             #expect(throws: CredentialExchangeCoordinatorError.tokenMismatch) { try f.coordinator.claimImport(token: queued, for: f.manager, owner: f.owner) }
-            #expect(!f.coordinator.receive(Self.activity(token: queued)))
+            #expect(f.coordinator.receive(Self.activity(token: queued)) == .ignored)
 
             // The claim is for this profile's manager only.
             let otherBefore = try f.diskBytes(f.otherProfile)
@@ -311,7 +311,7 @@ struct CredentialExchangeCoordinatorTests {
 
             // Revoked access between claim and staging.
             let revoked = UUID()
-            #expect(f.coordinator.receive(Self.activity(token: revoked)))
+            #expect(f.coordinator.receive(Self.activity(token: revoked)) == .accepted)
             try f.coordinator.claimImport(token: revoked, for: f.manager, owner: f.owner)
             f.manager.lock(reason: .screenLock)
             await #expect(throws: CredentialTransferFailure.self) { try await f.coordinator.stage(incoming, into: f.manager, owner: f.owner) }
@@ -320,7 +320,7 @@ struct CredentialExchangeCoordinatorTests {
             // A fresh unlock is a new authorization epoch, not the one the token was bound to.
             try await f.unlock(f.manager)
             let reunlocked = UUID()
-            #expect(f.coordinator.receive(Self.activity(token: reunlocked)))
+            #expect(f.coordinator.receive(Self.activity(token: reunlocked)) == .accepted)
             try f.coordinator.claimImport(token: reunlocked, for: f.manager, owner: f.owner)
             f.manager.lock(reason: .manual)
             try await f.unlock(f.manager)
@@ -643,7 +643,7 @@ struct CredentialExchangeCoordinatorTests {
         try await withFixture(gate: gate) { f in
             try await f.seed(neighbours(1))
             let first = UUID()
-            #expect(f.coordinator.receive(Self.activity(token: first)))
+            #expect(f.coordinator.receive(Self.activity(token: first)) == .accepted)
             try f.coordinator.claimImport(token: first, for: f.manager, owner: f.owner)
             let late = try exported([account(username: "late", password: "late-password")])
 
@@ -656,7 +656,7 @@ struct CredentialExchangeCoordinatorTests {
             gate.whenParked {
                 f.coordinator.cancelImport(for: f.manager, owner: f.owner)
                 gate.release()
-                log.received = f.coordinator.receive(CredentialExchangeCoordinatorTests.activity(token: log.token))
+                log.received = f.coordinator.receive(CredentialExchangeCoordinatorTests.activity(token: log.token)) == .accepted
                 do { try f.coordinator.claimImport(token: log.token, for: f.manager, owner: f.owner) } catch { log.error = error }
             }
 

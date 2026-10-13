@@ -191,15 +191,15 @@ final class BrowserApplication {
     /// nothing: the credential page asks for the profile, the unlock and the review first, and the import is bound
     /// to the profile whose page the user reviews it from. Before bootstrap finishes the token waits in the
     /// exchange coordinator and `bootstrap` shows it. A token refused because another transfer is open is not dropped
-    /// silently: the coordinator keeps its notice and the credential page shows it.
+    /// silently: the coordinator keeps its refusal and the credential page opens to show it; a token it ignores opens nothing.
     @discardableResult
     func receiveCredentialExchange(_ activity: NSUserActivity) -> Bool {
         let coordinator = CredentialExchangeCoordinator.shared
-        let accepted = coordinator.receive(activity)
-        if isReady, accepted || coordinator.hasRefusal {
+        let received = coordinator.receive(activity)
+        if isReady, received != .ignored {
             showCredentialExchange()
         }
-        return accepted
+        return received == .accepted
     }
 
     /// Opens the credential page in the window external links go to: never a private window, which keeps no vault.
