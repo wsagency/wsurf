@@ -145,12 +145,17 @@ nonisolated enum VaultTamper: CaseIterable, CustomTestStringConvertible {
     case historyDeleted, historyFlipped, historySwapped, historyVersionReplayed, historyForeignStore, historyExtraRow
     // V5 transfer pairs (each leaves both ledgers internally consistent)
     case transferIDSplit, transferDuplicateOut, transferOwnerMismatch, transferEntryMismatch, transferMovedSetMismatch
+    // Header fields and a moved row's identity, edited on the Trash side only (each leaves V1-V4 consistent).
+    case transferScopeMismatch, transferSubjectMismatch, transferLiveRecordMismatch, transferLiveVersionMismatch
+    case movedRowVersionMismatch, movedRowOwnerMismatch, movedRowSubjectMismatch
 
     var testDescription: String { "\(self)" }
 
     var moves: Int {
         switch self {
-        case .transferIDSplit, .transferDuplicateOut, .transferOwnerMismatch, .transferEntryMismatch, .transferMovedSetMismatch:
+        case .transferIDSplit, .transferDuplicateOut, .transferOwnerMismatch, .transferEntryMismatch, .transferMovedSetMismatch,
+            .transferScopeMismatch, .transferSubjectMismatch, .transferLiveRecordMismatch, .transferLiveVersionMismatch,
+            .movedRowVersionMismatch, .movedRowOwnerMismatch, .movedRowSubjectMismatch:
             1
         default:
             2
@@ -174,7 +179,9 @@ nonisolated enum VaultTamper: CaseIterable, CustomTestStringConvertible {
             try applyHead(&f)
         case .historyDeleted, .historyFlipped, .historySwapped, .historyVersionReplayed, .historyForeignStore, .historyExtraRow:
             try applyHistory(&f)
-        case .transferIDSplit, .transferDuplicateOut, .transferOwnerMismatch, .transferEntryMismatch, .transferMovedSetMismatch:
+        case .transferIDSplit, .transferDuplicateOut, .transferOwnerMismatch, .transferEntryMismatch, .transferMovedSetMismatch,
+            .transferScopeMismatch, .transferSubjectMismatch, .transferLiveRecordMismatch, .transferLiveVersionMismatch,
+            .movedRowVersionMismatch, .movedRowOwnerMismatch, .movedRowSubjectMismatch:
             try applyTransfer(&f)
         }
     }
@@ -338,6 +345,20 @@ nonisolated enum VaultTamper: CaseIterable, CustomTestStringConvertible {
             try f.rewriteJournal(of: trash) { $0[0].transfer?.ownerID = UUID() }
         case .transferEntryMismatch:
             try f.rewriteJournal(of: trash) { $0[0].transfer?.entryRecordID = UUID() }
+        case .transferScopeMismatch:
+            try f.rewriteJournal(of: trash) { $0[0].transfer?.scope = .credential }
+        case .transferSubjectMismatch:
+            try f.rewriteJournal(of: trash) { $0[0].transfer?.subject = .password }  // the source says nil
+        case .transferLiveRecordMismatch:
+            try f.rewriteJournal(of: trash) { $0[0].transfer?.liveRecordID = UUID() }
+        case .transferLiveVersionMismatch:
+            try f.rewriteJournal(of: trash) { $0[0].transfer?.liveVersion += 1 }
+        case .movedRowVersionMismatch:
+            try Self.reseatMovedRow(&f) { $0.version += 1 }
+        case .movedRowOwnerMismatch:
+            try Self.reseatMovedRow(&f) { $0.ownerID = UUID() }
+        case .movedRowSubjectMismatch:
+            try Self.reseatMovedRow(&f) { $0.subject = .totp }  // moved rows are `.password`
         case .transferMovedSetMismatch:
             // A real extra history row on the Trash side, journalled and counted there, that the source never removed.
             var row = StoreTables.RecordRow(vaultID: trash, recordID: UUID(), kind: .revision, ownerID: f.accounts[0].id, subject: .password, version: 99, sealed: Data())
@@ -350,6 +371,23 @@ nonisolated enum VaultTamper: CaseIterable, CustomTestStringConvertible {
         default:
             preconditionFailure("\(self) is not a transfer tamper")
         }
+    }
+
+    /// Re-seals one moved history row on the Trash side with an edited identity and rewrites its journal op to match,
+    /// so V3 and V4 stay consistent and only the source's `out` group disagrees (V5).
+    private static func reseatMovedRow(_ f: inout VaultStoreFixture, _ edit: (inout StoreTables.RecordRow) -> Void) throws {
+        let trash = f.trashID
+        let id = try f.recordIDs(of: trash, kind: .revision)[0]
+        var row = try f.storedRecord(trash, id)
+        edit(&row)
+        row.sealed = try VaultStoreFixture.sealHistory(row, ids: f.ids, key: f.trashDEK)
+        try f.mutate { [row] in try StoreTables.putRecord($0, row) }
+        let op = JournalOp(
+            op: .add, recordID: id, kind: .revision, ownerID: row.ownerID, subject: row.subject, version: row.version,
+            rowDigest: StoreSeal.digest(row.sealed)
+        )
+        let index = try #require(try f.journalRows(of: trash)[0].ops.firstIndex { $0.recordID == id })
+        try f.rewriteJournal(of: trash) { $0[0].ops[index] = op }
     }
 
     private static func addOp(owner: UUID) -> JournalOp {
