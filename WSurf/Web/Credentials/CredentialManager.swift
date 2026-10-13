@@ -186,6 +186,15 @@ final class CredentialManager {
         (managers[profile.id]?.values.filter(\.isUnlocked) ?? []).sorted { $0.vaultID.uuidString < $1.vaultID.uuidString }
     }
 
+    /// `selected` if it is unlocked and listed, else the lowest-numbered listed vault that is unlocked.
+    static func unlockedAuthorizer(in listing: [VaultListing], selected: CredentialManager?, profile: Profile) -> CredentialManager? {
+        if let selected, selected.isUnlocked, listing.contains(where: { $0.vaultID == selected.vaultID }) {
+            return selected
+        }
+        let open = unlockedManagers(for: profile)
+        return listing.sorted { $0.ordinal < $1.ordinal }.lazy.compactMap { vault in open.first { $0.vaultID == vault.vaultID } }.first
+    }
+
     /// Locks every live manager and stops every vault creation, for events that affect the whole session (sleep, screen lock,
     /// termination).
     static func lockAll(reason: CredentialLockReason) {
@@ -534,6 +543,15 @@ final class CredentialManager {
 
     func revisionPage(accountID: UUID, after: Int?) async throws -> RevisionPage {
         try await reading { access in try await store.revisionPage(vaultID: vaultID, accountID: accountID, after: after, using: access) }
+    }
+
+    /// Verified Trash and earlier-version counts: integers from the sealed heads, each checked against the stored rows.
+    func historyCounts() async throws -> (live: HistoryCounts, trash: HistoryCounts) {
+        try await reading { access in try await store.historyCounts(vaultID: vaultID, using: access) }
+    }
+
+    var preMigrationBackup: URL? {
+        store.preMigrationBackup()
     }
 
     func previewUndelete(entryID: UUID) async throws -> UndeletePreview {

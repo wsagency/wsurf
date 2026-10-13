@@ -7,6 +7,38 @@ import GRDB
 nonisolated enum StoreOpenState: Equatable, Sendable {
     case legacy(vaultID: UUID), firstRun, provisional(storeID: UUID, stubMissing: Bool), resumeMigration(storeID: UUID)
     case failClosed(StoreFailClosed)
+
+    var isProvisional: Bool {
+        if case .provisional = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    /// A first run creates the first vault; past it a new passkey needs room for another vault and an unlocked one to approve it.
+    func allowsNewPasskey(vaultCount: Int, hasAuthorizer: @autoclosure () -> Bool) -> Bool {
+        switch self {
+        case .firstRun:
+            true
+        case .provisional:
+            vaultCount < StoreFormat.activeVaultLimit && hasAuthorizer()
+        default:
+            false
+        }
+    }
+
+    /// Past a first run, a vault is also created with an enrolled passkey of another vault, while there is room.
+    func allowsCreate(vaultCount: Int, newPasskey: Bool, hasEnrolledPasskey: Bool) -> Bool {
+        switch self {
+        case .firstRun:
+            true
+        case .provisional:
+            newPasskey || (vaultCount < StoreFormat.activeVaultLimit && hasEnrolledPasskey)
+        default:
+            false
+        }
+    }
 }
 
 /// The three anchors of §6.2 and the §6.3 state machine. Evaluation reads and never writes. Only a verified absence

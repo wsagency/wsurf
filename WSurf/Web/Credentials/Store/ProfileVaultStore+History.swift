@@ -96,6 +96,12 @@ extension ProfileVaultStore {
         }
     }
 
+    /// The copy kept from before this vault was upgraded, if one is still on disk. It still holds whatever a purge removes from the vault.
+    nonisolated func preMigrationBackup() -> URL? {
+        let backup = file(StoreAnchors.Names.preV2)
+        return StoreAnchors.exists(backup) ? backup : nil
+    }
+
     func revisionPage(vaultID: UUID, accountID: UUID, after: Int?, using access: VaultAccess) async throws -> RevisionPage {
         try await readHistory(vaultID, access) { db, grant, _ in
             let page = try Self.pageIDs(db, vaultID: vaultID, kind: .revision, ownerID: accountID, after: after, ordinal: grant.ordinal)

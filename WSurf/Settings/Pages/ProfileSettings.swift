@@ -251,6 +251,7 @@ private struct ProfileDetailPage: View {
     @State private var draft: String
     @State private var facts = ProfileFacts.empty
     @State private var deleting = false
+    @State private var vaultNote: String?
     @State private var clearing = false
     @FocusState private var editing: Bool
 
@@ -284,7 +285,13 @@ private struct ProfileDetailPage: View {
     private func page(_ profile: Profile) -> some View {
         SubPageHeader(backTitle: "Profiles", onBack: onBack) {
             if !profile.isOriginal {
-                SettingsButton(title: "Delete profile…", isDestructive: true) { deleting = true }
+                SettingsButton(title: "Delete profile…", isDestructive: true) {
+                    // Counts are read first so the confirmation states what is verified, or that it can't be known.
+                    Task {
+                        vaultNote = await CredentialErasureNote.note(for: profile)
+                        deleting = true
+                    }
+                }
                     .disabled(coordinator.isSwitchingProfile)
                     .confirmationDialog(
                         Text("Delete \"\(profile.name)\"?"),
@@ -296,6 +303,9 @@ private struct ProfileDetailPage: View {
                         Button("Cancel", role: .cancel) { deleting = false }
                     } message: {
                         Text("Deleting this profile removes its tabs, history, and sign-ins from this Mac. Downloads stay in the Downloads folder.")
+                        if let vaultNote {
+                            Text(verbatim: vaultNote)
+                        }
                     }
             }
         }
