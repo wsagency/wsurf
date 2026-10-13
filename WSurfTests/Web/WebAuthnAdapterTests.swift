@@ -185,7 +185,9 @@ struct WebAuthnAdapterTests {
             The fixture document never became visible: window.isVisible=\(window.isVisible), \
             occluded=\(!window.occlusionState.contains(.visible)), attached=\(view.window === window), app.isActive=\(NSApp.isActive)
             """
-            if !shown { await release(view, native) }
+            if !shown {
+                await release(view, native)
+            }
             try #require(shown, Comment(rawValue: state))
         }
         return (view, native)

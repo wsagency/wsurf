@@ -75,7 +75,11 @@ struct VaultHistoryCountsTests {
                 await #expect {
                     _ = try await store.historyCounts(vaultID: f.vaultID, using: access)
                 } throws: { error in
-                    if case CredentialStoreError.integrityFailure = error { true } else { false }
+                    if case CredentialStoreError.integrityFailure = error {
+                        true
+                    } else {
+                        false
+                    }
                 }
             }
         }
