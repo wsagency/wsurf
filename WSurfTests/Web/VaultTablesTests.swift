@@ -346,7 +346,7 @@ struct VaultTablesTests {
         try queue.write { db in
             try db.execute(sql: "INSERT INTO vault(vaultID, role, ordinal, createdAt, wrappers, keyWrap) VALUES ('not-a-uuid', 'active', 9, 0.0, NULL, NULL)")
         }
-        try queue.read { db in
+        try queue.read { db -> Void in
             #expect(throws: (any Error).self) {
                 try StoreTables.vaultRows(db)
             }
