@@ -86,7 +86,7 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         let popup = Self.makeChooser(for: prompt)
         popup.map { alert.accessoryView = $0 }
 
-        switch await Self.present(alert, in: anchor, until: deadline) {
+        switch await NativeSheet.present(alert, in: anchor, until: deadline) {
         case .expired:
             return .expired
         case .cancelled:
@@ -111,7 +111,7 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
                 : String(localized: "You will choose an account next."))
         alert.addButton(withTitle: locked ? String(localized: "Unlock and Choose…") : String(localized: "Choose…"))
         alert.addButton(withTitle: String(localized: "Cancel"))
-        switch await Self.present(alert, in: anchor, until: deadline) {
+        switch await NativeSheet.present(alert, in: anchor, until: deadline) {
         case .expired:
             return .expired
         case .cancelled:
@@ -119,38 +119,6 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         case let .response(response):
             return response == .alertFirstButtonReturn ? .approved(choice: nil) : .declined
         }
-    }
-
-    private enum Presented { case response(NSApplication.ModalResponse), expired, cancelled }
-
-    /// Runs `alert` as a sheet that ends at the deadline or when the awaiting task is cancelled.
-    private static func present(_ alert: NSAlert, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> Presented {
-        final class Flag { var expired = false }
-        let flag = Flag()
-        let window = alert.window
-        // No deadline (a conditional request) means no timer: the sheet ends by an answer or by cancellation.
-        let timer = deadline.map { deadline in
-            Task { @MainActor in
-                guard (try? await Task.sleep(until: deadline, clock: .continuous)) != nil else { return }
-                flag.expired = true
-                anchor.endSheet(window, returnCode: .abort)
-            }
-        }
-        let response = await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                alert.beginSheetModal(for: anchor) { continuation.resume(returning: $0) }
-            }
-        } onCancel: {
-            Task { @MainActor in anchor.endSheet(window, returnCode: .abort) }
-        }
-        timer?.cancel()
-        if flag.expired {
-            return .expired
-        }
-        if Task.isCancelled {
-            return .cancelled
-        }
-        return .response(response)
     }
 
     func verifyUser(reason: String, until deadline: ContinuousClock.Instant?) async throws {

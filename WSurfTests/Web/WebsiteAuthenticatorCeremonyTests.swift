@@ -72,9 +72,9 @@ struct WebsiteAuthenticatorCeremonyTests {
     /// One real WebKit page on localhost whose profile is the fresh, test-owned profile of an unlocked encrypted vault.
     struct Fixture {
         let manager: CredentialManager
-        /// The page's own regular profile (never the original or a shared one), forgotten again by `cleanup`.
+        let vaultID: UUID
+        /// The page's own regular profile (never the original or a shared one), erased again by `cleanup`.
         let profile: Profile
-        let directory: URL
         let page: BrowserPage
         /// The page's tab: the object that owns the page's navigation delegate, so it must outlive the page's use.
         let tab: BrowserTab
@@ -84,9 +84,9 @@ struct WebsiteAuthenticatorCeremonyTests {
         let next: URL
         let frame: BrowserFrame
 
-        var file: URL { directory.appendingPathComponent("Credentials.vault", isDirectory: false) }
-        func bytes() throws -> Data {
-            try Data(contentsOf: file)
+        /// Every stored head, record and journal row of the vault: equal before and after means nothing was written.
+        func bytes() throws -> [String: Data] {
+            try VaultManagerFixture.rows(of: vaultID, in: profile)
         }
 
         func context(_ operation: WebAuthnOperation) async throws -> WebAuthnContext {
@@ -100,14 +100,13 @@ struct WebsiteAuthenticatorCeremonyTests {
         }
 
         func cleanup() async {
-            await Self.discard(page: page, window: window, directory: directory, profile: profile)
+            await Self.discard(page: page, window: window, profile: profile)
         }
 
-        static func discard(page: BrowserPage, window: NSWindow, directory: URL, profile: Profile) async {
+        static func discard(page: BrowserPage, window: NSWindow, profile: Profile) async {
             await page.close()
             window.close()
-            try? FileManager.default.removeItem(at: directory)
-            await Profile.erase(profile)
+            await VaultManagerFixture.erase(profile)
         }
     }
 
@@ -124,51 +123,49 @@ struct WebsiteAuthenticatorCeremonyTests {
             opensBlank: false, privately: false, context: BrowserProfileContext(profile: profile)
         )
         let page = tab.page
-        let clock = TestClock()
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let proof = VaultUnlockProof(
-            credentialID: Data(repeating: 1, count: 32),
-            prfInput: Data(repeating: 2, count: 32),
-            prf: SymmetricKey(size: .bits256)
-        )
-        let vault = try CredentialVault(profileID: profile.id, directory: directory, now: { clock.now })
-        let access = VaultAccess(profileID: profile.id, epoch: 1, deadline: clock.now.advanced(by: .seconds(300)))
-        try await vault.create(unlock: proof, access: access)
-        let manager = try CredentialManager(profile: profile, directory: directory, now: { clock.now })
-        try await manager.completeUnlock(credentialID: proof.credentialID, prf: proof.prf, access: manager.beginAccess())
+        let made = try await VaultManagerFixture.make(profile: profile, vaults: [.unlocked])
+        let vault = try #require(made.vaults.first)
 
         let headers = ["Permissions-Policy": "publickey-credentials-create=(self), publickey-credentials-get=(self)"]
-        let server = try await HTTPFixtureServer.start(routes: [
-            "/": .html("<!doctype html><title>Passkeys</title>", headers: headers),
-            "/next": .html("<!doctype html><title>Next</title>", headers: headers),
-        ])
-        var components = try #require(URLComponents(url: server.url(), resolvingAgainstBaseURL: false))
-        components.host = "localhost"
-        let url = try #require(components.url)
+        let server: HTTPFixtureServer
+        let url: URL
+        do {
+            server = try await HTTPFixtureServer.start(routes: [
+                "/": .html("<!doctype html><title>Passkeys</title>", headers: headers),
+                "/next": .html("<!doctype html><title>Next</title>", headers: headers),
+            ])
+            var components = try #require(URLComponents(url: server.url(), resolvingAgainstBaseURL: false))
+            components.host = "localhost"
+            url = try #require(components.url)
+        } catch {
+            await page.close()
+            await VaultManagerFixture.erase(profile)
+            throw error
+        }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 400), styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = page
         window.orderBack(nil)
         page.load(URLRequest(url: url))
         guard await PageSettle.untilIdle(page, timeout: .seconds(30)) else {
-            await Fixture.discard(page: page, window: window, directory: directory, profile: profile)
+            await Fixture.discard(page: page, window: window, profile: profile)
             throw FixtureError(reason: "page did not settle")
         }
         guard await waitUntil({ PageFrameRegistry.shared.mainFrame(in: page) != nil }),
               let frame = PageFrameRegistry.shared.mainFrame(in: page),
               let host = url.host, let scheme = url.scheme else {
-            await Fixture.discard(page: page, window: window, directory: directory, profile: profile)
+            await Fixture.discard(page: page, window: window, profile: profile)
             throw FixtureError(reason: "no main frame")
         }
         let port = url.port.map { ":\($0)" } ?? ""
         return Fixture(
-            manager: manager, profile: profile, directory: directory, page: page, tab: tab, window: window, server: server,
+            manager: vault.manager, vaultID: vault.vaultID, profile: profile, page: page, tab: tab, window: window, server: server,
             origin: "\(scheme)://\(host)\(port)", next: url.appendingPathComponent("next"), frame: frame
         )
     }
 
     /// Runs `body` with a fixture and tears it down on every exit, awaited: the page is closed before the window it lives
-    /// in and the vault directory it reads are released.
+    /// in and the vault store it reads are released.
     func withFixture(_ body: (Fixture) async throws -> Void) async throws {
         let fixture = try await fixture()
         do { try await body(fixture) } catch { await fixture.cleanup(); throw error }
@@ -493,12 +490,11 @@ struct WebsiteAuthenticatorCeremonyTests {
 
             // A manager for another profile never serves this page's context.
             let otherProfile = Profile(id: UUID(), name: "Other", symbol: "briefcase", color: .blue)
-            let otherDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-            defer { try? FileManager.default.removeItem(at: otherDirectory) }
-            let foreign = try CredentialManager(profile: otherProfile, directory: otherDirectory, now: { ContinuousClock.now })
+            let foreign = try #require(try await VaultManagerFixture.make(profile: otherProfile, vaults: [.locked]).vaults.first).manager
             await #expect(throws: WebsiteAuthenticatorError.self) {
                 try await WebsiteAuthenticator.perform(creation(), context: fixture.context(.create), manager: foreign, in: NSWindow(), interaction: user)
             }
+            await VaultManagerFixture.cleanup(otherProfile)
 
             // A context made for an assertion cannot register, and the reverse.
             let wrongOperation = try await fixture.context(.get)

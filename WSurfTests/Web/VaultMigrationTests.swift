@@ -454,7 +454,9 @@ struct VaultMigrationTests {
                 try await routed(store, vaultID, proof, confirm: true, access: newAccess(env.profileID))
             case .firstVault:
                 proof = VaultFixtures.proof()
-                vaultID = try await store.createVault(name: "Personal", unlock: proof, authorizedBy: .firstVault)
+                vaultID = try await store.createVault(
+                    name: "Personal", unlock: proof, authorizedBy: .firstVault(lease: newAccess(env.profileID))
+                )
             }
 
             // Every hook that ran after the pending store was first closed saw neither `-wal` nor `-shm`.
@@ -694,7 +696,7 @@ struct VaultPreUnlockDiscoveryTests {
             let proof = VaultFixtures.proof()
             let crash = tracker.makeStore(env: env, fileOps: probingOps(in: env.directory, hook: stopping(after: 7)))
             await #expect(throws: SeamStop(step: 7)) {
-                _ = try await crash.createVault(name: "Personal", unlock: proof, authorizedBy: .firstVault)
+                _ = try await crash.createVault(name: "Personal", unlock: proof, authorizedBy: .firstVault(lease: newAccess(env.profileID)))
             }
             guard case .resumeMigration = state(env) else { throw MigrationTestFailure("not a resume state") }
             let image = try directoryImage(env.directory)

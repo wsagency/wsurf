@@ -6,7 +6,7 @@ import Foundation
 
 nonisolated extension CredentialExchangeCodec {
     static func export(
-        _ snapshot: VaultSnapshot,
+        _ snapshot: StoreSnapshot,
         selection: [CredentialExportSelection],
         format: ASExportedCredentialData.FormatVersion
     ) throws -> ASExportedCredentialData {

@@ -32,8 +32,9 @@ nonisolated enum OperationLock {
 
     /// flock(2) on `<directory>/Credentials.lock`, polled every 10 ms. Each call opens its own descriptor, so holders
     /// in one process conflict like holders in two processes; a shared holder asking for exclusive times out
-    /// (`.storeBusy`) instead of upgrading.
-    static func acquire(in directory: URL, mode: Mode, wait: Duration = StoreFormat.lockWait) async throws -> OperationLockHold {
+    /// (`.storeBusy`) instead of upgrading. `nonisolated(nonsending)`: the call runs on the caller's actor, so the directory and
+    /// lock-file creation happen under the store actor before the first suspension (the poll loop), with no hop.
+    nonisolated(nonsending) static func acquire(in directory: URL, mode: Mode, wait: Duration = StoreFormat.lockWait) async throws -> OperationLockHold {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let file = directory.appendingPathComponent("Credentials.lock")
         var errorCode: Int32 = 0

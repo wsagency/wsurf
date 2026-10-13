@@ -59,7 +59,7 @@ extension ProfileVaultStore {
         scratchWarning: (@Sendable (URL) -> Void)?
     ) async throws {
         try access.checkAuthorization(at: now())  // no migration for an access that is already dead
-        let hold = try await OperationLock.acquire(in: directory, mode: .exclusive, wait: lockWait)
+        let hold = try await acquireOperation(mode: .exclusive)
         defer { hold.release() }
         do {
             switch openState() {

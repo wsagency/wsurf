@@ -415,7 +415,7 @@ extension WebsiteAuthenticator {
         guard manager.authorizationEpoch == bound.epoch, let before = manager.stableGeneration else {
             throw WebsiteAuthenticatorError.notAllowed
         }
-        let snapshot: VaultSnapshot
+        let snapshot: StoreSnapshot
         do { snapshot = try await manager.snapshot() } catch { throw vaultFailure(error) }
         try Task.checkCancellation()
         guard manager.authorizationEpoch == bound.epoch else { throw WebsiteAuthenticatorError.notAllowed }

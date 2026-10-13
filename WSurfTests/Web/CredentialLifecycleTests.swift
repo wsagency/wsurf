@@ -9,70 +9,96 @@ import Testing
 
 @testable import WSurf
 
-// Crypto/lifecycle verification only: PRF material is a test-only in-memory key handed straight to
-// `completeUnlock`/`completeCreate`. Nothing here is evidence of Apple provider or PRF behavior.
+// Crypto/lifecycle verification only: PRF material is a test-only in-memory key handed straight to `completeUnlock`. Nothing here
+// is evidence of Apple provider or PRF behavior.
 
 private nonisolated let allLockReasons: [CredentialLockReason] = [
     .manual, .profileSwitch, .screenLock, .sleep, .termination, .timeout,
 ]
 
+/// The manager's clock for "the write landed, then the lease ran out": once armed, the first read after the store's files differ from the
+/// baseline jumps the shared clock past any five-minute lease. `-shm` is excluded: readers update it without writing anything.
+private nonisolated final class CommitTripwire: Sendable {
+    private let directory: URL
+    private let clock: TestClock
+    private let state = Mutex<(baseline: [String: Data]?, fired: Bool)>((nil, false))
+
+    init(directory: URL, clock: TestClock) {
+        self.directory = directory
+        self.clock = clock
+    }
+
+    func arm() {
+        let image = Self.image(directory)
+        state.withLock { $0.baseline = image }
+    }
+
+    var fired: Bool {
+        state.withLock { $0.fired }
+    }
+
+    func now() -> ContinuousClock.Instant {
+        let (baseline, done) = state.withLock { ($0.baseline, $0.fired) }
+        if let baseline, !done, Self.image(directory) != baseline {
+            state.withLock { $0.fired = true }
+            clock.advance(by: .seconds(300))
+        }
+        return clock.now
+    }
+
+    private static func image(_ directory: URL) -> [String: Data] {
+        ((try? VaultStoreFixture.directoryImage(of: directory)) ?? [:]).filter { !$0.key.hasSuffix("-shm") }
+    }
+}
+
 struct CredentialLifecycleTests {
+    /// One vault over a private store directory and an injected clock, locked, with the store's rows as the "disk bytes".
     private struct Fixture {
-        let profile: Profile
-        let directory: URL
-        let proof: VaultUnlockProof
-        let clock: TestClock
+        let standalone: VaultManagerFixture.Standalone
 
-        var fileURL: URL { directory.appendingPathComponent("Credentials.vault", isDirectory: false) }
+        var proof: VaultUnlockProof {
+            standalone.vault.proof
+        }
 
-        func manager(now: (@Sendable () -> ContinuousClock.Instant)? = nil) throws -> CredentialManager {
+        var clock: TestClock {
+            standalone.clock
+        }
+
+        var directory: URL {
+            standalone.environment.directory
+        }
+
+        /// A new, locked manager over the same store (not in the registry); `now` defaults to the fixture clock.
+        func manager(now: (@Sendable () -> ContinuousClock.Instant)? = nil) -> CredentialManager {
             let clock = clock
-            return try CredentialManager(profile: profile, directory: directory, now: now ?? { clock.now })
+            return VaultManagerFixture.manager(
+                profileID: standalone.profile.id, vaultID: standalone.vault.vaultID, store: standalone.store,
+                passkeys: standalone.passkeys, now: now ?? { clock.now }
+            )
         }
 
-        func bytes() throws -> Data {
-            try Data(contentsOf: fileURL)
+        func bytes() throws -> [String: Data] {
+            try VaultManagerFixture.rows(of: standalone.vault.vaultID, inDirectory: directory)
         }
 
+        /// No connection outlives a store operation, so removing the directory needs no store close.
         func cleanup() {
-            try? FileManager.default.removeItem(at: directory)
+            standalone.environment.cleanUp()
         }
     }
 
     private func account(username: String = "ada") -> CredentialAccount {
-        CredentialAccount(
-            id: UUID(),
-            username: username,
-            displayName: nil,
-            origins: ["https://example.test"],
-            loginURLs: [URL(string: "https://example.test/login")!],
-            password: "secret",
-            passkeys: [],
-            totp: nil,
-            exchangeAccountID: nil,
-            exchangeItemID: nil
-        )
+        VaultFixtures.account(username: username)
     }
 
-    /// Real encrypted vault file created through the Task 4 actor; revision 1 when `accounts` is non-empty.
-    private func makeFixture(accounts: [CredentialAccount] = [], vaultExists: Bool = true, seed: UInt8 = 1) async throws -> Fixture {
-        let clock = TestClock()
-        let profile = Profile(id: UUID(), name: "Work", symbol: "briefcase", color: .blue)
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let proof = VaultUnlockProof(
-            credentialID: Data(repeating: seed, count: 32),
-            prfInput: Data(repeating: seed &+ 1, count: 32),
-            prf: SymmetricKey(size: .bits256)
-        )
-        if vaultExists {
-            let vault = try CredentialVault(profileID: profile.id, directory: directory, now: { clock.now })
-            let access = VaultAccess(profileID: profile.id, epoch: 1, deadline: clock.now.advanced(by: .seconds(300)))
-            try await vault.create(unlock: proof, access: access)
-            if !accounts.isEmpty {
-                _ = try await vault.commit(accounts, expectedRevision: 0, using: access)
-            }
+    /// A real encrypted vault in a private store; revision 1 (2 when `accounts` is non-empty: seeding is one commit). The manager that seeded it is locked again.
+    private func makeFixture(accounts: [CredentialAccount] = []) async throws -> Fixture {
+        let standalone = try await VaultManagerFixture.standalone(unlocked: !accounts.isEmpty)
+        if !accounts.isEmpty {
+            try await VaultManagerFixture.save(accounts, in: standalone.vault)
+            standalone.manager.lock(reason: .manual)
         }
-        return Fixture(profile: profile, directory: directory, proof: proof, clock: clock)
+        return Fixture(standalone: standalone)
     }
 
     private func unlock(_ manager: CredentialManager, _ f: Fixture) async throws {
@@ -85,7 +111,7 @@ struct CredentialLifecycleTests {
     func lateUnlockCannotReopenRevokedProfile(reason: CredentialLockReason) async throws {
         let f = try await makeFixture(accounts: [account()])
         defer { f.cleanup() }
-        let manager = try f.manager()
+        let manager = f.manager()
         let original = try f.bytes()
 
         let pending = manager.beginAccess()
@@ -101,75 +127,68 @@ struct CredentialLifecycleTests {
         try await unlock(manager, f)
         #expect(manager.isUnlocked)
         #expect(manager.unlockCredentials.map(\.credentialID) == [f.proof.credentialID])
-        #expect(try await manager.snapshot().revision == 1)
+        #expect(try await manager.snapshot().revision == 2)
     }
 
+    // A lock that lands while the registration prompt is open stops the creation before the store is written; a later creation is
+    // unaffected and, like every creation, leaves the new vault locked.
     @Test(arguments: allLockReasons)
-    func lateCreateCannotWriteVaultFile(reason: CredentialLockReason) async throws {
-        let f = try await makeFixture(vaultExists: false)
-        defer { f.cleanup() }
-        let manager = try f.manager()
-
-        let pending = manager.beginAccess()
-        manager.lock(reason: reason)
-        await #expect(throws: CredentialVaultError.unauthorized) {
-            try await manager.completeCreate(f.proof, access: pending)
-        }
-        #expect(!manager.isUnlocked)
-        #expect(!FileManager.default.fileExists(atPath: f.fileURL.path))
-
-        try await manager.completeCreate(f.proof, access: manager.beginAccess())
-        #expect(manager.isUnlocked)
-        #expect(FileManager.default.fileExists(atPath: f.fileURL.path))
-        #expect(manager.unlockCredentials.map(\.credentialID) == [f.proof.credentialID])
-    }
-
-    @Test func vaultExistsRefreshesUnlockMetadataWithoutUnlocking() async throws {
-        let f = try await makeFixture(accounts: [account()])
-        defer { f.cleanup() }
-        let manager = try f.manager()
-
-        #expect(manager.unlockCredentials.isEmpty)
-        #expect(try await manager.vaultExists())
-        #expect(manager.unlockCredentials.map(\.credentialID) == [f.proof.credentialID])
-        #expect(manager.authorizationEpoch == nil)
-        #expect(!manager.isUnlocked)
-
-        try FileManager.default.removeItem(at: f.fileURL)
-        #expect(try await manager.vaultExists() == false)
-        #expect(manager.unlockCredentials.isEmpty)
-        #expect(manager.authorizationEpoch == nil)
-    }
-    @Test func vaultExistsPropagatesCorruptionWithoutUnlocking() async throws {
-        let f = try await makeFixture(accounts: [account()])
-        defer { f.cleanup() }
-        try Data("not a credential vault".utf8).write(to: f.fileURL)
-        let manager = try f.manager()
-
-        await #expect(throws: CredentialVaultError.corruptVault) { try await manager.vaultExists() }
-        #expect(manager.unlockCredentials.isEmpty)
-        #expect(manager.authorizationEpoch == nil)
-        #expect(!manager.isUnlocked)
-    }
-
-    @Test func committedCreateDoesNotActivateAccessExpiredDuringWrite() async throws {
-        let f = try await makeFixture(vaultExists: false)
-        defer { f.cleanup() }
-        let fileURL = f.fileURL
-        let clock = f.clock
-        let manager = try f.manager(now: {
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                clock.advance(by: .seconds(300))
+    func lateCreateCannotWriteAVault(reason: CredentialLockReason) async throws {
+        let profile = try await VaultManagerFixture.newProfile()
+        let passkeys = VaultPasskeys()
+        passkeys.beforeRegister = { CredentialManager.lock(profileID: profile.id, reason: reason) }
+        let anchor = VaultManagerFixture.anchor()
+        do {
+            await #expect(throws: (any Error).self) {
+                _ = try await CredentialManager.createVault(
+                    profile: profile, name: "Late", choice: .newPasskey(authorizedBy: nil), in: anchor, native: passkeys.native
+                )
             }
-            return clock.now
-        })
+            let store = try CredentialManager.store(for: profile)
+            #expect(try await store.listing().isEmpty)
 
-        try await manager.completeCreate(f.proof, access: manager.beginAccess())
+            passkeys.beforeRegister = nil
+            let vaultID = try await CredentialManager.createVault(
+                profile: profile, name: "Fresh", choice: .newPasskey(authorizedBy: nil), in: anchor, native: passkeys.native
+            )
+            #expect(try await store.listing().map(\.isUnlocked) == [false])
+            #expect(!(try CredentialManager.forVault(profile, vaultID: vaultID)).isUnlocked)
+        } catch {
+            await VaultManagerFixture.cleanup(profile)
+            throw error
+        }
+        await VaultManagerFixture.cleanup(profile)
+    }
 
-        #expect(FileManager.default.fileExists(atPath: f.fileURL.path))
+    @Test func discoverUnlocksRefreshesUnlockMetadataWithoutUnlocking() async throws {
+        let f = try await makeFixture(accounts: [account()])
+        defer { f.cleanup() }
+        let manager = f.manager()
+
+        #expect(manager.unlockCredentials.isEmpty)
+        try await manager.discoverUnlocks()
+        #expect(manager.unlockCredentials.map(\.credentialID) == [f.proof.credentialID])
         #expect(manager.authorizationEpoch == nil)
         #expect(!manager.isUnlocked)
-        await #expect(throws: CredentialVaultError.unauthorized) { _ = try await manager.snapshot() }
+    }
+
+    @Test func discoverUnlocksPropagatesCorruptionWithoutUnlocking() async throws {
+        let environment = try VaultTestEnvironment.make()
+        defer { environment.cleanUp() }
+        try Data("not a credential vault".utf8).write(to: environment.directory.appendingPathComponent("Credentials.vault"))
+        let store = ProfileVaultStore(
+            profileID: environment.profileID, directory: environment.directory, defaults: environment.defaults,
+            now: { environment.clock.now }
+        )
+        let manager = VaultManagerFixture.manager(
+            profileID: environment.profileID, vaultID: UUID(), store: store, passkeys: VaultPasskeys()
+        )
+
+        await #expect(throws: (any Error).self) { try await manager.discoverUnlocks() }
+        #expect(manager.unlockCredentials.isEmpty)
+        #expect(manager.authorizationEpoch == nil)
+        #expect(!manager.isUnlocked)
+        await store.close()
     }
 
     // MARK: - Five-minute ceiling
@@ -177,7 +196,7 @@ struct CredentialLifecycleTests {
     @Test func authorizationExpiresAtFiveMinutes() async throws {
         let f = try await makeFixture(accounts: [account()])
         defer { f.cleanup() }
-        let manager = try f.manager()
+        let manager = f.manager()
         try await unlock(manager, f)
 
         // Repeated use is "webpage activity": it must not move the deadline.
@@ -186,17 +205,17 @@ struct CredentialLifecycleTests {
         f.clock.advance(by: .seconds(100))
         _ = try await manager.snapshot()
         f.clock.advance(by: .seconds(99))
-        #expect(try await manager.snapshot().revision == 1)
+        #expect(try await manager.snapshot().revision == 2)
         let epoch = try #require(manager.authorizationEpoch)
-        #expect(try await manager.commit([account(username: "grace")], expectedRevision: 1, authorizedEpoch: epoch).revision == 2)
+        #expect(try await manager.commit([account(username: "grace")], expectedRevision: 2, authorizedEpoch: epoch).revision == 3)
 
         let committed = try f.bytes()
         f.clock.advance(by: .seconds(1))
         await #expect(throws: CredentialVaultError.expired) { _ = try await manager.snapshot() }
-        // A manager may lock itself once it observes expiry; either rejection keeps the file untouched.
+        // A manager may lock itself once it observes expiry; either rejection keeps the store untouched.
         let operations: [() async throws -> Void] = [
-            { _ = try await manager.commit([], expectedRevision: 2, authorizedEpoch: epoch) },
-            { _ = try await manager.updatePasswordSavePolicy([], expectedRevision: 2, authorizedEpoch: epoch) },
+            { _ = try await manager.commit([], expectedRevision: 3, authorizedEpoch: epoch) },
+            { _ = try await manager.updatePasswordSavePolicy([], expectedRevision: 3, authorizedEpoch: epoch) },
         ]
         for operation in operations {
             do {
@@ -212,7 +231,7 @@ struct CredentialLifecycleTests {
     @Test func authorizationPropertiesExpireBeforeSnapshotWhenTimerHasNotRun() async throws {
         let f = try await makeFixture(accounts: [account()])
         defer { f.cleanup() }
-        let manager = try f.manager()
+        let manager = f.manager()
         try await unlock(manager, f)
 
         #expect(manager.authorizationEpoch != nil)
@@ -220,10 +239,11 @@ struct CredentialLifecycleTests {
         #expect(manager.authorizationEpoch == nil)
         #expect(!manager.isUnlocked)
     }
+
     @Test func authorizationPropertiesIgnoreCallerTaskCancellation() async throws {
         let f = try await makeFixture(accounts: [account()])
         defer { f.cleanup() }
-        let manager = try f.manager()
+        let manager = f.manager()
         try await unlock(manager, f)
         let epoch = manager.authorizationEpoch
 
@@ -293,27 +313,14 @@ struct CredentialLifecycleTests {
     }
 
     @Test @MainActor func fullUnlockVaultFailsCapacityPreflightBeforeProvider() async throws {
-        let clock = TestClock()
-        let profile = Profile(id: UUID(), name: "Full", symbol: "key", color: .blue)
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        func proof(_ seed: UInt8) -> VaultUnlockProof {
-            VaultUnlockProof(
-                credentialID: Data(repeating: seed, count: 32),
-                prfInput: Data(repeating: seed &+ 1, count: 32),
-                prf: SymmetricKey(size: .bits256)
-            )
-        }
-        let first = proof(1)
-        let vault = try CredentialVault(profileID: profile.id, directory: directory, now: { clock.now })
-        let initialAccess = VaultAccess(profileID: profile.id, epoch: 1, deadline: clock.now.advanced(by: .seconds(300)))
-        try await vault.create(unlock: first, access: initialAccess)
-        for seed in UInt8(2)...UInt8(32) {
-            _ = try await vault.addUnlock(proof(seed), using: initialAccess)
-        }
-        let manager = try CredentialManager(profile: profile, directory: directory, now: { clock.now })
+        let s = try await VaultManagerFixture.standalone(unlocked: false)
+        defer { s.environment.cleanUp() }
+        let manager = s.manager
         let access = manager.beginAccess()
-        try await manager.completeUnlock(credentialID: first.credentialID, prf: first.prf, access: access)
+        try await manager.completeUnlock(credentialID: s.vault.proof.credentialID, prf: s.vault.proof.prf, access: access)
+        for seed in UInt8(2)...UInt8(32) {
+            _ = try await manager.completeAddUnlock(VaultFixtures.proof(seed), using: access)
+        }
 
         await #expect(throws: CredentialVaultError.oversized) {
             try await manager.preflightAddingUnlock(using: access)
@@ -322,40 +329,21 @@ struct CredentialLifecycleTests {
     }
 
     @Test @MainActor func committedAddReceiptSurvivesStaleAccessWithoutMetadataDuplication() async throws {
-        let clock = TestClock()
-        let profile = Profile(id: UUID(), name: "Add", symbol: "key", color: .blue)
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        func proof(_ seed: UInt8) -> VaultUnlockProof {
-            VaultUnlockProof(
-                credentialID: Data(repeating: seed, count: 32),
-                prfInput: Data(repeating: seed &+ 1, count: 32),
-                prf: SymmetricKey(size: .bits256)
-            )
-        }
-        let first = proof(1), added = proof(2)
-        let vault = try CredentialVault(profileID: profile.id, directory: directory, now: { clock.now })
-        let initialAccess = VaultAccess(profileID: profile.id, epoch: 1, deadline: clock.now.advanced(by: .seconds(300)))
-        try await vault.create(unlock: first, access: initialAccess)
-        let fileURL = directory.appendingPathComponent("Credentials.vault")
-        let original = try Data(contentsOf: fileURL)
-        let observedCommittedWrite = Mutex(false)
-        let manager = try CredentialManager(profile: profile, directory: directory, now: {
-            let changed = !observedCommittedWrite.withLock { $0 }
-                && ((try? Data(contentsOf: fileURL)) != original)
-            if changed {
-                observedCommittedWrite.withLock { $0 = true }
-                clock.advance(by: .seconds(300))
-            }
-            return clock.now
-        })
+        let s = try await VaultManagerFixture.standalone(unlocked: false)
+        defer { s.environment.cleanUp() }
+        let first = s.vault.proof, added = VaultFixtures.proof(2)
+        let tripwire = CommitTripwire(directory: s.environment.directory, clock: s.clock)
+        let manager = VaultManagerFixture.manager(
+            profileID: s.profile.id, vaultID: s.vault.vaultID, store: s.store, passkeys: s.passkeys, now: { tripwire.now() }
+        )
         let access = manager.beginAccess()
         try await manager.completeUnlock(credentialID: first.credentialID, prf: first.prf, access: access)
+        tripwire.arm()
 
         let receipt = try await manager.completeAddUnlock(added, using: access)
 
-        #expect(observedCommittedWrite.withLock { $0 })
-        #expect(receipt.revision == 1)
+        #expect(tripwire.fired)
+        #expect(receipt.revision == 2)
         #expect(manager.authorizationEpoch == nil)
         #expect(manager.unlockCredentials.map(\.credentialID) == [first.credentialID])
 
@@ -367,36 +355,21 @@ struct CredentialLifecycleTests {
     }
 
     @Test @MainActor func committedRemoveReceiptSurvivesExpiredAccessWithoutMutatingMetadata() async throws {
-        let clock = TestClock()
-        let profile = Profile(id: UUID(), name: "Remove", symbol: "key", color: .blue)
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        func proof(_ seed: UInt8) -> VaultUnlockProof {
-            VaultUnlockProof(
-                credentialID: Data(repeating: seed, count: 32),
-                prfInput: Data(repeating: seed &+ 1, count: 32),
-                prf: SymmetricKey(size: .bits256)
-            )
-        }
-        let first = proof(1), remaining = proof(2)
-        let vault = try CredentialVault(profileID: profile.id, directory: directory, now: { clock.now })
-        let initialAccess = VaultAccess(profileID: profile.id, epoch: 1, deadline: clock.now.advanced(by: .seconds(300)))
-        try await vault.create(unlock: first, access: initialAccess)
-        _ = try await vault.addUnlock(remaining, using: initialAccess)
-        let fileURL = directory.appendingPathComponent("Credentials.vault")
-        let original = try Data(contentsOf: fileURL)
-        let observedCommittedWrite = Mutex(false)
-        let manager = try CredentialManager(profile: profile, directory: directory, now: {
-            let changed = !observedCommittedWrite.withLock { $0 }
-                && ((try? Data(contentsOf: fileURL)) != original)
-            if changed {
-                observedCommittedWrite.withLock { $0 = true }
-                clock.advance(by: .seconds(300))
-            }
-            return clock.now
-        })
+        let s = try await VaultManagerFixture.standalone(unlocked: false)
+        defer { s.environment.cleanUp() }
+        let first = s.vault.proof, remaining = VaultFixtures.proof(2)
+        let seeding = s.manager.beginAccess()
+        try await s.manager.completeUnlock(credentialID: first.credentialID, prf: first.prf, access: seeding)
+        _ = try await s.manager.completeAddUnlock(remaining, using: seeding)
+        s.manager.lock(reason: .manual)
+
+        let tripwire = CommitTripwire(directory: s.environment.directory, clock: s.clock)
+        let manager = VaultManagerFixture.manager(
+            profileID: s.profile.id, vaultID: s.vault.vaultID, store: s.store, passkeys: s.passkeys, now: { tripwire.now() }
+        )
         let access = manager.beginAccess()
         try await manager.completeUnlock(credentialID: first.credentialID, prf: first.prf, access: access)
+        tripwire.arm()
 
         let receipt = try await manager.completeRemoveUnlock(
             credentialID: first.credentialID,
@@ -404,8 +377,8 @@ struct CredentialLifecycleTests {
             using: access
         )
 
-        #expect(observedCommittedWrite.withLock { $0 })
-        #expect(receipt.revision == 2)
+        #expect(tripwire.fired)
+        #expect(receipt.revision == 3)
         #expect(manager.authorizationEpoch == nil)
         #expect(manager.unlockCredentials.map(\.credentialID) == [first.credentialID, remaining.credentialID])
         let fresh = manager.beginAccess()
@@ -418,13 +391,13 @@ struct CredentialLifecycleTests {
         let late = try await makeFixture(accounts: [account()])
         defer { inTime.cleanup(); late.cleanup() }
 
-        let acceptedManager = try inTime.manager()
+        let acceptedManager = inTime.manager()
         let accepted = acceptedManager.beginAccess()
         inTime.clock.advance(by: .seconds(299))
         try await acceptedManager.completeUnlock(credentialID: inTime.proof.credentialID, prf: inTime.proof.prf, access: accepted)
         #expect(acceptedManager.isUnlocked)
 
-        let rejectedManager = try late.manager()
+        let rejectedManager = late.manager()
         let rejected = rejectedManager.beginAccess()
         late.clock.advance(by: .seconds(300))
         await #expect(throws: CredentialVaultError.expired) {
@@ -438,14 +411,15 @@ struct CredentialLifecycleTests {
         defer { f.cleanup() }
         let original = try f.bytes()
         let calls = Mutex(0)
-        let manager = try f.manager(now: {
+        let clock = f.clock
+        let manager = f.manager(now: {
             let call = calls.withLock { count -> Int in
                 count += 1
                 return count
             }
-            let instant = f.clock.now
+            let instant = clock.now
             if call == 3 {
-                f.clock.advance(by: .seconds(300))
+                clock.advance(by: .seconds(300))
             }
             return instant
         })
@@ -465,7 +439,7 @@ struct CredentialLifecycleTests {
     func securityEventsRevokeAccess(reason: CredentialLockReason) async throws {
         let f = try await makeFixture(accounts: [account()])
         defer { f.cleanup() }
-        let manager = try f.manager()
+        let manager = f.manager()
         let access = manager.beginAccess()
         try await manager.completeUnlock(credentialID: f.proof.credentialID, prf: f.proof.prf, access: access)
         #expect(manager.isUnlocked)
@@ -477,8 +451,8 @@ struct CredentialLifecycleTests {
 
         #expect(!manager.isUnlocked)
         await #expect(throws: CredentialVaultError.unauthorized) { _ = try await manager.snapshot() }
-        await #expect(throws: CredentialVaultError.unauthorized) { _ = try await manager.commit([], expectedRevision: 1, authorizedEpoch: epoch) }
-        await #expect(throws: CredentialVaultError.unauthorized) { _ = try await manager.updatePasswordSavePolicy(["https://example.test"], expectedRevision: 1, authorizedEpoch: epoch) }
+        await #expect(throws: CredentialVaultError.unauthorized) { _ = try await manager.commit([], expectedRevision: 2, authorizedEpoch: epoch) }
+        await #expect(throws: CredentialVaultError.unauthorized) { _ = try await manager.updatePasswordSavePolicy(["https://example.test"], expectedRevision: 2, authorizedEpoch: epoch) }
         // The revoked access cannot be replayed to reopen the vault.
         await #expect(throws: CredentialVaultError.unauthorized) {
             try await manager.completeUnlock(credentialID: f.proof.credentialID, prf: f.proof.prf, access: access)
@@ -494,7 +468,7 @@ struct CredentialLifecycleTests {
     @Test func writesPreparedUnderAnEarlierEpochAreRefusedAfterLockAndReunlock() async throws {
         let f = try await makeFixture(accounts: [account()])
         defer { f.cleanup() }
-        let manager = try f.manager()
+        let manager = f.manager()
         try await unlock(manager, f)
         let prepared = try #require(manager.authorizationEpoch)
         let before = try f.bytes()
@@ -505,28 +479,29 @@ struct CredentialLifecycleTests {
         #expect(current != prepared)
 
         await #expect(throws: CredentialVaultError.unauthorized) {
-            _ = try await manager.commit([account(username: "stale")], expectedRevision: 1, authorizedEpoch: prepared)
+            _ = try await manager.commit([account(username: "stale")], expectedRevision: 2, authorizedEpoch: prepared)
         }
         await #expect(throws: CredentialVaultError.unauthorized) {
-            _ = try await manager.updatePasswordSavePolicy(["https://stale.example"], expectedRevision: 1, authorizedEpoch: prepared)
+            _ = try await manager.updatePasswordSavePolicy(["https://stale.example"], expectedRevision: 2, authorizedEpoch: prepared)
         }
         #expect(try f.bytes() == before)
-        #expect(try await manager.snapshot().revision == 1)
+        #expect(try await manager.snapshot().revision == 2)
 
         // The lease that is current still writes both kinds.
-        #expect(try await manager.commit([account(username: "fresh")], expectedRevision: 1, authorizedEpoch: current).revision == 2)
-        #expect(try await manager.updatePasswordSavePolicy(["https://fresh.example"], expectedRevision: 2, authorizedEpoch: current).revision == 3)
+        #expect(try await manager.commit([account(username: "fresh")], expectedRevision: 2, authorizedEpoch: current).revision == 3)
+        #expect(try await manager.updatePasswordSavePolicy(["https://fresh.example"], expectedRevision: 3, authorizedEpoch: current).revision == 4)
     }
 
     // MARK: - Isolation
 
+    // A vault copied under another profile is refused by the store itself (VaultIntegrityTests head-wrong-profile, VaultMigrationTests
+    // wrong-profile); what stays here is that one manager's lease never opens, locks or touches another's.
     @Test func profilesAndPrivatePagesStayIsolated() async throws {
-        let a = try await makeFixture(accounts: [account()], seed: 1)
-        let b = try await makeFixture(accounts: [account(username: "other")], seed: 5)
-        let foreign = try await makeFixture(vaultExists: false, seed: 9)
-        defer { a.cleanup(); b.cleanup(); foreign.cleanup() }
-        let first = try a.manager()
-        let second = try b.manager()
+        let a = try await makeFixture(accounts: [account()])
+        let b = try await makeFixture(accounts: [account(username: "other")])
+        defer { a.cleanup(); b.cleanup() }
+        let first = a.manager()
+        let second = b.manager()
         let accessOfFirst = first.beginAccess()
         try await first.completeUnlock(credentialID: a.proof.credentialID, prf: a.proof.prf, access: accessOfFirst)
         let secondBytes = try b.bytes()
@@ -539,74 +514,81 @@ struct CredentialLifecycleTests {
         #expect(!second.isUnlocked)
         #expect(try b.bytes() == secondBytes)
 
-        // A copied vault is bound to its own profile and cannot be opened under another one.
-        try FileManager.default.createDirectory(at: foreign.directory, withIntermediateDirectories: true)
-        try a.bytes().write(to: foreign.fileURL)
-        let stranger = try foreign.manager()
-        await #expect(throws: (any Error).self) {
-            try await stranger.completeUnlock(credentialID: a.proof.credentialID, prf: a.proof.prf, access: stranger.beginAccess())
-        }
-        #expect(!stranger.isUnlocked)
-
         // Locking one profile does not lock the other.
-        let third = try await makeFixture(accounts: [account()], seed: 7)
+        let third = try await makeFixture(accounts: [account()])
         defer { third.cleanup() }
-        let independent = try third.manager()
+        let independent = third.manager()
         try await unlock(independent, third)
         first.lock(reason: .profileSwitch)
         #expect(independent.isUnlocked)
-        #expect(try await independent.snapshot().revision == 1)
+        #expect(try await independent.snapshot().revision == 2)
     }
 
-    @Test func privateBrowsingNeverGetsAManagerOrVault() async throws {
-        let privateFile = Profile.privateBrowsing().supportDirectory.appendingPathComponent("Credentials.vault")
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+    @Test func privateBrowsingNeverGetsAManagerOrVault() throws {
+        let privateDirectory = Profile.privateBrowsing().supportDirectory
 
-        #expect(throws: CredentialVaultError.privateBrowsing) { try CredentialManager.forProfile(Profile.privateBrowsing()) }
+        #expect(throws: CredentialVaultError.privateBrowsing) { try CredentialManager.store(for: Profile.privateBrowsing()) }
         #expect(throws: CredentialVaultError.privateBrowsing) {
-            try CredentialManager(profile: Profile.privateBrowsing(), directory: directory)
+            try CredentialManager.forVault(Profile.privateBrowsing(), vaultID: UUID())
         }
-        #expect(!FileManager.default.fileExists(atPath: privateFile.path))
-        #expect(!FileManager.default.fileExists(atPath: directory.path))
+        for name in ["Credentials.store", "Credentials.vault"] {
+            #expect(!FileManager.default.fileExists(atPath: privateDirectory.appendingPathComponent(name).path))
+        }
     }
 
-    @Test func forProfileSharesOneLockStatePerProfile() throws {
-        let profile = Profile(id: UUID(), name: "Work", symbol: "briefcase", color: .blue)
-        let other = Profile(id: UUID(), name: "Home", symbol: "house", color: .green)
-        defer { for p in [profile, other] { try? FileManager.default.removeItem(at: p.supportDirectory) } }
-        #expect(try CredentialManager.forProfile(profile) === CredentialManager.forProfile(profile))
-        #expect(try CredentialManager.forProfile(profile) !== CredentialManager.forProfile(other))
+    @Test func forVaultSharesOneLockStatePerVault() async throws {
+        let profile = try await VaultManagerFixture.newProfile("Work")
+        let other = try await VaultManagerFixture.newProfile("Home")
+        let vaultID = UUID()
+        #expect(try CredentialManager.forVault(profile, vaultID: vaultID) === CredentialManager.forVault(profile, vaultID: vaultID))
+        #expect(try CredentialManager.forVault(profile, vaultID: vaultID) !== CredentialManager.forVault(profile, vaultID: UUID()))
+        #expect(try CredentialManager.forVault(profile, vaultID: vaultID) !== CredentialManager.forVault(other, vaultID: vaultID))
+        #expect(try CredentialManager.store(for: profile) === CredentialManager.store(for: profile))
         // Creating a manager must not create the real profile directory; only a vault write may.
         #expect(!FileManager.default.fileExists(atPath: profile.supportDirectory.path))
         #expect(!FileManager.default.fileExists(atPath: other.supportDirectory.path))
+        await VaultManagerFixture.cleanup(profile)
+        await VaultManagerFixture.cleanup(other)
     }
 
     /// Lock's queued actor cleanup must only clear the access it revoked, never a newer unlock.
     @Test func freshUnlockAfterLockCanRead() async throws {
         let f = try await makeFixture(accounts: [account()])
         defer { f.cleanup() }
-        let manager = try f.manager()
+        let manager = f.manager()
         try await unlock(manager, f)
         manager.lock(reason: .manual)
         try await unlock(manager, f)
         #expect(manager.isUnlocked)
-        #expect(try await manager.snapshot().revision == 1)
+        #expect(try await manager.snapshot().revision == 2)
     }
 
     @Test func retiredProfileRejectsPendingLateAndRecreatedAccess() async throws {
-        let profile = Profile(id: UUID(), name: "Gone", symbol: "trash", color: .red)
-        defer { try? FileManager.default.removeItem(at: profile.supportDirectory) }
-        let manager = try CredentialManager.forProfile(profile)
-        let pending = manager.beginAccess()
-        let proof = VaultUnlockProof(credentialID: Data(repeating: 1, count: 32), prfInput: Data(repeating: 2, count: 32), prf: SymmetricKey(size: .bits256))
+        try await VaultManagerFixture.with(vaults: [.locked]) { profile, passkeys, vaults in
+            let (manager, vaultID, proof) = (vaults[0].manager, vaults[0].vaultID, vaults[0].proof)
+            let pending = manager.beginAccess()
 
-        await CredentialManager.retire(profileID: profile.id)
+            await CredentialManager.retire(profileID: profile.id)
 
-        #expect(throws: CredentialVaultError.unauthorized) { try CredentialManager.forProfile(profile) }
-        await #expect(throws: CredentialVaultError.unauthorized) { try await manager.completeCreate(proof, access: pending) }
-        await #expect(throws: CredentialVaultError.unauthorized) { try await manager.completeCreate(proof, access: manager.beginAccess()) }
-        #expect(!manager.isUnlocked)
-        #expect(!FileManager.default.fileExists(atPath: profile.supportDirectory.path))
+            #expect(throws: CredentialVaultError.unauthorized) { try CredentialManager.store(for: profile) }
+            #expect(throws: CredentialVaultError.unauthorized) { try CredentialManager.forVault(profile, vaultID: vaultID) }
+            await #expect(throws: CredentialVaultError.unauthorized) {
+                try await manager.completeUnlock(credentialID: proof.credentialID, prf: proof.prf, access: pending)
+            }
+            await #expect(throws: CredentialVaultError.unauthorized) {
+                try await manager.completeUnlock(credentialID: proof.credentialID, prf: proof.prf, access: manager.beginAccess())
+            }
+            #expect(!manager.isUnlocked)
+
+            // The directory goes; nothing the retired profile owns brings it back.
+            try FileManager.default.removeItem(at: profile.supportDirectory)
+            await #expect(throws: CredentialVaultError.unauthorized) {
+                _ = try await CredentialManager.createVault(
+                    profile: profile, name: "Recreated", choice: .newPasskey(authorizedBy: nil), in: VaultManagerFixture.anchor(),
+                    native: passkeys.native
+                )
+            }
+            #expect(!FileManager.default.fileExists(atPath: profile.supportDirectory.path))
+        }
     }
 }

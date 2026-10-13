@@ -90,7 +90,12 @@ enum ProfileSettingsStore {
         }
         #endif
         guard !profile.isOriginal else { return .standard }
-        return UserDefaults(suiteName: suiteName(for: profile.id)) ?? .standard
+        // A named profile never reads or writes another profile's (or the original's) domain: `UserDefaults(suiteName:)` answers nil
+        // only for the app's own or the global domain, which a profile suite name never is, so there is no fallback to fall to.
+        guard let defaults = UserDefaults(suiteName: suiteName(for: profile.id)) else {
+            preconditionFailure("profile settings domain unavailable")
+        }
+        return defaults
     }
 
     static func forget(_ id: UUID) {

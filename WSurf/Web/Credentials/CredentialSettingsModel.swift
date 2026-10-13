@@ -237,13 +237,13 @@ final class CredentialSettingsModel {
         var pendingRemoval: PendingRemoval?
         var pendingUnlockRemoval: PendingUnlockRemoval?
 
-        init(epoch: UInt64, snapshot: VaultSnapshot) {
+        init(epoch: UInt64, snapshot: StoreSnapshot) {
             self.epoch = epoch
             revision = snapshot.revision
             summaries = snapshot.accounts.map(CredentialSummary.init)
         }
 
-        mutating func refresh(_ snapshot: VaultSnapshot) {
+        mutating func refresh(_ snapshot: StoreSnapshot) {
             if snapshot.revision != revision {
                 revealedPassword = nil
                 revealedUsername = nil
@@ -259,8 +259,18 @@ final class CredentialSettingsModel {
     /// `nil` until discovered; stays `nil` (with `error` set) when the vault exists but can't be read.
     private(set) var vaultExists: Bool?
     var error: String?
+    /// Set when unlocking was refused because the vault is a v1 file (or an interrupted migration) and the user has not
+    /// yet agreed to migrate it; no passkey prompt happened. Unlock again with `confirmMigration: true` after consent.
+    private(set) var needsMigrationConfirmation = false
+    /// The profile's active vaults as the last discovery listed them (names stay `nil` until a vault is unlocked).
+    private(set) var vaults: [VaultListing] = []
 
-    @ObservationIgnored private let manager: CredentialManager?
+    /// The one vault this page operates on; `nil` until discovery selects one, and while the profile has no vault.
+    private var manager: CredentialManager?
+    /// `nil` for private browsing and for a test-injected manager (which owns its own store).
+    @ObservationIgnored private let store: ProfileVaultStore?
+    /// Test seam: managers made here use it instead of the system passkey UI, which the shared registry's managers always use.
+    @ObservationIgnored private let native: VaultNativeUnlock?
     @ObservationIgnored private let pasteboard: NSPasteboard
     private var session: Session?
     @ObservationIgnored private let exchange: CredentialExchangeCoordinator
@@ -273,20 +283,25 @@ final class CredentialSettingsModel {
     /// arrive after a lock.
     private(set) var lastExport: CredentialExportOutcome?
 
-    /// `manager` is a seam for tests that need their own clock; production always uses the profile's shared one.
+    /// `manager` and `native` are seams for tests that need their own clock or passkeys; production selects the profile's
+    /// default vault (else the lowest-ordinal one) through the shared registry once `load()` has listed the vaults.
     init(
         profile: Profile,
         pasteboard: NSPasteboard = .general,
         exchange: CredentialExchangeCoordinator = .shared,
-        manager: CredentialManager? = nil
+        manager: CredentialManager? = nil,
+        native: VaultNativeUnlock? = nil
     ) {
         self.profile = profile
         self.exchange = exchange
         self.pasteboard = pasteboard
+        self.native = native
         if profile.isPrivate {
             self.manager = nil
+            store = nil
         } else {
-            self.manager = manager ?? (try? CredentialManager.forProfile(profile))
+            self.manager = manager
+            store = manager == nil ? try? CredentialManager.store(for: profile) : nil
         }
         watchAuthorization()
     }
@@ -294,7 +309,10 @@ final class CredentialSettingsModel {
     // MARK: Observable state
 
     var isAvailable: Bool {
-        manager != nil
+        manager != nil || store != nil
+    }
+    var selectedVaultID: UUID? {
+        manager?.vaultID
     }
     var isUnlocked: Bool {
         manager?.isUnlocked ?? false
@@ -374,12 +392,12 @@ final class CredentialSettingsModel {
     // MARK: Loading and editing
 
     func load() async {
-        guard let manager else { return }
-        guard let epoch = manager.authorizationEpoch else {
+        guard isAvailable else { return }
+        if manager?.isUnlocked != true {
             session = nil
-            await discoverVault(manager)
-            return
+            await discoverVault()
         }
+        guard let manager, let epoch = manager.authorizationEpoch else { return }
         isBusy = true
         defer { isBusy = false }
         do {
@@ -396,20 +414,65 @@ final class CredentialSettingsModel {
         }
     }
 
-    /// An unreadable vault is reported, never treated as an absent one: Create is offered only on a definite miss.
-    private func discoverVault(_ manager: CredentialManager) async {
+    /// Switches the page to another of the profile's vaults and loads it. A vault the listing doesn't hold falls back to the
+    /// default one.
+    func select(vaultID: UUID) async {
+        guard store != nil, vaultID != manager?.vaultID else { return }
+        do {
+            bind(try vaultManager(vaultID))
+        } catch {
+            self.error = Self.message(for: error)
+            return
+        }
+        await load()
+    }
+
+    /// An unreadable store is reported, never treated as an absent one: Create is offered only on a definite miss (an empty
+    /// listing). A v1 file or interrupted migration lists its one vault, so it is never a miss.
+    private func discoverVault() async {
         isBusy = true
         defer { isBusy = false }
         do {
-            let exists = try await manager.vaultExists()
+            if let store {
+                let listing = try await store.listing()
+                let preferred = await store.defaultVaultID()
+                guard !Task.isCancelled else { return }
+                vaults = listing
+                guard let lowest = listing.min(by: { $0.ordinal < $1.ordinal }) else {
+                    bind(nil)
+                    vaultExists = false
+                    error = nil
+                    return
+                }
+                let candidates = [manager?.vaultID, preferred].compactMap { $0 }
+                let listed = Set(listing.map(\.vaultID))
+                let id = candidates.first { listed.contains($0) } ?? lowest.vaultID
+                if id != manager?.vaultID {
+                    bind(try vaultManager(id))
+                }
+            }
+            guard let manager else { return }
+            try await manager.discoverUnlocks()
             guard !Task.isCancelled else { return }
-            vaultExists = exists
+            vaultExists = true
             error = nil
         } catch {
             guard !Task.isCancelled else { return }
             vaultExists = nil
             self.error = Self.message(for: error)
         }
+    }
+
+    private func bind(_ next: CredentialManager?) {
+        manager = next
+        session = nil
+        needsMigrationConfirmation = false
+        watchAuthorization()
+    }
+
+    private func vaultManager(_ vaultID: UUID) throws -> CredentialManager {
+        guard let native, let store else { return try CredentialManager.forVault(profile, vaultID: vaultID) }
+        return CredentialManager(profile: profile, vaultID: vaultID, store: store, native: native)
     }
 
     func attempt(_ work: () async throws -> Void) async {
@@ -515,14 +578,29 @@ final class CredentialSettingsModel {
 
     // MARK: Native unlock management
 
-    func createVault(in anchor: ASPresentationAnchor) async {
-        if await perform({ try await $0.create(in: anchor) }) {
-            await load()
+    /// Creates a vault through a new passkey, selects it, and unlocks it with that passkey. The first vault needs no
+    /// authorization; a further one is authorized by whichever vault is already unlocked. A vault still in a v1 file or an
+    /// interrupted migration is listed, so discovery never offers Create for it.
+    func createVault(name: String = String(localized: "Credentials"), in anchor: ASPresentationAnchor) async {
+        guard store != nil else { return }
+        var created: CredentialManager?
+        let authorizer = manager?.isUnlocked == true ? manager : CredentialManager.unlockedManagers(for: profile).first
+        let succeeded = await guarded {
+            let vaultID = try await CredentialManager.createVault(
+                profile: profile, name: name, choice: .newPasskey(authorizedBy: authorizer), in: anchor, native: native
+            )
+            created = try vaultManager(vaultID)
         }
+        guard succeeded, let created else { return }
+        bind(created)
+        vaultExists = true
+        await unlock(in: anchor)
     }
 
-    func unlock(in anchor: ASPresentationAnchor) async {
-        if await perform({ try await $0.unlock(in: anchor) }) {
+    /// `confirmMigration` is the user's explicit consent to migrate a v1 vault; without it the manager refuses before any
+    /// passkey prompt and `needsMigrationConfirmation` is set.
+    func unlock(in anchor: ASPresentationAnchor, confirmMigration: Bool = false, verifying: (@Sendable (Bool) -> Void)? = nil) async {
+        if await perform({ try await $0.unlock(in: anchor, confirmMigration: confirmMigration, verifying: verifying) }) {
             await load()
         }
     }
@@ -666,15 +744,16 @@ final class CredentialSettingsModel {
         if let session, session.epoch != manager.authorizationEpoch {
             self.session = nil
         }
+        // A manager the page has since left is neither watched nor allowed to drop the new binding's session.
         withObservationTracking {
             _ = manager.authorizationEpoch
         } onChange: { [weak self] in
-            MainActor.assumeIsolated { self?.session = nil }
-            Task { @MainActor [weak self] in self?.watchAuthorization() }
+            MainActor.assumeIsolated { if self?.manager === manager { self?.session = nil } }
+            Task { @MainActor [weak self] in if self?.manager === manager { self?.watchAuthorization() } }
         }
     }
 
-    private func authorizedSnapshot(epoch bound: UInt64? = nil) async throws -> (epoch: UInt64, snapshot: VaultSnapshot) {
+    private func authorizedSnapshot(epoch bound: UInt64? = nil) async throws -> (epoch: UInt64, snapshot: StoreSnapshot) {
         guard let manager, let epoch = manager.authorizationEpoch, bound == nil || bound == epoch else {
             throw CredentialVaultError.unauthorized
         }
@@ -729,15 +808,24 @@ final class CredentialSettingsModel {
             error = Self.message(for: CredentialVaultError.unauthorized)
             return false
         }
+        return await guarded(describe: describe) { try await operation(manager) }
+    }
+
+    /// The busy flag, the error and the migration-consent flag around one user action.
+    private func guarded(
+        describe: (any Error) -> String? = { CredentialSettingsModel.message(for: $0) },
+        _ work: () async throws -> Void
+    ) async -> Bool {
         isBusy = true
         error = nil
+        needsMigrationConfirmation = false
         defer { isBusy = false }
         do {
-            try await operation(manager)
+            try await work()
             return true
         } catch {
-            if case CredentialVaultError.missingVault = error {
-                vaultExists = false
+            if case CredentialStoreError.migrationNeedsConfirmation = error {
+                needsMigrationConfirmation = true
             }
             self.error = describe(error)
             return false
@@ -803,6 +891,8 @@ final class CredentialSettingsModel {
             return nil
         case PasskeyUnlockError.unsupportedPRF:
             return String(localized: "That passkey can’t protect the vault. Choose a passkey provider that supports the PRF extension.")
+        case CredentialStoreError.migrationNeedsConfirmation:
+            return String(localized: "This vault was saved by an older version of WSurf. Unlocking it upgrades it to the new format. Confirm to continue.")
         case is CancellationError:
             return nil
         default:

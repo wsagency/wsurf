@@ -40,6 +40,8 @@ enum WebAuthnAdapter {
         var expiryTask: Task<Void, Never>?
         var started = false
         var cancelled = false
+        /// The vault this ceremony runs against, set once at selection (after the route and any choice) and never rebound.
+        weak var boundManager: CredentialManager?
 
         init(key: Key, page: BrowserPage, frame: BrowserFrame, parsed: WebAuthnWire.Parsed) {
             self.key = key
@@ -92,6 +94,14 @@ enum WebAuthnAdapter {
     /// landed keeps its receipt inside the ceremony.
     static func cancel(profileID: UUID) {
         for entry in Array(entries.values) where entry.profileID == profileID {
+            refuse(entry)
+        }
+    }
+
+    /// One vault's access ended: only the ceremonies bound to that manager stop (same synchronous refusal as above). Another
+    /// vault's lock leaves them running; a ceremony still choosing its vault is covered by `cancel(profileID:)`.
+    static func cancel(manager: CredentialManager) {
+        for entry in Array(entries.values) where entry.boundManager === manager {
             refuse(entry)
         }
     }
@@ -397,8 +407,39 @@ enum WebAuthnAdapter {
             // Busy: a modal request fails NotAllowed, a conditional one stays pending (`finish`).
             guard busyWindows.insert(ObjectIdentifier(anchor)).inserted else { throw WebsiteAuthenticatorError.notAllowed }
             claimed = anchor
-            let manager = try CredentialManager.forProfile(page.context.profile)
+            let profile = page.context.profile
+            let route: VaultRoute
+            switch entry.parsed.request.options {
+            case .creation:
+                // The context's origin is already validated (it may be http://localhost, which a password origin never is).
+                route = await CredentialRouting.route(profile: profile, origin: native.origin, username: nil)
+            case .assertion(let options):
+                // A passkey belongs to its relying party: the same RP ID resolution the ceremony uses decides which vault holds it.
+                guard let url = URL(string: native.origin),
+                      let rpID = try? RelyingPartyPolicy.validate(rpID: options.rpID, origin: url) else {
+                    throw WebsiteAuthenticatorError.invalidRequest
+                }
+                route = await CredentialRouting.route(
+                    profile: profile, origin: native.origin, passkeyRPID: rpID, allowed: options.allowCredentials
+                )
+            }
+            let chosen: CredentialManager?
+            if case .needsUnlock(let only) = route {
+                // One vault, locked: nothing to choose. The ceremony's own origin-bearing offer comes before its unlock, so no
+                // nameless sheet is the first thing a page can show.
+                chosen = try? CredentialManager.forVault(profile, vaultID: only.vaultID)
+            } else {
+                chosen = await route.resolve(profile: profile, in: anchor)
+            }
+            // The route and the prompt suspended: the request must still be this live document, in this window, before any
+            // manager is bound to it. Nothing suspends between these checks and the binding.
+            try await requireLiveRequest(entry, page: page)
+            try ensureCurrent(entry)
+            guard native.credentialGeneration == entry.generation, page.credentialGeneration == entry.generation,
+                  !page.isPrivate, page.context.settings.passwordProvider == .credentialManager, page.window === anchor,
+                  let manager = chosen else { throw WebsiteAuthenticatorError.notAllowed }
             guard manager.profileID == native.profileID else { throw WebsiteAuthenticatorError.notAllowed }
+            entry.boundManager = manager
 
             let outcome = try await WebsiteAuthenticator.perform(
                 entry.parsed.request, context: native, manager: manager, in: anchor,
