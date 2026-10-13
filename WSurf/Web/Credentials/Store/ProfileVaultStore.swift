@@ -195,16 +195,77 @@ actor ProfileVaultStore {
         }
     }
 
-    /// The read-only preflight of `listing` and `discovery`: no lock and no file access for a state that has no v2 store yet (`false`),
-    /// the fail-closed error for a closed one.
-    private func hasStore() throws -> Bool {
+    /// A vault of a directory that has no v2 store yet, as the pre-unlock list shows it: the wrapper plaintext only, never a grant.
+    private struct LockedVault {
+        let vaultID: UUID
+        let ordinal: Int
+        let wrappers: [CredentialKeyWrapper]
+    }
+
+    /// The read-only preflight of `listing` and `discovery`. `nil` = a v2 store exists (`.provisional`; the caller reads it under
+    /// `withOperation`), the fail-closed error for a closed state, `[]` for a first run, and for `.legacy`/`.resumeMigration` the one
+    /// vault the v1 file or the pending store holds, read under a SHARED lock with the state re-read under it (a changed state is
+    /// `stateChanged`). It changes no credential or pending-store byte (the operation lock file may be created empty) and recovers,
+    /// deletes and checkpoints nothing; it takes no grant: unlocking still needs the confirmed migration.
+    private func lockedVaults() async throws -> [LockedVault]? {
         switch openState() {
         case .provisional:
-            return true
+            return nil
         case .failClosed(let closed):
             throw CredentialStoreError.failClosed(closed)
-        case .legacy, .firstRun, .resumeMigration:
-            return false
+        case .firstRun:
+            return []
+        case .legacy, .resumeMigration:
+            let hold = try await OperationLock.acquire(in: directory, mode: .shared, wait: lockWait)
+            defer { hold.release() }
+            switch openState() {
+            case .legacy:
+                let envelope = try CredentialVaultCrypto.decodeEnvelope(
+                    try LegacyVaultV1.readEnvelope(at: file(StoreAnchors.Names.vault)), profileID: profileID
+                )
+                return [LockedVault(vaultID: envelope.vaultID, ordinal: 1, wrappers: envelope.wrappers)]
+            case .resumeMigration:
+                return try pendingVaults()
+            case .failClosed(let closed):
+                throw CredentialStoreError.failClosed(closed)
+            case .provisional, .firstRun:
+                throw CredentialStoreError.stateChanged
+            }
+        }
+    }
+
+    /// The active vaults of the closed pending store, through a read-only `immutable=1` connection (the `StoreAnchors` pattern: no
+    /// `-wal`/`-shm`, nothing written). A sidecar means the file is not in its closed state: refused, and left for the resume to judge.
+    private func pendingVaults() throws -> [LockedVault] {
+        let pending = file(StoreAnchors.Names.migrating)
+        try PendingStore.requireNoSidecars(at: pending)
+        var configuration = Configuration()
+        configuration.readonly = true
+        let rows: [StoreTables.VaultRow]
+        do {
+            let queue = try DatabaseQueue(path: pending.absoluteString + "?immutable=1", configuration: configuration)
+            do {
+                rows = try queue.read { (db: Database) throws in try mapIntegrity(nil) { try StoreTables.vaultRows(db) } }
+            } catch {
+                try? queue.close()
+                throw error
+            }
+            try queue.close()
+        } catch let error as DatabaseError {
+            throw storeError(error, ordinal: nil)
+        }
+        // A valid pending recipe (legacy migration or first-vault bootstrap) holds exactly one active vault; anything else is corrupt.
+        let active = rows.filter { $0.role == .active }
+        guard active.count == 1, let row = active.first else { throw CredentialStoreError.integrityFailure(vaultOrdinal: nil) }
+        return [LockedVault(vaultID: row.vaultID, ordinal: row.ordinal, wrappers: try mapIntegrity(row.ordinal) { try VaultWrapperList.decode(row.wrappers) })]
+    }
+
+    /// A state that changed between the preflight and the lock is read again once, like `unlock`; a second change is `stateChanged`.
+    private func rerouting<T>(_ read: () async throws -> T) async throws -> T {
+        do {
+            return try await read()
+        } catch CredentialStoreError.stateChanged {
+            return try await read()
         }
     }
 
@@ -226,21 +287,26 @@ actor ProfileVaultStore {
 
     // MARK: Listing and discovery
 
-    /// Ordinals of the active vaults; the name only once that vault is unlocked.
+    /// Ordinals of the active vaults; the name only once that vault is unlocked. A v1 file or an interrupted migration lists its one
+    /// vault, locked.
     func listing() async throws -> [VaultListing] {
-        guard try hasStore() else { return [] }
-        let rows = try await withOperation { pool in
-            try pool.read { (db: Database) throws in try mapIntegrity(nil) { try StoreTables.vaultRows(db) } }
-        }
-        return rows.filter { $0.role == .active }.sorted { $0.ordinal < $1.ordinal }.map { row in
-            let grant = authorizedGrantIfAny(row.vaultID)
-            return VaultListing(
-                vaultID: row.vaultID,
-                ordinal: row.ordinal,
-                name: grant?.name,
-                isUnlocked: grant != nil,
-                isVerified: verified.contains(row.vaultID)
-            )
+        try await rerouting {
+            if let locked = try await lockedVaults() {
+                return locked.map { VaultListing(vaultID: $0.vaultID, ordinal: $0.ordinal, name: nil, isUnlocked: false, isVerified: false) }
+            }
+            let rows = try await withOperation { pool in
+                try pool.read { (db: Database) throws in try mapIntegrity(nil) { try StoreTables.vaultRows(db) } }
+            }
+            return rows.filter { $0.role == .active }.sorted { $0.ordinal < $1.ordinal }.map { row in
+                let grant = authorizedGrantIfAny(row.vaultID)
+                return VaultListing(
+                    vaultID: row.vaultID,
+                    ordinal: row.ordinal,
+                    name: grant?.name,
+                    isUnlocked: grant != nil,
+                    isVerified: verified.contains(row.vaultID)
+                )
+            }
         }
     }
 
@@ -252,12 +318,17 @@ actor ProfileVaultStore {
 
     /// The wrapper plaintext (credential id, PRF input) of one active vault, in stored order; no secret and no grant needed.
     func discovery(vaultID: UUID) async throws -> VaultDiscovery {
-        guard try hasStore() else { throw CredentialStoreError.noSuchVault }
-        let row = try await withOperation { pool in
-            try pool.read { (db: Database) throws in try Self.activeRow(vaultID, in: db) }
+        try await rerouting {
+            if let locked = try await lockedVaults() {
+                guard let vault = locked.first(where: { $0.vaultID == vaultID }) else { throw CredentialStoreError.noSuchVault }
+                return VaultDiscovery(vaultID: vaultID, unlocks: vault.wrappers.map(\.unlock))
+            }
+            let row = try await withOperation { pool in
+                try pool.read { (db: Database) throws in try Self.activeRow(vaultID, in: db) }
+            }
+            let wrappers = try mapIntegrity(row.ordinal) { try VaultWrapperList.decode(row.wrappers) }
+            return VaultDiscovery(vaultID: vaultID, unlocks: wrappers.map(\.unlock))
         }
-        let wrappers = try mapIntegrity(row.ordinal) { try VaultWrapperList.decode(row.wrappers) }
-        return VaultDiscovery(vaultID: vaultID, unlocks: wrappers.map(\.unlock))
     }
 
     // MARK: Grants
