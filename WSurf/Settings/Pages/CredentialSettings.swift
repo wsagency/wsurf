@@ -207,15 +207,14 @@ struct CredentialSettings: View {
         }
     }
 
-    /// The one next step a transfer ending allows. The model decides which; this only draws it.
+    /// The one next step a transfer ending allows. The model decides which; this only draws it. `.exportAgain` means the
+    /// other app has to send the import again (the message says so): it is not WSurf's own export, and WSurf has no button
+    /// for it.
     @ViewBuilder
     private func nextStep(_ action: CredentialTransferMessage.Action) -> some View {
         switch action {
-        case .none:
+        case .none, .exportAgain:
             EmptyView()
-        case .exportAgain:
-            Button("Export Again…") { openExport() }
-                .disabled(model.isBusy || model.summaries.isEmpty)
         case .checkSavedCredentials:
             Button("Check Saved Credentials") {
                 showsTrash = false

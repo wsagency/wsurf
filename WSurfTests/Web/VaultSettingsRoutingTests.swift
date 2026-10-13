@@ -144,4 +144,25 @@ struct VaultSettingsRoutingTests {
             #expect(model.summaries.count == legacy.accounts.count)
         }
     }
+
+    @Test func aTransferEndingBelongsToTheVaultItHappenedInAndNeverReadsAsAnotherVaultsTransfer() async throws {
+        try await withProfile { profile, passkeys in
+            let model = CredentialSettingsModel(profile: profile, native: passkeys.native)
+            await model.load()
+            await model.createVault(name: "First", choice: .newPasskey(authorizedBy: nil), in: VaultManagerFixture.anchor())
+            let first = try #require(model.selectedVaultID)
+            await model.unlock(in: VaultManagerFixture.anchor())
+            let epoch = try #require(model.authorizationEpoch)
+            let unknown = CredentialExportSelection(accountID: UUID(), password: true, passkeyIDs: [], totp: false)
+            #expect(await model.exportCredentials(selection: [unknown], epoch: epoch, in: VaultManagerFixture.anchor()) == nil)
+            let ending = try #require(model.transferMessage)
+
+            await model.createVault(name: "Second", choice: .newPasskey(authorizedBy: nil), in: VaultManagerFixture.anchor())
+            #expect(model.selectedVaultID != first)
+            #expect(model.transferMessage == nil)
+
+            await model.select(vaultID: first)
+            #expect(model.transferMessage == ending)
+        }
+    }
 }

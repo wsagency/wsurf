@@ -55,8 +55,9 @@ final class CredentialSettingsModel {
     var lastImport: CredentialImportOutcome? {
         importResult.flatMap { $0.epoch == manager?.authorizationEpoch ? $0.outcome : nil }
     }
-    /// How this window's last import or export ended (spec §13.5); `nil` before any, or after the user dismisses it.
-    private var ownMessage: CredentialTransferMessage?
+    /// How this window's last import or export ended (spec §13.5) and the vault it happened in; the page shows it only while
+    /// that vault is selected. `nil` before any, or after the user dismisses it.
+    private var ownMessage: (message: CredentialTransferMessage, vaultID: UUID?)?
 
     /// `manager` and `native` are seams for tests that need their own clock or passkeys; production selects the profile's
     /// default vault (else the lowest-ordinal one) through the shared registry once `load()` has listed the vaults.
@@ -148,26 +149,16 @@ final class CredentialSettingsModel {
 
     /// A new passkey needs a first run, or room for another vault and an already unlocked one to approve it.
     var canCreateWithNewPasskey: Bool {
-        switch openState {
-        case .firstRun?:
-            return true
-        case .provisional?:
-            return vaults.count < StoreFormat.activeVaultLimit
-                && CredentialManager.unlockedAuthorizer(in: vaults, selected: manager, profile: profile) != nil
-        default:
-            return false
-        }
+        openState?.allowsNewPasskey(
+            vaultCount: vaults.count,
+            hasAuthorizer: CredentialManager.unlockedAuthorizer(in: vaults, selected: manager, profile: profile) != nil
+        ) ?? false
     }
 
     var canCreateVault: Bool {
-        switch openState {
-        case .firstRun?:
-            return true
-        case .provisional?:
-            return canCreateWithNewPasskey || (vaults.count < StoreFormat.activeVaultLimit && !existingPasskeys.isEmpty)
-        default:
-            return false
-        }
+        openState?.allowsCreate(
+            vaultCount: vaults.count, newPasskey: canCreateWithNewPasskey, hasEnrolledPasskey: !existingPasskeys.isEmpty
+        ) ?? false
     }
 
     // MARK: Trash and earlier versions (state)
@@ -211,9 +202,7 @@ final class CredentialSettingsModel {
 
     func hideSecrets() {
         guard live != nil else { return }
-        session?.revealedPassword = nil
-        session?.revealedUsername = nil
-        session?.shownTOTP = nil
+        session?.hideSecrets()
     }
 
     func cancelEditing() {
@@ -363,10 +352,27 @@ final class CredentialSettingsModel {
     }
 
     private func bind(_ next: CredentialManager?) {
+        if let manager, manager.vaultID != next?.vaultID {
+            leave(manager)
+        }
         manager = next
         session = nil
         needsMigrationConfirmation = false
         watchAuthorization()
+    }
+
+    /// The page is leaving `old`: this window's ending and staged import belong to that vault, so neither may read as the next
+    /// vault's. Only this window's own import is cancelled; other windows' claims and reviews are left alone, and the ending
+    /// is shown again only if the page comes back to `old`.
+    private func leave(_ old: CredentialManager) {
+        var ending = transferMessage
+        if exchange.cancelImport(for: old, owner: owner) == .reviewCancelled {
+            ending = .discarded()
+        }
+        exchange.dismissNotice(for: owner)
+        if let ending {
+            ownMessage = (ending, old.vaultID)
+        }
     }
 
     private func vaultManager(_ vaultID: UUID) throws -> CredentialManager {
@@ -772,7 +778,10 @@ final class CredentialSettingsModel {
     /// How the last transfer ended, or the coordinator's refusal of a second token (spec §13.5). Production wording, nothing
     /// secret; the page shows it until the user dismisses it.
     var transferMessage: CredentialTransferMessage? {
-        ownMessage ?? (isAvailable ? exchange.notice(for: owner) : nil)
+        if let ownMessage, ownMessage.vaultID == manager?.vaultID {
+            return ownMessage.message
+        }
+        return isAvailable ? exchange.notice(for: owner) : nil
     }
 
     func dismissTransferMessage() {
@@ -805,13 +814,14 @@ final class CredentialSettingsModel {
         let expected = importReview?.outcome
         let epoch = manager?.authorizationEpoch
         var receipt: VaultCommitReceipt?
+        let vault = manager?.vaultID
         ownMessage = nil
         let committed = await perform(describe: importMessage(for:)) { receipt = try await self.exchange.commitImport(into: $0, owner: self.owner) }
         guard committed, let receipt, let expected else { return }
         if let epoch, epoch == manager?.authorizationEpoch {
             importResult = (expected, epoch)
         }
-        ownMessage = .succeeded(expected, receipt: receipt)
+        ownMessage = (.succeeded(expected, receipt: receipt), vault)
         await load()
     }
 
@@ -823,7 +833,7 @@ final class CredentialSettingsModel {
         guard let manager else { return .nothingOwned }
         let outcome = exchange.cancelImport(for: manager, owner: owner)
         if outcome == .reviewCancelled {
-            ownMessage = .discarded()
+            ownMessage = (.discarded(), manager.vaultID)
         }
         return outcome
     }
@@ -842,6 +852,7 @@ final class CredentialSettingsModel {
         epoch: UInt64,
         in anchor: ASPresentationAnchor
     ) async -> CredentialExportOutcome? {
+        let vault = manager?.vaultID
         ownMessage = nil
         var outcome: CredentialExportOutcome?
         let sent = await perform {
@@ -851,11 +862,11 @@ final class CredentialSettingsModel {
             )
         }
         // The page showed an older vault than the one on disk: read it again, or every retry would fail the same way.
-        if !sent, ownMessage?.kind == .exportSelectionChanged {
+        if !sent, ownMessage?.message.kind == .exportSelectionChanged {
             await load()
         }
         if let outcome, outcome != .cancelled {
-            ownMessage = outcome.message
+            ownMessage = outcome.message.map { ($0, vault) }
         }
         return outcome
     }
@@ -924,13 +935,7 @@ final class CredentialSettingsModel {
         // Last point before the durable write: a cancelled task or a changed authorization never commits.
         try Task.checkCancellation()
         let receipt = try await manager.commit(accounts, expectedRevision: expectedRevision, authorizedEpoch: epoch)
-        try? update(epoch) {
-            $0.revision = receipt.revision
-            $0.summaries = accounts.map(CredentialSummary.init)
-            $0.revealedPassword = nil
-            $0.revealedUsername = nil
-            $0.shownTOTP = nil
-        }
+        try? update(epoch) { $0.committed(accounts, revision: receipt.revision) }
         return receipt
     }
 
@@ -965,6 +970,7 @@ final class CredentialSettingsModel {
         describe: (any Error) -> String? = { CredentialSettingsModel.message(for: $0) },
         _ work: () async throws -> Void
     ) async -> Bool {
+        let vault = manager?.vaultID
         isBusy = true
         error = nil
         needsMigrationConfirmation = false
@@ -973,7 +979,7 @@ final class CredentialSettingsModel {
             try await work()
             return true
         } catch let failure as CredentialTransferFailure {
-            ownMessage = failure.message
+            ownMessage = (failure.message, vault)
             return false
         } catch {
             if case CredentialStoreError.migrationNeedsConfirmation = error {

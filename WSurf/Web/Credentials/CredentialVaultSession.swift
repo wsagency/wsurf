@@ -37,15 +37,26 @@ struct CredentialVaultSession {
         summaries = snapshot.accounts.map(CredentialSummary.init)
     }
 
+    mutating func hideSecrets() {
+        revealedPassword = nil
+        revealedUsername = nil
+        shownTOTP = nil
+    }
+
     mutating func refresh(_ snapshot: StoreSnapshot) {
         if snapshot.revision != revision {
-            revealedPassword = nil
-            revealedUsername = nil
-            shownTOTP = nil
+            hideSecrets()
         }
         revision = snapshot.revision
         stamps = snapshot.stamps
         stampsRevision = snapshot.revision
         summaries = snapshot.accounts.map(CredentialSummary.init)
+    }
+
+    /// After a write this page made: the accounts as written, and no secret still shown. The stamps stay as they were read.
+    mutating func committed(_ accounts: [CredentialAccount], revision: UInt64) {
+        self.revision = revision
+        summaries = accounts.map(CredentialSummary.init)
+        hideSecrets()
     }
 }

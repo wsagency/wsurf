@@ -26,7 +26,8 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
         case exportSelectionChanged
     }
 
-    /// The next step the consumer offers; the terminal-state policy lives here, not in the text.
+    /// The next step the consumer offers; the terminal-state policy lives here, not in the text. `exportAgain` is the user
+    /// re-sending the discarded INBOUND import from the other app (Passwords); it is never WSurf's own outgoing export.
     enum Action: Equatable, Sendable { case none, exportAgain, checkSavedCredentials }
 
     let kind: Kind
