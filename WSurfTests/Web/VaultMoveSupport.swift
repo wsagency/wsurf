@@ -8,8 +8,8 @@ import Testing
 
 @testable import WSurf
 
-// Task 7: plumbing shared by `VaultMoveTests` and `VaultMoveBenchmark`. Everything reads through `StoreTables`, `StoreSeal` and the
-// fixture's own keys; nothing here uses the commit/delete engine.
+// Task 7: plumbing shared by `VaultMoveTests` and `VaultMoveBenchmark`. The helpers read through `StoreTables`, `StoreSeal` and the
+// fixture's own keys; only `HiddenHistoryOperation` drives the store's `commit`/`delete`.
 
 /// The MOVE's write transaction cannot be reached from outside the store without a production hook: its pool is opened inside the
 /// store, and Apple's SQLite refuses process-wide auto-extensions (`sqlite3_auto_extension` is deprecated and not supported there).
