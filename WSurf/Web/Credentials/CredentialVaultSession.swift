@@ -37,6 +37,11 @@ struct CredentialVaultSession {
         summaries = snapshot.accounts.map(CredentialSummary.init)
     }
 
+    /// The stamps only while they describe the revision shown; after this page's own write they are unknown, not stale.
+    var knownStamps: [UUID: AccountStamp]? {
+        stampsRevision == revision ? stamps : nil
+    }
+
     mutating func hideSecrets() {
         revealedPassword = nil
         revealedUsername = nil
