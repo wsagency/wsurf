@@ -246,26 +246,43 @@ struct MentionFieldTests {
         let harness = harness()
         let content = try #require(harness.window.contentView)
         let other = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        other.stringValue = "other"
         content.addSubview(other)
+        var focusReports: [Bool] = []
+        harness.coordinator.onFocusChange = { focusReports.append($0) }
 
         harness.coordinator.syncFocus(true, in: harness.field)
         await settlePaletteLayout(content)
-        let fieldEditor = try #require(harness.field.currentEditor() as? NSTextView)
-        #expect(harness.window.firstResponder === fieldEditor)
+        let originalEditor = try #require(harness.field.currentEditor() as? NSTextView)
+        originalEditor.insertText("original", replacementRange: NSRange(location: 0, length: 0))
+        await settlePaletteLayout(content)
+        #expect(harness.field.stringValue == "original")
+        #expect(focusReports == [true])
 
         #expect(harness.window.makeFirstResponder(other))
-        let otherEditor = try #require(other.currentEditor() as? NSTextView)
-        #expect(harness.window.firstResponder === otherEditor)
+        #expect(harness.field.currentEditor() == nil)
+        #expect(other.currentEditor() != nil)
+        #expect(focusReports == [true])
 
         // Mirror updateNSView seeing isFocused == true before the async did-end report settles.
         harness.coordinator.syncFocus(true, in: harness.field)
         await settlePaletteLayout(content)
+        #expect(focusReports == [true, false])
+        #expect(harness.field.currentEditor() == nil)
+        let otherEditor = try #require(other.currentEditor() as? NSTextView)
         #expect(harness.window.firstResponder === otherEditor)
+        otherEditor.insertText(" typed", replacementRange: NSRange(location: otherEditor.string.utf16.count, length: 0))
+        #expect(other.stringValue == "other typed")
+        #expect(harness.field.stringValue == "original")
 
         // A fresh explicit request after the blur report still focuses the field.
         harness.coordinator.syncFocus(true, in: harness.field)
         await settlePaletteLayout(content)
-        #expect(harness.window.firstResponder === harness.field.currentEditor())
+        #expect(other.currentEditor() == nil)
+        let refocusedEditor = try #require(harness.field.currentEditor() as? NSTextView)
+        refocusedEditor.insertText(" again", replacementRange: NSRange(location: refocusedEditor.string.utf16.count, length: 0))
+        #expect(harness.field.stringValue == "original again")
+        #expect(other.stringValue == "other typed")
     }
 
     @Test func sitePlaceholderUpdatesWhileClearingTheFocusedField() async throws {
