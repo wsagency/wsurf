@@ -63,7 +63,8 @@ struct VaultMoveBenchmark {
             sampler.cancel()
             let growthMB = (max(await sampler.value, before) - before) / 1024 / 1024
             print("VaultMoveBenchmark: small delete over \(rows) other rows, delete \(deleteTime), resident growth \(growthMB) MB")
-            #expect(try f.moveOwnedRowCount(in: f.trashID, owner: victim.id) == 1)
+            // The victim's one revision (`historyRows: 1` is owned by `accounts[0]`) plus the `trashEntry`, which is owned by the account too.
+            #expect(try f.moveOwnedRowCount(in: f.trashID, owner: victim.id) == 2)
             #expect(growthMB < Self.growthLimitMB, "resident size grew by \(growthMB) MB authenticating \(rows) bystander rows")
         }
     }
