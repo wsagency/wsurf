@@ -2,7 +2,7 @@
 
 Date: 2026-10-08; refreshed 2026-10-14 against `origin/main` `d3cf409` (PR #19)
 
-Status: Conversational contract approved, including WebKit/device/network limitations. The user additionally approved real hover, element-state waits, and element/region screenshots, and required checking existing MCP behavior on both engines. This revised written specification awaits user review. Product implementation starts only after written-spec approval, implementation-plan review, and selection of an execution method. The 2026-10-14 refresh changes no product scope: it updates stale baselines, records delivery slicing and file ownership (section 8), and lists the design choices still open. The user has not reviewed the refresh; implementation is a separate PR from this document.
+Status: Conversational contract approved, including WebKit/device/network limitations. The user additionally approved real hover, element-state waits, and element/region screenshots, and required checking existing MCP behavior on both engines. This revised written specification awaits user review; that review is the only open gate (section 8). Product implementation starts only after written-spec approval and review of the implementation plan written from it. The execution method is already decided (section 8). The 2026-10-14 refresh changes no product scope: it updates stale baselines and records delivery slicing and file ownership. The user has not reviewed the refresh.
 
 ## Intent and agreed scope
 
@@ -51,7 +51,7 @@ WebKit script installation and message routing must respect shared content contr
 - Page runtime owns reference registration and bounded DOM/CSS extraction for the current document.
 - Page/native presentation owns actual layout and reversible overrides. Engine adapters supply supported emulation and diagnostic sources through the existing page boundary.
 
-Use direct extensions of these boundaries. No new general-purpose automation framework or duplicate engine abstraction is needed. The engine session has not confirmed a shared implementation interface; this spec does not claim that coordination occurred or modify its worktree.
+Use direct extensions of these boundaries. No new general-purpose automation framework or duplicate engine abstraction is needed. Shared engine API changes are requested from their single source owner and sequenced by the main coordinator (see Coordination decisions).
 
 ### Cross-engine parity comes first
 
@@ -82,7 +82,7 @@ These are engineering decisions made while taking over the workstream. They are 
 - **Chromium back/forward fix (ported).** Commit `ad8638b` (`feature/chromium-mcp-verification-20261006`, based on `7130832`) was a mixed preservation commit. Its Back/Forward-cache context-rebinding portion is already on `main` through PR #14 (`ChromiumDevTools+FrameEvents.swift` `frameNavigated`; `ChromiumPage.didNavigate(frame:restoredFromCache:)`; `didChangeLoading`), together with the canonical credential-context invalidation (`invalidateCredentialContexts`) that earlier text here called uncommitted, and the PR #19 vault work on top (`d3cf409`). Its test, `MCP.md` and CHANGELOG text, and the `/.worktrees/` policy are also on `main`; `ad8638b` carries no unique content. This workstream does not rewrite or duplicate that port; `goBack` freshness work builds on it and must preserve credential-context invalidation.
 - **Linen post-0.8 MCP changes** (`78b76de`, `447c02b`, `70c3c57`, `59c396d`, `16c5800`) are proposals only. The implementation plan source-compares them for reuse and provenance. They are not approved for blanket intake and are not ported in parallel.
 - **Shared engine API sequencing.** `BrowserPage`, `BrowserFrame`, `PageFrameRegistry`, `PageDriver`, `ChromiumDevTools` and its frame events, `ChromiumPage`, and `BrowserTab` lifecycle/final dispatch have one source owner. Changes this spec needs there (delivery receipt, history target freshness, page generation, capability and device-axis hooks, diagnostic sources) are requested from that owner and sequenced through the main coordinator. MCP-layer work (`MCPToolCatalog`, `MCPBrowserSession`, `MCPAccessConsent`, `MCP.md`) follows only after the shared contract it consumes exists. PR #14 and PR #19 changed `BrowserPage`, `PageFrameRegistry` and `ChromiumDevTools` substantially (credential generation, frame revisions, document identity), so any earlier line anchor is stale; implementation plans re-read the files at the then-current `main`.
-- **`PageDriver` is shared with the in-app assistant.** `PageDriver.hover`, `pressKey`, `waitForPage` and `goBack` are also called by the assistant tools (`PageInteractionTools`, `AgentToolkit+PageActions`, `FrameTools`), not only by `MCPBrowserSession`. A shared-driver fix therefore changes assistant behavior too. Screenshots are not the same function: MCP calls `PageDriver.screenshot`, while the assistant's `AgentToolkit.screenshotPage` calls `PageDriver.computerFrame`; whether both reach the same `BrowserPage` capture geometry is not established here and is for the slice 2 plan to confirm. This spec keeps the MCP schema changes in `MCPToolCatalog` and decides nothing about assistant tool schemas (open choice 1, section 8).
+- **`PageDriver` is shared with the in-app assistant.** `PageDriver.hover`, `pressKey`, `waitForPage` and `goBack` are also called by the assistant tools (`PageInteractionTools`, `AgentToolkit+PageActions`, `FrameTools`), not only by `MCPBrowserSession`. A shared-driver fix therefore benefits and changes assistant behavior too. Screenshots are not the same function: MCP calls `PageDriver.screenshot`, while the assistant's `AgentToolkit.screenshotPage` calls `PageDriver.computerFrame`; whether both reach the same `BrowserPage` capture geometry is not established here and is for the slice 2 plan to confirm. The new MCP parameters and tools are MCP-only: this spec adds or changes no assistant tool schema.
 
 
 ## 1. Permission contract
@@ -221,7 +221,7 @@ This document describes acceptance work; no product implementation, native build
 
 Build/test the full app on Pro with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`, using an owned isolated source/build snapshot. Preserve Pro's established checkout/builds. Copy the result to an owned stage app on Air, using `WSURF_STAGE=1` and a separate `WSURF_STAGE_HOME`. Use a real external MCP client and fresh stage UI evidence.
 
-Stage isolation must include the MCP endpoint, not just browsing storage. Introduced by PR #10 (`fb7b91c`) and still present at `d3cf409`, `LocalMCPEndpoint` derives its directory and socket from the stage home when stage mode is active, and `StageMode` derives the defaults suite and website data store ID per stage home. This isolation exists only in `#if DEBUG` code, so native scenario 12 requires a DEBUG build. A Release build does not enable this isolation; ad-hoc signing alone proves nothing about it. An ad-hoc-signed Debug build may use Stage. Source inspection shows this is implemented. The only runtime evidence so far is the PR #15 CI smoke (run 38067274759, Debug app, isolated stage home: `initialize ok`, the 19 baseline names listed, `listTabs` with no shared tabs, relay EOF exit 0). Per that PR's own statement it shows liveness only, not native consent, window registration, or the behavior of the other 18 tools. Full native scenario 12 remains required for the integrated candidate; source inspection and earlier component probes alone do not establish it. On 2026-10-08, before that change, runtime inspection found the normal running WSurf process owning the shared socket and another task's stage app running. Neither was stopped, granted access, nor used for parity actions. Pro's Xcode 27.0/Swift 6.4 toolchain was reachable; no whole-app parity result is claimed from that check.
+Stage isolation must include the MCP endpoint, not just browsing storage. Introduced by PR #10 (merge commit `350de93`) and still present at `d3cf409`, `LocalMCPEndpoint` derives its directory and socket from the stage home when stage mode is active, and `StageMode` derives the defaults suite and website data store ID per stage home. This isolation exists only in `#if DEBUG` code, so native scenario 12 requires a DEBUG build. A Release build does not enable this isolation; ad-hoc signing alone proves nothing about it. An ad-hoc-signed Debug build may use Stage. Source inspection shows this is implemented. The only runtime evidence so far is the PR #15 CI smoke (run 38067274759, Debug app, isolated stage home: `initialize ok`, the 19 baseline names listed, `listTabs` with no shared tabs, relay EOF exit 0). Per that PR's own statement it shows liveness only, not native consent, window registration, or the behavior of the other 18 tools. Full native scenario 12 remains required for the integrated candidate; source inspection and earlier component probes alone do not establish it. On 2026-10-08, before that change, runtime inspection found the normal running WSurf process owning the shared socket and another task's stage app running. Neither was stopped, granted access, nor used for parity actions. Pro's Xcode 27.0/Swift 6.4 toolchain was reachable; no whole-app parity result is claimed from that check.
 
 Before a real MCP stage run, confirm natively that the stage server and relay use the owned endpoint derived from the stage home, with owner-only directory/socket permissions and lock checks, and that the production endpoint is unchanged. Stage preferences and website storage are now task-scoped per stage home in source; verify this natively rather than by source text. This is verification infrastructure for the requested feature, not authorization to connect a probe to production tabs.
 
@@ -246,13 +246,21 @@ Keep permanent tests for plausible consumer-visible permission, stale-reference,
 
 Integration remains a PR to `main` after review and required CI. Stage verification does not authorize release deployment or installed-app replacement.
 
-## 8. Delivery slices, ownership, and open decisions (2026-10-14)
+## 8. Delivery plan, ownership, and review gate (2026-10-14)
 
-This section is the proposed delivery shape for review. It adds no scope and removes none: the 19 baseline tools keep their contract, and the required outcomes stay the real hover, `waitForPage` element conditions, element/region screenshots, `requestAccess development`/Allow Development consent, and the 10 development tools of section 2.
+This section records the delivery shape. It adds no scope and removes none: the 19 baseline tools keep their contract, and the required outcomes stay the real hover, `waitForPage` element conditions, element/region screenshots, `requestAccess development`/Allow Development consent, and the 10 development tools of section 2.
 
-Implementation is one or more PRs separate from this document. Approval of this spec is the gate to writing the implementation plan; it authorizes no product code. The first slice needs a native probe before any fix; until a probe reproduces a risk it stays a risk.
+### Decisions already made
 
-| Slice | Content | Primary files (re-read at then-current `main`) | Gate |
+- **Execution.** The user requested subagent-driven implementation and a PR separate from this document. Work runs in isolated worktrees through subagents; the coordinator (Main) owns the shared engine files (see Coordination decisions) and every native run. This is decided, not an open choice.
+- **One implementation PR, six reviewable commits.** The MCP implementation is one PR with one reviewable commit per slice below, in order. It is not six PRs.
+- **MCP-only extensions.** The new parameters and tools exist in the MCP catalog only. Shared `PageDriver` fixes benefit the assistant as a side effect; no assistant schema is added or changed.
+- **Release availability (engineering decision).** MCP is already a production user feature, so the development tools ship in Release builds behind the native **Allow Development** consent of section 1. The DEBUG-only stage isolation of section 7 is a verification harness, not a feature gate.
+- **Risks are not defects.** The `pressKey`, `goBack`, `refreshHistory` and capture findings are static source risks. Slice 1 starts with a native probe; a fix needs a reproduced risk and a confirmed root cause.
+
+### Slices
+
+| Slice | Commit content | Primary files (re-read at then-current `main`) | Gate |
 |---|---|---|---|
 | 1 | Delivery and freshness parity: `pressKey` delivery receipt; `goBack` nil-navigation and trusted-target freshness | `PageNativeInput`, `PageDriver`, `ChromiumPage`, `BrowserPage`; `ChromiumPageTests`, `PageDriverTests`, `PageDriverConsentGateTests` | Native probe reproduces each risk and its root cause; scenarios 9-10 |
 | 2 | The three approved extensions: real hover; `elementVisible`/`elementHidden`/`elementEnabled`; element/region screenshot with bounds and scale | `PageNativeInput`, `PageInteraction` (`waitForPage`, `screenshot`), `PageRuntime`, `ChromiumPage.capture`, `MCPToolCatalog` (number/object parameters), `MCPBrowserSession`, `MCP.md` | Slice 1 contract exists; scenario 11 |
@@ -261,21 +269,18 @@ Implementation is one or more PRs separate from this document. Approval of this 
 | 5 | `findElements`, `inspectElement` | `PageRuntime`, `PageObservation`, `MCPBrowserSession` | Scenario 4 |
 | 6 | `startDiagnostics`, `readConsole`, `readNetwork` | `ChromiumDevTools` (Runtime/Network subscriptions), WebKit page-world hooks, bounded buffers | Scenarios 5-6, 8 |
 
-Slices 3-6 each depend on its shared engine hook (single source owner, through the coordinator); they are not parallel until those hooks exist.
+Slices 3-6 each depend on a shared engine hook from its single source owner, requested through the coordinator, so they are sequenced rather than parallel until those hooks exist. Each commit carries its own tests and `MCP.md`/CHANGELOG updates.
 
 ### File ownership against parallel work
 
-- **Credential UI/vault (PR #14, PR #19 and any follow-up):** owns `WSurf/Web/Credentials/*`, `Settings/Pages/Credential*`, `WebAuthnAdapter`, autofill and `BrowserApplication`. No overlap in the MCP-owned files listed above was found in the credential worktrees at `d3cf409`. Shared contact points are `BrowserPage` credential generation, `PageFrameRegistry`, and `ChromiumDevTools+FrameEvents.invalidateCredentialContexts`: slice 1 `goBack` freshness and slice 4 `reloadPage` must preserve them and keep the WebAuthn back/forward and credential-context tests passing.
-- **AnyLanguageModel upgrade and assistant (`WSurf/Agent/*`, package pin 0.15.1 in `project.pbxproj`):** no branch for it exists at `d3cf409`. Overlap is `AgentToolkit.Descriptions` (consumed by `MCPToolCatalog`), `PageInteractionTools`, `AgentToolkit+PageActions`, `FrameTools`, and the `PageDriver` calls above. Coordinate any change to those through the coordinator; the package pin and `import AnyLanguageModel` files are not touched by this spec.
-- **Linen:** intake follows `docs/upstream-migrations.md` as its own PR. The post-0.8 MCP commits named above stay proposals; the plan source-compares them for reuse and provenance and does not take them in blanket or in parallel.
-- **`MCP.md`, `MCPToolCatalog`, `MCPBrowserSession`, `MCPAccessConsent`:** MCP-owned, one slice at a time. Import/export (credential exchange) does not touch them and is not blocked by this work.
+- **Credential UI/vault and import/export (PR #14, PR #19 and follow-ups):** owns `WSurf/Web/Credentials/*`, `Settings/Pages/Credential*`, `WebAuthnAdapter`, autofill and `BrowserApplication`. No overlap with the MCP-owned files above was found in the credential worktrees at `d3cf409`. Shared contact points are `BrowserPage` credential generation, `PageFrameRegistry`, and `ChromiumDevTools+FrameEvents.invalidateCredentialContexts`: slice 1 `goBack` freshness and slice 4 `reloadPage` must preserve them and keep the WebAuthn back/forward and credential-context tests passing. Import/export does not touch the MCP-owned files and is not blocked by this work.
+- **AnyLanguageModel upgrade and assistant (`WSurf/Agent/*`):** the upgrade worker owns the package dependency and the AI call sites it needs to keep compatible. This work does not edit the package pin or `import AnyLanguageModel` files. The overlap is `AgentToolkit.Descriptions` (read by `MCPToolCatalog`), `PageInteractionTools`, `AgentToolkit+PageActions`, `FrameTools`, and the shared `PageDriver` calls; changes there go through the coordinator so the two workers rebase on each other rather than conflict.
+- **Linen:** intake follows `docs/upstream-migrations.md` as its own PR. The post-0.8 MCP commits named above stay proposals; the implementation plan source-compares them for reuse and provenance and does not take them in blanket or in parallel.
+- **MCP-owned files** (`MCP.md`, `MCPToolCatalog`, `MCPBrowserSession`, `MCPAccessConsent`): edited by one slice at a time.
 
-### Open design choices for review
+### Review gate
 
-1. **Assistant surface.** (a) Recommended: shared-driver fixes benefit both consumers; new schemas (`region`, element conditions, hover semantics text) are MCP-only. (b) Also extend assistant tool schemas, which collides with the AnyLanguageModel upgrade and needs its own scope.
-2. **PR granularity.** (a) Recommended: one implementation PR per slice, each with its own native verification. (b) One combined PR for slices 1-2, then one per remaining slice.
-3. **Release availability.** The development tools ship in Release builds behind explicit Allow Development consent (assumed from section 1); stage verification remains DEBUG-only. Confirm or restrict.
-4. **Execution method.** Subagent-driven implementation in isolated worktrees with the coordinator owning the shared engine files and all native runs, versus inline execution by the coordinator.
+The only open gate is the user's written approval of this specification. Approval permits writing the implementation plan; it does not approve the plan, which does not exist yet and gets its own review, and it authorizes no product code.
 
 ## References
 
