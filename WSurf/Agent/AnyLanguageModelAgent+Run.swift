@@ -44,7 +44,7 @@ extension AnyLanguageModelAgent {
             log.saveCheckpoint(state.checkpoint, taskID: task.id)
             log.recordContextEstimate(
                 tabID: task.spaceID,
-                tokens: (state.checkpoint.openAI?.contextTokens ?? Self.estimatedTokens(in: state.checkpoint.transcript)) + budget.toolSchemaTokens
+                tokens: (state.checkpoint.openAI?.contextTokens ?? estimatedTokens(in: state.checkpoint.transcript)) + budget.toolSchemaTokens
             )
             if !discardedTabIDs.contains(task.spaceID) {
                 sessions[task.spaceID] = makeSession(transcript: state.checkpoint.transcript)
@@ -75,7 +75,7 @@ extension AnyLanguageModelAgent {
         do {
             try AttachmentRequest.validate(
                 task.attachments, message: utterance, textOnly: task.attachmentTextOnly || !acceptsImages,
-                windowTokens: budget.windowTokens
+                windowTokens: budget.windowTokens, imageTokens: imageTokens
             )
             if openAI != nil, !task.isContinuation {
                 state.attachmentInput = try OpenAIAttachmentInput.make(prompt: utterance, attachments: task.attachments,
@@ -131,9 +131,9 @@ extension AnyLanguageModelAgent {
             }
             let resumeCharacters = state.task.isContinuation ? AgentCheckpoint.resumePrompt.count + state.utterance.count : 0
             let ledgerCharacters = toolkit.taskLedger.context.count
-            if isOverBudget(state.session, nativeState: state.nativeState, promptCharacters: state.prompt.count + ledgerCharacters + state.images.count * 6_400 + resumeCharacters) {
+            if isOverBudget(state.session, nativeState: state.nativeState, promptCharacters: state.prompt.count + ledgerCharacters + resumeCharacters, images: state.images.count) {
                 callbacks.event("context_compaction", ["reason": "input_budget"])
-                try await compact(state, pendingPromptTokens: max(1, (state.prompt.count + ledgerCharacters + resumeCharacters) / 4) + state.images.count * 1_600,
+                try await compact(state, pendingPromptTokens: max(1, (state.prompt.count + ledgerCharacters + resumeCharacters) / 4) + state.images.count * imageTokens,
                                   event: callbacks.event)
                 callbacks.save()
             }

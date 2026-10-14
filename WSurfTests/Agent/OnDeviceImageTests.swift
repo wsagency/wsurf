@@ -16,7 +16,6 @@ struct OnDeviceImageTests {
         let onDevice = makeAgent(model: SystemLanguageModel.default)
         let hosted = makeAgent(model: HarnessScript([]))
 
-        #expect(onDevice.acceptsImages)
         #expect(!onDevice.seesScreenshots)
         #expect(Set(onDevice.makeSession().tools.map(\.name)).isDisjoint(with: AgentToolCatalog.visualToolIDs))
         #expect(hosted.seesScreenshots)
@@ -28,6 +27,24 @@ struct OnDeviceImageTests {
 
         #expect(!textOnly.seesScreenshots)
         #expect(Set(textOnly.makeSession().tools.map(\.name)).isDisjoint(with: AgentToolCatalog.visualToolIDs))
+    }
+
+    @Test func severalAttachedImagesFitTheOnDeviceRunBudgetButNotAHostedOne() {
+        let budget = ContextBudget.resolve(windowTokens: 8_192, desiredResponseTokens: 1_024)
+        let onDevice = makeAgent(model: SystemLanguageModel.default, budget: budget)
+        let hosted = makeAgent(model: HarnessScript([]), budget: budget)
+        func isOver(_ agent: AnyLanguageModelAgent, images: Int) -> Bool {
+            agent.isOverBudget(agent.makeSession(), nativeState: nil, promptCharacters: 400, images: images)
+        }
+        let retained = Transcript(entries: [
+            .prompt(.init(segments: [.text(.init(content: "Read these"))] + Array(repeating: .image(Self.image), count: 5))),
+        ])
+
+        #expect(!isOver(onDevice, images: 4))
+        #expect(isOver(onDevice, images: 30))
+        #expect(isOver(hosted, images: 4))
+        #expect(onDevice.estimatedTokens(in: retained) < budget.inputTokens)
+        #expect(hosted.estimatedTokens(in: retained) > budget.inputTokens)
     }
 
     @Test(arguments: [true, false])
@@ -128,14 +145,17 @@ struct OnDeviceImageTests {
     }
 
     private func makeAgent(
-        model: any LanguageModel, acceptsImages: Bool = true, toolOverrides: [any Tool]? = nil
+        model: any LanguageModel, acceptsImages: Bool = true, toolOverrides: [any Tool]? = nil,
+        budget: ContextBudget = ContextBudget(
+            windowTokens: 128_000, responseTokens: 2_000, inputTokens: 100_000, toolSchemaTokens: 0,
+            instructionTier: .compact, toolTier: .full, toolOutput: .standard, retainedExchanges: 12,
+            retainedToolRounds: 1
+        )
     ) -> AnyLanguageModelAgent {
         let log = ConversationLog(database: .temporary())
         return AnyLanguageModelAgent(
             name: "fixture", modelID: "fixture", toolOverrides: toolOverrides, model: model, options: GenerationOptions(),
-            budget: ContextBudget(windowTokens: 128_000, responseTokens: 2_000, inputTokens: 100_000, toolSchemaTokens: 0,
-                                  instructionTier: .compact, toolTier: .full, toolOutput: .standard, retainedExchanges: 12,
-                                  retainedToolRounds: 1),
+            budget: budget,
             acceptsImages: acceptsImages,
             enabledToolIDs: toolOverrides == nil ? AgentToolCatalog.visualToolIDs : nil,
             toolkit: AgentToolkit(browser: BrowserModel(database: .temporary()), media: MediaCenter(), log: log),

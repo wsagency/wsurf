@@ -98,7 +98,16 @@ final class AnyLanguageModelAgent: AgentRunner {
     /// The on-device model reads attached images but gets no screenshots: tool images and
     /// screenshot tools stay out of its small context window.
     var seesScreenshots: Bool {
-        acceptsImages && !(model is SystemLanguageModel)
+        acceptsImages && !isOnDevice
+    }
+
+    private var isOnDevice: Bool {
+        model is SystemLanguageModel
+    }
+
+    /// Prompt tokens one attached or retained image is charged in every budget check.
+    var imageTokens: Int {
+        AttachmentRequest.imageTokens(onDevice: isOnDevice)
     }
 
     func compactContext(forTab tabID: UUID) async throws -> Bool {
@@ -123,7 +132,7 @@ final class AnyLanguageModelAgent: AgentRunner {
         checkpoint.openAI = nativeState
         log.saveCheckpoint(checkpoint, taskID: trace.id)
         sessions[tabID] = compacted
-        log.recordContextEstimate(tabID: tabID, tokens: nativeState?.contextTokens ?? (Self.estimatedTokens(in: compacted.transcript) + budget.toolSchemaTokens))
+        log.recordContextEstimate(tabID: tabID, tokens: nativeState?.contextTokens ?? (estimatedTokens(in: compacted.transcript) + budget.toolSchemaTokens))
         return true
     }
 
@@ -216,7 +225,8 @@ final class AnyLanguageModelAgent: AgentRunner {
         onImageInputUnsupported()
         log.setAttachments(task.attachments, textOnly: true, taskID: task.id)
         try AttachmentRequest.validate(
-            task.attachments, message: utterance, textOnly: true, windowTokens: budget.windowTokens
+            task.attachments, message: utterance, textOnly: true, windowTokens: budget.windowTokens,
+            imageTokens: imageTokens
         )
         let original = AssistantAttachment.prompt(utterance, attachments: task.attachments, textOnly: true)
         return (makeSession(transcript: transcript), images.isEmpty ? prompt : original, original)
@@ -360,8 +370,11 @@ final class AnyLanguageModelAgent: AgentRunner {
         return response.content
     }
 
-    func isOverBudget(_ session: LanguageModelSession, nativeState: OpenAIConversationState?, promptCharacters: Int) -> Bool {
-        (nativeState?.contextTokens ?? Self.estimatedTokens(in: session.transcript)) + max(1, promptCharacters / 4) + budget.toolSchemaTokens > budget.inputTokens
+    func isOverBudget(
+        _ session: LanguageModelSession, nativeState: OpenAIConversationState?, promptCharacters: Int, images: Int
+    ) -> Bool {
+        (nativeState?.contextTokens ?? estimatedTokens(in: session.transcript)) + max(1, promptCharacters / 4)
+            + images * imageTokens + budget.toolSchemaTokens > budget.inputTokens
     }
 
     func compact(
@@ -421,20 +434,20 @@ final class AnyLanguageModelAgent: AgentRunner {
         let handoff = Transcript.Entry.response(.init(assetIDs: [], segments: [.text(.init(content: memory))]))
         let limit = min(
             min(budget.inputTokens * 3 / 4, budget.inputTokens - pendingPromptTokens - 128) - budget.toolSchemaTokens,
-            Self.estimatedTokens(in: session.transcript) * 3 / 4
+            estimatedTokens(in: session.transcript) * 3 / 4
         )
         var retainedPrompts = Array(prompts.suffix(1))
         func rebuilt(_ tail: [Transcript.Entry] = []) -> Transcript {
             Transcript(entries: instructions + retainedPrompts + [handoff] + tail)
         }
-        guard Self.estimatedTokens(in: rebuilt()) <= limit else {
+        guard estimatedTokens(in: rebuilt()) <= limit else {
             event("compaction_result", ["status": "failed", "reason": "context_limit"])
             throw AgentCompactionFailure()
         }
         for prompt in prompts.dropLast().reversed() {
             let previous = retainedPrompts
             retainedPrompts.insert(prompt, at: 0)
-            if Self.estimatedTokens(in: rebuilt()) > limit {
+            if estimatedTokens(in: rebuilt()) > limit {
                 retainedPrompts = previous
                 break
             }
@@ -451,11 +464,11 @@ final class AnyLanguageModelAgent: AgentRunner {
                 }
                 return true
             }
-            guard Self.estimatedTokens(in: rebuilt(candidate)) <= limit else { break }
+            guard estimatedTokens(in: rebuilt(candidate)) <= limit else { break }
             tail = candidate
         }
         let compacted = makeSession(transcript: rebuilt(tail))
-        guard Self.estimatedTokens(in: compacted.transcript) < Self.estimatedTokens(in: session.transcript) else {
+        guard estimatedTokens(in: compacted.transcript) < estimatedTokens(in: session.transcript) else {
             event("compaction_result", ["status": "failed", "reason": "not_smaller"])
             throw AgentCompactionFailure()
         }
@@ -630,16 +643,16 @@ final class AnyLanguageModelAgent: AgentRunner {
         }.joined()
     }
 
-    static func estimatedTokens(in transcript: Transcript) -> Int {
+    func estimatedTokens(in transcript: Transcript) -> Int {
         var prose = 0
         var machine = 0
         var images = 0
         for entry in transcript {
             switch entry {
             case .instructions(let value):
-                prose += text(in: value.segments).count
+                prose += Self.text(in: value.segments).count
             case .prompt(let value):
-                prose += text(in: value.segments).count
+                prose += Self.text(in: value.segments).count
                 images += value.segments.filter {
                     if case .image = $0 {
                         return true
@@ -647,16 +660,16 @@ final class AnyLanguageModelAgent: AgentRunner {
                     return false
                 }.count
             case .response(let value):
-                prose += text(in: value.segments).count
+                prose += Self.text(in: value.segments).count
             case .toolCalls(let calls):
                 machine += calls.reduce(0) { partial, call in
                     partial + call.toolName.count + call.arguments.jsonString.count
                 }
             case .toolOutput(let value):
-                machine += text(in: value.segments).count
+                machine += Self.text(in: value.segments).count
             }
         }
-        let estimate = prose / 4 + machine / 3 + images * 1_600
+        let estimate = prose / 4 + machine / 3 + images * imageTokens
         return prose + machine + images == 0 ? 0 : max(1, estimate)
     }
 
