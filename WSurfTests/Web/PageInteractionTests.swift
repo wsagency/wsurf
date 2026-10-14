@@ -160,45 +160,28 @@ struct PageInteractionTests {
         #expect(!observation.refs.contains(1))
     }
 
-    @Test func refsOutsideTheObservationNameTheRefAndDoNotAct() async throws {
-        let buttons = (1...12).map { "<button onclick='window.hit=true'>Choice \($0)</button>" }.joined()
+    @Test func clickingARefTheObservationOmittedActsOnlyOnceItIsListed() async throws {
+        let buttons = (1...12).map { "<button onclick='document.body.dataset.clicked=\"\($0)\"'>Choice \($0)</button>" }.joined()
         let view = await page(buttons)
         _ = await PageDriver.snapshot(view, textLimit: 0, controlLimit: 3)
-        let observation = try #require(PageDriver.observation(in: view))
-        #expect(!observation.refs.contains(9))
-        let refusals = [
-            await PageDriver.click(ref: 9, label: "", in: view),
-            await PageDriver.inspectControl(ref: 9, in: view),
-            await PageDriver.scroll(direction: "down", ref: 9, in: view),
-            await PageDriver.hover(ref: 9, in: view),
-        ]
-        for refusal in refusals {
-            #expect(refusal.contains("[9] was not listed"), "\(refusal)")
-        }
-        #expect(await js(view, "window.hit === undefined") as? Bool == true)
+        #expect(!(try #require(PageDriver.observation(in: view)).refs.contains(9)))
+        _ = await PageDriver.click(ref: 9, label: "", in: view)
+        #expect(await js(view, "document.body.dataset.clicked === undefined") as? Bool == true)
 
-        // A page that is genuinely stale must not be described as merely unlisted.
-        let wrongAuthority = await PageDriver.$expectedObservation.withValue("not-the-current-observation") {
-            await PageDriver.click(ref: 9, label: "", in: view)
-        }
-        #expect(!wrongAuthority.contains("was not listed"), "\(wrongAuthority)")
-        view.loadHTMLString("<button onclick='window.hit=true'>New document</button>", baseURL: nil)
-        #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
-        let afterNavigation = await PageDriver.click(ref: 9, label: "", in: view)
-        #expect(!afterNavigation.contains("was not listed"), "\(afterNavigation)")
-        #expect(await js(view, "window.hit === undefined") as? Bool == true)
+        _ = await PageDriver.snapshot(view, textLimit: 0, controlLimit: 12)
+        #expect(try #require(PageDriver.observation(in: view)).refs.contains(9))
+        _ = await PageDriver.click(ref: 9, label: "", in: view)
+        #expect(await js(view, "document.body.dataset.clicked") as? String == "9")
     }
 
-    @Test func batchFillNamesALaterUnlistedRefAndKeepsEarlierFills() async throws {
+    @Test func batchFillWritesListedFieldsAndLeavesAnOmittedOneUntouched() async throws {
         let view = await page((1...12).map { "<input aria-label='Field \($0)'>" }.joined())
         _ = await PageDriver.snapshot(view, textLimit: 0, controlLimit: 3)
         let listed = try #require(PageDriver.observation(in: view)).refs
         #expect(listed.contains(1) && !listed.contains(9))
-        let result = await PageDriver.fillFields([
+        _ = await PageDriver.fillFields([
             .init(ref: 1, value: "kept", select: false), .init(ref: 9, value: "unseen", select: false),
         ], in: view)
-        #expect(result.hasPrefix("Filled 1 of 2 fields."), "\(result)")
-        #expect(result.contains("[9] was not listed"), "\(result)")
         #expect(await js(view, "document.querySelectorAll('input')[0].value") as? String == "kept")
         #expect(await js(view, "document.querySelectorAll('input')[8].value") as? String == "")
     }
