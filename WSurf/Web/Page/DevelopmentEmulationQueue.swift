@@ -6,8 +6,8 @@ import Foundation
 
 /// Runs a page's development emulation work (applying a viewport, cleaning one up) strictly one at a time in the order it was
 /// requested. `enqueue` reserves its turn synchronously, before it returns, so a release followed straight away by a new lease's
-/// apply (no suspension between them) still runs the cleanup first. The work runs in its own task: a cancelled caller does not
-/// abandon half-applied emulation.
+/// apply (no suspension between them) still runs the cleanup first. The work runs in its own task, so cancelling a caller that
+/// merely awaits it does not abandon a cleanup; work that must stop with its caller forwards the cancellation itself.
 @MainActor
 final class DevelopmentEmulationQueue {
     private var tail: Task<Void, Never>?

@@ -539,13 +539,20 @@ struct MCPDevelopmentOwnershipTests {
         #expect(tab.page.developmentViewport == nil)
     }
 
-    @Test func resettingEverySiteAnswerEndsAnIdleViewportLease() async throws {
+    /// Both ways Settings clears every site answer reach the lease: the assistant answers alone, and "remove everything"
+    /// (which cookie clearing calls on the shared store, with no tab involved).
+    @Test(arguments: [false, true])
+    func resettingEverySiteAnswerEndsAnIdleViewportLease(removingEverything: Bool) async throws {
         let (server, browser, tab) = try await fixture(profileWide: true)
         defer { _ = server }
         let subject = session(browser)
         try await requestDevelopment(subject)
         #expect(status(try await call(subject, "setViewport", tab, phone)) == "ok")
-        browser.sitePermissions.removeAllAssistantAccess()
+        if removingEverything {
+            browser.sitePermissions.removeEverything()
+        } else {
+            browser.sitePermissions.removeAllAssistantAccess()
+        }
         #expect(tab.developmentOwner == nil)
         #expect(tab.page.developmentViewport == nil)
     }
@@ -581,6 +588,39 @@ struct MCPDevelopmentOwnershipTests {
         #expect(tab.page.developmentViewport == size)
         let info = try await call(first, "getDevelopmentInfo", tab)
         #expect(info.structuredContent?.objectValue?["owner"]?.stringValue == "self")
+    }
+
+    /// A `setViewport` waiting behind another turn on the page's emulation queue is cancelled by its caller before its turn
+    /// begins: it applies nothing, a lease it created for nothing is not kept, and diagnostics the lease already held stay.
+    @Test(arguments: [false, true])
+    func aSetViewportCancelledWhileQueuedAppliesNothing(ownsDiagnostics: Bool) async throws {
+        let (server, browser, tab) = try await fixture()
+        defer { _ = server }
+        let subject = session(browser)
+        try await requestDevelopment(subject)
+        if ownsDiagnostics { #expect(status(try await call(subject, "startDiagnostics", tab)) == "ok") }
+        let page = tab.page
+        let widthBefore = try #require(try await page.evaluateJavaScript("window.innerWidth") as? Int)
+        var open: CheckedContinuation<Void, Never>?
+        let gate = page.emulationQueue.enqueue { await withCheckedContinuation { open = $0 } }
+        #expect(await waitUntil { open != nil })
+        let request = Task { try await self.call(subject, "setViewport", tab, self.phone) }
+        #expect(await waitUntil { tab.developmentOwner != nil })
+        // The call acquires its lease and reserves its turn behind the gate without suspending in between.
+        try await Task.sleep(for: .milliseconds(100))
+        request.cancel()
+        open?.resume()
+        await gate.value
+        let result = try? await request.value
+        #expect(result?.isError != false)
+        #expect(page.developmentViewport == nil)
+        #expect(try await page.evaluateJavaScript("window.innerWidth") as? Int == widthBefore)
+        if ownsDiagnostics {
+            #expect(tab.developmentOwner?.diagnostics != nil)
+            #expect(tab.developmentOwner?.viewport == nil)
+        } else {
+            #expect(tab.developmentOwner == nil)
+        }
     }
 
     // MARK: Diagnostics follow the document

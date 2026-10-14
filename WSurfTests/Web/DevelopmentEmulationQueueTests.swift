@@ -22,7 +22,10 @@ struct DevelopmentEmulationQueueTests {
         #expect(log == ["old apply start", "old apply end", "old cleanup", "new apply"])
     }
 
-    @Test func aCancelledCallerDoesNotAbandonQueuedWork() async {
+    /// The queue itself never cancels its work for an awaiting caller, which is what keeps a release's cleanup durable.
+    /// A request whose own work must stop when its caller is cancelled forwards that explicitly
+    /// (`applyDevelopmentViewport`; covered through the MCP `setViewport` consumer test).
+    @Test func aCancelledAwaiterDoesNotCancelQueuedCleanup() async {
         let queue = DevelopmentEmulationQueue()
         var log: [String] = []
         let caller = Task { await queue.enqueue { try? await Task.sleep(for: .milliseconds(20)); log.append("applied") }.value }

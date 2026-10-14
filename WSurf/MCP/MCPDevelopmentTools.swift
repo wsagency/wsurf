@@ -246,6 +246,10 @@ extension MCPBrowserSession {
         case .missed(let measured, let message):
             releaseIfIdle(owner, tab: tab)
             return MCPDevelopmentTools.result(.unsupported, tabID: tab.id, message: message, measured.map { ["viewport": MCPDevelopmentTools.value($0)] } ?? [:])
+        case .cancelled:
+            // Rolled back inside the turn; a lease this request created and that now holds nothing is not kept.
+            releaseIfIdle(owner, tab: tab)
+            return MCPDevelopmentTools.result(.stale, tabID: tab.id, message: "The request was cancelled; no viewport was applied.")
         case .stale:
             return MCPDevelopmentTools.result(.stale, tabID: tab.id, message: "The development lease ended before the viewport was applied.")
         }

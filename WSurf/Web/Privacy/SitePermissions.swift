@@ -399,6 +399,7 @@ final class SitePermissions {
         noAutomaticPictureOriginSet = []
         noAutomaticPictureOrigins = []
         scheduleSave()
+        onAssistantAccessChanged?()
     }
 
     func waitForPendingSave() async {

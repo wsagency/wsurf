@@ -101,6 +101,8 @@ enum DevelopmentViewportOutcome {
     /// The requested size was not obtained; layout was rolled back to normal.
     case missed(MeasuredViewport?, String)
     case stale
+    /// The request's caller was cancelled: whatever it had applied was rolled back and nothing is reported as applied.
+    case cancelled
 }
 
 extension BrowserPage {
@@ -138,21 +140,37 @@ extension BrowserPage {
             return .unsupported("WebKit has no DPR, touch or mobile-viewport override, so device profiles are not applied and nothing was changed.")
         }
         // The turn is reserved here, synchronously: a cleanup requested before this call (an earlier lease's release) is
-        // already in the queue and runs first. Each step of the turn revalidates the lease before mutating.
-        return await emulationQueue.enqueue { [self] in
+        // already in the queue and runs first. The turn runs in its own task, so the caller's cancellation is forwarded to it;
+        // each step of the turn then stops at its next check and rolls back only what this request applied.
+        let turn = emulationQueue.enqueue { [self] in
             await runDevelopmentViewport(request, profile: profile, device: device, owner: owner, tab: tab)
-        }.value
+        }
+        let outcome = await withTaskCancellationHandler { await turn.value } onCancel: { turn.cancel() }
+        // Cancelled after the turn finished but before this caller resumed: a success is never reported for it.
+        if Task.isCancelled, case .applied = outcome {
+            await emulationQueue.enqueue { [self] in if tab.isCurrent(owner) { await rollBackViewport(owner) } }.value
+            return .cancelled
+        }
+        return outcome
     }
 
     private func runDevelopmentViewport(
         _ request: PageViewport.Request, profile: PageViewport.Profile?, device: Bool, owner: DevelopmentOwner, tab: BrowserTab
     ) async -> DevelopmentViewportOutcome {
+        // Nothing has been touched yet: a request cancelled before its turn begins mutates nothing.
+        guard !Task.isCancelled else { return .cancelled }
         guard tab.isCurrent(owner) else { return .stale }
+        // Cancelled mid-turn: undo what this request applied to the lease it still owns (a released lease was already cleaned).
+        func cancelled() async -> DevelopmentViewportOutcome {
+            if tab.isCurrent(owner) { await rollBackViewport(owner) }
+            return .cancelled
+        }
         // Switching from a device profile to a plain size clears the device axes first.
         if owner.viewport?.device == true, !device, let chromium {
             await chromium.clearDeviceEmulation()
             guard tab.isCurrent(owner) else { return .stale }
             owner.viewport = owner.viewport.map { DevelopmentViewportState(size: $0.size, device: false) }
+            guard !Task.isCancelled else { return await cancelled() }
         }
         if device, let chromium, let profile {
             do {
@@ -168,16 +186,25 @@ extension BrowserPage {
                 await chromium.clearDeviceEmulation()
                 return .stale
             }
+            guard !Task.isCancelled else {
+                // This request's device axes are not kept; the lease's earlier layout (if any) stays as it was.
+                await chromium.clearDeviceEmulation()
+                if tab.isCurrent(owner), let previous = owner.viewport, previous.device {
+                    owner.viewport = DevelopmentViewportState(size: previous.size, device: false)
+                }
+                return .cancelled
+            }
         }
         let size = CGSize(width: request.width, height: request.height)
         developmentViewport = size
         owner.viewport = DevelopmentViewportState(size: size, device: device)
         var measured: MeasuredViewport?
         for _ in 0..<20 {
-            try? await Task.sleep(for: .milliseconds(50))
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return await cancelled() }
             guard tab.isCurrent(owner) else { return .stale }
             measured = await measureViewport()
             guard tab.isCurrent(owner) else { return .stale }
+            guard !Task.isCancelled else { return await cancelled() }
             if let measured, measured.width == request.width, measured.height == request.height { break }
         }
         guard let measured, measured.width == request.width, measured.height == request.height else {
@@ -189,6 +216,7 @@ extension BrowserPage {
             return .unsupported(
                 "The embedded runtime did not honor every device axis (measured devicePixelRatio \(measured.devicePixelRatio), touch \(measured.touch)); nothing was kept.")
         }
+        guard !Task.isCancelled else { return await cancelled() }
         return .applied(measured)
     }
 

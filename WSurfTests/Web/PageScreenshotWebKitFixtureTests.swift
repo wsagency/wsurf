@@ -66,4 +66,8 @@ struct PageScreenshotWebKitFixtureTests {
     @Test func aFrameUnderAThreeDimensionalTransformIsRefused() async throws {
         #expect(try await mapped(await page(frameStyle: "transform: rotateY(40deg)")) == .failure(.unmappableFrame))
     }
+
+    @Test func aFrameTranslatedInZUnderPerspectiveIsRefused() async throws {
+        #expect(try await mapped(await page(frameStyle: "translate: 0 0 50px", wrapperStyle: "perspective: 200px")) == .failure(.unmappableFrame))
+    }
 }

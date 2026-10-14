@@ -640,6 +640,9 @@ nonisolated enum PageRuntime {
             }
             l = mul([Math.cos(t), Math.sin(t), -Math.sin(t), Math.cos(t)], l);
           }
+          // A non-zero z in `translate` is 3D: under a perspective ancestor it scales the box, which no 2D polygon carries.
+          const translate = (s.translate || 'none').trim().split(/\s+/);
+          if (translate.length > 2 && parseFloat(translate[2])) return null;
           return l.every(Number.isFinite) ? l : null;
         };
         // Every transform from `node` up to its document's root, composed once.
