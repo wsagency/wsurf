@@ -31,6 +31,9 @@ final class TabAssistantAccessCenter {
     var persistsAnswers = true
     private(set) var sessionPolicy: AssistantAccessPolicy?
 
+    /// Called after the effective policy may have changed (an answer, a new origin, cleared site data).
+    @ObservationIgnored var onPolicyChanged: (() -> Void)?
+
     var displayHost: String {
         SitePermissions.displayName(for: origin)
     }
@@ -104,6 +107,7 @@ final class TabAssistantAccessCenter {
         } else {
             sessionPolicy = policy == .ask ? nil : policy
         }
+        onPolicyChanged?()
     }
 
     func pageChanged(url: URL?) {
@@ -114,10 +118,12 @@ final class TabAssistantAccessCenter {
         guard nextOrigin != origin else { return }
         origin = nextOrigin
         sessionPolicy = nil
+        onPolicyChanged?()
     }
 
     func siteDataCleared() {
         sessionPolicy = nil
+        onPolicyChanged?()
     }
 
     func denialMessage(for capability: AssistantPageCapability) -> String {

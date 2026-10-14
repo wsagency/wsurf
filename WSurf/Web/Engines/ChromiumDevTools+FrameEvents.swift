@@ -14,6 +14,7 @@ extension ChromiumDevTools {
             guard let value = try? Self.jsonObject(pointer, size: size) as? [String: Any] else { return }
             params = value
         }
+        if let diagnosticsSink, Self.diagnosticEvents.contains(name) { diagnosticsSink(name, params) }
         switch name {
         case "Runtime.executionContextCreated":
             contextCreated(params)
@@ -49,6 +50,11 @@ extension ChromiumDevTools {
             break
         }
     }
+
+    private static let diagnosticEvents: Set<String> = [
+        "Runtime.consoleAPICalled", "Runtime.exceptionThrown", "Network.requestWillBeSent", "Network.responseReceived",
+        "Network.loadingFinished", "Network.loadingFailed",
+    ]
 
     private func documentResponseReceived(_ params: [String: Any]) {
         guard params["type"] as? String == "Document",

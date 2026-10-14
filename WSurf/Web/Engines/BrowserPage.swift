@@ -27,8 +27,22 @@ final class BrowserPage: NSView {
         }
     }
 
+    /// MCP development viewport in CSS pixels; nil is normal layout. Never persisted. The real page is laid out at this size
+    /// (it may exceed the host, which clips it) so `innerWidth`/`innerHeight` are the requested values.
+    var developmentViewport: CGSize? {
+        didSet {
+            guard developmentViewport != oldValue else { return }
+            (superview as? WebViewContainer)?.layoutPage()
+        }
+    }
+
     func frameInViewport(_ viewport: CGRect) -> CGRect {
-        CGRect(x: viewport.minX, y: viewport.minY, width: viewport.width, height: max(1, viewport.height - topBarInset))
+        if let size = developmentViewport {
+            let zoom = pageZoom
+            let height = size.height * zoom
+            return CGRect(x: viewport.minX, y: viewport.maxY - topBarInset - height, width: size.width * zoom, height: height)
+        }
+        return CGRect(x: viewport.minX, y: viewport.minY, width: viewport.width, height: max(1, viewport.height - topBarInset))
     }
 
     @objc dynamic var url: URL?
@@ -257,6 +271,7 @@ final class BrowserPage: NSView {
         set {
             webKit?.pageZoom = newValue
             chromium?.pageZoom = newValue
+            if developmentViewport != nil { (superview as? WebViewContainer)?.layoutPage() }
         }
     }
 
@@ -424,16 +439,25 @@ final class BrowserPage: NSView {
         }
     }
 
-    func sendKeyEvent(_ event: NSEvent) {
-        if let webKit {
+    /// True when `responder` is this page's engine view or one of its descendants.
+    func ownsResponder(_ responder: NSResponder?) -> Bool {
+        guard let webKit else { return chromium?.ownsResponder(responder) == true }
+        return responder === webKit || (responder as? NSView)?.isDescendant(of: webKit) == true
+    }
+
+    /// True only when the engine's own responder held keyboard focus and was invoked. A key for a page that is not the
+    /// first responder is dropped, never reported as delivered.
+    func sendKeyEvent(_ event: NSEvent) -> Bool {
+        if webKit != nil {
+            guard let responder = window?.firstResponder, ownsResponder(responder) else { return false }
             if event.type == .keyUp {
-                webKit.keyUp(with: event)
+                responder.keyUp(with: event)
             } else {
-                webKit.keyDown(with: event)
+                responder.keyDown(with: event)
             }
-        } else {
-            chromium?.sendKeyEvent(event)
+            return true
         }
+        return chromium?.sendKeyEvent(event) ?? false
     }
 
     func callAsyncJavaScript(
@@ -667,11 +691,12 @@ final class BrowserPage: NSView {
         }
     }
 
-    func addScriptMessageHandler(name: String, in world: WKContentWorld, handler: @escaping (BrowserScriptMessage) -> Void) {
+    /// `bridge: false` registers the handler without installing the page-callable `__wsurfSend` relay for that world.
+    func addScriptMessageHandler(name: String, in world: WKContentWorld, bridge: Bool = true, handler: @escaping (BrowserScriptMessage) -> Void) {
         handlers[Self.handlerKey(name: name, world: world)] = handler
         if let webKit {
             let controller = webKit.configuration.userContentController
-            Self.installBridge(in: controller, world: world)
+            if bridge { Self.installBridge(in: controller, world: world) }
             controller.removeScriptMessageHandler(forName: name, contentWorld: world)
             // Opener-created views can share a controller; route by the emitting native view, not the last installed tab.
             controller.add(MessageAdapter(world: world), contentWorld: world, name: name)

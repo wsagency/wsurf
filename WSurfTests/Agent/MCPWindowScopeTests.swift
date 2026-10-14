@@ -148,7 +148,7 @@ struct MCPWindowScopeTests {
         var shareWindow: NSWindow?
         var openWindow: NSWindow?
         let connection = try #require(app.mcpServer.makeSessionForConnection(
-            consent: { _, _, window in
+            consent: { _, _, _, window in
                 shareWindow = window
                 return .control
             },
@@ -191,7 +191,7 @@ struct MCPWindowScopeTests {
         try #require(await PageSettle.untilIdle(tab.page))
         app.focus(first)
         let capturedAdapter = first.extensions.adapter(for: first.browser)
-        let connection = try #require(app.mcpServer.makeSessionForConnection(consent: { _, _, _ in .control }))
+        let connection = try #require(app.mcpServer.makeSessionForConnection(consent: { _, _, _, _ in .control }))
         try #require(try await call(connection, "requestAccess").isError == false)
         let read = try await call(connection, "readPage", arguments: ["tabID": .string(tab.id.uuidString)])
         guard case .object(let observation) = read.structuredContent else {
@@ -255,7 +255,7 @@ struct MCPWindowScopeTests {
         first.browser.newTab(url: URL(string: "https://first-window.invalid/"))
         app.focus(first)
         var prompts = 0
-        let connection = try #require(app.mcpServer.makeSessionForConnection(consent: { _, _, _ in
+        let connection = try #require(app.mcpServer.makeSessionForConnection(consent: { _, _, _, _ in
             prompts += 1
             return .control
         }))
