@@ -380,9 +380,185 @@ nonisolated enum PageRuntime {
           snapshot: window.__wsurfSnapshot, document: documentID, url: location.href };
       };
 
+      // MARK: Development inspection: elementState (waits), findAll, inspect
+      // Every result is bounded while it is built; nothing reads input values, hidden-field contents or raw HTML.
+
+      const STYLE_PROPERTIES = \#(styleLiteral);
+      const ATTRIBUTE_ALLOWLIST = new Set(['id', 'class', 'role', 'type', 'name', 'for', 'tabindex', 'alt', 'title', 'placeholder',
+        'href', 'src', 'target', 'rel', 'lang', 'dir', 'disabled', 'readonly', 'required', 'checked', 'selected', 'hidden', 'multiple',
+        'autocomplete', 'contenteditable', 'draggable', 'inert', 'open', 'width', 'height', 'colspan', 'rowspan', 'min', 'max', 'step']);
+      const clip = (s, n) => { s = norm(s); return s.length > n ? Array.from(s).slice(0, n).join('') : s; };
+      const round = n => Math.round(n * 100) / 100;
+      const rectOf = el => { const r = el.getBoundingClientRect(); return { x: round(r.x), y: round(r.y), width: round(r.width), height: round(r.height) }; };
+      const hiddenInput = el => el.tagName === 'INPUT' && ((el.type || '') + '').toLowerCase() === 'hidden';
+      const inert = el => { for (let n = el; n; n = parentOf(n)) if (n.hasAttribute && n.hasAttribute('inert')) return true; return false; };
+
+      function* deep(root) {
+        for (const el of root.querySelectorAll('*')) {
+          yield el;
+          if (el.shadowRoot) yield* deep(el.shadowRoot);
+          if (el.tagName === 'IFRAME') {
+            try {
+              const inner = el.contentDocument;
+              if (inner && inner.documentElement) { yield inner.documentElement; yield* deep(inner); }
+            } catch (e) {}
+          }
+        }
+      }
+      const validSelector = selector => {
+        try { document.createDocumentFragment().querySelector(selector); return true; } catch (e) { return false; }
+      };
+      const refFor = el => {
+        let ref = refIDs.get(el);
+        if (!ref) { ref = window.__wsurfRefs.push(el); refIDs.set(el, ref); }
+        refSignatures.set(ref, signature(el));
+        return ref;
+      };
+
+      const elementState = selector => {
+        if (!validSelector(selector)) return { invalid: true };
+        const matches = [];
+        for (const el of deep(document)) {
+          if (el.matches(selector)) { matches.push(el); if (matches.length > 1) break; }
+        }
+        if (matches.length !== 1) return { count: matches.length, visible: false, enabled: false };
+        const el = matches[0], rect = el.getBoundingClientRect();
+        return { count: 1, visible: visible(el) && rect.width > 0 && rect.height > 0, enabled: !disabled(el) && !inert(el) };
+      };
+
+      const nameOf = el => {
+        if (['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT', 'OPTION', 'OPTGROUP', 'DATALIST'].includes(el.tagName) || hiddenInput(el)) return '';
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return clip(fieldLabel(el), 80);
+        const aria = accessibleName(el);
+        if (aria || el.isContentEditable) return clip(aria, 80);
+        const kind = kindOf(el);
+        if (kind === 'button' || kind === 'link') return clip(controlLabel(el), 80);
+        let text = '';
+        for (const node of el.childNodes) { if (node.nodeType === 3) text += node.nodeValue + ' '; if (text.length > 400) break; }
+        return clip(text || el.getAttribute('alt') || el.getAttribute('title') || '', 80);
+      };
+
+      const summaryOf = (el, ref) => {
+        const tag = el.tagName.toLowerCase();
+        if (hiddenInput(el)) return { r: ref, tag, type: 'hidden' };
+        const out = { r: ref, tag };
+        if (el.id) out.id = clip(el.id, 80);
+        const cls = Array.from(el.classList || []).slice(0, 5).map(c => clip(c, 40));
+        if (cls.length) out.cls = cls;
+        const role = el.getAttribute('role');
+        if (role) out.role = clip(role, 40);
+        const name = nameOf(el);
+        if (name) out.name = name;
+        out.rect = rectOf(el);
+        out.visible = visible(el);
+        if (el.ownerDocument !== document) out.inFrame = true;
+        return out;
+      };
+
+      const findAll = (selector, offset, limit) => {
+        if (!validSelector(selector)) return { invalid: true };
+        offset = Math.min(Math.max(0, Math.trunc(offset) || 0), 10000);
+        limit = Math.min(Math.max(1, Math.trunc(limit) || 1), 100);
+        const observation = window.__wsurfSnapshot = Date.now().toString(36) + Math.random().toString(36);
+        const items = [];
+        let index = 0, hasMore = false;
+        for (const el of deep(document)) {
+          if (!el.matches(selector)) continue;
+          if (index++ < offset) continue;
+          if (items.length === limit) { hasMore = true; break; }
+          items.push(summaryOf(el, refFor(el)));
+        }
+        return { observation, document: documentID, url: location.href, offset, limit, returned: items.length, hasMore, items,
+          coverage: { crossOriginFrames: 'skipped', closedShadowRoots: 'skipped' } };
+      };
+
+      const safeURL = (value, el) => {
+        try {
+          const u = new URL(value, el.baseURI);
+          return u.origin === 'null' ? u.protocol : u.origin + u.pathname;
+        } catch (e) { return ''; }
+      };
+
+      const inspect = ref => {
+        if (!matchesRef(ref)) return { stale: true };
+        const el = window.__wsurfRefs[ref - 1], view = realm(el), style = view.getComputedStyle(el);
+        const px = name => round(parseFloat(style.getPropertyValue(name)) || 0);
+        const sides = (a, b = '') => ({ top: px(a + '-top' + b), right: px(a + '-right' + b), bottom: px(a + '-bottom' + b), left: px(a + '-left' + b) });
+        const rect = rectOf(el), padding = sides('padding'), border = sides('border', '-width');
+        const total = el.attributes.length, hidden = hiddenInput(el), attributes = {};
+        let kept = 0, scanned = 0;
+        for (; scanned < Math.min(total, 256) && kept < 32; scanned++) {
+          const attr = el.attributes[scanned], name = attr.name.toLowerCase();
+          if (hidden ? name !== 'type' : !(ATTRIBUTE_ALLOWLIST.has(name) || name.startsWith('aria-'))) continue;
+          attributes[name] = name === 'href' || name === 'src' ? safeURL(attr.value, el) : clip(attr.value, 120);
+          kept++;
+        }
+        const styles = {};
+        for (const property of STYLE_PROPERTIES) {
+          const value = style.getPropertyValue(property);
+          if (value !== '') styles[property] = clip(value, 120);
+        }
+        const ancestors = [];
+        let ancestorsTruncated = false;
+        for (let node = parentOf(el); node && node.nodeType === 1; node = parentOf(node)) {
+          if (ancestors.length === 16) { ancestorsTruncated = true; break; }
+          const s = realm(node).getComputedStyle(node), box = node.getBoundingClientRect();
+          const entry = { tag: node.tagName.toLowerCase(), display: s.display, position: s.position,
+            overflow: s.overflowX + ' ' + s.overflowY, width: round(box.width), height: round(box.height) };
+          if (node.id) entry.id = clip(node.id, 80);
+          const cls = Array.from(node.classList || []).slice(0, 3).map(c => clip(c, 40));
+          if (cls.length) entry.cls = cls;
+          ancestors.push(entry);
+        }
+        const out = {
+          r: ref, document: documentID, tag: el.tagName.toLowerCase(), name: nameOf(el),
+          attributes, attributesTotal: total, attributesTruncated: scanned < total,
+          rect,
+          scroll: { scrollWidth: el.scrollWidth, scrollHeight: el.scrollHeight, clientWidth: el.clientWidth, clientHeight: el.clientHeight,
+            scrollTop: round(el.scrollTop), scrollLeft: round(el.scrollLeft) },
+          box: { boxSizing: style.boxSizing, margin: sides('margin'), border, padding,
+            content: { width: Math.max(0, round(rect.width - padding.left - padding.right - border.left - border.right)),
+                       height: Math.max(0, round(rect.height - padding.top - padding.bottom - border.top - border.bottom)) } },
+          style: styles, ancestors, ancestorsTruncated
+        };
+        if (el.ownerDocument !== document) out.inFrame = true;
+        const size = () => new TextEncoder().encode(JSON.stringify(out)).length;
+        while (size() > 32768 && out.ancestors.length) { out.ancestors.pop(); out.ancestorsTruncated = true; }
+        if (size() > 32768) { out.attributes = {}; out.attributesTruncated = true; }
+        if (size() > 32768) { out.style = {}; out.truncated = true; }
+        return out;
+      };
+
       return { matchesRef, expectValue, valueState, walk, documentID, norm, collect, pageText, viewportText, resolve, setValue, pressEnter,
-        labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe };
+        labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe, elementState, findAll, inspect };
     })());
     """#
+
+    // MARK: Bounded inputs for development tools
+
+    static let maxSelectorBytes = 2_048
+
+    enum SelectorFailure: Error, Equatable { case empty, tooLong, invalid }
+
+    /// A CSS selector is accepted only when non-blank, free of NUL, and at most 2,048 UTF-8 bytes. Syntax is checked
+    /// by the page itself (`Invalid selector.`), never guessed here.
+    static func validate(selector: String) -> Result<String, SelectorFailure> {
+        if selector.allSatisfy(\.isWhitespace) { return .failure(.empty) }
+        if selector.utf8.count > maxSelectorBytes { return .failure(.tooLong) }
+        if selector.unicodeScalars.contains(where: { $0.value == 0 }) { return .failure(.invalid) }
+        return .success(selector)
+    }
+
+    /// Computed style properties `inspect` may return (≤ 64); the script receives this exact list.
+    static let inspectStyleProperties = [
+        "display", "position", "visibility", "opacity", "overflow-x", "overflow-y", "z-index", "top", "right", "bottom", "left",
+        "width", "height", "min-width", "min-height", "max-width", "max-height", "box-sizing", "float", "clear",
+        "flex-direction", "flex-wrap", "flex-grow", "flex-shrink", "flex-basis", "order", "justify-content", "justify-items",
+        "justify-self", "align-items", "align-content", "align-self", "row-gap", "column-gap",
+        "grid-template-columns", "grid-template-rows", "grid-auto-flow", "grid-column-start", "grid-column-end",
+        "grid-row-start", "grid-row-end", "font-family", "font-size", "font-weight", "line-height", "text-align", "white-space",
+        "color", "background-color", "border-radius", "transform", "pointer-events", "cursor",
+    ]
+    private static let styleLiteral = "[" + inspectStyleProperties.map { "'\($0)'" }.joined(separator: ",") + "]"
 
 }
