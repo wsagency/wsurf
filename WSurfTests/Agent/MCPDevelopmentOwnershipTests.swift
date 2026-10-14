@@ -590,15 +590,14 @@ struct MCPDevelopmentOwnershipTests {
         #expect(info.structuredContent?.objectValue?["owner"]?.stringValue == "self")
     }
 
-    /// A `setViewport` waiting behind another turn on the page's emulation queue is cancelled by its caller before its turn
-    /// begins: it applies nothing, a lease it created for nothing is not kept, and diagnostics the lease already held stay.
-    @Test(arguments: [false, true])
-    func aSetViewportCancelledWhileQueuedAppliesNothing(ownsDiagnostics: Bool) async throws {
+    /// A `setViewport` call waiting behind another turn on the page's emulation queue is cancelled by its caller: it applies
+    /// nothing and the lease it acquired for nothing is not kept. The call has acquired its lease (`developmentOwner` is set)
+    /// before it reserves its turn, with no suspension in between, so the cancel reaches a call that is inside the apply.
+    @Test func aSetViewportCancelledWhileQueuedAppliesNothingAndFreesItsLease() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
         let subject = session(browser)
         try await requestDevelopment(subject)
-        if ownsDiagnostics { #expect(status(try await call(subject, "startDiagnostics", tab)) == "ok") }
         let page = tab.page
         let widthBefore = try #require(try await page.evaluateJavaScript("window.innerWidth") as? Int)
         var open: CheckedContinuation<Void, Never>?
@@ -606,8 +605,6 @@ struct MCPDevelopmentOwnershipTests {
         #expect(await waitUntil { open != nil })
         let request = Task { try await self.call(subject, "setViewport", tab, self.phone) }
         #expect(await waitUntil { tab.developmentOwner != nil })
-        // The call acquires its lease and reserves its turn behind the gate without suspending in between.
-        try await Task.sleep(for: .milliseconds(100))
         request.cancel()
         open?.resume()
         await gate.value
@@ -615,12 +612,36 @@ struct MCPDevelopmentOwnershipTests {
         #expect(result?.isError != false)
         #expect(page.developmentViewport == nil)
         #expect(try await page.evaluateJavaScript("window.innerWidth") as? Int == widthBefore)
-        if ownsDiagnostics {
-            #expect(tab.developmentOwner?.diagnostics != nil)
-            #expect(tab.developmentOwner?.viewport == nil)
-        } else {
-            #expect(tab.developmentOwner == nil)
+        #expect(tab.developmentOwner == nil)
+    }
+
+    /// The apply itself, cancelled before or while it waits for its turn (both orders end the same way): nothing is applied and
+    /// the lease keeps the diagnostics it already held.
+    @Test func aCancelledApplyLeavesTheLeasesDiagnosticsAndNoViewport() async throws {
+        let (server, browser, tab) = try await fixture()
+        defer { _ = server }
+        let subject = session(browser)
+        try await requestDevelopment(subject)
+        #expect(status(try await call(subject, "startDiagnostics", tab)) == "ok")
+        let owner = try #require(tab.developmentOwner)
+        let page = tab.page
+        let widthBefore = try #require(try await page.evaluateJavaScript("window.innerWidth") as? Int)
+        var open: CheckedContinuation<Void, Never>?
+        let gate = page.emulationQueue.enqueue { await withCheckedContinuation { open = $0 } }
+        #expect(await waitUntil { open != nil })
+        let apply = Task { await page.applyDevelopmentViewport(.init(width: 400, height: 700), profile: nil, owner: owner, tab: tab) }
+        apply.cancel()
+        open?.resume()
+        await gate.value
+        guard case .cancelled = await apply.value else {
+            Issue.record("a cancelled apply must report .cancelled")
+            return
         }
+        #expect(page.developmentViewport == nil)
+        #expect(try await page.evaluateJavaScript("window.innerWidth") as? Int == widthBefore)
+        #expect(tab.isCurrent(owner))
+        #expect(owner.diagnostics != nil)
+        #expect(owner.viewport == nil)
     }
 
     // MARK: Diagnostics follow the document
