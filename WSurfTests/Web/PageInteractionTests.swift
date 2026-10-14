@@ -361,6 +361,37 @@ struct PageInteractionTests {
         #expect(await PageDriver.screenshot(in: view) == nil)
     }
 
+    @Test func boundedScreenshotsShrinkWhileUnboundedOnesKeepTheirPixels() async throws {
+        let view = await page(
+            """
+            <canvas id='c' width='500' height='400'></canvas>
+            <script>
+              const context = document.getElementById('c').getContext('2d'), noise = context.createImageData(500, 400);
+              for (let i = 0; i < noise.data.length; i++) noise.data[i] = i % 4 === 3 ? 255 : Math.random() * 256;
+              context.putImageData(noise, 0, 0);
+            </script>
+            """)
+        let limit = 30_000
+        let full = try #require(await PageDriver.screenshot(in: view))
+        let bounded = try #require(await PageDriver.screenshot(in: view, maximumBytes: limit))
+        #expect(full.count > limit)
+        #expect(bounded.count <= limit)
+        let fullWidth = try #require(NSBitmapImageRep(data: full)).pixelsWide
+        #expect(try #require(NSBitmapImageRep(data: bounded)).pixelsWide < fullWidth)
+    }
+
+    @Test func scopeCoversEveryMatchingElement() async {
+        let view = await page(
+            "<button>Outside</button><section><input aria-label='First'></section><section><textarea aria-label='Second'></textarea></section>")
+        let sections = await PageDriver.snapshot(view, scope: "section")
+        #expect(sections.contains("\"First\"") && sections.contains("\"Second\""), "\(sections)")
+        #expect(!sections.contains("button \"Outside\""))
+        let fields = await PageDriver.snapshot(view, scope: "textarea, input")
+        #expect(fields.contains("\"First\"") && fields.contains("\"Second\""), "\(fields)")
+        #expect(!(await PageDriver.snapshot(view, scope: "article")).hasPrefix("PAGE TEXT:"))
+        #expect(!(await PageDriver.snapshot(view, scope: "section[")).hasPrefix("PAGE TEXT:"))
+    }
+
     @Test func sensitiveEditableTextIsRedactedAndCannotBeOverwritten() async {
         let view = await page("<div contenteditable='true' aria-label='Recovery phrase'>hidden-recovery-words</div>")
         let output = await PageDriver.snapshot(view)

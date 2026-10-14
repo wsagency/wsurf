@@ -217,7 +217,7 @@ final class MCPBrowserSession: Identifiable {
                 var capturedImage: Data?
                 let output: String
                 if name == "screenshotPage" {
-                    capturedImage = await PageDriver.screenshot(in: view)
+                    capturedImage = await PageDriver.screenshot(in: view, maximumBytes: Self.screenshotBytes)
                     output =
                         capturedImage == nil
                         ? "Screenshot unavailable; use readPage for redacted text."
@@ -250,7 +250,11 @@ final class MCPBrowserSession: Identifiable {
                 let value: Value = .object(content)
                 var blocks: [MCP.Tool.Content] = [.text(text: encoded(value), annotations: nil, _meta: nil)]
                 if let capturedImage { blocks.append(.image(data: capturedImage.base64EncodedString(), mimeType: "image/jpeg", annotations: nil, _meta: nil)) }
-                return CallTool.Result(content: blocks, structuredContent: Optional.some(value), isError: !succeeded)
+                let result = CallTool.Result(content: blocks, structuredContent: Optional.some(value), isError: !succeeded)
+                if capturedImage != nil, Self.replyBytes(result) > MCPMessageFramer.maximumBytes {
+                    return failure("The screenshot is too large to return. Use readPage for redacted text.")
+                }
+                return result
             }
         }
     }
@@ -383,6 +387,18 @@ final class MCPBrowserSession: Identifiable {
 
     private func encoded(_ value: Value) -> String {
         (try? JSONEncoder().encode(value)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+    }
+
+    /// The image share of a reply. Its base64 form is 200,000 bytes, which leaves about 60 KB of the transport line for
+    /// the text block, the structured copy of it and the JSON-RPC envelope.
+    nonisolated static let screenshotBytes = 150_000
+
+    /// Size of the reply line as `MCP.Server` writes it: sorted keys, unescaped slashes, plus a JSON-RPC envelope allowance.
+    nonisolated static func replyBytes(_ result: CallTool.Result) -> Int {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let body = try? encoder.encode(result) else { return .max }
+        return body.count + 256
     }
 
     private func success(_ text: String) -> CallTool.Result {

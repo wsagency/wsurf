@@ -121,7 +121,8 @@ extension PageDriver {
         return "Timed out waiting for \(condition).\n" + (await PageAutomationGuard.withCurrentDocument(in: view) { await snapshot(view, lookingFor: value) })
     }
 
-    static func screenshot(in view: BrowserPage) async -> Data? {
+    /// `maximumBytes` bounds the returned JPEG and may shrink its pixels. Callers that map pixels back to the page pass nil.
+    static func screenshot(in view: BrowserPage, maximumBytes: Int? = nil) async -> Data? {
         guard PageAutomationGuard.allowsExecution else { return nil }
         let document = view.url
         let safetyCheck = scripted(
@@ -137,6 +138,6 @@ extension PageDriver {
         else { return nil }
         let after = await evaluateJSON(safetyCheck, in: view)
         guard after?["safe"] as? Bool == true, after?["document"] as? String == safe?["document"] as? String else { return nil }
-        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
+        return PageScreenshotEncoding.jpeg(bitmap, fitting: maximumBytes)
     }
 }

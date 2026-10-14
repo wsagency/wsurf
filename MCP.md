@@ -120,7 +120,7 @@ revoke it immediately.
 | `inspectControl` | Read control state and paginate dropdown options. |
 | `setChecked` | Set a checkbox, switch, or radio to the requested state. |
 | `waitForPage` | Wait for text, absent text, a URL substring, or document readiness, up to 15 seconds. |
-| `screenshotPage` | Return a viewport image; refuse capture when detected sensitive fields are filled. |
+| `screenshotPage` | Return a viewport image, shrunk to fit the message limit; refuse capture when detected sensitive fields are filled. |
 | `pressKey` | Send a supported keyboard key to a control in a visible tab. |
 | `hoverOnPage` | Dispatch pointer/mouse hover handlers. CSS-only hover is unsupported. |
 | `scrollPage` | Scroll vertically or horizontally, optionally inside a referenced container. |
@@ -147,10 +147,11 @@ not replay verified refs or retry blocked controls through another tool.
 Reads and actions use document-bound references in the same isolated runtime.
 Replaced or unobserved targets are refused.
 
-Use `lookingFor` to search beyond the first excerpt, `scope` for a CSS control subtree,
-`viewportOnly` for visible controls, and `textOffset` / `controlOffset` to continue.
+Use `lookingFor` to search beyond the first excerpt, `scope` for the controls under every element a CSS selector
+matches, `viewportOnly` for visible controls, and `textOffset` / `controlOffset` to continue.
 Keep the query and scope unchanged when paging. Text offsets use UTF-16 units.
-The standard text response budget is about 6 KB before MCP framing; screenshot data is separate.
+The standard text response budget is about 6 KB before MCP framing; a screenshot is capped at 150 KB of JPEG, and its pixels shrink when needed.
+A ref the observation did not list gets a message saying so, not the stale-page message.
 Use screenshots only when text and control state do not answer the task.
 
 

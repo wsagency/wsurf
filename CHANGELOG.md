@@ -7,6 +7,12 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-14 — MCP page tools: scope, unlisted refs and screenshot size
+
+Taken from Linen (`70c3c576`, `59c396de`, `78b76dee`), adapted to WSurf. `readPage` `scope` now covers every element the selector matches, not only the first. A ref that the current observation did not list (for example after control paging) now gets a message saying so, instead of the stale-page message; a genuinely stale page, a changed document or a wrong observation ID still gets the stale message. `screenshotPage` bounds its JPEG at 150,000 bytes, lowering quality and then shrinking pixels in 25% steps, and refuses to return a reply that would still exceed the 262,144-byte MCP line; the computer-use frame path is unchanged.
+
+Not run: no Xcode build or test of this change; checked with swiftc probes of the scope script in real WebKit and of the screenshot encoder in AppKit.
+
 ### 2026-10-14 — Credentials: an Import & Export section, and password CSV files
 
 Credential Settings has one **Import & Export** section (it holds the incoming-credentials row that used to be its own section, and the Export… button that was on the Saved credentials header). **Choose File…** imports a password CSV and **Export to CSV…** writes one. A CSV is read by its header, not by column position: `URL` (or `Url`), `Username` and `Password` are required, `Title` or `Name` is used as the name, and both the 4-column `Title,Url,Username,Password` and the 6-column `Title,URL,Username,Password,Notes,OTPAuth` layouts work. That is compatibility with the layouts public third-party importers read, not a statement of Apple's format. A file over the vault's size limit is refused before it is read.
