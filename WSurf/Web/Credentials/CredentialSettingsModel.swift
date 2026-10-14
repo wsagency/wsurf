@@ -37,14 +37,16 @@ final class CredentialSettingsModel {
     @ObservationIgnored private var unlockInFlight = false
 
     /// The one vault this page operates on; `nil` until discovery selects one, and while the profile has no vault.
-    private var manager: CredentialManager?
+    /// Read by `CredentialSettingsModel+Export`; only this class sets it.
+    private(set) var manager: CredentialManager?
     /// `nil` for private browsing and for a test-injected manager (which owns its own store).
     @ObservationIgnored private let store: ProfileVaultStore?
     /// Test seam: managers made here use it instead of the system passkey UI, which the shared registry's managers always use.
     @ObservationIgnored private let native: VaultNativeUnlock?
     @ObservationIgnored private let pasteboard: NSPasteboard
     private var session: CredentialVaultSession?
-    @ObservationIgnored private let exchange: CredentialExchangeCoordinator
+    /// Internal for `CredentialSettingsModel+Export`.
+    @ObservationIgnored let exchange: CredentialExchangeCoordinator
     /// Identifies this model to the exchange coordinator. One profile has one shared manager but every settings page
     /// builds its own model, so the import this model began is the only one it may see, decide, commit or cancel.
     @ObservationIgnored let owner = UUID()
@@ -57,7 +59,8 @@ final class CredentialSettingsModel {
     }
     /// How this window's last import or export ended (spec §13.5) and the vault it happened in; the page shows it only while
     /// that vault is selected. `nil` before any, or after the user dismisses it.
-    private var ownMessage: (message: CredentialTransferMessage, vaultID: UUID?)?
+    /// Internal for `CredentialSettingsModel+Export`, which records its own endings.
+    var ownMessage: (message: CredentialTransferMessage, vaultID: UUID?)?
 
     /// `manager` and `native` are seams for tests that need their own clock or passkeys; production selects the profile's
     /// default vault (else the lowest-ordinal one) through the shared registry once `load()` has listed the vaults.
@@ -850,32 +853,6 @@ final class CredentialSettingsModel {
         exchange.discardPendingImport(token: token)
     }
 
-    /// `epoch` is the one the selection was made at; a lock, a re-unlock or a change to a selected account since the page
-    /// read it rejects it. A cancel before any data was passed is `.cancelled` and leaves no status; every other result is recorded.
-    func exportCredentials(
-        selection: [CredentialExportSelection],
-        epoch: UInt64,
-        in anchor: ASPresentationAnchor
-    ) async -> CredentialExportOutcome? {
-        let vault = manager?.vaultID
-        ownMessage = nil
-        var outcome: CredentialExportOutcome?
-        let sent = await perform {
-            let stamps = try await self.exportStamps(epoch: epoch)
-            outcome = try await self.exchange.exportCredentials(
-                selection: selection, expectedStamps: stamps, epoch: epoch, from: $0, in: anchor
-            )
-        }
-        // The page showed an older vault than the one on disk: read it again, or every retry would fail the same way.
-        if !sent, ownMessage?.message.kind == .exportSelectionChanged {
-            await load()
-        }
-        if let outcome, outcome != .cancelled {
-            ownMessage = outcome.message.map { ($0, vault) }
-        }
-        return outcome
-    }
-
     /// Stages the password CSV at `url` for the same review a system import gets. The file is only read, never changed.
     /// `epoch` is the authorization the page had BEFORE its open panel: a lock or re-unlock while the panel was up stages nothing.
     func beginCSVImport(from url: URL, epoch: UInt64) async {
@@ -894,42 +871,10 @@ final class CredentialSettingsModel {
         }
     }
 
-    /// Writes the selection as a plain-text CSV at `url`, which the user chose in the save panel the caller ran BEFORE this
-    /// call, so the stamps are proved after it. Returns whether a file was written; every other result leaves `url` as it was.
-    @discardableResult
-    func exportCSV(selection: [CredentialExportSelection], epoch: UInt64, to url: URL) async -> Bool {
-        let vault = manager?.vaultID
-        ownMessage = nil
-        var rows: Int?
-        let saved = await perform {
-            let stamps = try await self.exportStamps(epoch: epoch)
-            rows = try await self.exchange.exportCSV(selection: selection, expectedStamps: stamps, epoch: epoch, from: $0, to: url)
-        }
-        if !saved, ownMessage?.message.kind == .exportSelectionChanged {
-            await load()
-        }
-        if saved, let rows {
-            ownMessage = (.csvExported(rows: rows), vault)
-        }
-        return saved
-    }
-
-    /// The stamps the selection was made against; after this page's own write, a fresh read of the same revision stands in.
-    private func exportStamps(epoch: UInt64) async throws -> [UUID: AccountStamp] {
-        guard let live, live.epoch == epoch else { throw CredentialTransferFailure(message: .exportSelectionChanged()) }
-        if let known = live.knownStamps {
-            return known
-        }
-        let (_, snapshot) = try await authorizedSnapshot(epoch: epoch)
-        guard snapshot.revision == live.revision else {
-            throw CredentialTransferFailure(message: .exportSelectionChanged())
-        }
-        return snapshot.stamps
-    }
-
     // MARK: Private
 
-    private var live: CredentialVaultSession? {
+    /// Internal for `CredentialSettingsModel+Export`.
+    var live: CredentialVaultSession? {
         guard let session, session.epoch == manager?.authorizationEpoch else { return nil }
         return session
     }
@@ -955,7 +900,8 @@ final class CredentialSettingsModel {
         }
     }
 
-    private func authorizedSnapshot(epoch bound: UInt64? = nil) async throws -> (epoch: UInt64, snapshot: StoreSnapshot) {
+    /// Internal for `CredentialSettingsModel+Export`.
+    func authorizedSnapshot(epoch bound: UInt64? = nil) async throws -> (epoch: UInt64, snapshot: StoreSnapshot) {
         guard let manager, let epoch = manager.authorizationEpoch, bound == nil || bound == epoch else {
             throw CredentialVaultError.unauthorized
         }
@@ -994,7 +940,8 @@ final class CredentialSettingsModel {
 
     private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
 
-    private func perform(
+    /// Internal for `CredentialSettingsModel+Export`.
+    func perform(
         epoch bound: UInt64? = nil,
         describe: (any Error) -> String? = { CredentialSettingsModel.message(for: $0) },
         _ operation: (CredentialManager) async throws -> Void

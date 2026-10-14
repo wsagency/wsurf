@@ -31,16 +31,26 @@ nonisolated struct CredentialCSVReport: Sendable, Equatable {
         /// Fixed wording: never a field of the file.
         var text: String {
             switch self {
-            case .unsupportedWebsite: String(localized: "not imported: the website is missing or isn’t a secure https address.")
-            case .missingPassword: String(localized: "not imported: there is no password.")
-            case .passwordTooLong: String(localized: "not imported: the password is too long.")
-            case .wrongFieldCount: String(localized: "not imported: the row doesn’t match the header.")
-            case .invalidRow: String(localized: "not imported: the row can’t be saved.")
-            case let .duplicateInFile(first): String(localized: "not imported: same as line \(first).")
-            case .notesNotImported: String(localized: "notes in this row aren’t imported.")
-            case .oneTimeCodeNotImported: String(localized: "this row has a verification code, which isn’t imported. Set it up again with the website.")
-            case let .conflictsWithEarlierRow(line): String(localized: "same website and username as line \(line) with another password. Choose what to do with each of them.")
-            case .matchesSeveralSaved: String(localized: "several saved logins have this website and username. Choose Skip or Add Separately.")
+            case .unsupportedWebsite:
+                String(localized: "not imported: the website is missing or isn’t a secure https address.")
+            case .missingPassword:
+                String(localized: "not imported: there is no password.")
+            case .passwordTooLong:
+                String(localized: "not imported: the password is too long.")
+            case .wrongFieldCount:
+                String(localized: "not imported: the row doesn’t match the header.")
+            case .invalidRow:
+                String(localized: "not imported: the row can’t be saved.")
+            case let .duplicateInFile(first):
+                String(localized: "not imported: same as line \(first).")
+            case .notesNotImported:
+                String(localized: "notes in this row aren’t imported.")
+            case .oneTimeCodeNotImported:
+                String(localized: "this row has a verification code, which isn’t imported. Set it up again with the website.")
+            case let .conflictsWithEarlierRow(line):
+                String(localized: "same website and username as line \(line) with another password. Choose what to do with each of them.")
+            case .matchesSeveralSaved:
+                String(localized: "several saved logins have this website and username. Choose Skip or Add Separately.")
             }
         }
     }
@@ -94,7 +104,9 @@ nonisolated enum CredentialCSVImport {
 
         func hash(into hasher: inout Hasher) {
             hasher.combine(value.utf8.count)
-            for byte in value.utf8 { hasher.combine(byte) }
+            for byte in value.utf8 {
+                hasher.combine(byte)
+            }
         }
     }
 
@@ -109,22 +121,41 @@ nonisolated enum CredentialCSVImport {
         let password: ExactText
     }
 
+    /// Where the recognised columns are. A header that names one twice has no single right column to read, so the file is
+    /// refused rather than the first one picked.
+    private struct Columns {
+        let url: Int
+        let username: Int
+        let password: Int
+        let title: Int?
+        let notes: Int?
+        let code: Int?
+        /// Every recognised position; the other columns are reported, by position only, when they hold data.
+        let known: Set<Int>
+
+        init(names: [String]) throws {
+            func column(_ options: Set<String>) throws -> Int? {
+                let found = names.indices.filter { options.contains(names[$0]) }
+                guard found.count <= 1 else { throw CredentialCSVError.ambiguousColumns }
+                return found.first
+            }
+            let foundURL = try column(["url"]), foundUsername = try column(["username"]), foundPassword = try column(["password"])
+            title = try column(["title", "name"])
+            notes = try column(["notes", "note"])
+            code = try column(["otpauth"])
+            guard let foundURL, let foundUsername, let foundPassword else { throw CredentialCSVError.missingColumns }
+            url = foundURL
+            username = foundUsername
+            password = foundPassword
+            known = Set([foundURL, foundUsername, foundPassword] + [title, notes, code].compactMap { $0 })
+        }
+    }
+
     static func stage(_ data: Data, against base: StoreSnapshot) throws -> Staged {
         let rows = try CredentialCSV.parse(data)
         guard let header = rows.first else { throw CredentialCSVError.missingColumns }
         let names = header.fields.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
-        // A header that names a column twice has no single right one to read: refuse the file rather than pick the first.
-        func column(_ options: Set<String>) throws -> Int? {
-            let found = names.indices.filter { options.contains(names[$0]) }
-            guard found.count <= 1 else { throw CredentialCSVError.ambiguousColumns }
-            return found.first
-        }
-        let urlColumn = try column(["url"]), userColumn = try column(["username"]), passwordColumn = try column(["password"])
-        let titleColumn = try column(["title", "name"])
-        let notesColumn = try column(["notes", "note"])
-        let codeColumn = try column(["otpauth"])
-        guard let urlColumn, let userColumn, let passwordColumn else { throw CredentialCSVError.missingColumns }
-        let known = Set([urlColumn, userColumn, passwordColumn] + [titleColumn, notesColumn, codeColumn].compactMap { $0 })
+        let columns = try Columns(names: names)
 
         // Stored logins an incoming row can be the same login as, by website and exact username.
         var saved: [LoginKey: [CredentialAccount]] = [:]
@@ -151,19 +182,23 @@ nonisolated enum CredentialCSVImport {
             }
             guard row.fields.count == names.count else { note(.wrongFieldCount); continue }
             let fields = row.fields
-            for (index, value) in fields.enumerated() where !known.contains(index) && !value.isEmpty {
+            for (index, value) in fields.enumerated() where !columns.known.contains(index) && !value.isEmpty {
                 ignored.insert(index + 1)
             }
-            guard let login = website(fields[urlColumn]), let origin = CredentialAccount.origin(for: login) else {
+            guard let login = website(fields[columns.url]), let origin = CredentialAccount.origin(for: login) else {
                 note(.unsupportedWebsite)
                 continue
             }
-            let username = fields[userColumn]
-            let password = fields[passwordColumn]
+            let username = fields[columns.username]
+            let password = fields[columns.password]
             guard !password.isEmpty else { note(.missingPassword); continue }
             guard password.utf8.count <= 4_096 else { note(.passwordTooLong); continue }
-            if let notesColumn, !fields[notesColumn].isEmpty { note(.notesNotImported) }
-            if let codeColumn, !fields[codeColumn].isEmpty { note(.oneTimeCodeNotImported) }
+            if let notes = columns.notes, !fields[notes].isEmpty {
+                note(.notesNotImported)
+            }
+            if let code = columns.code, !fields[code].isEmpty {
+                note(.oneTimeCodeNotImported)
+            }
 
             let key = LoginKey(origin: origin, username: ExactText(username))
             let exact = LoginAndPassword(login: key, password: ExactText(password))
@@ -178,7 +213,7 @@ nonisolated enum CredentialCSVImport {
                 continue
             }
 
-            let title = titleColumn.map { fields[$0].trimmingCharacters(in: .whitespacesAndNewlines) }
+            let title = columns.title.map { fields[$0].trimmingCharacters(in: .whitespacesAndNewlines) }
             // Replace names ONE stored login. With several saved logins for this website and username none is more right than
             // another, so none is offered: the review asks for Skip or Add Separately.
             let existing = matches.count == 1 ? matches.first : nil
@@ -208,7 +243,9 @@ nonisolated enum CredentialCSVImport {
             } else {
                 firstLine[key] = row.line
             }
-            if matches.count > 1 { note(.matchesSeveralSaved) }
+            if matches.count > 1 {
+                note(.matchesSeveralSaved)
+            }
             if let existing {
                 conflicts.append(CredentialImportConflict(incoming: identity, existing: .password(accountID: existing.id)))
                 classes[identity] = .noCommonBase
@@ -227,7 +264,9 @@ nonisolated enum CredentialCSVImport {
         for row in staged {
             let savedCount = saved[row.key]?.count ?? 0
             let fileCount = rowsPerLogin[row.key] ?? 0
-            if savedCount > 1 || (savedCount == 0 && fileCount > 1) { needsChoice.insert(row.identity) }
+            if savedCount > 1 || (savedCount == 0 && fileCount > 1) {
+                needsChoice.insert(row.identity)
+            }
         }
         // Each saved login can be replaced by one row, so the file adds at most every row but one per saved login it matches.
         let replaced = Set(conflicts.map(\.existing)).count
