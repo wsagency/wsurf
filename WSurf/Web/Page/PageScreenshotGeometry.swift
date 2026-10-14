@@ -36,13 +36,26 @@ nonisolated struct ScreenshotCapture: Sendable {
 }
 
 nonisolated enum ScreenshotGeometry {
-    /// Validates a CSS-pixel crop target and clips it to the visible viewport. Never scrolls or stitches: a target that
-    /// does not intersect the viewport is `offscreen`, and a partly visible one is cropped to the visible part.
-    static func clip(_ rect: CGRect, toViewport viewport: CGSize) -> Result<CGRect, ScreenshotFailure> {
-        let values = [rect.origin.x, rect.origin.y, rect.size.width, rect.size.height, viewport.width, viewport.height]
-        guard values.allSatisfy(\.isFinite), rect.size.width > 0, rect.size.height > 0, viewport.width > 0, viewport.height > 0 else {
-            return .failure(.invalidGeometry)
-        }
+    /// Subpixel slack for layout rounding of rects measured by the page.
+    private static let tolerance: CGFloat = 0.5
+
+    private static func valid(_ rect: CGRect, _ viewport: CGSize) -> Bool {
+        [rect.origin.x, rect.origin.y, rect.size.width, rect.size.height, viewport.width, viewport.height].allSatisfy(\.isFinite)
+            && rect.size.width > 0 && rect.size.height > 0 && viewport.width > 0 && viewport.height > 0
+    }
+
+    /// A client-supplied region (CSS px, viewport-relative) must lie fully inside the viewport: a region that is not is
+    /// `offscreen`, never cropped into a smaller image the client did not ask for.
+    static func region(_ rect: CGRect, inViewportCSS viewport: CGSize) -> Result<CGRect, ScreenshotFailure> {
+        guard valid(rect, viewport) else { return .failure(.invalidGeometry) }
+        let bounds = CGRect(origin: .zero, size: viewport)
+        return bounds.insetBy(dx: -tolerance, dy: -tolerance).contains(rect) ? .success(rect.intersection(bounds)) : .failure(.offscreen)
+    }
+
+    /// An element's box (CSS px, viewport-relative) reduced to its visible part. The result is the capture's reported
+    /// `bounds`; an element with no visible part is `offscreen`. Never scrolls or stitches.
+    static func visibleBounds(ofElement rect: CGRect, inViewportCSS viewport: CGSize) -> Result<CGRect, ScreenshotFailure> {
+        guard valid(rect, viewport) else { return .failure(.invalidGeometry) }
         let visible = rect.intersection(CGRect(origin: .zero, size: viewport))
         return visible.isNull || visible.isEmpty ? .failure(.offscreen) : .success(visible)
     }

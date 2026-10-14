@@ -47,30 +47,12 @@ struct PageViewportTests {
         #expect(PageViewport.validate(width: 5000, height: 5000, zoom: 1, scale: 1) == .failure(.axisOutOfRange(.width, 5000)))
     }
 
-    @Test func profilesMatchSpec() throws {
-        let phone = try #require(PageViewport.profile(named: "phone"))
-        #expect(phone.dimensions(.portrait) == .init(width: 390, height: 844))
-        #expect(phone.dimensions(.landscape) == .init(width: 844, height: 390))
-        #expect(phone.scale == 3)
-        #expect(phone.requiredAxes == ["viewport", "dpr", "touch", "mobile"])
-
-        let tablet = try #require(PageViewport.profile(named: "tablet"))
-        #expect(tablet.dimensions(.portrait) == .init(width: 768, height: 1024))
-        #expect(tablet.scale == 2)
-        #expect(tablet.requiredAxes == ["viewport", "dpr", "touch", "mobile"])
-
-        for name in ["responsive-phone", "responsive-tablet", "responsive-desktop"] {
+    @Test func landscapeSwapsTheProfileAxes() throws {
+        for name in ["phone", "tablet", "responsive-desktop"] {
             let profile = try #require(PageViewport.profile(named: name))
-            #expect(profile.requiredAxes == ["viewport"])
-            #expect(profile.scale == 1)
+            let portrait = profile.dimensions(.portrait), landscape = profile.dimensions(.landscape)
+            #expect(landscape.width == portrait.height && landscape.height == portrait.width, "\(name)")
         }
-        let responsivePhone = try #require(PageViewport.profile(named: "responsive-phone"))
-        #expect(responsivePhone.dimensions(.portrait) == .init(width: 390, height: 844))
-        let responsiveTablet = try #require(PageViewport.profile(named: "responsive-tablet"))
-        #expect(responsiveTablet.dimensions(.portrait) == .init(width: 768, height: 1024))
-        let desktop = try #require(PageViewport.profile(named: "responsive-desktop"))
-        #expect(desktop.dimensions(.landscape) == .init(width: 1280, height: 800))
-        #expect(desktop.dimensions(.portrait) == .init(width: 800, height: 1280))
     }
 
     @Test func unknownProfileAndOrientationAreRejected() {

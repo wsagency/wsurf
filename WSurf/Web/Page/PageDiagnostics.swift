@@ -9,7 +9,8 @@ import Foundation
 nonisolated enum PageDiagnostics {
     enum Stream: String { case console, network }
 
-    enum CursorError: Error, Equatable { case invalid }
+    /// Bad input at the read boundary is an error, never clamped or coerced.
+    enum ReadError: Error, Equatable { case invalid, invalidLimit }
 
     /// A record field. Numbers stay numbers (an unknown status or duration is an absent key, never `0` or a numeric string).
     enum Field: Equatable, Sendable, ExpressibleByStringLiteral, ExpressibleByIntegerLiteral {
@@ -19,13 +20,29 @@ nonisolated enum PageDiagnostics {
         init(stringLiteral value: String) { self = .text(value) }
         init(integerLiteral value: Int) { self = .number(value) }
 
-        var byteCount: Int {
+        /// Bytes this value occupies once serialized as JSON (quotes and escapes included).
+        var serializedSize: Int {
             switch self {
-            case .text(let text): text.utf8.count
+            case .text(let text): PageDiagnostics.escapedSize(text) + 2
             case .number(let number): String(number).utf8.count
             }
         }
     }
+
+    /// Serialized JSON string-body size of `text`: quotes and backslashes take 2 bytes, control characters 6 (`\u00XX`,
+    /// the worst case), everything else its UTF-8 length.
+    static func escapedSize(_ text: String) -> Int { text.unicodeScalars.reduce(0) { $0 + escapedSize($1) } }
+
+    static func escapedSize(_ scalar: Unicode.Scalar) -> Int {
+        switch scalar.value {
+        case 0x22, 0x5C: 2
+        case ..<0x20: 6
+        default: String(scalar).utf8.count
+        }
+    }
+
+    /// Fixed serialized cost of a record's own members (seq, timestamp, stream, truncated flag, braces, separators).
+    static let recordOverhead = 160
 
     struct Record: Equatable {
         let seq: UInt64
@@ -35,11 +52,13 @@ nonisolated enum PageDiagnostics {
         let fields: [String: Field]
         let truncated: Bool
 
-        /// Approximate serialized size: field keys and values plus the document identity.
-        var byteCount: Int { Record.size(fields) + documentID.utf8.count }
+        /// Serialized JSON size: members, escaped keys and values, and the document identity.
+        var byteCount: Int { Record.size(fields, documentID: documentID) }
 
-        fileprivate static func size(_ fields: [String: Field]) -> Int {
-            fields.reduce(0) { $0 + $1.key.utf8.count + $1.value.byteCount }
+        fileprivate static func size(_ fields: [String: Field], documentID: String) -> Int {
+            fields.reduce(PageDiagnostics.recordOverhead + PageDiagnostics.escapedSize(documentID)) {
+                $0 + PageDiagnostics.escapedSize($1.key) + 4 + $1.value.serializedSize
+            }
         }
     }
 
@@ -65,7 +84,15 @@ nonisolated enum PageDiagnostics {
         let connection: UUID
         let tab: String
         private(set) var documentID: String
-        private(set) var epoch = 0
+        /// Process-unique: a new buffer for the same connection and tab never reuses an earlier buffer's epoch, so a cursor
+        /// from before a reset is rejected whichever buffer instance issued it.
+        private(set) var epoch = Buffer.takeEpoch()
+        private static var lastEpoch = 0
+
+        private static func takeEpoch() -> Int {
+            lastEpoch += 1
+            return lastEpoch
+        }
         private let maxRecords: Int
         private let maxBytes: Int
         private let maxRecordBytes: Int
@@ -91,9 +118,10 @@ nonisolated enum PageDiagnostics {
         /// Stores a record for the owner's current document. Returns false (and stores nothing) for any other document,
         /// so late events from a previous document can never be merged under the new identity.
         @discardableResult
-        func append(stream: Stream, timestamp: Date, documentID: String, fields: [String: Field]) -> Bool {
+        func append(stream: Stream, timestamp: Date, documentID: String, fields: [String: Field], truncated cut: Bool = false) -> Bool {
             guard documentID == self.documentID else { return false }
-            let (bounded, truncated) = bound(fields, documentID: documentID)
+            let (bounded, boundTruncated) = bound(fields, documentID: documentID)
+            let truncated = cut || boundTruncated
             let seq = nextSeq[stream, default: 0]
             nextSeq[stream] = seq + 1
             let record = Record(seq: seq, timestamp: timestamp, documentID: documentID, stream: stream, fields: bounded, truncated: truncated)
@@ -113,11 +141,12 @@ nonisolated enum PageDiagnostics {
             nextSeq.removeAll()
             evictedCount.removeAll()
             byteCount = 0
-            epoch += 1
+            epoch = Buffer.takeEpoch()
             if let documentID { self.documentID = documentID }
         }
 
-        func read(stream: Stream, cursor: String?, limit: Int) throws(CursorError) -> Page {
+        func read(stream: Stream, cursor: String?, limit: Int) throws(ReadError) -> Page {
+            guard (1...Buffer.maxReadLimit).contains(limit) else { throw .invalidLimit }
             let next = nextSeq[stream, default: 0]
             let retained = records.filter { $0.stream == stream }
             let oldest = retained.first?.seq ?? next
@@ -128,7 +157,7 @@ nonisolated enum PageDiagnostics {
                 guard position <= next else { throw .invalid }
                 if position < oldest { gap = Int(oldest - position) } else { start = position }
             }
-            let page = retained.filter { $0.seq >= start }.prefix(min(max(limit, 1), Buffer.maxReadLimit))
+            let page = retained.filter { $0.seq >= start }.prefix(limit)
             let after = page.last.map { $0.seq + 1 } ?? start
             return Page(
                 records: Array(page), nextCursor: encode(stream: stream, seq: after), gap: gap,
@@ -141,7 +170,7 @@ nonisolated enum PageDiagnostics {
             Data("\(connection.uuidString)|\(tab)|\(stream.rawValue)|\(epoch)|\(seq)".utf8).base64EncodedString()
         }
 
-        private func decode(_ cursor: String, stream: Stream) throws(CursorError) -> UInt64 {
+        private func decode(_ cursor: String, stream: Stream) throws(ReadError) -> UInt64 {
             guard let data = Data(base64Encoded: cursor), let text = String(data: data, encoding: .utf8) else { throw .invalid }
             let parts = text.split(separator: "|", omittingEmptySubsequences: false)
             guard parts.count == 5,
@@ -153,19 +182,21 @@ nonisolated enum PageDiagnostics {
 
         // MARK: Record bounds
 
-        /// Cuts the largest field value, on character boundaries, until the record fits `maxRecordBytes`.
+        /// Cuts the largest text value (ties by key), on unicode scalar boundaries, until the record's serialized size fits
+        /// `maxRecordBytes`. Scalars, not characters: one grapheme cluster can be arbitrarily many bytes.
         private func bound(_ fields: [String: Field], documentID: String) -> ([String: Field], Bool) {
             var fields = fields
             var truncated = false
             func text(_ field: Field) -> String? { if case .text(let text) = field { text } else { nil } }
-            while Record.size(fields) + documentID.utf8.count > maxRecordBytes,
-                let largest = fields.compactMap({ key, field in text(field).map { (key, $0) } }).max(by: { $0.1.utf8.count < $1.1.utf8.count }),
+            while Record.size(fields, documentID: documentID) > maxRecordBytes,
+                let largest = fields.compactMap({ key, field in text(field).map { (key, $0) } })
+                    .max(by: { ($0.1.utf8.count, $1.0) < ($1.1.utf8.count, $0.0) }),
                 !largest.1.isEmpty
             {
-                var excess = Record.size(fields) + documentID.utf8.count - maxRecordBytes
-                var value = largest.1
-                while excess > 0, let last = value.popLast() { excess -= String(last).utf8.count }
-                fields[largest.0] = .text(value)
+                var excess = Record.size(fields, documentID: documentID) - maxRecordBytes
+                var value = largest.1.unicodeScalars
+                while excess > 0, let last = value.popLast() { excess -= PageDiagnostics.escapedSize(last) }
+                fields[largest.0] = .text(String(value))
                 truncated = true
             }
             return (fields, truncated)

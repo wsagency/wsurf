@@ -30,7 +30,12 @@ final class RuntimeHarness: NSObject, WKNavigationDelegate {
         }
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finish() }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) { finish() }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) { finish() }
+
+    /// A failed load resumes too, so a fixture that cannot load fails its test instead of hanging it.
+    private func finish() {
         loaded?.resume()
         loaded = nil
     }
@@ -75,10 +80,11 @@ struct DevelopmentElementStateTests {
         let page = await RuntimeHarness(html: "<p class=a>1</p><p class=a>2</p><p class=a>3</p>")
         let none = try await page.state(".missing")
         #expect(none["count"] as? Int == 0)
-        #expect(none["visible"] as? Bool == false)
+        #expect(none["visible"] is NSNull)  // no state to report: `!visible` must not read as "hidden"
         let many = try await page.state(".a")
         #expect((many["count"] as? Int ?? 0) > 1)
-        #expect(many["visible"] as? Bool == false)  // never reports a state for an ambiguous target
+        #expect(many["visible"] is NSNull)
+        #expect(many["enabled"] is NSNull)
     }
 
     @Test(arguments: [
@@ -114,7 +120,7 @@ struct DevelopmentElementStateTests {
         let page = await RuntimeHarness(html: "<p>x</p>")
         for selector in ["div[", "::::", "a b >", "#"] {
             let state = try await page.state(selector)
-            #expect(state["invalid"] as? Bool == true, "\(selector)")
+            #expect(state["problem"] as? String == "invalid", "\(selector)")
             #expect(state["count"] == nil)
         }
     }
@@ -157,6 +163,65 @@ struct DevelopmentSelectorTests {
     }
 }
 
+/// A selector is evaluated against the page, so attribute predicates are reads. Only exposed attributes may be tested.
+@MainActor
+struct DevelopmentSelectorPolicyTests {
+    private static let page = """
+        <body><form><input type=hidden name=csrf value="s3cr3t" data-token="s3cr3t"><input id=pw type=password value="pw123">
+        <input id=name name=email value="a@b.test"><button data-testid=go class="primary big" aria-label="Go">Go</button>
+        <a id=lnk href="https://x.test/p?sig=TOK9">link</a><select id=sel><option value="1">One</option></select></form></body>
+        """
+
+    @Test(arguments: [
+        #"input[type=hidden][value^="s3"]"#,
+        #"input[type=hidden][value="s3cr3t"]"#,
+        #"body:has(input[type=hidden][value^="s3"])"#,
+        #":is(input, textarea):not([value=""])"#,
+        #"form:has(> input[type=hidden][value*=cr3])"#,
+        #"input[type=hidden][v\61lue^="s3"]"#,
+        #"input[type=hidden][VALUE^="s3"]"#,
+        #"input[type=hidden][*|value^="s3"]"#,
+        #"input[type=hidden][|value^="s3"]"#,
+        #"input[type=hidden][value^='s3' i]"#,
+        #"#pw[value="pw123"]"#,
+        #"input[type=hidden][data-token^=s3]"#,
+        #"a[href*="TOK9"]"#,
+        #"a[href^="https://x.test/p?sig"]"#,
+        #"a[src="x"]"#,
+        #"option[value="1"]"#,
+        #"[class="a"][onclick]"#,
+    ])
+    func unexposedAttributeReadsAreRejectedNotEmpty(selector: String) async throws {
+        let page = await RuntimeHarness(html: Self.page)
+        let found = try await page.find(selector)
+        #expect(found["problem"] as? String == "unsafe", "\(selector): \(found.raw)")
+        #expect(found["items"] == nil)
+        let state = try await page.state(selector)
+        #expect(state["problem"] as? String == "unsafe", "\(selector)")
+        #expect(state["count"] == nil)
+    }
+
+    @Test(arguments: [
+        "button", "#pw", ".primary", "button.primary.big", "[data-testid=go]", "[data-testid='go']", "[aria-label=Go]",
+        "input[type=hidden]", "input[name=csrf]", "a[href]", "form > button:not([disabled])", "form:has(button.primary)", "input[type=password]#pw",
+        "body :is(button, a)", "[id=lnk]", "[type]", "a[ href ]",
+    ])
+    func ordinaryStructuralSelectorsStillWork(selector: String) async throws {
+        let page = await RuntimeHarness(html: Self.page)
+        let found = try await page.find(selector)
+        #expect(found["problem"] == nil, "\(selector): \(found.raw)")
+        #expect((found["items"] as? [[String: Any]])?.isEmpty == false, "\(selector)")
+    }
+
+    @Test func readPageScopeAppliesTheSamePolicy() async throws {
+        let page = await RuntimeHarness(html: Self.page)
+        let result = try await page.run("return JSON.stringify(R.observe('', 1000, 10, 0, 0, 'body:has(input[type=hidden][value^=\"s3\"])', false));")
+        #expect((result["error"] as? String)?.contains("scope") == true)
+        let ok = try await page.run("return JSON.stringify(R.observe('', 1000, 10, 0, 0, 'form', false));")
+        #expect(ok["error"] == nil)
+    }
+}
+
 @MainActor
 struct DevelopmentFindElementsTests {
     private static let list = "<ul>" + (0..<150).map { "<li class=item>Item \($0)</li>" }.joined() + "</ul>"
@@ -179,19 +244,18 @@ struct DevelopmentFindElementsTests {
         #expect(beyond["hasMore"] as? Bool == false)
     }
 
-    @Test func clampsLimitAndOffsetToTheCeilings() async throws {
+    @Test(arguments: [(-5, 10), (0, 0), (0, 101), (10_001, 5), (0, 5_000)])
+    func outOfRangeOffsetOrLimitIsAnErrorNotClamped(offset: Int, limit: Int) async throws {
         let page = await RuntimeHarness(html: Self.list)
-        let wide = try await page.find("li.item", offset: 0, limit: 5_000)
-        #expect((wide["items"] as? [[String: Any]])?.count == 100)
-        let negative = try await page.find("li.item", offset: -5, limit: 0)
-        #expect(negative["offset"] as? Int == 0)
-        #expect((negative["items"] as? [[String: Any]])?.count == 1)
+        let result = try await page.find("li.item", offset: offset, limit: limit)
+        #expect(result["problem"] as? String == "range")
+        #expect(result["items"] == nil)
     }
 
     @Test func invalidSelectorIsReportedNotEmptySuccess() async throws {
         let page = await RuntimeHarness(html: "<p>x</p>")
         let result = try await page.find("div[")
-        #expect(result["invalid"] as? Bool == true)
+        #expect(result["problem"] as? String == "invalid")
         #expect(result["items"] == nil)
     }
 
@@ -225,15 +289,79 @@ struct DevelopmentFindElementsTests {
         #expect(Set(names ?? []) == ["open", "frame"])
     }
 
-    @Test func nonControlRefsAreStaleForActionsButControlsStillResolve() async throws {
+    /// A ref from findAll is inspect-only until readPage's collect emits the same element as an ordinary control.
+    @Test func foundRefsCarryNoActionAuthorityUntilReadPageEmitsThem() async throws {
         let page = await RuntimeHarness(html: "<div id=box>Box</div><button id=ok>Okay</button>")
         let items = try #require(try await page.find("#box, #ok")["items"] as? [[String: Any]])
         let box = try #require(items.first { $0["tag"] as? String == "div" }?["r"] as? Int)
         let button = try #require(items.first { $0["tag"] as? String == "button" }?["r"] as? Int)
-        let stale = try await page.run("return JSON.stringify(R.resolve(\(box), '', ['button', 'field', 'link']));")
-        #expect(stale["stale"] as? Bool == true)
-        let ok = try await page.run("return JSON.stringify({ found: !!R.resolve(\(button), '', ['button']).el });")
-        #expect(ok["found"] as? Bool == true)
+        let found = try await page.run("""
+            return JSON.stringify({
+              boxStale: !!R.resolve(\(box), '', ['button', 'field', 'link']).stale,
+              buttonStale: !!R.resolve(\(button), '', ['button']).stale,
+              buttonByLabel: !!R.resolve(0, 'Okay', ['button']).el,
+              matches: R.matchesRef(\(button)),
+              inspectable: !R.inspect(\(button)).stale });
+            """)
+        #expect(found["boxStale"] as? Bool == true)
+        #expect(found["buttonStale"] as? Bool == true)
+        #expect(found["buttonByLabel"] as? Bool == false)
+        #expect(found["matches"] as? Bool == false)
+        #expect(found["inspectable"] as? Bool == true)  // inspection still works
+        let promoted = try await page.run("""
+            R.collect();
+            return JSON.stringify({
+              sameRef: R.collect().find(c => c.l === 'Okay')?.r === \(button),
+              resolves: !!R.resolve(\(button), '', ['button']).el,
+              boxStillStale: !!R.resolve(\(box), '', ['button', 'field', 'link']).stale });
+            """)
+        #expect(promoted["sameRef"] as? Bool == true)  // reusing the registered ref keeps its number
+        #expect(promoted["resolves"] as? Bool == true)
+        #expect(promoted["boxStillStale"] as? Bool == true)
+    }
+
+    @Test func collectThenFindKeepsAnOrdinaryControlActionable() async throws {
+        let page = await RuntimeHarness(html: "<button id=ok>Okay</button>")
+        let ref = try await page.run("return JSON.stringify({ r: R.collect().find(c => c.l === 'Okay').r });")["r"] as? Int ?? 0
+        _ = try await page.find("button")
+        let after = try await page.run("return JSON.stringify({ resolves: !!R.resolve(\(ref), '', ['button']).el, byLabel: !!R.resolve(0, 'Okay', ['button']).el });")
+        #expect(after["resolves"] as? Bool == true)
+        #expect(after["byLabel"] as? Bool == true)
+    }
+
+    @Test func aFoundHiddenDuplicateDoesNotMakeALabelAmbiguous() async throws {
+        let page = await RuntimeHarness(html: "<button style='display:none'>Save</button><button>Save</button>")
+        _ = try await page.run("R.collect(); return '{}';")
+        let before = try await page.run("return JSON.stringify({ found: !!R.resolve(0, 'Save', ['button']).el });")
+        #expect(before["found"] as? Bool == true)
+        _ = try await page.find("button")
+        let after = try await page.run("const r = R.resolve(0, 'Save', ['button']); return JSON.stringify({ found: !!r.el, ambiguous: !!r.ambiguous });")
+        #expect(after["found"] as? Bool == true)
+        #expect(after["ambiguous"] as? Bool == false)
+    }
+
+    @Test func aFoundOnlyElementThatChangesIsStaleForInspection() async throws {
+        let page = await RuntimeHarness(html: "<div id=host><p id=p>x</p></div>")
+        let items = try #require(try await page.find("#p")["items"] as? [[String: Any]])
+        let ref = try #require(items.first?["r"] as? Int)
+        _ = try await page.run("document.getElementById('host').innerHTML = '<p id=p>x</p>'; return '{}';")
+        #expect(try await page.inspect(ref)["stale"] as? Bool == true)
+    }
+
+    @Test func aFormWithClobberingNamedControlsIsStillSummarised() async throws {
+        let page = await RuntimeHarness(html: "<form id=f><input name=name><input name=id><input name=value></form>")
+        let found = try await page.find("form")
+        let item = try #require((found["items"] as? [[String: Any]])?.first)
+        #expect(item["tag"] as? String == "form")
+        #expect(found["problem"] == nil)
+    }
+
+    @Test func frameRootsAreListedOnce() async throws {
+        let page = await RuntimeHarness(html: "<iframe srcdoc='<p>in</p>'></iframe>")
+        let result = try await page.find("html")
+        let refs = (result["items"] as? [[String: Any]])?.compactMap { $0["r"] as? Int } ?? []
+        #expect(refs.count == 2)  // the document and the frame's document, each once
+        #expect(Set(refs).count == refs.count)
     }
 
     @Test func neverEmitsFieldValuesOrHiddenContent() async throws {
@@ -293,6 +421,16 @@ struct DevelopmentInspectTests {
         #expect(style["justify-content"] == "center")
         let rect = try #require(inspected["rect"] as? [String: Double])
         #expect(rect["width"] == 220)  // 200 content + 14 padding + 6 border
+    }
+
+    @Test func contentBoxIsInLayoutPixelsUnderTransformAndCursorUrlsAreNotReported() async throws {
+        let page = await RuntimeHarness(html: """
+            <div id=t style="width:100px;height:40px;padding:5px;border:2px solid black;transform:scale(2);cursor:url(https://x.test/c.png?tok=SECRET9), auto"></div>
+            """)
+        let inspected = try await page.inspect(try await ref(page, "#t"))
+        let content = try #require((inspected["box"] as? [String: Any])?["content"] as? [String: Double])
+        #expect(content == ["width": 100, "height": 40])
+        #expect(!inspected.raw.contains("SECRET9"))
     }
 
     @Test func reportsGridLayout() async throws {

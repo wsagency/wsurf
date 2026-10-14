@@ -42,9 +42,35 @@ struct PageDiagnosticsIngestTests {
         let long = String(repeating: "é", count: 5_000)
         let result = try #require(entry(["k": "console", "level": "log", "text": long, "cookie": "hunter2", "stack": "at x"]))
         guard case .text(let text)? = result.fields["text"] else { Issue.record("text missing"); return }
-        #expect(text.count <= 2_000)
+        #expect(text.utf8.count <= 4_096)
+        #expect(result.truncated)
         #expect(result.fields["cookie"] == nil)
         #expect(result.fields["stack"] == nil)
+    }
+
+    @Test func aShortMessageIsNotFlaggedTruncated() throws {
+        #expect(try #require(entry(["k": "console", "level": "log", "text": "short"])).truncated == false)
+    }
+
+    @Test func aHostileGraphemeClusterIsBoundedBeforeItCostsAnything() throws {
+        // 20 MB of combining marks form one grapheme cluster per base: character-based clipping let all of it through.
+        let hostile = String(repeating: "e" + String(repeating: "\u{301}", count: 5_000), count: 2_000)
+        let clock = ContinuousClock()
+        var result: PageDiagnostics.Entry?
+        let elapsed = clock.measure { result = entry(["k": "console", "level": "log", "text": hostile]) }
+        guard case .text(let text)? = result?.fields["text"] else { Issue.record("text missing"); return }
+        #expect(text.utf8.count <= 4_096)
+        #expect(!text.isEmpty)
+        #expect(result?.truncated == true)
+        #expect(elapsed < .milliseconds(250))
+    }
+
+    @Test func aHugeURLIsClippedAndFlagged() throws {
+        let url = "https://a.test/" + String(repeating: "p", count: 100_000)
+        let result = try #require(entry(["k": "net", "via": "fetch", "method": "GET", "url": url, "outcome": "completed"]))
+        guard case .text(let kept)? = result.fields["url"] else { Issue.record("url missing"); return }
+        #expect(kept.utf8.count <= 2_048)
+        #expect(result.truncated)
     }
 
     @Test func networkMessageSanitizesAndValidatesEveryField() {
@@ -94,6 +120,16 @@ struct PageDiagnosticsIngestTests {
         let result = console("warning", [["type": "string", "value": "slow"], ["type": "number", "value": 3], ["type": "boolean", "value": true], ["type": "undefined"]])
         #expect(result == .init(stream: .console, fields: ["level": "warn", "text": "slow 3 true undefined", "source": "cdp"]))
         #expect(console("error", [["type": "string", "value": "x"]])?.fields["level"] == "error")
+    }
+
+    @Test func consoleArgumentCountAndSizeAreBoundedAndFlagged() throws {
+        let many = (0..<500).map { _ in ["type": "string", "value": String(repeating: "a", count: 1_000)] as [String: Any] }
+        let result = try #require(console("log", many))
+        guard case .text(let text)? = result.fields["text"] else { Issue.record("text missing"); return }
+        #expect(text.utf8.count <= 4_096)
+        #expect(result.truncated)
+        let eight: [[String: Any]] = (0..<8).map { _ in ["type": "string", "value": "ok"] }
+        #expect(try #require(console("log", eight)).truncated == false)
     }
 
     @Test func opaqueObjectsAreOmittedAndErrorsKeepOnlyTheirFirstLine() {
@@ -170,13 +206,44 @@ struct PageDiagnosticsIngestTests {
         #expect(final.fields["url"] == "https://a.test/new")
     }
 
-    @Test func inFlightTrackingIsBounded() {
+    @Test func inFlightOverflowIsCountedNotSilent() {
         let mapper = ChromiumDiagnosticsMapper()
         for index in 0..<1_000 {
             _ = mapper.entry(method: "Network.requestWillBeSent", params: ["requestId": "\(index)", "timestamp": 1.0, "request": ["url": "https://a.test/\(index)", "method": "GET"]])
         }
+        #expect(mapper.lostInFlight == 1_000 - 256)
         #expect(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "0", "timestamp": 2.0]) == nil)  // evicted
         #expect(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "999", "timestamp": 2.0]) != nil)
+    }
+
+    @Test func aFinishEventCarriesTheIdentityOfTheRequestStartNotTheCurrentDocument() throws {
+        let mapper = ChromiumDiagnosticsMapper()
+        _ = mapper.entry(method: "Network.requestWillBeSent", params: [
+            "requestId": "x", "timestamp": 1.0, "frameId": "frame-old", "loaderId": "loader-old", "request": ["url": "https://a.test/", "method": "GET"],
+        ])
+        // The page navigates; the old document's request is cancelled afterwards.
+        let late = try #require(mapper.entry(method: "Network.loadingFailed", params: ["requestId": "x", "timestamp": 2.0, "canceled": true]))
+        #expect(late.frameID == "frame-old")
+        #expect(late.loaderID == "loader-old")
+    }
+
+    @Test func resetForgetsEarlierRequestsAndTheLossCount() {
+        let mapper = ChromiumDiagnosticsMapper()
+        for index in 0..<300 {
+            _ = mapper.entry(method: "Network.requestWillBeSent", params: ["requestId": "\(index)", "timestamp": 1.0, "request": ["url": "https://a.test/", "method": "GET"]])
+        }
+        mapper.reset()
+        #expect(mapper.lostInFlight == 0)
+        #expect(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "299", "timestamp": 2.0]) == nil)
+    }
+
+    @Test func aHugeRequestURLIsClippedWhileInFlight() throws {
+        let mapper = ChromiumDiagnosticsMapper()
+        _ = mapper.entry(method: "Network.requestWillBeSent", params: ["requestId": "u", "timestamp": 1.0, "request": ["url": "https://a.test/" + String(repeating: "p", count: 2_000_000), "method": "GET"]])
+        let done = try #require(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "u", "timestamp": 1.1]))
+        guard case .text(let url)? = done.fields["url"] else { Issue.record("url missing"); return }
+        #expect(url.utf8.count <= 2_048)
+        #expect(done.truncated)
     }
 
     @Test func malformedEventsAreIgnoredWithoutCrashing() {

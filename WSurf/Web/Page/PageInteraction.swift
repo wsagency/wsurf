@@ -121,7 +121,7 @@ extension PageDriver {
         let elementState = isElement
             ? """
             const state = R.elementState(value);
-            if (state.invalid) return JSON.stringify({ error: 'Invalid selector.' });
+            if (state.error) return JSON.stringify({ error: state.error });
             if (state.count > 1) return JSON.stringify({ error: 'The selector matches more than one element.' });
             """
             : ""
@@ -201,7 +201,7 @@ extension PageDriver {
             guard width > 0, height > 0 else { return .failure(.invalidGeometry) }
             css = CGRect(origin: .zero, size: viewport)
         case .region(let requested):
-            switch ScreenshotGeometry.clip(requested, toViewport: viewport) {
+            switch ScreenshotGeometry.region(requested, inViewportCSS: viewport) {
             case .success(let clipped): css = clipped
             case .failure(let failure): return .failure(failure)
             }
@@ -210,12 +210,13 @@ extension PageDriver {
             guard let x = number(box, "x"), let y = number(box, "y"), let w = number(box, "width"), let h = number(box, "height") else {
                 return .failure(.stale)
             }
-            switch ScreenshotGeometry.clip(CGRect(x: x, y: y, width: w, height: h), toViewport: viewport) {
+            switch ScreenshotGeometry.visibleBounds(ofElement: CGRect(x: x, y: y, width: w, height: h), inViewportCSS: viewport) {
             case .success(let clipped): css = clipped
             case .failure(let failure): return .failure(failure)
             }
         }
         let zoom = view.pageZoom
+        guard css.width * zoom >= 1, css.height * zoom >= 1 else { return .failure(.invalidGeometry) }
         let crop: CGRect? = target == .viewport ? nil : CGRect(x: css.minX * zoom, y: css.minY * zoom, width: css.width * zoom, height: css.height * zoom)
         let pointWidth = crop?.width ?? view.bounds.width
         guard let image = try? await view.capture(rect: crop, width: min(1280, max(1, pointWidth))),

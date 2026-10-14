@@ -313,7 +313,7 @@ struct PageInteractionTests {
         #expect((await PageDriver.waitForPage(condition: "elementVisible", value: "div[", timeout: 1, in: view)) == "Invalid selector.")
     }
 
-    @Test func screenshotRegionsClipAndRejectOffscreen() async {
+    @Test func screenshotRegionMustBeFullyInsideTheViewport() async {
         let view = await page("<p>Visible</p>")
         let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 400, height: 300), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -321,12 +321,14 @@ struct PageInteractionTests {
         window.orderBack(nil)
         defer { window.contentView = nil; window.close() }
         let width = view.bounds.width
-        if case .success(let capture) = await PageDriver.screenshot(.region(CGRect(x: width - 10, y: 0, width: 100, height: 20)), in: view) {
-            #expect(capture.bounds.width == 10)
+        if case .success(let capture) = await PageDriver.screenshot(.region(CGRect(x: 0, y: 0, width: 100, height: 20)), in: view) {
+            #expect(capture.bounds == CGRect(x: 0, y: 0, width: 100, height: 20))
         } else {
-            Issue.record("clipped region failed")
+            Issue.record("inside region failed")
         }
+        #expect(await PageDriver.screenshot(.region(CGRect(x: width - 10, y: 0, width: 100, height: 20)), in: view).failure == .offscreen)
         #expect(await PageDriver.screenshot(.region(CGRect(x: width + 50, y: 0, width: 10, height: 10)), in: view).failure == .offscreen)
+        #expect(await PageDriver.screenshot(.region(CGRect(x: 0, y: 0, width: 1e-9, height: 10)), in: view).failure == .invalidGeometry)
     }
 
     @Test func nestedHorizontalScrollReturnsFreshControls() async {

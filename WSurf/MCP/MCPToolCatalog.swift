@@ -42,6 +42,15 @@ nonisolated enum MCPToolCatalog {
                     ]),
                 ])
             }
+            if type == "region" {
+                let edge: Value = .object(["type": "number", "minimum": -100000, "maximum": 100000])
+                let size: Value = .object(["type": "number", "exclusiveMinimum": 0, "maximum": 100000])
+                return .object([
+                    "type": "object", "additionalProperties": false, "description": .string(description),
+                    "required": ["x", "y", "width", "height"],
+                    "properties": .object(["x": edge, "y": edge, "width": size, "height": size]),
+                ])
+            }
             var fields: [String: Value] = ["type": .string(type), "description": .string(description)]
             if type == "integer" {
                 fields["minimum"] = .int(minimum)
@@ -71,6 +80,20 @@ nonisolated enum MCPToolCatalog {
             )
         }
 
+        /// Exactly x, y, width, height: finite numbers within ±100,000, width and height positive.
+        private static func isRegion(_ box: [String: Value]) -> Bool {
+            guard Set(box.keys) == ["x", "y", "width", "height"] else { return false }
+            func number(_ key: String) -> Double? {
+                switch box[key] {
+                case .int(let value): Double(value)
+                case .double(let value) where value.isFinite: value
+                default: nil
+                }
+            }
+            guard let x = number("x"), let y = number("y"), let width = number("width"), let height = number("height") else { return false }
+            return abs(x) <= 100_000 && abs(y) <= 100_000 && width > 0 && width <= 100_000 && height > 0 && height <= 100_000
+        }
+
         func validate(_ arguments: [String: Value]) throws {
             guard Set(arguments.keys).isSubset(of: Set(parameters.map(\.name))) else {
                 throw MCPError.invalidParams("Unknown argument.")
@@ -98,6 +121,8 @@ nonisolated enum MCPToolCatalog {
                                 else { return false }
                                 return true
                             }
+                    case ("region", .object(let box)):
+                        Self.isRegion(box)
                     case ("boolean", .bool):
                         true
                     default:
@@ -183,14 +208,11 @@ nonisolated enum MCPToolCatalog {
         Entry(
             name: "screenshotPage",
             description:
-                "Capture the viewport, one element (ref + observationID), or a viewport region (x, y, width, height in CSS pixels) as an image. Never scrolls or stitches. Filled sensitive fields prevent any capture. Prefer readPage for text.",
+                "Capture the viewport, one element (observationID + ref), or a region {x, y, width, height} in viewport CSS pixels that must lie fully inside the viewport, as an image. Never scrolls or stitches. Filled sensitive fields prevent any capture. Prefer readPage for text.",
             parameters: [
                 tab, Parameter(name: "ref", type: "integer", description: "Control to capture; needs observationID.", required: false),
                 Parameter(name: "observationID", type: "string", description: "Required when ref is supplied.", required: false),
-                Parameter(name: "x", type: "integer", description: "Region left edge in viewport CSS pixels.", required: false, minimum: 0),
-                Parameter(name: "y", type: "integer", description: "Region top edge in viewport CSS pixels.", required: false, minimum: 0),
-                Parameter(name: "width", type: "integer", description: "Region width in CSS pixels.", required: false),
-                Parameter(name: "height", type: "integer", description: "Region height in CSS pixels.", required: false),
+                Parameter(name: "region", type: "region", description: "Viewport-relative CSS-pixel rectangle; not with ref.", required: false),
             ], readOnly: true),
         Entry(
             name: "scrollPage", description: AgentToolkit.Descriptions.scrollPage,

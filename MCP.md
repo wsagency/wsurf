@@ -119,8 +119,8 @@ revoke it immediately.
 | `fillFields` | Fill up to 32 distinct nonsensitive form controls without submitting; report exactly which refs retained their values. |
 | `inspectControl` | Read control state and paginate dropdown options. |
 | `setChecked` | Set a checkbox, switch, or radio to the requested state. |
-| `waitForPage` | Wait up to 15 seconds for text, absent text, a URL substring, document readiness, or a CSS selector that matches exactly one element to be visible, hidden/absent, or enabled. An element wait ends as stale if the page navigates. |
-| `screenshotPage` | Return an image of the viewport, one referenced element, or a viewport region (`x`, `y`, `width`, `height` in CSS pixels), clipped to the visible viewport; the result states the covered rectangle and image scale. Never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop. |
+| `waitForPage` | Wait up to 15 seconds for text, absent text, a URL substring, document readiness, or a CSS selector that matches exactly one element to be visible, hidden/absent, or enabled. An element wait ends as stale if the page navigates. Selectors are limited to a safe subset; see below. |
+| `screenshotPage` | Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part. The result states the covered rectangle and image scale. Never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop. |
 | `pressKey` | Send a supported keyboard key to a control in a visible tab. |
 | `hoverOnPage` | Dispatch pointer/mouse hover handlers. CSS-only hover is unsupported. |
 | `scrollPage` | Scroll vertically or horizontally, optionally inside a referenced container. |
@@ -153,6 +153,10 @@ Keep the query and scope unchanged when paging. Text offsets use UTF-16 units.
 The standard text response budget is about 6 KB before MCP framing; screenshot data is separate.
 Use screenshots only when text and control state do not answer the task.
 
+
+### Safe selectors
+
+A CSS selector is evaluated against the page, so an attribute test such as `input[type=hidden][value^=a]`, also under `:has()`, would read a value one character at a time. Selectors passed to `waitForPage` and `readPage` scope are therefore parsed by the browser first (escapes, case and namespace forms such as `v\61lue` or `[*|value]` are normalised) and may test only attributes WSurf already exposes: `id`, `class`, `role`, `type`, `name`, `for`, `alt`, `title`, `placeholder`, `lang`, `dir`, `target`, `rel`, `aria-*`, the test attributes `data-testid`, `data-test`, `data-test-id`, `data-cy`, `data-qa` and `data-automation-id`, and a few boolean or numeric ones (`disabled`, `checked`, `hidden`, `width`, `min`…). `href` and `src` may be tested for presence only. Any other attribute test, including `value`, other `data-*` and `on*`, is refused with an explicit error rather than answered with an empty result. Structural selectors, classes, ids and `:has()` without such tests work as usual.
 
 ## Privacy boundaries
 

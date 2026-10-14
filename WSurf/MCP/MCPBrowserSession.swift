@@ -266,18 +266,21 @@ final class MCPBrowserSession: Identifiable {
         }
     }
 
-    /// `ref` or the four region fields, never both; a region needs all four.
+    /// `ref` or `region`, never both. `region` was shape-checked by the catalog.
     private static func screenshotTarget(_ arguments: [String: Value]) -> (target: ScreenshotTarget, error: String?) {
-        let box = ["x", "y", "width", "height"].map { arguments[$0]?.intValue }
-        let hasRegion = box.contains { $0 != nil }
-        if let ref = arguments["ref"]?.intValue {
-            return (.element(ref: ref), hasRegion ? "Use either ref or a region, not both." : nil)
+        func number(_ box: [String: Value], _ key: String) -> CGFloat {
+            switch box[key] {
+            case .int(let value): CGFloat(value)
+            case .double(let value): CGFloat(value)
+            default: .nan
+            }
         }
-        guard hasRegion else { return (.viewport, nil) }
-        guard let x = box[0], let y = box[1], let width = box[2], let height = box[3] else {
-            return (.viewport, "A region needs x, y, width, and height.")
+        let ref = arguments["ref"]?.intValue
+        if case .object(let box)? = arguments["region"] {
+            if ref != nil { return (.viewport, "Use either ref or region, not both.") }
+            return (.region(CGRect(x: number(box, "x"), y: number(box, "y"), width: number(box, "width"), height: number(box, "height"))), nil)
         }
-        return (.region(CGRect(x: x, y: y, width: width, height: height)), nil)
+        return (ref.map { .element(ref: $0) } ?? .viewport, nil)
     }
 
     private func pageAction(name: String, arguments: [String: Value], view: BrowserPage) async -> String {

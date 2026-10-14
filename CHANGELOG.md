@@ -9,7 +9,7 @@ release notes will be added above this provenance record.
 
 ### 2026-10-14 — MCP: element waits and cropped screenshots
 
-`waitForPage` accepts `elementVisible`, `elementHidden` and `elementEnabled` with a CSS selector that must match one element, and ends as stale if the page navigates. `screenshotPage` can capture one referenced element or a viewport region, clipped to the visible viewport; it never scrolls or stitches, and a filled sensitive field anywhere on the page still refuses every capture.
+`waitForPage` accepts `elementVisible`, `elementHidden` and `elementEnabled` with a CSS selector that must match one element, and ends as stale if the page navigates. Selectors may test only attributes WSurf already exposes (see MCP.md, Safe selectors), so a selector cannot be used to read hidden values. `screenshotPage` can capture one referenced element or a viewport region, cropped to its visible part (a region must lie fully inside the viewport); it never scrolls or stitches, and a filled sensitive field anywhere on the page still refuses every capture.
 
 ### 2026-10-13 — Credentials: several vaults per profile, Trash and earlier versions, and a one-way store upgrade
 

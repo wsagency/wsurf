@@ -5,9 +5,13 @@
 nonisolated enum PageRuntime {
     static let script = #"""
       const R = (window.__wsurf = window.__wsurf || (() => {
-      const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+      // A page can clobber `form.name` / `form.id` with a named control, so a non-string is empty text, never an exception.
+      const norm = s => typeof s === 'string' ? s.replace(/\s+/g, ' ').trim() : '';
       const documentID = Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16)).join('-');
       const refIDs = new WeakMap();
+      // Elements registered only by findAll. They may be inspected, but carry no action authority: matchesRef, resolve by
+      // ref and resolve by label all ignore them until readPage's collect emits the same element as a control.
+      const foundOnly = new WeakSet();
       const refSignatures = new Map();
       const expectedValues = new WeakMap();
       let lastControlQuery = null;
@@ -108,10 +112,11 @@ nonisolated enum PageRuntime {
 
       const signature = el => JSON.stringify([kindOf(el), labelOf(el, kindOf(el)), el.id, el.name,
         el.type, el.href, el.getAttribute('formaction'), el.form?.action, el.form?.method]);
-      const matchesRef = ref => {
+      const inspectableRef = ref => {
         const el = window.__wsurfRefs[ref - 1];
         return !!el?.isConnected && signature(el) === refSignatures.get(ref);
       };
+      const matchesRef = ref => inspectableRef(ref) && !foundOnly.has(window.__wsurfRefs[ref - 1]);
       const expectValue = (el, value) => expectedValues.set(el, { value, signature: signature(el) });
       const valueState = ref => {
         const el = window.__wsurfRefs[ref - 1];
@@ -140,6 +145,7 @@ nonisolated enum PageRuntime {
 
           let ref = refIDs.get(el);
           if (!ref) { ref = window.__wsurfRefs.push(el); refIDs.set(el, ref); }
+          foundOnly.delete(el);
           el.__wsurfRef = ref;
           refSignatures.set(ref, signature(el));
           const entry = { r: ref, k: kind, l: label };
@@ -225,13 +231,13 @@ nonisolated enum PageRuntime {
       const resolve = (ref, label, kinds) => {
         if (ref > 0) {
           const el = window.__wsurfRefs[ref - 1];
-          if (!el || !el.isConnected || !kinds.includes(kindOf(el))) return { stale: true };
+          if (!el || !el.isConnected || foundOnly.has(el) || !kinds.includes(kindOf(el))) return { stale: true };
           return { el };
         }
         const t = norm(label).toLowerCase();
         const candidates = [];
         for (const el of window.__wsurfRefs) {
-          if (!el.isConnected) continue;
+          if (!el.isConnected || foundOnly.has(el)) continue;
           const kind = kindOf(el);
           if (!kind || !kinds.includes(kind)) continue;
           candidates.push({ el, label: labelOf(el, kind).toLowerCase() });
@@ -357,7 +363,10 @@ nonisolated enum PageRuntime {
         let end = Math.min(text.length, start + textLimit);
         if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1] || '')) end--;
         let root = null;
-        if (scope) { try { root = document.querySelector(scope); } catch (e) {} }
+        if (scope) {
+          if (selectorProblem(scope)) return { error: 'The scope selector is invalid or reads an attribute value that is not exposed.' };
+          root = document.querySelector(scope);
+        }
         if (scope && !root) return { error: 'No element matches that scope.' };
         const candidates = all.filter(c => (!root || within(root, window.__wsurfRefs[c.r - 1])) && (!viewportOnly || c.vp));
         const availabilityOrder = (a, b) => Number(b.vp) - Number(a.vp) || Number(!!a.d) - Number(!!b.d);
@@ -400,28 +409,79 @@ nonisolated enum PageRuntime {
           if (el.tagName === 'IFRAME') {
             try {
               const inner = el.contentDocument;
-              if (inner && inner.documentElement) { yield inner.documentElement; yield* deep(inner); }
+              if (inner && inner.documentElement) yield* deep(inner);
             } catch (e) {}
           }
         }
       }
-      const validSelector = selector => {
-        try { document.createDocumentFragment().querySelector(selector); return true; } catch (e) { return false; }
+      // Selector policy. A selector is evaluated against the page, so an attribute predicate is a read of that attribute:
+      // `input[type=hidden][value^=s3]` (or the same under :has) would recover a hidden token a byte at a time. Attribute
+      // predicates are therefore limited to attributes this runtime already exposes. The selector is canonicalised by the
+      // engine's own CSS parser first, so escapes (`v\61lue`), case and namespace forms (`[*|value]`) cannot hide a name.
+      const URL_ATTRIBUTES = new Set(['href', 'src']);
+      const TEST_ATTRIBUTES = new Set(['data-testid', 'data-test', 'data-test-id', 'data-cy', 'data-qa', 'data-automation-id']);
+      const skipString = (text, start) => {
+        for (let k = start + 1; k < text.length; k++) {
+          if (text[k] === '\\') k++;
+          else if (text[k] === text[start]) return k;
+        }
+        return text.length;
       };
+      const attributeSelectors = text => {
+        const out = [];
+        for (let i = 0; i < text.length; i++) {
+          const c = text[i];
+          if (c === '\\') { i++; continue; }
+          if (c === '"' || c === "'") { i = skipString(text, i); continue; }
+          if (c !== '[') continue;
+          let body = '', j = i + 1;
+          for (; j < text.length && text[j] !== ']'; j++) {
+            if (text[j] === '\\') { body += text.slice(j, j + 2); j++; continue; }
+            if (text[j] === '"' || text[j] === "'") { const e = skipString(text, j); body += text.slice(j, e + 1); j = e; continue; }
+            body += text[j];
+          }
+          out.push(body);
+          i = j;
+        }
+        return out;
+      };
+      const ATTRIBUTE_BODY = /^\s*(?:(?:[^\s|=~^$*\\\[\]"']*|\*)\|(?!=))?([^\s|=~^$*\\\[\]"']+)\s*(?:([~|^$*]?=)[\s\S]*)?$/;
+      // null when the selector may run; otherwise 'invalid' (not a selector) or 'unsafe' (reads an unexposed attribute).
+      const selectorProblem = selector => {
+        try { document.createDocumentFragment().querySelector(selector); } catch (e) { return 'invalid'; }
+        let canonical;
+        try {
+          const sheet = new CSSStyleSheet();
+          sheet.insertRule(selector + '{}');
+          if (sheet.cssRules.length !== 1 || !sheet.cssRules[0].selectorText) return 'invalid';
+          canonical = sheet.cssRules[0].selectorText;
+        } catch (e) { return 'invalid'; }
+        for (const body of attributeSelectors(canonical)) {
+          const m = ATTRIBUTE_BODY.exec(body);
+          if (!m) return 'unsafe';
+          const name = m[1].toLowerCase(), hasValue = !!m[2];
+          if (name.startsWith('aria-') || TEST_ATTRIBUTES.has(name)) continue;
+          if (!ATTRIBUTE_ALLOWLIST.has(name) || (hasValue && URL_ATTRIBUTES.has(name))) return 'unsafe';
+        }
+        return null;
+      };
+      const SELECTOR_ERRORS = { invalid: 'Invalid selector.',
+        unsafe: 'That selector reads an attribute value that is not exposed. Use id, class, role, type, name, aria-*, or a test attribute (data-testid); href and src by presence only.' };
       const refFor = el => {
         let ref = refIDs.get(el);
-        if (!ref) { ref = window.__wsurfRefs.push(el); refIDs.set(el, ref); }
+        if (!ref) { ref = window.__wsurfRefs.push(el); refIDs.set(el, ref); foundOnly.add(el); }
         refSignatures.set(ref, signature(el));
         return ref;
       };
 
       const elementState = selector => {
-        if (!validSelector(selector)) return { invalid: true };
+        const problem = selectorProblem(selector);
+        if (problem) return { problem, error: SELECTOR_ERRORS[problem] };
         const matches = [];
         for (const el of deep(document)) {
           if (el.matches(selector)) { matches.push(el); if (matches.length > 1) break; }
         }
-        if (matches.length !== 1) return { count: matches.length, visible: false, enabled: false };
+        if (matches.length !== 1) return { count: matches.length, visible: null, enabled: null };
         const el = matches[0], rect = el.getBoundingClientRect();
         return { count: 1, visible: visible(el) && rect.width > 0 && rect.height > 0, enabled: !disabled(el) && !inert(el) };
       };
@@ -456,9 +516,11 @@ nonisolated enum PageRuntime {
       };
 
       const findAll = (selector, offset, limit) => {
-        if (!validSelector(selector)) return { invalid: true };
-        offset = Math.min(Math.max(0, Math.trunc(offset) || 0), 10000);
-        limit = Math.min(Math.max(1, Math.trunc(limit) || 1), 100);
+        const problem = selectorProblem(selector);
+        if (problem) return { problem, error: SELECTOR_ERRORS[problem] };
+        if (!Number.isInteger(offset) || offset < 0 || offset > 10000 || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+          return { problem: 'range', error: 'offset must be 0 to 10000 and limit 1 to 100.' };
+        }
         const observation = window.__wsurfSnapshot = Date.now().toString(36) + Math.random().toString(36);
         const items = [];
         let index = 0, hasMore = false;
@@ -480,7 +542,7 @@ nonisolated enum PageRuntime {
       };
 
       const inspect = ref => {
-        if (!matchesRef(ref)) return { stale: true };
+        if (!inspectableRef(ref)) return { stale: true };
         const el = window.__wsurfRefs[ref - 1], view = realm(el), style = view.getComputedStyle(el);
         const px = name => round(parseFloat(style.getPropertyValue(name)) || 0);
         const sides = (a, b = '') => ({ top: px(a + '-top' + b), right: px(a + '-right' + b), bottom: px(a + '-bottom' + b), left: px(a + '-left' + b) });
@@ -517,8 +579,9 @@ nonisolated enum PageRuntime {
           scroll: { scrollWidth: el.scrollWidth, scrollHeight: el.scrollHeight, clientWidth: el.clientWidth, clientHeight: el.clientHeight,
             scrollTop: round(el.scrollTop), scrollLeft: round(el.scrollLeft) },
           box: { boxSizing: style.boxSizing, margin: sides('margin'), border, padding,
-            content: { width: Math.max(0, round(rect.width - padding.left - padding.right - border.left - border.right)),
-                       height: Math.max(0, round(rect.height - padding.top - padding.bottom - border.top - border.bottom)) } },
+            // Layout pixels (untransformed): clientWidth/Height already exclude borders and scrollbars.
+            content: { width: Math.max(0, round(el.clientWidth - padding.left - padding.right)),
+                       height: Math.max(0, round(el.clientHeight - padding.top - padding.bottom)) } },
           style: styles, ancestors, ancestorsTruncated
         };
         if (el.ownerDocument !== document) out.inFrame = true;
@@ -530,7 +593,7 @@ nonisolated enum PageRuntime {
       };
 
       return { matchesRef, expectValue, valueState, walk, documentID, norm, collect, pageText, viewportText, resolve, setValue, pressEnter,
-        labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe, elementState, findAll, inspect };
+        labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe, elementState, findAll, inspect, selectorProblem };
     })());
     """#
 
@@ -557,7 +620,7 @@ nonisolated enum PageRuntime {
         "justify-self", "align-items", "align-content", "align-self", "row-gap", "column-gap",
         "grid-template-columns", "grid-template-rows", "grid-auto-flow", "grid-column-start", "grid-column-end",
         "grid-row-start", "grid-row-end", "font-family", "font-size", "font-weight", "line-height", "text-align", "white-space",
-        "color", "background-color", "border-radius", "transform", "pointer-events", "cursor",
+        "color", "background-color", "border-radius", "transform", "pointer-events",
     ]
     private static let styleLiteral = "[" + inspectStyleProperties.map { "'\($0)'" }.joined(separator: ",") + "]"
 

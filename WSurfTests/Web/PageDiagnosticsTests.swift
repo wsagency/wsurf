@@ -53,16 +53,18 @@ struct PageDiagnosticsTests {
         let network = try buffer.read(stream: .network, cursor: nil, limit: 10)
         #expect(console.records.map(\.seq) == [0, 1])
         #expect(network.records.map(\.seq) == [0])
-        #expect(throws: PageDiagnostics.CursorError.self) {
+        #expect(throws: PageDiagnostics.ReadError.self) {
             try buffer.read(stream: .network, cursor: console.nextCursor, limit: 10)
         }
     }
 
-    @Test func limitIsBoundedToTheSpecCeiling() throws {
+    @Test func aLimitOutsideOneToOneHundredIsAnErrorNotClamped() throws {
         let buffer = buffer()
         for _ in 0..<150 { add(buffer) }
-        #expect(try buffer.read(stream: .console, cursor: nil, limit: 1_000).records.count == 100)
-        #expect(try buffer.read(stream: .console, cursor: nil, limit: 0).records.count == 1)
+        #expect(try buffer.read(stream: .console, cursor: nil, limit: 100).records.count == 100)
+        for limit in [0, -1, 101, 1_000] {
+            #expect(throws: PageDiagnostics.ReadError.invalidLimit) { try buffer.read(stream: .console, cursor: nil, limit: limit) }
+        }
     }
 
     @Test func foreignMalformedAndExpiredCursorsAreRejected() throws {
@@ -75,17 +77,28 @@ struct PageDiagnosticsTests {
         let otherTab = PageDiagnostics.Buffer(connection: connection, tab: "tab-2", documentID: "doc-1")
         add(otherTab)
         for foreign in [otherConnection, otherTab] {
-            #expect(throws: PageDiagnostics.CursorError.self) { try foreign.read(stream: .console, cursor: valid, limit: 10) }
+            #expect(throws: PageDiagnostics.ReadError.self) { try foreign.read(stream: .console, cursor: valid, limit: 10) }
         }
         for malformed in ["", "not base64!", Data("a|b".utf8).base64EncodedString(), Data("\(connection)|tab-1|console|0|abc".utf8).base64EncodedString()] {
-            #expect(throws: PageDiagnostics.CursorError.self) { try buffer.read(stream: .console, cursor: malformed, limit: 10) }
+            #expect(throws: PageDiagnostics.ReadError.self) { try buffer.read(stream: .console, cursor: malformed, limit: 10) }
         }
         // A cursor pointing past anything ever produced cannot be genuine.
-        let future = Data("\(connection)|tab-1|console|0|999".utf8).base64EncodedString()
-        #expect(throws: PageDiagnostics.CursorError.self) { try buffer.read(stream: .console, cursor: future, limit: 10) }
+        let future = Data("\(connection)|tab-1|console|\(buffer.epoch)|999".utf8).base64EncodedString()
+        #expect(throws: PageDiagnostics.ReadError.self) { try buffer.read(stream: .console, cursor: future, limit: 10) }
 
         buffer.reset()
-        #expect(throws: PageDiagnostics.CursorError.self) { try buffer.read(stream: .console, cursor: valid, limit: 10) }
+        #expect(throws: PageDiagnostics.ReadError.self) { try buffer.read(stream: .console, cursor: valid, limit: 10) }
+    }
+
+    @Test func aCursorFromBeforeResetAndStartIsRejectedByTheNewBufferToo() throws {
+        let first = buffer()
+        for index in 0..<5 { add(first, .console, "old\(index)") }
+        let old = try first.read(stream: .console, cursor: nil, limit: 3).nextCursor
+        // `resetDevelopment` then `startDiagnostics` for the same connection and tab builds a fresh buffer.
+        let second = buffer()
+        for index in 0..<5 { add(second, .console, "new\(index)") }
+        #expect(throws: PageDiagnostics.ReadError.self) { try second.read(stream: .console, cursor: old, limit: 10) }
+        #expect(second.epoch != first.epoch)
     }
 
     // MARK: Eviction and loss counters
@@ -130,14 +143,21 @@ struct PageDiagnosticsTests {
         #expect(buffer.evicted(.console) == 10 - buffer.recordCount)
     }
 
-    @Test func burstOfTenThousandStaysWithinBothCaps() throws {
+    @Test func burstOfLargeEventsStaysWithinTheRealSerializedByteCap() throws {
         let buffer = buffer()
-        for index in 0..<10_000 { add(buffer, .console, "event \(index) " + String(repeating: "z", count: 900)) }
-        #expect(buffer.recordCount <= 1_024)
-        #expect(buffer.byteCount <= 2 * 1_048_576)
-        #expect(buffer.evicted(.console) == 10_000 - buffer.recordCount)
+        // Control characters serialize to 6 bytes each: 1,200 of them are far more than 1,200 raw bytes.
+        let payload = String(repeating: "\u{1}", count: 1_200)
+        for index in 0..<10_000 { add(buffer, .console, "event \(index) " + payload) }
         let page = try buffer.read(stream: .console, cursor: nil, limit: 100)
-        #expect(page.evicted == buffer.evicted(.console))
+        let serialized = try JSONSerialization.data(withJSONObject: page.records.map { record in
+            ["seq": Int(record.seq), "stream": record.stream.rawValue, "documentID": record.documentID, "truncated": record.truncated,
+             "timestamp": "2026-10-14T00:00:00.000Z", "fields": record.fields.mapValues { field -> Any in
+                switch field { case .text(let text): text; case .number(let number): number } }] as [String: Any]
+        })
+        // What the buffer counts for a record is never less than what that record serializes to.
+        #expect(buffer.byteCount <= 2 * 1_048_576)
+        #expect(buffer.byteCount >= serialized.count / page.records.count * buffer.recordCount)
+        #expect(buffer.evicted(.console) == 10_000 - buffer.recordCount)
         #expect(page.records.first?.seq == UInt64(buffer.evicted(.console)))
     }
 
@@ -154,6 +174,29 @@ struct PageDiagnosticsTests {
         #expect(text.allSatisfy { $0 == "é" })  // cut on a character boundary, never mid-scalar
         #expect(page.truncated == 1)
         #expect(buffer.byteCount == record.byteCount)
+    }
+
+    @Test func controlCharactersCountAtTheirEscapedSize() throws {
+        let buffer = buffer(maxRecordBytes: 400)
+        add(buffer, .console, String(repeating: "\u{1}", count: 500))  // 3,000 bytes once escaped
+        let record = try #require(try buffer.read(stream: .console, cursor: nil, limit: 1).records.first)
+        #expect(record.truncated)
+        #expect(record.byteCount <= 400)
+        guard case .text(let text)? = record.fields["text"] else { Issue.record("text missing"); return }
+        #expect(!text.isEmpty)
+        let json = try JSONSerialization.data(withJSONObject: ["text": text])
+        #expect(json.count <= 400)
+    }
+
+    @Test func aHugeGraphemeClusterIsCutByScalarsNotEmptied() throws {
+        let buffer = buffer(maxRecordBytes: 1_024)
+        // One grapheme cluster of 5,001 scalars: character-based cutting would drop it whole and leave nothing.
+        add(buffer, .console, "e" + String(repeating: "\u{301}", count: 5_000))
+        let record = try #require(try buffer.read(stream: .console, cursor: nil, limit: 1).records.first)
+        guard case .text(let text)? = record.fields["text"] else { Issue.record("text missing"); return }
+        #expect(record.truncated)
+        #expect(record.byteCount <= 1_024)
+        #expect(text.unicodeScalars.count > 100)
     }
 
     @Test func numericFieldsSurviveTruncationUntouched() throws {
@@ -173,12 +216,12 @@ struct PageDiagnosticsTests {
     }
 
     @Test func truncationShrinksTheLargestFieldFirst() throws {
-        let buffer = buffer(maxRecordBytes: 200)
+        let buffer = buffer(maxRecordBytes: 400)
         _ = buffer.append(stream: .console, timestamp: Date(), documentID: "doc-1", fields: ["level": "error", "text": .text(String(repeating: "t", count: 500)), "url": "https://a.example/x"])
         let record = try #require(try buffer.read(stream: .console, cursor: nil, limit: 1).records.first)
         #expect(record.fields["level"] == "error")
         #expect(record.fields["url"] == "https://a.example/x")
-        #expect(record.byteCount <= 200)
+        #expect(record.byteCount <= 400)
     }
 
     // MARK: Epochs and documents

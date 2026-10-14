@@ -339,13 +339,19 @@ struct MCPTransportTests {
             try click.validate(["tabID": "tab", "observationID": "observation", "ref": 0])
         }
     }
-    @Test func screenshotContractTakesRegionIntegersAndRejectsNegativeOrFractionalEdges() throws {
+    @Test func screenshotRegionIsAStructuredObjectOfFiniteNumbers() throws {
         let shot = try #require(MCPToolCatalog.entries.first { $0.name == "screenshotPage" })
         try shot.validate(["tabID": "tab"])
-        try shot.validate(["tabID": "tab", "x": 0, "y": 0, "width": 10, "height": 10])
-        #expect(throws: (any Error).self) { try shot.validate(["tabID": "tab", "x": -1]) }
-        #expect(throws: (any Error).self) { try shot.validate(["tabID": "tab", "width": 0]) }
-        #expect(throws: (any Error).self) { try shot.validate(["tabID": "tab", "width": 1.5]) }
+        try shot.validate(["tabID": "tab", "region": ["x": 0, "y": 12.5, "width": 10, "height": 10.25]])
+        let rejected: [Value] = [
+            ["x": 0, "y": 0, "width": 0, "height": 10], ["x": 0, "y": 0, "width": -1, "height": 10],
+            ["x": 0, "y": 0, "width": 10], ["x": 0, "y": 0, "width": 10, "height": 10, "extra": 1],
+            ["x": "0", "y": 0, "width": 10, "height": 10], ["x": 0, "y": 0, "width": 1e9, "height": 10],
+        ]
+        for region in rejected {
+            #expect(throws: (any Error).self) { try shot.validate(["tabID": "tab", "region": region]) }
+        }
+        #expect(throws: (any Error).self) { try shot.validate(["tabID": "tab", "x": 0]) }
     }
 
     @Test func fillFieldsContractAcceptsThirtyTwoControlsAndRejectsThirtyThree() throws {

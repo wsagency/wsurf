@@ -5,16 +5,36 @@
 import Foundation
 
 nonisolated extension PageDiagnostics {
-    /// One record before the buffer assigns identity: the stream and its already-sanitized fields.
+    /// One record before the buffer assigns identity: the stream and its already-sanitized fields. `truncated` reports that
+    /// ingest cut a message or URL to its byte bound. The native identity (`frameID`, `loaderID`, `contextID`) is the one
+    /// observed when the event began, so the owner can reject an event whose document is no longer the current one.
     struct Entry: Equatable {
         let stream: Stream
         let fields: [String: PageDiagnostics.Field]
+        var truncated = false
+        var frameID: String?
+        var loaderID: String?
+        var contextID: Int?
     }
 
-    fileprivate static let maxText = 2_000
+    fileprivate static let maxTextBytes = 4_096
+    fileprivate static let maxURLBytes = 2_048
+    fileprivate static let maxConsoleArguments = 16
     fileprivate static let methodCharacters = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
 
-    fileprivate static func clip(_ text: String) -> String { String(text.prefix(maxText)) }
+    /// Cuts `text` to at most `bytes` UTF-8 bytes on a unicode scalar boundary, touching only the kept prefix. Scalars, not
+    /// characters: a single grapheme cluster can be arbitrarily many bytes.
+    fileprivate static func clip(_ text: String, bytes: Int = maxTextBytes) -> (text: String, truncated: Bool) {
+        var used = 0
+        var end = text.unicodeScalars.startIndex
+        while end < text.unicodeScalars.endIndex {
+            let size = String(text.unicodeScalars[end]).utf8.count
+            if used + size > bytes { return (String(text.unicodeScalars[..<end]), true) }
+            used += size
+            end = text.unicodeScalars.index(after: end)
+        }
+        return (text, false)
+    }
 
     fileprivate static func method(_ value: Any?) -> String? {
         guard let value = value as? String, (1...16).contains(value.count),
@@ -55,10 +75,16 @@ nonisolated enum PageDiagnosticsHook {
 
     private static func console(_ body: [String: Any]) -> PageDiagnostics.Entry? {
         guard let level = body["level"] as? String, levels.contains(level), let text = body["text"] as? String else { return nil }
-        var fields: [String: PageDiagnostics.Field] = ["level": .text(level), "text": .text(PageDiagnostics.clip(text)), "source": "webkit-hook"]
-        if let url = (body["url"] as? String).flatMap(PageDiagnostics.sanitize(url:)) { fields["url"] = .text(url) }
+        let message = PageDiagnostics.clip(text)
+        var fields: [String: PageDiagnostics.Field] = ["level": .text(level), "text": .text(message.text), "source": "webkit-hook"]
+        var truncated = message.truncated
+        if let url = (body["url"] as? String).flatMap(PageDiagnostics.sanitize(url:)) {
+            let clipped = PageDiagnostics.clip(url, bytes: PageDiagnostics.maxURLBytes)
+            fields["url"] = .text(clipped.text)
+            truncated = truncated || clipped.truncated
+        }
         if let line = body["line"] as? Int, line >= 0 { fields["line"] = .number(line) }
-        return .init(stream: .console, fields: fields)
+        return .init(stream: .console, fields: fields, truncated: truncated)
     }
 
     private static func network(_ body: [String: Any]) -> PageDiagnostics.Entry? {
@@ -66,10 +92,11 @@ nonisolated enum PageDiagnosticsHook {
         let outcome = (body["outcome"] as? String).flatMap { outcomes.contains($0) ? $0 : nil } ?? "unknown"
         var fields: [String: PageDiagnostics.Field] = ["outcome": .text(outcome), "source": .text("webkit-\(via)")]
         fields["method"] = PageDiagnostics.method(body["method"]).map { .text($0) }
-        fields["url"] = (body["url"] as? String).flatMap(PageDiagnostics.sanitize(url:)).map { .text($0) }
+        let url = (body["url"] as? String).flatMap(PageDiagnostics.sanitize(url:)).map { PageDiagnostics.clip($0, bytes: PageDiagnostics.maxURLBytes) }
+        fields["url"] = url.map { .text($0.text) }
         fields["status"] = PageDiagnostics.status(body["status"]).map { .number($0) }
         fields["durationMs"] = PageDiagnostics.duration(milliseconds: body["ms"] as? Double).map { .number($0) }
-        return .init(stream: .network, fields: fields)
+        return .init(stream: .network, fields: fields, truncated: url?.truncated ?? false)
     }
 }
 
@@ -79,8 +106,11 @@ nonisolated final class ChromiumDiagnosticsMapper {
     private struct Pending {
         var method: String?
         var url: String?
+        var urlTruncated = false
         var start: Double?
         var status: Int?
+        var frameID: String?
+        var loaderID: String?
     }
 
     private static let maxInFlight = 256
@@ -88,6 +118,17 @@ nonisolated final class ChromiumDiagnosticsMapper {
 
     private var pending: [String: Pending] = [:]
     private var order: [String] = []
+    /// In-flight requests dropped because more than `maxInFlight` were open at once. Their outcome is unknown; the owner
+    /// surfaces this count in its read response instead of losing them silently.
+    private(set) var lostInFlight = 0
+
+    /// Forgets every in-flight request and the loss count. Call on each document or lease change: a finish event for a
+    /// request from before it then maps to nothing.
+    func reset() {
+        pending.removeAll()
+        order.removeAll()
+        lostInFlight = 0
+    }
 
     func entry(method: String, params: [String: Any]) -> PageDiagnostics.Entry? {
         switch method {
@@ -109,8 +150,18 @@ nonisolated final class ChromiumDiagnosticsMapper {
 
     private static func console(_ params: [String: Any]) -> PageDiagnostics.Entry? {
         guard let type = params["type"] as? String, let level = consoleLevels[type], let args = params["args"] as? [[String: Any]] else { return nil }
-        let text = args.map(describe).joined(separator: " ")
-        return .init(stream: .console, fields: ["level": .text(level), "text": .text(PageDiagnostics.clip(text)), "source": "cdp"])
+        var text = ""
+        var truncated = args.count > PageDiagnostics.maxConsoleArguments
+        for arg in args.prefix(PageDiagnostics.maxConsoleArguments) {
+            let separator = text.isEmpty ? "" : " "
+            let room = PageDiagnostics.maxTextBytes - text.utf8.count - separator.utf8.count
+            let piece = PageDiagnostics.clip(describe(arg), bytes: max(room, 0))
+            text += separator + piece.text
+            if piece.truncated { truncated = true; break }
+        }
+        return .init(
+            stream: .console, fields: ["level": .text(level), "text": .text(text), "source": "cdp"], truncated: truncated,
+            contextID: params["executionContextId"] as? Int)
     }
 
     /// Primitives only. Objects and functions are never rendered: their descriptions can embed arbitrary page data.
@@ -137,11 +188,16 @@ nonisolated final class ChromiumDiagnosticsMapper {
     private static func exception(_ params: [String: Any]) -> PageDiagnostics.Entry? {
         guard let details = params["exceptionDetails"] as? [String: Any] else { return nil }
         let described = (details["exception"] as? [String: Any])?["description"] as? String
-        let text = PageDiagnostics.firstLine(described ?? details["text"] as? String ?? "Uncaught")
-        var fields: [String: PageDiagnostics.Field] = ["level": "error", "text": .text(PageDiagnostics.clip(text)), "source": "cdp"]
-        if let url = (details["url"] as? String).flatMap(PageDiagnostics.sanitize(url:)) { fields["url"] = .text(url) }
+        let message = PageDiagnostics.clip(PageDiagnostics.firstLine(described ?? details["text"] as? String ?? "Uncaught"))
+        var fields: [String: PageDiagnostics.Field] = ["level": "error", "text": .text(message.text), "source": "cdp"]
+        var truncated = message.truncated
+        if let url = (details["url"] as? String).flatMap(PageDiagnostics.sanitize(url:)) {
+            let clipped = PageDiagnostics.clip(url, bytes: PageDiagnostics.maxURLBytes)
+            fields["url"] = .text(clipped.text)
+            truncated = truncated || clipped.truncated
+        }
         if let line = details["lineNumber"] as? Int, line >= 0 { fields["line"] = .number(line + 1) }  // CDP lines are 0-based
-        return .init(stream: .console, fields: fields)
+        return .init(stream: .console, fields: fields, truncated: truncated, contextID: details["executionContextId"] as? Int)
     }
 
     // MARK: Network
@@ -154,14 +210,17 @@ nonisolated final class ChromiumDiagnosticsMapper {
             previous.status = PageDiagnostics.status(redirect["status"])
             hop = Self.network(previous, end: timestamp, outcome: "completed")
         }
+        let url = (request["url"] as? String).flatMap(PageDiagnostics.sanitize(url:)).map { PageDiagnostics.clip($0, bytes: PageDiagnostics.maxURLBytes) }
         let next = Pending(
-            method: PageDiagnostics.method(request["method"]),
-            url: (request["url"] as? String).flatMap(PageDiagnostics.sanitize(url:)),
-            start: timestamp
+            method: PageDiagnostics.method(request["method"]), url: url?.text, urlTruncated: url?.truncated ?? false, start: timestamp,
+            frameID: params["frameId"] as? String, loaderID: params["loaderId"] as? String
         )
         if pending.updateValue(next, forKey: id) == nil {
             order.append(id)
-            if order.count > Self.maxInFlight { pending[order.removeFirst()] = nil }
+            if order.count > Self.maxInFlight {
+                pending[order.removeFirst()] = nil
+                lostInFlight += 1
+            }
         }
         return hop
     }
@@ -180,6 +239,6 @@ nonisolated final class ChromiumDiagnosticsMapper {
         if let start = request.start, let end {
             fields["durationMs"] = PageDiagnostics.duration(milliseconds: ((end - start) * 1000).rounded()).map { .number($0) }
         }
-        return .init(stream: .network, fields: fields)
+        return .init(stream: .network, fields: fields, truncated: request.urlTruncated, frameID: request.frameID, loaderID: request.loaderID)
     }
 }
