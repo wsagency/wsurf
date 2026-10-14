@@ -136,7 +136,7 @@ final class AgentToolkit {
         remember(links: links(in: output))
         let succeeded = [
             "CONTROL:", "Condition met.", "Clicked", "Typed", "Selected", "Set checked", "Checked state",
-            "Screenshot captured.", "Scrolled", "Already at", "Dispatched hover", "Sent ",
+            "Screenshot captured.", "Scrolled", "Already at", "Hovered.", "Sent ",
         ].contains { output.hasPrefix($0) }
         completeTool(step, output: output, failed: !succeeded)
         return fencedPageOutput(output)

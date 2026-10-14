@@ -323,7 +323,7 @@ extension PageDriver {
             try await performComputerClick(action, type: type, point: point, modifiers: modifiers, in: view, window: window)
         case "move":
             guard let point else { throw PageComputerFailure.unavailable }
-            try computerMouse(point: point, button: "left", phase: "move", modifiers: modifiers, in: view, window: window)
+            try movePointer(to: point, modifiers: modifiers, in: view, window: window)
         case "drag_events":
             let path = try (action["path"].array ?? []).map { try computerPoint($0, frame: frame) }
             guard (2...50).contains(path.count), let end = path.last else { throw PageComputerFailure.unavailable }
@@ -415,6 +415,11 @@ extension PageDriver {
             guard !Task.isCancelled else { return }
             pointer?.removeFromSuperview()
         }
+    }
+
+    /// Moves the pointer to `point` (view points, top-left origin) exactly as the computer `move` action does.
+    static func movePointer(to point: CGPoint, modifiers: NSEvent.ModifierFlags = [], in view: BrowserPage, window: NSWindow) throws {
+        try computerMouse(point: point, button: "left", phase: "move", modifiers: modifiers, in: view, window: window)
     }
 
     private static func computerMouse(point: CGPoint, button: String, phase: String, count: Int = 1, modifiers: NSEvent.ModifierFlags = [], in view: BrowserPage, window: NSWindow) throws {

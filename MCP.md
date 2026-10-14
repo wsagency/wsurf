@@ -122,7 +122,7 @@ revoke it immediately.
 | `waitForPage` | Wait up to 15 seconds for text, absent text, a URL substring, document readiness, or a CSS selector that matches exactly one element to be visible, hidden/absent, or enabled. An element wait ends as stale if the page navigates. Selectors are limited to a safe subset; see below. |
 | `screenshotPage` | Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part. The result states the covered rectangle and image scale. Never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop. |
 | `pressKey` | Send a supported keyboard key to a control in a visible tab. |
-| `hoverOnPage` | Dispatch pointer/mouse hover handlers. CSS-only hover is unsupported. |
+| `hoverOnPage` | Move the real pointer to a referenced element, so CSS `:hover` and pointer/mouse handlers run. Needs WSurf to be the active app with a key window and the tab on screen; it never activates or raises WSurf. Refused when the element is offscreen or covered, and not available inside frames. |
 | `scrollPage` | Scroll vertically or horizontally, optionally inside a referenced container. |
 | `goBack` | Go back within the shared website. |
 | `navigate` | Navigate a shared tab; another website requires approval. |

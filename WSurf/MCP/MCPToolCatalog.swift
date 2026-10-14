@@ -17,7 +17,7 @@ nonisolated enum MCPToolCatalog {
         access then. Interrupted actions are never automatically retried. Successful actions return fresh \
         observations; reuse those without an extra read. Use fillFields for independent form fields, \
         waitForPage for expected changes, and readPage queries or offsets for missing content. Prefer \
-        text over screenshots. Keyboard input needs a visible tab; hover dispatches handlers only.
+        text over screenshots. Keyboard input needs a visible tab; hover moves the real pointer and needs WSurf active with the tab on screen.
         """
 
     struct Parameter: Sendable {
@@ -172,7 +172,7 @@ nonisolated enum MCPToolCatalog {
                 tab, snapshot, ref, Parameter(name: "option", type: "string", description: "Visible option text."),
             ]),
         Entry(
-            name: "hoverOnPage", description: "Dispatch pointer and mouse hover handlers. CSS-only hover is unavailable. Verify the returned page.",
+            name: "hoverOnPage", description: "Move the real pointer over an element so CSS :hover and pointer/mouse handlers run. Needs WSurf to be the active app with the tab on screen; elements inside frames are not supported. Verify the returned page.",
             parameters: [tab, snapshot, ref]),
         Entry(
             name: "pressKey", description: "Send a keyboard key to a control in a visible shared tab.",

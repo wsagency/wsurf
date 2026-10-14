@@ -372,7 +372,7 @@ struct PageInteractionTests {
         #expect(await PageDriver.screenshot(in: view).failure == .privacy)
     }
 
-    @Test func hoverHandlersAndNativeKeyboardReachWebKit() async {
+    @Test func backgroundHoverIsUnavailableAndNativeKeyboardReachesWebKit() async {
         let view = await page(
             """
             <style>#hover:hover + #revealed { display:block } #revealed { display:none }</style>
@@ -391,8 +391,9 @@ struct PageInteractionTests {
         }
         _ = await PageDriver.snapshot(view)
         let hover = await PageDriver.hover(ref: 1, in: view)
-        #expect(hover.contains("Hover details"), "\(hover)")
-        #expect(hover.contains("CSS-only hover is unavailable"))
+        // A background window is not hoverable: the move is refused, never claimed, and no handler ran.
+        #expect(hover.hasPrefix("Hover needs"), "\(hover)")
+        #expect(await js(view, "document.querySelector('#revealed').style.display") as? String == "")
         let key = await PageDriver.pressKey("ArrowDown", ref: 2, in: view)
         #expect(key.hasPrefix("Sent ArrowDown"), "\(key)")
         #expect(await js(view, "window.lastKey") as? String == "ArrowDown")

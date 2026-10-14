@@ -242,7 +242,7 @@ final class MCPBrowserSession: Identifiable {
                 }
                 let prefixes = [
                     "PAGE TEXT:", "Clicked", "Typed", "Selected", "Scrolled", "Already at", "Went back.",
-                    "CONTROL:", "Condition met.", "Set checked", "Checked state", "Screenshot captured.", "Dispatched hover", "Sent ",
+                    "CONTROL:", "Condition met.", "Set checked", "Checked state", "Screenshot captured.", "Hovered.", "Sent ",
                 ]
                 let succeeded =
                     prefixes.contains { output.hasPrefix($0) }

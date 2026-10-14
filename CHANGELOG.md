@@ -7,7 +7,9 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
-### 2026-10-14 — MCP: element waits and cropped screenshots
+### 2026-10-14 — MCP: real hover, element waits and cropped screenshots
+
+`hoverOnPage` now moves the real pointer to the element, so CSS `:hover` works. It needs WSurf to be the active app with the tab on screen, and says so instead of claiming success when it is not.
 
 `waitForPage` accepts `elementVisible`, `elementHidden` and `elementEnabled` with a CSS selector that must match one element, and ends as stale if the page navigates. Selectors may test only attributes WSurf already exposes (see MCP.md, Safe selectors), so a selector cannot be used to read hidden values. `screenshotPage` can capture one referenced element or a viewport region, cropped to its visible part (a region must lie fully inside the viewport); it never scrolls or stitches, and a filled sensitive field anywhere on the page still refuses every capture.
 
