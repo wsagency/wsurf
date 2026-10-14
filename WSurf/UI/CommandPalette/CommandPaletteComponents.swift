@@ -91,8 +91,11 @@ struct CommandPaletteField: View {
 
 struct SiteSearchChip: View {
     let site: SearchEngine
-    var fontSize: CGFloat = 14
+    var fontSize: CGFloat = Self.referenceSize
     let onRemove: () -> Void
+
+    /// Padding is 10 x 6 at this size and scales with `fontSize`.
+    private static let referenceSize: CGFloat = 14
 
     var body: some View {
         let appearance = SiteSearchAppearance(site: site)
@@ -101,8 +104,8 @@ struct SiteSearchChip: View {
                 .lineLimit(1)
                 .font(.system(size: fontSize, weight: .semibold))
                 .foregroundStyle(appearance.foreground)
-                .padding(.horizontal, fontSize * 0.7)
-                .padding(.vertical, fontSize * 0.4)
+                .padding(.horizontal, 10 * fontSize / Self.referenceSize)
+                .padding(.vertical, 6 * fontSize / Self.referenceSize)
                 .background(appearance.background, in: Capsule())
         }
         .buttonStyle(.plain)

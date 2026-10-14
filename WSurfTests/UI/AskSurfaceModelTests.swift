@@ -126,6 +126,31 @@ struct AskSurfaceModelTests {
         }
     }
 
+    /// Cached suggestions are applied synchronously when a query is offered for
+    /// completion, so a cache hit shows whether the typed text was offered to
+    /// the default engine without a request.
+    @Test func textTypedInSiteModeIsNotOfferedToTheDefaultEngineForCompletion() {
+        Omnibox.$agentOnlyForTesting.withValue(false) {
+            let model = model(placement: .startPage)
+            model.coordinator.context.settings.searchEngineID = SearchEngine.duckDuckGo.id
+            model.coordinator.context.settings.showsSearchSuggestions = true
+            model.suggestions.store(["youtube music"], for: "youtube", engine: .duckDuckGo)
+            model.suggestions.store(["private lofi mix"], for: "private lofi", engine: .duckDuckGo)
+            model.fieldFocusDidChange(true)
+
+            model.interaction.text = "private lofi"
+            #expect(!model.suggestions.phrases.isEmpty)
+
+            model.interaction.text = "youtube"
+            #expect(model.activateSiteSearch())
+            model.interaction.text = "private lofi"
+            #expect(model.suggestions.phrases.isEmpty)
+
+            #expect(model.removeSearchSite())
+            #expect(!model.suggestions.phrases.isEmpty)
+        }
+    }
+
     @Test func leavingTheFieldDropsTheSite() {
         Omnibox.$agentOnlyForTesting.withValue(true) {
             let model = model()
