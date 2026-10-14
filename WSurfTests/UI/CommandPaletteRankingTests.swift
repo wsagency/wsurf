@@ -161,6 +161,17 @@ struct CommandPaletteRankingTests {
         ]))
         #expect(!loadedIDs.contains("action-goForward"))
     }
+
+    @Test func reloadIsOfferedOnlyForAPageThatCanReload() {
+        func ids(canReload: Bool) -> Set<String> {
+            let context = CommandPaletteContext(tabCount: 1, hasActiveTab: true, canReload: canReload)
+            return Set(CommandPaletteCatalog.commands(context: context, perform: { _ in }).map(\.id))
+        }
+
+        #expect(ids(canReload: true).isSuperset(of: ["action-reload", "action-hardReload"]))
+        #expect(ids(canReload: false).isDisjoint(with: ["action-reload", "action-hardReload"]))
+    }
+
     @Test func aToggleIsNamedForWhatItWillDo() {
         let quiet = CommandPaletteCatalog.commands(
             context: CommandPaletteContext(isSpeechMuted: true),
@@ -212,6 +223,6 @@ struct CommandPaletteRankingTests {
     }
 
     private func fixtureContext() -> CommandPaletteContext {
-        CommandPaletteContext(historyCount: 12, tabCount: 4, hasActiveTab: true)
+        CommandPaletteContext(historyCount: 12, tabCount: 4, hasActiveTab: true, canReload: true)
     }
 }

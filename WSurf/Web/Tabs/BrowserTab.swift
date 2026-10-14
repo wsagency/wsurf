@@ -170,6 +170,11 @@ final class BrowserTab: Identifiable {
         internalPage != nil || isShowingStartPage
     }
 
+    /// Reload needs an address to load again; WSurf's own pages and an empty tab have none.
+    var canReload: Bool {
+        !urlString.isEmpty && !isShowingSystemPage
+    }
+
     /// Only permit internal navigation to the `wsurf:` URL requested by the app.
     private var permittedSystemPage: URL?
 

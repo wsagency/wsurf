@@ -101,6 +101,22 @@ struct BrowserPagesTests {
         #expect(model.activeTab?.urlString.hasPrefix("https://example.com") == true)
     }
 
+    // MARK: - Reloading
+
+    @Test func onlyAPageWithAnAddressOfItsOwnCanBeReloaded() {
+        let model = makeModel()
+        let blank = model.newTab()
+        #expect(!blank.canReload)
+
+        let reading = model.newTab(url: URL(string: "https://example.com/article")!)
+        #expect(reading.canReload)
+
+        let history = model.showHistory()
+        #expect(history !== reading)
+        #expect(history.internalPage == .history)
+        #expect(!history.canReload)
+    }
+
     // MARK: - Back and forward across WSurf's own pages
 
     /// Every page a tab shows is one entry in one list, so Back needs no
