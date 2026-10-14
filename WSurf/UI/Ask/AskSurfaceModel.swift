@@ -122,7 +122,8 @@ final class AskSurfaceModel {
             agentMessage: agentMessage,
             mirrorsPageURL: placement.mirrorsPageURL,
             isFocused: isFocused,
-            typedText: interaction.trimmedText,
+            // An active site search counts as typed input, so a message cannot hide the chip.
+            typedText: interaction.trimmedText.isEmpty ? (searchSite?.name ?? "") : interaction.trimmedText,
             notice: coordinator.notice,
             status: coordinator.statusMessage,
             placeholder: placeholder,
@@ -244,6 +245,8 @@ final class AskSurfaceModel {
     }
 
     func focusFromAddressCommand() {
+        searchSite = nil
+        suggestionPreview.clear()
         if placement.mirrorsPageURL {
             interaction.text = currentURL
         }

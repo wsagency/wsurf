@@ -132,8 +132,15 @@ struct AskSurfaceModelTests {
     @Test func textTypedInSiteModeIsNotOfferedToTheDefaultEngineForCompletion() {
         Omnibox.$agentOnlyForTesting.withValue(false) {
             let model = model(placement: .startPage)
-            model.coordinator.context.settings.searchEngineID = SearchEngine.duckDuckGo.id
-            model.coordinator.context.settings.showsSearchSuggestions = true
+            let settings = model.coordinator.context.settings
+            let previousEngine = settings.searchEngineID
+            let previousSuggestions = settings.showsSearchSuggestions
+            defer {
+                settings.searchEngineID = previousEngine
+                settings.showsSearchSuggestions = previousSuggestions
+            }
+            settings.searchEngineID = SearchEngine.duckDuckGo.id
+            settings.showsSearchSuggestions = true
             model.suggestions.store(["youtube music"], for: "youtube", engine: .duckDuckGo)
             model.suggestions.store(["private lofi mix"], for: "private lofi", engine: .duckDuckGo)
             model.fieldFocusDidChange(true)
@@ -165,6 +172,40 @@ struct AskSurfaceModelTests {
             #expect(model.activateSiteSearch())
             model.fieldFocusDidChange(false)
             #expect(model.searchSite == nil)
+        }
+    }
+
+    @Test func theAddressCommandDropsTheSiteInsteadOfSearchingTheCurrentAddress() {
+        Omnibox.$agentOnlyForTesting.withValue(true) {
+            let model = model()
+            let tab = model.browser.newTab()
+            tab.urlString = "https://example.com/page"
+            model.fieldFocusDidChange(true)
+            model.interaction.text = "red"
+            #expect(model.activateSiteSearch())
+
+            model.focusFromAddressCommand()
+
+            #expect(model.searchSite == nil)
+            #expect(model.interaction.text == tab.urlString)
+        }
+    }
+
+    @Test func anEmptySiteSearchStaysVisibleOverRestingMessages() {
+        Omnibox.$agentOnlyForTesting.withValue(true) {
+            let model = model()
+            model.coordinator.statusMessage = "Working"
+            defer { model.coordinator.statusMessage = nil }
+            model.fieldFocusDidChange(true)
+            model.interaction.text = "red"
+            #expect(model.restingContent == nil)
+            #expect(model.activateSiteSearch())
+            #expect(model.interaction.text.isEmpty)
+            #expect(model.restingContent == nil)
+
+            model.removeSearchSite()
+            model.interaction.text = ""
+            #expect(model.restingContent != nil)
         }
     }
 
