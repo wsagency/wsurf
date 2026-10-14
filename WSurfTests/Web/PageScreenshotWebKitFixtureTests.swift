@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import AppKit
 import CoreGraphics
 import Testing
+import WebKit
 
 @testable import WSurf
 
@@ -97,6 +99,34 @@ struct PageScreenshotWebKitFixtureTests {
         let inner = "<style>body{margin:0}#c{position:absolute;left:0;top:0;width:50px;height:100px;overflow:hidden;zoom:1.5}"
             + "#t{position:absolute;left:20px;top:30px;width:60px;height:40px}</style><div id=c><div id=t>x</div></div>"
         try await expectMapped(await page(inner: inner), CGRect(x: 145, y: 110, width: 45, height: 60))
+    }
+
+    /// Zoom 1.5 mirrored: the measured placement has only integer layout sizes and a device-pixel-snapped box, so the mapped
+    /// rect is not the unsnapped CSS arithmetic ((502.5, 142.5) at device pixel ratio 2, 501.25 at ratio 1). It is checked against
+    /// what WebKit paints in the same view: the bounds of the magenta target in a snapshot, within 1 CSS px.
+    @Test func aZoomedAndFlippedFrameLandsWhereItIsPainted() async throws {
+        let inner = "<style>body{margin:0}#t{position:absolute;left:20px;top:30px;width:60px;height:40px;background:#f0f}</style><div id=t></div>"
+        let harness = await page(frameStyle: "zoom: 1.5; transform: scaleX(-1)", inner: inner)
+        guard case .success(let mappedRect) = try await mapped(harness) else { Issue.record("not mapped"); return }
+        let configuration = WKSnapshotConfiguration()
+        configuration.snapshotWidth = 800
+        let image = try await harness.webView.takeSnapshot(configuration: configuration)
+        let rep = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+        let data = try #require(rep.bitmapData)
+        let scale = CGFloat(rep.pixelsWide) / 800
+        var minX = Int.max, minY = Int.max, maxX = -1, maxY = -1
+        for y in 0..<rep.pixelsHigh {
+            for x in 0..<rep.pixelsWide {
+                let p = data + y * rep.bytesPerRow + x * rep.samplesPerPixel
+                guard p[0] > 200, p[1] < 60, p[2] > 200 else { continue }
+                minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+        try #require(maxX >= 0, "the target is not painted")
+        let painted = CGRect(x: CGFloat(minX) / scale, y: CGFloat(minY) / scale,
+            width: CGFloat(maxX - minX + 1) / scale, height: CGFloat(maxY - minY + 1) / scale)
+        let delta = [mappedRect.minX - painted.minX, mappedRect.minY - painted.minY, mappedRect.width - painted.width, mappedRect.height - painted.height]
+        #expect(delta.allSatisfy { abs($0) <= 1 }, "\(mappedRect) != painted \(painted)")
     }
 
     // SVG nodes have no layout box to measure from: the frame is reported as not measurable, not as a changed document.
