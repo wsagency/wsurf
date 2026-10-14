@@ -8,9 +8,9 @@ import WebKit
 
 extension PageDriver {
     static func hover(ref: Int, in view: BrowserPage) async -> String {
-        guard await validateObservation(in: view, ref: ref) else { return await staleMessage(ref: ref, in: view) }
+        guard await validateObservation(in: view, ref: ref) else { return await referenceFailureMessage(ref: ref, in: view) }
         await announce(ref: ref, in: view, pause: false)
-        guard await validateObservation(in: view, ref: ref) else { return await staleMessage(ref: ref, in: view) }
+        guard await validateObservation(in: view, ref: ref) else { return await referenceFailureMessage(ref: ref, in: view) }
         let result = await evaluateJSON(
             scripted(
                 """
@@ -68,7 +68,7 @@ extension PageDriver {
                 return SensitiveAction.declined(found.label, category: category)
             }
         }
-        guard await validateObservation(in: view, ref: ref), let window = view.window else { return await staleMessage(ref: ref, in: view) }
+        guard await validateObservation(in: view, ref: ref), let window = view.window else { return await referenceFailureMessage(ref: ref, in: view) }
         let ready = await evaluateJSON(
             scripted(
                 """

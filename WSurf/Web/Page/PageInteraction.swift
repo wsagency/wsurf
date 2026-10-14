@@ -20,7 +20,7 @@ extension PageDriver {
     }
 
     static func inspectControl(ref: Int, offset: Int = 0, in view: BrowserPage) async -> String {
-        guard await validateObservation(in: view, ref: ref) else { return await staleMessage(ref: ref, in: view) }
+        guard await validateObservation(in: view, ref: ref) else { return await referenceFailureMessage(ref: ref, in: view) }
         let start = max(0, offset)
         let script = scripted(
             """
@@ -58,7 +58,7 @@ extension PageDriver {
     static func setChecked(
         ref: Int, checked: Bool, in view: BrowserPage, announced: Bool = false, refreshControls: Bool = true
     ) async -> String {
-        guard await validateObservation(in: view, ref: ref) else { return await staleMessage(ref: ref, in: view) }
+        guard await validateObservation(in: view, ref: ref) else { return await referenceFailureMessage(ref: ref, in: view) }
         let state = await evaluateJSON(scripted("""
             const el = window.__wsurfRefs[\(ref) - 1];
             if (R.isSensitiveField(el)) return JSON.stringify({ refused: true });

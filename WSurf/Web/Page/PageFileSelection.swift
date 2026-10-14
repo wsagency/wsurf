@@ -69,7 +69,7 @@ extension PageDriver {
         guard selectedFrame == nil, await validateObservation(in: view, ref: ref),
               let scope = PageAutomationGuard.current, let window = view.window,
               let observation = observations.object(forKey: view),
-              PageFileSelection.pending.object(forKey: view) == nil else { return await staleMessage(ref: ref, in: view) }
+              PageFileSelection.pending.object(forKey: view) == nil else { return await referenceFailureMessage(ref: ref, in: view) }
         let eligible = await evaluateJSON(scripted("""
             const el = window.__wsurfRefs[\(ref) - 1];
             const error = R.actionable(el);

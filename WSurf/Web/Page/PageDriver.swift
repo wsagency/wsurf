@@ -460,7 +460,7 @@ enum PageDriver {
         guard ["up", "down", "left", "right"].contains(direction) else { return "Use up, down, left, or right." }
         guard PageAutomationGuard.allowsExecution else { return staleMessage }
         if ref > 0, !(await validateObservation(in: webView, ref: ref)) {
-            return await staleMessage(ref: ref, in: webView)
+            return await referenceFailureMessage(ref: ref, in: webView)
         }
         let horizontal = direction == "left" || direction == "right"
         let sign = direction == "up" || direction == "left" ? -1 : 1
@@ -541,7 +541,7 @@ enum PageDriver {
             return .failure("Say which element: a [ref] number from readPage, or a visible label.")
         }
         if ref > 0, !(await validateObservation(in: webView, ref: ref)) {
-            return .failure(await staleMessage(ref: ref, in: webView))
+            return .failure(await referenceFailureMessage(ref: ref, in: webView))
         }
         if ref == 0, expectedObservation != nil, !(await validateObservation(in: webView)) {
             return .failure(staleMessage)

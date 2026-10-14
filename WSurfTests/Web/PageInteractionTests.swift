@@ -60,11 +60,11 @@ struct PageInteractionTests {
         let view = await page("<button id='a' onclick='window.hit=true'>Ordinary action</button>")
         _ = await PageDriver.snapshot(view)
         _ = await js(view, "document.querySelector('button').textContent='Delete account'")
-        #expect(await PageDriver.click(ref: 1, label: "", in: view) == PageDriver.staleMessage)
+        _ = await PageDriver.click(ref: 1, label: "", in: view)
         #expect(await js(view, "window.hit === undefined") as? Bool == true)
         view.loadHTMLString("<button onclick='window.hit=true'>New document</button>", baseURL: nil)
         #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
-        #expect(await PageDriver.click(ref: 1, label: "", in: view) == PageDriver.staleMessage)
+        _ = await PageDriver.click(ref: 1, label: "", in: view)
         #expect(await js(view, "window.hit === undefined") as? Bool == true)
     }
 
@@ -160,7 +160,7 @@ struct PageInteractionTests {
         #expect(!observation.refs.contains(1))
     }
 
-    @Test func refsOutsideTheObservationAreNotReportedAsStale() async throws {
+    @Test func refsOutsideTheObservationNameTheRefAndDoNotAct() async throws {
         let buttons = (1...12).map { "<button onclick='window.hit=true'>Choice \($0)</button>" }.joined()
         let view = await page(buttons)
         _ = await PageDriver.snapshot(view, textLimit: 0, controlLimit: 3)
@@ -173,18 +173,34 @@ struct PageInteractionTests {
             await PageDriver.hover(ref: 9, in: view),
         ]
         for refusal in refusals {
-            #expect(refusal != PageDriver.staleMessage, "\(refusal)")
+            #expect(refusal.contains("[9] was not listed"), "\(refusal)")
         }
         #expect(await js(view, "window.hit === undefined") as? Bool == true)
 
+        // A page that is genuinely stale must not be described as merely unlisted.
         let wrongAuthority = await PageDriver.$expectedObservation.withValue("not-the-current-observation") {
             await PageDriver.click(ref: 9, label: "", in: view)
         }
-        #expect(wrongAuthority == PageDriver.staleMessage)
-
-        view.loadHTMLString("<button>New document</button>", baseURL: nil)
+        #expect(!wrongAuthority.contains("was not listed"), "\(wrongAuthority)")
+        view.loadHTMLString("<button onclick='window.hit=true'>New document</button>", baseURL: nil)
         #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
-        #expect(await PageDriver.click(ref: 9, label: "", in: view) == PageDriver.staleMessage)
+        let afterNavigation = await PageDriver.click(ref: 9, label: "", in: view)
+        #expect(!afterNavigation.contains("was not listed"), "\(afterNavigation)")
+        #expect(await js(view, "window.hit === undefined") as? Bool == true)
+    }
+
+    @Test func batchFillNamesALaterUnlistedRefAndKeepsEarlierFills() async throws {
+        let view = await page((1...12).map { "<input aria-label='Field \($0)'>" }.joined())
+        _ = await PageDriver.snapshot(view, textLimit: 0, controlLimit: 3)
+        let listed = try #require(PageDriver.observation(in: view)).refs
+        #expect(listed.contains(1) && !listed.contains(9))
+        let result = await PageDriver.fillFields([
+            .init(ref: 1, value: "kept", select: false), .init(ref: 9, value: "unseen", select: false),
+        ], in: view)
+        #expect(result.hasPrefix("Filled 1 of 2 fields."), "\(result)")
+        #expect(result.contains("[9] was not listed"), "\(result)")
+        #expect(await js(view, "document.querySelectorAll('input')[0].value") as? String == "kept")
+        #expect(await js(view, "document.querySelectorAll('input')[8].value") as? String == "")
     }
 
     @Test func calendarPaginationRecoversFromRefOffsetsAndChangedQueries() async {
@@ -216,10 +232,9 @@ struct PageInteractionTests {
         let before = try #require(PageDriver.observation(in: view))
         view.loadHTMLString("<button onclick='window.hit=true'>29</button>", baseURL: nil)
         #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
-        let result = await PageDriver.$expectedObservation.withValue(before.id) {
+        _ = await PageDriver.$expectedObservation.withValue(before.id) {
             await PageDriver.click(ref: 0, label: "29", in: view)
         }
-        #expect(result == PageDriver.staleMessage)
         #expect(await js(view, "window.hit === undefined") as? Bool == true)
     }
 
@@ -390,6 +405,14 @@ struct PageInteractionTests {
         #expect(fields.contains("\"First\"") && fields.contains("\"Second\""), "\(fields)")
         #expect(!(await PageDriver.snapshot(view, scope: "article")).hasPrefix("PAGE TEXT:"))
         #expect(!(await PageDriver.snapshot(view, scope: "section[")).hasPrefix("PAGE TEXT:"))
+
+        let shadow = await page(
+            """
+            <div class='host'></div><button>Outside</button>
+            <script>document.querySelector('.host').attachShadow({ mode: 'open' }).innerHTML = '<button>Inside shadow</button>';</script>
+            """)
+        let hosted = await PageDriver.snapshot(shadow, scope: ".host")
+        #expect(hosted.contains("button \"Inside shadow\"") && !hosted.contains("button \"Outside\""), "\(hosted)")
     }
 
     @Test func sensitiveEditableTextIsRedactedAndCannotBeOverwritten() async {

@@ -9,9 +9,9 @@ release notes will be added above this provenance record.
 
 ### 2026-10-14 — MCP page tools: scope, unlisted refs and screenshot size
 
-Taken from Linen (`70c3c576`, `59c396de`, `78b76dee`), adapted to WSurf. `readPage` `scope` now covers every element the selector matches, not only the first. A ref that the current observation did not list (for example after control paging) now gets a message saying so, instead of the stale-page message; a genuinely stale page, a changed document or a wrong observation ID still gets the stale message. `screenshotPage` bounds its JPEG at 150,000 bytes, lowering quality and then shrinking pixels in 25% steps, and refuses to return a reply that would still exceed the 262,144-byte MCP line; the computer-use frame path is unchanged.
+Taken from Linen (`70c3c576`, `59c396de`, `78b76dee`), adapted to WSurf. `readPage` `scope` now covers every element the selector matches, not only the first. A ref that the current observation did not list (for example after control paging) now gets a message saying so, instead of the stale-page message, in every ref-taking tool and for any field of a `fillFields` batch (earlier fields in the batch are still filled); a genuinely stale page, a changed document or a wrong observation ID still gets the stale message. `screenshotPage` bounds its JPEG at 150,000 bytes, lowering quality and then shrinking pixels in 25% steps, and refuses to return a reply that would still exceed the 262,144-byte MCP line. A refused reply records no observation ID, read-content flag or link authority, since the client never received them. The computer-use frame path is unchanged. The reply measure assumes the SDK's own 36-byte request id (the relay always uses it); a client that talks to the socket directly with a very long id can lose only its own reply.
 
-Not run: no Xcode build or test of this change; checked with swiftc probes of the scope script in real WebKit and of the screenshot encoder in AppKit.
+Not run: no Xcode build or test of this change; checked with swiftc probes of the scope script (nested, union, no-match, invalid and shadow-host selectors) in real WebKit and of the screenshot encoder in AppKit, and the changed Swift files were syntax-parsed only.
 
 ### 2026-10-14 — Credentials: an Import & Export section, and password CSV files
 

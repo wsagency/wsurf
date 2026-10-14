@@ -20,7 +20,7 @@ extension PageDriver {
         }
         guard let initial = await batchState(in: webView), await canContinueBatch(fields.first?.ref ?? 0, in: webView),
             let documentID = observation(in: webView)?.documentID
-        else { return await staleMessage(ref: fields[0].ref, in: webView) }
+        else { return await referenceFailureMessage(ref: fields[0].ref, in: webView) }
 
         var written: [FieldValue] = []
         var details: [String] = []
@@ -29,7 +29,8 @@ extension PageDriver {
                 await batchState(in: webView) == initial,
                 await canContinueBatch(field.ref, in: webView)
             else {
-                details.append("The page changed or access ended. Read fresh controls before continuing.")
+                details.append(await referenceFailureMessage(
+                    ref: field.ref, in: webView, otherwise: "The page changed or access ended. Read fresh controls before continuing."))
                 break
             }
             guard let control = await evaluateJSON(scripted("""

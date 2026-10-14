@@ -237,23 +237,25 @@ final class MCPBrowserSession: Identifiable {
                     prefixes.contains { output.hasPrefix($0) }
                     || (name == "fillFields" && output.hasPrefix("Filled "))
                 var content: [String: Value] = ["tabID": .string(tab.id.uuidString), "content": .string(AgentToolkit.untrusted(output))]
+                var delivered: PageObservation?
                 if let current = PageDriver.observation(in: view), current.url == webURL(of: tab)?.absoluteString,
                     output.contains("observationID: " + current.id) {
-                    observations[tab.id] = PageObservation(id: current.id, snapshot: current.id, documentURL: current.url)
+                    delivered = PageObservation(id: current.id, snapshot: current.id, documentURL: current.url)
                     content["observationID"] = .string(current.id)
                     if PageOutputBudget.cost(current.url) <= 512 { content["url"] = .string(current.url) }
-                } else {
-                    observations[tab.id] = nil
                 }
-                hasReadContent = true
-                destinations.formUnion(PageDriver.listedLinks(in: output).map { destinationKey($0.url) })
                 let value: Value = .object(content)
                 var blocks: [MCP.Tool.Content] = [.text(text: encoded(value), annotations: nil, _meta: nil)]
                 if let capturedImage { blocks.append(.image(data: capturedImage.base64EncodedString(), mimeType: "image/jpeg", annotations: nil, _meta: nil)) }
                 let result = CallTool.Result(content: blocks, structuredContent: Optional.some(value), isError: !succeeded)
+                // A refused reply grants nothing: the client never saw its observation ID or links.
                 if capturedImage != nil, Self.replyBytes(result) > MCPMessageFramer.maximumBytes {
+                    observations[tab.id] = nil
                     return failure("The screenshot is too large to return. Use readPage for redacted text.")
                 }
+                observations[tab.id] = delivered
+                hasReadContent = true
+                destinations.formUnion(PageDriver.listedLinks(in: output).map { destinationKey($0.url) })
                 return result
             }
         }
@@ -393,7 +395,10 @@ final class MCPBrowserSession: Identifiable {
     /// the text block, the structured copy of it and the JSON-RPC envelope.
     nonisolated static let screenshotBytes = 150_000
 
-    /// Size of the reply line as `MCP.Server` writes it: sorted keys, unescaped slashes, plus a JSON-RPC envelope allowance.
+    /// Size of the reply line as `MCP.Server` writes it: sorted keys, unescaped slashes, plus 256 bytes for the JSON-RPC
+    /// envelope. The relay issues every backend request with the SDK's `ID.random` (a 36-byte UUID string), which the
+    /// envelope (`jsonrpc`, `id`, `result`) fits in with room to spare. A client that connects to the socket directly and
+    /// picks a very long request id can push its own reply over the line limit; only that client loses the reply.
     nonisolated static func replyBytes(_ result: CallTool.Result) -> Int {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
