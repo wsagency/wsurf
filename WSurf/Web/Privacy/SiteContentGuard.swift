@@ -74,6 +74,18 @@ final class SiteContentGuard {
         }
       };
       document.addEventListener('play', guard, true);
+      // A player never attached to the page fires no `play` the document can hear.
+      const watched = new WeakSet();
+      const nativePlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function () {
+        if (!this.isConnected && !watched.has(this)) {
+          watched.add(this);
+          this.addEventListener('play', (event) => {
+            if (!this.isConnected) guard(event);
+          });
+        }
+        return nativePlay.apply(this, arguments);
+      };
 
       const release = () => {
         for (const media of state.held) {
