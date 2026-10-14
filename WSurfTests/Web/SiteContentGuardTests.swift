@@ -145,6 +145,45 @@ final class SiteContentGuardTests {
         #expect(await pauses(in: view) == 0)
     }
 
+    /// A player made with `createElement` or `new Audio()` and never attached to the page
+    /// fires no `play` event the document can hear.
+    @Test func aPlayerKeptOffThePageIsStoppedToo() async {
+        settings.autoplay = .block
+
+        let view = await page(permissions: temporaryPermissions())
+        await playOffThePage(in: view)
+
+        #expect(await waitUntil { await self.pauses(in: view) == 1 })
+    }
+
+    @Test func aPlayerKeptOffThePageThatThePersonStartedPlays() async {
+        settings.autoplay = .block
+
+        let view = await page(permissions: temporaryPermissions())
+        await playOffThePage(in: view, startedByHand: true)
+
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(await pauses(in: view) == 0)
+    }
+
+    private func playOffThePage(in view: BrowserPage, startedByHand: Bool = false) async {
+        _ = try? await view.evaluateJavaScript(
+            """
+            (() => {
+              Object.defineProperty(navigator, 'userActivation', {
+                configurable: true,
+                get() { return { hasBeenActive: \(startedByHand), isActive: \(startedByHand) }; }
+              });
+              const audio = document.createElement('audio');
+              window.__pauses = 0;
+              audio.pause = () => { window.__pauses += 1; };
+              audio.play().catch(() => {});
+              return true;
+            })()
+            """
+        )
+    }
+
     /// A website's own answer outranks the setting every other website is under.
     @Test func aWebsiteWithItsOwnAnswerIsNotUnderTheSetting() async throws {
         settings.autoplay = .allow
