@@ -8,9 +8,9 @@ import WebKit
 
 extension PageDriver {
     static func hover(ref: Int, in view: BrowserPage) async -> String {
-        guard await validateObservation(in: view, ref: ref) else { return staleMessage }
+        guard await validateObservation(in: view, ref: ref) else { return await staleMessage(ref: ref, in: view) }
         await announce(ref: ref, in: view, pause: false)
-        guard await validateObservation(in: view, ref: ref) else { return staleMessage }
+        guard await validateObservation(in: view, ref: ref) else { return await staleMessage(ref: ref, in: view) }
         let result = await evaluateJSON(
             scripted(
                 """
@@ -52,7 +52,13 @@ extension PageDriver {
         }
         guard view.window != nil else { return "Keyboard input requires a visible tab. Switch to the page first." }
         let resolved = await resolve(ref: ref, label: "", kinds: #"["field","button","link","checkbox","radio","combobox","select","scrollarea"]"#, in: view)
-        guard case .success(let found) = resolved else { return staleMessage }
+        let found: Resolved
+        switch resolved {
+        case .success(let value):
+            found = value
+        case .failure(let message):
+            return message
+        }
         if key == "Enter" || key == "Space", let category = SensitiveAction.category(of: found.label, context: found.context) {
             guard
                 await AgentActionConsent.permit(
@@ -62,7 +68,7 @@ extension PageDriver {
                 return SensitiveAction.declined(found.label, category: category)
             }
         }
-        guard await validateObservation(in: view, ref: ref), let window = view.window else { return staleMessage }
+        guard await validateObservation(in: view, ref: ref), let window = view.window else { return await staleMessage(ref: ref, in: view) }
         let ready = await evaluateJSON(
             scripted(
                 """

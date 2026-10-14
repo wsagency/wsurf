@@ -20,7 +20,7 @@ extension PageDriver {
         }
         guard let initial = await batchState(in: webView), await canContinueBatch(fields.first?.ref ?? 0, in: webView),
             let documentID = observation(in: webView)?.documentID
-        else { return staleMessage }
+        else { return await staleMessage(ref: fields[0].ref, in: webView) }
 
         var written: [FieldValue] = []
         var details: [String] = []
