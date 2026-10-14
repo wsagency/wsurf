@@ -156,6 +156,10 @@ final class BrowserModel {
             guard let tab else { return }
             self?.onContentProcessTerminated?(tab)
         }
+        tab.mayUnloadAfterTermination = { [weak self, weak tab] in
+            guard let self, let tab else { return false }
+            return activeTab !== tab && !tab.isFavorite && protectionReason(for: tab) == nil
+        }
         tab.onNavigationOutsideExtension = { [weak self] url in
             self?.newTab(url: url)
         }

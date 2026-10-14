@@ -433,6 +433,13 @@ extension BrowserTab {
         guard !isClosed else { return }
         isPlayingAudio = false
         onContentProcessTerminated?()
+        // Only a WebKit page can come back from its saved interaction state; a Chromium page
+        // reloads in place, as before, because unloading would drop its back/forward history.
+        if liveView?.webKit != nil, canDiscardWebContent, mayUnloadAfterTermination?() == true {
+            Pipeline.log.notice("web content process died in a background tab; restoring it when shown")
+            unloadUntilShown()
+            return
+        }
         if !processState.shouldReloadAfterUnexpectedTermination() {
             Pipeline.log.error("web content process died twice; leaving the tab alone")
             return

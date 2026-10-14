@@ -199,7 +199,7 @@ final class FaviconLoader {
         })()
         """
         if webView.url?.host()?.lowercased() == host,
-           let answer = (try? await webView.evaluateJavaScript(script)) as? String,
+           let answer = await webView.evaluateJavaScript(script, within: .seconds(5), as: String.self),
            webView.url?.host()?.lowercased() == host,
            let answered = Self.declaredIconURL(fromAnswer: answer, requestedHost: host, pageURL: pageURL) {
             candidates.append(answered)
@@ -240,7 +240,7 @@ final class FaviconLoader {
     private func fetch(_ url: URL) async -> Data? {
         guard Self.isFetchable(url) else { return nil }
         let session = persistsToDisk ? session : ephemeralSession
-        guard let (data, response) = try? await session.data(from: url),
+        guard let (data, response) = try? await session.data(for: URLRequest(url: url, timeoutInterval: 10)),
               !Task.isCancelled,
               (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true
         else { return nil }
