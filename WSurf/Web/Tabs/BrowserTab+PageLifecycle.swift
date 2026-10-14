@@ -433,6 +433,11 @@ extension BrowserTab {
         guard !isClosed else { return }
         isPlayingAudio = false
         onContentProcessTerminated?()
+        if isShown?() == false {
+            Pipeline.log.notice("web content process died in a background tab; restoring it when shown")
+            unloadUntilShown()
+            return
+        }
         if !processState.shouldReloadAfterUnexpectedTermination() {
             Pipeline.log.error("web content process died twice; leaving the tab alone")
             return

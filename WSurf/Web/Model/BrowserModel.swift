@@ -156,6 +156,10 @@ final class BrowserModel {
             guard let tab else { return }
             self?.onContentProcessTerminated?(tab)
         }
+        tab.isShown = { [weak self, weak tab] in
+            guard let self, let tab else { return true }
+            return activeTab === tab || isVisibleInSplit(tab)
+        }
         tab.onNavigationOutsideExtension = { [weak self] url in
             self?.newTab(url: url)
         }
