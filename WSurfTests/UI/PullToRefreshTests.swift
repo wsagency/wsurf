@@ -198,6 +198,13 @@ struct PullToRefreshProbeTests {
         )
     }
 
+    /// A wheel event nothing cancels.
+    private func quietWheel(on page: BrowserPage) async {
+        _ = try? await page.evaluateJavaScript(
+            "window.dispatchEvent(new WheelEvent('wheel', { deltaY: -40, cancelable: true }))"
+        )
+    }
+
     @Test func theProbeSeesTheInnerScrollerAndOnlyIt() async throws {
         let page = await loadedPage("""
         <div style="height: 3000px">
@@ -267,5 +274,40 @@ struct PullToRefreshProbeTests {
 
         await load("<div style=\"height: 400px\">plain</div>", in: page)
         #expect(try await !probe(page, x: 250, y: 200).wheelClaimed)
+    }
+
+    /// The claim lasts a moment after the page's cancelled wheel, not until some other wheel arrives.
+    @Test func aClaimExpiresWhenNoOtherWheelFollows() async throws {
+        let page = await loadedPage(Self.mapPage)
+        await wheel(on: page)
+        #expect(try await probe(page, x: 250, y: 200).wheelClaimed)
+
+        #expect(await waitUntil(timeout: .seconds(10)) {
+            try await !probe(page, x: 250, y: 200).wheelClaimed
+        })
+        let atFinish = try await answer(PullToRefreshMonitor.finishProbeScript, from: page)
+        #expect(PullToRefreshMonitor.canBeginPull(atFinish))
+    }
+
+    /// The bug: the next wheel stamped the old cancelled one with its own time, so a pull
+    /// started long after the map was used still read as claimed.
+    @Test func aPullLongAfterTheMapWasUsedIsNotClaimed() async throws {
+        let page = await loadedPage(Self.mapPage)
+        await wheel(on: page)
+        #expect(await waitUntil(timeout: .seconds(10)) {
+            try await !probe(page, x: 250, y: 200).wheelClaimed
+        })
+
+        await quietWheel(on: page)
+        let pull = try await probe(page, x: 250, y: 200)
+        #expect(!pull.wheelClaimed)
+        #expect(PullToRefreshMonitor.canBeginPull(pull))
+    }
+
+    @Test func aCancelledWheelFollowedByAnotherKeepsTheClaim() async throws {
+        let page = await loadedPage(Self.mapPage)
+        await wheel(on: page)
+        await wheel(on: page)
+        #expect(try await probe(page, x: 250, y: 200).wheelClaimed)
     }
 }

@@ -77,14 +77,18 @@ final class PullToRefreshMonitor {
     /// Remembers that the page cancelled a wheel event: a map or canvas that zooms on the wheel
     /// never moves the document, which reads as a pull. Each document installs it once, so the
     /// probes can include it to cover a document that loaded before the user script existed.
+    /// This listener runs before the page's own, so a cancel is not visible yet. The event is
+    /// kept, and its `defaultPrevented` is read at the next event or probe. `at` is when the
+    /// kept event arrived and moves to `claimedAt` if it was cancelled.
     static let wheelWatchScript = """
         (() => {
           if (window.__wsurfWheel) return;
-          const watch = { last: null, claimedAt: -Infinity };
+          const watch = { last: null, at: -Infinity, claimedAt: -Infinity };
           window.__wsurfWheel = watch;
           window.addEventListener('wheel', event => {
-            if (watch.last && watch.last.defaultPrevented) watch.claimedAt = performance.now();
+            if (watch.last && watch.last.defaultPrevented) watch.claimedAt = watch.at;
             watch.last = event;
+            watch.at = performance.now();
           }, { capture: true, passive: true });
         })();
         """
@@ -96,12 +100,19 @@ final class PullToRefreshMonitor {
         )
     }
 
+    /// True while the page's last wheel event, or the one before it, was cancelled less than
+    /// `wheelClaimWindow` ago. A probe also drops an event older than the window, so the watch
+    /// holds at most one event, and only until the next wheel event, a probe or the unload.
     private static let wheelClaimedExpression = """
         (() => {
           const watch = window.__wsurfWheel;
           if (!watch) return false;
-          if (watch.last && watch.last.defaultPrevented) return true;
-          return performance.now() - watch.claimedAt < \(wheelClaimWindow);
+          const now = performance.now();
+          if (now - watch.at >= \(wheelClaimWindow)) {
+            watch.last = null;
+            return false;
+          }
+          return now - watch.claimedAt < \(wheelClaimWindow) || watch.last.defaultPrevented;
         })()
         """
 
