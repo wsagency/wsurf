@@ -7,6 +7,10 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-14 — Agent: AnyLanguageModel 1.0.0 (DRAFT: pending native build, tests and smoke; finalize or drop after them)
+
+The agent now builds against AnyLanguageModel 1.0.0 (pinned to revision `80d50b0`). Provider reasoning that the library now records in the transcript is dropped at run start (checkpoint restore), at checkpoint save and in compaction, and is kept only for rounds produced in the running session, including later iterations of a resumed run. It is ignored for OpenAI items. Reasoning text counts toward the context estimate while it is kept. No other behavior changes.
+
 ### 2026-10-13 — Credentials: several vaults per profile, Trash and earlier versions, and a one-way store upgrade
 
 Each profile now keeps its credentials in one encrypted store (`Credentials.store`) that holds up to 16 active vaults, each with a linked Trash. Every vault has its own passkey unlock, its own manager and lock, and a five-minute unlock; a profile lock (profile switch, sleep, screen lock, quit, profile erase) locks every vault of the profile. A locked vault is listed only by number, with no name or content. You can choose a default vault, create a further vault with a new passkey or with a passkey already enrolled in another vault of the profile (vaults sharing a passkey share its exposure: one compromised authenticator opens all of them), and remove an unlock passkey. Creating a vault never reuses or extends an existing unlock. Removing a passkey stops its normal unlock; it does not rotate the vault key, so a copy of the vault file that still holds its wrapper can still be opened with it.

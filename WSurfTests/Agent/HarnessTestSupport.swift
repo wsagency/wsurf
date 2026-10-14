@@ -11,6 +11,7 @@ final class HarnessScript: LanguageModel, @unchecked Sendable {
     enum Action {
         case text(String)
         case calls([String])
+        case thinkingCalls(String, [String], callID: String? = nil)
         case commentary(String, [String])
         case progress(String)
         case failure(any Error)
@@ -60,12 +61,21 @@ final class HarnessScript: LanguageModel, @unchecked Sendable {
             throw error
         case .text(let value):
             text = value
-        case .calls(let names), .commentary(_, let names):
+        case .calls(let names), .commentary(_, let names), .thinkingCalls(_, let names, _):
+            var fixedID: String?
+            if case .thinkingCalls(_, _, let callID) = action { fixedID = callID }
             let calls = names.map { name in
-                Transcript.ToolCall(id: UUID().uuidString, toolName: name,
+                Transcript.ToolCall(id: fixedID ?? UUID().uuidString, toolName: name,
                                     arguments: GeneratedContent(properties: ["value": GeneratedContent("fixture-value")]))
             }
             entries = [.toolCalls(.init(calls))]
+            if case .thinkingCalls(let thought, _, _) = action {
+                entries.insert(.reasoning(.init(
+                    metadata: ["provider": GeneratedContent("anthropic")],
+                    segments: [.text(.init(content: thought))],
+                    signature: Data("sig".utf8)
+                )), at: 0)
+            }
             if case .commentary(let message, _) = action { text = message } else { text = "" }
         case .progress(let message):
             entries = [.toolCalls(.init([Transcript.ToolCall(
