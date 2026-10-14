@@ -527,4 +527,58 @@ extension PageInteractionTests {
             #expect(await js(view, "document.querySelector('#target').value") as? String == "A")
         }
     }
+
+    // Slice 1 native probes (docs/superpowers/plans/2026-10-14-mcp-development-mode.md, Task 1).
+    // They assert the shared contract on both engines; a failure on one engine reproduces a static risk.
+    @Test(arguments: BrowserEngine.allCases)
+    func pressKeyDeliversKeyDownAndKeyUpToFocusedControl(engine: BrowserEngine) async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("""
+                <input aria-label="Input" onkeydown="window.keys=(window.keys||'')+'d'" onkeyup="window.keys+='u'">
+                """),
+        ])
+        defer { withExtendedLifetime(server) {} }
+        try await withPage(engine: engine, url: server.url()) { view in
+            _ = await PageDriver.readRenderedPage(view)
+            let ref = try #require(PageDriver.observation(in: view)?.refs.sorted().first)
+            let result = await PageDriver.pressKey("ArrowDown", ref: ref, in: view)
+            let delivered = try await view.evaluateJavaScript("window.keys || ''") as? String
+            #expect(delivered == "du", "engine \(engine): result \(result)")
+            #expect(result.hasPrefix("Sent ArrowDown") == (delivered == "du"), "reported success must match delivery: \(result)")
+            #expect(try await view.evaluateJavaScript("document.activeElement.tagName") as? String == "INPUT")
+        }
+    }
+
+    @Test(arguments: BrowserEngine.allCases)
+    func goBackReportsActualNavigation(engine: BrowserEngine) async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/a": .html("<h1>Page A</h1>"), "/b": .html("<h1>Page B</h1>"),
+        ])
+        defer { withExtendedLifetime(server) {} }
+        let first = try server.url("/a")
+        let second = try server.url("/b")
+        try await withPage(engine: engine, url: first) { view in
+            let none = await PageDriver.goBack(in: view)
+            #expect(none == "There is no page to go back to.", "engine \(engine): \(none)")
+            view.load(URLRequest(url: second))
+            try #require(await waitUntil { view.url == second && !view.isLoading })
+            let back = await PageDriver.goBack(in: view)
+            #expect(back.hasPrefix("Went back."), "engine \(engine): \(back)")
+            #expect(view.url == first, "engine \(engine): url \(String(describing: view.url))")
+            #expect(back.contains("Page A"), "engine \(engine): \(back)")
+        }
+    }
+
+    @Test(arguments: BrowserEngine.allCases)
+    func goBackHandlesSameDocumentHistory(engine: BrowserEngine) async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html("<h1>Same doc</h1>")])
+        defer { withExtendedLifetime(server) {} }
+        try await withPage(engine: engine, url: server.url()) { view in
+            _ = try await view.evaluateJavaScript("history.pushState({}, '', '/pushed'); 0")
+            try #require(await waitUntil { view.url?.path == "/pushed" })
+            let back = await PageDriver.goBack(in: view)
+            #expect(back.hasPrefix("Went back."), "engine \(engine): \(back)")
+            #expect(await waitUntil { view.url?.path == "/" }, "engine \(engine): url \(String(describing: view.url))")
+        }
+    }
 }
