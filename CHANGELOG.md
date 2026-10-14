@@ -7,6 +7,10 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-14 — Page robustness: stalled favicon lookups, detached players and crashed background tabs
+
+A page that stops answering no longer holds its favicon lookup: the declared-icon script is given 5 seconds and the icon download 10, and the tab's favicon task no longer keeps the tab or page alive while it waits. Auto-play Never and Muted now also cover players a page creates with `createElement('audio')` or `new Audio()` and never attaches; a player the person started by hand is still left alone. A tab whose web-content process dies while it is not visible is no longer reloaded in the background: it unloads to its saved session and restores when it becomes the active tab or a visible split pane, while a visible tab still reloads at once with the same retry limit. Backported from Linen (`3d0903d`, `ebb66e9`, `c0afef3`).
+
 ### 2026-10-13 — Credentials: several vaults per profile, Trash and earlier versions, and a one-way store upgrade
 
 Each profile now keeps its credentials in one encrypted store (`Credentials.store`) that holds up to 16 active vaults, each with a linked Trash. Every vault has its own passkey unlock, its own manager and lock, and a five-minute unlock; a profile lock (profile switch, sleep, screen lock, quit, profile erase) locks every vault of the profile. A locked vault is listed only by number, with no name or content. You can choose a default vault, create a further vault with a new passkey or with a passkey already enrolled in another vault of the profile (vaults sharing a passkey share its exposure: one compromised authenticator opens all of them), and remove an unlock passkey. Creating a vault never reuses or extends an existing unlock. Removing a passkey stops its normal unlock; it does not rotate the vault key, so a copy of the vault file that still holds its wrapper can still be opened with it.
