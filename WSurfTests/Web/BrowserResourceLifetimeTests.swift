@@ -142,8 +142,8 @@ struct BrowserResourceLifetimeTests {
 
     @Test func aBackgroundTabItsWebsiteKeepsActiveReloadsAtOnce() async throws {
         let permissions = SitePermissions(
-            storageURL: FileManager.default.temporaryDirectory
-                .appending(path: "BrowserResourceLifetimeTests-\(UUID().uuidString).json")
+            storageURL: FileManager.default.temporaryDirectory.appending(path: "unused-permissions.json"),
+            persists: false
         )
         let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
         defer { browser.cancelPendingSave() }
