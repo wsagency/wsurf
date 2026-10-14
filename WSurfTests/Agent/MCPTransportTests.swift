@@ -339,6 +339,15 @@ struct MCPTransportTests {
             try click.validate(["tabID": "tab", "observationID": "observation", "ref": 0])
         }
     }
+    @Test func screenshotContractTakesRegionIntegersAndRejectsNegativeOrFractionalEdges() throws {
+        let shot = try #require(MCPToolCatalog.entries.first { $0.name == "screenshotPage" })
+        try shot.validate(["tabID": "tab"])
+        try shot.validate(["tabID": "tab", "x": 0, "y": 0, "width": 10, "height": 10])
+        #expect(throws: (any Error).self) { try shot.validate(["tabID": "tab", "x": -1]) }
+        #expect(throws: (any Error).self) { try shot.validate(["tabID": "tab", "width": 0]) }
+        #expect(throws: (any Error).self) { try shot.validate(["tabID": "tab", "width": 1.5]) }
+    }
+
     @Test func fillFieldsContractAcceptsThirtyTwoControlsAndRejectsThirtyThree() throws {
         let fill = try #require(MCPToolCatalog.entries.first { $0.name == "fillFields" })
         let arguments: (Int) -> [String: Value] = { count in

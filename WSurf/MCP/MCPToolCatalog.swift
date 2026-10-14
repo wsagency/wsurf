@@ -176,13 +176,22 @@ nonisolated enum MCPToolCatalog {
         Entry(
             name: "waitForPage", description: "Wait for a condition and return one fresh observation.",
             parameters: [
-                tab, Parameter(name: "condition", type: "string", description: "text, textAbsent, url, or ready"),
-                Parameter(name: "value", type: "string", description: "Text or URL substring; empty for ready."),
+                tab, Parameter(name: "condition", type: "string", description: "text, textAbsent, url, elementVisible, elementHidden, elementEnabled, or ready"),
+                Parameter(name: "value", type: "string", description: "Text or URL substring, or a CSS selector (max 2048 bytes, must match one element) for element conditions; empty for ready."),
                 Parameter(name: "timeout", type: "integer", description: "Seconds, capped at 15.", required: false),
             ], readOnly: true),
         Entry(
-            name: "screenshotPage", description: "Capture the viewport as an image. Filled sensitive fields prevent capture. Prefer readPage for text.",
-            parameters: [tab], readOnly: true),
+            name: "screenshotPage",
+            description:
+                "Capture the viewport, one element (ref + observationID), or a viewport region (x, y, width, height in CSS pixels) as an image. Never scrolls or stitches. Filled sensitive fields prevent any capture. Prefer readPage for text.",
+            parameters: [
+                tab, Parameter(name: "ref", type: "integer", description: "Control to capture; needs observationID.", required: false),
+                Parameter(name: "observationID", type: "string", description: "Required when ref is supplied.", required: false),
+                Parameter(name: "x", type: "integer", description: "Region left edge in viewport CSS pixels.", required: false, minimum: 0),
+                Parameter(name: "y", type: "integer", description: "Region top edge in viewport CSS pixels.", required: false, minimum: 0),
+                Parameter(name: "width", type: "integer", description: "Region width in CSS pixels.", required: false),
+                Parameter(name: "height", type: "integer", description: "Region height in CSS pixels.", required: false),
+            ], readOnly: true),
         Entry(
             name: "scrollPage", description: AgentToolkit.Descriptions.scrollPage,
             parameters: [

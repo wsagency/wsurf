@@ -77,7 +77,7 @@ extension PageDriver {
         let deadline = ContinuousClock.now + .seconds(1)
         repeat {
             let before = await evaluateJSON(scripted(computerContext + "return JSON.stringify({ document: R.documentID, revision: window.__wsurfComputer.revision });"), in: view)
-            guard let data = await screenshot(in: view), let bitmap = NSBitmapImageRep(data: data), bitmap.pixelsWide > 0, bitmap.pixelsHigh > 0,
+            guard case .success(let capture) = await screenshot(in: view), case let data = capture.jpeg, let bitmap = NSBitmapImageRep(data: data), bitmap.pixelsWide > 0, bitmap.pixelsHigh > 0,
                   let document = before?["document"] as? String, let revision = before?["revision"] as? Int else { throw PageComputerFailure.unavailable }
             let after = await evaluateJSON(scripted("return JSON.stringify({ document: R.documentID, revision: window.__wsurfComputer?.revision });"), in: view)
             guard after?["document"] as? String == document else { throw PageComputerFailure.stale }

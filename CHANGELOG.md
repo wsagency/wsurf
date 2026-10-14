@@ -7,6 +7,10 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-14 — MCP: element waits and cropped screenshots
+
+`waitForPage` accepts `elementVisible`, `elementHidden` and `elementEnabled` with a CSS selector that must match one element, and ends as stale if the page navigates. `screenshotPage` can capture one referenced element or a viewport region, clipped to the visible viewport; it never scrolls or stitches, and a filled sensitive field anywhere on the page still refuses every capture.
+
 ### 2026-10-13 — Credentials: several vaults per profile, Trash and earlier versions, and a one-way store upgrade
 
 Each profile now keeps its credentials in one encrypted store (`Credentials.store`) that holds up to 16 active vaults, each with a linked Trash. Every vault has its own passkey unlock, its own manager and lock, and a five-minute unlock; a profile lock (profile switch, sleep, screen lock, quit, profile erase) locks every vault of the profile. A locked vault is listed only by number, with no name or content. You can choose a default vault, create a further vault with a new passkey or with a passkey already enrolled in another vault of the profile (vaults sharing a passkey share its exposure: one compromised authenticator opens all of them), and remove an unlock passkey. Creating a vault never reuses or extends an existing unlock. Removing a passkey stops its normal unlock; it does not rotate the vault key, so a copy of the vault file that still holds its wrapper can still be opened with it.

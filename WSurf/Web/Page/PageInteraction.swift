@@ -83,11 +83,24 @@ extension PageDriver {
             status: status, ref: ref, documentID: documentID, refreshControls: refreshControls, in: view)
     }
 
+    private static let elementConditions: Set<String> = ["elementVisible", "elementHidden", "elementEnabled"]
+
     static func waitForPage(condition: String, value: String, timeout: Int = 5, in view: BrowserPage) async -> String {
-        guard ["text", "textAbsent", "url", "ready"].contains(condition),
+        let isElement = elementConditions.contains(condition)
+        guard isElement || ["text", "textAbsent", "url", "ready"].contains(condition),
             condition == "ready" || !value.isEmpty,
             let encoded = jsonString(value)
-        else { return "Use text, textAbsent, url, or ready with a nonempty value where required." }
+        else {
+            return "Use text, textAbsent, url, elementVisible, elementHidden, elementEnabled, or ready with a nonempty value where required."
+        }
+        if isElement {
+            switch PageRuntime.validate(selector: value) {
+            case .success: break
+            case .failure(.invalid): return "Invalid selector."
+            case .failure(.empty), .failure(.tooLong):
+                return "The selector must be 1 to \(PageRuntime.maxSelectorBytes) UTF-8 bytes."
+            }
+        }
         let expression: String
         switch condition {
         case "ready":
@@ -96,9 +109,24 @@ extension PageDriver {
             expression = "location.href.includes(value)"
         case "textAbsent":
             expression = "!R.pageText().includes(value)"
+        case "elementVisible":
+            expression = "state.count === 1 && state.visible"
+        case "elementHidden":
+            expression = "state.count === 0 || !state.visible"
+        case "elementEnabled":
+            expression = "state.count === 1 && state.enabled"
         default:
             expression = "R.pageText().includes(value)"
         }
+        let elementState = isElement
+            ? """
+            const state = R.elementState(value);
+            if (state.invalid) return JSON.stringify({ error: 'Invalid selector.' });
+            if (state.count > 1) return JSON.stringify({ error: 'The selector matches more than one element.' });
+            """
+            : ""
+        // An element wait belongs to the document it started on: a navigation ends it instead of answering for the new page.
+        var startDocument: String?
         let deadline = ContinuousClock.now + .seconds(min(15, max(1, timeout)))
         repeat {
             guard PageAutomationGuard.allowsExecution else { return staleMessage }
@@ -106,37 +134,105 @@ extension PageDriver {
                 let script = scripted(
                     """
                     const value = \(encoded);
+                    \(elementState)
                     const matches = \(expression);
-                    return JSON.stringify({ matches });
+                    return JSON.stringify({ matches, document: R.documentID });
                     """)
-                guard let result = await evaluateJSON(script, in: view) else { return staleMessage }
+                guard let result = await evaluateJSON(script, in: view), result["stale"] == nil else { return staleMessage }
+                if let error = result["error"] as? String { return error }
+                if isElement {
+                    guard let document = result["document"] as? String, document == (startDocument ?? document) else { return staleMessage }
+                    startDocument = document
+                }
                 return result["matches"] as? Bool == true ? "matched" : "pending"
             }
             if output == "matched" {
-                return "Condition met.\n" + (await PageAutomationGuard.withCurrentDocument(in: view) { await snapshot(view, lookingFor: value) })
+                return "Condition met.\n" + (await PageAutomationGuard.withCurrentDocument(in: view) { await snapshot(view, lookingFor: isElement ? "" : value) })
             }
             if output != "pending" { return output }
             try? await Task.sleep(for: .milliseconds(150))
         } while ContinuousClock.now < deadline
-        return "Timed out waiting for \(condition).\n" + (await PageAutomationGuard.withCurrentDocument(in: view) { await snapshot(view, lookingFor: value) })
+        return "Timed out waiting for \(condition).\n" + (await PageAutomationGuard.withCurrentDocument(in: view) { await snapshot(view, lookingFor: isElement ? "" : value) })
     }
 
-    static func screenshot(in view: BrowserPage) async -> Data? {
-        guard PageAutomationGuard.allowsExecution else { return nil }
+    /// One capture path for the viewport, an element or a CSS-pixel region. Sensitive filled fields anywhere on the page
+    /// refuse the capture, checked before and after, even for a crop. Never scrolls, stitches or changes the viewport.
+    static func screenshot(_ target: ScreenshotTarget = .viewport, in view: BrowserPage) async -> Result<ScreenshotCapture, ScreenshotFailure> {
+        guard PageAutomationGuard.allowsExecution else { return .failure(.stale) }
+        var ref = 0
+        switch target {
+        case .viewport:
+            break
+        case .element(let requested):
+            // Frame-relative geometry is not mapped to the view, so crops are for the top document only.
+            guard selectedFrame == nil else { return .failure(.invalidGeometry) }
+            guard await validateObservation(in: view, ref: requested) else { return .failure(.stale) }
+            ref = requested
+        case .region:
+            guard selectedFrame == nil else { return .failure(.invalidGeometry) }
+        }
         let document = view.url
-        let safetyCheck = scripted(
+        let probe = scripted(
             """
-            return JSON.stringify({ document: R.documentID, safe: !Array.from(R.walk(document.body)).some(el =>
-              R.isSensitiveField(el) && (el.value || el.isContentEditable && el.textContent)) });
+            const out = { document: R.documentID, vw: window.innerWidth, vh: window.innerHeight,
+              safe: !Array.from(R.walk(document.body)).some(el => R.isSensitiveField(el) && (el.value || el.isContentEditable && el.textContent)) };
+            const ref = \(ref);
+            if (ref) {
+              const el = R.matchesRef(ref) ? window.__wsurfRefs[ref - 1] : null;
+              if (!el || !el.isConnected) return JSON.stringify({ stale: true });
+              const box = el.getBoundingClientRect();
+              let x = box.x, y = box.y;
+              for (let w = el.ownerDocument.defaultView; w && w.frameElement; w = w.parent) {
+                const frame = w.frameElement, outer = frame.getBoundingClientRect();
+                x += outer.x + frame.clientLeft; y += outer.y + frame.clientTop;
+              }
+              out.rect = { x, y, width: box.width, height: box.height };
+            }
+            return JSON.stringify(out);
             """)
-        let safe = await evaluateJSON(safetyCheck, in: view)
-        guard safe?["safe"] as? Bool == true else { return nil }
-        guard let image = try? await view.capture(width: min(1280, max(1, view.bounds.width))),
-              PageAutomationGuard.allowsExecution, view.url == document,
-              let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff)
-        else { return nil }
-        let after = await evaluateJSON(safetyCheck, in: view)
-        guard after?["safe"] as? Bool == true, after?["document"] as? String == safe?["document"] as? String else { return nil }
-        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
+        guard let before = await evaluateJSON(probe, in: view), before["stale"] == nil else { return .failure(.stale) }
+        guard before["safe"] as? Bool == true else { return .failure(.privacy) }
+        func number(_ object: [String: Any]?, _ key: String) -> CGFloat? { (object?[key] as? NSNumber).map { CGFloat($0.doubleValue) } }
+        guard let width = number(before, "vw"), let height = number(before, "vh") else { return .failure(.stale) }
+        let viewport = CGSize(width: width, height: height)
+        let css: CGRect
+        switch target {
+        case .viewport:
+            guard width > 0, height > 0 else { return .failure(.invalidGeometry) }
+            css = CGRect(origin: .zero, size: viewport)
+        case .region(let requested):
+            switch ScreenshotGeometry.clip(requested, toViewport: viewport) {
+            case .success(let clipped): css = clipped
+            case .failure(let failure): return .failure(failure)
+            }
+        case .element:
+            let box = before["rect"] as? [String: Any]
+            guard let x = number(box, "x"), let y = number(box, "y"), let w = number(box, "width"), let h = number(box, "height") else {
+                return .failure(.stale)
+            }
+            switch ScreenshotGeometry.clip(CGRect(x: x, y: y, width: w, height: h), toViewport: viewport) {
+            case .success(let clipped): css = clipped
+            case .failure(let failure): return .failure(failure)
+            }
+        }
+        let zoom = view.pageZoom
+        let crop: CGRect? = target == .viewport ? nil : CGRect(x: css.minX * zoom, y: css.minY * zoom, width: css.width * zoom, height: css.height * zoom)
+        let pointWidth = crop?.width ?? view.bounds.width
+        guard let image = try? await view.capture(rect: crop, width: min(1280, max(1, pointWidth))),
+            PageAutomationGuard.allowsExecution, view.url == document,
+            let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), bitmap.pixelsWide > 0
+        else { return .failure(.captureFailed) }
+        guard let after = await evaluateJSON(probe, in: view), after["stale"] == nil, after["document"] as? String == before["document"] as? String else {
+            return .failure(.stale)
+        }
+        guard after["safe"] as? Bool == true else { return .failure(.privacy) }
+        if case .element = target {
+            let box = after["rect"] as? [String: Any], first = before["rect"] as? [String: Any]
+            for key in ["x", "y", "width", "height"] {
+                guard let a = number(box, key), let b = number(first, key), abs(a - b) <= 0.5 else { return .failure(.stale) }
+            }
+        }
+        guard let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return .failure(.captureFailed) }
+        return .success(ScreenshotCapture(jpeg: jpeg, bounds: css, scale: CGFloat(bitmap.pixelsWide) / css.width))
     }
 }

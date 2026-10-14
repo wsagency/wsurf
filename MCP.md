@@ -119,8 +119,8 @@ revoke it immediately.
 | `fillFields` | Fill up to 32 distinct nonsensitive form controls without submitting; report exactly which refs retained their values. |
 | `inspectControl` | Read control state and paginate dropdown options. |
 | `setChecked` | Set a checkbox, switch, or radio to the requested state. |
-| `waitForPage` | Wait for text, absent text, a URL substring, or document readiness, up to 15 seconds. |
-| `screenshotPage` | Return a viewport image; refuse capture when detected sensitive fields are filled. |
+| `waitForPage` | Wait up to 15 seconds for text, absent text, a URL substring, document readiness, or a CSS selector that matches exactly one element to be visible, hidden/absent, or enabled. An element wait ends as stale if the page navigates. |
+| `screenshotPage` | Return an image of the viewport, one referenced element, or a viewport region (`x`, `y`, `width`, `height` in CSS pixels), clipped to the visible viewport; the result states the covered rectangle and image scale. Never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop. |
 | `pressKey` | Send a supported keyboard key to a control in a visible tab. |
 | `hoverOnPage` | Dispatch pointer/mouse hover handlers. CSS-only hover is unsupported. |
 | `scrollPage` | Scroll vertically or horizontally, optionally inside a referenced container. |

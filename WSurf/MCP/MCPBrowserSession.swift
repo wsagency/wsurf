@@ -217,11 +217,22 @@ final class MCPBrowserSession: Identifiable {
                 var capturedImage: Data?
                 let output: String
                 if name == "screenshotPage" {
-                    capturedImage = await PageDriver.screenshot(in: view)
-                    output =
-                        capturedImage == nil
-                        ? "Screenshot unavailable; use readPage for redacted text."
-                        : "Screenshot captured.\n" + (await PageDriver.snapshot(view, viewportOnly: true))
+                    let request = Self.screenshotTarget(arguments)
+                    if let message = request.error {
+                        output = message
+                    } else {
+                        switch await PageDriver.screenshot(request.target, in: view) {
+                        case .success(let capture):
+                            capturedImage = capture.jpeg
+                            let box = capture.bounds
+                            output =
+                                "Screenshot captured. Shows viewport CSS pixels x \(Int(box.minX.rounded())), y \(Int(box.minY.rounded())), "
+                                + "\(Int(box.width.rounded())) by \(Int(box.height.rounded())); image scale \(String(format: "%.2f", capture.scale)) px per CSS px.\n"
+                                + (await PageDriver.snapshot(view, viewportOnly: true))
+                        case .failure(let failure):
+                            output = failure.message
+                        }
+                    }
                 } else {
                     output = await pageAction(name: name, arguments: arguments, view: view)
                 }
@@ -253,6 +264,20 @@ final class MCPBrowserSession: Identifiable {
                 return CallTool.Result(content: blocks, structuredContent: Optional.some(value), isError: !succeeded)
             }
         }
+    }
+
+    /// `ref` or the four region fields, never both; a region needs all four.
+    private static func screenshotTarget(_ arguments: [String: Value]) -> (target: ScreenshotTarget, error: String?) {
+        let box = ["x", "y", "width", "height"].map { arguments[$0]?.intValue }
+        let hasRegion = box.contains { $0 != nil }
+        if let ref = arguments["ref"]?.intValue {
+            return (.element(ref: ref), hasRegion ? "Use either ref or a region, not both." : nil)
+        }
+        guard hasRegion else { return (.viewport, nil) }
+        guard let x = box[0], let y = box[1], let width = box[2], let height = box[3] else {
+            return (.viewport, "A region needs x, y, width, and height.")
+        }
+        return (.region(CGRect(x: x, y: y, width: width, height: height)), nil)
     }
 
     private func pageAction(name: String, arguments: [String: Value], view: BrowserPage) async -> String {

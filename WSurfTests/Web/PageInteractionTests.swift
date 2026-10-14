@@ -303,6 +303,32 @@ struct PageInteractionTests {
         #expect((await PageDriver.waitForPage(condition: "text", value: "Missing", timeout: 1, in: view)).hasPrefix("Timed out"))
     }
 
+    @Test func waitsForElementStateAndRejectsBadSelectors() async {
+        let view = await page("<button id='go' disabled>Go</button><p id='gone'>Soon</p><p class='dup'>a</p><p class='dup'>b</p>")
+        _ = await js(view, "setTimeout(()=>{document.querySelector('#go').disabled=false;document.querySelector('#gone').remove()},180);true")
+        #expect((await PageDriver.waitForPage(condition: "elementEnabled", value: "#go", timeout: 2, in: view)).hasPrefix("Condition met."))
+        #expect((await PageDriver.waitForPage(condition: "elementHidden", value: "#gone", timeout: 2, in: view)).hasPrefix("Condition met."))
+        #expect((await PageDriver.waitForPage(condition: "elementVisible", value: "#missing", timeout: 1, in: view)).hasPrefix("Timed out"))
+        #expect((await PageDriver.waitForPage(condition: "elementVisible", value: ".dup", timeout: 1, in: view)) == "The selector matches more than one element.")
+        #expect((await PageDriver.waitForPage(condition: "elementVisible", value: "div[", timeout: 1, in: view)) == "Invalid selector.")
+    }
+
+    @Test func screenshotRegionsClipAndRejectOffscreen() async {
+        let view = await page("<p>Visible</p>")
+        let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 400, height: 300), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderBack(nil)
+        defer { window.contentView = nil; window.close() }
+        let width = view.bounds.width
+        if case .success(let capture) = await PageDriver.screenshot(.region(CGRect(x: width - 10, y: 0, width: 100, height: 20)), in: view) {
+            #expect(capture.bounds.width == 10)
+        } else {
+            Issue.record("clipped region failed")
+        }
+        #expect(await PageDriver.screenshot(.region(CGRect(x: width + 50, y: 0, width: 10, height: 10)), in: view).failure == .offscreen)
+    }
+
     @Test func nestedHorizontalScrollReturnsFreshControls() async {
         let view = await page(
             "<div aria-label='Items' role='region' style='width:200px;overflow:auto'><div style='width:1500px'><button>First</button><button style='margin-left:900px'>Last</button></div></div>"
@@ -332,7 +358,7 @@ struct PageInteractionTests {
 
     @Test func screenshotsRefuseFilledSensitiveFields() async {
         let view = await page("<input type='password' value='secret'>")
-        #expect(await PageDriver.screenshot(in: view) == nil)
+        #expect(await PageDriver.screenshot(in: view).failure == .privacy)
     }
 
     @Test func sensitiveEditableTextIsRedactedAndCannotBeOverwritten() async {
@@ -341,7 +367,7 @@ struct PageInteractionTests {
         #expect(!output.contains("hidden-recovery-words"))
         #expect(output.contains("filled, hidden"))
         #expect(!(await PageDriver.type(text: "replacement", intoField: "", ref: 1, submit: false, in: view)).hasPrefix("Typed"))
-        #expect(await PageDriver.screenshot(in: view) == nil)
+        #expect(await PageDriver.screenshot(in: view).failure == .privacy)
     }
 
     @Test func hoverHandlersAndNativeKeyboardReachWebKit() async {
@@ -368,7 +394,7 @@ struct PageInteractionTests {
         let key = await PageDriver.pressKey("ArrowDown", ref: 2, in: view)
         #expect(key.hasPrefix("Sent ArrowDown"), "\(key)")
         #expect(await js(view, "window.lastKey") as? String == "ArrowDown")
-        #expect(await PageDriver.screenshot(in: view) != nil)
+        if case .failure(let failure) = await PageDriver.screenshot(in: view) { Issue.record("screenshot failed: \(failure)") }
     }
 }
 
@@ -581,4 +607,8 @@ extension PageInteractionTests {
             #expect(await waitUntil { view.url?.path == "/" }, "engine \(engine): url \(String(describing: view.url))")
         }
     }
+}
+
+private extension Result {
+    var failure: Failure? { if case .failure(let error) = self { error } else { nil } }
 }
