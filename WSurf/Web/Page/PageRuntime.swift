@@ -350,6 +350,8 @@ nonisolated enum PageRuntime {
       };
 
       const observe = (query, textLimit, controlLimit, textOffset, controlOffset, scope, viewportOnly) => {
+        // A rejected scope must not rotate the snapshot or walk the page.
+        if (scope && selectorProblem(scope)) return { error: 'The scope selector is invalid or reads an attribute value that is not exposed.' };
         const all = collect();
         const text = pageText(viewportOnly);
         const terms = norm(query).toLowerCase().split(/\s+/).filter(Boolean);
@@ -362,11 +364,7 @@ nonisolated enum PageRuntime {
         if (start > 0 && /[\uDC00-\uDFFF]/.test(text[start] || '')) start++;
         let end = Math.min(text.length, start + textLimit);
         if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1] || '')) end--;
-        let root = null;
-        if (scope) {
-          if (selectorProblem(scope)) return { error: 'The scope selector is invalid or reads an attribute value that is not exposed.' };
-          root = document.querySelector(scope);
-        }
+        const root = scope ? document.querySelector(scope) : null;
         if (scope && !root) return { error: 'No element matches that scope.' };
         const candidates = all.filter(c => (!root || within(root, window.__wsurfRefs[c.r - 1])) && (!viewportOnly || c.vp));
         const availabilityOrder = (a, b) => Number(b.vp) - Number(a.vp) || Number(!!a.d) - Number(!!b.d);
@@ -398,6 +396,13 @@ nonisolated enum PageRuntime {
         'autocomplete', 'contenteditable', 'draggable', 'inert', 'open', 'width', 'height', 'colspan', 'rowspan', 'min', 'max', 'step']);
       const clip = (s, n) => { s = norm(s); return s.length > n ? Array.from(s).slice(0, n).join('') : s; };
       const round = n => Math.round(n * 100) / 100;
+      // Size of a result as delivered: Swift re-serialises the JSON (escaping "/"), and the text is then wrapped by
+      // AgentToolkit.untrusted, which escapes & < >. Measured here, on those exact bytes, so a budget cannot be missed by
+      // escaping. WIRE_LIMIT sits 8 KiB under the 32 KiB cap for the "ELEMENT:"/"observationID:" lines and Foundation's
+      // own formatting of numbers, which this measure cannot see.
+      const WIRE_LIMIT = 24576;
+      const WIRE_ESCAPES = { '/': '\\/', '&': '&amp;', '<': '&lt;', '>': '&gt;' };
+      const wireBytes = value => new TextEncoder().encode(JSON.stringify(value).replace(/[\/&<>]/g, c => WIRE_ESCAPES[c])).length;
       const rectOf = el => { const r = el.getBoundingClientRect(); return { x: round(r.x), y: round(r.y), width: round(r.width), height: round(r.height) }; };
       const hiddenInput = el => el.tagName === 'INPUT' && ((el.type || '') + '').toLowerCase() === 'hidden';
       const inert = el => { for (let n = el; n; n = parentOf(n)) if (n.hasAttribute && n.hasAttribute('inert')) return true; return false; };
@@ -523,15 +528,22 @@ nonisolated enum PageRuntime {
         }
         const observation = window.__wsurfSnapshot = Date.now().toString(36) + Math.random().toString(36);
         const items = [];
-        let index = 0, hasMore = false;
+        const result = { observation, document: documentID, url: location.href, offset, limit, returned: 0, hasMore: true, items,
+          coverage: { crossOriginFrames: 'skipped', closedShadowRoots: 'skipped' } };
+        let used = wireBytes(result), index = 0;
+        result.hasMore = false;
         for (const el of deep(document)) {
           if (!el.matches(selector)) continue;
           if (index++ < offset) continue;
-          if (items.length === limit) { hasMore = true; break; }
-          items.push(summaryOf(el, refFor(el)));
+          if (items.length === limit) { result.hasMore = true; break; }
+          const item = summaryOf(el, refFor(el)), cost = wireBytes(item) + 1;
+          // The first item always fits (summaries are clipped), so a page always advances.
+          if (items.length && used + cost > WIRE_LIMIT) { result.hasMore = true; break; }
+          items.push(item);
+          used += cost;
         }
-        return { observation, document: documentID, url: location.href, offset, limit, returned: items.length, hasMore, items,
-          coverage: { crossOriginFrames: 'skipped', closedShadowRoots: 'skipped' } };
+        result.returned = items.length;
+        return result;
       };
 
       const safeURL = (value, el) => {
@@ -585,14 +597,13 @@ nonisolated enum PageRuntime {
           style: styles, ancestors, ancestorsTruncated
         };
         if (el.ownerDocument !== document) out.inFrame = true;
-        const size = () => new TextEncoder().encode(JSON.stringify(out)).length;
-        while (size() > 32768 && out.ancestors.length) { out.ancestors.pop(); out.ancestorsTruncated = true; }
-        if (size() > 32768) { out.attributes = {}; out.attributesTruncated = true; }
-        if (size() > 32768) { out.style = {}; out.truncated = true; }
+        while (wireBytes(out) > WIRE_LIMIT && out.ancestors.length) { out.ancestors.pop(); out.ancestorsTruncated = true; }
+        if (wireBytes(out) > WIRE_LIMIT) { out.attributes = {}; out.attributesTruncated = true; }
+        if (wireBytes(out) > WIRE_LIMIT) { out.style = {}; out.truncated = true; }
         return out;
       };
 
-      return { matchesRef, expectValue, valueState, walk, documentID, norm, collect, pageText, viewportText, resolve, setValue, pressEnter,
+      return { matchesRef, inspectableRef, isFoundOnly: ref => foundOnly.has(window.__wsurfRefs[ref - 1]), expectValue, valueState, walk, documentID, norm, collect, pageText, viewportText, resolve, setValue, pressEnter,
         labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe, elementState, findAll, inspect, selectorProblem };
     })());
     """#

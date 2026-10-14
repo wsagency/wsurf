@@ -34,12 +34,17 @@ extension PageDriver {
         if let error = result?["error"] as? String { return error }
         guard let x = result?["x"] as? Double, let y = result?["y"] as? Double else { return staleMessage }
         guard await validateObservation(in: view, ref: ref) else { return staleMessage }
+        let point = CGPoint(x: x * view.pageZoom, y: y * view.pageZoom)
+        // The page's own hit test cannot see a window clip: a development-viewport pane can be smaller than the page.
+        guard pageReceivesPointer(at: view.convert(point, to: nil), in: view, window: window) else {
+            return "The element is not reachable by the real pointer: it is clipped by the window, covered by another view, or a sheet is open."
+        }
         do {
-            try movePointer(to: CGPoint(x: x * view.pageZoom, y: y * view.pageZoom), in: view, window: window)
+            try movePointer(to: point, in: view, window: window)
         } catch PageComputerFailure.stale {
             return staleMessage
         } catch {
-            return unavailable
+            return "Hover could not be delivered to the page."
         }
         return "Hovered. Verify the returned page.\n" + (await settleAndSnippet(view))
     }

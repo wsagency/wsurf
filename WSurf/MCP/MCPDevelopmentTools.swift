@@ -92,20 +92,25 @@ extension MCPBrowserSession {
         defer { tab.setExternalAutomationWorking(false) }
         tab.realizeDeferredSession()
         let view = tab.page
+        // Identity and generation of the view this call was started on; checked again after every suspension.
+        let generation = tab.pageGeneration
+        guard tab.isLive(view, generation: generation) else {
+            return MCPDevelopmentTools.result(.pageGone, tabID: tab.id, message: "The page is not ready. Try again.")
+        }
         guard let url = webURL(of: tab) else { return MCPDevelopmentTools.result(.pageGone, tabID: tab.id, message: "The webpage is unavailable.") }
         let scope: Scope = name == "getDevelopmentInfo" ? .read : .development
         let guardScope = PageAutomationGuard(
             documentURL: url.absoluteString, snapshot: nil,
-            validate: { [weak self, weak tab] in
-                guard let self, let tab else { return false }
-                return self.permits(tab, capability: scope)
+            validate: { [weak self, weak tab, weak view] in
+                guard let self, let tab, let view else { return false }
+                return tab.isLive(view, generation: generation) && self.permits(tab, capability: scope)
             })
         return await PageAutomationGuard.$current.withValue(guardScope) {
             guard guardScope.validate(), webURL(of: tab) == url else {
                 return MCPDevelopmentTools.result(.stale, tabID: tab.id, message: "Page access changed. Try again.")
             }
             switch name {
-            case "getDevelopmentInfo": return await developmentInfo(tab: tab, view: view)
+            case "getDevelopmentInfo": return await developmentInfo(tab: tab, view: view, generation: generation)
             case "setViewport":
                 guard let width = arguments["width"]?.intValue, let height = arguments["height"]?.intValue else {
                     return MCPDevelopmentTools.result(.invalidInput, tabID: tab.id, message: "width and height are required integers.")
@@ -121,30 +126,33 @@ extension MCPBrowserSession {
                 }
                 let size = profile.dimensions(orientation)
                 return await setViewport(width: size.width, height: size.height, profile: profile, tab: tab, view: view)
-            case "reloadPage": return await reload(tab: tab, view: view)
+            case "reloadPage": return await reload(tab: tab, view: view, generation: generation)
             case "resetDevelopment": return resetDevelopment(tab: tab)
             case "startDiagnostics": return await startDiagnostics(tab: tab, view: view)
             default:
                 return await readDiagnostics(
-                    stream: name == "readConsole" ? .console : .network, arguments: arguments, tab: tab, view: view)
+                    stream: name == "readConsole" ? .console : .network, arguments: arguments, tab: tab, view: view, generation: generation)
             }
         }
     }
 
     // MARK: Ownership
 
-    /// Nil on conflict. Acquisition is synchronous, so two connections racing for one tab yield exactly one owner.
+    /// Nil on conflict or when `view` is no longer the tab's live page. Acquisition is synchronous, so two connections racing
+    /// for one tab yield exactly one owner.
     private func acquireDevelopment(_ tab: BrowserTab, view: BrowserPage) -> DevelopmentOwner? {
-        switch tab.acquireDevelopment(connection: id, page: view) {
+        let authorized = { [weak self, weak tab] () -> Bool in
+            guard let self, let tab else { return false }
+            return self.permits(tab, capability: .development)
+        }
+        switch tab.acquireDevelopment(connection: id, page: view, isAuthorized: authorized) {
         case .alreadyOwned(let owner): return owner
-        case .conflict: return nil
+        case .conflict, .pageGone: return nil
         case .acquired(let owner):
             let tabID = tab.id
-            owner.isAuthorized = { [weak self, weak tab] in
-                guard let self, let tab else { return false }
-                return self.permits(tab, capability: .development)
+            owner.onRelease { [weak self, weak owner] _ in
+                if self?.developmentTabs[tabID]?.owner === owner { self?.developmentTabs[tabID] = nil }
             }
-            owner.onRelease { [weak self] _ in self?.developmentTabs[tabID] = nil }
             developmentTabs[tabID] = (tab, owner)
             return owner
         }
@@ -155,26 +163,47 @@ extension MCPBrowserSession {
         if owner.viewport == nil, owner.diagnostics == nil { tab.releaseDevelopment(owner, reason: .reset) }
     }
 
+    /// Why `acquireDevelopment` returned nil.
+    private func refusal(_ tab: BrowserTab, view: BrowserPage) -> CallTool.Result {
+        guard !tab.isClosed, tab.liveView === view else {
+            return MCPDevelopmentTools.result(.stale, tabID: tab.id, message: "The page was replaced. Try again.")
+        }
+        return conflict(tab)
+    }
+
     private func conflict(_ tab: BrowserTab) -> CallTool.Result {
         MCPDevelopmentTools.result(.ownershipConflict, tabID: tab.id, message: "Another connection is using development tools on this tab. Nothing was changed.")
     }
 
+    /// The lease this connection holds on `tab`, if any.
+    private func ownLease(_ tab: BrowserTab) -> DevelopmentOwner? {
+        tab.developmentRelation(of: id) == .own ? tab.developmentOwner : nil
+    }
+
     func releaseUnauthorizedDevelopment() {
-        for (tab, owner) in Array(developmentTabs.values) where !permits(tab, capability: .development) {
-            tab.releaseDevelopment(owner, reason: .grantDowngrade)
+        for (tab, owner) in Array(developmentTabs.values) {
+            tab.releaseInvalidDevelopment()
+            if tab.developmentOwner === owner, !permits(tab, capability: .development) {
+                tab.releaseDevelopment(owner, reason: .grantDowngrade)
+            }
         }
     }
 
     // MARK: Tools
 
-    private func developmentInfo(tab: BrowserTab, view: BrowserPage) async -> CallTool.Result {
-        let relation = tab.developmentRelation(of: id)
+    private func developmentInfo(tab: BrowserTab, view: BrowserPage, generation: Int) async -> CallTool.Result {
         var fields: [String: Value] = [
-            "engine": .string(view.developmentCapabilities.engine), "owner": .string(relation == .own ? "self" : relation.rawValue),
+            "engine": .string(view.developmentCapabilities.engine),
             "zoom": .double(Double(view.pageZoom)), "capabilities": MCPDevelopmentTools.value(view.developmentCapabilities),
         ]
+        let measured = await view.measureViewport()
+        guard tab.isLive(view, generation: generation) else {
+            return MCPDevelopmentTools.result(.stale, tabID: tab.id, message: "The page was replaced while it was measured. Try again.")
+        }
+        let relation = tab.developmentRelation(of: id)
+        fields["owner"] = .string(relation == .own ? "self" : relation.rawValue)
         if let size = view.developmentViewport { fields["viewportOverride"] = .object(["width": .int(Int(size.width)), "height": .int(Int(size.height))]) }
-        guard let measured = await view.measureViewport() else {
+        guard let measured else {
             return MCPDevelopmentTools.result(.pageGone, tabID: tab.id, message: "The page did not respond.", fields)
         }
         fields["viewport"] = MCPDevelopmentTools.value(measured)
@@ -196,7 +225,7 @@ extension MCPBrowserSession {
                 message: "WebKit has no DPR, touch or mobile-viewport override. Use a responsive-* profile or setViewport. Nothing was changed.",
                 ["capabilities": MCPDevelopmentTools.value(view.developmentCapabilities)])
         }
-        guard let owner = acquireDevelopment(tab, view: view) else { return conflict(tab) }
+        guard let owner = acquireDevelopment(tab, view: view) else { return refusal(tab, view: view) }
         let outcome = await view.applyDevelopmentViewport(.init(width: width, height: height), profile: profile, owner: owner, tab: tab)
         switch outcome {
         case .applied(let measured):
@@ -218,30 +247,33 @@ extension MCPBrowserSession {
         }
     }
 
-    private func reload(tab: BrowserTab, view: BrowserPage) async -> CallTool.Result {
-        let relation = tab.developmentRelation(of: id)
-        if relation == .other { return conflict(tab) }
+    private func reload(tab: BrowserTab, view: BrowserPage, generation: Int) async -> CallTool.Result {
+        if tab.developmentRelation(of: id) == .other { return conflict(tab) }
+        let owner = ownLease(tab)
         guard view.reload() != nil else {
             return MCPDevelopmentTools.result(.unsupported, tabID: tab.id, message: "The page could not be reloaded.")
         }
         observations[tab.id] = nil
         await PageSettle.untilIdle(view)
-        // The lease and its viewport stay only while the reloaded document is still inside this connection's grant.
-        if relation == .own, !permits(tab, capability: .development) {
-            tab.releaseDevelopment(reason: .documentDenied)
+        guard tab.isLive(view, generation: generation) else {
+            return MCPDevelopmentTools.result(.stale, tabID: tab.id, message: "The page was replaced during the reload. Try again.")
+        }
+        // The lease and its viewport stay only while the reloaded document is still inside this connection's grant. Only the
+        // lease captured before the reload is released, never one a different connection acquired meanwhile.
+        if let owner, tab.developmentOwner === owner, !permits(tab, capability: .development) {
+            tab.releaseDevelopment(owner, reason: .documentDenied)
             return MCPDevelopmentTools.result(.denied, tabID: tab.id, message: "The reloaded page is outside this connection's access; development settings were removed.")
         }
         return MCPDevelopmentTools.result(.ok, tabID: tab.id, message: "Reload started. Use readPage after the page loads.")
     }
 
     private func resetDevelopment(tab: BrowserTab) -> CallTool.Result {
-        switch tab.developmentRelation(of: id) {
-        case .other: return conflict(tab)
-        case .none: return MCPDevelopmentTools.result(.ok, tabID: tab.id, message: "Nothing to reset.")
-        case .own:
-            tab.releaseDevelopment(reason: .reset)
+        if let owner = ownLease(tab) {
+            tab.releaseDevelopment(owner, reason: .reset)
             return MCPDevelopmentTools.result(.ok, tabID: tab.id, message: "Development settings and diagnostics were removed.")
         }
+        if tab.developmentRelation(of: id) == .other { return conflict(tab) }
+        return MCPDevelopmentTools.result(.ok, tabID: tab.id, message: "Nothing to reset.")
     }
 
     private func diagnosticsInfo(_ diagnostics: DevelopmentDiagnostics) -> [String: Value] {
@@ -253,7 +285,7 @@ extension MCPBrowserSession {
     }
 
     private func startDiagnostics(tab: BrowserTab, view: BrowserPage) async -> CallTool.Result {
-        guard let owner = acquireDevelopment(tab, view: view) else { return conflict(tab) }
+        guard let owner = acquireDevelopment(tab, view: view) else { return refusal(tab, view: view) }
         if let running = owner.diagnostics {
             return MCPDevelopmentTools.result(.ok, tabID: tab.id, message: "Capture is already running; nothing was cleared.", diagnosticsInfo(running))
         }
@@ -269,14 +301,21 @@ extension MCPBrowserSession {
         return MCPDevelopmentTools.result(.ok, tabID: tab.id, message: "Capture started. Earlier activity is not available.", diagnosticsInfo(diagnostics))
     }
 
-    private func readDiagnostics(stream: PageDiagnostics.Stream, arguments: [String: Value], tab: BrowserTab, view: BrowserPage) async -> CallTool.Result {
-        let relation = tab.developmentRelation(of: id)
-        if relation == .other { return conflict(tab) }
-        guard relation == .own, let owner = tab.developmentOwner, let diagnostics = owner.diagnostics else {
+    private func readDiagnostics(
+        stream: PageDiagnostics.Stream, arguments: [String: Value], tab: BrowserTab, view: BrowserPage, generation: Int
+    ) async -> CallTool.Result {
+        guard let owner = ownLease(tab) else {
+            if tab.developmentRelation(of: id) == .other { return conflict(tab) }
             return MCPDevelopmentTools.result(.invalidInput, tabID: tab.id, message: "Capture is not running. Call startDiagnostics first.")
         }
-        guard await diagnostics.sync(), tab.isCurrent(owner) else {
-            return MCPDevelopmentTools.result(.denied, tabID: tab.id, message: "The page left this connection's access; capture stopped.")
+        guard let diagnostics = owner.diagnostics else {
+            return MCPDevelopmentTools.result(.invalidInput, tabID: tab.id, message: "Capture is not running. Call startDiagnostics first.")
+        }
+        guard await diagnostics.sync(), tab.isCurrent(owner), tab.isLive(view, generation: generation) else {
+            let replaced = !tab.isLive(view, generation: generation)
+            return MCPDevelopmentTools.result(
+                replaced ? .stale : .denied, tabID: tab.id,
+                message: replaced ? "The page was replaced; capture stopped." : "The page left this connection's access; capture stopped.")
         }
         do {
             let page = try diagnostics.buffer.read(

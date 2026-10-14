@@ -198,12 +198,15 @@ final class BrowserTab: Identifiable {
     @ObservationIgnored var liveView: BrowserPage? {
         didSet {
             loadedEngine = liveView?.engine
+            releaseInvalidDevelopment()
         }
     }
     private(set) var loadedEngine: BrowserEngine?
     @ObservationIgnored private var retiredView: BrowserPage?
     private var retirementGeneration = 0
-    private(set) var pageGeneration = 0
+    private(set) var pageGeneration = 0 {
+        didSet { releaseInvalidDevelopment() }
+    }
     @ObservationIgnored var developmentOwner: DevelopmentOwner?
     let sitePermissions: SitePermissions
     let context: BrowserProfileContext
@@ -337,6 +340,7 @@ final class BrowserTab: Identifiable {
             adopt(liveView)
         }
         find.driver = .browserPage { [weak self] in self?.page }
+        assistantAccess.onPolicyChanged = { [weak self] in self?.releaseInvalidDevelopment() }
         if opensStartPage {
             permitSystemPage(SystemPages.start)
             page.load(URLRequest(url: SystemPages.start))
@@ -401,7 +405,7 @@ final class BrowserTab: Identifiable {
 
     @discardableResult
     private func retire(_ outgoing: BrowserPage) -> Task<Void, Never> {
-        releaseDevelopment(reason: .engineReplaced)
+        releaseCurrentDevelopment(reason: .engineReplaced)
         onPageRetired?(outgoing)
         retirementGeneration &+= 1
         let generation = retirementGeneration
@@ -584,7 +588,7 @@ final class BrowserTab: Identifiable {
     func detach() {
         guard !isClosed else { return }
         isClosed = true
-        releaseDevelopment(reason: .tabClosed)
+        releaseCurrentDevelopment(reason: .tabClosed)
         pendingNavigationTask?.cancel()
         coverHold?.cancel()
         onChromiumDownload = nil

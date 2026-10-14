@@ -9,7 +9,7 @@ enum DevelopmentReleaseReason: Equatable {
 }
 
 enum DevelopmentAcquisition {
-    case acquired(DevelopmentOwner), alreadyOwned(DevelopmentOwner), conflict
+    case acquired(DevelopmentOwner), alreadyOwned(DevelopmentOwner), conflict, pageGone
 }
 
 enum DevelopmentRelation: String {
@@ -57,31 +57,66 @@ final class DevelopmentOwner {
 
 extension BrowserTab {
     /// Synchronous on the main actor with no suspension between check and set: two connections racing yield one owner.
-    func acquireDevelopment(connection: UUID, page: BrowserPage) -> DevelopmentAcquisition {
+    /// A lease that is no longer current or authorized is released first, so it can never block or be inherited.
+    func acquireDevelopment(connection: UUID, page: BrowserPage, isAuthorized: @escaping () -> Bool) -> DevelopmentAcquisition {
+        releaseInvalidDevelopment()
+        guard !isClosed, liveView === page else { return .pageGone }
         if let owner = developmentOwner {
             return owner.connection == connection ? .alreadyOwned(owner) : .conflict
         }
-        guard !isClosed else { return .conflict }
         let owner = DevelopmentOwner(connection: connection, pageGeneration: pageGeneration, page: page)
-        owner.requestRelease = { [weak self, weak owner] reason in self?.releaseDevelopment(owner, reason: reason) }
+        owner.isAuthorized = isAuthorized
+        owner.requestRelease = { [weak self, weak owner] reason in
+            guard let owner else { return }
+            self?.releaseDevelopment(owner, reason: reason)
+        }
         developmentOwner = owner
         return .acquired(owner)
     }
 
     func developmentRelation(of connection: UUID) -> DevelopmentRelation {
+        releaseInvalidDevelopment()
         guard let owner = developmentOwner else { return .none }
         return owner.connection == connection ? .own : .other
     }
 
-    /// True while `owner` still holds this tab's lease for the page it was acquired for. Check after every suspension.
+    /// True while `owner` still holds this tab's lease for the live page it was acquired for. Check after every suspension.
     func isCurrent(_ owner: DevelopmentOwner) -> Bool {
         developmentOwner === owner && pageGeneration == owner.pageGeneration && !isClosed
+            && owner.page != nil && owner.page === liveView
     }
 
-    /// Releases `owner` (or whoever holds the lease when nil) and removes only what that owner applied.
-    func releaseDevelopment(_ owner: DevelopmentOwner? = nil, reason: DevelopmentReleaseReason) {
-        guard let current = developmentOwner, owner == nil || owner === current else { return }
+    /// True while `view` is still this tab's live page of `generation`. Unlike `page`, never materializes a view.
+    func isLive(_ view: BrowserPage, generation: Int) -> Bool {
+        !isClosed && liveView === view && pageGeneration == generation
+    }
+
+    /// Releases exactly `owner` and removes only what it applied; a different or newer lease is untouched.
+    func releaseDevelopment(_ owner: DevelopmentOwner, reason: DevelopmentReleaseReason) {
+        guard developmentOwner === owner else { return }
         developmentOwner = nil
-        current.release(reason)
+        owner.release(reason)
+    }
+
+    /// Tab lifecycle events (page replaced, tab closed) end whatever lease exists.
+    func releaseCurrentDevelopment(reason: DevelopmentReleaseReason) {
+        if let owner = developmentOwner { releaseDevelopment(owner, reason: reason) }
+    }
+
+    /// Releases the lease when its page was replaced, the tab closed, or its connection no longer has development access to the
+    /// current document. Runs from native events (page transition, navigation commit, policy change) and again at every acquire.
+    func releaseInvalidDevelopment() {
+        guard let owner = developmentOwner else { return }
+        if !isCurrent(owner) {
+            releaseDevelopment(owner, reason: isClosed ? .tabClosed : .engineReplaced)
+        } else if !owner.isAuthorized() {
+            releaseDevelopment(owner, reason: .documentDenied)
+        }
+    }
+
+    /// A new document committed: an unauthorized one ends the lease, otherwise capture follows the document.
+    func developmentDocumentChanged() {
+        releaseInvalidDevelopment()
+        developmentOwner?.diagnostics?.documentMayHaveChanged()
     }
 }

@@ -399,6 +399,94 @@ struct PageInteractionTests {
         #expect(await js(view, "window.lastKey") as? String == "ArrowDown")
         if case .failure(let failure) = await PageDriver.screenshot(in: view) { Issue.record("screenshot failed: \(failure)") }
     }
+
+    /// Native, not run by the headless component package. A ref inside a same-origin iframe is captured where it really is:
+    /// through the frame's border and padding, and only the part the frame shows, never the neighbouring page.
+    @Test func anElementInsideAnIframeIsCroppedThroughTheFrameGeometry() async {
+        let view = await page(
+            """
+            <iframe id='f' style='position:absolute;left:30px;top:40px;width:200px;height:100px;border:5px solid black;padding:20px'
+              srcdoc="<body style='margin:0'><button style='position:absolute;left:10px;top:12px;width:60px;height:24px'>Go</button><button style='position:absolute;left:180px;top:12px;width:60px;height:24px'>Edge</button></body>"></iframe>
+            """)
+        let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderBack(nil)
+        defer { window.contentView = nil; window.close() }
+        var loaded = false
+        for _ in 0..<50 where !loaded {
+            loaded = await js(view, "!!document.getElementById('f').contentDocument?.querySelector('button')") as? Bool == true
+            if !loaded { try? await Task.sleep(for: .milliseconds(100)) }
+        }
+        _ = await PageDriver.snapshot(view)
+        // The frame's content box starts at its border box (30, 40) plus 5 px border plus 20 px padding.
+        func check(_ ref: Int, _ expected: CGRect) async {
+            switch await PageDriver.screenshot(.element(ref: ref), in: view) {
+            case .success(let capture):
+                #expect(abs(capture.bounds.minX - expected.minX) <= 0.5 && abs(capture.bounds.minY - expected.minY) <= 0.5, "\(capture.bounds)")
+                #expect(abs(capture.bounds.width - expected.width) <= 0.5 && abs(capture.bounds.height - expected.height) <= 0.5, "\(capture.bounds)")
+            case .failure(let failure):
+                Issue.record("ref \(ref): \(failure)")
+            }
+        }
+        await check(1, CGRect(x: 65, y: 77, width: 60, height: 24))
+        await check(2, CGRect(x: 235, y: 77, width: 20, height: 24))
+    }
+
+    /// Native, not run by the headless component package. A key is never reported as delivered to a page that does not hold
+    /// keyboard focus.
+    @Test func aKeyIsRefusedWhenThePageIsNotTheFirstResponder() async throws {
+        let view = await page("<input aria-label='Input' onkeydown='window.lastKey=event.key'>")
+        let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderBack(nil)
+        defer { window.contentView = nil; window.close() }
+        func event() throws -> NSEvent {
+            try #require(NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, characters: "a", charactersIgnoringModifiers: "a", isARepeat: false, keyCode: 0))
+        }
+        #expect(window.makeFirstResponder(nil))
+        #expect(!view.sendKeyEvent(try event()))
+        #expect(window.makeFirstResponder(view))
+        #expect(view.sendKeyEvent(try event()))
+    }
+
+    /// Native, not run by the headless component package. A non-interactive element that only `findElements` registered
+    /// is captured under development access and refused otherwise; control refs keep working without it; a vanished
+    /// element stays stale rather than reading as a permission failure.
+    @Test func foundOnlyElementsNeedDevelopmentAccessToBeCaptured() async throws {
+        let view = await page("<div id='box' style='width:80px;height:30px;background:red'>Box</div><button>Go</button>")
+        let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderBack(nil)
+        defer { window.contentView = nil; window.close() }
+        let found = await PageDriver.findElements(selector: "#box", offset: 0, limit: 5, in: view)
+        let ref = try #require(found.components(separatedBy: "\"r\":").dropFirst().first.flatMap { Int($0.prefix { $0.isNumber }) }, "\(found)")
+        #expect(await PageDriver.screenshot(.element(ref: ref), in: view).failure == .needsDevelopment)
+        if case .failure(let failure) = await PageDriver.screenshot(.element(ref: ref), developmentAllowed: { true }, in: view) {
+            Issue.record("development capture failed: \(failure)")
+        }
+        // Access dropping during the capture is caught before the pixels are returned.
+        var asked = 0
+        let dropped = await PageDriver.screenshot(.element(ref: ref), developmentAllowed: { asked += 1; return asked == 1 }, in: view)
+        #expect(dropped.failure == .needsDevelopment)
+        _ = await js(view, "document.getElementById('box').remove(); true")
+        #expect(await PageDriver.screenshot(.element(ref: ref), developmentAllowed: { true }, in: view).failure == .stale)
+    }
+
+    @Test func aControlRefIsCapturedWithoutDevelopmentAccess() async {
+        let view = await page("<button style='width:80px;height:30px'>Go</button>")
+        let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderBack(nil)
+        defer { window.contentView = nil; window.close() }
+        _ = await PageDriver.snapshot(view)
+        if case .failure(let failure) = await PageDriver.screenshot(.element(ref: 1), in: view) { Issue.record("control capture failed: \(failure)") }
+    }
 }
 
 extension PageInteractionTests {

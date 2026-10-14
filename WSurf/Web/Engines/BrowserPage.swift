@@ -439,13 +439,21 @@ final class BrowserPage: NSView {
         }
     }
 
-    /// True only when the engine's responder was actually invoked.
+    /// True when `responder` is this page's engine view or one of its descendants.
+    func ownsResponder(_ responder: NSResponder?) -> Bool {
+        guard let webKit else { return chromium?.ownsResponder(responder) == true }
+        return responder === webKit || (responder as? NSView)?.isDescendant(of: webKit) == true
+    }
+
+    /// True only when the engine's own responder held keyboard focus and was invoked. A key for a page that is not the
+    /// first responder is dropped, never reported as delivered.
     func sendKeyEvent(_ event: NSEvent) -> Bool {
-        if let webKit {
+        if webKit != nil {
+            guard let responder = window?.firstResponder, ownsResponder(responder) else { return false }
             if event.type == .keyUp {
-                webKit.keyUp(with: event)
+                responder.keyUp(with: event)
             } else {
-                webKit.keyDown(with: event)
+                responder.keyDown(with: event)
             }
             return true
         }

@@ -192,6 +192,74 @@ struct MCPDevelopmentOwnershipTests {
         #expect(status(try await call(subject, "readConsole", tab)) == "invalidInput")
     }
 
+    // MARK: Lease lifecycle against the tab
+
+    @Test func aLeaseEndsWhenItsPageIsReplacedAndNoLeaseIsGrantedOnAReplacedPage() async throws {
+        let (server, _, tab) = try await fixture()
+        defer { _ = server }
+        let outgoing = tab.page
+        guard case .acquired(let owner) = tab.acquireDevelopment(connection: UUID(), page: outgoing, isAuthorized: { true }) else {
+            Issue.record("the first acquisition must succeed")
+            return
+        }
+        var reason: DevelopmentReleaseReason?
+        owner.onRelease { reason = $0 }
+        tab.liveView = nil
+        #expect(reason == .engineReplaced)
+        #expect(tab.developmentOwner == nil)
+        guard case .pageGone = tab.acquireDevelopment(connection: UUID(), page: outgoing, isAuthorized: { true }) else {
+            Issue.record("a replaced page must not be leased")
+            return
+        }
+    }
+
+    @Test func anIdleLeaseEndsWhenItsConnectionLosesAccess() async throws {
+        let (server, _, tab) = try await fixture()
+        defer { _ = server }
+        var allowed = true
+        guard case .acquired = tab.acquireDevelopment(connection: UUID(), page: tab.page, isAuthorized: { allowed }) else {
+            Issue.record("the first acquisition must succeed")
+            return
+        }
+        allowed = false
+        tab.assistantAccess.set(.readOnly)
+        #expect(tab.developmentOwner == nil, "a policy change releases a lease that applied nothing")
+    }
+
+    @Test func aNavigationOutsideTheGrantEndsTheLeaseAtCommit() async throws {
+        let (server, _, tab) = try await fixture()
+        defer { _ = server }
+        let other = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><title>Other</title>")])
+        let granted = try server.url().port
+        guard case .acquired = tab.acquireDevelopment(
+            connection: UUID(), page: tab.page, isAuthorized: { [weak tab] in tab?.page.url?.port == granted })
+        else {
+            Issue.record("the first acquisition must succeed")
+            return
+        }
+        tab.page.load(URLRequest(url: try other.url()))
+        #expect(await PageSettle.untilIdle(tab.page))
+        #expect(tab.developmentOwner == nil)
+    }
+
+    @Test func aReleasedLeaseCanNeverReleaseANewerOne() async throws {
+        let (server, _, tab) = try await fixture()
+        defer { _ = server }
+        guard case .acquired(let first) = tab.acquireDevelopment(connection: UUID(), page: tab.page, isAuthorized: { true }) else {
+            Issue.record("the first acquisition must succeed")
+            return
+        }
+        tab.releaseDevelopment(first, reason: .reset)
+        guard case .acquired(let second) = tab.acquireDevelopment(connection: UUID(), page: tab.page, isAuthorized: { true }) else {
+            Issue.record("the slot must be free after a release")
+            return
+        }
+        tab.releaseDevelopment(first, reason: .documentDenied)
+        first.requestRelease?(.documentDenied)
+        #expect(tab.developmentOwner === second)
+        #expect(tab.isCurrent(second))
+    }
+
     @Test func catalogBoundsReadsAndPaging() throws {
         func entry(_ name: String) throws -> MCPToolCatalog.Entry { try #require(MCPToolCatalog.entries.first { $0.name == name }) }
         let tab: Value = .string(UUID().uuidString)

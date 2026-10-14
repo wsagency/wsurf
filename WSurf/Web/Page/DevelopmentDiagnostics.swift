@@ -8,17 +8,30 @@ import WebKit
 /// Console and network capture for one development lease. Nothing is installed or recorded until `start()`, and `stop()`
 /// removes everything `start()` installed. Chromium subscribes to events its DevTools session already receives; WebKit gets a
 /// hook injected into this page's current document only (never a user script on the shared content controller).
+///
+/// The capture follows the document from native boundaries, not from reads: the owner calls `documentMayHaveChanged()` when
+/// a navigation commits, WebKit then waits for the new document's frame registration (its native nonce) and attaches the
+/// hook, and `sync()` on a read is only the safety net.
 @MainActor
 final class DevelopmentDiagnostics {
-    private static let handlerName = "wsurfDiagnostics"
-
     let buffer: PageDiagnostics.Buffer
     private weak var page: BrowserPage?
     private weak var owner: DevelopmentOwner?
     private let mapper = ChromiumDiagnosticsMapper()
+    /// Unique per capture. The controller registration can be shared with sibling views and other captures, so a capture
+    /// may only ever remove a registration whose name it alone owns.
+    private let handlerName = "wsurfDiag" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+    /// The current install's secret. A message is accepted only when it carries it.
     private var token = ""
+    /// DOM event name of the latest install: the single address `stop()` and a superseding install tear down.
+    private var event: String?
+    /// The document (registry nonce) the live hook was verified against. Nil: no hook is known to be attached.
+    private var hookDocumentID: String?
+    private var handlerRegistered = false
+    /// Single flight: at most one WebKit follow-up runs; it re-reads the document after each await.
+    private var following: Task<Void, Never>?
     private var stopped = false
-    /// Events before the current capture, and between a navigation and re-attachment, are never available.
+    /// Document changes this capture followed (each one cleared the buffer and started a new epoch).
     private(set) var reattachments = 0
 
     init?(owner: DevelopmentOwner, page: BrowserPage, tabID: String) {
@@ -40,8 +53,16 @@ final class DevelopmentDiagnostics {
         var gaps = ["Nothing before startDiagnostics is available.", "Header values, bodies, cookies and object contents are never captured."]
         if engine == "chromium" {
             gaps.append("Subframes, workers and extension worlds are not captured.")
+            gaps.append(
+                "Requests still in flight when the document changes are dropped unless they belong to the new document, and the redirect hops of a main-frame navigation that happen before its document commits are not recorded (only the final request is).")
         } else {
-            gaps.append("After a navigation the hook is re-attached on the next read; earlier events of the new document, workers, iframes and resource loads are not captured.")
+            gaps.append(
+                "After a navigation commits, the hook attaches once the new document's frame registration completes; console messages, errors, fetch and XMLHttpRequest calls before that are never captured, and the previous document's records are discarded.")
+            gaps.append(
+                "Console objects, errors and proxies are not read and appear as [object]. fetch reports a URL only for a string URL argument, and a method only for fetch(url) without an init (GET); a Request, URL or RequestInit argument is not read, so its method or URL is absent (unknown). XMLHttpRequest reports method and URL when passed as strings. Workers, iframes and resource loads are not captured.")
+            if hookDocumentID != buffer.documentID {
+                gaps.append("The hook is not attached to the current document (its frame registration is pending or the install failed); events are being missed until it attaches.")
+            }
         }
         return gaps
     }
@@ -54,52 +75,60 @@ final class DevelopmentDiagnostics {
             mapper.reset()
             chromium.devTools.diagnosticsSink = { [weak self] method, params in self?.receive(method: method, params: params) }
         } else {
-            await installHook(on: page)
+            await follow()?.value
         }
     }
 
     func stop() {
         guard !stopped else { return }
         stopped = true
+        following = nil
         guard let page else { return }
         page.chromium?.devTools.diagnosticsSink = nil
-        if page.webKit != nil {
-            page.removeScriptMessageHandler(name: Self.handlerName, in: PageAutomationGuard.world)
-            Task { [weak page] in
-                _ = try? await page?.evaluateJavaScript(
-                    "window.__wsurfDiagOff && window.__wsurfDiagOff();", in: nil, contentWorld: PageAutomationGuard.world)
-            }
-        }
+        guard let webKit = page.webKit else { return }
+        // Synchronous and ordered after any hook script this capture already issued, so a hook still being installed is
+        // torn down too (its install rechecks `stopped` and never issues the relay). It needs neither the relay nor a
+        // content-world global.
+        if let event { Self.tearDown(event, in: webKit) }
+        guard handlerRegistered else { return }
+        page.removeScriptMessageHandler(name: handlerName, in: PageAutomationGuard.world)
+        webKit.configuration.userContentController.removeScriptMessageHandler(forName: handlerName, contentWorld: PageAutomationGuard.world)
     }
 
-    /// Follows the document: a new document clears the buffer (new epoch, old cursors invalid) and, on WebKit, re-attaches the
-    /// hook. Returns false when the new document is no longer authorized, after releasing the lease.
+    /// A navigation committed (called by the owning tab): follow the new document now instead of at the next read. Chromium
+    /// adopts it immediately; WebKit attaches the hook as soon as the new main frame is registered.
+    func documentMayHaveChanged() {
+        _ = follow()
+    }
+
+    /// Safety net for reads: brings the capture to the page's current document. Returns false when the lease is gone or the
+    /// new document is no longer authorized (the lease is released first).
     func sync() async -> Bool {
+        await follow()?.value
+        return !stopped
+    }
+
+    /// Binds the capture to the page's current document. A new document clears the buffer (new epoch, old cursors invalid)
+    /// and the Chromium request correlation (stale in-flight entries and the loss count never carry over). A nil identity is
+    /// pending, not synced. Returns false when stopped or when the new document is denied (the lease is released first).
+    private func adoptCurrentDocument() -> Bool {
         guard !stopped, let page, let owner else { return false }
-        guard let current = page.mainDocumentID else { return true }
-        guard current != buffer.documentID else { return true }
+        guard let current = page.mainDocumentID, current != buffer.documentID else { return true }
         guard owner.isAuthorized() else {
             owner.requestRelease?(.documentDenied)
+            stop()
             return false
         }
         buffer.reset(documentID: current)
+        mapper.reset(keeping: current)
         reattachments += 1
-        if page.webKit != nil { await installHook(on: page) }
-        return !stopped
+        return true
     }
 
     // MARK: Chromium
 
     private func receive(method: String, params: [String: Any]) {
-        guard !stopped, let chromium = page?.chromium, let current = page?.mainDocumentID else { return }
-        if current != buffer.documentID {
-            guard owner?.isAuthorized() == true else {
-                owner?.requestRelease?(.documentDenied)
-                return
-            }
-            buffer.reset(documentID: current)
-            reattachments += 1
-        }
+        guard !stopped, let chromium = page?.chromium, page?.mainDocumentID != nil, adoptCurrentDocument() else { return }
         guard let entry = mapper.entry(method: method, params: params), belongsToDocument(entry, chromium.devTools) else { return }
         buffer.append(
             stream: entry.stream, timestamp: Date(), documentID: buffer.documentID, fields: entry.fields, truncated: entry.truncated)
@@ -122,127 +151,98 @@ final class DevelopmentDiagnostics {
 
     // MARK: WebKit
 
-    private func installHook(on page: BrowserPage) async {
-        token = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        let event = "wsurf-diag-" + token
-        let expected = token
-        page.addScriptMessageHandler(name: Self.handlerName, in: PageAutomationGuard.world) { [weak self] message in
-            self?.receive(message: message, expectedToken: expected)
+    private func follow() -> Task<Void, Never>? {
+        guard !stopped, let page else { return nil }
+        guard page.webKit != nil else {
+            _ = adoptCurrentDocument()
+            return nil
         }
-        _ = try? await page.evaluateJavaScript(Self.pageHook(event: event), in: nil, contentWorld: .page)
-        _ = try? await page.evaluateJavaScript(
-            Self.relay(event: event, token: token, handler: Self.handlerName), in: nil, contentWorld: PageAutomationGuard.world)
+        if let following { return following }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await followWebKit()
+        }
+        following = task
+        return task
     }
 
-    private func receive(message: BrowserScriptMessage, expectedToken: String) {
-        guard !stopped, token == expectedToken, message.frameInfo.isMainFrame, let page, page.mainDocumentID == buffer.documentID,
-            let body = message.body as? [String: Any], body["t"] as? String == expectedToken,
+    /// Runs until the hook is attached to the document the page is on, or that document's registration is pending. The
+    /// clearing of `following` follows the last check without a suspension, so an event arriving meanwhile is never lost.
+    /// Each pass is gated on a document change or a successful wait, so a failing install is not retried in a loop: the
+    /// next commit or read retries it.
+    private func followWebKit() async {
+        defer { following = nil }
+        while adoptCurrentDocument(), let page {
+            guard let current = page.mainDocumentID else {
+                awaitRegistration(on: page)
+                return
+            }
+            if hookDocumentID == current { return }
+            await installHook(on: page, document: current)
+            guard !stopped, page.mainDocumentID != current else { return }
+        }
+    }
+
+    /// The new document's own readiness promise resolves once native acknowledged its main frame (the nonce
+    /// `mainDocumentID` reads). Not part of the single flight: a document that dies before resolving ends the wait without
+    /// blocking the next one, and a wait that ends without a registered frame does not re-trigger itself.
+    private func awaitRegistration(on page: BrowserPage) {
+        guard let webKit = page.webKit else { return }
+        Task { [weak self, weak webKit] in
+            let ready = try? await webKit?.callAsyncJavaScript(
+                "return (await globalThis.\(PageFrameRegistry.readyName)) === true;", in: nil, contentWorld: PageAutomationGuard.world)
+            guard let self, !stopped, ready as? Bool == true, self.page?.mainDocumentID != nil else { return }
+            documentMayHaveChanged()
+        }
+    }
+
+    /// Attaches the hook to `document`. Every await is followed by a recheck of the lease and the document; a superseded
+    /// install tears down its own hook and leaves any newer state alone.
+    private func installHook(on page: BrowserPage, document: String) async {
+        guard let webKit = page.webKit else { return }
+        // A hook of an earlier install can still be alive in this document (history restore): retire it first.
+        if let previous = event { Self.tearDown(previous, in: webKit) }
+        let mine = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        token = mine
+        let name = "wsurf-diag-" + mine
+        event = name
+        hookDocumentID = nil
+        if !handlerRegistered {
+            handlerRegistered = true
+            page.addScriptMessageHandler(name: handlerName, in: PageAutomationGuard.world) { [weak self] message in
+                self?.receive(message: message)
+            }
+        }
+        func current() -> Bool { !stopped && token == mine && page.mainDocumentID == document }
+        guard await run(PageDiagnosticsHook.pageHook(event: name), in: .page, on: webKit), current() else {
+            Self.tearDown(name, in: webKit)
+            return
+        }
+        guard await run(PageDiagnosticsHook.relay(event: name, token: mine, handler: handlerName), in: PageAutomationGuard.world, on: webKit),
+            current()
+        else {
+            Self.tearDown(name, in: webKit)
+            return
+        }
+        hookDocumentID = document
+    }
+
+    /// Native-owned housekeeping, not agent automation: it goes straight to the web view so the task-local automation guard
+    /// of whoever happened to trigger it can neither block an install nor leave a hook behind.
+    private func run(_ script: String, in world: WKContentWorld, on webKit: WKWebView) async -> Bool {
+        (try? await webKit.evaluateJavaScript(script, in: nil, contentWorld: world)) as? Bool == true
+    }
+
+    private static func tearDown(_ event: String, in webKit: WKWebView) {
+        webKit.evaluateJavaScript(PageDiagnosticsHook.off(event: event), in: nil, in: PageAutomationGuard.world, completionHandler: nil)
+    }
+
+    private func receive(message: BrowserScriptMessage) {
+        guard !stopped, message.frameInfo.isMainFrame, let page, page.mainDocumentID == buffer.documentID,
+            let body = message.body as? [String: Any], body["t"] as? String == token,
             let entry = PageDiagnosticsHook.entry(from: body)
         else { return }
         buffer.append(
             stream: entry.stream, timestamp: Date(), documentID: buffer.documentID, fields: entry.fields, truncated: entry.truncated)
-    }
-
-    /// Runs in the page world. Reports through a DOM event (an isolated-world relay forwards it to native), preserves the
-    /// wrapped call's behavior and result, and restores every original when the `-off` event arrives.
-    private static func pageHook(event: String) -> String {
-        """
-        (() => {
-          const EV = "\(event)";
-          const dispatch = document.dispatchEvent.bind(document), CE = CustomEvent, stringify = JSON.stringify;
-          const emit = o => { try { dispatch(new CE(EV, { detail: stringify(o) })); } catch (e) {} };
-          const restore = [];
-          const wrap = (obj, key, make) => {
-            const orig = obj[key];
-            if (typeof orig !== 'function') return;
-            const wrapped = make(orig);
-            try { obj[key] = wrapped; restore.push(() => { if (obj[key] === wrapped) obj[key] = orig; }); } catch (e) {}
-          };
-          const text = v => {
-            try {
-              switch (typeof v) {
-                case 'string': return v;
-                case 'number': case 'boolean': case 'undefined': return String(v);
-                case 'bigint': return v + 'n';
-                case 'function': return '[function]';
-                case 'symbol': return '[symbol]';
-              }
-              if (v === null) return 'null';
-              if (v instanceof Error) return String(v.name) + ': ' + String(v.message).split('\\n')[0];
-              return '[object]';
-            } catch (e) { return '[unreadable]'; }
-          };
-          for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
-            wrap(console, level, orig => function (...args) {
-              try { emit({ k: 'console', level, text: args.slice(0, 16).map(text).join(' ').slice(0, 4096) }); } catch (e) {}
-              return orig.apply(this, args);
-            });
-          }
-          const onError = e => {
-            if (!(e instanceof ErrorEvent)) return;
-            emit({ k: 'console', level: 'error', text: String(e.message).slice(0, 4096), url: String(e.filename || ''), line: e.lineno | 0 });
-          };
-          const onRejection = e => emit({ k: 'console', level: 'error', text: ('Unhandled rejection: ' + text(e.reason)).slice(0, 4096) });
-          window.addEventListener('error', onError, true);
-          window.addEventListener('unhandledrejection', onRejection, true);
-          const net = (via, method, url, start, status, outcome) =>
-            emit({ k: 'net', via, method, url, status, ms: performance.now() - start, outcome });
-          wrap(window, 'fetch', orig => function (input, init) {
-            const start = performance.now();
-            let method = 'GET', url = '';
-            try {
-              const req = input instanceof Request ? input : null;
-              method = String((init && init.method) || (req && req.method) || 'GET');
-              url = String(req ? req.url : input);
-            } catch (e) {}
-            // Returning a derived promise keeps the page's own rejection (and unhandledrejection) semantics intact.
-            return orig.apply(this, arguments).then(
-              r => { net('fetch', method, url, start, r.status, 'completed'); return r; },
-              err => { net('fetch', method, url, start, null, err && err.name === 'AbortError' ? 'aborted' : 'failed'); throw err; });
-          });
-          const K = Symbol();
-          const proto = XMLHttpRequest.prototype;
-          wrap(proto, 'open', orig => function (method, url) {
-            try { this[K] = { method: String(method), url: String(url) }; } catch (e) {}
-            return orig.apply(this, arguments);
-          });
-          wrap(proto, 'send', orig => function () {
-            const state = this[K];
-            if (state && !state.watched) {
-              state.watched = true;
-              const start = performance.now();
-              this.addEventListener('abort', () => { state.aborted = true; });
-              this.addEventListener('loadend', () =>
-                net('xhr', state.method, state.url, start, this.status || null, this.status ? 'completed' : state.aborted ? 'aborted' : 'failed'));
-            }
-            return orig.apply(this, arguments);
-          });
-          const off = () => {
-            document.removeEventListener(EV + '-off', off);
-            window.removeEventListener('error', onError, true);
-            window.removeEventListener('unhandledrejection', onRejection, true);
-            restore.forEach(f => f());
-          };
-          document.addEventListener(EV + '-off', off);
-        })();
-        """
-    }
-
-    /// Runs in the isolated world: forwards the page hook's events to the native handler and tears the hook down.
-    private static func relay(event: String, token: String, handler: String) -> String {
-        """
-        (() => {
-          if (window.__wsurfDiagOff) window.__wsurfDiagOff();
-          const channel = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers["\(handler)"];
-          if (!channel) return;
-          const forward = e => { try { const body = JSON.parse(e.detail); body.t = "\(token)"; channel.postMessage(body); } catch (err) {} };
-          document.addEventListener("\(event)", forward, true);
-          window.__wsurfDiagOff = () => {
-            document.removeEventListener("\(event)", forward, true);
-            document.dispatchEvent(new CustomEvent("\(event)-off"));
-            delete window.__wsurfDiagOff;
-          };
-        })();
-        """
     }
 }

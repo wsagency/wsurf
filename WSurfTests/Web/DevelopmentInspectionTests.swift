@@ -21,7 +21,9 @@ final class RuntimeHarness: NSObject, WKNavigationDelegate {
     private var loaded: CheckedContinuation<Void, Never>?
 
     init(html: String, size: CGSize = CGSize(width: 800, height: 600)) async {
-        webView = WKWebView(frame: CGRect(origin: .zero, size: size))
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()  // a fixture must never touch the user's persistent web data
+        webView = WKWebView(frame: CGRect(origin: .zero, size: size), configuration: configuration)
         super.init()
         webView.navigationDelegate = self
         await withCheckedContinuation { continuation in
@@ -64,6 +66,21 @@ final class RuntimeHarness: NSObject, WKNavigationDelegate {
     static func literal(_ string: String) throws -> String {
         String(decoding: try JSONEncoder().encode(string), as: UTF8.self)
     }
+}
+
+/// The size of what a client receives for a runtime result: re-serialised by Swift (sorted keys, `/` escaped), labelled like
+/// the driver's output, and fenced like `AgentToolkit.untrusted`, which escapes `& < >` (`DevelopmentWireFenceTests` pins
+/// `wireFence` to the real function, which the pure component package cannot link).
+func wireFence(_ pageText: String) -> String {
+    let escaped = pageText.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+    return "<page-content untrusted=\"true\">\n\(escaped)\n</page-content>"
+}
+
+private func deliveredBytes(_ output: RuntimeHarness.Output, label: String) throws -> Int {
+    var object = output.object
+    object["observation"] = nil  // the driver replaces it with a trailing observationID line
+    let json = String(decoding: try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), as: UTF8.self)
+    return wireFence("\(label):\n\(json)\nobservationID: \(String(repeating: "x", count: 32))").utf8.count
 }
 
 @MainActor
@@ -387,6 +404,21 @@ struct DevelopmentFindElementsTests {
         #expect((item["cls"] as? [String] ?? []).count <= 5)
         #expect(result.raw.utf8.count < 4_096)
     }
+
+    /// Control characters become 6 bytes each and `& < > /` 2 to 5, so a character-bounded summary can be many times its size.
+    @Test func escapingHeavySummariesStopAtTheByteBudgetAndReportMore() async throws {
+        let control = String(repeating: "&#1;", count: 80)
+        let escaped = String(repeating: "&lt;&amp;&gt;/", count: 20)
+        let page = await RuntimeHarness(html: String(repeating: "<p class=row id=\"\(control)\">\(escaped)</p>", count: 100))
+        let result = try await page.find("p.row", offset: 0, limit: 100)
+        let items = try #require(result["items"] as? [[String: Any]])
+        #expect(items.count >= 1 && items.count < 100)
+        #expect(result["returned"] as? Int == items.count)
+        #expect(result["hasMore"] as? Bool == true)
+        #expect(try deliveredBytes(result, label: "ELEMENTS") <= 32 * 1_024)
+        let next = try await page.find("p.row", offset: items.count, limit: 100)
+        #expect((next["items"] as? [[String: Any]])?.isEmpty == false)
+    }
 }
 
 @MainActor
@@ -475,6 +507,21 @@ struct DevelopmentInspectTests {
         #expect(inspected["stale"] == nil)
     }
 
+    /// Budgets are measured on what the client receives (Swift re-serialisation and `untrusted` escaping), not on the page's raw JSON.
+    @Test func outputStaysUnderThirtyTwoKiBAfterSwiftEscaping() async throws {
+        let heavy = String(repeating: "&lt;&amp;&gt;/", count: 20)  // 80 characters; 300 bytes once delivered
+        let wide = String(repeating: "&lt;&amp;&gt;/", count: 30)  // 120 characters; 450 bytes once delivered
+        let attributes = (0..<40).map { "aria-a\($0)=\"\(wide)\"" }.joined(separator: " ")
+        let wrapper = "<div id=\"\(heavy)\" class=\"\(String(repeating: "&lt;&amp;&gt;/", count: 10)) \(String(repeating: "&amp;&lt;&gt;/", count: 10)) \(String(repeating: "&gt;&lt;&amp;/", count: 10))\">"
+        // Fourteen wrappers plus body and html are exactly the sixteen-ancestor cap, so any truncation seen here is the byte budget's.
+        let page = await RuntimeHarness(html: "\(String(repeating: wrapper, count: 14))<span id=leaf \(attributes)>x</span>\(String(repeating: "</div>", count: 14))")
+        let inspected = try await page.inspect(try await ref(page, "#leaf"))
+        #expect(inspected["stale"] == nil)
+        #expect(try deliveredBytes(inspected, label: "ELEMENT") <= 32 * 1_024)
+        // The runtime budgets the delivered size, so it sheds ancestors for this content.
+        #expect(inspected["ancestorsTruncated"] as? Bool == true)
+    }
+
     @Test func omitsSecretsAndRawContent() async throws {
         let page = await RuntimeHarness(html: """
             <form><input id=pw type=password name=password value="hunter2-secret" data-token="hunter2-secret">
@@ -510,5 +557,122 @@ struct DevelopmentInspectTests {
         #expect(scroll["clientHeight"] == 50)
         #expect((scroll["scrollHeight"] ?? 0) >= 400)
         #expect(scroll["scrollTop"] == 0)
+    }
+}
+
+/// The WebKit page hook (`PageDiagnosticsHook.pageHook`) in a real WKWebView page world: it describes nothing by running page
+/// code, preserves every wrapped call, and `off` gives back only what it still owns. Page code cannot be observed from the
+/// outside except through traps, so the fixture objects record every property access, conversion and trap into `__trap`.
+@MainActor
+struct PageDiagnosticsHookTests {
+    private static let event = "wsurf-diag-test"
+
+    private func json(_ page: RuntimeHarness, _ body: String) async throws -> [String: Any] {
+        let value = try await page.webView.callAsyncJavaScript(body, in: nil, contentWorld: .page)
+        let raw = try #require(value as? String)
+        return try #require(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+    }
+
+    @Test func hookRunsNoPageCodePreservesCallsAndOffRestoresOnlyItsOwnWrappers() async throws {
+        let event = Self.event
+        let page = await RuntimeHarness(html: "<p>hook</p>")
+        _ = try await json(page, """
+            window.__log = []; window.__trap = []; window.__fetchSelf = []; window.__fetchArgs = [];
+            window.__err = new TypeError('boom');
+            document.addEventListener("\(event)", e => window.__log.push(JSON.parse(e.detail)));
+            window.fetch = function (...a) {
+              window.__fetchSelf.push(this); window.__fetchArgs.push(a);
+              return a[0] === '/reject' ? Promise.reject(window.__err) : Promise.resolve(new Response('x', { status: 201 }));
+            };
+            window.__orig = { fetch: window.fetch, warn: console.warn, log: console.log };
+            return JSON.stringify({});
+            """)
+        let installed = try await page.webView.evaluateJavaScript(PageDiagnosticsHook.pageHook(event: event), in: nil, contentWorld: .page)
+        #expect(installed as? Bool == true)
+
+        let result = try await json(page, """
+            const trap = window.__trap;
+            const evil = { get name() { trap.push('name'); return 'n'; }, get message() { trap.push('message'); return 'm'; },
+              toString() { trap.push('toString'); return 's'; }, get constructor() { trap.push('constructor'); return Object; } };
+            const err = new Error('e');
+            Object.defineProperty(err, 'name', { get() { trap.push('err.name'); return 'E'; } });
+            Object.defineProperty(err, 'message', { get() { trap.push('err.message'); return 'M'; } });
+            const proxy = new Proxy({}, { get() { trap.push('get'); return 1; }, getPrototypeOf() { trap.push('proto'); return Object.prototype; },
+              has() { trap.push('has'); return true; }, ownKeys() { trap.push('keys'); return []; }, getOwnPropertyDescriptor() { trap.push('gopd'); } });
+            console.log('a', evil, err, proxy, 5, null, undefined, true, 7n);
+
+            const thisObj = { marker: 1 };
+            const init = { get method() { trap.push('init.method'); return 'POST'; } };
+            const plain = await fetch('/api/x');
+            const viaCall = await fetch.call(thisObj, '/api/y?token=s#f', init);
+            const request = new Request('https://other.test/r', { method: 'PUT' });
+            const viaRequest = await fetch(request);
+            let rejected = null;
+            try { await fetch('/reject'); } catch (e) { rejected = e; }
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('get', '/xhr/path?q=1#f');
+            xhr.send();
+            const done = new Promise(r => xhr.addEventListener('loadend', r));
+            xhr.abort();
+            await done;
+            let illegal = false;
+            try { XMLHttpRequest.prototype.open.call({}, 'GET', '/x'); } catch (e) { illegal = e instanceof TypeError; }
+
+            const args = window.__fetchArgs[1];
+            return JSON.stringify({
+              statuses: [plain.status, viaCall.status, viaRequest.status],
+              rejectedSame: rejected === window.__err,
+              thisPreserved: window.__fetchSelf[1] === thisObj,
+              argsPreserved: args.length === 2 && args[0] === '/api/y?token=s#f' && args[1] === init && window.__fetchArgs[2][0] === request,
+              illegalInvocationStillThrows: illegal,
+              trap: window.__trap.slice(),
+              log: window.__log,
+            });
+            """)
+        #expect(result["trap"] as? [String] == [], "page code ran: \(result["trap"] ?? "nil")")
+        #expect(result["statuses"] as? [Int] == [201, 201, 201])
+        #expect(result["rejectedSame"] as? Bool == true)
+        #expect(result["thisPreserved"] as? Bool == true)
+        #expect(result["argsPreserved"] as? Bool == true)
+        #expect(result["illegalInvocationStillThrows"] as? Bool == true)
+
+        let log = try #require(result["log"] as? [[String: Any]])
+        let console = try #require(log.first)
+        #expect(console["text"] as? String == "a [object] [object] [object] 5 null undefined true 7n")
+        let network = try log.filter { $0["k"] as? String == "net" }.map { try #require(PageDiagnosticsHook.entry(from: $0)) }
+        #expect(network.count == 5, "\(log)")
+        let fields = network.map(\.fields)
+        // A string URL without an init: the method is GET and the relative URL resolves against the document.
+        #expect(fields[0]["method"] == "GET" && fields[0]["url"] == "https://fixture.test/api/x" && fields[0]["status"] == 201)
+        // An init object or a Request is never read: method and/or URL are unknown, not guessed.
+        #expect(fields[1]["method"] == nil && fields[1]["url"] == "https://fixture.test/api/y")
+        #expect(fields[2]["method"] == nil && fields[2]["url"] == nil)
+        #expect(fields[3]["url"] == "https://fixture.test/reject" && fields[3]["outcome"] == "failed" && fields[3]["status"] == nil)
+        #expect(fields[4]["method"] == "GET" && fields[4]["url"] == "https://fixture.test/xhr/path" && fields[4]["outcome"] == "aborted")
+
+        // The page wraps over the hook's console.log; off must not clobber that, only stop reporting through it.
+        _ = try await json(page, """
+            const hookLog = console.log;
+            window.__pageWrap = function (...a) { return hookLog.apply(this, a); };
+            console.log = window.__pageWrap;
+            window.__before = window.__log.length;
+            return JSON.stringify({});
+            """)
+        let off = try await page.webView.evaluateJavaScript(PageDiagnosticsHook.off(event: event), in: nil, contentWorld: .page)
+        #expect(off as? Bool == true)
+        let after = try await json(page, """
+            console.log('quiet'); console.warn('quiet'); await fetch('/after');
+            return JSON.stringify({
+              pageWrapperKept: console.log === window.__pageWrap,
+              warnRestored: console.warn === window.__orig.warn,
+              fetchRestored: window.fetch === window.__orig.fetch,
+              silent: window.__log.length === window.__before,
+            });
+            """)
+        #expect(after["pageWrapperKept"] as? Bool == true)
+        #expect(after["warnRestored"] as? Bool == true)
+        #expect(after["fetchRestored"] as? Bool == true)
+        #expect(after["silent"] as? Bool == true)
     }
 }

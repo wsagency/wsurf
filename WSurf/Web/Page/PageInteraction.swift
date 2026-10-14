@@ -157,19 +157,24 @@ extension PageDriver {
 
     /// One capture path for the viewport, an element or a CSS-pixel region. Sensitive filled fields anywhere on the page
     /// refuse the capture, checked before and after, even for a crop. Never scrolls, stitches or changes the viewport.
-    static func screenshot(_ target: ScreenshotTarget = .viewport, in view: BrowserPage) async -> Result<ScreenshotCapture, ScreenshotFailure> {
+    /// `developmentAllowed` is asked before any work, after each await and just before pixels are returned: an element
+    /// registered only by `findElements` is captured while it answers true, never otherwise. Ordinary control refs, the
+    /// viewport and regions never ask for it.
+    static func screenshot(
+        _ target: ScreenshotTarget = .viewport, developmentAllowed: () -> Bool = { false }, in view: BrowserPage
+    ) async -> Result<ScreenshotCapture, ScreenshotFailure> {
         guard PageAutomationGuard.allowsExecution else { return .failure(.stale) }
         var ref = 0
         switch target {
         case .viewport:
             break
         case .element(let requested):
-            // Frame-relative geometry is not mapped to the view, so crops are for the top document only.
-            guard selectedFrame == nil else { return .failure(.invalidGeometry) }
-            guard await validateObservation(in: view, ref: requested) else { return .failure(.stale) }
+            // A selected frame measures in its own viewport, which the page's geometry cannot be mapped back from.
+            guard selectedFrame == nil else { return .failure(.unmappableFrame) }
+            guard await validateObservation(in: view, ref: requested, inspectable: true) else { return .failure(.stale) }
             ref = requested
         case .region:
-            guard selectedFrame == nil else { return .failure(.invalidGeometry) }
+            guard selectedFrame == nil else { return .failure(.unmappableFrame) }
         }
         let document = view.url
         let probe = scripted(
@@ -178,21 +183,84 @@ extension PageDriver {
               safe: !Array.from(R.walk(document.body)).some(el => R.isSensitiveField(el) && (el.value || el.isContentEditable && el.textContent)) };
             const ref = \(ref);
             if (ref) {
-              const el = R.matchesRef(ref) ? window.__wsurfRefs[ref - 1] : null;
+              const el = R.inspectableRef(ref) ? window.__wsurfRefs[ref - 1] : null;
               if (!el || !el.isConnected) return JSON.stringify({ stale: true });
+              out.foundOnly = R.isFoundOnly(ref);
+              const r = (x, y, width, height) => ({ x, y, width, height });
+              const win = node => node.ownerDocument.defaultView, up = node => node.parentElement || node.getRootNode().host;
+              // False when the node or an ancestor is rotated, flipped or skewed: its box is then not a rectangle to clip with.
+              const aligned = node => {
+                for (let n = node; n; n = up(n)) {
+                  const style = win(n).getComputedStyle(n), m = style.transform && style.transform !== 'none' ? new DOMMatrix(style.transform) : null;
+                  if ((style.rotate || 'none') !== 'none' || m && (!m.is2D || m.a <= 0 || m.d <= 0 || Math.abs(m.b) > 1e-6 || Math.abs(m.c) > 1e-6)) return false;
+                }
+                return true;
+              };
+              // Padding boxes (what an `overflow` container shows) of the ancestors that cut `node` off, in its own viewport.
+              // An absolute or fixed node escapes the containers that are not its containing block.
+              const clipsOf = node => {
+                const view = win(node), clips = [];
+                let position = view.getComputedStyle(node).position;
+                for (let a = up(node); a; a = up(a)) {
+                  const s = view.getComputedStyle(a), block = s.transform !== 'none' || s.filter !== 'none';
+                  if (position === 'fixed' ? !block : position === 'absolute' && s.position === 'static' && !block) continue;
+                  position = s.position;
+                  const rootScroller = a === view.document.body && view.getComputedStyle(view.document.documentElement).overflow === 'visible';
+                  if ((s.overflowX === 'visible' && s.overflowY === 'visible') || s.display === 'inline' || s.display === 'contents' || rootScroller) continue;
+                  if (!aligned(a)) out.unmappable = true;
+                  const b = a.getBoundingClientRect(), sx = a.offsetWidth ? b.width / a.offsetWidth : 1, sy = a.offsetHeight ? b.height / a.offsetHeight : 1;
+                  clips.push(r(b.x + a.clientLeft * sx, b.y + a.clientTop * sy, a.clientWidth * sx, a.clientHeight * sy));
+                }
+                return clips;
+              };
               const box = el.getBoundingClientRect();
-              let x = box.x, y = box.y;
-              for (let w = el.ownerDocument.defaultView; w && w.frameElement; w = w.parent) {
-                const frame = w.frameElement, outer = frame.getBoundingClientRect();
-                x += outer.x + frame.clientLeft; y += outer.y + frame.clientTop;
+              out.rect = r(box.x, box.y, box.width, box.height);
+              out.clips = clipsOf(el);
+              out.frames = [];
+              let w = win(el);
+              for (; w && w !== window && w.frameElement; w = w.parent) {
+                const frame = w.frameElement, own = win(frame).getComputedStyle(frame);
+                const outer = frame.getBoundingClientRect(), pad = name => parseFloat(own[name]) || 0;
+                out.frames.push({ border: r(outer.x, outer.y, outer.width, outer.height), layout: r(0, 0, frame.offsetWidth, frame.offsetHeight),
+                  content: r(frame.clientLeft + pad('paddingLeft'), frame.clientTop + pad('paddingTop'),
+                    frame.clientWidth - pad('paddingLeft') - pad('paddingRight'), frame.clientHeight - pad('paddingTop') - pad('paddingBottom')),
+                  aligned: aligned(frame), clips: clipsOf(frame) });
               }
-              out.rect = { x, y, width: box.width, height: box.height };
+              if (w !== window) out.unmappable = true;
             }
             return JSON.stringify(out);
             """)
         guard let before = await evaluateJSON(probe, in: view), before["stale"] == nil else { return .failure(.stale) }
+        // An element only `findElements` registered is capturable under development access alone; that is decided first.
+        let foundOnly = before["foundOnly"] as? Bool == true
+        guard !(foundOnly && !developmentAllowed()) else { return .failure(.needsDevelopment) }
         guard before["safe"] as? Bool == true else { return .failure(.privacy) }
         func number(_ object: [String: Any]?, _ key: String) -> CGFloat? { (object?[key] as? NSNumber).map { CGFloat($0.doubleValue) } }
+        func rect(_ object: Any?) -> CGRect? {
+            let box = object as? [String: Any]
+            guard let x = number(box, "x"), let y = number(box, "y"), let w = number(box, "width"), let h = number(box, "height") else { return nil }
+            return CGRect(x: x, y: y, width: w, height: h)
+        }
+        /// The element's rect in the top viewport: an element inside same-origin iframes is measured in its own frame's
+        /// viewport and is carried out through every frame on its path.
+        func mapped(_ probe: [String: Any]) -> Result<CGRect, ScreenshotFailure> {
+            guard probe["unmappable"] as? Bool != true else { return .failure(.unmappableFrame) }
+            func rects(_ list: Any?) -> [CGRect]? {
+                let boxes = (list as? [Any] ?? []).map(rect)
+                return boxes.contains { $0 == nil } ? nil : boxes.compactMap { $0 }
+            }
+            guard let own = rect(probe["rect"]), let ownClips = rects(probe["clips"]) else { return .failure(.stale) }
+            var frames: [ScreenshotFrameBox] = []
+            for entry in probe["frames"] as? [[String: Any]] ?? [] {
+                guard let border = rect(entry["border"]), let layout = rect(entry["layout"]), let content = rect(entry["content"]),
+                    let clips = rects(entry["clips"])
+                else { return .failure(.stale) }
+                frames.append(
+                    ScreenshotFrameBox(border: border, layout: layout.size, content: content, axisAligned: entry["aligned"] as? Bool == true, clips: clips))
+            }
+            return ScreenshotGeometry.translate(own, clippedBy: ownClips, through: frames)
+        }
+        var placed: CGRect?
         guard let width = number(before, "vw"), let height = number(before, "vh") else { return .failure(.stale) }
         let viewport = CGSize(width: width, height: height)
         let css: CGRect
@@ -206,13 +274,14 @@ extension PageDriver {
             case .failure(let failure): return .failure(failure)
             }
         case .element:
-            let box = before["rect"] as? [String: Any]
-            guard let x = number(box, "x"), let y = number(box, "y"), let w = number(box, "width"), let h = number(box, "height") else {
-                return .failure(.stale)
-            }
-            switch ScreenshotGeometry.visibleBounds(ofElement: CGRect(x: x, y: y, width: w, height: h), inViewportCSS: viewport) {
-            case .success(let clipped): css = clipped
+            switch mapped(before) {
             case .failure(let failure): return .failure(failure)
+            case .success(let box):
+                placed = box
+                switch ScreenshotGeometry.visibleBounds(ofElement: box, inViewportCSS: viewport) {
+                case .success(let clipped): css = clipped
+                case .failure(let failure): return .failure(failure)
+                }
             }
         }
         let zoom = view.pageZoom
@@ -223,15 +292,17 @@ extension PageDriver {
             PageAutomationGuard.allowsExecution, view.url == document,
             let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), bitmap.pixelsWide > 0
         else { return .failure(.captureFailed) }
+        guard !(foundOnly && !developmentAllowed()) else { return .failure(.needsDevelopment) }
         guard let after = await evaluateJSON(probe, in: view), after["stale"] == nil, after["document"] as? String == before["document"] as? String else {
             return .failure(.stale)
         }
+        // Development access is checked again right before pixels leave, after the last await.
+        guard !((foundOnly || after["foundOnly"] as? Bool == true) && !developmentAllowed()) else { return .failure(.needsDevelopment) }
         guard after["safe"] as? Bool == true else { return .failure(.privacy) }
-        if case .element = target {
-            let box = after["rect"] as? [String: Any], first = before["rect"] as? [String: Any]
-            for key in ["x", "y", "width", "height"] {
-                guard let a = number(box, key), let b = number(first, key), abs(a - b) <= 0.5 else { return .failure(.stale) }
-            }
+        if let placed {
+            guard case .success(let now) = mapped(after),
+                [now.minX - placed.minX, now.minY - placed.minY, now.width - placed.width, now.height - placed.height].allSatisfy({ abs($0) <= 0.5 })
+            else { return .failure(.stale) }
         }
         guard let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return .failure(.captureFailed) }
         return .success(ScreenshotCapture(jpeg: jpeg, bounds: css, scale: CGFloat(bitmap.pixelsWide) / css.width))

@@ -39,7 +39,7 @@ extension BrowserPage {
             deviceAxes: Dictionary(uniqueKeysWithValues: axes.map { ($0, none) }),
             diagnostics: [
                 "console": .limited("console.log/info/warn/error/debug, uncaught errors and unhandled rejections of the current document, from a hook installed when capture starts."),
-                "network": .limited("fetch and XMLHttpRequest of the current document only; resource loads, WebSockets and workers are not observed."),
+                "network": .limited("fetch and XMLHttpRequest of the current document only; fetch reports a URL only for a string argument and a method only for fetch(url) without an init; resource loads, WebSockets and workers are not observed."),
             ])
     }
 
@@ -48,6 +48,17 @@ extension BrowserPage {
         let id = chromium.map { $0.devTools.framesByID.values.first { $0.isMainFrame }?.documentID }
             ?? PageFrameRegistry.shared.mainFrame(in: self)?.documentID
         return id?.isEmpty == false ? id : nil
+    }
+}
+
+extension BrowserPage {
+    private static let emulationLocks = NSMapTable<BrowserPage, DevelopmentEmulationLock>.weakToStrongObjects()
+
+    var emulationLock: DevelopmentEmulationLock {
+        if let lock = Self.emulationLocks.object(forKey: self) { return lock }
+        let lock = DevelopmentEmulationLock()
+        Self.emulationLocks.setObject(lock, forKey: self)
+        return lock
     }
 }
 
@@ -61,7 +72,14 @@ struct DevelopmentViewportState {
     func remove(from owner: DevelopmentOwner) {
         guard let page = owner.page else { return }
         if page.developmentViewport == size { page.developmentViewport = nil }
-        if device, let chromium = page.chromium { Task { await chromium.clearDeviceEmulation() } }
+        if device, let chromium = page.chromium {
+            let lock = page.emulationLock
+            Task {
+                await lock.acquire()
+                defer { lock.release() }
+                await chromium.clearDeviceEmulation()
+            }
+        }
     }
 }
 
@@ -117,15 +135,25 @@ extension BrowserPage {
         if device, chromium == nil {
             return .unsupported("WebKit has no DPR, touch or mobile-viewport override, so device profiles are not applied and nothing was changed.")
         }
+        // Every emulation change and cleanup of this page runs one at a time, in arrival order, so an old lease's cleanup
+        // can never land after a newer lease applied its own, and each step revalidates the lease before mutating.
+        await emulationLock.acquire()
+        defer { emulationLock.release() }
+        guard tab.isCurrent(owner) else { return .stale }
         // Switching from a device profile to a plain size clears the device axes first.
         if owner.viewport?.device == true, !device, let chromium {
             await chromium.clearDeviceEmulation()
+            guard tab.isCurrent(owner) else { return .stale }
             owner.viewport = owner.viewport.map { DevelopmentViewportState(size: $0.size, device: false) }
         }
         if device, let chromium, let profile {
             do {
                 try await chromium.setDeviceEmulation(width: request.width, height: request.height, scale: profile.scale)
             } catch {
+                // A failed set clears every axis, including the ones a previous request of this lease applied.
+                if tab.isCurrent(owner), let previous = owner.viewport, previous.device {
+                    owner.viewport = DevelopmentViewportState(size: previous.size, device: false)
+                }
                 return .unsupported("Chromium rejected the device emulation: \(error.localizedDescription)")
             }
             guard tab.isCurrent(owner) else {

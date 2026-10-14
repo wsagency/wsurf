@@ -28,6 +28,7 @@ nonisolated enum MCPToolCatalog {
         var required = true
         var minimum = 1
         var maximum = 100_000
+        var maxLength: Int?
 
         var schema: Value {
             if type == "array" {
@@ -58,6 +59,8 @@ nonisolated enum MCPToolCatalog {
                 fields["minimum"] = .int(minimum)
                 fields["maximum"] = .int(maximum)
             }
+            // JSON Schema counts characters, not UTF-8 bytes, so this is only a hint; the byte bound is enforced natively.
+            if let maxLength { fields["maxLength"] = .int(maxLength) }
             return .object(fields)
         }
     }
@@ -160,7 +163,9 @@ nonisolated enum MCPToolCatalog {
                 tab, Parameter(name: "lookingFor", type: "string", description: "Optional topic to find in the page text.", required: false),
                 Parameter(name: "textOffset", type: "integer", description: "Text continuation offset.", required: false, minimum: 0),
                 Parameter(name: "controlOffset", type: "integer", description: "Control continuation offset.", required: false, minimum: 0),
-                Parameter(name: "scope", type: "string", description: "CSS selector restricting controls.", required: false),
+                Parameter(
+                    name: "scope", type: "string", description: "CSS selector restricting controls, at most 2,048 UTF-8 bytes.", required: false,
+                    maxLength: PageRuntime.maxSelectorBytes),
                 Parameter(name: "viewportOnly", type: "boolean", description: "Only viewport controls.", required: false),
             ], readOnly: true),
         Entry(name: "clickOnPage", description: AgentToolkit.Descriptions.clickOnPage, parameters: [tab, snapshot, ref]),
@@ -212,9 +217,10 @@ nonisolated enum MCPToolCatalog {
         Entry(
             name: "screenshotPage",
             description:
-                "Capture the viewport, one element (observationID + ref), or a region {x, y, width, height} in viewport CSS pixels that must lie fully inside the viewport, as an image. Never scrolls or stitches. Filled sensitive fields prevent any capture. Prefer readPage for text.",
+                "Capture the viewport, one element (observationID + ref), or a region {x, y, width, height} in viewport CSS pixels that must lie fully inside the viewport, as an image. A ref from readPage (a control) needs only read access; a ref from findElements that is not a control needs development access. Never scrolls or stitches. Filled sensitive fields prevent any capture. Prefer readPage for text.",
             parameters: [
-                tab, Parameter(name: "ref", type: "integer", description: "Control to capture; needs observationID.", required: false),
+                tab,
+                Parameter(name: "ref", type: "integer", description: "Element to capture: a readPage control, or with development access a findElements element; needs observationID.", required: false),
                 Parameter(name: "observationID", type: "string", description: "Required when ref is supplied.", required: false),
                 Parameter(name: "region", type: "region", description: "Viewport-relative CSS-pixel rectangle; not with ref.", required: false),
             ], readOnly: true),
@@ -234,14 +240,16 @@ nonisolated enum MCPToolCatalog {
             description:
                 "Find elements by CSS selector in the document, same-origin frames and open shadow roots; cross-origin frames and closed shadow roots are reported as skipped. Needs development access. Returns an observationID and refs usable only with inspectElement; use readPage for refs you can act on.",
             parameters: [
-                tab, Parameter(name: "selector", type: "string", description: "CSS selector, at most 2,048 bytes."),
+                tab,
+                Parameter(
+                    name: "selector", type: "string", description: "CSS selector, at most 2,048 UTF-8 bytes.", maxLength: PageRuntime.maxSelectorBytes),
                 Parameter(name: "offset", type: "integer", description: "Matches to skip, 0 to 10,000.", required: false, minimum: 0, maximum: 10_000),
                 Parameter(name: "limit", type: "integer", description: "Matches to return, 1 to 100 (default 50).", required: false, maximum: 100),
             ], readOnly: true),
         Entry(
             name: "inspectElement",
             description:
-                "Inspect one found or read element: bounded attributes, geometry, box model, allowlisted computed styles and ancestors. Never returns field values or raw HTML. Needs development access.",
+                "Inspect one found or read element: bounded attributes, geometry, box model, allowlisted computed styles and ancestors. Never returns field values or raw HTML. Needs development access. Inspection refs are not action targets: click, type, hover and the other actions accept only refs from readPage; screenshotPage can capture them with development access.",
             parameters: [tab, snapshot, ref], readOnly: true),
         Entry(
             name: "setViewport",

@@ -73,6 +73,38 @@ struct PageDiagnosticsIngestTests {
         #expect(result.truncated)
     }
 
+    @Test func aHugeURLIsBoundedBeforeItIsParsed() {
+        let url = "https://a.test/" + String(repeating: "p", count: 20_000_000)
+        let clock = ContinuousClock()
+        var result: PageDiagnostics.Entry?
+        let elapsed = clock.measure { result = entry(["k": "net", "via": "fetch", "method": "GET", "url": url, "outcome": "completed"]) }
+        #expect(result?.truncated == true)
+        #expect(elapsed < .milliseconds(250))  // 20 MB reaching URLComponents takes far longer
+    }
+
+    @Test func aCutURLThatNoLongerParsesIsDroppedButStillFlagged() throws {
+        let url = String(repeating: "x", count: 5_000) + "://a.test/"  // the scheme is cut away with the tail
+        let result = try #require(entry(["k": "net", "via": "fetch", "method": "GET", "url": url, "outcome": "completed"]))
+        #expect(result.fields["url"] == nil)
+        #expect(result.truncated)
+    }
+
+    @Test func theHooksOwnCutIsFlaggedAndAnUnknownMethodStaysAbsent() throws {
+        let result = try #require(entry(["k": "net", "via": "fetch", "url": "https://a.test/p", "urlClipped": true, "outcome": "completed"]))
+        #expect(result.truncated)
+        #expect(result.fields["url"] == "https://a.test/p")
+        #expect(result.fields["method"] == nil)  // unknown is absent, never a guessed GET
+        let unknown = try #require(entry(["k": "net", "via": "fetch", "url": NSNull(), "method": NSNull(), "outcome": "failed"]))
+        #expect(unknown.fields["url"] == nil)
+        #expect(unknown.fields["method"] == nil)
+        #expect(unknown.truncated == false)
+    }
+
+    @Test func anOverlongMethodIsDropped() throws {
+        let result = try #require(entry(["k": "net", "via": "xhr", "method": String(repeating: "A", count: 1_000_000), "url": "https://a.test/", "outcome": "completed"]))
+        #expect(result.fields["method"] == nil)
+    }
+
     @Test func networkMessageSanitizesAndValidatesEveryField() {
         let result = entry([
             "k": "net", "via": "fetch", "method": "post", "url": "https://u:hunter2@api.test/v1/x?token=hunter2#f",
@@ -235,6 +267,26 @@ struct PageDiagnosticsIngestTests {
         mapper.reset()
         #expect(mapper.lostInFlight == 0)
         #expect(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "299", "timestamp": 2.0]) == nil)
+    }
+
+    @Test func aDocumentChangeKeepsOnlyTheNewDocumentsOwnRequestsAndClearsTheLossCount() throws {
+        let mapper = ChromiumDiagnosticsMapper()
+        func start(_ id: String, loader: String) {
+            _ = mapper.entry(method: "Network.requestWillBeSent", params: [
+                "requestId": id, "timestamp": 1.0, "frameId": "main", "loaderId": loader, "request": ["url": "https://a.test/\(id)", "method": "GET"],
+            ])
+        }
+        for index in 0..<300 { start("old\(index)", loader: "L1") }
+        #expect(mapper.lostInFlight == 300 - 256)
+        start("doc", loader: "L2")  // the new document's own request began before the commit was observed
+        mapper.reset(keeping: "L2")
+        #expect(mapper.lostInFlight == 0)  // the previous document's loss is not reported for this one
+        #expect(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "old299", "timestamp": 2.0]) == nil)
+        let kept = try #require(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "doc", "timestamp": 2.0]))
+        #expect(kept.loaderID == "L2")
+        // Forgotten entries free their slots: another 256 requests fit without a new loss.
+        for index in 0..<256 { start("new\(index)", loader: "L2") }
+        #expect(mapper.lostInFlight == 0)
     }
 
     @Test func aHugeRequestURLIsClippedWhileInFlight() throws {

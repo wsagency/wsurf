@@ -422,6 +422,15 @@ extension PageDriver {
         try computerMouse(point: point, button: "left", phase: "move", modifiers: modifiers, in: view, window: window)
     }
 
+    /// True when the topmost view at a window point belongs to the page and no sheet intercepts. False for a point the page
+    /// draws but another view or a clipping ancestor (a development-viewport pane smaller than the page) hides.
+    static func pageReceivesPointer(at locationInWindow: CGPoint, in view: BrowserPage, window: NSWindow) -> Bool {
+        guard let content = window.contentView,
+              let hit = content.hitTest(content.superview?.convert(locationInWindow, from: nil) ?? locationInWindow),
+              hit.isDescendant(of: view), window.attachedSheet == nil else { return false }
+        return true
+    }
+
     private static func computerMouse(point: CGPoint, button: String, phase: String, count: Int = 1, modifiers: NSEvent.ModifierFlags = [], in view: BrowserPage, window: NSWindow) throws {
         guard PageAutomationGuard.allowsExecution, view.window === window else { throw PageComputerFailure.stale }
         let local = CGPoint(x: point.x, y: view.isFlipped ? point.y : view.bounds.height - point.y)
@@ -449,9 +458,7 @@ extension PageDriver {
             clickCount: phase == "move" ? 0 : count, pressure: phase == "up" || phase == "move" ? 0 : 1) else {
             throw PageComputerFailure.unavailable
         }
-        guard let content = window.contentView,
-              let hit = content.hitTest(content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow),
-              hit.isDescendant(of: view), window.attachedSheet == nil else { throw PageComputerFailure.unavailable }
+        guard pageReceivesPointer(at: event.locationInWindow, in: view, window: window) else { throw PageComputerFailure.unavailable }
         if phase == "move" {
             if let chromium = view.chromium {
                 chromium.sendMouseMove(to: chromium.convert(local, from: view), modifiers: modifiers)
@@ -547,14 +554,9 @@ extension PageDriver {
                 if result?["prevented"] as? Bool != true {
                     _ = try await computerTarget(point: nil, in: view)
                     try await validateComputerFrame(frame, in: view, checkRevision: false)
-                    let responder = window.firstResponder
-                    let ownsResponder: Bool
-                    if let webKit = view.webKit {
-                        ownsResponder = responder === webKit
-                    } else {
-                        ownsResponder = view.chromium?.ownsResponder(responder) == true
+                    guard window.attachedSheet == nil, view.window === window, view.ownsResponder(window.firstResponder) else {
+                        throw PageComputerFailure.unavailable
                     }
-                    guard window.attachedSheet == nil, view.window === window, ownsResponder else { throw PageComputerFailure.unavailable }
                     if let webKit = view.webKit {
                         webKit.selectAll(nil)
                     } else if let chromium = view.chromium {

@@ -213,6 +213,9 @@ final class MCPBrowserSession: Identifiable {
         defer { tab.setExternalAutomationWorking(false) }
         tab.realizeDeferredSession()
         let view = tab.page
+        // The view and generation this call started on. The guard below refuses to continue once either changes.
+        let generation = tab.pageGeneration
+        guard tab.isLive(view, generation: generation) else { return failure("The page is not ready. Try again.") }
         guard let url = webURL(of: tab) else { return failure("The webpage is unavailable.") }
         let usesRef =
             ["clickOnPage", "typeOnPage", "selectOption", "fillFields", "inspectControl", "setChecked", "hoverOnPage", "pressKey", "inspectElement"].contains(name)
@@ -225,8 +228,8 @@ final class MCPBrowserSession: Identifiable {
         }
         let scope = PageAutomationGuard(
             documentURL: url.absoluteString, snapshot: usesRef ? observation?.snapshot : nil,
-            validate: { [weak self, weak tab] in
-                guard let self, let tab else { return false }
+            validate: { [weak self, weak tab, weak view] in
+                guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
                 return self.permits(tab, capability: capability)
                     && (capability != .control || self.onScreen(tab))
             }
@@ -241,7 +244,13 @@ final class MCPBrowserSession: Identifiable {
                     if let message = request.error {
                         output = message
                     } else {
-                        switch await PageDriver.screenshot(request.target, in: view) {
+                        // A control ref needs read access; a non-control inspection ref needs current development access, asked
+                        // again inside the driver before work, after each await and before pixels are returned.
+                        let developmentAllowed = { [weak self, weak tab] in
+                            guard let self, let tab else { return false }
+                            return self.permits(tab, capability: .development)
+                        }
+                        switch await PageDriver.screenshot(request.target, developmentAllowed: developmentAllowed, in: view) {
                         case .success(let capture):
                             capturedImage = capture.jpeg
                             let box = capture.bounds
