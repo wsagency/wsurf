@@ -3,6 +3,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Account, passkey and verification-code management for one profile's vault. Reached from `AutofillSettings`
 /// as its own entry, separate from the legacy Passwords page.
@@ -58,7 +59,11 @@ struct CredentialSettings: View {
             CredentialImportReviewSheet(model: model, run: run)
         }
         .sheet(item: $exportContext) { context in
-            CredentialExportSheet(model: model) { selection in
+            CredentialExportSheet(model: model, csv: context.csv) { selection in
+                if context.csv {
+                    saveCSV(selection, epoch: context.epoch)
+                    return
+                }
                 withWindow { window in
                     let outcome = await model.exportCredentials(
                         selection: selection, epoch: context.epoch, in: window
@@ -190,6 +195,32 @@ struct CredentialSettings: View {
             .padding(.vertical, 24)
             .frame(maxWidth: .infinity, minHeight: 160)
         }
+        // The same entries as the unlocked page, visible but off, so it is clear why nothing can be imported or exported yet.
+        SettingsSection(title: "Import & Export", symbol: "arrow.up.arrow.down", footnote: lockedTransferReason) {
+            DetailRow(title: "Import passwords from a CSV file") {
+                Button("Choose File…") {}.buttonStyle(.bordered).disabled(true)
+            }
+            RowSeparator()
+            DetailRow(title: "Export to another app") {
+                Button("Export…") {}.buttonStyle(.bordered).disabled(true)
+            }
+            RowSeparator()
+            DetailRow(title: "Export passwords to a CSV file") {
+                Button("Export to CSV…") {}.buttonStyle(.bordered).disabled(true)
+            }
+        }
+    }
+
+    /// Why the Import & Export entries are off while the vault is not open.
+    var lockedTransferReason: LocalizedStringResource {
+        switch model.vaultExists {
+        case .some(true):
+            "Unlock the vault to import or export credentials. Nothing is read or saved while it is locked."
+        case .some(false):
+            "Create a vault first: imports are saved into a vault, and there is nothing to export yet."
+        case .none:
+            "Import and export wait until WSurf knows whether a credential vault exists."
+        }
     }
 
     var lockedCaption: LocalizedStringResource {
@@ -223,9 +254,37 @@ struct CredentialSettings: View {
         }
     }
 
-    private func openExport() {
+    private func openExport(csv: Bool = false) {
         guard let epoch = model.authorizationEpoch else { return }
-        exportContext = CredentialExportContext(epoch: epoch)
+        exportContext = CredentialExportContext(epoch: epoch, csv: csv)
+    }
+
+    private func importCSV() {
+        // The authorization the user was looking at; checked again after the panel, which can stay open past a lock.
+        guard let epoch = model.authorizationEpoch else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = String(localized: "Choose a password CSV file, such as one exported from Passwords.")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        run { await model.beginCSVImport(from: url, epoch: epoch) }
+    }
+
+    /// The save panel runs only after the user clicked Choose File…, and the vault is read and the selection proved current
+    /// only after it returns, so a change made while the panel was open writes nothing. The panel itself asks before replacing a file.
+    private func saveCSV(_ selection: [CredentialExportSelection], epoch: UInt64) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.nameFieldStringValue = String(localized: "WSurf Passwords.csv")
+        panel.message = String(localized: "The file will not be encrypted. Anyone who can open it can read the passwords in it.")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        work?.cancel()
+        work = Task {
+            guard model.authorizationEpoch == epoch else { return }
+            await model.exportCSV(selection: selection, epoch: epoch, to: url)
+            exportContext = nil
+        }
     }
 
     private func resultCaption(_ result: CredentialImportOutcome.Result) -> String {
@@ -248,17 +307,22 @@ struct CredentialSettings: View {
     @ViewBuilder
     private var unlockedContent: some View {
         vaultsSection
-        if let token = model.pendingImportToken {
-            SettingsSection(
-                title: "Credentials waiting to import",
-                symbol: "square.and.arrow.down",
-                footnote: """
-                    Another app is sending credentials to the profile “\(model.profile.name)”. Nothing is saved \
-                    until you review and confirm. Dismiss declines them; to import them later, send them again \
-                    from the other app.
-                    """
-            ) {
-                DetailRow(title: "Credentials from another app") {
+        SettingsSection(
+            title: "Import & Export",
+            symbol: "arrow.up.arrow.down",
+            footnote: """
+                A CSV file holds passwords with their websites only, and isn’t encrypted: delete it once you have used it. \
+                Passkeys and verification codes can only be moved with Export… and the system’s credential exchange.
+                """
+        ) {
+            if let token = model.pendingImportToken {
+                DetailRow(
+                    verbatimTitle: String(localized: "Credentials from another app"),
+                    verbatimCaption: String(localized: """
+                        Sent to the profile “\(model.profile.name)”. Nothing is saved until you review and confirm. \
+                        Dismiss declines them; to import them later, send them again from the other app.
+                        """)
+                ) {
                     HStack(spacing: 8) {
                         Button("Review…") { run { await model.beginImport() } }
                         Button("Dismiss") { model.discardPendingImport(token: token) }
@@ -266,6 +330,24 @@ struct CredentialSettings: View {
                     .buttonStyle(.bordered)
                     .disabled(model.isBusy)
                 }
+                RowSeparator()
+            }
+            DetailRow(title: "Import passwords from a CSV file") {
+                Button("Choose File…") { importCSV() }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy)
+            }
+            RowSeparator()
+            DetailRow(title: "Export to another app") {
+                Button("Export…") { openExport() }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy || model.summaries.isEmpty)
+            }
+            RowSeparator()
+            DetailRow(title: "Export passwords to a CSV file") {
+                Button("Export to CSV…") { openExport(csv: true) }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy || model.summaries.filter(CredentialCSVExport.isExportable).isEmpty)
             }
         }
         if model.hasUnconfirmedPasskeys {
@@ -322,10 +404,6 @@ struct CredentialSettings: View {
                             run { try await model.beginEditing(accountID: nil) }
                         }
                         .disabled(model.isBusy)
-                        ToolbarChip(symbol: "square.and.arrow.up", label: "Export…") {
-                            openExport()
-                        }
-                        .disabled(model.isBusy || model.summaries.isEmpty)
                         ToolbarChip(symbol: "lock", label: "Lock") { model.lock() }
                     }
                 },

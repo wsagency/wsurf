@@ -7,7 +7,9 @@ import Foundation
 /// What the page says for an error, by cause: the vault and its passkeys, then the store, then the exchange. `nil` is a
 /// user cancel, which says nothing.
 extension CredentialSettingsModel {
-    static func importMessage(for error: any Error, tokenSpent: Bool) -> String? {
+    static func importMessage(
+        for error: any Error, tokenSpent: Bool, origin: CredentialTransferMessage.Origin = .system
+    ) -> String? {
         guard tokenSpent else { return message(for: error) }
         let reason: String
         switch error {
@@ -27,7 +29,12 @@ extension CredentialSettingsModel {
         default:
             reason = String(localized: "something went wrong")
         }
-        return String(localized: "The import ended because \(reason), and nothing was saved. To import these credentials, send them again from the other app.")
+        switch origin {
+        case .system:
+            return String(localized: "The import ended because \(reason), and nothing was saved. To import these credentials, send them again from the other app.")
+        case .csvFile:
+            return String(localized: "The import ended because \(reason), and nothing was saved. To import the file, choose it again.")
+        }
     }
 
     static func message(for error: any Error) -> String? {
@@ -101,6 +108,8 @@ extension CredentialSettingsModel {
             return String(localized: "Choose what to do with every conflict first.")
         case CredentialExchangeCoordinatorError.invalidChoice:
             return String(localized: "That choice isn’t available for this credential.")
+        case CredentialExchangeCoordinatorError.replaceTaken:
+            return String(localized: "Another row already replaces that saved login. Change that one first.")
         case CredentialExchangeCoordinatorError.emptySelection:
             return String(localized: "Select at least one credential to export.")
         case CredentialExchangeCoordinatorError.systemRejected:

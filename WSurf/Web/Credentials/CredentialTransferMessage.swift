@@ -24,11 +24,19 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
         case exportNotSent
         /// The selected accounts changed or the vault locked before the hand-off, so nothing was sent.
         case exportSelectionChanged
+        /// A CSV import file that is not a password CSV.
+        case csvUnreadable
+        /// The CSV file was written (it is plain text).
+        case csvExported
     }
 
     /// The next step the consumer offers; the terminal-state policy lives here, not in the text. `exportAgain` is the user
     /// re-sending the discarded INBOUND import from the other app (Passwords); it is never WSurf's own outgoing export.
     enum Action: Equatable, Sendable { case none, exportAgain, checkSavedCredentials }
+
+    /// Where an import came from, so a message tells the one retry that is true: send it again from the other app, or
+    /// choose the same file again. Only the endings of an import (a discard, a failed apply, an uncertain write) differ.
+    enum Origin: Equatable, Sendable { case system, csvFile }
 
     let kind: Kind
     let action: Action
@@ -56,18 +64,34 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
 
     /// The transfer ended BEFORE any write started: lock, epoch change, lease expiry, a cancel before the write, a spent token,
     /// or an account the plan touches changed since the preview. Nothing was written. Never used once the write has begun.
-    static func discarded() -> Self {
-        Self(.discarded, .exportAgain, String(localized: """
-            This transfer was discarded. WSurf dropped its copy of the imported data and can no longer use it. \
-            No data was written. Export again from Passwords.
-            """))
+    static func discarded(_ origin: Origin = .system) -> Self {
+        switch origin {
+        case .system:
+            Self(.discarded, .exportAgain, String(localized: """
+                This transfer was discarded. WSurf dropped its copy of the imported data and can no longer use it. \
+                No data was written. Export again from Passwords.
+                """))
+        case .csvFile:
+            Self(.discarded, .none, String(localized: """
+                This import was discarded. WSurf dropped its copy of the file’s data. No data was written and the file was not \
+                changed. To import it, choose the file again.
+                """))
+        }
     }
 
     /// Capacity, collision or write error. `operation` is a static localized label of what failed, never system error text.
-    static func applyFailed(operation: String) -> Self {
-        Self(.applyFailed(operation: operation), .exportAgain, String(localized: """
-            \(operation) failed and nothing was written. This transfer was discarded. Export again from Passwords.
-            """))
+    static func applyFailed(operation: String, _ origin: Origin = .system) -> Self {
+        switch origin {
+        case .system:
+            Self(.applyFailed(operation: operation), .exportAgain, String(localized: """
+                \(operation) failed and nothing was written. This transfer was discarded. Export again from Passwords.
+                """))
+        case .csvFile:
+            Self(.applyFailed(operation: operation), .none, String(localized: """
+                \(operation) failed and nothing was written. This import was discarded and the file was not changed. \
+                To import it, choose the file again.
+                """))
+        }
     }
 
     static func succeeded(_ outcome: CredentialImportOutcome, receipt: VaultCommitReceipt) -> Self {
@@ -78,11 +102,19 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
 
     /// The write had begun and its result is unknown (lock, user cancel, lease or epoch loss while it ran): it may or may not
     /// have landed, so this is neither a discard nor a success, and it names no cause.
-    static func mayHaveLanded() -> Self {
-        Self(.mayHaveLanded, .checkSavedCredentials, String(localized: """
-            WSurf could not confirm the result of this import. It may have been saved. \
-            Check Saved Credentials before exporting again.
-            """))
+    static func mayHaveLanded(_ origin: Origin = .system) -> Self {
+        switch origin {
+        case .system:
+            Self(.mayHaveLanded, .checkSavedCredentials, String(localized: """
+                WSurf could not confirm the result of this import. It may have been saved. \
+                Check Saved Credentials before exporting again.
+                """))
+        case .csvFile:
+            Self(.mayHaveLanded, .checkSavedCredentials, String(localized: """
+                WSurf could not confirm the result of this import. It may have been saved. \
+                Check Saved Credentials before choosing the file again.
+                """))
+        }
     }
 
     /// Every incoming item was skipped or already identical.
@@ -129,6 +161,41 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
     static func exportSelectionChanged() -> Self {
         Self(.exportSelectionChanged, .none, String(localized: """
             A selected credential changed or WSurf was locked, so no credentials were sent. Review the selection and export again.
+            """))
+    }
+
+    // MARK: CSV
+
+    /// The file as a whole could not be read as a password CSV (`line` is where the structure broke, when it names one).
+    /// Nothing was imported and the file itself was never touched.
+    static func csvUnreadable(line: Int?) -> Self {
+        let culprit = line.map { String(localized: "The problem is on line \($0).") } ?? ""
+        return Self(.csvUnreadable, .none, String(localized: """
+            The file could not be used as a password CSV (it may be too large, not a Passwords export, damaged, or hold more \
+            logins than the vault can keep), so nothing was imported. \(culprit) The file was not changed.
+            """))
+    }
+
+    /// The chosen file could not be opened, or is not an ordinary file. Nothing was imported and the file was never touched.
+    static func csvNotOpened() -> Self {
+        Self(.csvUnreadable, .none, String(localized: """
+            The file could not be opened, so nothing was imported. It may have moved, not be readable by this account, or \
+            not be an ordinary file. The file was not changed.
+            """))
+    }
+
+    /// The CSV file was written. WSurf cannot protect it any more: it is plain text.
+    static func csvExported(rows: Int) -> Self {
+        Self(.csvExported, .none, String(localized: """
+            WSurf saved \(rows) password rows to a CSV file. The file is not encrypted and anyone who can open it can read \
+            the passwords. Delete it as soon as you have imported it. WSurf does not delete it for you.
+            """))
+    }
+
+    /// Failed before the destination was changed: whatever was already at the chosen location is untouched.
+    static func csvNotSaved() -> Self {
+        Self(.exportNotSent, .none, String(localized: """
+            The CSV file could not be saved, so nothing was exported. Anything already at that location was left as it was.
             """))
     }
 }
