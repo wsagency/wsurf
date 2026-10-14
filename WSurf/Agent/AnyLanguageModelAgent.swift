@@ -95,6 +95,12 @@ final class AnyLanguageModelAgent: AgentRunner {
         true
     }
 
+    /// The on-device model reads attached images but gets no screenshots: tool images and
+    /// screenshot tools stay out of its small context window.
+    var seesScreenshots: Bool {
+        acceptsImages && !(model is SystemLanguageModel)
+    }
+
     func compactContext(forTab tabID: UUID) async throws -> Bool {
         guard let trace = log.latestTrace(forTab: tabID),
               trace.state != .running,
@@ -233,10 +239,10 @@ final class AnyLanguageModelAgent: AgentRunner {
                     try await Self.execute(tool, arguments: call.arguments)
                 }
                 if let data = toolkit.takePendingScreenshot() {
-                    if acceptsImages {
+                    if seesScreenshots {
                         segments.append(.image(.init(data: data, mimeType: "image/jpeg")))
                     } else {
-                        segments.append(.text(.init(content: "This model cannot view images. Use the text observation.")))
+                        segments.append(.text(.init(content: "This model cannot view screenshots. Use the text observation.")))
                     }
                 }
                 output = Transcript.ToolOutput(id: call.id, toolName: call.toolName, segments: segments)
@@ -594,7 +600,7 @@ final class AnyLanguageModelAgent: AgentRunner {
         let managed: [any Tool] = [UpdateProgressTool(), RecordTaskOutcomeTool(toolkit: toolkit),
                                   VerifyTaskOutcomeTool(toolkit: toolkit), BlockTaskOutcomeTool(toolkit: toolkit), ]
         let managedNames = Set(managed.map(\.name))
-        return selected.filter { !managedNames.contains($0.name) && (acceptsImages || !AgentToolCatalog.visualToolIDs.contains($0.name)) }
+        return selected.filter { !managedNames.contains($0.name) && (seesScreenshots || !AgentToolCatalog.visualToolIDs.contains($0.name)) }
             + managed
     }
 
@@ -603,8 +609,9 @@ final class AnyLanguageModelAgent: AgentRunner {
             ? tools().map { AgentProposalTool(name: $0.name, description: $0.description, parameters: $0.parameters) }
             : tools()
         if let transcript {
+            let readable = acceptsImages ? transcript : ModelImageSupport.textOnly(transcript)
             return LanguageModelSession(
-                model: model, tools: tools, transcript: acceptsImages ? transcript : ModelImageSupport.textOnly(transcript)
+                model: model, tools: tools, transcript: seesScreenshots ? readable : ModelImageSupport.withoutToolImages(readable)
             )
         }
         return LanguageModelSession(

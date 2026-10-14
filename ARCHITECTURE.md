@@ -149,6 +149,12 @@ not completed or uncertain browser actions. Exhaustion saves a resumable checkpo
 without requesting another summary. Visual no-progress detection ignores pointer
 coordinates and screenshot variation on an unchanged page.
 
+Attached images follow the model's image input. The on-device model accepts them
+only when the system reports the vision capability. It never receives screenshots:
+its session omits the visual tools, a pending screenshot becomes a text note, and
+images in tool results are removed when a transcript is restored. A hosted model
+keeps its per-window, per-model image setting and receives screenshots as before.
+
 Conversation messages, attachments and checkpoints belong to the originating
 profile, which stays task-local across awaits and focus changes. They are private
 conversation data, not diagnostic exports. Deleting a turn also
