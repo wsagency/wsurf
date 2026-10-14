@@ -7,6 +7,10 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-14 — MCP: development access
+
+A client can ask for development access (`requestAccess` with `development: true`); the prompt adds **Allow Development**, which still obeys each site's Assistant Access. It unlocks `findElements` and `inspectElement` (bounded DOM, geometry and allowlisted styles, never field values), `setViewport` and `emulateDevice` (an exact CSS-pixel viewport measured inside the page; `phone` and `tablet` also set pixel ratio, touch and mobile viewport on Chromium only), `reloadPage`, and console and network metadata through `startDiagnostics`, `readConsole` and `readNetwork`. `getDevelopmentInfo` and `resetDevelopment` report and clear the state. One connection owns a tab's viewport and diagnostics at a time; disconnecting, a lower grant or site policy, a reload outside the grant, closing the tab or an engine change releases it and removes everything it applied. Diagnostics cover the main document from the moment capture starts and state their gaps per engine (see MCP.md). `pressKey` now says so when the key was not delivered instead of reporting success.
+
 ### 2026-10-14 — MCP: real hover, element waits and cropped screenshots
 
 `hoverOnPage` now moves the real pointer to the element, so CSS `:hover` works. It needs WSurf to be the active app with the tab on screen, and says so instead of claiming success when it is not.

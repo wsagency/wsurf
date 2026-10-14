@@ -21,6 +21,13 @@ final class MCPBrowserSession: Identifiable {
         let documentURL: String
     }
 
+    /// What a tool needs from the connection's grant and the site's Assistant Access setting.
+    enum Scope {
+        case read, control
+        /// Control plus DOM inspection, diagnostics, and viewport/device emulation.
+        case development
+    }
+
     let id = UUID()
     var clientName = String(localized: "External Connection")
     private(set) var isConnected = true
@@ -29,11 +36,13 @@ final class MCPBrowserSession: Identifiable {
     private(set) var grants: [UUID: Grant] = [:]
     @ObservationIgnored private let browser: BrowserModel
     @ObservationIgnored private let available: () -> Bool
-    @ObservationIgnored private let consent: (String, [MCPAccessConsent.Page]) async -> MCPAccessConsent.Access?
+    @ObservationIgnored private let consent: (String, [MCPAccessConsent.Page], Bool) async -> MCPAccessConsent.Access?
     @ObservationIgnored private let openConsent: (String, URL) async -> Bool
     @ObservationIgnored private let actionPolicy = AgentActionPolicy(storage: MCPActionGrantStorage())
     @ObservationIgnored private let consentWindow: ExtensionWindowAdapter?
-    @ObservationIgnored private var observations: [UUID: PageObservation] = [:]
+    @ObservationIgnored var observations: [UUID: PageObservation] = [:]
+    /// Cleanup index only: the tab owns the lease, this lets disconnect find the tabs this connection holds.
+    @ObservationIgnored var developmentTabs: [UUID: (tab: BrowserTab, owner: DevelopmentOwner)] = [:]
     @ObservationIgnored private var destinations: Set<String> = []
     @ObservationIgnored private var hasReadContent = false
     @ObservationIgnored private var accessWasRequested = false
@@ -50,8 +59,8 @@ final class MCPBrowserSession: Identifiable {
     init(
         browser: BrowserModel,
         available: @escaping () -> Bool,
-        consent: @escaping (String, [MCPAccessConsent.Page]) async -> MCPAccessConsent.Access? = { client, pages in
-            await MCPAccessConsent.share(client: client, pages: pages, in: nil)
+        consent: @escaping (String, [MCPAccessConsent.Page], Bool) async -> MCPAccessConsent.Access? = { client, pages, development in
+            await MCPAccessConsent.share(client: client, pages: pages, development: development, in: nil)
         },
         openConsent: @escaping (String, URL) async -> Bool = { client, url in
             await MCPAccessConsent.open(client: client, url: url, in: nil)
@@ -69,6 +78,8 @@ final class MCPBrowserSession: Identifiable {
 
     func revoke() {
         isConnected = false
+        for (tab, owner) in Array(developmentTabs.values) { tab.releaseDevelopment(owner, reason: .disconnect) }
+        developmentTabs = [:]
         grants = [:]
         observations = [:]
         destinations = []
@@ -100,9 +111,10 @@ final class MCPBrowserSession: Identifiable {
     }
 
     private func execute(name: String, arguments: [String: Value]) async -> CallTool.Result {
+        releaseUnauthorizedDevelopment()
         switch name {
         case "requestAccess":
-            return await requestAccess()
+            return await requestAccess(development: arguments["development"]?.boolValue ?? false)
         case "listTabs":
             return tabList()
         case "newTab":
@@ -113,7 +125,10 @@ final class MCPBrowserSession: Identifiable {
         guard let id = arguments["tabID"]?.stringValue.flatMap(UUID.init(uuidString:)),
             let tab = sharedTab(id), let grant = grants[id]
         else { return failure("This tab is not shared with this connection.") }
-        let capability: AssistantPageCapability = ["readPage", "inspectControl", "waitForPage", "screenshotPage"].contains(name) ? .read : .control
+        let capability: Scope =
+            ["readPage", "inspectControl", "waitForPage", "screenshotPage", "getDevelopmentInfo"].contains(name)
+            ? .read
+            : Self.developmentCalls.contains(name) || Self.developmentPageActions.contains(name) ? .development : .control
         guard permits(tab, capability: capability) else {
             return failure("This action is blocked by the connection’s access or the website’s Assistant Access setting.")
         }
@@ -142,10 +157,13 @@ final class MCPBrowserSession: Identifiable {
                 return failure("The previous page belongs to another website. Ask the user to open and share it.")
             }
         }
+        if Self.developmentCalls.contains(name) {
+            return await developmentCall(name: name, arguments: arguments, tab: tab)
+        }
         return await usePage(name: name, arguments: arguments, tab: tab, capability: capability)
     }
 
-    private func requestAccess() async -> CallTool.Result {
+    private func requestAccess(development: Bool) async -> CallTool.Result {
         guard !accessWasRequested else {
             return failure("Access has already been requested. The user can disconnect and reconnect to share different tabs.")
         }
@@ -155,12 +173,14 @@ final class MCPBrowserSession: Identifiable {
             return .init(id: tab.id, title: tab.title, url: url)
         }
         guard !pages.isEmpty else {
-            _ = await consent(clientName, [])
+            _ = await consent(clientName, [], development)
             return failure("No shareable webpage is on screen. WSurf showed the user how to open a webpage. Request access again after they have opened it.")
         }
         accessWasRequested = true
-        let answer = await consent(clientName, pages)
-        guard isConnected, available(), !Task.isCancelled, let answer else { return failure("Access was not granted.") }
+        var granted = await consent(clientName, pages, development)
+        // Development access can only come from a request that asked for it.
+        if granted == .development, !development { granted = .control }
+        guard isConnected, available(), !Task.isCancelled, let answer = granted else { return failure("Access was not granted.") }
         for page in pages {
             guard let tab = browser.tabs.first(where: { $0.id == page.id }),
                 !tab.isPrivate, webURL(of: tab) == page.url,
@@ -187,7 +207,7 @@ final class MCPBrowserSession: Identifiable {
     }
 
     private func usePage(
-        name: String, arguments: [String: Value], tab: BrowserTab, capability: AssistantPageCapability
+        name: String, arguments: [String: Value], tab: BrowserTab, capability: Scope
     ) async -> CallTool.Result {
         tab.setExternalAutomationWorking(true)
         defer { tab.setExternalAutomationWorking(false) }
@@ -195,7 +215,7 @@ final class MCPBrowserSession: Identifiable {
         let view = tab.page
         guard let url = webURL(of: tab) else { return failure("The webpage is unavailable.") }
         let usesRef =
-            ["clickOnPage", "typeOnPage", "selectOption", "fillFields", "inspectControl", "setChecked", "hoverOnPage", "pressKey"].contains(name)
+            ["clickOnPage", "typeOnPage", "selectOption", "fillFields", "inspectControl", "setChecked", "hoverOnPage", "pressKey", "inspectElement"].contains(name)
             || arguments["ref"] != nil
         let observation = observations[tab.id]
         if usesRef {
@@ -208,7 +228,7 @@ final class MCPBrowserSession: Identifiable {
             validate: { [weak self, weak tab] in
                 guard let self, let tab else { return false }
                 return self.permits(tab, capability: capability)
-                    && (capability == .read || self.onScreen(tab))
+                    && (capability != .control || self.onScreen(tab))
             }
         )
         return await PageAutomationGuard.$current.withValue(scope) {
@@ -242,7 +262,7 @@ final class MCPBrowserSession: Identifiable {
                 }
                 let prefixes = [
                     "PAGE TEXT:", "Clicked", "Typed", "Selected", "Scrolled", "Already at", "Went back.",
-                    "CONTROL:", "Condition met.", "Set checked", "Checked state", "Screenshot captured.", "Hovered.", "Sent ",
+                    "CONTROL:", "Condition met.", "Set checked", "Checked state", "Screenshot captured.", "Hovered.", "Sent ", "ELEMENTS:", "ELEMENT:",
                 ]
                 let succeeded =
                     prefixes.contains { output.hasPrefix($0) }
@@ -321,6 +341,12 @@ final class MCPBrowserSession: Identifiable {
             return await PageDriver.waitForPage(
                 condition: arguments["condition"]?.stringValue ?? "", value: arguments["value"]?.stringValue ?? "",
                 timeout: arguments["timeout"]?.intValue ?? 5, in: view)
+        case "findElements":
+            return await PageDriver.findElements(
+                selector: arguments["selector"]?.stringValue ?? "", offset: arguments["offset"]?.intValue ?? 0,
+                limit: arguments["limit"]?.intValue ?? MCPDevelopmentTools.defaultLimit, in: view)
+        case "inspectElement":
+            return await PageDriver.inspectElement(ref: ref, in: view)
         case "goBack":
             return await PageDriver.goBack(in: view)
         default:
@@ -390,22 +416,24 @@ final class MCPBrowserSession: Identifiable {
         return tab.assistantAccess.effectivePolicy == .deny ? nil : tab
     }
 
-    private func permits(_ tab: BrowserTab, capability: AssistantPageCapability) -> Bool {
+    func permits(_ tab: BrowserTab, capability: Scope) -> Bool {
         guard sharedTab(tab.id) === tab, let grant = grants[tab.id] else { return false }
-        if capability == .control {
-            return grant.access == .control && tab.assistantAccess.effectivePolicy != .readOnly
+        let writable = tab.assistantAccess.effectivePolicy != .readOnly
+        switch capability {
+        case .read: return true
+        case .control: return (grant.access == .control || grant.access == .development) && writable
+        case .development: return grant.access == .development && writable
         }
-        return true
     }
 
-    private func webURL(of tab: BrowserTab) -> URL? {
+    func webURL(of tab: BrowserTab) -> URL? {
         guard !tab.isShowingSystemPage else { return nil }
         let url = tab.isMaterialised ? tab.page.url : URL(string: tab.urlString)
         guard let url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }
         return url
     }
 
-    private func onScreen(_ tab: BrowserTab) -> Bool {
+    func onScreen(_ tab: BrowserTab) -> Bool {
         browser.activeTabID == tab.id || browser.splitPanes?.contains(where: { $0 === tab }) == true
     }
 

@@ -90,7 +90,7 @@ extension PageDriver {
                     timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                     context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
             else { return "Could not create keyboard input." }
-            view.sendKeyEvent(event)
+            guard view.sendKeyEvent(event) else { return "The key was not delivered to the page." }
         }
         return "Sent \(key). Check the resulting page.\n" + (await settleAndSnippet(view))
     }

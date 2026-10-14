@@ -15,6 +15,8 @@ final class ChromiumDevTools {
     private var pending: [Int: PendingCommand] = [:]
     private var timeouts: [Int: Task<Void, Never>] = [:]
     var closed = false
+    /// MCP development diagnostics. Nil unless a lease is capturing; the domains themselves are never toggled here.
+    var diagnosticsSink: ((String, [String: Any]) -> Void)?
     private var prepared = false
     private var preparing = false
     private var prepareWaiters: [CheckedContinuation<Void, Error>] = []

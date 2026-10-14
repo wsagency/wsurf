@@ -203,7 +203,8 @@ final class BrowserTab: Identifiable {
     private(set) var loadedEngine: BrowserEngine?
     @ObservationIgnored private var retiredView: BrowserPage?
     private var retirementGeneration = 0
-    private var pageGeneration = 0
+    private(set) var pageGeneration = 0
+    @ObservationIgnored var developmentOwner: DevelopmentOwner?
     let sitePermissions: SitePermissions
     let context: BrowserProfileContext
     private let dataStore: WKWebsiteDataStore
@@ -400,6 +401,7 @@ final class BrowserTab: Identifiable {
 
     @discardableResult
     private func retire(_ outgoing: BrowserPage) -> Task<Void, Never> {
+        releaseDevelopment(reason: .engineReplaced)
         onPageRetired?(outgoing)
         retirementGeneration &+= 1
         let generation = retirementGeneration
@@ -582,6 +584,7 @@ final class BrowserTab: Identifiable {
     func detach() {
         guard !isClosed else { return }
         isClosed = true
+        releaseDevelopment(reason: .tabClosed)
         pendingNavigationTask?.cancel()
         coverHold?.cancel()
         onChromiumDownload = nil

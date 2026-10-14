@@ -130,7 +130,7 @@ final class BrowserMCPServer {
     }
 
     func makeSessionForConnection(
-        consent: @escaping (String, [MCPAccessConsent.Page], NSWindow?) async -> MCPAccessConsent.Access? = MCPAccessConsent.share,
+        consent: @escaping (String, [MCPAccessConsent.Page], Bool, NSWindow?) async -> MCPAccessConsent.Access? = MCPAccessConsent.share,
         openConsent: @escaping (String, URL, NSWindow?) async -> Bool = MCPAccessConsent.open
     ) -> MCPBrowserSession? {
         guard let browser = target(), !browser.opensPrivately, !browser.context.profile.isPrivate,
@@ -147,14 +147,14 @@ final class BrowserMCPServer {
                       adapter.nativeWindow === nativeWindow else { return false }
                 return available(browser)
             },
-            consent: { [weak browser, weak context, weak adapter] client, pages in
+            consent: { [weak browser, weak context, weak adapter] client, pages, development in
                 guard let browser, let context, let adapter, let nativeWindow,
                       browser.context === context,
                       context.extensions.adapter(for: browser) === adapter,
                       adapter.nativeWindow === nativeWindow,
                       available(browser)
                 else { return nil }
-                let answer = await consent(client, pages, nativeWindow)
+                let answer = await consent(client, pages, development, nativeWindow)
                 guard browser.context === context,
                       context.extensions.adapter(for: browser) === adapter,
                       adapter.nativeWindow === nativeWindow,

@@ -104,6 +104,9 @@ final class WebViewContainer: NSView {
     init(page: BrowserPage, onReady: (() -> Void)? = nil) {
         self.onReady = onReady
         super.init(frame: .zero)
+        // A development viewport can be larger than the host; the overflow is clipped, never squeezed.
+        wantsLayer = true
+        layer?.masksToBounds = true
         install(page)
     }
 

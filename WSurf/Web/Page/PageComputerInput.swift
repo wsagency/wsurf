@@ -526,7 +526,7 @@ extension PageDriver {
                   let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                       windowNumber: window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
             else { throw PageComputerFailure.stale }
-            view.sendKeyEvent(event)
+            guard view.sendKeyEvent(event) else { throw PageComputerFailure.unavailable }
         }
         if flags.contains(.command) {
             try await computerSelectAll(frame: frame, in: view, window: window)

@@ -27,8 +27,22 @@ final class BrowserPage: NSView {
         }
     }
 
+    /// MCP development viewport in CSS pixels; nil is normal layout. Never persisted. The real page is laid out at this size
+    /// (it may exceed the host, which clips it) so `innerWidth`/`innerHeight` are the requested values.
+    var developmentViewport: CGSize? {
+        didSet {
+            guard developmentViewport != oldValue else { return }
+            (superview as? WebViewContainer)?.layoutPage()
+        }
+    }
+
     func frameInViewport(_ viewport: CGRect) -> CGRect {
-        CGRect(x: viewport.minX, y: viewport.minY, width: viewport.width, height: max(1, viewport.height - topBarInset))
+        if let size = developmentViewport {
+            let zoom = pageZoom
+            let height = size.height * zoom
+            return CGRect(x: viewport.minX, y: viewport.maxY - topBarInset - height, width: size.width * zoom, height: height)
+        }
+        return CGRect(x: viewport.minX, y: viewport.minY, width: viewport.width, height: max(1, viewport.height - topBarInset))
     }
 
     @objc dynamic var url: URL?
@@ -257,6 +271,7 @@ final class BrowserPage: NSView {
         set {
             webKit?.pageZoom = newValue
             chromium?.pageZoom = newValue
+            if developmentViewport != nil { (superview as? WebViewContainer)?.layoutPage() }
         }
     }
 
@@ -424,16 +439,17 @@ final class BrowserPage: NSView {
         }
     }
 
-    func sendKeyEvent(_ event: NSEvent) {
+    /// True only when the engine's responder was actually invoked.
+    func sendKeyEvent(_ event: NSEvent) -> Bool {
         if let webKit {
             if event.type == .keyUp {
                 webKit.keyUp(with: event)
             } else {
                 webKit.keyDown(with: event)
             }
-        } else {
-            chromium?.sendKeyEvent(event)
+            return true
         }
+        return chromium?.sendKeyEvent(event) ?? false
     }
 
     func callAsyncJavaScript(
