@@ -51,6 +51,118 @@ struct BrowserResourceLifetimeTests {
         #expect(browser.tabs.contains { $0 === tab })
     }
 
+    // MARK: - A tab whose web-content process died
+
+    /// `contentProcessDidTerminate()` is the tab's public lifecycle entry point, not a real
+    /// web-content crash: these tests cover the tab's reaction, not WebKit's crash delivery.
+    private func loadedTab(
+        in browser: BrowserModel, title: String, activate: Bool
+    ) async throws -> (tab: BrowserTab, view: WKWebView) {
+        let tab = browser.newTab(activate: activate)
+        let view = try #require(tab.page.webKit)
+        view.loadHTMLString("<title>\(title)</title>", baseURL: URL(string: "https://fixture.example/"))
+        try #require(await waitUntil { !view.isLoading && view.title == title })
+        tab.urlString = "https://fixture.example/"
+        return (tab, view)
+    }
+
+    @Test func aBackgroundTabWhoseProcessDiesWaitsUntilItIsShown() async throws {
+        let browser = BrowserModel(database: .temporary())
+        defer { browser.cancelPendingSave() }
+        let front = browser.newTab()
+        let (background, _) = try await loadedTab(in: browser, title: "Background fixture", activate: false)
+        defer {
+            browser.close(background, recordForReopening: false)
+            browser.close(front, recordForReopening: false)
+        }
+        try #require(browser.activeTab === front)
+
+        background.contentProcessDidTerminate()
+
+        #expect(!background.isMaterialised)
+        #expect(background.isDeferred)
+
+        await background.waitForRetirement()
+        browser.activate(background)
+        _ = await background.waitForPendingNavigation()
+        #expect(background.isMaterialised)
+        #expect(!background.isDeferred)
+    }
+
+    @Test func theShownTabReloadsAsSoonAsItsProcessDies() async throws {
+        let browser = BrowserModel(database: .temporary())
+        defer { browser.cancelPendingSave() }
+        let (tab, view) = try await loadedTab(in: browser, title: "Front fixture", activate: true)
+        defer { browser.close(tab, recordForReopening: false) }
+        try #require(browser.activeTab === tab)
+
+        tab.contentProcessDidTerminate()
+
+        #expect(!tab.isDeferred)
+        #expect(tab.page.webKit === view)
+    }
+
+    @Test func aTabBesideTheShownOneInASplitReloadsAtOnce() async throws {
+        let browser = BrowserModel(database: .temporary())
+        defer { browser.cancelPendingSave() }
+        let anchor = browser.newTab()
+        let (beside, view) = try await loadedTab(in: browser, title: "Split fixture", activate: false)
+        defer {
+            browser.close(anchor, recordForReopening: false)
+            browser.close(beside, recordForReopening: false)
+        }
+        browser.split(anchor, with: beside, axis: .sideBySide)
+        browser.activate(anchor)
+        try #require(browser.isVisibleInSplit(beside))
+
+        beside.contentProcessDidTerminate()
+
+        #expect(!beside.isDeferred)
+        #expect(beside.page.webKit === view)
+    }
+
+    /// Whatever the tab keeps from being unloaded on purpose it keeps from being unloaded by a crash.
+    @Test func aFavoriteBackgroundTabReloadsAtOnce() async throws {
+        let browser = BrowserModel(database: .temporary())
+        defer { browser.cancelPendingSave() }
+        let front = browser.newTab()
+        let (favorite, view) = try await loadedTab(in: browser, title: "Favorite fixture", activate: false)
+        defer {
+            browser.close(favorite, recordForReopening: false)
+            browser.close(front, recordForReopening: false)
+        }
+        favorite.isFavorite = true
+        try #require(browser.activeTab === front)
+
+        favorite.contentProcessDidTerminate()
+
+        #expect(!favorite.isDeferred)
+        #expect(favorite.page.webKit === view)
+    }
+
+    @Test func aBackgroundTabItsWebsiteKeepsActiveReloadsAtOnce() async throws {
+        let permissions = SitePermissions(
+            storageURL: FileManager.default.temporaryDirectory
+                .appending(path: "BrowserResourceLifetimeTests-\(UUID().uuidString).json")
+        )
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.cancelPendingSave() }
+        let front = browser.newTab()
+        let (kept, view) = try await loadedTab(in: browser, title: "Kept fixture", activate: false)
+        defer {
+            browser.close(kept, recordForReopening: false)
+            browser.close(front, recordForReopening: false)
+        }
+        browser.setKeepsActive(true, for: kept)
+        try #require(browser.keepsActive(kept))
+        try #require(browser.activeTab === front)
+
+        kept.contentProcessDidTerminate()
+
+        #expect(!kept.isDeferred)
+        #expect(kept.page.webKit === view)
+    }
+
     @Test func privateCEFContextsSurviveOtherWindowClose() async throws {
         let server = try await HTTPFixtureServer.start(routes: [
             "/": .html("<title>Private CEF lifetime</title>"),

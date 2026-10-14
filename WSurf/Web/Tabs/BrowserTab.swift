@@ -383,11 +383,16 @@ final class BrowserTab: Identifiable {
 
     func discardWebContent() {
         guard canDiscardWebContent else { return }
+        unloadUntilShown()
+    }
+
+    /// Drops the web view and keeps the session; a replacement view is made when the tab is shown.
+    func unloadUntilShown() {
+        guard let outgoing = liveView else { return }
         let state = sessionState
         let url = URL(string: urlString)
         guard state != nil || url != nil else { return }
 
-        let outgoing = page
         retire(outgoing)
         stoppedNavigation = false
 
@@ -576,6 +581,10 @@ final class BrowserTab: Identifiable {
     var onSameDocumentNavigation: (() -> Void)?
 
     var onContentProcessTerminated: (() -> Void)?
+    /// Whether the model lets a tab whose web-content process died wait unloaded until it is shown:
+    /// not the active tab, not visible in a split, not a favorite, and not otherwise protected from
+    /// unloading. An unwired tab answers no, which keeps the immediate reload.
+    var mayUnloadAfterTermination: (() -> Bool)?
 
     private(set) var isClosed = false
 
@@ -603,6 +612,7 @@ final class BrowserTab: Identifiable {
         onLinkHovered = nil
         onSameDocumentNavigation = nil
         onContentProcessTerminated = nil
+        mayUnloadAfterTermination = nil
         onLocationRevoked = nil
         if let view = liveView {
             retire(view)
