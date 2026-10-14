@@ -154,6 +154,9 @@ only when the system reports the vision capability. It never receives screenshot
 its session omits the visual tools, a pending screenshot becomes a text note, and
 images in tool results are removed when a transcript is restored. A hosted model
 keeps its per-window, per-model image setting and receives screenshots as before.
+The on-device context window is the capacity the system model reports, unless a
+configured or discovered window exists; 4,096 tokens applies only when none is
+reported.
 
 Conversation messages, attachments and checkpoints belong to the originating
 profile, which stays task-local across awaits and focus changes. They are private

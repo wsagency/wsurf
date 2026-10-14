@@ -142,6 +142,26 @@ struct AttachmentTests {
         #expect(AttachmentRequest.images([visual], textOnly: false).count == 1)
     }
 
+    @Test func theOnDeviceWindowDecidesHowManyImagesFitAWholeMessage() {
+        let page = AssistantAttachment(
+            id: UUID(), name: "page.png", contentType: UTType.png.identifier,
+            data: Data([1]), text: "", images: [.init(data: Data([1]), mimeType: "image/png")]
+        )
+        func allowed(images: Int, reported: Int) -> Bool {
+            let window = ContextWindow.resolve(
+                for: ProviderCatalog.appleOnDevice, model: "", systemModelReportedTokens: reported
+            ).tokens
+            return (try? AttachmentRequest.validate(
+                Array(repeating: page, count: images), message: "Read", textOnly: false, windowTokens: window
+            )) != nil
+        }
+
+        #expect(allowed(images: 1, reported: 0))
+        #expect(!allowed(images: 2, reported: 0))
+        #expect(allowed(images: 2, reported: 8_192))
+        #expect(!allowed(images: 3, reported: 8_192))
+    }
+
     @Test func pastingAnImageCreatesARemovableAttachment() async throws {
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }
