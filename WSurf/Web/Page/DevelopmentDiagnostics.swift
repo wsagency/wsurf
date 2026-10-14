@@ -209,7 +209,7 @@ final class DevelopmentDiagnostics {
         hookDocumentID = nil
         if !handlerRegistered {
             handlerRegistered = true
-            page.addScriptMessageHandler(name: handlerName, in: PageAutomationGuard.world) { [weak self] message in
+            page.addScriptMessageHandler(name: handlerName, in: PageAutomationGuard.world, bridge: false) { [weak self] message in
                 self?.receive(message: message)
             }
         }

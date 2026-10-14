@@ -602,9 +602,87 @@ nonisolated enum PageRuntime {
         if (wireBytes(out) > WIRE_LIMIT) { out.style = {}; out.truncated = true; }
         return out;
       };
+      // Where a ref'd element, and everything that frames or clips it, sit in their own document's viewport, for a screenshot
+      // crop. Boxes are measured, never guessed: a bounding box, the layout size and the composed 2D linear part of every
+      // transform up to the document root (rotation, reflection, skew, scale); Swift derives the translation from the
+      // bounding box's centre and maps the polygon (`ScreenshotGeometry`). A 3D transform or an unreachable frame sets
+      // `unmappable`.
+      const screenshotGeometry = ref => {
+        const el = inspectableRef(ref) ? window.__wsurfRefs[ref - 1] : null;
+        if (!el || !el.isConnected) return { stale: true };
+        const out = { foundOnly: foundOnly.has(el), clips: [], frames: [] };
+        const r = (x, y, width, height) => ({ x, y, width, height });
+        const win = node => node.ownerDocument.defaultView, up = node => node.parentElement || node.getRootNode().host;
+        // [a, b, c, d] is matrix(a, b, c, d); mul(p, q) applies q first.
+        const mul = (p, q) => [p[0] * q[0] + p[2] * q[1], p[1] * q[0] + p[3] * q[1], p[0] * q[2] + p[2] * q[3], p[1] * q[2] + p[3] * q[3]];
+        const REPLACED = new Set(['IFRAME', 'IMG', 'VIDEO', 'AUDIO', 'CANVAS', 'svg', 'INPUT', 'SELECT', 'TEXTAREA', 'BUTTON', 'OBJECT', 'EMBED']);
+        const radians = token => { const n = parseFloat(token); return token.endsWith('grad') ? n * Math.PI / 200 : token.endsWith('deg') ? n * Math.PI / 180 : token.endsWith('turn') ? n * 2 * Math.PI : n; };
+        // The 2D linear part one node applies to itself: `transform`, `rotate` and `scale` (translation is derived later).
+        // Null for a 3D transform, which a 2D polygon cannot carry.
+        const own = node => {
+          const s = win(node).getComputedStyle(node);
+          if (s.display === 'contents' || (s.display === 'inline' && !REPLACED.has(node.tagName))) return [1, 0, 0, 1];
+          let l = [1, 0, 0, 1];
+          if (s.transform && s.transform !== 'none') {
+            const m = new DOMMatrix(s.transform);
+            if (m.m13 || m.m23 || m.m31 || m.m32 || m.m43 || m.m14 || m.m24 || m.m33 !== 1 || m.m44 !== 1) return null;
+            l = [m.m11, m.m12, m.m21, m.m22];
+          }
+          const scale = (s.scale || 'none').trim().split(/\s+/);
+          if (scale[0] !== 'none') { const sx = parseFloat(scale[0]); l = mul([sx, 0, 0, scale.length > 1 ? parseFloat(scale[1]) : sx], l); }
+          const rotate = (s.rotate || 'none').trim().split(/\s+/);
+          if (rotate[0] !== 'none') {
+            let t = radians(rotate[rotate.length - 1]);
+            if (rotate.length > 1) {
+              const word = rotate.length === 2 ? { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[rotate[0]] : null;
+              const v = word || (rotate.length === 4 ? rotate.slice(0, 3).map(parseFloat) : null);
+              if (!v || v[0] || v[1]) { if (t) return null; } else t *= Math.sign(v[2]);
+            }
+            l = mul([Math.cos(t), Math.sin(t), -Math.sin(t), Math.cos(t)], l);
+          }
+          return l.every(Number.isFinite) ? l : null;
+        };
+        // Every transform from `node` up to its document's root, composed once.
+        const linearOf = node => { let acc = [1, 0, 0, 1]; for (let n = node; n; n = up(n)) { const l = own(n); if (!l) return null; acc = mul(l, acc); } return acc; };
+        // `local` is the region of interest in layout pixels from the node's border-box origin.
+        const place = (node, local) => {
+          const linear = linearOf(node);
+          if (!linear) { out.unmappable = true; return null; }
+          const b = node.getBoundingClientRect();
+          return { border: r(b.x, b.y, b.width, b.height), layout: r(0, 0, node.offsetWidth, node.offsetHeight), linear, local };
+        };
+        // Padding boxes (what an `overflow` container shows) of the ancestors that cut `node` off, in its own viewport.
+        // An absolute or fixed node escapes the containers that are not its containing block.
+        const clipsOf = node => {
+          const view = win(node), clips = [];
+          let position = view.getComputedStyle(node).position;
+          for (let a = up(node); a; a = up(a)) {
+            const s = view.getComputedStyle(a), block = s.transform !== 'none' || s.filter !== 'none';
+            if (position === 'fixed' ? !block : position === 'absolute' && s.position === 'static' && !block) continue;
+            position = s.position;
+            const rootScroller = a === view.document.body && view.getComputedStyle(view.document.documentElement).overflow === 'visible';
+            if ((s.overflowX === 'visible' && s.overflowY === 'visible') || s.display === 'inline' || s.display === 'contents' || rootScroller) continue;
+            const p = place(a, r(a.clientLeft, a.clientTop, a.clientWidth, a.clientHeight));
+            if (p) clips.push(p);
+          }
+          return clips;
+        };
+        const box = el.getBoundingClientRect();
+        out.rect = r(box.x, box.y, box.width, box.height);
+        out.clips = clipsOf(el);
+        let w = win(el);
+        for (; w && w !== window && w.frameElement; w = w.parent) {
+          const frame = w.frameElement, style = win(frame).getComputedStyle(frame), pad = name => parseFloat(style[name]) || 0;
+          const p = place(frame, r(frame.clientLeft + pad('paddingLeft'), frame.clientTop + pad('paddingTop'),
+            frame.clientWidth - pad('paddingLeft') - pad('paddingRight'), frame.clientHeight - pad('paddingTop') - pad('paddingBottom')));
+          if (p) out.frames.push({ ...p, clips: clipsOf(frame) });
+        }
+        if (w !== window) out.unmappable = true;
+        return out;
+      };
 
       return { matchesRef, inspectableRef, isFoundOnly: ref => foundOnly.has(window.__wsurfRefs[ref - 1]), expectValue, valueState, walk, documentID, norm, collect, pageText, viewportText, resolve, setValue, pressEnter,
-        labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe, elementState, findAll, inspect, selectorProblem };
+        labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe, elementState, findAll, inspect, selectorProblem, screenshotGeometry };
     })());
     """#
 

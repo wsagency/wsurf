@@ -68,21 +68,6 @@ final class RuntimeHarness: NSObject, WKNavigationDelegate {
     }
 }
 
-/// The size of what a client receives for a runtime result: re-serialised by Swift (sorted keys, `/` escaped), labelled like
-/// the driver's output, and fenced like `AgentToolkit.untrusted`, which escapes `& < >` (`DevelopmentWireFenceTests` pins
-/// `wireFence` to the real function, which the pure component package cannot link).
-func wireFence(_ pageText: String) -> String {
-    let escaped = pageText.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
-    return "<page-content untrusted=\"true\">\n\(escaped)\n</page-content>"
-}
-
-private func deliveredBytes(_ output: RuntimeHarness.Output, label: String) throws -> Int {
-    var object = output.object
-    object["observation"] = nil  // the driver replaces it with a trailing observationID line
-    let json = String(decoding: try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), as: UTF8.self)
-    return wireFence("\(label):\n\(json)\nobservationID: \(String(repeating: "x", count: 32))").utf8.count
-}
-
 @MainActor
 struct DevelopmentElementStateTests {
     @Test func reportsVisibleEnabledSingleMatch() async throws {
@@ -415,7 +400,7 @@ struct DevelopmentFindElementsTests {
         #expect(items.count >= 1 && items.count < 100)
         #expect(result["returned"] as? Int == items.count)
         #expect(result["hasMore"] as? Bool == true)
-        #expect(try deliveredBytes(result, label: "ELEMENTS") <= 32 * 1_024)
+        #expect(result.raw.utf8.count <= 24 * 1_024)  // the runtime's own logical budget; the delivered-bytes bound is the MCP consumer test
         let next = try await page.find("p.row", offset: items.count, limit: 100)
         #expect((next["items"] as? [[String: Any]])?.isEmpty == false)
     }
@@ -517,7 +502,7 @@ struct DevelopmentInspectTests {
         let page = await RuntimeHarness(html: "\(String(repeating: wrapper, count: 14))<span id=leaf \(attributes)>x</span>\(String(repeating: "</div>", count: 14))")
         let inspected = try await page.inspect(try await ref(page, "#leaf"))
         #expect(inspected["stale"] == nil)
-        #expect(try deliveredBytes(inspected, label: "ELEMENT") <= 32 * 1_024)
+        #expect(inspected.raw.utf8.count <= 24 * 1_024)
         // The runtime budgets the delivered size, so it sheds ancestors for this content.
         #expect(inspected["ancestorsTruncated"] as? Bool == true)
     }

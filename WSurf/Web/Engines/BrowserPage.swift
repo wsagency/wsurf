@@ -691,11 +691,12 @@ final class BrowserPage: NSView {
         }
     }
 
-    func addScriptMessageHandler(name: String, in world: WKContentWorld, handler: @escaping (BrowserScriptMessage) -> Void) {
+    /// `bridge: false` registers the handler without installing the page-callable `__wsurfSend` relay for that world.
+    func addScriptMessageHandler(name: String, in world: WKContentWorld, bridge: Bool = true, handler: @escaping (BrowserScriptMessage) -> Void) {
         handlers[Self.handlerKey(name: name, world: world)] = handler
         if let webKit {
             let controller = webKit.configuration.userContentController
-            Self.installBridge(in: controller, world: world)
+            if bridge { Self.installBridge(in: controller, world: world) }
             controller.removeScriptMessageHandler(forName: name, contentWorld: world)
             // Opener-created views can share a controller; route by the emitting native view, not the last installed tab.
             controller.add(MessageAdapter(world: world), contentWorld: world, name: name)

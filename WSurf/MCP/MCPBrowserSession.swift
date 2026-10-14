@@ -129,7 +129,7 @@ final class MCPBrowserSession: Identifiable {
             ["readPage", "inspectControl", "waitForPage", "screenshotPage", "getDevelopmentInfo"].contains(name)
             ? .read
             : Self.developmentCalls.contains(name) || Self.developmentPageActions.contains(name) ? .development : .control
-        guard permits(tab, capability: capability) else {
+        guard mayProceed(tab, capability: capability) else {
             return failure("This action is blocked by the connection’s access or the website’s Assistant Access setting.")
         }
         if name == "switchTab" {
@@ -230,7 +230,7 @@ final class MCPBrowserSession: Identifiable {
             documentURL: url.absoluteString, snapshot: usesRef ? observation?.snapshot : nil,
             validate: { [weak self, weak tab, weak view] in
                 guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
-                return self.permits(tab, capability: capability)
+                return self.mayProceed(tab, capability: capability)
                     && (capability != .control || self.onScreen(tab))
             }
         )
@@ -248,16 +248,23 @@ final class MCPBrowserSession: Identifiable {
                         // again inside the driver before work, after each await and before pixels are returned.
                         let developmentAllowed = { [weak self, weak tab] in
                             guard let self, let tab else { return false }
-                            return self.permits(tab, capability: .development)
+                            return self.mayProceed(tab, capability: .development)
                         }
                         switch await PageDriver.screenshot(request.target, developmentAllowed: developmentAllowed, in: view) {
                         case .success(let capture):
-                            capturedImage = capture.jpeg
                             let box = capture.bounds
-                            output =
+                            let text =
                                 "Screenshot captured. Shows viewport CSS pixels x \(Int(box.minX.rounded())), y \(Int(box.minY.rounded())), "
                                 + "\(Int(box.width.rounded())) by \(Int(box.height.rounded())); image scale \(String(format: "%.2f", capture.scale)) px per CSS px.\n"
                                 + (await PageDriver.snapshot(view, viewportOnly: true))
+                            // The snapshot above was the last await: development access is asked once more right before the
+                            // image is attached, so a revoke during it never returns an inspection image.
+                            if capture.requiresDevelopment, !developmentAllowed() {
+                                output = ScreenshotFailure.needsDevelopment.message
+                            } else {
+                                capturedImage = capture.jpeg
+                                output = text
+                            }
                         case .failure(let failure):
                             output = failure.message
                         }
@@ -372,7 +379,7 @@ final class MCPBrowserSession: Identifiable {
         if origin != grant.origin {
             guard await openConsent(clientName, url) else { return failure("Navigation was not approved.") }
         }
-        guard permits(tab, capability: .control), onScreen(tab), webURL(of: tab) == previousURL else {
+        guard mayProceed(tab, capability: .control), onScreen(tab), webURL(of: tab) == previousURL else {
             return failure("Page access changed before navigation.")
         }
         guard browser.sitePermissions.assistantAccess(for: origin) != .deny else { return failure("Assistant access is off for this website.") }
@@ -415,8 +422,10 @@ final class MCPBrowserSession: Identifiable {
         return parts?.url?.absoluteString ?? url.absoluteString
     }
 
+    /// Persistent state only: whether this connection still shares `id`. A task's own cancellation is not part of it, because
+    /// another connection evaluates this through the owner's `isAuthorized` (lease release) from its own, possibly cancelled, task.
     private func sharedTab(_ id: UUID) -> BrowserTab? {
-        guard isConnected, available(), !Task.isCancelled,
+        guard isConnected, available(),
             let grant = grants[id], let tab = browser.tabs.first(where: { $0.id == id }),
             !tab.isPrivate, !tab.isClosed, let url = webURL(of: tab),
             SitePermissions.origin(for: url) == grant.origin
@@ -425,6 +434,7 @@ final class MCPBrowserSession: Identifiable {
         return tab.assistantAccess.effectivePolicy == .deny ? nil : tab
     }
 
+    /// Whether this connection's grant and the site's policy allow `capability` now. Persistent: never depends on the calling task.
     func permits(_ tab: BrowserTab, capability: Scope) -> Bool {
         guard sharedTab(tab.id) === tab, let grant = grants[tab.id] else { return false }
         let writable = tab.assistantAccess.effectivePolicy != .readOnly
@@ -433,6 +443,13 @@ final class MCPBrowserSession: Identifiable {
         case .control: return (grant.access == .control || grant.access == .development) && writable
         case .development: return grant.access == .development && writable
         }
+    }
+
+    /// `permits` for the request this task is running: also false once the request itself was cancelled, so a cancelled
+    /// request neither continues nor returns contents. Use at request entry and after each await of that request, never to
+    /// decide the fate of a lease.
+    func mayProceed(_ tab: BrowserTab, capability: Scope) -> Bool {
+        !Task.isCancelled && permits(tab, capability: capability)
     }
 
     func webURL(of tab: BrowserTab) -> URL? {

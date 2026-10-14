@@ -331,16 +331,22 @@ final class SitePermissions {
         scheduleSave()
     }
 
+    /// Fired after any change to the stored Assistant Access records, whoever made it (a tab's own prompt answer, or
+    /// Settings > Websites), so every tab's live assistant state is re-evaluated against the store.
+    var onAssistantAccessChanged: (() -> Void)?
+
     func setAssistantAccess(_ policy: AssistantAccessPolicy, for origin: String) {
         let origin = normalize(origin)
         guard !origin.isEmpty else { return }
         assistantRecords[origin] = policy == .ask ? nil : policy
         scheduleSave()
+        onAssistantAccessChanged?()
     }
 
     func removeAllAssistantAccess() {
         assistantRecords = [:]
         scheduleSave()
+        onAssistantAccessChanged?()
     }
 
     func setKeepsActive(_ keepsActive: Bool, for origin: String) {

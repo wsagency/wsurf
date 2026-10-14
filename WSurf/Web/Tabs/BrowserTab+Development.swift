@@ -31,6 +31,9 @@ final class DevelopmentOwner {
     var diagnostics: DevelopmentDiagnostics?
     private var releases: [(DevelopmentReleaseReason) -> Void] = []
     private(set) var isReleased = false
+    /// Finishes when the page's device emulation this lease applied has actually been removed (nil: nothing to remove).
+    /// Reserved on the page's emulation queue at release, so a later lease applies after it.
+    private(set) var cleanup: Task<Void, Never>?
 
     init(connection: UUID, pageGeneration: Int, page: BrowserPage?) {
         self.connection = connection
@@ -45,7 +48,7 @@ final class DevelopmentOwner {
     fileprivate func release(_ reason: DevelopmentReleaseReason) {
         guard !isReleased else { return }
         isReleased = true
-        viewport?.remove(from: self)
+        cleanup = viewport?.remove(from: self)
         viewport = nil
         diagnostics?.stop()
         diagnostics = nil

@@ -103,6 +103,12 @@ final class BrowserProfileContext {
                 }
             }
         }
+        sitePermissions.onAssistantAccessChanged = { [weak self] in
+            guard let self else { return }
+            for browser in self.browsers.allObjects where browser.context === self && browser.sitePermissions === self.sitePermissions {
+                for tab in browser.tabs { tab.assistantAccess.onPolicyChanged?() }
+            }
+        }
     }
 
     func register(_ browser: BrowserModel) {

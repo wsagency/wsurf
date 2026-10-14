@@ -103,7 +103,7 @@ extension MCPBrowserSession {
             documentURL: url.absoluteString, snapshot: nil,
             validate: { [weak self, weak tab, weak view] in
                 guard let self, let tab, let view else { return false }
-                return tab.isLive(view, generation: generation) && self.permits(tab, capability: scope)
+                return tab.isLive(view, generation: generation) && self.mayProceed(tab, capability: scope)
             })
         return await PageAutomationGuard.$current.withValue(guardScope) {
             guard guardScope.validate(), webURL(of: tab) == url else {
@@ -127,7 +127,7 @@ extension MCPBrowserSession {
                 let size = profile.dimensions(orientation)
                 return await setViewport(width: size.width, height: size.height, profile: profile, tab: tab, view: view)
             case "reloadPage": return await reload(tab: tab, view: view, generation: generation)
-            case "resetDevelopment": return resetDevelopment(tab: tab)
+            case "resetDevelopment": return await resetDevelopment(tab: tab)
             case "startDiagnostics": return await startDiagnostics(tab: tab, view: view)
             default:
                 return await readDiagnostics(
@@ -197,8 +197,12 @@ extension MCPBrowserSession {
             "zoom": .double(Double(view.pageZoom)), "capabilities": MCPDevelopmentTools.value(view.developmentCapabilities),
         ]
         let measured = await view.measureViewport()
+        // The page and the connection's current grant are checked after the last await, immediately before returning.
         guard tab.isLive(view, generation: generation) else {
             return MCPDevelopmentTools.result(.stale, tabID: tab.id, message: "The page was replaced while it was measured. Try again.")
+        }
+        guard mayProceed(tab, capability: .read) else {
+            return MCPDevelopmentTools.result(.stale, tabID: tab.id, message: "Page access changed while the page was measured. Try again.")
         }
         let relation = tab.developmentRelation(of: id)
         fields["owner"] = .string(relation == .own ? "self" : relation.rawValue)
@@ -262,14 +266,21 @@ extension MCPBrowserSession {
         // lease captured before the reload is released, never one a different connection acquired meanwhile.
         if let owner, tab.developmentOwner === owner, !permits(tab, capability: .development) {
             tab.releaseDevelopment(owner, reason: .documentDenied)
+            await owner.cleanup?.value
             return MCPDevelopmentTools.result(.denied, tabID: tab.id, message: "The reloaded page is outside this connection's access; development settings were removed.")
+        }
+        guard mayProceed(tab, capability: .development) else {
+            return MCPDevelopmentTools.result(.denied, tabID: tab.id, message: "Page access changed during the reload. Try again.")
         }
         return MCPDevelopmentTools.result(.ok, tabID: tab.id, message: "Reload started. Use readPage after the page loads.")
     }
 
-    private func resetDevelopment(tab: BrowserTab) -> CallTool.Result {
+    /// Reports success only once the page is clean: the release reserved the device-emulation cleanup on the page's queue, and
+    /// this waits for it, so a result never claims a removal that is still queued.
+    private func resetDevelopment(tab: BrowserTab) async -> CallTool.Result {
         if let owner = ownLease(tab) {
             tab.releaseDevelopment(owner, reason: .reset)
+            await owner.cleanup?.value
             return MCPDevelopmentTools.result(.ok, tabID: tab.id, message: "Development settings and diagnostics were removed.")
         }
         if tab.developmentRelation(of: id) == .other { return conflict(tab) }
@@ -320,7 +331,7 @@ extension MCPBrowserSession {
         do {
             let page = try diagnostics.buffer.read(
                 stream: stream, cursor: arguments["cursor"]?.stringValue, limit: arguments["limit"]?.intValue ?? MCPDevelopmentTools.defaultLimit)
-            guard tab.isCurrent(owner), permits(tab, capability: .development) else {
+            guard tab.isCurrent(owner), mayProceed(tab, capability: .development) else {
                 return MCPDevelopmentTools.result(.stale, tabID: tab.id, message: "The development lease ended before the records were returned.")
             }
             let formatter = ISO8601DateFormatter()

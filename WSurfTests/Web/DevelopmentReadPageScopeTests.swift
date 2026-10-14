@@ -32,11 +32,3 @@ struct DevelopmentReadPageScopeTests {
         #expect(await PageDriver.automationSnapshot(in: page) != nil)
     }
 }
-
-/// `wireFence` (the pure copy the delivered-bytes tests measure with) must stay identical to the real fence.
-struct DevelopmentWireFenceTests {
-    @Test func theTestFenceMatchesAgentToolkit() {
-        let text = "a & b <c> / \"d\" é €"
-        #expect(wireFence(text) == AgentToolkit.untrusted(text))
-    }
-}

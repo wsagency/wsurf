@@ -52,13 +52,14 @@ extension BrowserPage {
 }
 
 extension BrowserPage {
-    private static let emulationLocks = NSMapTable<BrowserPage, DevelopmentEmulationLock>.weakToStrongObjects()
+    private static let emulationQueues = NSMapTable<BrowserPage, DevelopmentEmulationQueue>.weakToStrongObjects()
 
-    var emulationLock: DevelopmentEmulationLock {
-        if let lock = Self.emulationLocks.object(forKey: self) { return lock }
-        let lock = DevelopmentEmulationLock()
-        Self.emulationLocks.setObject(lock, forKey: self)
-        return lock
+    /// Every emulation change and cleanup of this page goes through here, one at a time, in the order it was requested.
+    var emulationQueue: DevelopmentEmulationQueue {
+        if let queue = Self.emulationQueues.object(forKey: self) { return queue }
+        let queue = DevelopmentEmulationQueue()
+        Self.emulationQueues.setObject(queue, forKey: self)
+        return queue
     }
 }
 
@@ -67,19 +68,20 @@ struct DevelopmentViewportState {
     /// Device-axis emulation (Chromium) is active in addition to the layout size.
     let device: Bool
 
-    /// Compare-then-restore: clears only what this state applied, never a different size set since.
+    /// Compare-then-restore: puts back only the layout this state applied, never a different size set since.
     @MainActor
-    func remove(from owner: DevelopmentOwner) {
-        guard let page = owner.page else { return }
+    func restoreLayout(on page: BrowserPage) {
         if page.developmentViewport == size { page.developmentViewport = nil }
-        if device, let chromium = page.chromium {
-            let lock = page.emulationLock
-            Task {
-                await lock.acquire()
-                defer { lock.release() }
-                await chromium.clearDeviceEmulation()
-            }
-        }
+    }
+
+    /// Release path: restores the layout now and reserves the device-emulation cleanup's turn on the page's queue before
+    /// returning, so a lease acquired straight afterwards applies after it. The task finishes when the page is clean.
+    @MainActor
+    func remove(from owner: DevelopmentOwner) -> Task<Void, Never>? {
+        guard let page = owner.page else { return nil }
+        restoreLayout(on: page)
+        guard device, let chromium = page.chromium else { return nil }
+        return page.emulationQueue.enqueue { await chromium.clearDeviceEmulation() }
     }
 }
 
@@ -135,10 +137,16 @@ extension BrowserPage {
         if device, chromium == nil {
             return .unsupported("WebKit has no DPR, touch or mobile-viewport override, so device profiles are not applied and nothing was changed.")
         }
-        // Every emulation change and cleanup of this page runs one at a time, in arrival order, so an old lease's cleanup
-        // can never land after a newer lease applied its own, and each step revalidates the lease before mutating.
-        await emulationLock.acquire()
-        defer { emulationLock.release() }
+        // The turn is reserved here, synchronously: a cleanup requested before this call (an earlier lease's release) is
+        // already in the queue and runs first. Each step of the turn revalidates the lease before mutating.
+        return await emulationQueue.enqueue { [self] in
+            await runDevelopmentViewport(request, profile: profile, device: device, owner: owner, tab: tab)
+        }.value
+    }
+
+    private func runDevelopmentViewport(
+        _ request: PageViewport.Request, profile: PageViewport.Profile?, device: Bool, owner: DevelopmentOwner, tab: BrowserTab
+    ) async -> DevelopmentViewportOutcome {
         guard tab.isCurrent(owner) else { return .stale }
         // Switching from a device profile to a plain size clears the device axes first.
         if owner.viewport?.device == true, !device, let chromium {
@@ -173,20 +181,23 @@ extension BrowserPage {
             if let measured, measured.width == request.width, measured.height == request.height { break }
         }
         guard let measured, measured.width == request.width, measured.height == request.height else {
-            rollBackViewport(owner)
+            await rollBackViewport(owner)
             return .missed(measured, "The page did not reach the requested viewport; layout was restored.")
         }
         if device, let profile, measured.devicePixelRatio != profile.scale || !measured.touch {
-            rollBackViewport(owner)
+            await rollBackViewport(owner)
             return .unsupported(
                 "The embedded runtime did not honor every device axis (measured devicePixelRatio \(measured.devicePixelRatio), touch \(measured.touch)); nothing was kept.")
         }
         return .applied(measured)
     }
 
-    func rollBackViewport(_ owner: DevelopmentOwner) {
-        owner.viewport?.remove(from: owner)
+    /// Runs inside this page's emulation turn: restores the layout and clears device emulation before the outcome is reported.
+    func rollBackViewport(_ owner: DevelopmentOwner) async {
+        guard let state = owner.viewport else { return }
         owner.viewport = nil
+        state.restoreLayout(on: self)
+        if state.device, let chromium { await chromium.clearDeviceEmulation() }
     }
 }
 
