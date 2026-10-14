@@ -359,7 +359,7 @@ extension AnyLanguageModelAgent {
             needsRecovery = progress.recovery
             state.stop = progress.stop ?? state.stop
         }
-        state.session = makeSession(transcript: settledTranscript(state.session.transcript))
+        state.session = makeSession(transcript: settledTranscript(state.session.transcript, keepingReasoning: true))
         state.prompt = needsRecovery ? Self.recoveryPrompt : Self.continuationPrompt
         callbacks.save()
     }
