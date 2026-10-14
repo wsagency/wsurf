@@ -11,19 +11,35 @@ nonisolated enum PageDiagnostics {
 
     enum CursorError: Error, Equatable { case invalid }
 
+    /// A record field. Numbers stay numbers (an unknown status or duration is an absent key, never `0` or a numeric string).
+    enum Field: Equatable, Sendable, ExpressibleByStringLiteral, ExpressibleByIntegerLiteral {
+        case text(String)
+        case number(Int)
+
+        init(stringLiteral value: String) { self = .text(value) }
+        init(integerLiteral value: Int) { self = .number(value) }
+
+        var byteCount: Int {
+            switch self {
+            case .text(let text): text.utf8.count
+            case .number(let number): String(number).utf8.count
+            }
+        }
+    }
+
     struct Record: Equatable {
         let seq: UInt64
         let timestamp: Date
         let documentID: String
         let stream: Stream
-        let fields: [String: String]
+        let fields: [String: Field]
         let truncated: Bool
 
         /// Approximate serialized size: field keys and values plus the document identity.
         var byteCount: Int { Record.size(fields) + documentID.utf8.count }
 
-        fileprivate static func size(_ fields: [String: String]) -> Int {
-            fields.reduce(0) { $0 + $1.key.utf8.count + $1.value.utf8.count }
+        fileprivate static func size(_ fields: [String: Field]) -> Int {
+            fields.reduce(0) { $0 + $1.key.utf8.count + $1.value.byteCount }
         }
     }
 
@@ -75,7 +91,7 @@ nonisolated enum PageDiagnostics {
         /// Stores a record for the owner's current document. Returns false (and stores nothing) for any other document,
         /// so late events from a previous document can never be merged under the new identity.
         @discardableResult
-        func append(stream: Stream, timestamp: Date, documentID: String, fields: [String: String]) -> Bool {
+        func append(stream: Stream, timestamp: Date, documentID: String, fields: [String: Field]) -> Bool {
             guard documentID == self.documentID else { return false }
             let (bounded, truncated) = bound(fields, documentID: documentID)
             let seq = nextSeq[stream, default: 0]
@@ -138,16 +154,18 @@ nonisolated enum PageDiagnostics {
         // MARK: Record bounds
 
         /// Cuts the largest field value, on character boundaries, until the record fits `maxRecordBytes`.
-        private func bound(_ fields: [String: String], documentID: String) -> ([String: String], Bool) {
+        private func bound(_ fields: [String: Field], documentID: String) -> ([String: Field], Bool) {
             var fields = fields
             var truncated = false
+            func text(_ field: Field) -> String? { if case .text(let text) = field { text } else { nil } }
             while Record.size(fields) + documentID.utf8.count > maxRecordBytes,
-                let largest = fields.max(by: { $0.value.utf8.count < $1.value.utf8.count }), !largest.value.isEmpty
+                let largest = fields.compactMap({ key, field in text(field).map { (key, $0) } }).max(by: { $0.1.utf8.count < $1.1.utf8.count }),
+                !largest.1.isEmpty
             {
                 var excess = Record.size(fields) + documentID.utf8.count - maxRecordBytes
-                var value = largest.value
+                var value = largest.1
                 while excess > 0, let last = value.popLast() { excess -= String(last).utf8.count }
-                fields[largest.key] = value
+                fields[largest.0] = .text(value)
                 truncated = true
             }
             return (fields, truncated)

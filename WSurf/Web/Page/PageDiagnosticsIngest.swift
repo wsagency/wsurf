@@ -8,7 +8,7 @@ nonisolated extension PageDiagnostics {
     /// One record before the buffer assigns identity: the stream and its already-sanitized fields.
     struct Entry: Equatable {
         let stream: Stream
-        let fields: [String: String]
+        let fields: [String: PageDiagnostics.Field]
     }
 
     fileprivate static let maxText = 2_000
@@ -23,14 +23,14 @@ nonisolated extension PageDiagnostics {
         return value.uppercased()
     }
 
-    fileprivate static func status(_ value: Any?) -> String? {
+    fileprivate static func status(_ value: Any?) -> Int? {
         guard let value = value as? Int, (100...599).contains(value) else { return nil }
-        return String(value)
+        return value
     }
 
-    fileprivate static func duration(milliseconds: Double?) -> String? {
+    fileprivate static func duration(milliseconds: Double?) -> Int? {
         guard let ms = milliseconds, ms.isFinite, ms >= 0, ms < 1e9 else { return nil }
-        return String(Int(ms.rounded()))
+        return Int(ms.rounded())
     }
 
     fileprivate static func firstLine(_ text: String) -> String {
@@ -55,20 +55,20 @@ nonisolated enum PageDiagnosticsHook {
 
     private static func console(_ body: [String: Any]) -> PageDiagnostics.Entry? {
         guard let level = body["level"] as? String, levels.contains(level), let text = body["text"] as? String else { return nil }
-        var fields = ["level": level, "text": PageDiagnostics.clip(text), "source": "webkit-hook"]
-        if let url = (body["url"] as? String).flatMap(PageDiagnostics.sanitize(url:)) { fields["url"] = url }
-        if let line = body["line"] as? Int, line >= 0 { fields["line"] = String(line) }
+        var fields: [String: PageDiagnostics.Field] = ["level": .text(level), "text": .text(PageDiagnostics.clip(text)), "source": "webkit-hook"]
+        if let url = (body["url"] as? String).flatMap(PageDiagnostics.sanitize(url:)) { fields["url"] = .text(url) }
+        if let line = body["line"] as? Int, line >= 0 { fields["line"] = .number(line) }
         return .init(stream: .console, fields: fields)
     }
 
     private static func network(_ body: [String: Any]) -> PageDiagnostics.Entry? {
         guard let via = body["via"] as? String, via == "fetch" || via == "xhr" else { return nil }
         let outcome = (body["outcome"] as? String).flatMap { outcomes.contains($0) ? $0 : nil } ?? "unknown"
-        var fields = ["outcome": outcome, "source": "webkit-\(via)"]
-        fields["method"] = PageDiagnostics.method(body["method"])
-        fields["url"] = (body["url"] as? String).flatMap(PageDiagnostics.sanitize(url:))
-        fields["status"] = PageDiagnostics.status(body["status"])
-        fields["durationMs"] = PageDiagnostics.duration(milliseconds: body["ms"] as? Double)
+        var fields: [String: PageDiagnostics.Field] = ["outcome": .text(outcome), "source": .text("webkit-\(via)")]
+        fields["method"] = PageDiagnostics.method(body["method"]).map { .text($0) }
+        fields["url"] = (body["url"] as? String).flatMap(PageDiagnostics.sanitize(url:)).map { .text($0) }
+        fields["status"] = PageDiagnostics.status(body["status"]).map { .number($0) }
+        fields["durationMs"] = PageDiagnostics.duration(milliseconds: body["ms"] as? Double).map { .number($0) }
         return .init(stream: .network, fields: fields)
     }
 }
@@ -80,7 +80,7 @@ nonisolated final class ChromiumDiagnosticsMapper {
         var method: String?
         var url: String?
         var start: Double?
-        var status: String?
+        var status: Int?
     }
 
     private static let maxInFlight = 256
@@ -110,7 +110,7 @@ nonisolated final class ChromiumDiagnosticsMapper {
     private static func console(_ params: [String: Any]) -> PageDiagnostics.Entry? {
         guard let type = params["type"] as? String, let level = consoleLevels[type], let args = params["args"] as? [[String: Any]] else { return nil }
         let text = args.map(describe).joined(separator: " ")
-        return .init(stream: .console, fields: ["level": level, "text": PageDiagnostics.clip(text), "source": "cdp"])
+        return .init(stream: .console, fields: ["level": .text(level), "text": .text(PageDiagnostics.clip(text)), "source": "cdp"])
     }
 
     /// Primitives only. Objects and functions are never rendered: their descriptions can embed arbitrary page data.
@@ -138,9 +138,9 @@ nonisolated final class ChromiumDiagnosticsMapper {
         guard let details = params["exceptionDetails"] as? [String: Any] else { return nil }
         let described = (details["exception"] as? [String: Any])?["description"] as? String
         let text = PageDiagnostics.firstLine(described ?? details["text"] as? String ?? "Uncaught")
-        var fields = ["level": "error", "text": PageDiagnostics.clip(text), "source": "cdp"]
-        if let url = (details["url"] as? String).flatMap(PageDiagnostics.sanitize(url:)) { fields["url"] = url }
-        if let line = details["lineNumber"] as? Int, line >= 0 { fields["line"] = String(line + 1) }  // CDP lines are 0-based
+        var fields: [String: PageDiagnostics.Field] = ["level": "error", "text": .text(PageDiagnostics.clip(text)), "source": "cdp"]
+        if let url = (details["url"] as? String).flatMap(PageDiagnostics.sanitize(url:)) { fields["url"] = .text(url) }
+        if let line = details["lineNumber"] as? Int, line >= 0 { fields["line"] = .number(line + 1) }  // CDP lines are 0-based
         return .init(stream: .console, fields: fields)
     }
 
@@ -173,12 +173,12 @@ nonisolated final class ChromiumDiagnosticsMapper {
     }
 
     private static func network(_ request: Pending, end: Double?, outcome: String) -> PageDiagnostics.Entry {
-        var fields = ["outcome": outcome, "source": "cdp"]
-        fields["method"] = request.method
-        fields["url"] = request.url
-        fields["status"] = request.status
+        var fields: [String: PageDiagnostics.Field] = ["outcome": .text(outcome), "source": "cdp"]
+        fields["method"] = request.method.map { .text($0) }
+        fields["url"] = request.url.map { .text($0) }
+        fields["status"] = request.status.map { .number($0) }
         if let start = request.start, let end {
-            fields["durationMs"] = PageDiagnostics.duration(milliseconds: ((end - start) * 1000).rounded())
+            fields["durationMs"] = PageDiagnostics.duration(milliseconds: ((end - start) * 1000).rounded()).map { .number($0) }
         }
         return .init(stream: .network, fields: fields)
     }

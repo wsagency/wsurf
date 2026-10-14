@@ -15,12 +15,12 @@ struct PageDiagnosticsIngestTests {
 
     @Test func acceptsAWellFormedConsoleMessage() {
         let result = entry(["k": "console", "level": "error", "text": "boom", "url": "https://a.test/app.js?v=secret#x", "line": 12])
-        #expect(result == .init(stream: .console, fields: ["level": "error", "text": "boom", "url": "https://a.test/app.js", "line": "12", "source": "webkit-hook"]))
+        #expect(result == .init(stream: .console, fields: ["level": "error", "text": "boom", "url": "https://a.test/app.js", "line": 12, "source": "webkit-hook"]))
     }
 
     @Test(arguments: ["log", "info", "warn", "error", "debug"])
     func acceptsOnlyKnownLevels(level: String) {
-        #expect(entry(["k": "console", "level": level, "text": "x"])?.fields["level"] == level)
+        #expect(entry(["k": "console", "level": level, "text": "x"])?.fields["level"] == .text(level))
     }
 
     @Test func rejectsMalformedConsoleMessages() {
@@ -41,7 +41,8 @@ struct PageDiagnosticsIngestTests {
     @Test func clipsConsoleTextAndIgnoresExtraKeys() throws {
         let long = String(repeating: "é", count: 5_000)
         let result = try #require(entry(["k": "console", "level": "log", "text": long, "cookie": "hunter2", "stack": "at x"]))
-        #expect(try #require(result.fields["text"]).count <= 2_000)
+        guard case .text(let text)? = result.fields["text"] else { Issue.record("text missing"); return }
+        #expect(text.count <= 2_000)
         #expect(result.fields["cookie"] == nil)
         #expect(result.fields["stack"] == nil)
     }
@@ -52,7 +53,7 @@ struct PageDiagnosticsIngestTests {
             "status": 404, "ms": 12.6, "outcome": "completed",
         ])
         #expect(result == .init(stream: .network, fields: [
-            "method": "POST", "url": "https://api.test/v1/x", "status": "404", "durationMs": "13", "outcome": "completed", "source": "webkit-fetch",
+            "method": "POST", "url": "https://api.test/v1/x", "status": 404, "durationMs": 13, "outcome": "completed", "source": "webkit-fetch",
         ]))
     }
 
@@ -118,7 +119,7 @@ struct PageDiagnosticsIngestTests {
         ])
         #expect(result?.fields["text"] == "ReferenceError: nope is not defined")
         #expect(result?.fields["url"] == "https://a.test/app.js")
-        #expect(result?.fields["line"] == "42")  // CDP line numbers are 0-based
+        #expect(result?.fields["line"] == 42)  // CDP line numbers are 0-based
         #expect(result?.fields["level"] == "error")
     }
 
@@ -131,7 +132,7 @@ struct PageDiagnosticsIngestTests {
         #expect(mapper.entry(method: "Network.responseReceived", params: ["requestId": "1", "response": ["status": 201, "headers": ["Set-Cookie": "hunter2"]]]) == nil)
         let done = try #require(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "1", "timestamp": 100.25, "encodedDataLength": 1]))
         #expect(done == .init(stream: .network, fields: [
-            "method": "PUT", "url": "https://a.test/x", "status": "201", "durationMs": "250", "outcome": "completed", "source": "cdp",
+            "method": "PUT", "url": "https://a.test/x", "status": 201, "durationMs": 250, "outcome": "completed", "source": "cdp",
         ]))
         #expect(!String(describing: done).contains("hunter2"))
         #expect(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "1", "timestamp": 101.0]) == nil)  // already reported
@@ -164,7 +165,7 @@ struct PageDiagnosticsIngestTests {
             "redirectResponse": ["status": 302, "url": "https://a.test/old"],
         ]))
         #expect(hop.fields["url"] == "https://a.test/old")
-        #expect(hop.fields["status"] == "302")
+        #expect(hop.fields["status"] == 302)
         let final = try #require(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "r", "timestamp": 10.3]))
         #expect(final.fields["url"] == "https://a.test/new")
     }

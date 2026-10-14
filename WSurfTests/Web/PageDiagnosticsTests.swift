@@ -17,7 +17,7 @@ struct PageDiagnosticsTests {
 
     @discardableResult
     private func add(_ buffer: PageDiagnostics.Buffer, _ stream: PageDiagnostics.Stream = .console, _ text: String = "x", document: String = "doc-1") -> Bool {
-        buffer.append(stream: stream, timestamp: Date(timeIntervalSince1970: 0), documentID: document, fields: ["text": text])
+        buffer.append(stream: stream, timestamp: Date(timeIntervalSince1970: 0), documentID: document, fields: ["text": .text(text)])
     }
 
     // MARK: Reading and cursors
@@ -150,10 +150,18 @@ struct PageDiagnosticsTests {
         let record = try #require(page.records.first)
         #expect(record.truncated)
         #expect(record.byteCount <= 256)
-        let text = try #require(record.fields["text"])
-        #expect(String(text).allSatisfy { $0 == "é" })  // cut on a character boundary, never mid-scalar
+        guard case .text(let text)? = record.fields["text"] else { Issue.record("text missing"); return }
+        #expect(text.allSatisfy { $0 == "é" })  // cut on a character boundary, never mid-scalar
         #expect(page.truncated == 1)
         #expect(buffer.byteCount == record.byteCount)
+    }
+
+    @Test func numericFieldsSurviveTruncationUntouched() throws {
+        let buffer = buffer(maxRecordBytes: 256)
+        buffer.append(stream: .network, timestamp: Date(timeIntervalSince1970: 0), documentID: "doc-1", fields: ["url": .text(String(repeating: "u", count: 1_000)), "status": 404])
+        let record = try #require(try buffer.read(stream: .network, cursor: nil, limit: 1).records.first)
+        #expect(record.fields["status"] == 404)
+        #expect(record.truncated)
     }
 
     @Test func withinLimitRecordsAreNotMarkedTruncated() throws {
@@ -166,7 +174,7 @@ struct PageDiagnosticsTests {
 
     @Test func truncationShrinksTheLargestFieldFirst() throws {
         let buffer = buffer(maxRecordBytes: 200)
-        _ = buffer.append(stream: .console, timestamp: Date(), documentID: "doc-1", fields: ["level": "error", "text": String(repeating: "t", count: 500), "url": "https://a.example/x"])
+        _ = buffer.append(stream: .console, timestamp: Date(), documentID: "doc-1", fields: ["level": "error", "text": .text(String(repeating: "t", count: 500)), "url": "https://a.example/x"])
         let record = try #require(try buffer.read(stream: .console, cursor: nil, limit: 1).records.first)
         #expect(record.fields["level"] == "error")
         #expect(record.fields["url"] == "https://a.example/x")
