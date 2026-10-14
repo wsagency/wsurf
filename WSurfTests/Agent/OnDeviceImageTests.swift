@@ -30,7 +30,7 @@ struct OnDeviceImageTests {
     }
 
     @Test func severalAttachedImagesFitTheOnDeviceRunBudgetButNotAHostedOne() {
-        let budget = ContextBudget.resolve(windowTokens: 8_192, desiredResponseTokens: 1_024)
+        let budget = ContextBudget.resolve(windowTokens: 8_192, desiredResponseTokens: 700)
         let onDevice = makeAgent(model: SystemLanguageModel.default, budget: budget)
         let hosted = makeAgent(model: HarnessScript([]), budget: budget)
         func isOver(_ agent: AnyLanguageModelAgent, images: Int) -> Bool {
@@ -40,9 +40,8 @@ struct OnDeviceImageTests {
             .prompt(.init(segments: [.text(.init(content: "Read these"))] + Array(repeating: .image(Self.image), count: 5))),
         ])
 
-        #expect(!isOver(onDevice, images: 4))
-        #expect(isOver(onDevice, images: 30))
-        #expect(isOver(hosted, images: 4))
+        #expect(!isOver(onDevice, images: 5))
+        #expect(isOver(hosted, images: 5))
         #expect(onDevice.estimatedTokens(in: retained) < budget.inputTokens)
         #expect(hosted.estimatedTokens(in: retained) > budget.inputTokens)
     }

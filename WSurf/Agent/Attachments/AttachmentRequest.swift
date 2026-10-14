@@ -13,9 +13,8 @@ nonisolated enum AttachmentRequest {
 
     static let hostedImageTokens = 1_600
 
-    /// Conservative on-device charge per image. The system model costs 19 to 195 input tokens per image
-    /// whatever its size (measured on macOS 27.0 with the importer's 1,600 px photos and 1,200x1,552 PDF
-    /// pages; the peak of every shape tried was 195), so 256 leaves about 30% headroom.
+    /// Conservative on-device charge per image. On macOS 27.0 (Apple M5) the system model cost at most 195
+    /// input tokens for every image shape tried, including the importer's 1,600 px photos and 1,200x1,552 PDF pages.
     /// ponytail: empirical margin, not a documented bound. Upgrade path: the framework's tokenCount(for:)
     /// once it counts image prompts (it throws ModelManagerError 1001 on macOS 27.0).
     static let onDeviceImageTokens = 256
