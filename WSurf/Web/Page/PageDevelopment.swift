@@ -180,6 +180,7 @@ extension BrowserPage {
                 if tab.isCurrent(owner), let previous = owner.viewport, previous.device {
                     owner.viewport = DevelopmentViewportState(size: previous.size, device: false)
                 }
+                if Task.isCancelled { return .cancelled }
                 return .unsupported("Chromium rejected the device emulation: \(error.localizedDescription)")
             }
             guard tab.isCurrent(owner) else {

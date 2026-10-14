@@ -17,7 +17,7 @@ nonisolated enum ScreenshotFailure: Error, Equatable {
         case .offscreen: "The element or region is outside the visible viewport. Scroll it into view first."
         case .captureFailed: "Screenshot unavailable; use readPage for redacted text."
         case .unmappableFrame:
-            "The element or region sits where its position on the page cannot be measured exactly (a selected frame, or a frame or clipping container under a 3D transform or perspective). Screenshot the viewport instead."
+            "The element or region sits where its position on the page cannot be measured exactly (a selected frame, a frame or clipping container under a 3D transform or perspective, or SVG content). Screenshot the viewport instead."
         case .needsDevelopment:
             "Screenshots of elements found with findElements need development access. Use a control ref from readPage, or a viewport or region screenshot."
         }

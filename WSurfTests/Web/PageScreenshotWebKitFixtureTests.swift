@@ -14,11 +14,14 @@ import Testing
 struct PageScreenshotWebKitFixtureTests {
     /// A 300 x 200 content box, 5 px border and 10 px padding (a 330 x 230 border box at (100, 50), centre (265, 165)),
     /// holding a 60 x 40 element at (20, 30) in its own document: layout (35, 45)-(95, 85) from the border box's origin.
-    private func page(frameStyle: String = "", wrapperStyle: String = "") async -> RuntimeHarness {
+    private func page(
+        frameStyle: String = "", wrapperStyle: String = "",
+        inner: String = "<style>body{margin:0}#t{position:absolute;left:20px;top:30px;width:60px;height:40px}</style><div id=t>x</div>"
+    ) async -> RuntimeHarness {
         await RuntimeHarness(html: """
             <style>body { margin: 0 } #wrap { position: absolute; left: 0; top: 0; \(wrapperStyle) }
             iframe { position: absolute; left: 100px; top: 50px; width: 300px; height: 200px; border: 5px solid; padding: 10px; \(frameStyle) }</style>
-            <div id=wrap><iframe srcdoc='<style>body{margin:0}#t{position:absolute;left:20px;top:30px;width:60px;height:40px}</style><div id=t>x</div>'></iframe></div>
+            <div id=wrap><iframe srcdoc='\(inner)'></iframe></div>
             """)
     }
 
@@ -69,5 +72,40 @@ struct PageScreenshotWebKitFixtureTests {
 
     @Test func aFrameTranslatedInZUnderPerspectiveIsRefused() async throws {
         #expect(try await mapped(await page(frameStyle: "translate: 0 0 50px", wrapperStyle: "perspective: 200px")) == .failure(.unmappableFrame))
+    }
+
+    // CSS `zoom` scales layout, not through a transform: the box WebKit reports is zoomed while its layout sizes are not.
+    @Test(arguments: [
+        ("zoom: 1.5", CGRect(x: 202.5, y: 142.5, width: 90, height: 60)),
+        ("zoom: 0.5", CGRect(x: 67.5, y: 47.5, width: 30, height: 20)),
+    ])
+    func aZoomedFrameIsScaledAboutTheDocumentOrigin(style: String, expected: CGRect) async throws {
+        try await expectMapped(await page(frameStyle: style), expected)
+    }
+
+    @Test(arguments: [
+        ("zoom: 2", CGRect(x: 270, y: 190, width: 120, height: 80)),
+        ("zoom: 0.5", CGRect(x: 67.5, y: 47.5, width: 30, height: 20)),
+    ])
+    func aZoomedAncestorOfTheFrameIsScaledAboutTheDocumentOrigin(style: String, expected: CGRect) async throws {
+        try await expectMapped(await page(wrapperStyle: style), expected)
+    }
+
+    /// A 50 x 100 clipping container zoomed 1.5 (75 x 150 on screen) inside the frame's document, holding the 60 x 40 element
+    /// at (20, 30) layout (zoomed: 90 x 60 at (30, 45)): the container cuts it to 45 wide. The frame's content origin is (115, 65).
+    @Test func aZoomedClippingContainerInsideTheFrameCutsTheElement() async throws {
+        let inner = "<style>body{margin:0}#c{position:absolute;left:0;top:0;width:50px;height:100px;overflow:hidden;zoom:1.5}"
+            + "#t{position:absolute;left:20px;top:30px;width:60px;height:40px}</style><div id=c><div id=t>x</div></div>"
+        try await expectMapped(await page(inner: inner), CGRect(x: 145, y: 110, width: 45, height: 60))
+    }
+
+    // SVG nodes have no layout box to measure from: the frame is reported as not measurable, not as a changed document.
+    @Test func aFrameInsideSVGContentIsNotMeasurableNotStale() async throws {
+        let page = await RuntimeHarness(html: """
+            <svg width=500 height=400><g transform='translate(5 5)'><foreignObject x=10 y=10 width=400 height=300>
+            <iframe style='width:300px;height:200px' srcdoc='<div id=t style="width:60px;height:40px">x</div>'></iframe>
+            </foreignObject></g></svg>
+            """)
+        #expect(try await mapped(page) == .failure(.unmappableFrame))
     }
 }

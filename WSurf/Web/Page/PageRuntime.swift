@@ -617,16 +617,18 @@ nonisolated enum PageRuntime {
         const mul = (p, q) => [p[0] * q[0] + p[2] * q[1], p[1] * q[0] + p[3] * q[1], p[0] * q[2] + p[2] * q[3], p[1] * q[2] + p[3] * q[3]];
         const REPLACED = new Set(['IFRAME', 'IMG', 'VIDEO', 'AUDIO', 'CANVAS', 'svg', 'INPUT', 'SELECT', 'TEXTAREA', 'BUTTON', 'OBJECT', 'EMBED']);
         const radians = token => { const n = parseFloat(token); return token.endsWith('grad') ? n * Math.PI / 200 : token.endsWith('deg') ? n * Math.PI / 180 : token.endsWith('turn') ? n * 2 * Math.PI : n; };
-        // The 2D linear part one node applies to itself: `transform`, `rotate` and `scale` (translation is derived later).
+        // The 2D linear part one node applies to itself: CSS `zoom` (which scales layout, unlike a transform: bounding boxes are
+        // zoomed while offset and client sizes are not), then `transform`, `scale` and `rotate` (translation is derived later).
         // Null for a 3D transform, which a 2D polygon cannot carry.
         const own = node => {
           const s = win(node).getComputedStyle(node);
           if (s.display === 'contents' || (s.display === 'inline' && !REPLACED.has(node.tagName))) return [1, 0, 0, 1];
-          let l = [1, 0, 0, 1];
+          const zoom = parseFloat(s.zoom) || 1;
+          let l = [zoom, 0, 0, zoom];
           if (s.transform && s.transform !== 'none') {
             const m = new DOMMatrix(s.transform);
             if (m.m13 || m.m23 || m.m31 || m.m32 || m.m43 || m.m14 || m.m24 || m.m33 !== 1 || m.m44 !== 1) return null;
-            l = [m.m11, m.m12, m.m21, m.m22];
+            l = mul([m.m11, m.m12, m.m21, m.m22], l);
           }
           const scale = (s.scale || 'none').trim().split(/\s+/);
           if (scale[0] !== 'none') { const sx = parseFloat(scale[0]); l = mul([sx, 0, 0, scale.length > 1 ? parseFloat(scale[1]) : sx], l); }
@@ -649,6 +651,8 @@ nonisolated enum PageRuntime {
         const linearOf = node => { let acc = [1, 0, 0, 1]; for (let n = node; n; n = up(n)) { const l = own(n); if (!l) return null; acc = mul(l, acc); } return acc; };
         // `local` is the region of interest in layout pixels from the node's border-box origin.
         const place = (node, local) => {
+          // SVG nodes have no layout box (offset and client sizes): nothing to measure the placement from.
+          if (typeof node.offsetWidth !== 'number') { out.unmappable = true; return null; }
           const linear = linearOf(node);
           if (!linear) { out.unmappable = true; return null; }
           const b = node.getBoundingClientRect();
