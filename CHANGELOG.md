@@ -7,6 +7,14 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-14 — Search a website from the address field
+
+The address field (toolbar) and the Start Page field now offer the command palette's site search. Type a supported site name or domain, such as `You` or `github.com`, and a “Search <site>” hint with a Tab key appears; press Tab and the field takes a site chip and the placeholder “Search <site>”. Enter, or ⌘/⌥-Enter, opens the site's own search results for your text in the current tab, through the same search URL builder as the palette. Nothing you type in site mode is sent for web suggestions or to the assistant. Backspace in the empty field, the chip, Escape, leaving the field, or submitting ends site search; removing the chip keeps what you typed and brings back normal results. Tab keeps its usual job when no site matches, when you have attached tabs with `@`, and when the field shows the page's own address (for example `https://www.youtube.com/` on YouTube). Typing with an input method still composes normally, because Tab and Backspace are ignored while text is marked. The rendering-engine badge, the lock and the VoiceOver labels are unchanged, and the state belongs to each window's own field.
+
+Adapted from Linen (kavoye/linen-browser commit `baa5e7cad587f21762db0d968421f8e62d32b9bd`). WSurf's palette inlined the chip and the hint, so they are now the shared `SiteSearchChip` and `SearchScopeHint` views that both surfaces use. Unlike upstream, ending site search by removing the chip refreshes web suggestions for the text that stays, as the palette already does.
+
+Not run: no Xcode build, Swift Testing run or app launch for this change. The new `AskSurfaceModelTests` and the SwiftUI row are untested on a Mac with the full app toolchain; only a swiftc check of the existing `SiteSearch` URL construction ran.
+
 ### 2026-10-14 — Credentials: an Import & Export section, and password CSV files
 
 Credential Settings has one **Import & Export** section (it holds the incoming-credentials row that used to be its own section, and the Export… button that was on the Saved credentials header). **Choose File…** imports a password CSV and **Export to CSV…** writes one. A CSV is read by its header, not by column position: `URL` (or `Url`), `Username` and `Password` are required, `Title` or `Name` is used as the name, and both the 4-column `Title,Url,Username,Password` and the 6-column `Title,URL,Username,Password,Notes,OTPAuth` layouts work. That is compatibility with the layouts public third-party importers read, not a statement of Apple's format. A file over the vault's size limit is refused before it is read.

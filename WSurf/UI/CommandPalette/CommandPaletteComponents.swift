@@ -29,21 +29,10 @@ struct CommandPaletteField: View {
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             if let searchSite {
-                Button {
+                SiteSearchChip(site: searchSite) {
                     _ = onRemoveSite()
                     focused = true
-                } label: {
-                    Text(searchSite.name)
-                        .lineLimit(1)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(SiteSearchAppearance(site: searchSite).foreground)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(SiteSearchAppearance(site: searchSite).background, in: Capsule())
                 }
-                .buttonStyle(.plain)
-                .help("Remove \(searchSite.name) search")
-                .accessibilityLabel("Remove \(searchSite.name) search")
             }
 
             MentionField(
@@ -71,24 +60,10 @@ struct CommandPaletteField: View {
             )
 
             if let suggestedSite {
-                Button {
+                SearchScopeHint(title: String(localized: "Search \(suggestedSite.name)")) {
                     _ = onActivateSite()
                     focused = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Search \(suggestedSite.name)")
-                            .lineLimit(1)
-                        Text("Tab")
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 3)
-                            .background(.quaternary, in: .rect(cornerRadius: 4))
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Search \(suggestedSite.name)")
-                .accessibilityHint("Press Tab to search this site")
             }
             Button {
                 if query.isEmpty && searchSite == nil {
@@ -111,6 +86,51 @@ struct CommandPaletteField: View {
             .accessibilityLabel(query.isEmpty && searchSite == nil ? Text("Close") : Text("Clear"))
         }
         .padding(.horizontal, 20)
+    }
+}
+
+struct SiteSearchChip: View {
+    let site: SearchEngine
+    var fontSize: CGFloat = 14
+    let onRemove: () -> Void
+
+    var body: some View {
+        let appearance = SiteSearchAppearance(site: site)
+        Button(action: onRemove) {
+            Text(site.name)
+                .lineLimit(1)
+                .font(.system(size: fontSize, weight: .semibold))
+                .foregroundStyle(appearance.foreground)
+                .padding(.horizontal, fontSize * 0.7)
+                .padding(.vertical, fontSize * 0.4)
+                .background(appearance.background, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Remove \(site.name) search")
+        .accessibilityLabel("Remove \(site.name) search")
+    }
+}
+
+struct SearchScopeHint: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .lineLimit(1)
+                Text("Tab")
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .background(.quaternary, in: .rect(cornerRadius: 4))
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityHint("Press Tab to search this site")
     }
 }
 
