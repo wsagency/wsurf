@@ -7,6 +7,14 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-14 — Pull to refresh leaves pages that use the scroll wheel alone
+
+A page that cancels the wheel event to zoom or pan, such as a map or a canvas, never scrolls the document. Pulling down on it used to read as a pull to refresh and could reload the tab. Pull to refresh now stays off while the page is cancelling wheel events (and for 500 ms after the last one), both when the pull starts and again when it is released. A pull on an ordinary page at its top, a scrolled page, or a page with its own inner scroller behaves as before. A wheel event inside an iframe is not seen, so a map embedded in a frame can still reload the tab.
+
+A small document-start script in its own content world (`WSurfPull`) records the cancelled wheel events. It is installed once per page through `BrowserPage.installScript`, so the WebKit and Chromium engines use the same script, and the pull probes install it themselves in a document that loaded before the script existed. This is a port of the idea in Linen commit [`3748134`](https://github.com/kavoye/linen-browser/commit/3748134a21c26aeac212a333bdcd27ac615b170c) (kavoye/linen-browser, "Don't pull to refresh on pages that use the scroll wheel"), adapted to WSurf's engine-neutral `BrowserPage`.
+
+Checked with the script text taken from the source and run in a real `WKWebView` isolated world and in real Chrome 154 over the DevTools protocol (isolated world, new-document script), against a page whose element cancels a DOM `WheelEvent`: not claimed before the event, claimed after it, back to unclaimed 650 ms later, and no stale claim on a new document. In WebKit only, a document also kept a single wheel listener after repeated probes. Not run: no Xcode build, test suite or lint (SwiftLint is not installed on this machine), and no run inside WSurf's own Chromium (CEF) engine or against a real trackpad gesture.
+
 ### 2026-10-14 — Credentials: an Import & Export section, and password CSV files
 
 Credential Settings has one **Import & Export** section (it holds the incoming-credentials row that used to be its own section, and the Export… button that was on the Saved credentials header). **Choose File…** imports a password CSV and **Export to CSV…** writes one. A CSV is read by its header, not by column position: `URL` (or `Url`), `Username` and `Password` are required, `Title` or `Name` is used as the name, and both the 4-column `Title,Url,Username,Password` and the 6-column `Title,URL,Username,Password,Notes,OTPAuth` layouts work. That is compatibility with the layouts public third-party importers read, not a statement of Apple's format. A file over the vault's size limit is refused before it is read.
