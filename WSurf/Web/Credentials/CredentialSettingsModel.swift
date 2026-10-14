@@ -366,8 +366,9 @@ final class CredentialSettingsModel {
 
     /// The page leaves `old`: only this window's own import is cancelled there, and its ending shows again if the page returns.
     private func leave(_ old: CredentialManager) {
+        let origin = exchange.importOrigin(for: old, owner: owner)
         guard exchange.cancelImport(for: old, owner: owner) == .reviewCancelled else { return }
-        ownMessage = (.discarded(), old.vaultID)
+        ownMessage = (.discarded(origin), old.vaultID)
     }
 
     private func vaultManager(_ vaultID: UUID) throws -> CredentialManager {
@@ -800,11 +801,11 @@ final class CredentialSettingsModel {
         guard let token = exchange.pendingToken else { return }
         importResult = nil
         ownMessage = nil
-        _ = await perform(describe: importMessage(for:)) { try await self.exchange.beginImport(token: token, into: $0, owner: self.owner, onEnding: self.importEnding(in: $0)) }
+        _ = await perform(describe: { self.importMessage(for: $0) }) { try await self.exchange.beginImport(token: token, into: $0, owner: self.owner, onEnding: self.importEnding(in: $0)) }
     }
 
     func chooseImport(_ choice: CredentialImportChoice, for incoming: CredentialIdentity) {
-        do { try exchange.choose(choice, for: incoming, owner: owner) } catch { self.error = importMessage(for: error) }
+        do { try exchange.choose(choice, for: incoming, owner: owner) } catch { self.error = importMessage(for: error, origin: currentImportOrigin()) }
     }
 
     /// Stored accounts the credential can be merged into, each with every website it would then work on.
@@ -817,8 +818,10 @@ final class CredentialSettingsModel {
         let epoch = manager?.authorizationEpoch
         var receipt: VaultCommitReceipt?
         let vault = manager?.vaultID
+        // Read before the commit: a failed one drops the review, and its message must still name the right retry.
+        let origin = currentImportOrigin()
         ownMessage = nil
-        let committed = await perform(describe: importMessage(for:)) { receipt = try await self.exchange.commitImport(into: $0, owner: self.owner) }
+        let committed = await perform(describe: { self.importMessage(for: $0, origin: origin) }) { receipt = try await self.exchange.commitImport(into: $0, owner: self.owner) }
         guard committed, let receipt, let expected else { return }
         if let epoch, epoch == manager?.authorizationEpoch {
             importResult = (expected, epoch)
@@ -833,9 +836,10 @@ final class CredentialSettingsModel {
     @discardableResult
     func cancelImport() -> CredentialImportCancellation {
         guard let manager else { return .nothingOwned }
+        let origin = exchange.importOrigin(for: manager, owner: owner)
         let outcome = exchange.cancelImport(for: manager, owner: owner)
         if outcome == .reviewCancelled {
-            ownMessage = (.discarded(), manager.vaultID)
+            ownMessage = (.discarded(origin), manager.vaultID)
         }
         return outcome
     }
@@ -870,6 +874,44 @@ final class CredentialSettingsModel {
             ownMessage = outcome.message.map { ($0, vault) }
         }
         return outcome
+    }
+
+    /// Stages the password CSV at `url` for the same review a system import gets. The file is only read, never changed.
+    /// `epoch` is the authorization the page had BEFORE its open panel: a lock or re-unlock while the panel was up stages nothing.
+    func beginCSVImport(from url: URL, epoch: UInt64) async {
+        importResult = nil
+        ownMessage = nil
+        _ = await perform(epoch: epoch) {
+            let data: Data
+            do {
+                data = try CredentialCSV.read(url)
+            } catch CredentialCSVError.cannotRead {
+                throw CredentialTransferFailure(message: .csvNotOpened())
+            } catch {
+                throw CredentialTransferFailure(message: .csvUnreadable(line: nil))
+            }
+            try await self.exchange.beginCSVImport(data, into: $0, owner: self.owner, onEnding: self.importEnding(in: $0))
+        }
+    }
+
+    /// Writes the selection as a plain-text CSV at `url`, which the user chose in the save panel the caller ran BEFORE this
+    /// call, so the stamps are proved after it. Returns whether a file was written; every other result leaves `url` as it was.
+    @discardableResult
+    func exportCSV(selection: [CredentialExportSelection], epoch: UInt64, to url: URL) async -> Bool {
+        let vault = manager?.vaultID
+        ownMessage = nil
+        var rows: Int?
+        let saved = await perform {
+            let stamps = try await self.exportStamps(epoch: epoch)
+            rows = try await self.exchange.exportCSV(selection: selection, expectedStamps: stamps, epoch: epoch, from: $0, to: url)
+        }
+        if !saved, ownMessage?.message.kind == .exportSelectionChanged {
+            await load()
+        }
+        if saved, let rows {
+            ownMessage = (.csvExported(rows: rows), vault)
+        }
+        return saved
     }
 
     /// The stamps the selection was made against; after this page's own write, a fresh read of the same revision stands in.
@@ -990,10 +1032,16 @@ final class CredentialSettingsModel {
         }
     }
 
+    /// Where this window's open import came from, which decides what a failed one tells the user to do to retry.
+    private func currentImportOrigin() -> CredentialTransferMessage.Origin {
+        manager.map { exchange.importOrigin(for: $0, owner: owner) } ?? .system
+    }
+
     /// The system's token is used up once an import is claimed, and a review that ends takes its data with it. So
-    /// a failure that leaves neither a queued token nor an open review can only be redone from the other app.
-    private func importMessage(for error: any Error) -> String? {
+    /// a failure that leaves neither a queued token nor an open review can only be redone from the other app, or, for a
+    /// CSV file, by choosing the file again.
+    private func importMessage(for error: any Error, origin: CredentialTransferMessage.Origin = .system) -> String? {
         let staged = manager.map { exchange.hasStagedImport(for: $0, owner: owner) } ?? false
-        return Self.importMessage(for: error, tokenSpent: exchange.pendingToken == nil && !staged)
+        return Self.importMessage(for: error, tokenSpent: exchange.pendingToken == nil && !staged, origin: origin)
     }
 }

@@ -11,10 +11,13 @@ import SwiftUI
 struct CredentialExportContext: Identifiable {
     let id = UUID()
     let epoch: UInt64
+    /// A plain-text password CSV file instead of the system hand-off to another app.
+    var csv = false
 }
 
 struct CredentialExportSheet: View {
     let model: CredentialSettingsModel
+    var csv = false
     let export: ([CredentialExportSelection]) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var selection: [UUID: CredentialExportSelection] = [:]
@@ -26,8 +29,9 @@ struct CredentialExportSheet: View {
     /// Set once the user asked to export from this sheet, so only that attempt's ending is shown here.
     @State private var attempted = false
 
-    init(model: CredentialSettingsModel, export: @escaping ([CredentialExportSelection]) -> Void) {
+    init(model: CredentialSettingsModel, csv: Bool = false, export: @escaping ([CredentialExportSelection]) -> Void) {
         self.model = model
+        self.csv = csv
         self.export = export
         _shown = State(initialValue: model.summaries)
         _shownStamps = State(initialValue: model.exportStamps ?? [:])
@@ -35,6 +39,22 @@ struct CredentialExportSheet: View {
 
     private var chosen: [CredentialExportSelection] {
         model.summaries.compactMap { selection[$0.id] }.filter(\.hasParts)
+    }
+
+    /// What a CSV file cannot hold, counted over the whole vault and shown before anything is written.
+    private var csvLeftOut: String {
+        let all = model.summaries
+        let counts = (
+            noWebsite: all.filter { $0.hasPassword && $0.origins.isEmpty }.count,
+            noPassword: all.filter { !$0.hasPassword }.count,
+            passkeys: all.reduce(0) { $0 + $1.passkeys.count },
+            codes: all.filter(\.hasTOTP).count
+        )
+        return String(localized: """
+            A CSV file holds only passwords with a website. It will not contain: \(counts.noWebsite) logins without a website, \
+            \(counts.noPassword) credentials without a password, \(counts.passkeys) passkeys, \(counts.codes) verification code \
+            setups, or any notes.
+            """)
     }
 
     /// Whose vault the selection leaves from: the profile, and the vault when its name is readable.
@@ -47,17 +67,31 @@ struct CredentialExportSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Export Credentials").font(.headline)
+            Text(csv ? "Export Passwords to CSV" : "Export Credentials").font(.headline)
             Text(verbatim: exportSource)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("""
-                Choose what to send to another app. The system passes your selection to the app you pick next, and \
-                that app can read it: any passwords, passkeys and verification code setups you select aren’t \
-                encrypted by WSurf. WSurf doesn’t write a file, and your vault keeps its own copy.
-                """)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if csv {
+                Text("""
+                    This saves the selected passwords to a CSV file that is NOT encrypted: anyone who can open the file \
+                    can read every password in it. You choose where it goes, and WSurf never deletes it for you. Delete \
+                    it as soon as you have imported it elsewhere. Don’t open it in a spreadsheet app, which may change or \
+                    run cells that start with = + - or @.
+                    """)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(verbatim: csvLeftOut)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("""
+                    Choose what to send to another app. The system passes your selection to the app you pick next, and \
+                    that app can read it: any passwords, passkeys and verification code setups you select aren’t \
+                    encrypted by WSurf. WSurf doesn’t write a file, and your vault keeps its own copy.
+                    """)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if attempted, let message = model.transferMessage {
                 Text(verbatim: message.text)
                     .fontWeight(.medium)
@@ -69,19 +103,21 @@ struct CredentialExportSheet: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    ForEach(model.summaries) { summary in
+                    ForEach(csv ? model.summaries.filter(CredentialCSVExport.isExportable) : model.summaries) { summary in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(verbatim: summary.title).font(Theme.Font.rowTitle)
                             if summary.hasLogin {
                                 Toggle("Login", isOn: binding(summary.id, \.password))
                             }
-                            ForEach(summary.passkeys) { passkey in
-                                Toggle(isOn: passkeyBinding(summary.id, passkey.id)) {
-                                    Text(verbatim: "\(String(localized: "Passkey")) · \(passkey.rpID) · \(passkey.userName)")
+                            if !csv {
+                                ForEach(summary.passkeys) { passkey in
+                                    Toggle(isOn: passkeyBinding(summary.id, passkey.id)) {
+                                        Text(verbatim: "\(String(localized: "Passkey")) · \(passkey.rpID) · \(passkey.userName)")
+                                    }
                                 }
-                            }
-                            if summary.hasTOTP {
-                                Toggle("Verification code setup", isOn: binding(summary.id, \.totp))
+                                if summary.hasTOTP {
+                                    Toggle("Verification code setup", isOn: binding(summary.id, \.totp))
+                                }
                             }
                         }
                     }
@@ -96,7 +132,7 @@ struct CredentialExportSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { model.error = nil; dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Export…") {
+                Button(csv ? "Choose File…" : "Export…") {
                     attempted = true
                     review = nil
                     export(chosen)
@@ -185,6 +221,9 @@ struct CredentialImportReviewSheet: View {
                 Text(verbatim: destination(review))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let report = review.csvReport {
+                    csvReportView(report)
+                }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         ForEach(review.candidates) { candidate in candidateView(candidate) }
@@ -195,7 +234,7 @@ struct CredentialImportReviewSheet: View {
                 if let outcome = review.outcome {
                     Text(verbatim: importSummary(outcome)).foregroundStyle(.secondary)
                 } else {
-                    Text("Choose what to do with each credential that already exists here.").foregroundStyle(.secondary)
+                    Text("Choose what to do with each credential marked “Choose…”.").foregroundStyle(.secondary)
                 }
                 if let error = model.error {
                     Text(verbatim: error).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -212,6 +251,27 @@ struct CredentialImportReviewSheet: View {
             .padding(24)
             .frame(width: 520)
         }
+    }
+
+    /// What the file held beyond what will be imported, before anything is saved. Counts are of the file as read; the receipt
+    /// after Import reports what was actually saved. Line numbers and fixed wording only: nothing from the file itself.
+    private func csvReportView(_ report: CredentialCSVReport) -> some View {
+        let shown = report.issues.prefix(20)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text("The file has \(report.rowsRead) rows. \(report.alreadySaved) already saved here, \(report.omittedRows) can’t be imported.")
+            ForEach(Array(shown.enumerated()), id: \.offset) { _, issue in
+                Text(verbatim: "\(String(localized: "Line")) \(issue.line): \(issue.reason.text)")
+            }
+            if report.issues.count > shown.count {
+                Text("and \(report.issues.count - shown.count) more lines with notes.")
+            }
+            if !report.ignoredColumns.isEmpty {
+                Text("Columns \(report.ignoredColumns.map(String.init).joined(separator: ", ")) hold data WSurf doesn’t import.")
+            }
+        }
+        .font(Theme.Font.label)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func destination(_ review: CredentialImportReview) -> String {
@@ -273,6 +333,15 @@ struct CredentialImportReviewSheet: View {
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+                    }
+                    if record.needsChoice, record.existingTitle == nil {
+                        Text("Other logins have this website and username with a different password. Choose Skip or Add Separately for each.")
+                            .font(Theme.Font.label)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if record.needsChoice, let line = record.csvLine {
+                        Text("Line \(line) of the file").font(Theme.Font.label).foregroundStyle(.secondary)
                     }
                 }
                 Spacer(minLength: 8)
@@ -349,7 +418,7 @@ struct CredentialImportReviewSheet: View {
     private func choiceLabel(_ record: CredentialImportReview.Record) -> LocalizedStringResource {
         switch record.choice {
         case nil:
-            record.isConflict ? "Choose…" : "Import"
+            record.needsChoice ? "Choose…" : "Import"
         case .skip:
             "Skip"
         case .replace:
