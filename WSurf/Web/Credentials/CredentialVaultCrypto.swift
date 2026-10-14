@@ -74,13 +74,7 @@ nonisolated final class VaultAccess: Sendable {
     }
 }
 
-nonisolated struct VaultSnapshot: Sendable {
-    let revision: UInt64
-    let accounts: [CredentialAccount]
-    let blockedPasswordOrigins: Set<String>
-}
-
-nonisolated struct VaultCommitReceipt: Sendable {
+nonisolated struct VaultCommitReceipt: Sendable, Equatable {
     let revision: UInt64
 }
 
@@ -439,7 +433,7 @@ nonisolated enum CredentialVaultCrypto {
 
     private static func wrapperAAD(_ proof: VaultUnlockProof, profileID: UUID, vaultID: UUID) -> Data {
         var aad = Data()
-        appendLength(format, to: &aad)
+        appendLength(StoreFormat.wrapperFormat, to: &aad)
         appendField(uuidData(profileID), to: &aad)
         appendField(uuidData(vaultID), to: &aad)
         appendField(proof.credentialID, to: &aad)

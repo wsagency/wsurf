@@ -6,6 +6,7 @@ import AuthenticationServices
 import CryptoKit
 import Foundation
 import Observation
+import Synchronization
 
 nonisolated enum CredentialLockReason: Sendable {
     case manual, profileSwitch, screenLock, sleep, termination, timeout
@@ -26,7 +27,32 @@ nonisolated enum CredentialManagerError: Error {
     case registrationOutcomeUnknown
 }
 
-/// Profile-scoped unlock state. Every await re-checks the captured `VaultAccess` *before* a durable
+/// The native passkey calls a manager (or a vault creation) makes, as closures so a test drives the real manager with a stub.
+/// `.native` is the only production value.
+struct VaultNativeUnlock {
+    var register: (ASPresentationAnchor) async throws -> VaultUnlockRegistration
+    var verifyRegistration: (VaultUnlockRegistration, ASPresentationAnchor, () throws -> Void) async throws -> VaultUnlockProof
+    var assert: ([VaultUnlock], ASPresentationAnchor) async throws -> VaultUnlockProof
+    var cancel: () -> Void
+
+    static func native(_ unlocker: PasskeyVaultUnlocker) -> VaultNativeUnlock {
+        VaultNativeUnlock(
+            register: { try await unlocker.register(in: $0) },
+            verifyRegistration: { try await unlocker.verifyRegistration($0, in: $1, beforeAssertion: $2) },
+            assert: { try await unlocker.assert(among: $0, in: $1) },
+            cancel: { unlocker.cancel() }
+        )
+    }
+}
+
+enum NewVaultChoice {
+    /// A new WSurf passkey. `authorizedBy` is the unlocked vault that authorizes it; `nil` creates the profile's first vault.
+    case newPasskey(authorizedBy: CredentialManager?)
+    /// An enrolled passkey of another vault, asserted again for this creation.
+    case existing(sourceVaultID: UUID, credentialID: Data, prfInput: Data)
+}
+
+/// Per-vault unlock state: one manager per (profile, vault). Every await re-checks the captured `VaultAccess` *before* a durable
 /// mutation; nothing throws after a committed mutation, so a receipt always reflects what is on disk.
 @MainActor
 @Observable
@@ -51,6 +77,9 @@ final class CredentialManager {
     /// locked after the commit, or the outcome is unknown). Memory only and bounded: a restart forgets them, and nothing
     /// here is a secret. Settings shows the details only while unlocked.
     private(set) var unconfirmedPasskeys: [UnconfirmedPasskey] = []
+    /// Scratch files the last unlock could not remove. Reported by the store for every unlock surface, cleared when the next
+    /// unlock starts, and never part of an unlock's outcome.
+    private(set) var scratchCleanupWarnings: [URL] = []
 
     func noteUnconfirmedPasskey(rpID: String, userName: String, revision: UInt64) {
         guard !isRetired else { return }
@@ -69,85 +98,202 @@ final class CredentialManager {
         profile.id
     }
 
+    let vaultID: UUID
     @ObservationIgnored private let profile: Profile
-    @ObservationIgnored private let vault: CredentialVault
+    @ObservationIgnored private let store: ProfileVaultStore
     @ObservationIgnored private let now: @Sendable () -> ContinuousClock.Instant
-    @ObservationIgnored private let unlocker = PasskeyVaultUnlocker()
+    @ObservationIgnored private let native: VaultNativeUnlock
     @ObservationIgnored private var pending: [VaultAccess] = []
     private var current: VaultAccess?
-    @ObservationIgnored private var epoch: UInt64 = 0
     @ObservationIgnored private var timer: Task<Void, Never>?
     @ObservationIgnored private var isRetired = false
     /// Counts vault writes between their start and their end, and changes whenever one starts or ends.
     @ObservationIgnored private var writesInFlight = 0
     @ObservationIgnored private var writeGeneration: UInt64 = 0
+    /// Bumped by every unlock start and every lock: a scratch report is published only by the unlock that still owns it.
+    @ObservationIgnored private var unlockGeneration: UInt64 = 0
 
     init(
         profile: Profile,
-        directory: URL,
-        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now }
-    ) throws {
-        vault = try CredentialVault(profileID: profile.id, directory: directory, now: now)
+        vaultID: UUID,
+        store: ProfileVaultStore,
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now },
+        native: VaultNativeUnlock? = nil
+    ) {
         self.profile = profile
+        self.vaultID = vaultID
+        self.store = store
         self.now = now
+        self.native = native ?? .native(PasskeyVaultUnlocker())
     }
 
     // MARK: - Registry
 
-    private static var managers: [UUID: CredentialManager] = [:]
+    /// A vault creation in flight: the lease it owns (nil when the source vault's own access authorizes it) and its native
+    /// prompt, so a profile-level lock revokes the lease and cancels the prompt.
+    private final class Creation {
+        let lease: VaultAccess?
+        let native: VaultNativeUnlock
+
+        init(lease: VaultAccess?, native: VaultNativeUnlock) {
+            self.lease = lease
+            self.native = native
+        }
+    }
+
+    private static var managers: [UUID: [UUID: CredentialManager]] = [:]
+    private static var stores: [UUID: ProfileVaultStore] = [:]
+    private static var creations: [UUID: [Creation]] = [:]
     private static var retiredProfiles: Set<UUID> = []
     private static var observers: [any NSObjectProtocol] = []
+    /// One counter for every manager and creation in the process: an epoch handed to a consumer as a bare number names exactly
+    /// one lease, so vault A's epoch can never select vault B's manager. Never reset before the process ends.
+    private static var lastEpoch: UInt64 = 0
 
-    static func forProfile(_ profile: Profile) throws -> CredentialManager {
+    private static func nextEpoch() -> UInt64 {
+        lastEpoch += 1
+        return lastEpoch
+    }
+
+    /// The profile's one store. Private browsing has no vault.
+    static func store(for profile: Profile) throws -> ProfileVaultStore {
         guard !retiredProfiles.contains(profile.id) else { throw CredentialVaultError.unauthorized }
-        if let existing = managers[profile.id] {
+        guard profile.id != Profile.privateID else { throw CredentialVaultError.privateBrowsing }
+        if let existing = stores[profile.id] {
             return existing
         }
-        let manager = try CredentialManager(profile: profile, directory: profile.supportDirectory)
-        managers[profile.id] = manager
+        // UserDefaults is documented thread-safe; the SDK does not always mark it Sendable.
+        nonisolated(unsafe) let defaults = ProfileSettingsStore.defaults(for: profile)
+        let store = ProfileVaultStore(profileID: profile.id, directory: profile.supportDirectory, defaults: defaults)
+        stores[profile.id] = store
         installObserversOnce()
+        return store
+    }
+
+    /// `native` applies only when this call registers the manager (nil: the real passkey prompt); tests inject a stub.
+    static func forVault(_ profile: Profile, vaultID: UUID, native: VaultNativeUnlock? = nil) throws -> CredentialManager {
+        let store = try store(for: profile)
+        if let existing = managers[profile.id]?[vaultID] {
+            return existing
+        }
+        let manager = CredentialManager(profile: profile, vaultID: vaultID, store: store, native: native)
+        managers[profile.id, default: [:]][vaultID] = manager
         return manager
     }
 
-    /// Locks every live manager, for events that affect the whole session (sleep, screen lock, termination).
+    /// The profile's managers whose lease is live, in a stable order.
+    static func unlockedManagers(for profile: Profile) -> [CredentialManager] {
+        (managers[profile.id]?.values.filter(\.isUnlocked) ?? []).sorted { $0.vaultID.uuidString < $1.vaultID.uuidString }
+    }
+
+    /// `selected` if it is unlocked and listed, else the lowest-numbered listed vault that is unlocked.
+    static func unlockedAuthorizer(in listing: [VaultListing], selected: CredentialManager?, profile: Profile) -> CredentialManager? {
+        if let selected, selected.isUnlocked, listing.contains(where: { $0.vaultID == selected.vaultID }) {
+            return selected
+        }
+        let open = unlockedManagers(for: profile)
+        return listing.sorted { $0.ordinal < $1.ordinal }.lazy.compactMap { vault in open.first { $0.vaultID == vault.vaultID } }.first
+    }
+
+    /// Locks every live manager and stops every vault creation, for events that affect the whole session (sleep, screen lock,
+    /// termination).
     static func lockAll(reason: CredentialLockReason) {
-        for manager in managers.values {
-            manager.lock(reason: reason)
+        for profileID in Set(stores.keys).union(managers.keys).union(creations.keys) {
+            lock(profileID: profileID, reason: reason)
         }
     }
 
-    /// Locks one profile's manager, if it has one. A profile switch locks the profile being left, before its first
-    /// suspension, and leaves other profiles' managers alone.
+    /// Locks one profile's vault managers, creations and ceremonies, and withdraws its pending autofill vault choices. A profile
+    /// switch locks the profile being left, before its first suspension, and leaves other profiles alone.
     static func lock(profileID: UUID, reason: CredentialLockReason) {
-        managers[profileID]?.lock(reason: reason)
+        for manager in managers[profileID]?.values.map({ $0 }) ?? [] {
+            manager.lock(reason: reason)
+        }
+        revokeCreations(profileID)
+        WebAuthnAdapter.cancel(profileID: profileID)
+        AutofillSaveCoordinator.shared.vaultAccessEnded(profileID: profileID)
     }
 
-    /// Profile erasure: unregister and revoke access, then drain vault work before the caller deletes the directory.
+    private static func revokeCreations(_ profileID: UUID) {
+        for creation in creations[profileID] ?? [] {
+            creation.lease?.revoke()
+            creation.native.cancel()
+        }
+    }
+
+    /// Profile erasure: unregister, revoke every lease and creation, then drain the store before the caller deletes the directory.
     static func retire(profileID: UUID) async {
         retiredProfiles.insert(profileID)
-        guard let manager = managers.removeValue(forKey: profileID) else { return }
-        manager.isRetired = true
-        manager.lock(reason: .profileSwitch)
-        await manager.vault.lock()
+        let retiring = managers.removeValue(forKey: profileID)?.values.map { $0 } ?? []
+        for manager in retiring {
+            manager.isRetired = true
+            manager.lock(reason: .profileSwitch)
+        }
+        revokeCreations(profileID)
+        WebAuthnAdapter.cancel(profileID: profileID)
+        AutofillSaveCoordinator.shared.vaultAccessEnded(profileID: profileID)
+        await stores.removeValue(forKey: profileID)?.close()
     }
 
-    func vaultExists() async throws -> Bool {
-        try Task.checkCancellation()
-        guard !isRetired else { throw CredentialVaultError.unauthorized }
-        do {
-            let unlocks = try await vault.discovery().unlocks
-            try Task.checkCancellation()
-            guard !isRetired else { throw CredentialVaultError.unauthorized }
-            unlockCredentials = unlocks
-            return true
-        } catch CredentialVaultError.missingVault {
-            try Task.checkCancellation()
-            guard !isRetired else { throw CredentialVaultError.unauthorized }
-            unlockCredentials = []
-            return false
-        } catch {
-            guard !isRetired else { throw CredentialVaultError.unauthorized }
-            throw error
+    /// Creates a vault and returns its id. The new vault stays locked: no grant is published for it.
+    static func createVault(
+        profile: Profile,
+        name: String,
+        choice: NewVaultChoice,
+        in anchor: ASPresentationAnchor,
+        native: VaultNativeUnlock? = nil
+    ) async throws -> UUID {
+        let store = try store(for: profile)
+        var source: CredentialManager?
+        if case .newPasskey(let authorizedBy) = choice {
+            source = authorizedBy
+        }
+        if let source, source.profileID != profile.id || source.isRetired {
+            throw CredentialVaultError.unauthorized
+        }
+        let seam = native ?? source?.native ?? .native(PasskeyVaultUnlocker())
+        let lease = try source?.currentAccess()
+            ?? VaultAccess(profileID: profile.id, epoch: nextEpoch(), deadline: store.now().advanced(by: .seconds(300)))
+        let creation = Creation(lease: source == nil ? lease : nil, native: seam)
+        creations[profile.id, default: []].append(creation)
+        defer { creations[profile.id]?.removeAll { $0 === creation } }
+        func requireLease() throws {
+            guard !retiredProfiles.contains(profile.id) else { throw CredentialVaultError.unauthorized }
+            try lease.checkAuthorization(at: store.now())
+        }
+
+        try requireLease()
+        switch choice {
+        case .newPasskey:
+            let registration: VaultUnlockRegistration
+            do {
+                registration = try await seam.register(anchor)
+            } catch PasskeyUnlockError.registrationCompleted(let credentialID, let underlying) {
+                throw CredentialManagerError.externalPasskeyRemains(credentialID: credentialID, underlying: underlying)
+            } catch PasskeyUnlockError.registrationOutcomeUnknown {
+                throw CredentialManagerError.registrationOutcomeUnknown
+            }
+            let proof: VaultUnlockProof
+            do {
+                proof = try await seam.verifyRegistration(registration, anchor, requireLease)
+            } catch {
+                throw CredentialManagerError.externalPasskeyRemains(credentialID: registration.credentialID, underlying: error)
+            }
+            let authority: VaultCreationAuthority = source.map { .unlockedVault(vaultID: $0.vaultID, access: lease) }
+                ?? .firstVault(lease: lease)
+            do {
+                return try await store.createVault(name: name, unlock: proof, authorizedBy: authority)
+            } catch {
+                throw CredentialManagerError.externalPasskeyRemains(credentialID: proof.credentialID, underlying: error)
+            }
+        case .existing(let sourceVaultID, let credentialID, let prfInput):
+            let proof = try await seam.assert([VaultUnlock(credentialID: credentialID, prfInput: prfInput)], anchor)
+            try requireLease()
+            return try await store.createVault(
+                name: name,
+                unlock: proof,
+                authorizedBy: .existingPasskey(vaultID: sourceVaultID, credentialID: proof.credentialID, prf: proof.prf, lease: lease)
+            )
         }
     }
 
@@ -171,8 +317,10 @@ final class CredentialManager {
     // MARK: - Access epochs
 
     func beginAccess() -> VaultAccess {
-        epoch += 1
-        let access = VaultAccess(profileID: profile.id, epoch: epoch, deadline: now().advanced(by: .seconds(300)))
+        // A newer unlock attempt owns the report from here on: an older one still verifying can no longer publish its warning.
+        unlockGeneration &+= 1
+        scratchCleanupWarnings = []
+        let access = VaultAccess(profileID: profile.id, epoch: Self.nextEpoch(), deadline: now().advanced(by: .seconds(300)))
         if isRetired {
             access.revoke()
         } else {
@@ -181,96 +329,76 @@ final class CredentialManager {
         return access
     }
 
-    func completeUnlock(credentialID: Data, prf: SymmetricKey, access: VaultAccess) async throws {
+    /// Reads this vault's wrapper plaintext (also for a vault still in a v1 file or an interrupted migration) into `unlockCredentials`.
+    func discoverUnlocks() async throws {
+        try Task.checkCancellation()
+        guard !isRetired else { throw CredentialVaultError.unauthorized }
+        let unlocks = try await store.discovery(vaultID: vaultID).unlocks
+        try Task.checkCancellation()
+        guard !isRetired else { throw CredentialVaultError.unauthorized }
+        unlockCredentials = unlocks
+    }
+
+    /// `confirmMigration` is the user's explicit consent to migrate a v1 vault; without it a v1 or half-migrated vault is refused
+    /// before anything is written. `verifying` reports the store's verification start (`true`) and end (`false`).
+    func completeUnlock(
+        credentialID: Data,
+        prf: SymmetricKey,
+        access: VaultAccess,
+        confirmMigration: Bool = false,
+        verifying: (@Sendable (Bool) -> Void)? = nil
+    ) async throws {
         try requirePending(access)
+        unlockGeneration &+= 1
+        let generation = unlockGeneration
+        scratchCleanupWarnings = []
+        let scratch = ScratchReports()
+        func publishScratch() {
+            if unlockGeneration == generation {
+                scratchCleanupWarnings = scratch.urls
+            }
+        }
         do {
-            try await vault.unlock(credentialID: credentialID, prf: prf, access: access)
-            let unlocks = try await vault.discovery().unlocks
+            try await store.unlock(
+                vaultID: vaultID,
+                credentialID: credentialID,
+                prf: prf,
+                confirmMigration: confirmMigration,
+                access: access,
+                verifying: verifying,
+                scratchWarning: { scratch.add($0) }
+            )
+            publishScratch()
+            let unlocks = try await store.discovery(vaultID: vaultID).unlocks
             try requirePending(access)
             try activate(access)
             unlockCredentials = unlocks
         } catch {
+            publishScratch()
             discard(access)
             throw error
-        }
-    }
-
-    /// The create is durable once the vault write returns; expiry afterward must not turn success into failure.
-    func completeCreate(_ proof: VaultUnlockProof, access: VaultAccess) async throws {
-        try requirePending(access)
-        do {
-            try await writing { try await vault.create(unlock: proof, access: access) }
-        } catch {
-            discard(access)
-            throw error
-        }
-        unlockCredentials = [VaultUnlock(credentialID: proof.credentialID, prfInput: proof.prfInput)]
-        if pending.contains(where: { $0 === access }) {
-            do {
-                try activate(access)
-            } catch {
-                discard(access)
-            }
         }
     }
 
     // MARK: - Native unlock management
 
-    func create(in anchor: ASPresentationAnchor) async throws {
+    func unlock(in anchor: ASPresentationAnchor, confirmMigration: Bool = false, verifying: (@Sendable (Bool) -> Void)? = nil) async throws {
         let access = beginAccess()
         do {
             try requirePending(access)
-            do {
-                _ = try await vault.discovery()
-                throw CredentialVaultError.alreadyExists
-            } catch CredentialVaultError.missingVault {}
-            try requirePending(access)
-        } catch {
-            discard(access)
-            throw error
-        }
-
-        let registration: VaultUnlockRegistration
-        do {
-            registration = try await unlocker.register(in: anchor)
-        } catch PasskeyUnlockError.registrationCompleted(let credentialID, let underlying) {
-            discard(access)
-            throw CredentialManagerError.externalPasskeyRemains(credentialID: credentialID, underlying: underlying)
-        } catch PasskeyUnlockError.registrationOutcomeUnknown {
-            discard(access)
-            throw CredentialManagerError.registrationOutcomeUnknown
-        } catch {
-            discard(access)
-            throw error
-        }
-
-        let proof: VaultUnlockProof
-        do {
-            proof = try await unlocker.verifyRegistration(registration, in: anchor) {
-                try self.requirePending(access)
+            // The consent comes before the passkey prompt: no assertion is asked for a migration that would be refused.
+            switch await store.openState() {
+            case .legacy, .resumeMigration:
+                guard confirmMigration else { throw CredentialStoreError.migrationNeedsConfirmation }
+            case .provisional, .firstRun, .failClosed:
+                break
             }
-        } catch {
-            discard(access)
-            throw CredentialManagerError.externalPasskeyRemains(
-                credentialID: registration.credentialID,
-                underlying: error
+            let unlocks = try await store.discovery(vaultID: vaultID).unlocks
+            try requirePending(access)
+            let proof = try await native.assert(unlocks, anchor)
+            try await completeUnlock(
+                credentialID: proof.credentialID, prf: proof.prf, access: access, confirmMigration: confirmMigration, verifying: verifying
             )
-        }
-        do {
-            try await completeCreate(proof, access: access)
-        } catch {
-            throw CredentialManagerError.externalPasskeyRemains(credentialID: proof.credentialID, underlying: error)
-        }
-    }
-
-    func unlock(in anchor: ASPresentationAnchor) async throws {
-        let access = beginAccess()
-        do {
-            try requirePending(access)
-            let unlocks = try await vault.discovery().unlocks
-            try requirePending(access)
-            let proof = try await unlocker.assert(among: unlocks, in: anchor)
-            try await completeUnlock(credentialID: proof.credentialID, prf: proof.prf, access: access)
         } catch {
             discard(access)
             throw error
@@ -284,7 +412,7 @@ final class CredentialManager {
 
         let registration: VaultUnlockRegistration
         do {
-            registration = try await unlocker.register(in: anchor)
+            registration = try await native.register(anchor)
         } catch PasskeyUnlockError.registrationCompleted(let credentialID, let underlying) {
             throw CredentialManagerError.externalPasskeyRemains(credentialID: credentialID, underlying: underlying)
         } catch PasskeyUnlockError.registrationOutcomeUnknown {
@@ -293,7 +421,7 @@ final class CredentialManager {
 
         let proof: VaultUnlockProof
         do {
-            proof = try await unlocker.verifyRegistration(registration, in: anchor) {
+            proof = try await native.verifyRegistration(registration, anchor) {
                 try self.requireCurrent(access)
             }
         } catch {
@@ -307,7 +435,7 @@ final class CredentialManager {
 
     func preflightAddingUnlock(using access: VaultAccess) async throws -> VaultDiscovery {
         try requireCurrent(access)
-        let discovery = try await guarded(using: access) { try await vault.discovery() }
+        let discovery = try await guarded(using: access) { try await store.discovery(vaultID: vaultID) }
         try requireCurrent(access)
         unlockCredentials = discovery.unlocks
         guard discovery.unlocks.count < CredentialVaultLimits.wrappers else {
@@ -319,7 +447,7 @@ final class CredentialManager {
     func completeAddUnlock(_ proof: VaultUnlockProof, using access: VaultAccess) async throws -> VaultCommitReceipt {
         do {
             try requireCurrent(access)
-            let receipt = try await writing { try await guarded(using: access) { try await vault.addUnlock(proof, using: access) } }
+            let receipt = try await writing { try await guarded(using: access) { try await store.addUnlock(vaultID: vaultID, proof, using: access) } }
             if current === access, access.isAuthorized(at: now()),
                !unlockCredentials.contains(where: { $0.credentialID == proof.credentialID }) {
                 unlockCredentials.append(VaultUnlock(credentialID: proof.credentialID, prfInput: proof.prfInput))
@@ -338,7 +466,9 @@ final class CredentialManager {
         try requireCurrent(access)
         let receipt = try await writing {
             try await guarded(using: access) {
-                try await vault.removeUnlock(credentialID: credentialID, verifiedRemaining: verifiedRemaining, using: access)
+                try await store.removeUnlock(
+                    vaultID: vaultID, credentialID: credentialID, verifiedRemaining: verifiedRemaining, using: access
+                )
             }
         }
         if current === access, access.isAuthorized(at: now()) {
@@ -352,7 +482,7 @@ final class CredentialManager {
         guard unlockCredentials.contains(where: { $0.credentialID == credentialID }) else { throw CredentialVaultError.invalidData }
         let remaining = unlockCredentials.filter { $0.credentialID != credentialID }
         guard !remaining.isEmpty else { throw CredentialVaultError.noUnlocks }
-        let proof = try await unlocker.assert(among: remaining, in: anchor)
+        let proof = try await native.assert(remaining, anchor)
         try requireCurrent(access)
         return try await completeRemoveUnlock(
             credentialID: credentialID,
@@ -363,27 +493,105 @@ final class CredentialManager {
 
     // MARK: - Vault access
 
-    func snapshot() async throws -> VaultSnapshot {
-        let access = try currentAccess()
-        let snapshot = try await guarded(using: access) { try await vault.snapshot(using: access) }
-        try requireCurrent(access) // reads are discarded if a lock landed while they were in flight
-        return snapshot
+    func snapshot() async throws -> StoreSnapshot {
+        try await reading { access in try await store.snapshot(vaultID: vaultID, using: access) }
     }
 
     /// `authorizedEpoch` is the lease the caller's decision was made under. It is compared with the current access in the
     /// same main-actor segment that captures it, before any write starts, so a lock and re-unlock that landed after the
     /// decision (for example while a task was queued) can never carry the write into the newer lease.
-    func commit(_ accounts: [CredentialAccount], expectedRevision: UInt64, authorizedEpoch: UInt64) async throws -> VaultCommitReceipt {
-        let access = try currentAccess()
-        guard access.epoch == authorizedEpoch else { throw CredentialVaultError.unauthorized }
-        return try await writing { try await guarded(using: access) { try await vault.commit(accounts, expectedRevision: expectedRevision, using: access) } }
+    func commit(
+        _ accounts: [CredentialAccount], expectedRevision: UInt64, authorizedEpoch: UInt64, cause: String? = nil
+    ) async throws -> VaultCommitReceipt {
+        try await authorizedWrite(epoch: authorizedEpoch) { access in
+            try await store.commit(vaultID: vaultID, accounts, expectedRevision: expectedRevision, cause: cause, using: access)
+        }
+    }
+
+    /// The per-account write of spec §13.5: only the touched accounts are compared and written, so an unrelated concurrent
+    /// write survives. The lease and epoch rules are `commit`'s: a caller whose decision was made under another lease is refused
+    /// before anything starts.
+    func commitAccounts(_ writes: [AccountWrite], authorizedEpoch: UInt64, cause: String? = nil) async throws -> VaultCommitReceipt {
+        try await authorizedWrite(epoch: authorizedEpoch) { access in
+            try await store.commitAccounts(vaultID: vaultID, writes, cause: cause, using: access)
+        }
+    }
+
+    /// The names a transfer header shows: this profile's, and this vault's, which stays `nil` unless the lease is still current.
+    func displayNames() async throws -> (profile: String, vault: String?) {
+        let listing = try await reading { _ in try await store.listing() }
+        return (profile.name, listing.first { $0.vaultID == vaultID }?.name)
+    }
+
+    func delete(_ scope: RemovalScope, expectedRevision: UInt64, authorizedEpoch: UInt64) async throws -> VaultCommitReceipt {
+        try await authorizedWrite(epoch: authorizedEpoch) { access in
+            try await store.delete(vaultID: vaultID, scope: scope, expectedRevision: expectedRevision, using: access)
+        }
     }
 
     func updatePasswordSavePolicy(_ blockedOrigins: Set<String>, expectedRevision: UInt64, authorizedEpoch: UInt64) async throws -> VaultCommitReceipt {
+        try await authorizedWrite(epoch: authorizedEpoch) { access in
+            try await store.updatePasswordSavePolicy(vaultID: vaultID, blockedOrigins, expectedRevision: expectedRevision, using: access)
+        }
+    }
+
+    // MARK: - Trash and earlier versions (this manager's lease only)
+
+    func trashPage(after: Int?) async throws -> TrashPage {
+        try await reading { access in try await store.trashPage(vaultID: vaultID, after: after, using: access) }
+    }
+
+    func revisionPage(accountID: UUID, after: Int?) async throws -> RevisionPage {
+        try await reading { access in try await store.revisionPage(vaultID: vaultID, accountID: accountID, after: after, using: access) }
+    }
+
+    /// Verified Trash and earlier-version counts: integers from the sealed heads, each checked against the stored rows.
+    func historyCounts() async throws -> (live: HistoryCounts, trash: HistoryCounts) {
+        try await reading { access in try await store.historyCounts(vaultID: vaultID, using: access) }
+    }
+
+    var preMigrationBackup: URL? {
+        store.preMigrationBackup()
+    }
+
+    func previewUndelete(entryID: UUID) async throws -> UndeletePreview {
+        try await reading { access in try await store.previewUndelete(vaultID: vaultID, entryID: entryID, using: access) }
+    }
+
+    func undelete(entryID: UUID, expectedRevision: UInt64, authorizedEpoch: UInt64) async throws -> VaultCommitReceipt {
+        try await authorizedWrite(epoch: authorizedEpoch) { access in
+            try await store.undelete(vaultID: vaultID, entryID: entryID, expectedRevision: expectedRevision, using: access)
+        }
+    }
+
+    func previewRestoreRevision(revisionID: UUID) async throws -> CredentialAccount {
+        try await reading { access in try await store.previewRestoreRevision(vaultID: vaultID, revisionID: revisionID, using: access) }
+    }
+
+    func restoreRevision(revisionID: UUID, expectedRevision: UInt64, authorizedEpoch: UInt64) async throws -> VaultCommitReceipt {
+        try await authorizedWrite(epoch: authorizedEpoch) { access in
+            try await store.restoreRevision(vaultID: vaultID, revisionID: revisionID, expectedRevision: expectedRevision, using: access)
+        }
+    }
+
+    func removedIdentifiers() async throws -> RemovedIdentifiers {
+        try await reading { access in try await store.removedIdentifiers(vaultID: vaultID, using: access) }
+    }
+
+    /// A purge needs a fresh assertion of an enrolled passkey on top of the unlock: a cached lease alone never purges.
+    func purge(entryIDs: [UUID], emptyAll: Bool, in anchor: ASPresentationAnchor) async throws -> PurgeReceipt {
         let access = try currentAccess()
-        guard access.epoch == authorizedEpoch else { throw CredentialVaultError.unauthorized }
+        let unlocks = try await guarded(using: access) { try await store.discovery(vaultID: vaultID) }.unlocks
+        try requireCurrent(access)
+        let proof = try await native.assert(unlocks, anchor)
+        try requireCurrent(access)
         return try await writing {
-            try await guarded(using: access) { try await vault.updatePasswordSavePolicy(blockedOrigins, expectedRevision: expectedRevision, using: access) }
+            try await guarded(using: access) {
+                try await store.purge(
+                    vaultID: vaultID, entryIDs: entryIDs, emptyAll: emptyAll,
+                    authorization: FreshAuthorization(credentialID: proof.credentialID, prf: proof.prf), using: access
+                )
+            }
         }
     }
 
@@ -396,17 +604,31 @@ final class CredentialManager {
         }
         pending = []
         current = nil
+        unlockGeneration &+= 1
         // Ceremonies bound to this vault stop here, synchronously, before any suspension can let one continue.
-        WebAuthnAdapter.cancel(profileID: profile.id)
+        WebAuthnAdapter.cancel(manager: self)
         lastLockReason = reason
         timer?.cancel()
         timer = nil
-        unlocker.cancel()
-        let vault = vault
-        Task { for access in revoked { await vault.lock(ifUsing: access) } }
+        native.cancel()
+        let store = store
+        Task { for access in revoked { await store.lock(ifUsing: access) } }
     }
 
     // MARK: - Private
+
+    /// The scratch paths one unlock's store call reported, collected from the store's executor and read on the main actor.
+    private nonisolated final class ScratchReports: Sendable {
+        private let reported = Mutex<[URL]>([])
+
+        var urls: [URL] {
+            reported.withLock { $0 }
+        }
+
+        func add(_ url: URL) {
+            reported.withLock { $0.append(url) }
+        }
+    }
 
     private func currentAccess() throws -> VaultAccess {
         guard let current else { throw CredentialVaultError.unauthorized }
@@ -449,6 +671,21 @@ final class CredentialManager {
         }
     }
 
+    /// A read under the current lease; a result is discarded if a lock landed while it was in flight.
+    private func reading<T>(_ operation: (VaultAccess) async throws -> T) async throws -> T {
+        let access = try currentAccess()
+        let result = try await guarded(using: access) { try await operation(access) }
+        try requireCurrent(access)
+        return result
+    }
+
+    /// A durable write under the lease the caller decided under (`epoch`), marked in flight before its first suspension.
+    private func authorizedWrite<T>(epoch: UInt64, _ operation: (VaultAccess) async throws -> T) async throws -> T {
+        let access = try currentAccess()
+        guard access.epoch == epoch else { throw CredentialVaultError.unauthorized }
+        return try await writing { try await guarded(using: access) { try await operation(access) } }
+    }
+
     /// Marks a vault write as in flight before its first suspension and clears the mark on success, failure and
     /// cancellation alike: a write that threw or was cancelled may still have landed.
     private func writing<T>(_ operation: () async throws -> T) async rethrows -> T {
@@ -477,7 +714,7 @@ final class CredentialManager {
     private func discard(_ access: VaultAccess) {
         access.revoke()
         pending.removeAll { $0 === access }
-        let vault = vault
-        Task { await vault.lock(ifUsing: access) }
+        let store = store
+        Task { await store.lock(ifUsing: access) }
     }
 }

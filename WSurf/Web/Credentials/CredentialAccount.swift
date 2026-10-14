@@ -25,6 +25,36 @@ nonisolated struct CredentialBasicAuthenticationMetadata: Codable, Sendable, Equ
     var password: CredentialEditableFieldMetadata?
 }
 
+/// Observations that never change a credential's content hash (§11.1 "never" row).
+nonisolated struct CredentialEvents: Codable, Equatable, Sendable {
+    var lastImportedAt: Date?
+    var lastExportHandoffAt: Date?
+    var remoteLastObservedAt: Date?
+    /// `CredentialContent.hash` of the part last handed to the system exchange sheet. Local handoff evidence only: never an
+    /// accepted remote base, so it advances no `*Base` and no content/history state.
+    var lastExportHandoffHash: Data?
+
+    func validate() throws {
+        guard lastExportHandoffHash == nil || lastExportHandoffHash?.count == 32 else { throw CredentialVaultError.invalidData }
+    }
+}
+
+/// The accepted remote observation of a credential (§13.2a): its content hash and the remote item it came from.
+nonisolated struct ExchangeBase: Codable, Equatable, Sendable {
+    var contentHash: Data
+    var itemID: Data?
+}
+
+nonisolated extension CredentialAccount {
+    /// A freshly created account: `createdAt` and `modifiedAt` are `now`; migration and import paths leave both nil.
+    func stampingCreation(at now: Date) -> CredentialAccount {
+        var account = self
+        account.createdAt = now
+        account.modifiedAt = now
+        return account
+    }
+}
+
 nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable {
     var id: UUID
     var username: String
@@ -38,6 +68,13 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
     var exchangeItemID: Data?
     var exchangeMetadata: Data?
     var basicAuthenticationMetadata: CredentialBasicAuthenticationMetadata?
+    var createdAt: Date?
+    var modifiedAt: Date?
+    var migratedAt: Date?
+    var passwordEvents: CredentialEvents?
+    var totpEvents: CredentialEvents?
+    var passwordBase: ExchangeBase?
+    var totpBase: ExchangeBase?
 
     func validate() throws {
         guard !username.isEmpty || password != nil || !passkeys.isEmpty || totp != nil,
@@ -75,6 +112,8 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
         if let totp {
             try totp.validate()
         }
+        try passwordEvents?.validate()
+        try totpEvents?.validate()
         for data in [exchangeAccountID, exchangeItemID].compactMap({ $0 }) where data.count > CredentialVaultLimits.payloadBytes {
             throw CredentialVaultError.invalidData
         }
@@ -129,6 +168,8 @@ nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
     var createdAt: Date?
     var source: WebsitePasskeySource?
     var lastSignedAt: Date?
+    var events: CredentialEvents?
+    var base: ExchangeBase?
 
     func validate() throws {
         guard algorithm == -7,
@@ -149,6 +190,7 @@ nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
         if let metadata = exchangeFIDO2Metadata, metadata.count > CredentialVaultLimits.payloadBytes {
             throw CredentialVaultError.invalidData
         }
+        try events?.validate()
     }
 }
 

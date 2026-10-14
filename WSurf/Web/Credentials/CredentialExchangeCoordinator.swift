@@ -21,9 +21,21 @@ nonisolated enum CredentialImportChoice: Sendable, Equatable {
     case merge(into: UUID)
 }
 
+/// What an import does, or did, to the vault. `added` and `updated` count accounts; `results` says what became of every
+/// incoming credential. Display metadata only (kind, title, website): never a password, seed or key.
 nonisolated struct CredentialImportOutcome: Equatable, Sendable {
+    struct Result: Equatable, Sendable, Identifiable {
+        enum Action: Equatable, Sendable { case added, updated, unchanged, skipped }
+        let id: CredentialIdentity
+        let kind: CredentialImportReview.Record.Kind
+        let title: String
+        let relyingParty: String?
+        let action: Action
+    }
+
     let added: Int
     let updated: Int
+    var results: [Result] = []
 }
 
 /// What `cancelImport(for:)` ended. Cancelling a running commit only asks the vault not to write: a write that
@@ -44,6 +56,18 @@ nonisolated enum CredentialExportOutcome: Equatable, Sendable {
     case cancelled
     /// The hand-off call had started and then failed or was cancelled. The data may or may not have left.
     case uncertain
+
+    /// What the user is told for this outcome; a user cancel says nothing.
+    var message: CredentialTransferMessage? {
+        switch self {
+        case .transferred:
+            .handedToSystem()
+        case .uncertain:
+            .exportUncertain()
+        case .cancelled:
+            nil
+        }
+    }
 }
 
 nonisolated enum CredentialExchangeCoordinatorError: Error, Equatable, Sendable {
@@ -54,7 +78,6 @@ nonisolated enum CredentialExchangeCoordinatorError: Error, Equatable, Sendable 
     case unknownConflict
     /// The choice is not offered for that record, or it would make the import inconsistent.
     case invalidChoice
-    case nothingToImport
     case noStagedImport
     case emptySelection
     /// Domain and code only: the system's own text can name what was being transferred.
@@ -104,6 +127,9 @@ nonisolated struct CredentialImportReview: Sendable {
         /// takes the exporter's username and password as sent, so it removes the stored password; the review says so
         /// before the user chooses, and `.addSeparately` or `.skip` keep it.
         let removesStoredPasswordOnReplace: Bool
+        /// What the vault already says about this credential: new, unchanged, changed on either side, previously removed,
+        /// ambiguous, or a passkey with a conflicting key (never replaced).
+        let classification: CredentialImportClass
         /// `nil` for an unresolved conflict, or an automatic import for any other record.
         var choice: CredentialImportChoice?
         var isConflict: Bool {
@@ -124,6 +150,9 @@ nonisolated struct CredentialImportReview: Sendable {
         }
     }
 
+    /// Whose vault the credentials go into: the profile, and the vault when its name is readable.
+    let profileName: String
+    let vaultName: String?
     let candidates: [Candidate]
     let revision: UInt64
     /// `nil` until every conflict has a decision.
@@ -151,6 +180,11 @@ nonisolated struct CredentialImportReview: Sendable {
 final class CredentialExchangeCoordinator {
     static let shared = CredentialExchangeCoordinator()
 
+    /// Tells the window that began an import how it ended when that happened outside its own call (a lock that dropped its
+    /// review). The window builds it with a weak capture of itself and the vault it began in, so a window that is gone hears
+    /// nothing and another window never does.
+    typealias Ending = @MainActor (CredentialTransferMessage) -> Void
+
     /// `owner` is the settings model that began the import. One profile has one shared manager, but every settings
     /// page builds its own model, so the manager alone does not say whose review this is.
     private struct Claim {
@@ -158,14 +192,24 @@ final class CredentialExchangeCoordinator {
         let manager: ObjectIdentifier
         let owner: UUID
         let epoch: UInt64
+        let ending: Ending?
+    }
+
+    /// What the review shows beyond the preview itself, read once when it is staged.
+    private struct ReviewContext {
+        let classes: [CredentialIdentity: CredentialImportClass]
+        let profileName: String
+        let vaultName: String?
     }
 
     private struct Session {
         let manager: CredentialManager
         let owner: UUID
+        let ending: Ending?
         let epoch: UInt64
         let generation: Int
         let preview: CredentialImportPreview
+        let context: ReviewContext
         var choices: [CredentialIdentity: CredentialImportChoice]
         var review: CredentialImportReview
     }
@@ -185,17 +229,45 @@ final class CredentialExchangeCoordinator {
     @ObservationIgnored private var committing: Commit?
     private var session: Session?
 
+    /// The one sink for every ending or refusal (spec §13.5): each ending emits exactly one message. An operation one window
+    /// started also throws `CredentialTransferFailure`, so that window is told without a sink routing the message to it.
+    @ObservationIgnored var onMessage: (@MainActor (CredentialTransferMessage) -> Void)?
+    /// Test seam: runs after the pre-commit re-check and before `commitAccounts`.
+    @ObservationIgnored var afterLastCheck: (@MainActor () async -> Void)?
+    /// The clock for the export hand-off stamp.
+    @ObservationIgnored var now: @MainActor () -> Date = { Date() }
+    /// The refusal of a second token while one is open. It belongs to no window (the token is the system's), so it is the only
+    /// ending kept here; every window's own ending lives in that window.
+    private(set) var refusal: CredentialTransferMessage?
+
+    func dismissRefusal() {
+        refusal = nil
+    }
+
     // MARK: Pending token
 
-    /// Queues the token carried by the system's exchange activity. One import at a time, each token once.
+    /// What `receive` did with an activity: queued its token, refused it because another import is open (said so, once), or
+    /// ignored it (not an exchange activity, or a token already queued or spent), which says nothing and opens nothing.
+    enum ReceiveResult: Equatable {
+        case accepted, refused, ignored
+    }
+
+    /// Queues the token carried by the system's exchange activity. One import at a time, each token once. A new token that
+    /// arrives while another is pending, claimed or staged is refused and says so; the open import is untouched.
     @discardableResult
-    func receive(_ activity: NSUserActivity) -> Bool {
+    func receive(_ activity: NSUserActivity) -> ReceiveResult {
         guard activity.activityType == ASCredentialExchangeActivity,
               let token = activity.userInfo?[ASCredentialImportToken] as? UUID,
-              pendingToken == nil, claim == nil, session == nil,
-              !consumed.contains(token) else { return false }
+              token != pendingToken, !consumed.contains(token) else { return .ignored }
+        guard pendingToken == nil, claim == nil, session == nil else {
+            let message = CredentialTransferMessage.alreadyInProgress()
+            refusal = message
+            onMessage?(message)
+            return .refused
+        }
+        refusal = nil
         pendingToken = token
-        return true
+        return .accepted
     }
 
     /// Declines the queued token the caller rendered. A button drawn for an earlier token must not decline a later one.
@@ -206,13 +278,13 @@ final class CredentialExchangeCoordinator {
     }
 
     /// Binds the queued token to `manager`'s current authorization. A locked manager leaves the token queued.
-    func claimImport(token: UUID, for manager: CredentialManager, owner: UUID) throws {
+    func claimImport(token: UUID, for manager: CredentialManager, owner: UUID, onEnding: Ending? = nil) throws {
         guard pendingToken == token else { throw CredentialExchangeCoordinatorError.tokenMismatch }
         guard claim == nil, session == nil else { throw CredentialExchangeCoordinatorError.busy }
         guard let epoch = manager.authorizationEpoch else { throw CredentialVaultError.unauthorized }
         pendingToken = nil
         consumed.insert(token)
-        claim = Claim(token: token, manager: ObjectIdentifier(manager), owner: owner, epoch: epoch)
+        claim = Claim(token: token, manager: ObjectIdentifier(manager), owner: owner, epoch: epoch, ending: onEnding)
     }
 
     // MARK: Import
@@ -228,8 +300,8 @@ final class CredentialExchangeCoordinator {
     }
 
     /// Fetches the system's payload for `token` and stages it for review.
-    func beginImport(token: UUID, into manager: CredentialManager, owner: UUID) async throws {
-        try claimImport(token: token, for: manager, owner: owner)
+    func beginImport(token: UUID, into manager: CredentialManager, owner: UUID, onEnding: @escaping Ending) async throws {
+        try claimImport(token: token, for: manager, owner: owner, onEnding: onEnding)
         guard let bound = claim, bound.token == token else { throw CredentialExchangeCoordinatorError.busy }
         let data: ASExportedCredentialData
         do {
@@ -247,24 +319,55 @@ final class CredentialExchangeCoordinator {
         try await stage(data, into: manager, bound: bound)
     }
 
+    /// A cancel, lock or lease loss while this operation still owns the claim discards the import: the token is spent and
+    /// nothing was written. One that follows `cancelImport` is the cancel's own ending and says nothing more.
     private func stage(_ data: ASExportedCredentialData, into manager: CredentialManager, bound: Claim) async throws {
         defer { release(bound.token) }
+        do {
+            try await stageClaimed(data, into: manager, bound: bound)
+        } catch {
+            guard claim?.token == bound.token else { throw error }
+            switch error {
+            case is CancellationError, CredentialVaultError.unauthorized, CredentialVaultError.expired:
+                throw end(.discarded())
+            default:
+                throw error
+            }
+        }
+    }
+
+    private func stageClaimed(_ data: ASExportedCredentialData, into manager: CredentialManager, bound: Claim) async throws {
         guard claim?.token == bound.token else { throw CancellationError() }
         guard bound.manager == ObjectIdentifier(manager) else { throw CredentialExchangeCoordinatorError.wrongTarget }
         guard manager.authorizationEpoch == bound.epoch else { throw CredentialVaultError.unauthorized }
         session = nil
         let snapshot = try await manager.snapshot()
+        let removed = try await manager.removedIdentifiers()
+        let names = try await manager.displayNames()
         try Task.checkCancellation()
         // cancelImport() or a newer claim landed while the vault was read: this operation no longer owns anything.
         guard claim?.token == bound.token else { throw CancellationError() }
         guard manager.authorizationEpoch == bound.epoch else { throw CredentialVaultError.unauthorized }
 
-        let preview = try CredentialExchangeCodec.preview(data, against: snapshot)
+        let preview: CredentialImportPreview
+        do {
+            preview = try CredentialExchangeCodec.preview(data, against: snapshot)
+        } catch let error as CredentialExchangeError {
+            throw end(.malformed(record: error.record))
+        }
+        let destination = ImportDestinationView(accounts: snapshot.accounts, removed: removed)
+        var classes: [CredentialIdentity: CredentialImportClass] = [:]
+        for candidate in preview.candidates {
+            for incoming in Self.identities(in: candidate) {
+                classes[incoming] = try CredentialExchangeCodec.classify(incoming, in: preview, destination: destination)
+            }
+        }
+        let context = ReviewContext(classes: classes, profileName: names.profile, vaultName: names.vault)
         generation += 1
-        let review = try Self.review(for: preview, choices: [:])
+        let review = try Self.review(for: preview, choices: [:], context)
         session = Session(
-            manager: manager, owner: bound.owner, epoch: bound.epoch, generation: generation,
-            preview: preview, choices: [:], review: review
+            manager: manager, owner: bound.owner, ending: bound.ending, epoch: bound.epoch, generation: generation,
+            preview: preview, context: context, choices: [:], review: review
         )
         watch(manager, generation: generation)
     }
@@ -276,9 +379,14 @@ final class CredentialExchangeCoordinator {
         guard let record = live.review.candidates.lazy.flatMap(\.records).first(where: { $0.incoming == incoming }) else {
             throw CredentialExchangeCoordinatorError.unknownConflict
         }
+        // A passkey whose key conflicts with the stored one is only ever skipped.
+        if record.classification == .passkeyHardConflict, choice != .skip {
+            throw CredentialExchangeCoordinatorError.invalidChoice
+        }
         switch choice {
         case .replace:
-            guard record.isConflict else { throw CredentialExchangeCoordinatorError.invalidChoice }
+            // A passkey is never replaced: the vault keeps its credential ID unique, and a conflicting key is not ours to overwrite.
+            guard record.isConflict, record.kind != .passkey else { throw CredentialExchangeCoordinatorError.invalidChoice }
         case let .merge(target):
             guard Self.targets(for: incoming, in: live.preview).contains(where: { $0.accountID == target }) else {
                 throw CredentialExchangeCoordinatorError.invalidChoice
@@ -291,7 +399,7 @@ final class CredentialExchangeCoordinator {
         var choices = live.choices
         choices[incoming] = choice
         do {
-            live.review = try Self.review(for: live.preview, choices: choices)
+            live.review = try Self.review(for: live.preview, choices: choices, live.context)
         } catch CredentialVaultError.invalidData, CredentialVaultError.duplicateIdentifier {
             throw CredentialExchangeCoordinatorError.invalidChoice
         } catch {
@@ -308,33 +416,30 @@ final class CredentialExchangeCoordinator {
         return Self.targets(for: incoming, in: live.preview)
     }
 
-    /// Cancellation, a stale revision or a codec failure end the review; an unfinished review is kept.
-    /// The write runs in a task `cancelImport()` and the caller's cancellation both reach, and it is the
-    /// vault's own pre-write check that honours them. A receipt for a write that already landed is always
-    /// returned, and nothing throws once the vault has committed.
+    /// Applies the reviewed import with one per-account write bound to the stamps of the accounts it touches, so a write to
+    /// any other account never discards it. Every ending emits exactly one message (spec §13.5) and every ending but a
+    /// receipt throws it as a `CredentialTransferFailure`. A cancel, lock, epoch change or changed touched account
+    /// before the write, or a refusal the store proves rolled back, drops the review as discarded or failed: nothing was
+    /// written. Any other error once the write began says it may have landed. A returned receipt is never turned into an
+    /// error. An import that would change nothing is `nothingImported` and keeps the review.
     func commitImport(into manager: CredentialManager, owner: UUID) async throws -> VaultCommitReceipt {
         guard let staged = live else { throw CredentialExchangeCoordinatorError.noStagedImport }
         guard staged.manager === manager, staged.owner == owner else { throw CredentialExchangeCoordinatorError.wrongTarget }
-        guard staged.review.isResolved else { throw CredentialExchangeCoordinatorError.unresolvedConflicts }
+        guard staged.review.isResolved, let outcome = staged.review.outcome else { throw CredentialExchangeCoordinatorError.unresolvedConflicts }
         guard committing == nil else { throw CredentialExchangeCoordinatorError.busy }
 
-        let write: Task<VaultCommitReceipt, any Error>
+        let plan: (touched: [CredentialAccount], outcome: CredentialImportOutcome)
         do {
             try Task.checkCancellation()
             guard manager.authorizationEpoch == staged.epoch else { throw CredentialVaultError.unauthorized }
-            let plan = try Self.plan(staged.preview, choices: staged.choices)
-            guard plan.outcome.added + plan.outcome.updated > 0 else {
-                throw CredentialExchangeCoordinatorError.nothingToImport
-            }
-            let expected = staged.preview.revision
-            let authorized = staged.epoch
-            write = Task { try await manager.commit(plan.accounts, expectedRevision: expected, authorizedEpoch: authorized) }
-        } catch CredentialExchangeCoordinatorError.nothingToImport {
-            throw CredentialExchangeCoordinatorError.nothingToImport
+            plan = try Self.plan(staged.preview, choices: staged.choices)
         } catch {
             drop(staged.generation)
-            throw error
+            throw end(Self.messageBeforeWrite(error, operation: String(localized: "Preparing the imported credentials")))
         }
+        guard !plan.touched.isEmpty else { throw end(.nothingImported()) }
+
+        let write = Task { try await self.applyImport(plan.touched, outcome: outcome, staged: staged) }
         committing = Commit(generation: staged.generation, manager: ObjectIdentifier(manager), owner: owner, task: write)
         defer { if committing?.generation == staged.generation { committing = nil } }
         do {
@@ -344,6 +449,64 @@ final class CredentialExchangeCoordinator {
         } catch {
             drop(staged.generation)
             throw error
+        }
+    }
+
+    /// The re-check and the write of one import. The authoritative comparison is inside `commitAccounts`; the fresh read
+    /// only discards early, before anything starts.
+    private func applyImport(
+        _ touched: [CredentialAccount], outcome: CredentialImportOutcome, staged: Session
+    ) async throws -> VaultCommitReceipt {
+        let writes: [AccountWrite]
+        do {
+            try Task.checkCancellation()
+            let fresh = try await staged.manager.snapshot()
+            try Task.checkCancellation()
+            guard staged.manager.authorizationEpoch == staged.epoch else { throw CredentialVaultError.unauthorized }
+            writes = try touched.map { account in
+                guard let bound = staged.preview.base.stamps[account.id] else {
+                    guard fresh.stamps[account.id] == nil else { throw CredentialVaultError.staleRevision }
+                    return AccountWrite(accountID: account.id, expected: .absent, replacement: account)
+                }
+                guard fresh.stamps[account.id] == bound else { throw CredentialVaultError.staleRevision }
+                return AccountWrite(accountID: account.id, expected: .stamp(bound), replacement: account)
+            }
+            await afterLastCheck?()
+        } catch {
+            throw end(Self.messageBeforeWrite(error, operation: String(localized: "Checking the vault before saving")))
+        }
+        let receipt: VaultCommitReceipt
+        do {
+            receipt = try await staged.manager.commitAccounts(writes, authorizedEpoch: staged.epoch)
+        } catch {
+            throw end(Self.messageAfterWriteStarted(error))
+        }
+        onMessage?(.succeeded(outcome, receipt: receipt))
+        return receipt
+    }
+
+    /// No write has started: a cancel, lock, lease loss or changed touched account only discards; anything else the plan or the
+    /// vault refused is a failure to apply. Either way nothing was written.
+    private static func messageBeforeWrite(_ error: any Error, operation: String) -> CredentialTransferMessage {
+        switch error {
+        case is CancellationError, CredentialVaultError.unauthorized, CredentialVaultError.expired, CredentialVaultError.staleRevision:
+            .discarded()
+        default:
+            .applyFailed(operation: operation)
+        }
+    }
+
+    /// `commitAccounts` has begun. Only what its transaction proves rolled back says nothing was written: a stamp or
+    /// absence mismatch (`staleRevision`) and the capacity, collision and malformed refusals, which are all raised before the
+    /// first row is written. Every other error, cancellation and lease loss included, may follow a durable write.
+    private static func messageAfterWriteStarted(_ error: any Error) -> CredentialTransferMessage {
+        switch error {
+        case CredentialVaultError.staleRevision:
+            .discarded()
+        case CredentialVaultError.duplicateIdentifier, CredentialStoreError.limit, CredentialStoreError.malformed:
+            .applyFailed(operation: String(localized: "Saving the imported credentials"))
+        default:
+            .mayHaveLanded()
         }
     }
 
@@ -371,42 +534,78 @@ final class CredentialExchangeCoordinator {
                 outcome = .reviewCancelled
             }
         }
+        if outcome == .reviewCancelled {
+            onMessage?(.discarded())
+        }
         return outcome
     }
 
     // MARK: Export
 
-    /// Asks the system for a destination and format, then hands it exactly the selected credentials.
+    /// What the system's export manager gave back once the user chose a destination: the format it wants and the call that takes the data.
+    struct SystemExport: Sendable {
+        let format: ASExportedCredentialData.FormatVersion
+        let send: @Sendable (ASExportedCredentialData) async throws -> Void
+    }
+
+    /// The only native step of an export. Tests replace it to count what would have been sent; nothing else differs.
+    @ObservationIgnored var requestSystemExport: @MainActor (ASPresentationAnchor) async throws -> SystemExport = { anchor in
+        // The exporter is used by nothing else once `send` owns it, and `send` runs once, off the main actor, as before.
+        nonisolated(unsafe) let exporter = ASCredentialExportManager(presentationAnchor: anchor)
+        let options = try await exporter.requestExport(for: nil)
+        return SystemExport(format: options.formatVersion, send: { try await exporter.exportCredentials($0) })
+    }
+
+    /// Asks the system for a destination and format, then hands it exactly the selected credentials. `expectedStamps` are the
+    /// stamps of the selected accounts when the user chose them: a change to one of them, or a lock, sends nothing and says
+    /// the selection changed, while a write to any other account does not matter. A user cancel before any data was passed
+    /// returns `.cancelled` and says nothing; every other ending emits one message, and a failure throws it.
     func exportCredentials(
         selection: [CredentialExportSelection],
-        expectedRevision: UInt64,
+        expectedStamps: [UUID: AccountStamp],
         epoch: UInt64,
         from manager: CredentialManager,
         in anchor: ASPresentationAnchor
     ) async throws -> CredentialExportOutcome {
         guard Self.isNonEmpty(selection) else { throw CredentialExchangeCoordinatorError.emptySelection }
         try Task.checkCancellation()
-        guard manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-        let exporter = ASCredentialExportManager(presentationAnchor: anchor)
-        let options: ASCredentialExportManager.ExportOptions
         do {
-            options = try await exporter.requestExport(for: nil)
+            guard manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
+            let system: SystemExport
+            do {
+                system = try await requestSystemExport(anchor)
+            } catch {
+                if Self.isUserCancellation(error) {
+                    return .cancelled
+                }
+                throw Self.mapNative(error)
+            }
+            let (data, snapshot) = try await prepare(
+                selection: selection, expectedStamps: expectedStamps, format: system.format, from: manager, epoch: epoch
+            )
+            // Last point before the secrets leave the vault; everything before it is a clean cancel.
+            try Task.checkCancellation()
+            guard manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
+            let outcome = await Self.handOff { try await system.send(data) }
+            if outcome == .transferred {
+                await stampHandoff(selection, in: snapshot, from: manager, epoch: epoch)
+            }
+            if let message = outcome.message {
+                onMessage?(message)
+            }
+            return outcome
         } catch is CancellationError {
             throw CancellationError()
+        } catch CredentialExchangeCoordinatorError.emptySelection {
+            throw CredentialExchangeCoordinatorError.emptySelection
         } catch {
-            if Self.isUserCancellation(error) {
-                return .cancelled
+            switch error {
+            case CredentialVaultError.unauthorized, CredentialVaultError.expired, CredentialVaultError.staleRevision:
+                throw end(.exportSelectionChanged())
+            default:
+                throw end(.exportNotSent())
             }
-            throw Self.mapNative(error)
         }
-        let data = try await prepareExport(
-            selection: selection, expectedRevision: expectedRevision,
-            format: options.formatVersion, from: manager, epoch: epoch
-        )
-        // Last point before the secrets leave the vault; everything before it is a clean cancel.
-        try Task.checkCancellation()
-        guard manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-        return await Self.handOff { try await exporter.exportCredentials(data) }
     }
 
     /// Runs the system call that takes the credential data. Once it has started, a thrown error or a cancellation
@@ -425,24 +624,72 @@ final class CredentialExchangeCoordinator {
     /// Re-reads the vault under the authorization the selection was made in; the source is never modified.
     func prepareExport(
         selection: [CredentialExportSelection],
-        expectedRevision: UInt64,
+        expectedStamps: [UUID: AccountStamp],
         format: ASExportedCredentialData.FormatVersion,
         from manager: CredentialManager,
         epoch: UInt64
     ) async throws -> ASExportedCredentialData {
+        try await prepare(selection: selection, expectedStamps: expectedStamps, format: format, from: manager, epoch: epoch).data
+    }
+
+    func prepare(
+        selection: [CredentialExportSelection],
+        expectedStamps: [UUID: AccountStamp],
+        format: ASExportedCredentialData.FormatVersion,
+        from manager: CredentialManager,
+        epoch: UInt64
+    ) async throws -> (data: ASExportedCredentialData, snapshot: StoreSnapshot) {
         guard Self.isNonEmpty(selection) else { throw CredentialExchangeCoordinatorError.emptySelection }
         guard manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
         let snapshot = try await manager.snapshot()
         try Task.checkCancellation()
         guard manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-        guard snapshot.revision == expectedRevision else { throw CredentialVaultError.staleRevision }
-        let data = try CredentialExchangeCodec.export(
-            snapshot,
-            selection: selection.filter { Self.isNonEmpty([$0]) },
-            format: format
-        )
+        let chosen = selection.filter { Self.isNonEmpty([$0]) }
+        for entry in chosen {
+            let known = expectedStamps[entry.accountID]
+            // An account neither the selection nor the vault knows is a bad request; one that changed or vanished is a stale selection.
+            guard known != nil || snapshot.stamps[entry.accountID] != nil else { throw CredentialVaultError.invalidData }
+            guard let known, snapshot.stamps[entry.accountID] == known else { throw CredentialVaultError.staleRevision }
+        }
+        let data = try CredentialExchangeCodec.export(snapshot, selection: chosen, format: format)
         guard !data.accounts.isEmpty else { throw CredentialExchangeCoordinatorError.emptySelection }
-        return data
+        return (data, snapshot)
+    }
+
+    /// Records that the system took these parts: their time and canonical content hash in the part's events, never a remote
+    /// base. It runs after the hand-off and bound to the stamps the data was read at, through the per-account write, so an
+    /// unrelated write does not stop it and a changed account is left alone. Whether it lands changes nothing the user is told.
+    func stampHandoff(
+        _ selection: [CredentialExportSelection], in snapshot: StoreSnapshot, from manager: CredentialManager, epoch: UInt64
+    ) async {
+        let handedAt = now()
+        var writes: [AccountWrite] = []
+        for entry in selection where Self.isNonEmpty([entry]) {
+            guard var account = snapshot.accounts.first(where: { $0.id == entry.accountID }),
+                  let stamp = snapshot.stamps[account.id] else { continue }
+            let original = account
+            func mark(_ events: CredentialEvents?, _ part: CredentialPart) -> CredentialEvents? {
+                guard let hash = try? CredentialContent.hash(part) else { return events }
+                var result = events ?? CredentialEvents()
+                result.lastExportHandoffAt = handedAt
+                result.lastExportHandoffHash = hash
+                return result
+            }
+            if entry.password, Self.hasLogin(original) {
+                account.passwordEvents = mark(account.passwordEvents, .password(original))
+            }
+            if entry.totp, original.totp != nil {
+                account.totpEvents = mark(account.totpEvents, .totp(original))
+            }
+            for index in account.passkeys.indices where entry.passkeyIDs.contains(account.passkeys[index].id) {
+                account.passkeys[index].events = mark(account.passkeys[index].events, .passkey(original.passkeys[index]))
+            }
+            if account != original {
+                writes.append(AccountWrite(accountID: account.id, expected: .stamp(stamp), replacement: account))
+            }
+        }
+        guard !writes.isEmpty else { return }
+        _ = try? await manager.commitAccounts(writes, authorizedEpoch: epoch)
     }
 
     // MARK: System errors
@@ -483,13 +730,31 @@ final class CredentialExchangeCoordinator {
         }
     }
 
+    /// Delivers `message` once and returns the error that carries it to the window that owns the operation.
+    private func end(_ message: CredentialTransferMessage) -> CredentialTransferFailure {
+        onMessage?(message)
+        return CredentialTransferFailure(message: message)
+    }
+
+    /// Ends the review when the manager locks or re-unlocks: the copy is dropped and the window that began it is told once.
+    /// A running commit reports its own ending instead.
+    private func lose(_ generation: Int) {
+        guard let lost = session, lost.generation == generation else { return }
+        session = nil
+        if committing?.generation != generation {
+            let message = CredentialTransferMessage.discarded()
+            lost.ending?(message)
+            onMessage?(message)
+        }
+    }
+
     /// Drops the session synchronously inside the manager's change notification, so no secret survives a
     /// lock or an unlock into a new epoch. A later session installs its own observation.
     private func watch(_ manager: CredentialManager, generation: Int) {
         withObservationTracking {
             _ = manager.authorizationEpoch
         } onChange: { [weak self] in
-            MainActor.assumeIsolated { self?.drop(generation) }
+            MainActor.assumeIsolated { self?.lose(generation) }
         }
     }
 
@@ -585,29 +850,33 @@ final class CredentialExchangeCoordinator {
     private static func plan(
         _ preview: CredentialImportPreview,
         choices: [CredentialIdentity: CredentialImportChoice]
-    ) throws -> (accounts: [CredentialAccount], outcome: CredentialImportOutcome) {
+    ) throws -> (touched: [CredentialAccount], outcome: CredentialImportOutcome) {
         guard let decisions = decisions(preview, choices) else {
             throw CredentialExchangeCoordinatorError.unresolvedConflicts
         }
         let accounts = try CredentialExchangeCodec.apply(preview, decisions: decisions)
         let before = Dictionary(preview.base.accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var touched: [CredentialAccount] = []
         var added = 0
         var updated = 0
         for account in accounts {
             if let old = before[account.id] {
                 if old != account {
                     updated += 1
+                    touched.append(account)
                 }
             } else {
                 added += 1
+                touched.append(account)
             }
         }
-        return (accounts, CredentialImportOutcome(added: added, updated: updated))
+        return (touched, CredentialImportOutcome(added: added, updated: updated))
     }
 
     private static func review(
         for preview: CredentialImportPreview,
-        choices: [CredentialIdentity: CredentialImportChoice]
+        choices: [CredentialIdentity: CredentialImportChoice],
+        _ context: ReviewContext
     ) throws -> CredentialImportReview {
         let titles = Dictionary(
             (preview.base.accounts + preview.candidates).map { ($0.id, CredentialSummary($0).title) },
@@ -683,6 +952,7 @@ final class CredentialExchangeCoordinator {
                     removesStoredPasswordOnReplace: kind(incoming) == .password
                         && candidate.password == nil
                         && existing.flatMap { stored[accountID($0)]?.password } != nil,
+                    classification: context.classes[incoming] ?? .ambiguous,
                     choice: choice
                 )
             }
@@ -694,8 +964,27 @@ final class CredentialExchangeCoordinator {
         }
         var outcome: CredentialImportOutcome?
         if resolved {
-            outcome = try plan(preview, choices: choices).outcome
+            let planned = try plan(preview, choices: choices)
+            let changed = Set(planned.touched.map(\.id))
+            outcome = planned.outcome
+            outcome?.results = candidates.flatMap(\.records).map { record in
+                let action: CredentialImportOutcome.Result.Action
+                switch record.destination {
+                case .skipped, nil:
+                    action = .skipped
+                case .newAccount:
+                    action = .added
+                case let .existing(accountID, _, _, _):
+                    action = record.classification != .unchanged && changed.contains(accountID) ? .updated : .unchanged
+                }
+                return CredentialImportOutcome.Result(
+                    id: record.incoming, kind: record.kind, title: record.title, relyingParty: record.relyingParty, action: action
+                )
+            }
         }
-        return CredentialImportReview(candidates: candidates, revision: preview.revision, outcome: outcome)
+        return CredentialImportReview(
+            profileName: context.profileName, vaultName: context.vaultName,
+            candidates: candidates, revision: preview.revision, outcome: outcome
+        )
     }
 }

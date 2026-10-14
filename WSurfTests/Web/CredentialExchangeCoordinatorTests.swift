@@ -19,13 +19,8 @@ struct CredentialExchangeCoordinatorTests {
     static let origin = "https://example.test"
 
     final class Fixture {
-        let profile = Profile(id: UUID(), name: "Target", symbol: "key", color: .blue)
-        let otherProfile = Profile(id: UUID(), name: "Other", symbol: "key", color: .green)
-        let proof = VaultUnlockProof(
-            credentialID: Data(repeating: 1, count: 32),
-            prfInput: Data(repeating: 2, count: 32),
-            prf: SymmetricKey(size: .bits256)
-        )
+        let profile: Profile
+        let otherProfile: Profile
         let coordinator = CredentialExchangeCoordinator()
         let manager: CredentialManager
         /// The settings model on whose behalf the coordinator is driven directly. Model-driven tests stage with
@@ -34,40 +29,79 @@ struct CredentialExchangeCoordinatorTests {
         let other: CredentialManager
 
         let gate: VaultClockGate?
+        /// Each manager's vault, created locked, with the passkey that unlocks it.
+        private let vaults: [FixtureVault]
+        /// Only with a `gate`: the store the gated manager reads, closed by `cleanup`.
+        private let gatedStore: ProfileVaultStore?
 
-        /// With a `gate`, the manager is private to this fixture and its vault reads the gate's clock.
-        @MainActor init(gate: VaultClockGate? = nil) throws {
-            self.gate = gate
-            if let gate {
-                manager = try CredentialManager(profile: profile, directory: profile.supportDirectory, now: { gate.now() })
-            } else {
-                manager = try CredentialManager.forProfile(profile)
+        /// With a `gate`, the manager is private to this fixture and its store reads the gate's clock.
+        @MainActor init(gate: VaultClockGate? = nil) async throws {
+            let profile = Profile(id: UUID(), name: "Target", symbol: "key", color: .blue)
+            let otherProfile = Profile(id: UUID(), name: "Other", symbol: "key", color: .green)
+            let passkeys = VaultPasskeys()
+            var gatedStore: ProfileVaultStore?
+            let vault: FixtureVault
+            let otherVault: FixtureVault
+            do {
+                if let gate {
+                    let made = try await gate.makeVault(profile: profile, passkeys: passkeys)
+                    vault = made.vault
+                    gatedStore = made.store
+                } else {
+                    vault = try #require(try await VaultManagerFixture.make(profile: profile, passkeys: passkeys, vaults: [.locked]).vaults.first)
+                }
+                otherVault = try #require(try await VaultManagerFixture.make(profile: otherProfile, passkeys: passkeys, vaults: [.locked]).vaults.first)
+            } catch {
+                // No fixture is handed out: whatever it built is released here, including the first profile's gate entry.
+                await gatedStore?.close()
+                await VaultManagerFixture.cleanup(profile)
+                await VaultManagerFixture.cleanup(otherProfile)
+                throw error
             }
-            other = try CredentialManager.forProfile(otherProfile)
+            self.profile = profile
+            self.otherProfile = otherProfile
+            self.gate = gate
+            self.gatedStore = gatedStore
+            self.vaults = [vault, otherVault]
+            manager = vault.manager
+            other = otherVault.manager
         }
 
-        @MainActor func create(_ target: CredentialManager) async throws {
-            try await target.completeCreate(proof, access: target.beginAccess())
-        }
-
+        /// Unlocks `target`'s vault with its own passkey: a new authorization epoch every time.
         @MainActor func unlock(_ target: CredentialManager) async throws {
-            try await target.completeUnlock(credentialID: proof.credentialID, prf: proof.prf, access: target.beginAccess())
+            try await VaultManagerFixture.unlock(try #require(vaults.first { $0.manager === target }))
         }
 
+        /// Unlocks the target and, when there is anything to save, commits `accounts` as revision 1.
         @MainActor func seed(_ accounts: [CredentialAccount], into target: CredentialManager? = nil) async throws {
             let target = target ?? manager
-            try await create(target)
+            try await unlock(target)
             if !accounts.isEmpty {
-                _ = try await target.commit(accounts, expectedRevision: 0, authorizedEpoch: try #require(target.authorizationEpoch))
+                _ = try await target.commit(accounts, expectedRevision: try await target.snapshot().revision, authorizedEpoch: try #require(target.authorizationEpoch))
             }
         }
 
-        @MainActor func stored(_ target: CredentialManager? = nil) async throws -> VaultSnapshot {
+        @MainActor func stored(_ target: CredentialManager? = nil) async throws -> StoreSnapshot {
             try await (target ?? manager).snapshot()
         }
 
-        func diskBytes(_ owner: Profile? = nil) throws -> Data {
-            try Data(contentsOf: (owner ?? profile).supportDirectory.appendingPathComponent("Credentials.vault"))
+        /// Every stored row of `owner`'s vault: equal before and after means nothing was written.
+        func diskBytes(_ owner: Profile? = nil) throws -> [String: Data] {
+            let owner = owner ?? profile
+            let vault = owner.id == profile.id ? vaults[0] : vaults[1]
+            return try VaultManagerFixture.rows(of: vault.vaultID, in: owner)
+        }
+
+        /// Blocks the calling thread until the vault's rows differ from `before` (30 s at most): the commit has landed.
+        @MainActor func waitForCommit(from before: [String: Data]) -> Bool {
+            let deadline = ContinuousClock().now.advanced(by: .seconds(30))
+            while ContinuousClock().now < deadline {
+                if let current = try? diskBytes(), current != before {
+                    return true
+                }
+                Thread.sleep(forTimeInterval: 0.005)
+            }
+            return false
         }
 
         /// Queues `token`, claims it for `target` and stages `data`, the way the settings page does after the
@@ -76,7 +110,7 @@ struct CredentialExchangeCoordinatorTests {
             let target = target ?? manager
             let owner = owner ?? self.owner
             let token = UUID()
-            #expect(coordinator.receive(CredentialExchangeCoordinatorTests.activity(token: token)))
+            #expect(coordinator.receive(CredentialExchangeCoordinatorTests.activity(token: token)) == .accepted)
             try coordinator.claimImport(token: token, for: target, owner: owner)
             try await coordinator.stage(data, into: target, owner: owner)
         }
@@ -88,15 +122,14 @@ struct CredentialExchangeCoordinatorTests {
             if gate != nil {
                 manager.lock(reason: .manual)
             }
-            await CredentialManager.retire(profileID: profile.id)
-            await CredentialManager.retire(profileID: otherProfile.id)
-            try? FileManager.default.removeItem(at: profile.supportDirectory)
-            try? FileManager.default.removeItem(at: otherProfile.supportDirectory)
+            await gatedStore?.close()
+            await VaultManagerFixture.cleanup(profile)
+            await VaultManagerFixture.cleanup(otherProfile)
         }
     }
 
     func withFixture(gate: VaultClockGate? = nil, _ body: (Fixture) async throws -> Void) async throws {
-        let fixture = try Fixture(gate: gate)
+        let fixture = try await Fixture(gate: gate)
         do { try await body(fixture) } catch { await fixture.cleanup(); throw error }
         await fixture.cleanup()
     }
@@ -152,6 +185,11 @@ struct CredentialExchangeCoordinatorTests {
         TOTPGenerator(secret: Data(seed.utf8), algorithm: .sha256, period: 45, digits: 8, issuer: "Example", userName: "ada")
     }
 
+    /// The account counts of an import outcome, `[added, updated]`; its `results` list is asserted where it matters.
+    func counts(_ outcome: CredentialImportOutcome?) -> [Int]? {
+        outcome.map { [$0.added, $0.updated] }
+    }
+
     func neighbours(_ count: Int) -> [CredentialAccount] {
         (0..<count).map { account(username: "neighbour-\($0)", password: "neighbour-pw-\($0)") }
     }
@@ -159,7 +197,7 @@ struct CredentialExchangeCoordinatorTests {
     /// Real codec output for `accounts`, as another app would export it.
     func exported(_ accounts: [CredentialAccount]) throws -> ASExportedCredentialData {
         try CredentialExchangeCodec.export(
-            VaultSnapshot(revision: 0, accounts: accounts, blockedPasswordOrigins: []),
+            StoreSnapshot(vaultID: UUID(), revision: 0, accounts: accounts, blockedPasswordOrigins: [], stamps: [:]),
             selection: accounts.map {
                 CredentialExportSelection(accountID: $0.id, password: $0.password != nil, passkeyIDs: Set($0.passkeys.map(\.id)), totp: $0.totp != nil)
             },
@@ -225,15 +263,15 @@ struct CredentialExchangeCoordinatorTests {
         let coordinator = CredentialExchangeCoordinator()
         let token = UUID()
 
-        #expect(!coordinator.receive(Self.activity(type: "com.example.other", token: token)))
-        #expect(!coordinator.receive(Self.activity(token: nil)))
-        #expect(!coordinator.receive(Self.activity(token: "not-a-uuid")))
+        #expect(coordinator.receive(Self.activity(type: "com.example.other", token: token)) == .ignored)
+        #expect(coordinator.receive(Self.activity(token: nil)) == .ignored)
+        #expect(coordinator.receive(Self.activity(token: "not-a-uuid")) == .ignored)
         #expect(coordinator.pendingToken == nil)
 
-        #expect(coordinator.receive(Self.activity(token: token)))
+        #expect(coordinator.receive(Self.activity(token: token)) == .accepted)
         #expect(coordinator.pendingToken == token)
-        #expect(!coordinator.receive(Self.activity(token: token)))
-        #expect(!coordinator.receive(Self.activity(token: UUID())))
+        #expect(coordinator.receive(Self.activity(token: token)) == .ignored)
+        #expect(coordinator.receive(Self.activity(token: UUID())) == .refused)
         #expect(coordinator.pendingToken == token)
 
         coordinator.discardPendingImport(token: token)
@@ -244,13 +282,13 @@ struct CredentialExchangeCoordinatorTests {
         try await withFixture { f in
             let existing = neighbours(3)
             try await f.seed(existing)
-            try await f.create(f.other)
+            try await f.unlock(f.other)
             let incoming = try exported([account(username: "grace", password: "incoming")])
 
             // A locked target never claims the token, and the queued token survives for a retry.
             f.manager.lock(reason: .manual)
             let queued = UUID()
-            #expect(f.coordinator.receive(Self.activity(token: queued)))
+            #expect(f.coordinator.receive(Self.activity(token: queued)) == .accepted)
             #expect(throws: CredentialVaultError.unauthorized) { try f.coordinator.claimImport(token: queued, for: f.manager, owner: f.owner) }
             #expect(f.coordinator.pendingToken == queued)
             try await f.unlock(f.manager)
@@ -263,7 +301,7 @@ struct CredentialExchangeCoordinatorTests {
             try f.coordinator.claimImport(token: queued, for: f.manager, owner: f.owner)
             #expect(f.coordinator.pendingToken == nil)
             #expect(throws: CredentialExchangeCoordinatorError.tokenMismatch) { try f.coordinator.claimImport(token: queued, for: f.manager, owner: f.owner) }
-            #expect(!f.coordinator.receive(Self.activity(token: queued)))
+            #expect(f.coordinator.receive(Self.activity(token: queued)) == .ignored)
 
             // The claim is for this profile's manager only.
             let otherBefore = try f.diskBytes(f.otherProfile)
@@ -273,28 +311,28 @@ struct CredentialExchangeCoordinatorTests {
 
             // Revoked access between claim and staging.
             let revoked = UUID()
-            #expect(f.coordinator.receive(Self.activity(token: revoked)))
+            #expect(f.coordinator.receive(Self.activity(token: revoked)) == .accepted)
             try f.coordinator.claimImport(token: revoked, for: f.manager, owner: f.owner)
             f.manager.lock(reason: .screenLock)
-            await #expect(throws: CredentialVaultError.unauthorized) { try await f.coordinator.stage(incoming, into: f.manager, owner: f.owner) }
+            await #expect(throws: CredentialTransferFailure.self) { try await f.coordinator.stage(incoming, into: f.manager, owner: f.owner) }
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
 
             // A fresh unlock is a new authorization epoch, not the one the token was bound to.
             try await f.unlock(f.manager)
             let reunlocked = UUID()
-            #expect(f.coordinator.receive(Self.activity(token: reunlocked)))
+            #expect(f.coordinator.receive(Self.activity(token: reunlocked)) == .accepted)
             try f.coordinator.claimImport(token: reunlocked, for: f.manager, owner: f.owner)
             f.manager.lock(reason: .manual)
             try await f.unlock(f.manager)
-            await #expect(throws: CredentialVaultError.unauthorized) { try await f.coordinator.stage(incoming, into: f.manager, owner: f.owner) }
+            await #expect(throws: CredentialTransferFailure.self) { try await f.coordinator.stage(incoming, into: f.manager, owner: f.owner) }
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
 
-            // A vault that changed after the preview is never overwritten by it.
+            // Another writer's change to an account the import does not touch survives it: only the touched accounts are compared and written.
             try await f.stage(incoming)
-            _ = try await f.manager.commit(existing + [account(username: "newer", password: "newer")], expectedRevision: 1, authorizedEpoch: try #require(f.manager.authorizationEpoch))
-            let afterNewer = try f.diskBytes()
-            await #expect(throws: CredentialVaultError.staleRevision) { _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner) }
-            #expect(try f.diskBytes() == afterNewer)
+            _ = try await f.manager.commit(existing + [account(username: "newer", password: "newer")], expectedRevision: 2, authorizedEpoch: try #require(f.manager.authorizationEpoch))
+            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            let usernames = try await f.stored().accounts.map(\.username)
+            #expect(usernames.contains("newer") && usernames.contains("grace"))
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
         }
     }
@@ -311,22 +349,23 @@ struct CredentialExchangeCoordinatorTests {
                 withUnsafeCurrentTask { $0?.cancel() }
                 return try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
-            await #expect(throws: CancellationError.self) { _ = try await cancelled.value }
+            let failure = await #expect(throws: CredentialTransferFailure.self) { _ = try await cancelled.value }
+            #expect(failure?.message.kind == .discarded)
             #expect(try f.diskBytes() == before)
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
         }
     }
 
-    // The write is real and parked inside the vault, after the manager authorized it and before it replaces the file.
+    // The write is real and parked inside the store, after the manager authorized it and before it writes.
     @Test(arguments: [true, false])
-    func cancellingAnInFlightCommitBeforeTheFileIsReplacedPreservesTheVault(throughCoordinator: Bool) async throws {
+    func cancellingAnInFlightCommitBeforeTheWriteLandsPreservesTheVault(throughCoordinator: Bool) async throws {
         let gate = VaultClockGate()
         try await withFixture(gate: gate) { f in
             try await f.seed(neighbours(2))
             let before = try f.diskBytes()
             try await f.stage(try exported([account(username: "grace", password: "incoming")]))
 
-            gate.holdNextVaultRead()
+            gate.holdImportWrite(of: f.coordinator)
             let committing = Task { @MainActor in try await f.coordinator.commitImport(into: f.manager, owner: f.owner) }
             // The write is parked inside the vault: cancel first, then release. Nothing here touches the manager.
             gate.whenParked {
@@ -338,38 +377,37 @@ struct CredentialExchangeCoordinatorTests {
                 gate.release()
             }
 
-            await #expect(throws: CancellationError.self) { _ = try await committing.value }
+            let failure = await #expect(throws: CredentialTransferFailure.self) { _ = try await committing.value }
+            // The write had started when the cancel arrived, so only "may have landed" is true, even though the vault is unchanged.
+            #expect(failure?.message.kind == .mayHaveLanded)
             #expect(gate.hasParked)
             #expect(try f.diskBytes() == before)
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
         }
     }
 
-    @Test func cancellationOnceTheFileIsBeingReplacedStillReportsTheReceipt() async throws {
+    @Test func cancellationOnceTheCommitHasLandedStillReportsTheReceipt() async throws {
         let gate = VaultClockGate()
         try await withFixture(gate: gate) { f in
             try await f.seed(neighbours(2))
             let before = try f.diskBytes()
             try await f.stage(try exported([account(username: "grace", password: "incoming")]))
-            let file = f.profile.supportDirectory.appendingPathComponent("Credentials.vault")
-            let watcher = try DirectoryChangeWatcher(f.profile.supportDirectory)
-            defer { watcher.stop() }
 
-            gate.holdNextVaultRead()
+            gate.holdImportWrite(of: f.coordinator)
             let committing = Task { @MainActor in try await f.coordinator.commitImport(into: f.manager, owner: f.owner) }
             // The callback holds the main actor from the release until the cancel, so the commit task cannot finish
-            // in between: it releases the parked write, waits for the vault to replace the file, then cancels.
-            // The vault's cancellation check is already behind the replacement.
+            // in between: it releases the parked write, waits for the store to commit its rows, then cancels.
+            // The store's last cancellation poll is already behind the commit.
             let log = CallbackLog()
             gate.whenParked {
                 gate.release()
-                log.committedFileChanged = watcher.waitForChange(of: file, from: before)
+                log.commitLanded = f.waitForCommit(from: before)
                 committing.cancel()
             }
 
             let receipt = try await committing.value
-            #expect(gate.hasParked && log.committedFileChanged)
-            #expect(receipt.revision == 2)
+            #expect(gate.hasParked && log.commitLanded)
+            #expect(receipt.revision == 3)
             #expect(try f.diskBytes() != before)
             #expect(try await f.stored().revision == receipt.revision)
         }
@@ -387,9 +425,13 @@ struct CredentialExchangeCoordinatorTests {
             do {
                 try await f.stage(mixed)
                 Issue.record("A malformed record must abort the whole import")
-            } catch let error as CredentialExchangeError {
-                #expect(error.reason == .invalidData)
-                #expect(error.record.description.hasPrefix("account[0]/item[1]"))
+            } catch let failure as CredentialTransferFailure {
+                // The message carries the position only, never the credential's content.
+                guard case let .malformed(record?) = failure.message.kind else {
+                    Issue.record("A malformed record must end the transfer as malformed, with its position")
+                    return
+                }
+                #expect(record.description.hasPrefix("account[0]/item[1]"))
             }
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
             #expect(try f.diskBytes() == before)
@@ -432,16 +474,19 @@ struct CredentialExchangeCoordinatorTests {
             #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.isResolved == true)
 
             if choice == .skip {
-                await #expect(throws: CredentialExchangeCoordinatorError.nothingToImport) {
+                let failure = await #expect(throws: CredentialTransferFailure.self) {
                     _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
                 }
-                #expect(try await f.stored().revision == 1)
+                #expect(failure?.message.kind == .nothingImported)
+                #expect(f.coordinator.importReview(for: f.manager, owner: f.owner) != nil)
+                #expect(try await f.stored().revision == 2)
                 return
             }
             let receipt = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
-            #expect(receipt.revision == 2)
+            #expect(receipt.revision == 3)
             let after = try await f.stored().accounts
-            #expect(try after.filter { other in others.contains { $0.id == other.id } }.map(bytes) == neighboursBefore)
+            let neighboursAfter = try others.map { other in try bytes(try #require(after.first { $0.id == other.id })) }
+            #expect(neighboursAfter == neighboursBefore)
             switch choice {
             case .replace:
                 #expect(after.count == 10)
@@ -468,14 +513,16 @@ struct CredentialExchangeCoordinatorTests {
             try await f.stage(try exported(fresh))
 
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
-            #expect(review.revision == 1 && review.candidates.count == 2 && review.isResolved)
-            #expect(review.outcome == CredentialImportOutcome(added: 2, updated: 0))
+            #expect(review.revision == 2 && review.candidates.count == 2 && review.isResolved)
+            #expect(counts(review.outcome) == [2, 0])
 
             let receipt = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
-            #expect(receipt.revision == 2)
+            #expect(receipt.revision == 3)
             let after = try await f.stored().accounts
             #expect(after.count == 6)
-            #expect(try after.prefix(4).map(bytes) == existing.map(bytes))
+            for old in existing {
+                #expect(try bytes(try #require(after.first { $0.id == old.id })) == bytes(old), "existing account changed")
+            }
             let grace = try #require(after.first { $0.username == "grace" })
             #expect(grace.totp?.period == 45 && grace.totp?.digits == 8 && grace.totp?.algorithm == .sha256)
             let linus = try #require(after.first { $0.username == "linus" })
@@ -528,14 +575,16 @@ struct CredentialExchangeCoordinatorTests {
 
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.isResolved && review.conflicts.isEmpty)
-            #expect(review.outcome == CredentialImportOutcome(added: 1, updated: 0))
+            #expect(counts(review.outcome) == [1, 0] && review.outcome?.results.map(\.action) == [.added])
 
             let record = try #require(review.candidates.first?.records.first)
             try f.coordinator.choose(.skip, for: record.incoming, owner: f.owner)
-            #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome == CredentialImportOutcome(added: 0, updated: 0))
-            await #expect(throws: CredentialExchangeCoordinatorError.nothingToImport) {
+            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [0, 0])
+            #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome?.results.map(\.action) == [.skipped])
+            let failure = await #expect(throws: CredentialTransferFailure.self) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
+            #expect(failure?.message.kind == .nothingImported)
             #expect(try f.diskBytes() == before)
         }
     }
@@ -555,7 +604,7 @@ struct CredentialExchangeCoordinatorTests {
             #expect(targets.first?.allowedOrigins == [Self.origin, "https://other.test"])
 
             try f.coordinator.choose(.merge(into: bare.id), for: record.incoming, owner: f.owner)
-            #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome == CredentialImportOutcome(added: 0, updated: 1))
+            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [0, 1])
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
 
             let after = try await f.stored().accounts
@@ -594,7 +643,7 @@ struct CredentialExchangeCoordinatorTests {
         try await withFixture(gate: gate) { f in
             try await f.seed(neighbours(1))
             let first = UUID()
-            #expect(f.coordinator.receive(Self.activity(token: first)))
+            #expect(f.coordinator.receive(Self.activity(token: first)) == .accepted)
             try f.coordinator.claimImport(token: first, for: f.manager, owner: f.owner)
             let late = try exported([account(username: "late", password: "late-password")])
 
@@ -607,7 +656,7 @@ struct CredentialExchangeCoordinatorTests {
             gate.whenParked {
                 f.coordinator.cancelImport(for: f.manager, owner: f.owner)
                 gate.release()
-                log.received = f.coordinator.receive(CredentialExchangeCoordinatorTests.activity(token: log.token))
+                log.received = f.coordinator.receive(CredentialExchangeCoordinatorTests.activity(token: log.token)) == .accepted
                 do { try f.coordinator.claimImport(token: log.token, for: f.manager, owner: f.owner) } catch { log.error = error }
             }
 
@@ -640,7 +689,7 @@ struct CredentialExchangeCoordinatorTests {
             #expect(merged.exchangeItemID == Data([0xB0, 1]))
             let reexported = try await f.coordinator.prepareExport(
                 selection: [CredentialExportSelection(accountID: bare.id, password: true, passkeyIDs: [], totp: true)],
-                expectedRevision: stored.revision, format: .v1, from: f.manager, epoch: try #require(f.manager.authorizationEpoch)
+                expectedStamps: stored.stamps, format: .v1, from: f.manager, epoch: try #require(f.manager.authorizationEpoch)
             )
             let exportedItem = try #require(reexported.accounts.first?.items.first)
             #expect(exportedItem.id == Data([0xB0, 1]) && exportedItem.tags == ["work", "shared"])
@@ -649,7 +698,7 @@ struct CredentialExchangeCoordinatorTests {
 
     @Test func aMergeThatWouldDropAnotherImportedItemsMetadataIsNotOffered() async throws {
         try await withFixture { f in
-            try await f.create(f.manager)
+            try await f.unlock(f.manager)
             try await f.stage(handBuilt([item(id: 1, scoped: true, [password("first")], tags: ["first"])]))
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             let first = try #require(try await f.stored().accounts.first)
@@ -660,7 +709,7 @@ struct CredentialExchangeCoordinatorTests {
             #expect(throws: CredentialExchangeCoordinatorError.invalidChoice) {
                 try f.coordinator.choose(.merge(into: first.id), for: record.incoming, owner: f.owner)
             }
-            #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome == CredentialImportOutcome(added: 1, updated: 0))
+            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [1, 0])
         }
     }
 
@@ -675,7 +724,7 @@ struct CredentialExchangeCoordinatorTests {
             #expect(f.coordinator.mergeTargets(for: login.incoming, owner: f.owner).map(\.accountID) == [destination.id])
             // The full plan, with the code left to import by itself, is valid: the choice is accepted.
             try f.coordinator.choose(.merge(into: destination.id), for: login.incoming, owner: f.owner)
-            #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome == CredentialImportOutcome(added: 1, updated: 1))
+            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [1, 1])
 
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             let stored = try await f.stored().accounts
@@ -688,7 +737,7 @@ struct CredentialExchangeCoordinatorTests {
             // Both still export, each under its own identifiers, with the item's tags.
             let reexported = try await f.coordinator.prepareExport(
                 selection: stored.map { CredentialExportSelection(accountID: $0.id, password: $0.password != nil, passkeyIDs: [], totp: $0.totp != nil) },
-                expectedRevision: try await f.stored().revision, format: .v1, from: f.manager,
+                expectedStamps: try await f.stored().stamps, format: .v1, from: f.manager,
                 epoch: try #require(f.manager.authorizationEpoch)
             )
             let items = reexported.accounts.flatMap(\.items)
@@ -711,7 +760,9 @@ struct CredentialExchangeCoordinatorTests {
         }
     }
 
-    @Test func aPasskeyWhoseCredentialIDIsStoredCanOnlyBeReplacedOrSkipped() async throws {
+    /// A stored passkey's cryptographic identity is fixed (§13.3): the credential ID is held, so the import can only
+    /// be skipped. Replacing and adding are both refused and leave the review as it was.
+    @Test func aPasskeyWhoseCredentialIDIsStoredCanOnlyBeSkipped() async throws {
         try await withFixture { f in
             let id = UUID()
             let stored = account(id: id, username: "", password: nil, passkeys: [try passkey(5)])
@@ -722,16 +773,25 @@ struct CredentialExchangeCoordinatorTests {
             let record = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)?.conflicts.first)
             #expect(!record.canAddSeparately)
             #expect(f.coordinator.mergeTargets(for: record.incoming, owner: f.owner).isEmpty)
-            #expect(throws: CredentialExchangeCoordinatorError.invalidChoice) {
-                try f.coordinator.choose(.addSeparately, for: record.incoming, owner: f.owner)
+            for refused: CredentialImportChoice in [.addSeparately, .replace] {
+                #expect(throws: CredentialExchangeCoordinatorError.invalidChoice) {
+                    try f.coordinator.choose(refused, for: record.incoming, owner: f.owner)
+                }
             }
             #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.isResolved == false)
 
-            try f.coordinator.choose(.replace, for: record.incoming, owner: f.owner)
-            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
-            let after = try await f.stored().accounts
-            #expect(after.count == 2)
-            #expect(after.first { $0.id == id }?.passkeys.map(\.privateKeyPKCS8) == [incomingKey.privateKeyPKCS8])
+            try f.coordinator.choose(.skip, for: record.incoming, owner: f.owner)
+            // Skipping the only conflict leaves nothing to write: the vault is untouched.
+            let before = try f.diskBytes()
+            let failure = await #expect(throws: CredentialTransferFailure.self) {
+                _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            }
+            #expect(failure?.message.kind == .nothingImported)
+            #expect(try f.diskBytes() == before)
+            let after = try await f.stored()
+            #expect(after.revision == 2)
+            #expect(after.accounts.count == 2)
+            #expect(after.accounts.first { $0.id == id }?.passkeys.map(\.privateKeyPKCS8) == [stored.passkeys[0].privateKeyPKCS8])
         }
     }
 
@@ -758,7 +818,7 @@ struct CredentialExchangeCoordinatorTests {
     @Test func reviewIsOnlyVisibleForTheBoundProfile() async throws {
         try await withFixture { f in
             try await f.seed(neighbours(1))
-            try await f.create(f.other)
+            try await f.unlock(f.other)
             try await f.stage(try exported([account(username: "grace", password: "incoming")]))
 
             #expect(f.coordinator.importReview(for: f.manager, owner: f.owner) != nil)
@@ -774,15 +834,13 @@ struct CredentialExchangeCoordinatorTests {
 
 // MARK: - Deterministic vault synchronization
 
-/// Parks the vault actor's thread the next time it reads the manager's clock. The vault reads it off the main
-/// thread, inside the access's authorization lock and before it writes anything, so a parked operation is
-/// genuinely in flight; the manager's own reads happen on the main thread and are never held.
+/// Parks the store's thread the next time it reads the manager's clock. The store reads it off the main
+/// thread, before it writes anything, so a parked operation is genuinely in flight; the manager's own reads
+/// happen on the main thread and are never held.
 ///
-/// A parked read holds that authorization lock and the process-wide mutation lock, so reading the manager's
-/// authorization (`authorizationEpoch`, `isUnlocked`, `claimImport`, ...) from the main actor blocks until the
-/// read has been released and the vault operation finished. Nothing here awaits a suspended task to make
-/// progress: a plain thread notices the park and runs the test's callback on the main queue, which releases the
-/// gate at the point the test needs.
+/// A parked read can hold the store's operation lock, so another operation on the same store waits until the
+/// read has been released. Nothing here awaits a suspended task to make progress: a plain thread notices the
+/// park and runs the test's callback on the main queue, which releases the gate at the point the test needs.
 nonisolated final class VaultClockGate: Sendable {
     private let armed = Mutex(false)
     private let didPark = Mutex(false)
@@ -804,7 +862,7 @@ nonisolated final class VaultClockGate: Sendable {
         }) {
             didPark.withLock { $0 = true }
             parked.signal()
-            // Bounded so a test that never gets to `release()` cannot keep the process-wide mutation lock forever.
+            // Bounded so a test that never gets to `release()` cannot keep the store's operation lock forever.
             _ = released.wait(timeout: .now() + 40)
         }
         return ContinuousClock().now
@@ -831,49 +889,35 @@ nonisolated final class VaultClockGate: Sendable {
     }
 }
 
+extension VaultClockGate {
+    /// Holds the first vault read after the import's last re-check: the account write itself, not the fresh snapshot the
+    /// re-check takes first.
+    @MainActor func holdImportWrite(of coordinator: CredentialExchangeCoordinator) {
+        coordinator.afterLastCheck = { [self] in holdNextVaultRead() }
+    }
+}
+
+extension VaultClockGate {
+    /// An unlockable vault of `profile` (in its real support directory) whose store and manager both read this gate's
+    /// clock. The manager is private to the caller, not in the registry; the caller closes `store`.
+    @MainActor func makeVault(profile: Profile, passkeys: VaultPasskeys) async throws -> (vault: FixtureVault, store: ProfileVaultStore) {
+        nonisolated(unsafe) let defaults = ProfileSettingsStore.defaults(for: profile)
+        let store = ProfileVaultStore(profileID: profile.id, directory: profile.supportDirectory, defaults: defaults, now: { self.now() })
+        let proof = VaultFixtures.proof(UInt8(passkeys.registered.count + 1))
+        passkeys.adopt(proof)
+        let lease = VaultAccess(profileID: profile.id, epoch: 0, deadline: ContinuousClock().now.advanced(by: .seconds(300)))
+        let vaultID = try await store.createVault(name: "Gated", unlock: proof, authorizedBy: .firstVault(lease: lease))
+        let manager = VaultManagerFixture.manager(
+            profileID: profile.id, vaultID: vaultID, store: store, passkeys: passkeys, now: { self.now() }
+        )
+        return (FixtureVault(manager: manager, vaultID: vaultID, proof: proof), store)
+    }
+}
+
 /// What a main-actor callback run by `VaultClockGate.whenParked` observed.
 @MainActor final class CallbackLog {
     let token = UUID()
     var received = false
-    var committedFileChanged = false
+    var commitLanded = false
     var error: (any Error)?
-}
-
-/// Signals when something has been written in `directory`, which is how the vault's atomic file replacement
-/// shows. Events are delivered on a private queue that a saturated global queue cannot starve.
-nonisolated final class DirectoryChangeWatcher: @unchecked Sendable {
-    private let source: any DispatchSourceFileSystemObject
-    private let changed: DispatchSemaphore
-
-    init(_ directory: URL) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let descriptor = open(directory.path, O_EVTONLY)
-        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        let changed = DispatchSemaphore(value: 0)
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptor, eventMask: .write,
-            // User-interactive, like the main thread that blocks on it, so the wait is not a priority inversion.
-            queue: DispatchQueue(label: "credential-exchange-test.watcher", qos: .userInteractive)
-        )
-        source.setEventHandler { changed.signal() }
-        source.setCancelHandler { close(descriptor) }
-        self.source = source
-        self.changed = changed
-        source.resume()
-    }
-
-    /// Blocks the calling thread until `file` no longer holds `before`. Each directory event wakes it to look, so
-    /// a temporary file appearing next to the vault does not count; only the replaced file does.
-    func waitForChange(of file: URL, from before: Data) -> Bool {
-        while changed.wait(timeout: .now() + 30) == .success {
-            if let current = try? Data(contentsOf: file), current != before {
-                return true
-            }
-        }
-        return false
-    }
-
-    func stop() {
-        source.cancel()
-    }
 }

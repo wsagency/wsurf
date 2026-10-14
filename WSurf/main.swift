@@ -16,7 +16,9 @@ if CommandLine.arguments.contains("--mcp") {
 // Install CEF's lightweight AppKit subclass without loading Chromium.
 CEFApplication.install()
 
-UserDefaults.standard.set("WhenScrolling", forKey: "AppleShowScrollBars")
+if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+    UserDefaults.standard.set("WhenScrolling", forKey: "AppleShowScrollBars")
+}
 
 let application = NSApplication.shared
 let appDelegate = AppDelegate()

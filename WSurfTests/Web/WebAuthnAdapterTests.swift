@@ -170,11 +170,26 @@ struct WebAuthnAdapterTests {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: .borderless, backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             window.contentView = view
-            window.orderBack(nil)
+            window.orderFrontRegardless()
             native.window = window
         }
         view.loadHTMLString("<!doctype html><input id=field autocomplete='username webauthn'>", baseURL: URL(string: origin + "/"))
         #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
+        if visible, let window = native.window {
+            // The relay never hands a signed result to a hidden document (`visibilityState`), and neither `orderBack` nor an
+            // idle navigation proves the document is visible. The fixture establishes it (`orderFrontRegardless` above, its own
+            // window only) and waits on the condition itself; if it never holds, its state is captured before cleanup and the
+            // test stops here instead of failing later in `deliver` and the 25 s settle wait.
+            let shown = await waitUntil { (try? await view.evaluateJavaScript("document.visibilityState")) as? String == "visible" }
+            let state = """
+            The fixture document never became visible: window.isVisible=\(window.isVisible), \
+            occluded=\(!window.occlusionState.contains(.visible)), attached=\(view.window === window), app.isActive=\(NSApp.isActive)
+            """
+            if !shown {
+                await release(view, native)
+            }
+            try #require(shown, Comment(rawValue: state))
+        }
         return (view, native)
     }
 
@@ -228,7 +243,7 @@ struct WebAuthnAdapterTests {
         let parsed = try WebAuthnWire.parse(request)
         #expect(parsed.operation == .create)
         let (json, _) = try registration(parsed)
-        #expect(try await deliver(["result": json], id: parsed.id, document: try #require(request["document"] as? String), in: view))
+        try #require(try await deliver(["result": json], id: parsed.id, document: try #require(request["document"] as? String), in: view))
         #expect(await waitUntil { (try? await view.evaluateJavaScript("window.settled") as? Int) == 1 })
 
         let checks = try await view.evaluateJavaScript("""

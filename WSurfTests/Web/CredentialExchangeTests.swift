@@ -67,8 +67,8 @@ struct CredentialExchangeTests {
         return derValue(0x30, body)
     }
 
-    func snapshot(_ accounts: [CredentialAccount], revision: UInt64 = 3) -> VaultSnapshot {
-        VaultSnapshot(revision: revision, accounts: accounts, blockedPasswordOrigins: [])
+    func snapshot(_ accounts: [CredentialAccount], revision: UInt64 = 3) -> StoreSnapshot {
+        StoreSnapshot(vaultID: UUID(), revision: revision, accounts: accounts, blockedPasswordOrigins: [], stamps: [:])
     }
 
     func account(
@@ -165,9 +165,13 @@ struct CredentialExchangeTests {
         itemID: Data = Data([0xB0, 0x01]),
         title: String = "Example account",
         scope: ASImportableCredentialScope? = ASImportableCredentialScope(urls: [URL(string: "https://example.test/login")!], androidApps: []),
+        created: Date? = nil,
+        lastModified: Date? = nil,
         credentials: [ASImportableCredential]
     ) -> ASExportedCredentialData {
-        let item = importableItem(id: itemID, title: title, scope: scope, credentials: credentials)
+        let item = importableItem(
+            id: itemID, title: title, created: created, lastModified: lastModified, scope: scope, credentials: credentials
+        )
         let account = ASImportableAccount(id: accountID, userName: "ada", email: "ada@example.test", collections: [], items: [item])
         return ASExportedCredentialData(
             accounts: [account],
@@ -180,6 +184,24 @@ struct CredentialExchangeTests {
 
     func credentials(in data: ASExportedCredentialData) -> [ASImportableCredential] {
         data.accounts.flatMap(\.items).flatMap(\.credentials)
+    }
+
+    /// `account` as a user-accepted pairing (§13.2a): every credential's observed base is its current content.
+    func bound(_ account: CredentialAccount) throws -> CredentialAccount {
+        var result = account
+        if CredentialExchangeCodec.hasBasicAuthentication(account) {
+            result.passwordBase = ExchangeBase(contentHash: try CredentialContent.hash(.password(account)), itemID: account.exchangeItemID)
+        }
+        if account.totp != nil {
+            result.totpBase = ExchangeBase(contentHash: try CredentialContent.hash(.totp(account)), itemID: account.exchangeItemID)
+        }
+        for index in result.passkeys.indices {
+            result.passkeys[index].base = ExchangeBase(
+                contentHash: try CredentialContent.hash(.passkey(result.passkeys[index])),
+                itemID: account.exchangeItemID
+            )
+        }
+        return result
     }
 
     @Test func linkedPasswordPasskeyAndNondefaultTOTPExportReimportByUse() throws {
@@ -276,45 +298,6 @@ struct CredentialExchangeTests {
         #expect(exportedTOTP.issuer == "Example Issuer" && exportedTOTP.userName == "ada")
     }
 
-    @Test func replacingAPasskeyUsesIncomingKeyAndUnknownImportedHistory() throws {
-        let oldKey = P256.Signing.PrivateKey()
-        let oldInput = data(credentials: [passkey(key: try PasskeyKeyEncoding.exportPKCS8(oldKey))])
-        let importedPasskey = try #require(
-            CredentialExchangeCodec.preview(oldInput, against: snapshot([])).candidates.first?.passkeys.first
-        )
-        var existingPasskeyJSON = try #require(JSONSerialization.jsonObject(
-            with: JSONEncoder().encode(importedPasskey)
-        ) as? [String: Any])
-        let createdAt = Date(timeIntervalSince1970: 1_700_000_100)
-        let lastSignedAt = Date(timeIntervalSince1970: 1_700_000_200)
-        existingPasskeyJSON["source"] = "created"
-        existingPasskeyJSON["createdAt"] = createdAt.timeIntervalSinceReferenceDate
-        existingPasskeyJSON["lastSignedAt"] = lastSignedAt.timeIntervalSinceReferenceDate
-        let existingPasskey = try JSONDecoder().decode(
-            WebsitePasskey.self, from: JSONSerialization.data(withJSONObject: existingPasskeyJSON)
-        )
-        let existing = account(
-            id: accountID, externalID: accountExternalID, itemID: itemExternalID, username: "ada",
-            password: nil, passkeys: [existingPasskey]
-        )
-        let newKey = P256.Signing.PrivateKey()
-        let incoming = data(
-            credentials: [passkey(key: try PasskeyKeyEncoding.exportPKCS8(newKey))]
-        )
-        let preview = try CredentialExchangeCodec.preview(incoming, against: snapshot([existing]))
-        let conflict = try #require(preview.conflicts.first)
-        let reconciled = try CredentialExchangeCodec.apply(
-            preview, decisions: [.replace(incoming: conflict.incoming, target: conflict.existing)]
-        )
-        let updated = try #require(reconciled.first?.passkeys.first)
-        let updatedRecord = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(updated)) as? [String: Any])
-
-        #expect(updated.credentialID == existingPasskey.credentialID)
-        #expect(updated.privateKeyPKCS8 != existingPasskey.privateKeyPKCS8)
-        #expect(updatedRecord["source"] as? String == "imported")
-        #expect(updatedRecord["createdAt"] == nil && updatedRecord["lastSignedAt"] == nil)
-    }
-
     @Test func preservesProviderAndItemMetadataAndPrunesUnselectedCollectionLinks() throws {
         let providerID = Data([0xA0, 0x41])
         let firstItemID = Data([0xB0, 0x41])
@@ -332,7 +315,7 @@ struct CredentialExchangeTests {
         let imported = try CredentialExchangeCodec.apply(
             CredentialExchangeCodec.preview(input, against: snapshot([])),
             decisions: []
-        )
+        ).map { try bound($0) }
         #expect(imported.count == 2)
         let first = try #require(imported.first)
         let second = try #require(imported.last)

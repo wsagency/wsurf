@@ -169,7 +169,10 @@ struct FormConsumerBoundaryTests {
     ) async throws -> T {
         let profile = Profile(id: UUID(), name: "Form fixture", symbol: "person", color: .gray)
         let context = BrowserProfileContext(profile: profile)
-        let permissions = SitePermissions(storageURL: nil)
+        let permissions = SitePermissions(
+            storageURL: AppDatabase.supportDirectory
+                .appendingPathComponent("FormConsumerBoundary-\(UUID().uuidString).json")
+        )
         permissions.setEngine(engine, for: SitePermissions.origin(for: url))
         let browser = BrowserModel(
             context: context, windowID: UUID(), database: .temporary(), sitePermissions: permissions

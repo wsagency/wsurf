@@ -6,7 +6,7 @@ import Foundation
 
 nonisolated extension CredentialExchangeCodec {
     static func export(
-        _ snapshot: VaultSnapshot,
+        _ snapshot: StoreSnapshot,
         selection: [CredentialExportSelection],
         format: ASExportedCredentialData.FormatVersion
     ) throws -> ASExportedCredentialData {
@@ -83,10 +83,11 @@ nonisolated extension CredentialExchangeCodec {
             }
             let urls = try exportURLs(account)
             let scope = urls.isEmpty ? nil : ASImportableCredentialScope(urls: urls, androidApps: [])
+            let inherited = try inheritsRemoteDates(account, chosen: chosen, exportedPassword: basic != nil)
             var item = makeItem(
                 id: externalItemID,
-                created: metadata.created,
-                lastModified: metadata.lastModified,
+                created: inherited ? metadata.created : nil,
+                lastModified: account.modifiedAt ?? (inherited ? metadata.lastModified : nil),
                 title: account.displayName ?? (account.exchangeMetadata == nil ? account.username : ""),
                 scope: scope,
                 credentials: credentials,
@@ -152,20 +153,36 @@ nonisolated extension CredentialExchangeCodec {
     }
 
     private static func exchangeMetadata(for account: CredentialAccount) throws -> ExchangeMetadata {
-        guard let data = account.exchangeMetadata else {
-            return ExchangeMetadata(
-                accountName: "",
-                email: "",
-                fullName: nil,
-                collections: [],
-                subtitle: nil,
-                created: nil,
-                lastModified: nil,
-                favorite: false,
-                tags: []
-            )
+        try CredentialContent.exchangeMetadata(account) ?? ExchangeMetadata(
+            accountName: "",
+            email: "",
+            fullName: nil,
+            collections: [],
+            subtitle: nil,
+            created: nil,
+            lastModified: nil,
+            favorite: false,
+            tags: []
+        )
+    }
+
+    /// The exporter's dates are inherited only while every exported part still equals what was last observed
+    /// remotely; otherwise they stay absent. Never `Date()`: an unknown date is not now.
+    private static func inheritsRemoteDates(_ account: CredentialAccount, chosen: CredentialExportSelection, exportedPassword: Bool) throws -> Bool {
+        var parts: [(ExchangeBase?, CredentialPart)] = []
+        if exportedPassword {
+            parts.append((account.passwordBase, .password(account)))
         }
-        return try JSONDecoder().decode(ExchangeMetadata.self, from: data)
+        if chosen.totp, account.totp != nil {
+            parts.append((account.totpBase, .totp(account)))
+        }
+        for passkey in account.passkeys where chosen.passkeyIDs.contains(passkey.id) {
+            parts.append((passkey.base, .passkey(passkey)))
+        }
+        return try parts.allSatisfy { base, part in
+            guard let base else { return false }
+            return try CredentialContent.hash(part) == base.contentHash
+        }
     }
 
     private static func exportCollection(

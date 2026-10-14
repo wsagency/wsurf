@@ -7,6 +7,100 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-13 — Credentials: several vaults per profile, Trash and earlier versions, and a one-way store upgrade
+
+Each profile now keeps its credentials in one encrypted store (`Credentials.store`) that holds up to 16 active vaults, each with a linked Trash. Every vault has its own passkey unlock, its own manager and lock, and a five-minute unlock; a profile lock (profile switch, sleep, screen lock, quit, profile erase) locks every vault of the profile. A locked vault is listed only by number, with no name or content. You can choose a default vault, create a further vault with a new passkey or with a passkey already enrolled in another vault of the profile (vaults sharing a passkey share its exposure: one compromised authenticator opens all of them), and remove an unlock passkey. Creating a vault never reuses or extends an existing unlock. Removing a passkey stops its normal unlock; it does not rotate the vault key, so a copy of the vault file that still holds its wrapper can still be opened with it.
+
+Where a login is saved or filled is decided by the vault that holds it: a match in one unlocked vault goes to that vault; a match in several vaults, or none while another vault is locked, asks you to choose; the default vault takes new logins; a locked default vault asks you to unlock or choose and never falls back silently. Suggestions read only unlocked vaults. A passkey request is bound to the vault it runs on and ends only when that vault locks or the profile's access ends; choosing a vault only selects it and unlocks nothing until the request is checked again afterwards. Credential sheets belong to the task that awaits them, so a cancelled request dismisses its own sheet. Creating the first vault removes the files it built only when it is cancelled or its creation lease is dead; any other failure keeps them as fail-closed evidence and refuses a blind retry.
+
+Each vault has a linked Trash that opens with the vault's own unlock and has no unlock of its own. Removing an account, a password, a one-time code or a passkey moves it, with its earlier versions, to the Trash in one transaction. The Settings page lists the Trash and an account's earlier versions in pages of 50 with counts checked against the stored rows. You can undelete (refused, with nothing written, when a live item has the same id, exchange item, website and username, or passkey, or the owner is gone) and restore an earlier password, one-time code or website-metadata version (passkeys are never restored from a version). Emptying the Trash or removing items for good needs a confirmation and a fresh passkey assertion. Purging is a logical removal, not secure erasure: the chosen entries and their earlier versions are replaced by a record that keeps identifiers only (no password, one-time-code seed or key), but encrypted remnants (older database pages), Time Machine or other backups, and the pre-upgrade backup can still hold the removed data, and WSurf never deletes those copies.
+
+The first unlock of a vault saved by an older WSurf asks for an explicit confirmation, then upgrades it once, in one exclusive step: it writes a verified backup, `Credentials.vault.pre-v2`, builds and verifies the new store, and only then swaps it in. The upgrade is one-way. Older WSurf builds can no longer open the vault and show a corruption-style error; changes made after the upgrade are not in the backup; the backup still holds the vault as it was, under its old unlock wrappers, so anything you later purge stays readable there to whoever can unlock those wrappers; and WSurf never overwrites or deletes it, and a purge does not cover it (its path is shown wherever purge or a fail-closed state is explained). A write by an older build that lands during the swap is kept as `Credentials.vault.cutover-v1` and the vault stays closed with both files shown. An interrupted upgrade resumes at the next unlock without losing the old vault.
+
+Integrity: the store has a registry that lists every vault and the digests of its heads and unlock wrappers, authenticated by a registry key. That key is sealed inside the head of every active vault, so unlocking any one vault can read it and could re-authenticate a forged registry; it opens no other vault and wraps nothing. Each vault's head, rows and history are sealed and checked against journals before any removal, and the vault's password-saving policy (the blocked-origins list) is part of the sealed head. A small witness in the profile's preferences remembers that a store existed for the profile; it is not cryptographic and detects accidental loss or replacement, not an attacker. When files are missing, foreign, unreadable, left over from an interrupted step, or disagree, the page shows the cause and the absolute paths with a Retry button only: WSurf never offers Create, reset or acknowledge there, and moves or deletes nothing to get out. Limits it does not solve: if the store, its stub file, the witness and every migration leftover are all gone, the profile reads as a first run (while `Credentials.vault.pre-v2` or another leftover survives, WSurf fails closed instead); a whole older but consistent copy of the store restored in place passes every check and loses the later changes without a warning; the vault list shown before an unlock is not authenticated.
+
+Bounds: each vault holds at most 1,000 accounts and 4,000,000 bytes of live data, at most 32 unlock wrappers and 4,096 blocked origins; a profile holds at most 16 active vaults (each one's linked Trash is in addition). Earlier versions, Trash entries and purge records have no count limit and are bounded only by disk; each row is capped at 8,000,000 bytes. A write over a live limit is refused whole with the limit named, and nothing is dropped to make room.
+
+Import and export: an import is classified against the destination vault only (new, unchanged, changed remotely, locally or both, no common base, ambiguous, previously removed, passkey conflict), matches by exchange identifiers and an accepted pairing and never by website and username, and never replaces a stored passkey. It applies in one per-account write bound to the version stamps of only the accounts it touches, so editing another account while the review is open no longer discards it; before the write starts, a changed touched account, a lock, a re-unlock or a cancel discards the import and writes nothing; if the vault's access ends or the write fails in a way that proves nothing about the outcome once the write has started, the result may already have landed, WSurf says so and asks you to check Saved Credentials, and it never claims a rollback (only a version-stamp mismatch, a limit, a collision or a malformed record, all refused before the first row is written, proves nothing was written). The review and result list what became of each credential (added, updated, unchanged or skipped; kind, title and website only), and every import and export ends in exactly one message with its next step. The ending belongs to the window and vault that began the transfer, so another window's later ending never replaces it and another window's dismiss never clears it; a system token that is ignored (already queued or spent) does not reopen the credential page, only a refused one does. An export records its hand-off time and a content hash only for still-unchanged chosen accounts; a chosen credential that changed meanwhile, including one whose only change is its password, code seed or passkey key, is named and the sheet asks again. Apple Passwords decides what it adds, skips or replaces and gives no per-item receipt, and WSurf cannot see or undo anything on the Apple side, so "handed to the system" is the strongest claim WSurf makes: it never says an export was accepted, updated in Passwords or synced, and these dates and hashes never mark anything as synced.
+
+Verification: the app builds natively and the full automated test suite passes, including the vault, import/export and Settings model tests. Not yet verified by hand on a Mac, and only possible after installing: the on-screen Settings flows, passkey/PRF unlock with real authenticators, and a real credential exchange with Apple Passwords, which gives WSurf no receipt for what it adds, skips or replaces. Those checks are the user's to report.
+
+### 2026-10-13 — Command palette keeps the focus you give it
+
+The command palette's search field no longer takes keyboard focus back after you have moved it elsewhere, and the Ask mention field respects a focus change made by the system.
+
+### 2026-10-13 — Profile settings fail closed
+
+A named profile's settings never fall back to the original profile's (app-wide) defaults. If its own settings domain cannot be opened, the app stops instead of reading or writing another profile's settings.
+
+### 2026-10-12 — Credential editor website fields
+
+Both website fields of the credential editor (websites and other HTTPS origins) are now plain-text list editors: Return, Shift-Return and keypad Enter insert a new line and never save, a typed comma or Space after a valid address starts the next line, and valid addresses are underlined like links but a click only places the caret and never opens anything. Paste, drop and input-method text are inserted as typed, and save-time validation is unchanged. This is source-level only; the on-screen behaviour has not been exercised in a running app.
+
+### 2026-10-13 — CI tests no longer share the installed app's identity
+
+Debug builds take their bundle identifier from `WSURF_BUNDLE_ID_SUFFIX`, empty by
+default; Release identifiers, the tests target and default Debug identifiers do
+not change. CI builds with a unique `.ci-<run_id>-<run_attempt>` suffix, then
+`Tools/check-built-identity.py` refuses to launch the test host unless the built
+app, extension, five Chromium helpers and test bundle carry that identity, the one
+generated `.xctestrun` names that app and test bundle, and no Stage environment is
+set; only then does `test-without-building -xctestrun` run that exact file, inside
+the same total watchdog budget. The test host's standard
+preferences and default WebKit data then use that identifier instead of
+`io.wsagency.wsurf`. A throwaway check on a uniquely suffixed build confirmed a
+preferences key and a `localStorage` key stay in that namespace and that the
+production preferences, WebKit and Caches metadata did not change. Test hosts also
+keep favicon caches under their per-process test directory instead of
+`~/Library/Caches/WSurf/Favicons` (a focused regression and its neighbours passed;
+the full suite is not claimed here). Other profile test preference domains still
+use random UUID names, not per-process ones. The CI job now selects Xcode through
+`DEVELOPER_DIR` without `sudo xcode-select`, installs SwiftLint under
+`RUNNER_TEMP`, downloads the Metal toolchain only when `runner.environment` is
+`github-hosted` and otherwise only verifies it, no longer passes
+`-skipMacroValidation -skipPackagePluginValidation`, no longer uploads every
+host crash report, and runs a watchdog check; the watchdog now samples only its
+own child and never lists host processes. A final step removes the run's own
+preferences, WebKit, Caches, HTTPStorages and Saved Application State by exact
+identifier. Limits: the Pro machine's own Gitea runners are distinct from this GitHub
+Actions job, whose advertised runtime was GitHub-hosted (`runner.environment`
+`github-hosted`); that job's OS isolation and account are not verified here, and the
+suffix is namespacing, not OS isolation. macOS-managed
+`~/Library/Containers/<id>.CredentialExchange` cannot be removed by `rm` and
+stays; a hard-killed runner skips cleanup; the registered-extension `pluginkit -r`
+branch has not been exercised. GitHub's fork pull-request approval policy is
+unchanged and lets prior contributors' fork runs start without approval, which
+stays unsafe until the owner permits a change, so only trusted-branch work may use
+this runner.
+
+The narrow probes above passed, but a full native test run then found a real
+write to the production `~/Library/Application Support/WSurf/SitePermissions.json`:
+two tests built `SitePermissions(storageURL: nil)`, whose implicit default pointed
+at the installed app's file. The default is removed. `SitePermissions` now requires
+an explicit file URL and those tests use their own, under the per-process test
+directory. A targeted native run of the changed callers and their neighbours
+(131 tests in 8 suites, including `FormConsumerBoundaryTests`,
+`MCPPrivacyTests` and `SitePermissionsTests`) passed, and known production
+metadata, including that file and its parent directory, was unchanged across it.
+A later full native run on the fixed source ran 3244 tests in 351 suites in about
+939 seconds, inside the watchdog budget, with 14 existing disabled tests and no new
+skips. One test failed, a separate, not yet diagnosed failure in
+`WebAuthnContextBackForwardTests` (its first `route == manager` check, before any
+back/forward navigation), so the
+full suite did not pass and CI is not green. The privacy part of that run held:
+known production metadata, including that file and its parent directory, was
+unchanged, and only owned namespace paths were created and cleaned. What the
+earlier write changed is unknown: the file's content before it was never recorded,
+and it was left untouched. Only the paths named above were checked, so this does
+not show that all production data stays unchanged. A later diagnostic build of
+`WebAuthnContextBackForwardTests` (extra instrumentation only, not a product fix)
+passed its build and artifact guard and the 30-test `WebAuthnContextTests` run, but
+the cause of the full-run failure is still unknown and was not reproduced by that
+targeted run. The first CI run of this change failed at the Metal
+toolchain step (the hosted image lacks it and the verify-only replacement removed the
+download); that step is fixed in source and awaits a new run, so no CI result for
+this change exists yet.
+
 ### 2026-10-11 — Remove managed browser passkey entitlement
 
 WSurf no longer declares or requests Apple's managed
