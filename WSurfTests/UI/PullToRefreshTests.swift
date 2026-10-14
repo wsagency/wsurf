@@ -290,12 +290,16 @@ struct PullToRefreshProbeTests {
     }
 
     /// The bug: the next wheel stamped the old cancelled one with its own time, so a pull
-    /// started long after the map was used still read as claimed.
+    /// started long after the map was used still read as claimed. The wait reads only the
+    /// page's clock: a probe would drop the expired event itself and hide the bug.
     @Test func aPullLongAfterTheMapWasUsedIsNotClaimed() async throws {
         let page = await loadedPage(Self.mapPage)
         await wheel(on: page)
+        let clock = "performance.now()"
+        let usedAt = try #require((try await page.evaluateJavaScript(clock) as? NSNumber)?.doubleValue)
         #expect(await waitUntil(timeout: .seconds(10)) {
-            try await !probe(page, x: 250, y: 200).wheelClaimed
+            let now = (try? await page.evaluateJavaScript(clock) as? NSNumber)?.doubleValue ?? 0
+            return now - usedAt > PullToRefreshMonitor.wheelClaimWindow
         })
 
         await quietWheel(on: page)
