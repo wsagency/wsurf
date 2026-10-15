@@ -60,6 +60,10 @@ versions.
   to search that site. Enter opens results in a new tab; Option-Enter uses the
   current tab. Backspace in an empty query removes the site chip; its remove
   button preserves a query you have already typed.
+- The address field and the Start Page field search a site the same way: type a
+  supported site name, press Tab, then type your query. Enter opens the results
+  in the current tab. Backspace in an empty field, Escape, or leaving the field
+  ends the site search. A page's own address never offers a site.
 - **Choose a website engine:** Website Settings › Browser Engine selects
   WebKit (default) or embedded Chromium. Changing engines reloads the website
   and resets its Back/Forward history; cookies, storage, and sign-ins are separate.
