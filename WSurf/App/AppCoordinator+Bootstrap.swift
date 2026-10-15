@@ -99,9 +99,9 @@ extension AppCoordinator {
             }
         }
         timing.mark("updates")
-        if application == nil {
-            SmartCardFeature.shared.appDidStart()
-        }
+        // Auto-load must run in the real app too; the application==nil blocks above
+        // cover test coordinators only. appDidStart itself gates on manual unload.
+        SmartCardFeature.shared.appDidStart()
         Task { [extensions] in
             await extensions.start()
             await extensions.updateInstalledIfDue()
