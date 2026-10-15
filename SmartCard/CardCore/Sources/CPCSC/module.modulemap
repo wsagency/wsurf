@@ -1,0 +1,5 @@
+module CPCSC [system] {
+    header "shim.h"
+    link framework "PCSC"
+    export *
+}

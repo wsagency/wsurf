@@ -1,0 +1,606 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		5C0000000000000000000011 /* CardCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5C000000000000000000000F /* CardCore */; };
+		5C0000000000000000000012 /* CardCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5C0000000000000000000010 /* CardCore */; };
+		5C0000000000000000000013 /* SmartCardCTK.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5C0000000000000000000005 /* SmartCardCTK.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		5C0000000000000000000020 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5C0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5C0000000000000000000015;
+			remoteInfo = SmartCardCTK;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		5C000000000000000000001A /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				5C0000000000000000000013 /* SmartCardCTK.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		5C0000000000000000000004 /* SmartCardHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SmartCardHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5C0000000000000000000005 /* SmartCardCTK.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SmartCardCTK.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		5C0000000000000000000006 /* libWSurfSmartCardPkcs11.dylib */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.dylib"; includeInIndex = 0; path = libWSurfSmartCardPkcs11.dylib; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		5C000000000000000000000B /* Exceptions for "HostApp" folder in "SmartCardHost" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				SmartCardHost.entitlements,
+			);
+			target = 5C0000000000000000000014 /* SmartCardHost */;
+		};
+		5C000000000000000000000C /* Exceptions for "CTKExtension" folder in "SmartCardCTK" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				SmartCardCTK.entitlements,
+			);
+			target = 5C0000000000000000000015 /* SmartCardCTK */;
+		};
+		5C000000000000000000000D /* Exceptions for "PKCS11" folder in "SmartCardPKCS11" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				exports.txt,
+			);
+			target = 5C0000000000000000000016 /* SmartCardPKCS11 */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		5C0000000000000000000007 /* HostApp */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5C000000000000000000000B /* Exceptions for "HostApp" folder */,
+			);
+			path = HostApp;
+			sourceTree = "<group>";
+		};
+		5C0000000000000000000008 /* CTKExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5C000000000000000000000C /* Exceptions for "CTKExtension" folder */,
+			);
+			path = CTKExtension;
+			sourceTree = "<group>";
+		};
+		5C0000000000000000000009 /* PKCS11 */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5C000000000000000000000D /* Exceptions for "PKCS11" folder */,
+			);
+			path = PKCS11;
+			sourceTree = "<group>";
+		};
+		5C000000000000000000000A /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		5C0000000000000000000018 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		5C000000000000000000001C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				5C0000000000000000000011 /* CardCore in Frameworks */,
+			);
+		};
+		5C000000000000000000001F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				5C0000000000000000000012 /* CardCore in Frameworks */,
+			);
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		5C0000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				5C0000000000000000000007 /* HostApp */,
+				5C0000000000000000000008 /* CTKExtension */,
+				5C0000000000000000000009 /* PKCS11 */,
+				5C000000000000000000000A /* Shared */,
+				5C0000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		5C0000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				5C0000000000000000000004 /* SmartCardHost.app */,
+				5C0000000000000000000005 /* SmartCardCTK.appex */,
+				5C0000000000000000000006 /* libWSurfSmartCardPkcs11.dylib */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5C0000000000000000000014 /* SmartCardHost */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5C0000000000000000000023 /* Build configuration list for PBXNativeTarget "SmartCardHost" */;
+			buildPhases = (
+				5C0000000000000000000017 /* Sources */,
+				5C0000000000000000000018 /* Frameworks */,
+				5C0000000000000000000019 /* Resources */,
+				5C000000000000000000001A /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5C0000000000000000000021 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5C0000000000000000000007,
+			);
+			name = SmartCardHost;
+			packageProductDependencies = (
+			);
+			productName = SmartCardHost;
+			productReference = 5C0000000000000000000004;
+			productType = "com.apple.product-type.application";
+		};
+		5C0000000000000000000015 /* SmartCardCTK */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5C0000000000000000000024 /* Build configuration list for PBXNativeTarget "SmartCardCTK" */;
+			buildPhases = (
+				5C000000000000000000001B /* Sources */,
+				5C000000000000000000001C /* Frameworks */,
+				5C000000000000000000001D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				5C0000000000000000000008,
+				5C000000000000000000000A,
+			);
+			name = SmartCardCTK;
+			packageProductDependencies = (
+				5C000000000000000000000F /* CardCore */,
+			);
+			productName = SmartCardCTK;
+			productReference = 5C0000000000000000000005;
+			productType = "com.apple.product-type.app-extension";
+		};
+		5C0000000000000000000016 /* SmartCardPKCS11 */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5C0000000000000000000025 /* Build configuration list for PBXNativeTarget "SmartCardPKCS11" */;
+			buildPhases = (
+				5C000000000000000000001E /* Sources */,
+				5C000000000000000000001F /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				5C0000000000000000000009,
+				5C000000000000000000000A,
+			);
+			name = SmartCardPKCS11;
+			packageProductDependencies = (
+				5C0000000000000000000010 /* CardCore */,
+			);
+			productName = SmartCardPKCS11;
+			productReference = 5C0000000000000000000006;
+			productType = "com.apple.product-type.library.dynamic";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		5C0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					5C0000000000000000000014 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					5C0000000000000000000015 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					5C0000000000000000000016 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+				};
+			};
+			buildConfigurationList = 5C0000000000000000000022 /* Build configuration list for PBXProject "SmartCard" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 5C0000000000000000000002;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				5C000000000000000000000E /* XCLocalSwiftPackageReference "CardCore" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 5C0000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5C0000000000000000000014 /* SmartCardHost */,
+				5C0000000000000000000015 /* SmartCardCTK */,
+				5C0000000000000000000016 /* SmartCardPKCS11 */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		5C0000000000000000000019 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		5C000000000000000000001D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5C0000000000000000000017 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		5C000000000000000000001B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		5C000000000000000000001E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		5C0000000000000000000021 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5C0000000000000000000015 /* SmartCardCTK */;
+			targetProxy = 5C0000000000000000000020 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		5C0000000000000000000026 /* Debug configuration for PBXProject "SmartCard" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 5X68L55TNU;
+				ENABLE_ENHANCED_SECURITY = YES;
+				ENABLE_POINTER_AUTHENTICATION = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+				"DEBUG=1",
+				"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		5C0000000000000000000027 /* Release configuration for PBXProject "SmartCard" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 5X68L55TNU;
+				ENABLE_ENHANCED_SECURITY = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_POINTER_AUTHENTICATION = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		5C0000000000000000000028 /* Debug configuration for PBXNativeTarget "SmartCardHost" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = HostApp/SmartCardHost.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 5X68L55TNU;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HostApp/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+				"$(inherited)",
+				"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.wsagency.smartcard;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		5C0000000000000000000029 /* Release configuration for PBXNativeTarget "SmartCardHost" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = HostApp/SmartCardHost.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 5X68L55TNU;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HostApp/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+				"$(inherited)",
+				"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.wsagency.smartcard;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		5C000000000000000000002A /* Debug configuration for PBXNativeTarget "SmartCardCTK" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = CTKExtension/SmartCardCTK.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 5X68L55TNU;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CTKExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+				"$(inherited)",
+				"@executable_path/../Frameworks",
+				"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.wsagency.smartcard.ctk;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		5C000000000000000000002B /* Release configuration for PBXNativeTarget "SmartCardCTK" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = CTKExtension/SmartCardCTK.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 5X68L55TNU;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CTKExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+				"$(inherited)",
+				"@executable_path/../Frameworks",
+				"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.wsagency.smartcard.ctk;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		5C000000000000000000002C /* Debug configuration for PBXNativeTarget "SmartCardPKCS11" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEFINES_MODULE = NO;
+				DEVELOPMENT_TEAM = 5X68L55TNU;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				ENABLE_HARDENED_RUNTIME = YES;
+				EXECUTABLE_PREFIX = lib;
+				EXPORTED_SYMBOLS_FILE = PKCS11/exports.txt;
+				GENERATE_INFOPLIST_FILE = NO;
+				MACH_O_TYPE = mh_dylib;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.wsagency.smartcard.pkcs11;
+				PRODUCT_NAME = WSurfSmartCardPkcs11;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		5C000000000000000000002D /* Release configuration for PBXNativeTarget "SmartCardPKCS11" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEFINES_MODULE = NO;
+				DEVELOPMENT_TEAM = 5X68L55TNU;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				ENABLE_HARDENED_RUNTIME = YES;
+				EXECUTABLE_PREFIX = lib;
+				EXPORTED_SYMBOLS_FILE = PKCS11/exports.txt;
+				GENERATE_INFOPLIST_FILE = NO;
+				MACH_O_TYPE = mh_dylib;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.wsagency.smartcard.pkcs11;
+				PRODUCT_NAME = WSurfSmartCardPkcs11;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		5C0000000000000000000022 /* Build configuration list for PBXProject "SmartCard" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5C0000000000000000000026 /* Debug */,
+				5C0000000000000000000027 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5C0000000000000000000023 /* Build configuration list for PBXNativeTarget "SmartCardHost" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5C0000000000000000000028 /* Debug */,
+				5C0000000000000000000029 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5C0000000000000000000024 /* Build configuration list for PBXNativeTarget "SmartCardCTK" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5C000000000000000000002A /* Debug */,
+				5C000000000000000000002B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5C0000000000000000000025 /* Build configuration list for PBXNativeTarget "SmartCardPKCS11" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5C000000000000000000002C /* Debug */,
+				5C000000000000000000002D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		5C000000000000000000000E /* XCLocalSwiftPackageReference "CardCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = CardCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		5C000000000000000000000F /* CardCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CardCore;
+		};
+		5C0000000000000000000010 /* CardCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CardCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 5C0000000000000000000001 /* Project object */;
+}
