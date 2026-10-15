@@ -271,6 +271,8 @@ private struct ExtensionsSettings: View {
         )
         .settingsAnchor("extensions.installed")
 
+        SmartCardSettingsCard()
+
         SafariExtensionsSettingsCard(coordinator: coordinator)
     }
 

@@ -31,6 +31,109 @@ struct ExtensionsSettingsCard: View {
     }
 }
 
+struct SmartCardSettingsCard: View {
+    private let feature = SmartCardFeature.shared
+
+    var body: some View {
+        SettingsSection(
+            title: "Smart card",
+            symbol: "creditcard.and.123",
+            footnote: "Load and Unload only start and stop WSurf’s own card services. The card reader extension is managed by macOS in System Settings."
+        ) {
+            SmartCardRow(title: "Smart card support", caption: "Use a government or bank smart card to sign in and sign documents.") {
+                SettingsToggle(Binding(
+                    get: { feature.enabled },
+                    set: { $0 ? feature.enable() : feature.disable() }
+                ))
+            }
+
+            RowSeparator()
+
+            SmartCardRow(title: "Card services", caption: serviceCaption) {
+                SettingsButton(title: feature.isActive ? "Unload" : "Load") {
+                    if feature.isActive {
+                        feature.unload()
+                    } else {
+                        feature.load()
+                    }
+                }
+                .disabled(!feature.enabled)
+            }
+
+            RowSeparator()
+
+            SmartCardRow(title: "Card reader extension", caption: extensionCaption) {
+                SettingsButton(title: "Manage in System Settings", symbol: "arrow.up.forward") {
+                    feature.openSystemSettings()
+                }
+            }
+        }
+        .task { await feature.refreshCTKStatus() }
+    }
+
+    private var serviceCaption: LocalizedStringResource {
+        if feature.isActive {
+            return "Loaded"
+        }
+        return feature.enabled ? "Unloaded" : "Off"
+    }
+
+    private var extensionCaption: LocalizedStringResource {
+        if feature.isCheckingCTK {
+            return "Checking…"
+        }
+        switch feature.ctkStatus {
+        case .registered:
+            return "Registered"
+        case .notInstalled:
+            return "Not installed"
+        case .unknown:
+            return "Status unavailable"
+        }
+    }
+}
+
+private struct SmartCardRow<Controls: View>: View {
+    let title: LocalizedStringResource
+    let caption: LocalizedStringResource
+    @ViewBuilder let controls: Controls
+
+    @Environment(\.settingsIsCompact) private var isCompact
+
+    var body: some View {
+        Group {
+            if isCompact {
+                VStack(alignment: .leading, spacing: 10) {
+                    label
+                    HStack(spacing: 12) {
+                        Spacer(minLength: 0)
+                        controls
+                    }
+                }
+            } else {
+                HStack(spacing: 12) {
+                    label
+                    controls
+                }
+            }
+        }
+        .padding(.horizontal, SettingsMetrics.rowPaddingH)
+        .padding(.vertical, SettingsMetrics.rowPaddingV)
+    }
+
+    private var label: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(Theme.Font.title)
+            Text(caption)
+                .font(Theme.Font.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct SafariExtensionsSettingsCard: View {
     let coordinator: AppCoordinator
 

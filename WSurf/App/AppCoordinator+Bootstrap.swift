@@ -99,6 +99,9 @@ extension AppCoordinator {
             }
         }
         timing.mark("updates")
+        if application == nil {
+            SmartCardFeature.shared.appDidStart()
+        }
         Task { [extensions] in
             await extensions.start()
             await extensions.updateInstalledIfDue()
