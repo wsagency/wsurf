@@ -489,6 +489,11 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             )
             guard let credential else { return (.cancelAuthenticationChallenge, nil) }
             return (.useCredential, credential)
+        case .promptForClientCertificate:
+            guard let credential = await ClientCertificatePicker.credential(for: space, in: webView.window) else {
+                return (.cancelAuthenticationChallenge, nil)
+            }
+            return (.useCredential, credential)
         }
     }
 

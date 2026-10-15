@@ -12,14 +12,19 @@ enum AuthChallenge {
         case useDefaultHandling
         case rejectProtectionSpace
         case promptForCredential
+        case promptForClientCertificate
     }
 
     static func decision(
         for space: URLProtectionSpace,
-        previousFailureCount: Int
+        previousFailureCount: Int,
+        smartCardActive: Bool = SmartCardFeature.shared.isActive
     ) -> Decision {
         if space.authenticationMethod == NSURLAuthenticationMethodServerTrust {
             return .evaluateServerTrust
+        }
+        if space.authenticationMethod == NSURLAuthenticationMethodClientCertificate, smartCardActive {
+            return .promptForClientCertificate
         }
         guard isPasswordBased(space.authenticationMethod) else {
             return .useDefaultHandling
@@ -89,7 +94,7 @@ enum AuthChallenge {
         return String(localized: "This website is asking for a username and password for “\(trimmed)”.")
     }
 
-    private static func present(_ alert: NSAlert, in window: NSWindow?) async -> NSApplication.ModalResponse {
+    static func present(_ alert: NSAlert, in window: NSWindow?) async -> NSApplication.ModalResponse {
         guard let window else { return alert.runModal() }
         return await withCheckedContinuation { continuation in
             alert.beginSheetModal(for: window) { response in

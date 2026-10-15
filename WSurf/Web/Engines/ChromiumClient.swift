@@ -835,6 +835,11 @@ final class ChromiumClient {
             }
             return 1
         }
+        // Selection logic lives in ChromiumClient+ClientCertificate.swift (selectClientCertificate).
+        handler.pointee.on_select_client_certificate = { handlerSelf, browser, isProxy, host, _, count, certificates, callback in
+            ChromiumClient.selectClientCertificate(handlerSelf, browser: browser, isProxy: isProxy, host: host,
+                                                   count: count, certificates: certificates, callback: callback)
+        }
         handler.pointee.get_auth_credentials = { handlerSelf, browser, origin, proxy, host, port, realm, scheme, callback in
             ChromiumClient.releaseBrowser(browser)
             guard let callback else { return 0 }
