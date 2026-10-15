@@ -73,10 +73,61 @@ nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringC
         }
     }
 
+    /// The kind of credential an error was raised on: the SDK case name only, never a value. It lets an unsupported or
+    /// invalid record be told apart when its index alone cannot.
+    enum CredentialKind: String, Equatable, Sendable {
+        case address, apiKey, basicAuthentication, creditCard, customFields, driversLicense, generatedPassword
+        case identityDocument, itemReference, note, passkey, passport, personName, sshKey, totp, wifi, unknown
+
+        init(_ credential: ASImportableCredential) {
+            switch credential {
+            case .address:
+                self = .address
+            case .apiKey:
+                self = .apiKey
+            case .basicAuthentication:
+                self = .basicAuthentication
+            case .creditCard:
+                self = .creditCard
+            case .customFields:
+                self = .customFields
+            case .driversLicense:
+                self = .driversLicense
+            case .generatedPassword:
+                self = .generatedPassword
+            case .identityDocument:
+                self = .identityDocument
+            case .itemReference:
+                self = .itemReference
+            case .note:
+                self = .note
+            case .passkey:
+                self = .passkey
+            case .passport:
+                self = .passport
+            case .personName:
+                self = .personName
+            case .sshKey:
+                self = .sshKey
+            case .totp:
+                self = .totp
+            case .wifi:
+                self = .wifi
+            @unknown default:
+                self = .unknown
+            }
+        }
+    }
+
     let record: Record
     let reason: Reason
+    /// Set only when `record` is a credential.
+    var credentialKind: CredentialKind?
 
-    var description: String { "\(reason.rawValue) at \(record.description)" }
+    var description: String {
+        credentialKind.map { "\(reason.rawValue) at \(record.description) (\($0.rawValue))" }
+            ?? "\(reason.rawValue) at \(record.description)"
+    }
     var errorDescription: String? {
         description
     }
@@ -164,6 +215,7 @@ nonisolated enum CredentialExchangeCodec {
         var totalCollections = 0
         var candidates: [CredentialAccount] = []
         var record = CredentialExchangeError.Record.exporter
+        var credentialKind: CredentialExchangeError.CredentialKind?
     }
 
     static func preview(_ data: ASExportedCredentialData, against base: StoreSnapshot) throws -> CredentialImportPreview {
@@ -187,10 +239,12 @@ nonisolated enum CredentialExchangeCodec {
             }
             let conflicts = try makeConflicts(state.candidates, against: base.accounts)
             return CredentialImportPreview(base: base, candidates: state.candidates, conflicts: conflicts)
-        } catch let error as CredentialExchangeError {
-            throw error
         } catch {
-            throw CredentialExchangeError(record: state.record, underlying: error)
+            var failure = error as? CredentialExchangeError ?? CredentialExchangeError(record: state.record, underlying: error)
+            if case .credential = failure.record {
+                failure.credentialKind = state.credentialKind
+            }
+            throw failure
         }
     }
 
@@ -290,8 +344,10 @@ nonisolated enum CredentialExchangeCodec {
 
         for (credentialIndex, credential) in item.credentials.enumerated() {
             state.record = .credential(account: position.account, item: position.item, credential: credentialIndex)
+            state.credentialKind = CredentialExchangeError.CredentialKind(credential)
             try importCredential(credential, into: &candidate, state: &state)
         }
+        state.credentialKind = nil
         state.record = .item(account: position.account, item: position.item)
         try candidate.validate()
         state.candidates.append(candidate)

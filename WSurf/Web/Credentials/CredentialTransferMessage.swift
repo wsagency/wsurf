@@ -14,8 +14,9 @@ import Foundation
 nonisolated struct CredentialTransferMessage: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         case alreadyInProgress, discarded, applyFailed(operation: String), succeeded, mayHaveLanded, nothingImported
-        /// The codec's own structural position of the bad record (indices only, never content); nil when it names none.
-        case malformed(record: CredentialExchangeError.Record?)
+        /// The codec's own fixed-vocabulary account of the bad record: its position, a reason and, for a credential, its kind.
+        /// Never content or the underlying error text.
+        case malformed(CredentialExchangeError)
         /// The system accepted the hand-off. Says nothing about the other app.
         case handedToSystem
         /// The hand-off had started and then failed or was cancelled: whether data left is unknown.
@@ -122,13 +123,23 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
         Self(.nothingImported, .none, String(localized: "Nothing was imported."))
     }
 
-    /// Any bad record rejects the whole payload; only its structural position is shown, never content or the underlying error.
-    static func malformed(record: CredentialExchangeError.Record?) -> Self {
-        let culprit = record.map { String(localized: "The problem is at \($0.description).") }
-            ?? String(localized: "WSurf could not tell which record is at fault.")
-        return Self(.malformed(record: record), .exportAgain, String(localized: """
-            The transfer could not be read, so nothing was imported. \(culprit) \
-            This transfer was discarded. Export again from Passwords.
+    /// Any bad record rejects the whole payload; only its position, reason and credential kind are shown, never content.
+    static func malformed(_ error: CredentialExchangeError) -> Self {
+        let reason = switch error.reason {
+        case .unsupported:
+            String(localized: "WSurf cannot import this part of the transfer")
+        case .invalidData:
+            String(localized: "WSurf could not validate this data")
+        case .duplicateIdentifier:
+            String(localized: "an identifier is repeated")
+        case .oversized:
+            String(localized: "the transfer is over WSurf’s import limits")
+        }
+        let kind = error.credentialKind.map { " (\($0.rawValue))" } ?? ""
+        return Self(.malformed(error), .none, String(localized: """
+            The transfer could not be read, so nothing was imported. \
+            The problem is at \(error.record.description)\(kind): \(reason). \
+            This transfer was discarded, and WSurf does not retry it.
             """))
     }
 

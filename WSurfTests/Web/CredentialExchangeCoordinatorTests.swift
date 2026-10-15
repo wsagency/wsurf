@@ -426,12 +426,13 @@ struct CredentialExchangeCoordinatorTests {
                 try await f.stage(mixed)
                 Issue.record("A malformed record must abort the whole import")
             } catch let failure as CredentialTransferFailure {
-                // The message carries the position only, never the credential's content.
-                guard case let .malformed(record?) = failure.message.kind else {
+                // The message carries the position, reason and kind only, never the credential's content.
+                guard case let .malformed(error) = failure.message.kind else {
                     Issue.record("A malformed record must end the transfer as malformed, with its position")
                     return
                 }
-                #expect(record.description.hasPrefix("account[0]/item[1]"))
+                #expect(error.record.description.hasPrefix("account[0]/item[1]"))
+                #expect(error.reason == .invalidData && error.credentialKind == .totp)
             }
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
             #expect(try f.diskBytes() == before)

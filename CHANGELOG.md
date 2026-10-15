@@ -7,6 +7,14 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-15 — Credentials: a refused transfer from Passwords now says why
+
+When a transfer from Passwords was refused ("The transfer could not be read"), the message gave only the position of the record (for example `account[0]/item[0]/credential[1]`), so two different causes looked the same. The message now also gives a fixed reason (not supported, could not be validated, an identifier repeated, over the import limits) and, when the position is a credential, its kind by the system's own case name (for example `note`, `totp`, `passkey`). It never includes a value, a title, a website or the underlying error text. The message no longer says "Export again from Passwords": the transfer is discarded and WSurf does not retry it.
+
+This is a diagnostic only. What WSurf accepts is unchanged: a transfer is still read in full or refused in full, only passwords, passkeys and verification codes are imported, and nothing is written before Review and Import. It does not fix the failure that prompted it: that needs the reason and kind from a new attempt.
+
+Checked: a swiftc build of the import codec and message with synthetic dummy records (a note, a second login, a verification code with period 0 and a malformed passkey key, each after a valid login) gave the expected position, reason and kind and no content in the message, and a valid login with a verification code still imported; `Tools/check-format.sh` (SwiftLint 0.65.1) reports no violations. Not run: no Xcode build or test; the updated unit tests (`CredentialExchangeTests+Import`, `CredentialExchangeCoordinatorTests`) have not been compiled or run.
+
 ### 2026-10-14 — Credentials: an Import & Export section, and password CSV files
 
 Credential Settings has one **Import & Export** section (it holds the incoming-credentials row that used to be its own section, and the Export… button that was on the Saved credentials header). **Choose File…** imports a password CSV and **Export to CSV…** writes one. A CSV is read by its header, not by column position: `URL` (or `Url`), `Username` and `Password` are required, `Title` or `Name` is used as the name, and both the 4-column `Title,Url,Username,Password` and the 6-column `Title,URL,Username,Password,Notes,OTPAuth` layouts work. That is compatibility with the layouts public third-party importers read, not a statement of Apple's format. A file over the vault's size limit is refused before it is read.

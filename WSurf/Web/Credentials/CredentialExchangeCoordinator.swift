@@ -229,7 +229,7 @@ final class CredentialExchangeCoordinator {
             do {
                 preview = try CredentialExchangeCodec.preview(data, against: snapshot)
             } catch let error as CredentialExchangeError {
-                throw end(.malformed(record: error.record))
+                throw end(.malformed(error))
             }
             let destination = ImportDestinationView(accounts: snapshot.accounts, removed: removed)
             for candidate in preview.candidates {

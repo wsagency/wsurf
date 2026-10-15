@@ -590,9 +590,39 @@ extension CredentialExchangeTests {
         } catch {
             let diagnostic = try #require(error as? CredentialExchangeError)
             #expect(diagnostic.record == .credential(account: 1, item: 1, credential: 1))
+            #expect(diagnostic.reason == .unsupported)
+            #expect(diagnostic.credentialKind == .generatedPassword)
             let description = String(describing: error)
             #expect(description.contains("account[1]/item[1]/credential[1]"))
             #expect(!description.contains(secret))
+        }
+    }
+
+    /// A credential at index 1 fails closed with its fixed reason and kind; the supported pair beside it still imports.
+    @Test func rejectedCredentialNamesItsReasonAndKindAndSupportedOnesStillImport() throws {
+        let supported = try CredentialExchangeCodec.preview(
+            data(credentials: [basicAuthentication(username: "ada", password: "pw"), totp()]), against: snapshot([])
+        )
+        #expect(supported.candidates.count == 1)
+        #expect(supported.candidates[0].password == "pw" && supported.candidates[0].totp != nil)
+
+        let cases: [(ASImportableCredential, CredentialExchangeError.Reason, CredentialExchangeError.CredentialKind)] = [
+            (.note(.init(content: .init(id: nil, fieldType: .string, value: "dummy"))), .unsupported, .note),
+            (basicAuthentication(username: "two", password: "two", usernameID: Data([0x21]), passwordID: Data([0x22])), .invalidData, .basicAuthentication),
+            (totp(period: 0), .invalidData, .totp),
+            (passkey(key: Data([0x30, 0x82, 0x01])), .invalidData, .passkey),
+        ]
+        for (credential, reason, kind) in cases {
+            let incoming = data(credentials: [basicAuthentication(username: "ada", password: "pw"), credential])
+            do {
+                _ = try CredentialExchangeCodec.preview(incoming, against: snapshot([]))
+                Issue.record("Expected \(kind) rejection")
+            } catch {
+                let diagnostic = try #require(error as? CredentialExchangeError)
+                #expect(diagnostic.record == .credential(account: 0, item: 0, credential: 1))
+                #expect(diagnostic.reason == reason)
+                #expect(diagnostic.credentialKind == kind)
+            }
         }
     }
 
