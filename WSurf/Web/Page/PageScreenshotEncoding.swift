@@ -8,15 +8,17 @@ nonisolated enum PageScreenshotEncoding {
     /// Smallest edge, in pixels, below which an image is no longer worth returning.
     private static let minimumEdge = 32
 
-    /// JPEG data for `bitmap`. Without a limit the bitmap is encoded as is. With one, the quality drops first and the
-    /// pixels shrink by a quarter per pass after that. Returns nil when nothing fits.
-    static func jpeg(_ bitmap: NSBitmapImageRep, fitting limit: Int?) -> Data? {
-        guard let limit else { return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) }
+    /// JPEG data for `bitmap` and the pixel width of the image it holds. Without a limit the bitmap is encoded as is. With
+    /// one, the quality drops first and the pixels shrink by a quarter per pass after that. Returns nil when nothing fits.
+    static func jpeg(_ bitmap: NSBitmapImageRep, fitting limit: Int?) -> (data: Data, pixelsWide: Int)? {
+        guard let limit else {
+            return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]).map { ($0, bitmap.pixelsWide) }
+        }
         var current = bitmap
         while min(current.pixelsWide, current.pixelsHigh) >= minimumEdge {
             for quality in [0.8, 0.6, 0.4] {
                 if let data = current.representation(using: .jpeg, properties: [.compressionFactor: quality]), data.count <= limit {
-                    return data
+                    return (data, current.pixelsWide)
                 }
             }
             guard let smaller = scaled(current, by: 0.75) else { return nil }

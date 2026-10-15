@@ -11,6 +11,11 @@ extension BrowserTab {
         return scheme != "about" && scheme != SystemPages.scheme
     }
 
+    /// Reload needs an address to load again; WSurf's own pages and an empty tab have none.
+    var canReload: Bool {
+        !urlString.isEmpty && !isShowingSystemPage
+    }
+
     var backList: [PageHistoryItem] {
         guard isMaterialised else { return [] }
         return page.backForwardList.backList

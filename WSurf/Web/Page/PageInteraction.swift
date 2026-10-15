@@ -243,12 +243,10 @@ extension PageDriver {
             else { return .failure(.stale) }
         }
         // The limit may have shrunk the pixels, so the scale comes from the image that is returned.
-        guard let jpeg = PageScreenshotEncoding.jpeg(bitmap, fitting: maximumBytes),
-            let encoded = NSBitmapImageRep(data: jpeg), encoded.pixelsWide > 0
-        else { return .failure(.captureFailed) }
+        guard let encoded = PageScreenshotEncoding.jpeg(bitmap, fitting: maximumBytes) else { return .failure(.captureFailed) }
         return .success(
             ScreenshotCapture(
-                jpeg: jpeg, bounds: css, scale: CGFloat(encoded.pixelsWide) / css.width,
+                jpeg: encoded.data, bounds: css, scale: CGFloat(encoded.pixelsWide) / css.width,
                 requiresDevelopment: foundOnly || after["foundOnly"] as? Bool == true))
     }
 }
