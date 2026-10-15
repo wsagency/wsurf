@@ -335,11 +335,15 @@ struct AgentContextCompactionTests {
         #expect(Self.reasoning(in: last).isEmpty)
         #expect(Self.reasoning(in: try #require(trace.checkpoint).transcript).isEmpty)
         let calls = last.flatMap { entry -> [String] in
-            if case .toolCalls(let calls) = entry { return calls.map(\.id) }
+            if case .toolCalls(let calls) = entry {
+                return calls.map(\.id)
+            }
             return []
         }
         let outputs = last.compactMap { entry -> String? in
-            if case .toolOutput(let output) = entry { return output.id }
+            if case .toolOutput(let output) = entry {
+                return output.id
+            }
             return nil
         }
         #expect(calls.contains("call-original"))

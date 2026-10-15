@@ -103,7 +103,9 @@ extension BrowserTab {
 
     /// Tab lifecycle events (page replaced, tab closed) end whatever lease exists.
     func releaseCurrentDevelopment(reason: DevelopmentReleaseReason) {
-        if let owner = developmentOwner { releaseDevelopment(owner, reason: reason) }
+        if let owner = developmentOwner {
+            releaseDevelopment(owner, reason: reason)
+        }
     }
 
     /// Releases the lease when its page was replaced, the tab closed, or its connection no longer has development access to the

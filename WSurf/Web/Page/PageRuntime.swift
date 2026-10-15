@@ -613,7 +613,10 @@ nonisolated enum PageRuntime {
         // [a, b, c, d] is matrix(a, b, c, d); mul(p, q) applies q first.
         const mul = (p, q) => [p[0] * q[0] + p[2] * q[1], p[1] * q[0] + p[3] * q[1], p[0] * q[2] + p[2] * q[3], p[1] * q[2] + p[3] * q[3]];
         const REPLACED = new Set(['IFRAME', 'IMG', 'VIDEO', 'AUDIO', 'CANVAS', 'svg', 'INPUT', 'SELECT', 'TEXTAREA', 'BUTTON', 'OBJECT', 'EMBED']);
-        const radians = token => { const n = parseFloat(token); return token.endsWith('grad') ? n * Math.PI / 200 : token.endsWith('deg') ? n * Math.PI / 180 : token.endsWith('turn') ? n * 2 * Math.PI : n; };
+        const radians = token => {
+          const n = parseFloat(token);
+          return token.endsWith('grad') ? n * Math.PI / 200 : token.endsWith('deg') ? n * Math.PI / 180 : token.endsWith('turn') ? n * 2 * Math.PI : n;
+        };
         // The 2D linear part one node applies to itself: CSS `zoom` (which scales layout, unlike a transform: bounding boxes are
         // zoomed while offset and client sizes are not), then `transform`, `scale` and `rotate` (translation is derived later).
         // Null for a 3D transform, which a 2D polygon cannot carry.
@@ -685,7 +688,8 @@ nonisolated enum PageRuntime {
         return out;
       };
 
-      return { matchesRef, inspectableRef, isFoundOnly: ref => foundOnly.has(window.__wsurfRefs[ref - 1]), expectValue, valueState, walk, documentID, norm, collect, pageText, viewportText, resolve, setValue, pressEnter,
+      return { matchesRef, inspectableRef, isFoundOnly: ref => foundOnly.has(window.__wsurfRefs[ref - 1]), expectValue, valueState, walk, documentID, norm, collect,
+        pageText, viewportText, resolve, setValue, pressEnter,
         labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe, elementState, findAll, inspect, selectorProblem, screenshotGeometry };
     })());
     """#
@@ -699,9 +703,15 @@ nonisolated enum PageRuntime {
     /// A CSS selector is accepted only when non-blank, free of NUL, and at most 2,048 UTF-8 bytes. Syntax is checked
     /// by the page itself (`Invalid selector.`), never guessed here.
     static func validate(selector: String) -> Result<String, SelectorFailure> {
-        if selector.allSatisfy(\.isWhitespace) { return .failure(.empty) }
-        if selector.utf8.count > maxSelectorBytes { return .failure(.tooLong) }
-        if selector.unicodeScalars.contains(where: { $0.value == 0 }) { return .failure(.invalid) }
+        if selector.allSatisfy(\.isWhitespace) {
+            return .failure(.empty)
+        }
+        if selector.utf8.count > maxSelectorBytes {
+            return .failure(.tooLong)
+        }
+        if selector.unicodeScalars.contains(where: { $0.value == 0 }) {
+            return .failure(.invalid)
+        }
         return .success(selector)
     }
 

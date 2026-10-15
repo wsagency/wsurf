@@ -362,8 +362,10 @@ struct MCPTransportTests {
             let text = String(decoding: try JSONEncoder().encode(content), as: UTF8.self)
             let image = Data((0..<imageBytes).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ ($0 >> 8)) })
             let result = CallTool.Result(
-                content: [.text(text: text, annotations: nil, _meta: nil),
-                          .image(data: image.base64EncodedString(), mimeType: "image/jpeg", annotations: nil, _meta: nil)],
+                content: [
+                    .text(text: text, annotations: nil, _meta: nil),
+                    .image(data: image.base64EncodedString(), mimeType: "image/jpeg", annotations: nil, _meta: nil),
+                ],
                 structuredContent: Optional.some(content), isError: false)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]

@@ -14,14 +14,16 @@ final class RuntimeHarness: NSObject, WKNavigationDelegate {
     struct Output {
         let raw: String
         let object: [String: Any]
-        subscript(key: String) -> Any? { object[key] }
+        subscript(key: String) -> Any? {
+            object[key]
+        }
     }
 
     let webView: WKWebView
     private var loaded: CheckedContinuation<Void, Never>?
 
     init(html: String, size: CGSize = CGSize(width: 800, height: 600)) async {
-        let configuration = WKWebViewConfiguration()
+        let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()  // a fixture must never touch the user's persistent web data
         webView = WKWebView(frame: CGRect(origin: .zero, size: size), configuration: configuration)
         super.init()
@@ -32,9 +34,17 @@ final class RuntimeHarness: NSObject, WKNavigationDelegate {
         }
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finish() }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) { finish() }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) { finish() }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        finish()
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+        finish()
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        finish()
+    }
 
     /// A failed load resumes too, so a fixture that cannot load fails its test instead of hanging it.
     private func finish() {
@@ -273,8 +283,8 @@ struct DevelopmentFindElementsTests {
         let coverage = try #require(result["coverage"] as? [String: String])
         #expect(coverage["crossOriginFrames"] == "skipped")
         #expect(coverage["closedShadowRoots"] == "skipped")
-        #expect(result["observation"] as? String != nil)
-        #expect(result["document"] as? String != nil)
+        #expect(result["observation"] is String)
+        #expect(result["document"] is String)
     }
 
     @Test func traversesOpenShadowRootsAndSameOriginFramesNotClosedOnes() async throws {
@@ -497,7 +507,8 @@ struct DevelopmentInspectTests {
         let heavy = String(repeating: "&lt;&amp;&gt;/", count: 20)  // 80 characters; 300 bytes once delivered
         let wide = String(repeating: "&lt;&amp;&gt;/", count: 30)  // 120 characters; 450 bytes once delivered
         let attributes = (0..<40).map { "aria-a\($0)=\"\(wide)\"" }.joined(separator: " ")
-        let wrapper = "<div id=\"\(heavy)\" class=\"\(String(repeating: "&lt;&amp;&gt;/", count: 10)) \(String(repeating: "&amp;&lt;&gt;/", count: 10)) \(String(repeating: "&gt;&lt;&amp;/", count: 10))\">"
+        let classes = ["&lt;&amp;&gt;/", "&amp;&lt;&gt;/", "&gt;&lt;&amp;/"].map { String(repeating: $0, count: 10) }.joined(separator: " ")
+        let wrapper = "<div id=\"\(heavy)\" class=\"\(classes)\">"
         // Fourteen wrappers plus body and html are exactly the sixteen-ancestor cap, so any truncation seen here is the byte budget's.
         let page = await RuntimeHarness(html: "\(String(repeating: wrapper, count: 14))<span id=leaf \(attributes)>x</span>\(String(repeating: "</div>", count: 14))")
         let inspected = try await page.inspect(try await ref(page, "#leaf"))

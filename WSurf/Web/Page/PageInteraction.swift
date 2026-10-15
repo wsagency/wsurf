@@ -95,8 +95,10 @@ extension PageDriver {
         }
         if isElement {
             switch PageRuntime.validate(selector: value) {
-            case .success: break
-            case .failure(.invalid): return "Invalid selector."
+            case .success:
+                break
+            case .failure(.invalid):
+                return "Invalid selector."
             case .failure(.empty), .failure(.tooLong):
                 return "The selector must be 1 to \(PageRuntime.maxSelectorBytes) UTF-8 bytes."
             }
@@ -166,17 +168,12 @@ extension PageDriver {
         in view: BrowserPage
     ) async -> Result<ScreenshotCapture, ScreenshotFailure> {
         guard PageAutomationGuard.allowsExecution else { return .failure(.stale) }
-        var ref = 0
-        switch target {
-        case .viewport:
-            break
-        case .element(let requested):
-            // A selected frame measures in its own viewport, which the page's geometry cannot be mapped back from.
-            guard selectedFrame == nil else { return .failure(.unmappableFrame) }
-            guard await validateObservation(in: view, ref: requested, inspectable: true) else { return .failure(.stale) }
-            ref = requested
-        case .region:
-            guard selectedFrame == nil else { return .failure(.unmappableFrame) }
+        let ref: Int
+        switch await screenshotRef(for: target, in: view) {
+        case .success(let probed):
+            ref = probed
+        case .failure(let failure):
+            return .failure(failure)
         }
         let document = view.url
         let probe = scripted(
@@ -196,32 +193,19 @@ extension PageDriver {
         let foundOnly = before["foundOnly"] as? Bool == true
         guard !(foundOnly && !developmentAllowed()) else { return .failure(.needsDevelopment) }
         guard before["safe"] as? Bool == true else { return .failure(.privacy) }
-        func number(_ object: [String: Any]?, _ key: String) -> CGFloat? { (object?[key] as? NSNumber).map { CGFloat($0.doubleValue) } }
-        let mapped = ScreenshotGeometry.topViewportRect(measured:)
-        var placed: CGRect?
-        guard let width = number(before, "vw"), let height = number(before, "vh") else { return .failure(.stale) }
-        let viewport = CGSize(width: width, height: height)
-        let css: CGRect
-        switch target {
-        case .viewport:
-            guard width > 0, height > 0 else { return .failure(.invalidGeometry) }
-            css = CGRect(origin: .zero, size: viewport)
-        case .region(let requested):
-            switch ScreenshotGeometry.region(requested, inViewportCSS: viewport) {
-            case .success(let clipped): css = clipped
-            case .failure(let failure): return .failure(failure)
-            }
-        case .element:
-            switch mapped(before) {
-            case .failure(let failure): return .failure(failure)
-            case .success(let box):
-                placed = box
-                switch ScreenshotGeometry.visibleBounds(ofElement: box, inViewportCSS: viewport) {
-                case .success(let clipped): css = clipped
-                case .failure(let failure): return .failure(failure)
-                }
-            }
+        func number(_ object: [String: Any]?, _ key: String) -> CGFloat? {
+            (object?[key] as? NSNumber).map { CGFloat($0.doubleValue) }
         }
+        guard let width = number(before, "vw"), let height = number(before, "vh") else { return .failure(.stale) }
+        let area: (css: CGRect, placed: CGRect?)
+        switch screenshotArea(target, viewport: CGSize(width: width, height: height), measured: before) {
+        case .success(let value):
+            area = value
+        case .failure(let failure):
+            return .failure(failure)
+        }
+        let css = area.css
+        let placed = area.placed
         let zoom = view.pageZoom
         guard css.width * zoom >= 1, css.height * zoom >= 1 else { return .failure(.invalidGeometry) }
         let crop: CGRect? = target == .viewport ? nil : CGRect(x: css.minX * zoom, y: css.minY * zoom, width: css.width * zoom, height: css.height * zoom)
@@ -237,16 +221,67 @@ extension PageDriver {
         // Development access is checked again right before pixels leave, after the last await.
         guard !((foundOnly || after["foundOnly"] as? Bool == true) && !developmentAllowed()) else { return .failure(.needsDevelopment) }
         guard after["safe"] as? Bool == true else { return .failure(.privacy) }
-        if let placed {
-            guard case .success(let now) = mapped(after),
-                [now.minX - placed.minX, now.minY - placed.minY, now.width - placed.width, now.height - placed.height].allSatisfy({ abs($0) <= 0.5 })
-            else { return .failure(.stale) }
-        }
+        guard placementHeld(placed, in: after) else { return .failure(.stale) }
         // The limit may have shrunk the pixels, so the scale comes from the image that is returned.
         guard let encoded = PageScreenshotEncoding.jpeg(bitmap, fitting: maximumBytes) else { return .failure(.captureFailed) }
         return .success(
             ScreenshotCapture(
                 jpeg: encoded.data, bounds: css, scale: CGFloat(encoded.pixelsWide) / css.width,
                 requiresDevelopment: foundOnly || after["foundOnly"] as? Bool == true))
+    }
+
+    /// The element ref a screenshot probes (0 for none), or the reason the target cannot be captured at all.
+    private static func screenshotRef(for target: ScreenshotTarget, in view: BrowserPage) async -> Result<Int, ScreenshotFailure> {
+        switch target {
+        case .viewport:
+            return .success(0)
+        case .element(let requested):
+            // A selected frame measures in its own viewport, which the page's geometry cannot be mapped back from.
+            guard selectedFrame == nil else { return .failure(.unmappableFrame) }
+            guard await validateObservation(in: view, ref: requested, inspectable: true) else { return .failure(.stale) }
+            return .success(requested)
+        case .region:
+            guard selectedFrame == nil else { return .failure(.unmappableFrame) }
+            return .success(0)
+        }
+    }
+
+    /// An element capture is refused when the element moved between the probe before and the probe after the capture.
+    private static func placementHeld(_ placed: CGRect?, in after: [String: Any]) -> Bool {
+        guard let placed else { return true }
+        guard case .success(let now) = ScreenshotGeometry.topViewportRect(measured: after),
+            [now.minX - placed.minX, now.minY - placed.minY, now.width - placed.width, now.height - placed.height].allSatisfy({ abs($0) <= 0.5 })
+        else { return false }
+        return true
+    }
+
+    /// The CSS rect a screenshot of `target` covers and, for an element, the box it was measured at in the top viewport.
+    private static func screenshotArea(
+        _ target: ScreenshotTarget, viewport: CGSize, measured before: [String: Any]
+    ) -> Result<(css: CGRect, placed: CGRect?), ScreenshotFailure> {
+        switch target {
+        case .viewport:
+            guard viewport.width > 0, viewport.height > 0 else { return .failure(.invalidGeometry) }
+            return .success((css: CGRect(origin: .zero, size: viewport), placed: nil))
+        case .region(let requested):
+            switch ScreenshotGeometry.region(requested, inViewportCSS: viewport) {
+            case .success(let clipped):
+                return .success((css: clipped, placed: nil))
+            case .failure(let failure):
+                return .failure(failure)
+            }
+        case .element:
+            switch ScreenshotGeometry.topViewportRect(measured: before) {
+            case .failure(let failure):
+                return .failure(failure)
+            case .success(let box):
+                switch ScreenshotGeometry.visibleBounds(ofElement: box, inViewportCSS: viewport) {
+                case .success(let clipped):
+                    return .success((css: clipped, placed: box))
+                case .failure(let failure):
+                    return .failure(failure)
+                }
+            }
+        }
     }
 }

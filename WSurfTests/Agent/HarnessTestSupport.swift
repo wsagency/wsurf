@@ -63,7 +63,9 @@ final class HarnessScript: LanguageModel, @unchecked Sendable {
             text = value
         case .calls(let names), .commentary(_, let names), .thinkingCalls(_, let names, _):
             var fixedID: String?
-            if case .thinkingCalls(_, _, let callID) = action { fixedID = callID }
+            if case .thinkingCalls(_, _, let callID) = action {
+                fixedID = callID
+            }
             let calls = names.map { name in
                 Transcript.ToolCall(id: fixedID ?? UUID().uuidString, toolName: name,
                                     arguments: GeneratedContent(properties: ["value": GeneratedContent("fixture-value")]))

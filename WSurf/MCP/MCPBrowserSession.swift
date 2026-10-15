@@ -78,7 +78,9 @@ final class MCPBrowserSession: Identifiable {
 
     func revoke() {
         isConnected = false
-        for (tab, owner) in Array(developmentTabs.values) { tab.releaseDevelopment(owner, reason: .disconnect) }
+        for (tab, owner) in Array(developmentTabs.values) {
+            tab.releaseDevelopment(owner, reason: .disconnect)
+        }
         developmentTabs = [:]
         grants = [:]
         observations = [:]
@@ -179,7 +181,9 @@ final class MCPBrowserSession: Identifiable {
         accessWasRequested = true
         var granted = await consent(clientName, pages, development)
         // Development access can only come from a request that asked for it.
-        if granted == .development, !development { granted = .control }
+        if granted == .development, !development {
+            granted = .control
+        }
         guard isConnected, available(), !Task.isCancelled, let answer = granted else { return failure("Access was not granted.") }
         for page in pages {
             guard let tab = browser.tabs.first(where: { $0.id == page.id }),
@@ -250,9 +254,9 @@ final class MCPBrowserSession: Identifiable {
                             guard let self, let tab else { return false }
                             return self.mayProceed(tab, capability: .development)
                         }
-                        switch await PageDriver.screenshot(
+                        let outcome = await PageDriver.screenshot(
                             request.target, developmentAllowed: developmentAllowed, maximumBytes: Self.screenshotBytes, in: view)
-                        {
+                        switch outcome {
                         case .success(let capture):
                             let box = capture.bounds
                             let text =
@@ -314,9 +318,12 @@ final class MCPBrowserSession: Identifiable {
     private static func screenshotTarget(_ arguments: [String: Value]) -> (target: ScreenshotTarget, error: String?) {
         func number(_ box: [String: Value], _ key: String) -> CGFloat {
             switch box[key] {
-            case .int(let value): CGFloat(value)
-            case .double(let value): CGFloat(value)
-            default: .nan
+            case .int(let value):
+                CGFloat(value)
+            case .double(let value):
+                CGFloat(value)
+            default:
+                .nan
             }
         }
         let ref = arguments["ref"]?.intValue
@@ -447,9 +454,12 @@ final class MCPBrowserSession: Identifiable {
         guard sharedTab(tab.id) === tab, let grant = grants[tab.id] else { return false }
         let writable = tab.assistantAccess.effectivePolicy != .readOnly
         switch capability {
-        case .read: return true
-        case .control: return (grant.access == .control || grant.access == .development) && writable
-        case .development: return grant.access == .development && writable
+        case .read:
+            return true
+        case .control:
+            return (grant.access == .control || grant.access == .development) && writable
+        case .development:
+            return grant.access == .development && writable
         }
     }
 

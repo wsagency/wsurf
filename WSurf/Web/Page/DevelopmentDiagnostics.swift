@@ -54,12 +54,17 @@ final class DevelopmentDiagnostics {
         if engine == "chromium" {
             gaps.append("Subframes, workers and extension worlds are not captured.")
             gaps.append(
-                "Requests still in flight when the document changes are dropped unless they belong to the new document, and the redirect hops of a main-frame navigation that happen before its document commits are not recorded (only the final request is).")
+                "Requests still in flight when the document changes are dropped unless they belong to the new document, "
+                    + "and the redirect hops of a main-frame navigation that happen before its document commits are not recorded (only the final request is).")
         } else {
             gaps.append(
-                "After a navigation commits, the hook attaches once the new document's frame registration completes; console messages, errors, fetch and XMLHttpRequest calls before that are never captured, and the previous document's records are discarded.")
+                "After a navigation commits, the hook attaches once the new document's frame registration completes; "
+                    + "console messages, errors, fetch and XMLHttpRequest calls before that are never captured, and the previous document's records are discarded.")
             gaps.append(
-                "Console objects, errors and proxies are not read and appear as [object]. fetch reports a URL only for a string URL argument, and a method only for fetch(url) without an init (GET); a Request, URL or RequestInit argument is not read, so its method or URL is absent (unknown). XMLHttpRequest reports method and URL when passed as strings. Workers, iframes and resource loads are not captured.")
+                "Console objects, errors and proxies are not read and appear as [object]. "
+                    + "fetch reports a URL only for a string URL argument, and a method only for fetch(url) without an init (GET); "
+                    + "a Request, URL or RequestInit argument is not read, so its method or URL is absent (unknown). "
+                    + "XMLHttpRequest reports method and URL when passed as strings. Workers, iframes and resource loads are not captured.")
             if hookDocumentID != buffer.documentID {
                 gaps.append("The hook is not attached to the current document (its frame registration is pending or the install failed); events are being missed until it attaches.")
             }
@@ -89,7 +94,9 @@ final class DevelopmentDiagnostics {
         // Synchronous and ordered after any hook script this capture already issued, so a hook still being installed is
         // torn down too (its install rechecks `stopped` and never issues the relay). It needs neither the relay nor a
         // content-world global.
-        if let event { Self.tearDown(event, in: webKit) }
+        if let event {
+            Self.tearDown(event, in: webKit)
+        }
         guard handlerRegistered else { return }
         page.removeScriptMessageHandler(name: handlerName, in: PageAutomationGuard.world)
         webKit.configuration.userContentController.removeScriptMessageHandler(forName: handlerName, contentWorld: PageAutomationGuard.world)
@@ -147,7 +154,9 @@ final class DevelopmentDiagnostics {
         return entry.loaderID == buffer.documentID
     }
 
-    var lostInFlight: Int { mapper.lostInFlight }
+    var lostInFlight: Int {
+        mapper.lostInFlight
+    }
 
     // MARK: WebKit
 
@@ -157,7 +166,9 @@ final class DevelopmentDiagnostics {
             _ = adoptCurrentDocument()
             return nil
         }
-        if let following { return following }
+        if let following {
+            return following
+        }
         let task = Task { [weak self] in
             guard let self else { return }
             await followWebKit()
@@ -177,7 +188,9 @@ final class DevelopmentDiagnostics {
                 awaitRegistration(on: page)
                 return
             }
-            if hookDocumentID == current { return }
+            if hookDocumentID == current {
+                return
+            }
             await installHook(on: page, document: current)
             guard !stopped, page.mainDocumentID != current else { return }
         }
@@ -201,7 +214,9 @@ final class DevelopmentDiagnostics {
     private func installHook(on page: BrowserPage, document: String) async {
         guard let webKit = page.webKit else { return }
         // A hook of an earlier install can still be alive in this document (history restore): retire it first.
-        if let previous = event { Self.tearDown(previous, in: webKit) }
+        if let previous = event {
+            Self.tearDown(previous, in: webKit)
+        }
         let mine = UUID().uuidString.replacingOccurrences(of: "-", with: "")
         token = mine
         let name = "wsurf-diag-" + mine
@@ -213,7 +228,9 @@ final class DevelopmentDiagnostics {
                 self?.receive(message: message)
             }
         }
-        func current() -> Bool { !stopped && token == mine && page.mainDocumentID == document }
+        func current() -> Bool {
+            !stopped && token == mine && page.mainDocumentID == document
+        }
         guard await run(PageDiagnosticsHook.pageHook(event: name), in: .page, on: webKit), current() else {
             Self.tearDown(name, in: webKit)
             return

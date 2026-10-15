@@ -39,7 +39,9 @@ extension BrowserPage {
             deviceAxes: Dictionary(uniqueKeysWithValues: axes.map { ($0, none) }),
             diagnostics: [
                 "console": .limited("console.log/info/warn/error/debug, uncaught errors and unhandled rejections of the current document, from a hook installed when capture starts."),
-                "network": .limited("fetch and XMLHttpRequest of the current document only; fetch reports a URL only for a string argument and a method only for fetch(url) without an init; resource loads, WebSockets and workers are not observed."),
+                "network": .limited(
+                    "fetch and XMLHttpRequest of the current document only; fetch reports a URL only for a string argument and a method only for fetch(url) without an init; "
+                        + "resource loads, WebSockets and workers are not observed."),
             ])
     }
 
@@ -56,7 +58,9 @@ extension BrowserPage {
 
     /// Every emulation change and cleanup of this page goes through here, one at a time, in the order it was requested.
     var emulationQueue: DevelopmentEmulationQueue {
-        if let queue = Self.emulationQueues.object(forKey: self) { return queue }
+        if let queue = Self.emulationQueues.object(forKey: self) {
+            return queue
+        }
         let queue = DevelopmentEmulationQueue()
         Self.emulationQueues.setObject(queue, forKey: self)
         return queue
@@ -71,7 +75,9 @@ struct DevelopmentViewportState {
     /// Compare-then-restore: puts back only the layout this state applied, never a different size set since.
     @MainActor
     func restoreLayout(on page: BrowserPage) {
-        if page.developmentViewport == size { page.developmentViewport = nil }
+        if page.developmentViewport == size {
+            page.developmentViewport = nil
+        }
     }
 
     /// Release path: restores the layout now and reserves the device-emulation cleanup's turn on the page's queue before
@@ -130,11 +136,13 @@ extension BrowserPage {
     ) async -> DevelopmentViewportOutcome {
         let device = profile?.deviceAxes == true
         let hostScale = Double(window?.backingScaleFactor ?? 1)
-        switch PageViewport.validate(
+        let validation = PageViewport.validate(
             width: request.width, height: request.height, zoom: Double(pageZoom), scale: hostScale * (profile?.scale ?? 1))
-        {
-        case .failure(let failure): return .invalid(failure.message)
-        case .success: break
+        switch validation {
+        case .failure(let failure):
+            return .invalid(failure.message)
+        case .success:
+            break
         }
         if device, chromium == nil {
             return .unsupported("WebKit has no DPR, touch or mobile-viewport override, so device profiles are not applied and nothing was changed.")
@@ -162,7 +170,9 @@ extension BrowserPage {
         guard tab.isCurrent(owner) else { return .stale }
         // Cancelled mid-turn: undo what this request applied to the lease it still owns (a released lease was already cleaned).
         func cancelled() async -> DevelopmentViewportOutcome {
-            if tab.isCurrent(owner) { await rollBackViewport(owner) }
+            if tab.isCurrent(owner) {
+                await rollBackViewport(owner)
+            }
             return .cancelled
         }
         // Switching from a device profile to a plain size clears the device axes first.
@@ -173,27 +183,8 @@ extension BrowserPage {
             guard !Task.isCancelled else { return await cancelled() }
         }
         if device, let chromium, let profile {
-            do {
-                try await chromium.setDeviceEmulation(width: request.width, height: request.height, scale: profile.scale)
-            } catch {
-                // A failed set clears every axis, including the ones a previous request of this lease applied.
-                if tab.isCurrent(owner), let previous = owner.viewport, previous.device {
-                    owner.viewport = DevelopmentViewportState(size: previous.size, device: false)
-                }
-                if Task.isCancelled { return .cancelled }
-                return .unsupported("Chromium rejected the device emulation: \(error.localizedDescription)")
-            }
-            guard tab.isCurrent(owner) else {
-                await chromium.clearDeviceEmulation()
-                return .stale
-            }
-            guard !Task.isCancelled else {
-                // This request's device axes are not kept; the lease's earlier layout (if any) stays as it was.
-                await chromium.clearDeviceEmulation()
-                if tab.isCurrent(owner), let previous = owner.viewport, previous.device {
-                    owner.viewport = DevelopmentViewportState(size: previous.size, device: false)
-                }
-                return .cancelled
+            if let early = await applyDeviceEmulation(request, profile: profile, chromium: chromium, owner: owner, tab: tab) {
+                return early
             }
         }
         let size = CGSize(width: request.width, height: request.height)
@@ -206,7 +197,9 @@ extension BrowserPage {
             measured = await measureViewport()
             guard tab.isCurrent(owner) else { return .stale }
             guard !Task.isCancelled else { return await cancelled() }
-            if let measured, measured.width == request.width, measured.height == request.height { break }
+            if let measured, measured.width == request.width, measured.height == request.height {
+                break
+            }
         }
         guard let measured, measured.width == request.width, measured.height == request.height else {
             await rollBackViewport(owner)
@@ -221,20 +214,55 @@ extension BrowserPage {
         return .applied(measured)
     }
 
+    /// Device-axis step of a viewport turn; a non-nil result ends the turn with that outcome.
+    private func applyDeviceEmulation(
+        _ request: PageViewport.Request, profile: PageViewport.Profile, chromium: ChromiumPage, owner: DevelopmentOwner, tab: BrowserTab
+    ) async -> DevelopmentViewportOutcome? {
+        do {
+            try await chromium.setDeviceEmulation(width: request.width, height: request.height, scale: profile.scale)
+        } catch {
+            // A failed set clears every axis, including the ones a previous request of this lease applied.
+            if tab.isCurrent(owner), let previous = owner.viewport, previous.device {
+                owner.viewport = DevelopmentViewportState(size: previous.size, device: false)
+            }
+            if Task.isCancelled {
+                return .cancelled
+            }
+            return .unsupported("Chromium rejected the device emulation: \(error.localizedDescription)")
+        }
+        guard tab.isCurrent(owner) else {
+            await chromium.clearDeviceEmulation()
+            return .stale
+        }
+        guard !Task.isCancelled else {
+            // This request's device axes are not kept; the lease's earlier layout (if any) stays as it was.
+            await chromium.clearDeviceEmulation()
+            if tab.isCurrent(owner), let previous = owner.viewport, previous.device {
+                owner.viewport = DevelopmentViewportState(size: previous.size, device: false)
+            }
+            return .cancelled
+        }
+        return nil
+    }
+
     /// Runs inside this page's emulation turn: restores the layout and clears device emulation before the outcome is reported.
     func rollBackViewport(_ owner: DevelopmentOwner) async {
         guard let state = owner.viewport else { return }
         owner.viewport = nil
         state.restoreLayout(on: self)
-        if state.device, let chromium { await chromium.clearDeviceEmulation() }
+        if state.device, let chromium {
+            await chromium.clearDeviceEmulation()
+        }
     }
 }
 
 extension PageDriver {
     static func findElements(selector: String, offset: Int, limit: Int, in view: BrowserPage) async -> String {
         switch PageRuntime.validate(selector: selector) {
-        case .success: break
-        case .failure(.invalid): return "Invalid selector."
+        case .success:
+            break
+        case .failure(.invalid):
+            return "Invalid selector."
         case .failure(.empty), .failure(.tooLong):
             return "The selector must be 1 to \(PageRuntime.maxSelectorBytes) UTF-8 bytes."
         }

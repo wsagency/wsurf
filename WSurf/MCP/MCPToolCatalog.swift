@@ -90,9 +90,12 @@ nonisolated enum MCPToolCatalog {
             guard Set(box.keys) == ["x", "y", "width", "height"] else { return false }
             func number(_ key: String) -> Double? {
                 switch box[key] {
-                case .int(let value): Double(value)
-                case .double(let value) where value.isFinite: value
-                default: nil
+                case .int(let value):
+                    Double(value)
+                case .double(let value) where value.isFinite:
+                    value
+                default:
+                    nil
                 }
             }
             guard let x = number("x"), let y = number("y"), let width = number("width"), let height = number("height") else { return false }
@@ -148,7 +151,11 @@ nonisolated enum MCPToolCatalog {
         Entry(
             name: "requestAccess",
             description:
-                "Ask the user in WSurf to share the webpages currently on screen. Connecting grants no access. Respect a refusal; do not repeat the request. Set development only when you need DOM inspection, console/network metadata, or viewport changes; the user may still decline it.",
+                """
+                Ask the user in WSurf to share the webpages currently on screen. Connecting grants no access. \
+                Respect a refusal; do not repeat the request. Set development only when you need DOM inspection, \
+                console/network metadata, or viewport changes; the user may still decline it.
+                """,
             parameters: [
                 Parameter(name: "development", type: "boolean", description: "Also ask for development access. Omit for ordinary sharing.", required: false)
             ]),
@@ -181,7 +188,13 @@ nonisolated enum MCPToolCatalog {
                 tab, snapshot, ref, Parameter(name: "option", type: "string", description: "Visible option text."),
             ]),
         Entry(
-            name: "hoverOnPage", description: "Move the real pointer over an element so CSS :hover and pointer/mouse handlers run. Needs WSurf to be the active app with the tab on screen; elements inside frames are not supported. Verify the returned page.",
+            name: "hoverOnPage",
+            description:
+                """
+                Move the real pointer over an element so CSS :hover and pointer/mouse handlers run. \
+                Needs WSurf to be the active app with the tab on screen; elements inside frames are not supported. \
+                Verify the returned page.
+                """,
             parameters: [tab, snapshot, ref]),
         Entry(
             name: "pressKey", description: "Send a keyboard key to a control in a visible shared tab.",
@@ -217,10 +230,18 @@ nonisolated enum MCPToolCatalog {
         Entry(
             name: "screenshotPage",
             description:
-                "Capture the viewport, one element (observationID + ref), or a region {x, y, width, height} in viewport CSS pixels that must lie fully inside the viewport, as an image. A ref from readPage (a control) needs only read access; a ref from findElements that is not a control needs development access. Never scrolls or stitches. Filled sensitive fields prevent any capture. Prefer readPage for text.",
+                """
+                Capture the viewport, one element (observationID + ref), or a region {x, y, width, height} in viewport CSS pixels \
+                that must lie fully inside the viewport, as an image. A ref from readPage (a control) needs only read access; \
+                a ref from findElements that is not a control needs development access. Never scrolls or stitches. \
+                Filled sensitive fields prevent any capture. Prefer readPage for text.
+                """,
             parameters: [
                 tab,
-                Parameter(name: "ref", type: "integer", description: "Element to capture: a readPage control, or with development access a findElements element; needs observationID.", required: false),
+                Parameter(
+                    name: "ref", type: "integer",
+                    description: "Element to capture: a readPage control, or with development access a findElements element; needs observationID.",
+                    required: false),
                 Parameter(name: "observationID", type: "string", description: "Required when ref is supplied.", required: false),
                 Parameter(name: "region", type: "region", description: "Viewport-relative CSS-pixel rectangle; not with ref.", required: false),
             ], readOnly: true),
@@ -238,7 +259,11 @@ nonisolated enum MCPToolCatalog {
         Entry(
             name: "findElements",
             description:
-                "Find elements by CSS selector in the document, same-origin frames and open shadow roots; cross-origin frames and closed shadow roots are reported as skipped. Needs development access. Returns an observationID and refs usable only with inspectElement; use readPage for refs you can act on.",
+                """
+                Find elements by CSS selector in the document, same-origin frames and open shadow roots; \
+                cross-origin frames and closed shadow roots are reported as skipped. Needs development access. \
+                Returns an observationID and refs usable only with inspectElement; use readPage for refs you can act on.
+                """,
             parameters: [
                 tab,
                 Parameter(
@@ -249,12 +274,20 @@ nonisolated enum MCPToolCatalog {
         Entry(
             name: "inspectElement",
             description:
-                "Inspect one found or read element: bounded attributes, geometry, box model, allowlisted computed styles and ancestors. Never returns field values or raw HTML. Needs development access. Inspection refs are not action targets: click, type, hover and the other actions accept only refs from readPage; screenshotPage can capture them with development access.",
+                """
+                Inspect one found or read element: bounded attributes, geometry, box model, allowlisted computed styles and ancestors. \
+                Never returns field values or raw HTML. Needs development access. \
+                Inspection refs are not action targets: click, type, hover and the other actions accept only refs from readPage; \
+                screenshotPage can capture them with development access.
+                """,
             parameters: [tab, snapshot, ref], readOnly: true),
         Entry(
             name: "setViewport",
             description:
-                "Lay the page out at an exact CSS-pixel viewport (the document's innerWidth/innerHeight) and report the measured result. May exceed the window. Needs development access and a visible tab; undo with resetDevelopment.",
+                """
+                Lay the page out at an exact CSS-pixel viewport (the document's innerWidth/innerHeight) and report the measured result. \
+                May exceed the window. Needs development access and a visible tab; undo with resetDevelopment.
+                """,
             parameters: [
                 tab,
                 Parameter(name: "width", type: "integer", description: "CSS pixels.", minimum: PageViewport.minAxis, maximum: PageViewport.maxAxis),
@@ -263,7 +296,11 @@ nonisolated enum MCPToolCatalog {
         Entry(
             name: "emulateDevice",
             description:
-                "Apply a profile: responsive-phone, responsive-tablet, responsive-desktop (viewport size only) or phone, tablet (also device pixel ratio, touch and mobile viewport; Chromium only, rejected before any change on WebKit). Needs development access and a visible tab.",
+                """
+                Apply a profile: responsive-phone, responsive-tablet, responsive-desktop (viewport size only) or phone, tablet \
+                (also device pixel ratio, touch and mobile viewport; Chromium only, rejected before any change on WebKit). \
+                Needs development access and a visible tab.
+                """,
             parameters: [
                 tab, Parameter(name: "profile", type: "string", description: "responsive-phone, responsive-tablet, responsive-desktop, phone, or tablet."),
                 Parameter(name: "orientation", type: "string", description: "portrait or landscape."),
@@ -279,7 +316,11 @@ nonisolated enum MCPToolCatalog {
         Entry(
             name: "startDiagnostics",
             description:
-                "Start capturing console messages and network request metadata (method, sanitized URL, status, timing; never headers, bodies or cookies) for the tab's current document. Nothing earlier is available. Needs development access and a visible tab.",
+                """
+                Start capturing console messages and network request metadata \
+                (method, sanitized URL, status, timing; never headers, bodies or cookies) for the tab's current document. \
+                Nothing earlier is available. Needs development access and a visible tab.
+                """,
             parameters: [tab]),
         Entry(
             name: "readConsole",

@@ -162,7 +162,9 @@ struct PageScreenshotGeometryTests {
         #expect(ScreenshotGeometry.translate(CGRect(x: 130, y: 130, width: 10, height: 10), clippedBy: [diamond], through: []) == .failure(.offscreen))
         expectClose(ScreenshotGeometry.translate(CGRect(x: 190, y: 190, width: 20, height: 20), clippedBy: [diamond], through: []), CGRect(x: 190, y: 190, width: 20, height: 20))
         // The upper-right quarter: a triangle (200, 129.29), (270.71, 200), (200, 200).
-        expectClose(ScreenshotGeometry.translate(CGRect(x: 200, y: 100, width: 100, height: 100), clippedBy: [diamond], through: []), CGRect(x: 200, y: 200 - side / 2, width: side / 2, height: side / 2))
+        expectClose(
+            ScreenshotGeometry.translate(CGRect(x: 200, y: 100, width: 100, height: 100), clippedBy: [diamond], through: []),
+            CGRect(x: 200, y: 200 - side / 2, width: side / 2, height: side / 2))
     }
 
     @Test func aClipAroundTheFrameCutsTheMappedRect() {

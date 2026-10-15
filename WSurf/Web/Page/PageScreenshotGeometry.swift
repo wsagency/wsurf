@@ -11,13 +11,20 @@ nonisolated enum ScreenshotFailure: Error, Equatable {
 
     var message: String {
         switch self {
-        case .stale: "The page or element changed before capture. Use readPage again."
-        case .privacy: "Screenshot refused: a filled sensitive field is on the page. Use readPage for redacted text."
-        case .invalidGeometry: "The element or region has no usable area."
-        case .offscreen: "The element or region is outside the visible viewport. Scroll it into view first."
-        case .captureFailed: "Screenshot unavailable; use readPage for redacted text."
+        case .stale:
+            "The page or element changed before capture. Use readPage again."
+        case .privacy:
+            "Screenshot refused: a filled sensitive field is on the page. Use readPage for redacted text."
+        case .invalidGeometry:
+            "The element or region has no usable area."
+        case .offscreen:
+            "The element or region is outside the visible viewport. Scroll it into view first."
+        case .captureFailed:
+            "Screenshot unavailable; use readPage for redacted text."
         case .unmappableFrame:
-            "The element or region sits where its position on the page cannot be measured exactly (a selected frame, a frame or clipping container under a 3D transform or perspective, or SVG content). Screenshot the viewport instead."
+            "The element or region sits where its position on the page cannot be measured exactly "
+                + "(a selected frame, a frame or clipping container under a 3D transform or perspective, or SVG content). "
+                + "Screenshot the viewport instead."
         case .needsDevelopment:
             "Screenshots of elements found with findElements need development access. Use a control ref from readPage, or a viewport or region screenshot."
         }
@@ -93,7 +100,9 @@ nonisolated enum ScreenshotGeometry {
 
     private typealias Polygon = [CGPoint]
 
-    private static func finite(_ points: Polygon) -> Bool { points.allSatisfy { $0.x.isFinite && $0.y.isFinite } }
+    private static func finite(_ points: Polygon) -> Bool {
+        points.allSatisfy { $0.x.isFinite && $0.y.isFinite }
+    }
 
     private static func corners(_ rect: CGRect) -> Polygon {
         [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY)]
@@ -124,7 +133,8 @@ nonisolated enum ScreenshotGeometry {
     /// False when a measured number is not finite or a size is negative: such a box cannot be mapped.
     private static func usable(_ box: ScreenshotPlacement) -> Bool {
         let numbers = [box.border.origin.x, box.border.origin.y, box.border.width, box.border.height, box.layout.width, box.layout.height,
-            box.linear.a, box.linear.b, box.linear.c, box.linear.d, box.local.origin.x, box.local.origin.y, box.local.width, box.local.height]
+            box.linear.a, box.linear.b, box.linear.c, box.linear.d, box.local.origin.x, box.local.origin.y, box.local.width, box.local.height,
+        ]
         return numbers.allSatisfy(\.isFinite) && box.layout.width >= 0 && box.layout.height >= 0
     }
 
@@ -144,7 +154,9 @@ nonisolated enum ScreenshotGeometry {
         var result = subject
         for i in clip.indices where !result.isEmpty {
             let a = clip[i], b = clip[(i + 1) % clip.count]
-            func side(_ p: CGPoint) -> CGFloat { orientation * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) }
+            func side(_ p: CGPoint) -> CGFloat {
+                orientation * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x))
+            }
             let input = result
             result = []
             var previous = input[input.count - 1]
@@ -155,7 +167,9 @@ nonisolated enum ScreenshotGeometry {
                     return CGPoint(x: previous.x + t * (current.x - previous.x), y: previous.y + t * (current.y - previous.y))
                 }
                 if now >= 0 {
-                    if before < 0 { result.append(crossing()) }
+                    if before < 0 {
+                        result.append(crossing())
+                    }
                     result.append(current)
                 } else if before >= 0 {
                     result.append(crossing())
@@ -172,7 +186,9 @@ nonisolated enum ScreenshotGeometry {
         for clip in clips {
             guard let box = Self.polygon(of: clip) else { return nil }
             result = cut(result, to: box)
-            if result.count < 3 || abs(area(result)) <= minimumArea { return [] }
+            if result.count < 3 || abs(area(result)) <= minimumArea {
+                return []
+            }
         }
         return result
     }

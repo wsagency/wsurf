@@ -473,7 +473,8 @@ struct PageInteractionTests {
         let view = await page(
             """
             <iframe id='f' style='position:absolute;left:30px;top:40px;width:200px;height:100px;border:5px solid black;padding:20px'
-              srcdoc="<body style='margin:0'><button style='position:absolute;left:10px;top:12px;width:60px;height:24px'>Go</button><button style='position:absolute;left:180px;top:12px;width:60px;height:24px'>Edge</button></body>"></iframe>
+              srcdoc="<body style='margin:0'><button style='position:absolute;left:10px;top:12px;width:60px;height:24px'>Go</button>\
+            <button style='position:absolute;left:180px;top:12px;width:60px;height:24px'>Edge</button></body>"></iframe>
             """)
         let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -483,7 +484,9 @@ struct PageInteractionTests {
         var loaded = false
         for _ in 0..<50 where !loaded {
             loaded = await js(view, "!!document.getElementById('f').contentDocument?.querySelector('button')") as? Bool == true
-            if !loaded { try? await Task.sleep(for: .milliseconds(100)) }
+            if !loaded {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
         }
         _ = await PageDriver.snapshot(view)
         // The frame's content box starts at its border box (30, 40) plus 5 px border plus 20 px padding.
@@ -768,5 +771,11 @@ extension PageInteractionTests {
 }
 
 private extension Result {
-    var failure: Failure? { if case .failure(let error) = self { error } else { nil } }
+    var failure: Failure? {
+        if case .failure(let error) = self {
+            error
+        } else {
+            nil
+        }
+    }
 }

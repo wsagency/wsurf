@@ -7,7 +7,11 @@ import Foundation
 
 nonisolated struct HoverOnPageTool: Tool {
     let name = "hoverOnPage"
-    let description = "Move the real pointer over a control so CSS :hover and pointer/mouse handlers run. Needs WSurf to be the active app with the tab on screen; controls inside frames are not supported. Verify the returned page for revealed content."
+    let description = """
+        Move the real pointer over a control so CSS :hover and pointer/mouse handlers run. \
+        Needs WSurf to be the active app with the tab on screen; controls inside frames are not supported. \
+        Verify the returned page for revealed content.
+        """
     let toolkit: AgentToolkit
     @Generable struct Arguments {
         var page: String?

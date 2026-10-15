@@ -34,7 +34,9 @@ struct MCPDevelopmentOwnershipTests {
         let url = try server.url()
         let tab = browser.newTab(url: url)
         #expect(await PageSettle.untilIdle(tab.page))
-        if !profileWide { tab.assistantAccess.persistsAnswers = false }
+        if !profileWide {
+            tab.assistantAccess.persistsAnswers = false
+        }
         tab.assistantAccess.pageChanged(url: url)
         return (server, browser, tab)
     }
@@ -190,7 +192,9 @@ struct MCPDevelopmentOwnershipTests {
         for _ in 0..<50 where records.isEmpty {
             let read = try await call(subject, "readConsole", tab)
             records = read.structuredContent?.objectValue?["records"]?.arrayValue ?? []
-            if records.isEmpty { try await Task.sleep(for: .milliseconds(100)) }
+            if records.isEmpty {
+                try await Task.sleep(for: .milliseconds(100))
+            }
         }
         let text = records.compactMap { $0.objectValue?["text"]?.stringValue }.joined(separator: "\n")
         #expect(text.contains("after-start"))
@@ -271,7 +275,9 @@ struct MCPDevelopmentOwnershipTests {
     }
 
     @Test func catalogBoundsReadsAndPaging() throws {
-        func entry(_ name: String) throws -> MCPToolCatalog.Entry { try #require(MCPToolCatalog.entries.first { $0.name == name }) }
+        func entry(_ name: String) throws -> MCPToolCatalog.Entry {
+            try #require(MCPToolCatalog.entries.first { $0.name == name })
+        }
         let tab: Value = .string(UUID().uuidString)
         let find = try entry("findElements")
         try find.validate(["tabID": tab, "selector": ".x", "offset": 10_000, "limit": 100])
@@ -291,14 +297,18 @@ struct MCPDevelopmentOwnershipTests {
 
     private func text(_ result: CallTool.Result) -> String {
         result.content.compactMap {
-            if case .text(let text, _, _) = $0 { return text }
+            if case .text(let text, _, _) = $0 {
+                return text
+            }
             return nil
         }.joined(separator: "\n")
     }
 
     private func images(_ result: CallTool.Result) -> [Data] {
         result.content.compactMap {
-            if case .image(let data, _, _, _) = $0 { return Data(base64Encoded: data) }
+            if case .image(let data, _, _, _) = $0 {
+                return Data(base64Encoded: data)
+            }
             return nil
         }
     }
@@ -573,13 +583,17 @@ struct MCPDevelopmentOwnershipTests {
             if tab.developmentRelation(of: second.id) != .other { problems.append("relation") }
             tab.releaseInvalidDevelopment()
             switch tab.acquireDevelopment(connection: second.id, page: tab.page, isAuthorized: { true }) {
-            case .conflict: break
-            default: problems.append("acquire")
+            case .conflict:
+                break
+            default:
+                problems.append("acquire")
             }
             let calls = [(second, "getDevelopmentInfo"), (second, "resetDevelopment"), (first, "getDevelopmentInfo")]
             for (connection, name) in calls {
                 let result = try? await self.call(connection, name, tab)
-                if result?.isError != true || result?.structuredContent != nil { problems.append(name) }
+                if result?.isError != true || result?.structuredContent != nil {
+                    problems.append(name)
+                }
             }
             return problems
         }.value

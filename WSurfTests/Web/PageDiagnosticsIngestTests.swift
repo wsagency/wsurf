@@ -9,7 +9,9 @@ import Testing
 
 /// Untrusted page messages (WebKit hook) and CDP events (Chromium) become bounded records here, or nothing.
 struct PageDiagnosticsIngestTests {
-    private func entry(_ body: Any) -> PageDiagnostics.Entry? { PageDiagnosticsHook.entry(from: body) }
+    private func entry(_ body: Any) -> PageDiagnostics.Entry? {
+        PageDiagnosticsHook.entry(from: body)
+    }
 
     // MARK: WebKit hook messages
 
@@ -31,7 +33,9 @@ struct PageDiagnosticsIngestTests {
             ["k": "other", "level": "error", "text": "x"],
             ["level": "error", "text": "x"],
         ]
-        for body in bodies { #expect(entry(body) == nil) }
+        for body in bodies {
+            #expect(entry(body) == nil)
+        }
     }
 
     @Test func rejectsNonDictionaryBodies() {
@@ -180,7 +184,8 @@ struct PageDiagnosticsIngestTests {
         let mapper = ChromiumDiagnosticsMapper()
         let result = mapper.entry(method: "Runtime.exceptionThrown", params: [
             "exceptionDetails": ["text": "Uncaught", "url": "https://a.test/app.js?token=hunter2", "lineNumber": 41,
-                "exception": ["type": "object", "subtype": "error", "description": "ReferenceError: nope is not defined\n    at x"]],
+                "exception": ["type": "object", "subtype": "error", "description": "ReferenceError: nope is not defined\n    at x"],
+            ],
         ])
         #expect(result?.fields["text"] == "ReferenceError: nope is not defined")
         #expect(result?.fields["url"] == "https://a.test/app.js")
@@ -303,6 +308,8 @@ struct PageDiagnosticsIngestTests {
             ("Network.requestWillBeSent", ["requestId": 7, "request": "x"]), ("Network.loadingFinished", ["requestId": ["a"]]),
             ("Page.frameNavigated", [:]), ("", [:]),
         ]
-        for (method, params) in malformed { #expect(mapper.entry(method: method, params: params) == nil) }
+        for (method, params) in malformed {
+            #expect(mapper.entry(method: method, params: params) == nil)
+        }
     }
 }

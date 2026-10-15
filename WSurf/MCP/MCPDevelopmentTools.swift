@@ -31,9 +31,12 @@ nonisolated enum MCPDevelopmentTools {
 
     static func value(_ support: DevelopmentCapabilities.Support) -> Value {
         switch support {
-        case .supported: .object(["status": "supported"])
-        case .limited(let reason): .object(["status": "limited", "reason": .string(reason)])
-        case .unsupported(let reason): .object(["status": "unsupported", "reason": .string(reason)])
+        case .supported:
+            .object(["status": "supported"])
+        case .limited(let reason):
+            .object(["status": "limited", "reason": .string(reason)])
+        case .unsupported(let reason):
+            .object(["status": "unsupported", "reason": .string(reason)])
         }
     }
 
@@ -60,8 +63,10 @@ nonisolated enum MCPDevelopmentTools {
         ]
         for (key, field) in record.fields {
             switch field {
-            case .text(let text): object[key] = .string(text)
-            case .number(let number): object[key] = .int(number)
+            case .text(let text):
+                object[key] = .string(text)
+            case .number(let number):
+                object[key] = .int(number)
             }
         }
         if record.stream == .network {
@@ -110,7 +115,8 @@ extension MCPBrowserSession {
                 return MCPDevelopmentTools.result(.stale, tabID: tab.id, message: "Page access changed. Try again.")
             }
             switch name {
-            case "getDevelopmentInfo": return await developmentInfo(tab: tab, view: view, generation: generation)
+            case "getDevelopmentInfo":
+                return await developmentInfo(tab: tab, view: view, generation: generation)
             case "setViewport":
                 guard let width = arguments["width"]?.intValue, let height = arguments["height"]?.intValue else {
                     return MCPDevelopmentTools.result(.invalidInput, tabID: tab.id, message: "width and height are required integers.")
@@ -126,9 +132,12 @@ extension MCPBrowserSession {
                 }
                 let size = profile.dimensions(orientation)
                 return await setViewport(width: size.width, height: size.height, profile: profile, tab: tab, view: view)
-            case "reloadPage": return await reload(tab: tab, view: view, generation: generation)
-            case "resetDevelopment": return await resetDevelopment(tab: tab)
-            case "startDiagnostics": return await startDiagnostics(tab: tab, view: view)
+            case "reloadPage":
+                return await reload(tab: tab, view: view, generation: generation)
+            case "resetDevelopment":
+                return await resetDevelopment(tab: tab)
+            case "startDiagnostics":
+                return await startDiagnostics(tab: tab, view: view)
             default:
                 return await readDiagnostics(
                     stream: name == "readConsole" ? .console : .network, arguments: arguments, tab: tab, view: view, generation: generation)
@@ -146,12 +155,16 @@ extension MCPBrowserSession {
             return self.permits(tab, capability: .development)
         }
         switch tab.acquireDevelopment(connection: id, page: view, isAuthorized: authorized) {
-        case .alreadyOwned(let owner): return owner
-        case .conflict, .pageGone: return nil
+        case .alreadyOwned(let owner):
+            return owner
+        case .conflict, .pageGone:
+            return nil
         case .acquired(let owner):
             let tabID = tab.id
             owner.onRelease { [weak self, weak owner] _ in
-                if self?.developmentTabs[tabID]?.owner === owner { self?.developmentTabs[tabID] = nil }
+                if self?.developmentTabs[tabID]?.owner === owner {
+                    self?.developmentTabs[tabID] = nil
+                }
             }
             developmentTabs[tabID] = (tab, owner)
             return owner
@@ -160,7 +173,9 @@ extension MCPBrowserSession {
 
     /// A lease that applied nothing is not kept, so a rejected request leaves the slot free.
     private func releaseIfIdle(_ owner: DevelopmentOwner, tab: BrowserTab) {
-        if owner.viewport == nil, owner.diagnostics == nil { tab.releaseDevelopment(owner, reason: .reset) }
+        if owner.viewport == nil, owner.diagnostics == nil {
+            tab.releaseDevelopment(owner, reason: .reset)
+        }
     }
 
     /// Why `acquireDevelopment` returned nil.
@@ -217,11 +232,13 @@ extension MCPBrowserSession {
     private func setViewport(width: Int, height: Int, profile: PageViewport.Profile?, tab: BrowserTab, view: BrowserPage) async -> CallTool.Result {
         let device = profile?.deviceAxes == true
         // Everything that can be rejected is rejected before the tab is claimed or touched.
-        switch PageViewport.validate(
+        let validation = PageViewport.validate(
             width: width, height: height, zoom: Double(view.pageZoom), scale: Double(view.window?.backingScaleFactor ?? 1) * (profile?.scale ?? 1))
-        {
-        case .failure(let failure): return MCPDevelopmentTools.result(.invalidInput, tabID: tab.id, message: failure.message)
-        case .success: break
+        switch validation {
+        case .failure(let failure):
+            return MCPDevelopmentTools.result(.invalidInput, tabID: tab.id, message: failure.message)
+        case .success:
+            break
         }
         if device, view.chromium == nil {
             return MCPDevelopmentTools.result(
@@ -256,7 +273,9 @@ extension MCPBrowserSession {
     }
 
     private func reload(tab: BrowserTab, view: BrowserPage, generation: Int) async -> CallTool.Result {
-        if tab.developmentRelation(of: id) == .other { return conflict(tab) }
+        if tab.developmentRelation(of: id) == .other {
+            return conflict(tab)
+        }
         let owner = ownLease(tab)
         guard view.reload() != nil else {
             return MCPDevelopmentTools.result(.unsupported, tabID: tab.id, message: "The page could not be reloaded.")
@@ -287,7 +306,9 @@ extension MCPBrowserSession {
             await owner.cleanup?.value
             return MCPDevelopmentTools.result(.ok, tabID: tab.id, message: "Development settings and diagnostics were removed.")
         }
-        if tab.developmentRelation(of: id) == .other { return conflict(tab) }
+        if tab.developmentRelation(of: id) == .other {
+            return conflict(tab)
+        }
         return MCPDevelopmentTools.result(.ok, tabID: tab.id, message: "Nothing to reset.")
     }
 
@@ -320,7 +341,9 @@ extension MCPBrowserSession {
         stream: PageDiagnostics.Stream, arguments: [String: Value], tab: BrowserTab, view: BrowserPage, generation: Int
     ) async -> CallTool.Result {
         guard let owner = ownLease(tab) else {
-            if tab.developmentRelation(of: id) == .other { return conflict(tab) }
+            if tab.developmentRelation(of: id) == .other {
+                return conflict(tab)
+            }
             return MCPDevelopmentTools.result(.invalidInput, tabID: tab.id, message: "Capture is not running. Call startDiagnostics first.")
         }
         guard let diagnostics = owner.diagnostics else {
@@ -354,7 +377,9 @@ extension MCPBrowserSession {
         } catch {
             return MCPDevelopmentTools.result(
                 .invalidInput, tabID: tab.id,
-                message: (error as? PageDiagnostics.ReadError) == .invalidLimit ? "limit must be 1 to \(PageDiagnostics.Buffer.maxReadLimit)." : "The cursor is not valid for this tab, stream and capture.")
+                message: (error as? PageDiagnostics.ReadError) == .invalidLimit
+                    ? "limit must be 1 to \(PageDiagnostics.Buffer.maxReadLimit)."
+                    : "The cursor is not valid for this tab, stream and capture.")
         }
     }
 }

@@ -17,27 +17,39 @@ nonisolated enum PageDiagnostics {
         case text(String)
         case number(Int)
 
-        init(stringLiteral value: String) { self = .text(value) }
-        init(integerLiteral value: Int) { self = .number(value) }
+        init(stringLiteral value: String) {
+            self = .text(value)
+        }
+
+        init(integerLiteral value: Int) {
+            self = .number(value)
+        }
 
         /// Bytes this value occupies once serialized as JSON (quotes and escapes included).
         var serializedSize: Int {
             switch self {
-            case .text(let text): PageDiagnostics.escapedSize(text) + 2
-            case .number(let number): String(number).utf8.count
+            case .text(let text):
+                PageDiagnostics.escapedSize(text) + 2
+            case .number(let number):
+                String(number).utf8.count
             }
         }
     }
 
     /// Serialized JSON string-body size of `text`: quotes and backslashes take 2 bytes, control characters 6 (`\u00XX`,
     /// the worst case), everything else its UTF-8 length.
-    static func escapedSize(_ text: String) -> Int { text.unicodeScalars.reduce(0) { $0 + escapedSize($1) } }
+    static func escapedSize(_ text: String) -> Int {
+        text.unicodeScalars.reduce(0) { $0 + escapedSize($1) }
+    }
 
     static func escapedSize(_ scalar: Unicode.Scalar) -> Int {
         switch scalar.value {
-        case 0x22, 0x5C: 2
-        case ..<0x20: 6
-        default: String(scalar).utf8.count
+        case 0x22, 0x5C:
+            2
+        case ..<0x20:
+            6
+        default:
+            String(scalar).utf8.count
         }
     }
 
@@ -53,7 +65,9 @@ nonisolated enum PageDiagnostics {
         let truncated: Bool
 
         /// Serialized JSON size: members, escaped keys and values, and the document identity.
-        var byteCount: Int { Record.size(fields, documentID: documentID) }
+        var byteCount: Int {
+            Record.size(fields, documentID: documentID)
+        }
 
         fileprivate static func size(_ fields: [String: Field], documentID: String) -> Int {
             fields.reduce(PageDiagnostics.recordOverhead + PageDiagnostics.escapedSize(documentID)) {
@@ -111,9 +125,13 @@ nonisolated enum PageDiagnostics {
             self.maxRecordBytes = maxRecordBytes
         }
 
-        var recordCount: Int { records.count }
+        var recordCount: Int {
+            records.count
+        }
 
-        func evicted(_ stream: Stream) -> Int { evictedCount[stream, default: 0] }
+        func evicted(_ stream: Stream) -> Int {
+            evictedCount[stream, default: 0]
+        }
 
         /// Stores a record for the owner's current document. Returns false (and stores nothing) for any other document,
         /// so late events from a previous document can never be merged under the new identity.
@@ -142,7 +160,9 @@ nonisolated enum PageDiagnostics {
             evictedCount.removeAll()
             byteCount = 0
             epoch = Buffer.takeEpoch()
-            if let documentID { self.documentID = documentID }
+            if let documentID {
+                self.documentID = documentID
+            }
         }
 
         func read(stream: Stream, cursor: String?, limit: Int) throws(ReadError) -> Page {
@@ -155,7 +175,11 @@ nonisolated enum PageDiagnostics {
             if let cursor {
                 let position = try decode(cursor, stream: stream)
                 guard position <= next else { throw .invalid }
-                if position < oldest { gap = Int(oldest - position) } else { start = position }
+                if position < oldest {
+                    gap = Int(oldest - position)
+                } else {
+                    start = position
+                }
             }
             let page = retained.filter { $0.seq >= start }.prefix(limit)
             let after = page.last.map { $0.seq + 1 } ?? start
@@ -187,15 +211,19 @@ nonisolated enum PageDiagnostics {
         private func bound(_ fields: [String: Field], documentID: String) -> ([String: Field], Bool) {
             var fields = fields
             var truncated = false
-            func text(_ field: Field) -> String? { if case .text(let text) = field { text } else { nil } }
+            func text(_ field: Field) -> String? {
+                guard case .text(let text) = field else { return nil }
+                return text
+            }
             while Record.size(fields, documentID: documentID) > maxRecordBytes,
                 let largest = fields.compactMap({ key, field in text(field).map { (key, $0) } })
                     .max(by: { ($0.1.utf8.count, $1.0) < ($1.1.utf8.count, $0.0) }),
-                !largest.1.isEmpty
-            {
+                !largest.1.isEmpty {
                 var excess = Record.size(fields, documentID: documentID) - maxRecordBytes
                 var value = largest.1.unicodeScalars
-                while excess > 0, let last = value.popLast() { excess -= PageDiagnostics.escapedSize(last) }
+                while excess > 0, let last = value.popLast() {
+                    excess -= PageDiagnostics.escapedSize(last)
+                }
                 fields[largest.0] = .text(String(value))
                 truncated = true
             }
@@ -212,7 +240,7 @@ nonisolated enum PageDiagnostics {
     static func sanitize(url: String) -> String? {
         guard let colon = url.firstIndex(of: ":") else { return nil }
         let scheme = url[..<colon].lowercased()
-        guard let first = scheme.unicodeScalars.first, (first.value >= 0x61 && first.value <= 0x7A),
+        guard let first = scheme.unicodeScalars.first, first.value >= 0x61 && first.value <= 0x7A,
             scheme.unicodeScalars.allSatisfy({ ($0.value >= 0x61 && $0.value <= 0x7A) || ($0.value >= 0x30 && $0.value <= 0x39) || "+-.".unicodeScalars.contains($0) })
         else { return nil }
         guard hierarchicalSchemes.contains(scheme) else { return "\(scheme):" }

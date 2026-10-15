@@ -23,9 +23,12 @@ nonisolated enum PageViewport {
             switch self {
             case .axisOutOfRange(let axis, let value):
                 "The viewport \(axis == .width ? "width" : "height") \(value) must be between \(PageViewport.minAxis) and \(PageViewport.maxAxis) CSS pixels."
-            case .areaTooLarge: "The viewport may cover at most \(PageViewport.maxCSSArea) CSS pixels."
-            case .backingTooLarge: "The viewport would need more than \(Int(PageViewport.maxBackingArea)) backing pixels at the current zoom and scale."
-            case .invalidScale: "The page zoom or device scale is not a positive finite number."
+            case .areaTooLarge:
+                "The viewport may cover at most \(PageViewport.maxCSSArea) CSS pixels."
+            case .backingTooLarge:
+                "The viewport would need more than \(Int(PageViewport.maxBackingArea)) backing pixels at the current zoom and scale."
+            case .invalidScale:
+                "The page zoom or device scale is not a positive finite number."
             }
         }
     }
@@ -62,7 +65,9 @@ nonisolated enum PageViewport {
         Profile(name: "tablet", short: 768, long: 1_024, scale: 2, deviceAxes: true),
     ]
 
-    static func profile(named name: String) -> Profile? { profiles.first { $0.name == name } }
+    static func profile(named name: String) -> Profile? {
+        profiles.first { $0.name == name }
+    }
 
     /// Checks every ceiling before anything is applied: per-axis range, CSS area, then estimated backing pixels
     /// (`width × height × (zoom × scale)²`).

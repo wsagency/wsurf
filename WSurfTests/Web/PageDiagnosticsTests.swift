@@ -60,7 +60,9 @@ struct PageDiagnosticsTests {
 
     @Test func aLimitOutsideOneToOneHundredIsAnErrorNotClamped() throws {
         let buffer = buffer()
-        for _ in 0..<150 { add(buffer) }
+        for _ in 0..<150 {
+            add(buffer)
+        }
         #expect(try buffer.read(stream: .console, cursor: nil, limit: 100).records.count == 100)
         for limit in [0, -1, 101, 1_000] {
             #expect(throws: PageDiagnostics.ReadError.invalidLimit) { try buffer.read(stream: .console, cursor: nil, limit: limit) }
@@ -152,7 +154,14 @@ struct PageDiagnosticsTests {
         let serialized = try JSONSerialization.data(withJSONObject: page.records.map { record in
             ["seq": Int(record.seq), "stream": record.stream.rawValue, "documentID": record.documentID, "truncated": record.truncated,
              "timestamp": "2026-10-14T00:00:00.000Z", "fields": record.fields.mapValues { field -> Any in
-                switch field { case .text(let text): text; case .number(let number): number } }] as [String: Any]
+                switch field {
+                case .text(let text):
+                    text
+                case .number(let number):
+                    number
+                }
+            },
+            ] as [String: Any]
         })
         // What the buffer counts for a record is never less than what that record serializes to.
         #expect(buffer.byteCount <= 2 * 1_048_576)

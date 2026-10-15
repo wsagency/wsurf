@@ -271,7 +271,9 @@ final class BrowserPage: NSView {
         set {
             webKit?.pageZoom = newValue
             chromium?.pageZoom = newValue
-            if developmentViewport != nil { (superview as? WebViewContainer)?.layoutPage() }
+            if developmentViewport != nil {
+                (superview as? WebViewContainer)?.layoutPage()
+            }
         }
     }
 
@@ -696,7 +698,9 @@ final class BrowserPage: NSView {
         handlers[Self.handlerKey(name: name, world: world)] = handler
         if let webKit {
             let controller = webKit.configuration.userContentController
-            if bridge { Self.installBridge(in: controller, world: world) }
+            if bridge {
+                Self.installBridge(in: controller, world: world)
+            }
             controller.removeScriptMessageHandler(forName: name, contentWorld: world)
             // Opener-created views can share a controller; route by the emitting native view, not the last installed tab.
             controller.add(MessageAdapter(world: world), contentWorld: world, name: name)

@@ -29,7 +29,9 @@ nonisolated extension PageDiagnostics {
         var end = text.unicodeScalars.startIndex
         while end < text.unicodeScalars.endIndex {
             let size = String(text.unicodeScalars[end]).utf8.count
-            if used + size > bytes { return (String(text.unicodeScalars[..<end]), true) }
+            if used + size > bytes {
+                return (String(text.unicodeScalars[..<end]), true)
+            }
             used += size
             end = text.unicodeScalars.index(after: end)
         }
@@ -78,9 +80,12 @@ nonisolated enum PageDiagnosticsHook {
     static func entry(from body: Any) -> PageDiagnostics.Entry? {
         guard let body = body as? [String: Any] else { return nil }
         switch body["k"] as? String {
-        case "console": return console(body)
-        case "net": return network(body)
-        default: return nil
+        case "console":
+            return console(body)
+        case "net":
+            return network(body)
+        default:
+            return nil
         }
     }
 
@@ -300,17 +305,23 @@ nonisolated final class ChromiumDiagnosticsMapper {
 
     func entry(method: String, params: [String: Any]) -> PageDiagnostics.Entry? {
         switch method {
-        case "Runtime.consoleAPICalled": return Self.console(params)
-        case "Runtime.exceptionThrown": return Self.exception(params)
-        case "Network.requestWillBeSent": return requestWillBeSent(params)
+        case "Runtime.consoleAPICalled":
+            return Self.console(params)
+        case "Runtime.exceptionThrown":
+            return Self.exception(params)
+        case "Network.requestWillBeSent":
+            return requestWillBeSent(params)
         case "Network.responseReceived":
             if let id = params["requestId"] as? String, pending[id] != nil {
                 pending[id]?.status = PageDiagnostics.status((params["response"] as? [String: Any])?["status"])
             }
             return nil
-        case "Network.loadingFinished": return finish(params, outcome: "completed")
-        case "Network.loadingFailed": return finish(params, outcome: (params["canceled"] as? Bool) == true ? "aborted" : "failed")
-        default: return nil
+        case "Network.loadingFinished":
+            return finish(params, outcome: "completed")
+        case "Network.loadingFailed":
+            return finish(params, outcome: (params["canceled"] as? Bool) == true ? "aborted" : "failed")
+        default:
+            return nil
         }
     }
 
@@ -325,7 +336,10 @@ nonisolated final class ChromiumDiagnosticsMapper {
             let room = PageDiagnostics.maxTextBytes - text.utf8.count - separator.utf8.count
             let piece = PageDiagnostics.clip(describe(arg), bytes: max(room, 0))
             text += separator + piece.text
-            if piece.truncated { truncated = true; break }
+            if piece.truncated {
+                truncated = true
+                break
+            }
         }
         return .init(
             stream: .console, fields: ["level": .text(level), "text": .text(text), "source": "cdp"], truncated: truncated,
@@ -335,21 +349,29 @@ nonisolated final class ChromiumDiagnosticsMapper {
     /// Primitives only. Objects and functions are never rendered: their descriptions can embed arbitrary page data.
     private static func describe(_ arg: [String: Any]) -> String {
         switch arg["type"] as? String {
-        case "string": return arg["value"] as? String ?? ""
+        case "string":
+            return arg["value"] as? String ?? ""
         case "number":
             if let int = arg["value"] as? Int { return String(int) }
             if let double = arg["value"] as? Double { return String(double) }
             return arg["unserializableValue"] as? String ?? "[number]"
-        case "boolean": return (arg["value"] as? Bool) == true ? "true" : "false"
-        case "undefined": return "undefined"
-        case "function": return "[function]"
+        case "boolean":
+            return (arg["value"] as? Bool) == true ? "true" : "false"
+        case "undefined":
+            return "undefined"
+        case "function":
+            return "[function]"
         case "object":
             switch arg["subtype"] as? String {
-            case "null": return "null"
-            case "error": return PageDiagnostics.firstLine(arg["description"] as? String ?? "Error")
-            default: return "[object omitted]"
+            case "null":
+                return "null"
+            case "error":
+                return PageDiagnostics.firstLine(arg["description"] as? String ?? "Error")
+            default:
+                return "[object omitted]"
             }
-        default: return "[value omitted]"
+        default:
+            return "[value omitted]"
         }
     }
 
