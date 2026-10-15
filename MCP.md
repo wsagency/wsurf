@@ -121,7 +121,7 @@ revoke it immediately.
 | `inspectControl` | Read control state and paginate dropdown options. |
 | `setChecked` | Set a checkbox, switch, or radio to the requested state. |
 | `waitForPage` | Wait up to 15 seconds for text, absent text, a URL substring, document readiness, or a CSS selector that matches exactly one element to be visible, hidden/absent, or enabled. An element wait ends as stale if the page navigates. Selectors are limited to a safe subset; see below. |
-| `screenshotPage` | Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part, also when it sits in a same-origin iframe (the frame's border, padding, scale, clipping, CSS zoom and any 2D rotation, reflection or skew are applied; a selected frame, a frame or clipping container under a 3D transform or perspective, or a frame or clipping container inside SVG content, is refused). A control ref from `readPage` needs only read access; any other element ref from `findElements` needs development access, checked before the work, after every wait and again just before the image is returned. The result states the covered rectangle and image scale. Never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop. |
+| `screenshotPage` | Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part, also when it sits in a same-origin iframe (the frame's border, padding, scale, clipping, CSS zoom and any 2D rotation, reflection or skew are applied; a selected frame, a frame or clipping container under a 3D transform or perspective, or a frame or clipping container inside SVG content, is refused). A control ref from `readPage` needs only read access; any other element ref from `findElements` needs development access, checked before the work, after every wait and again just before the image is returned. The image is shrunk to fit the message limit, and the result states the covered rectangle and the scale of the image actually returned. Never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop. |
 | `pressKey` | Send a supported keyboard key to a control in a visible tab. |
 | `hoverOnPage` | Move the real pointer to a referenced element, so CSS `:hover` and pointer/mouse handlers run. Needs WSurf to be the active app with a key window and the tab on screen; it never activates or raises WSurf. Refused with a specific message when the element is offscreen, covered, or clipped by the window (a development viewport larger than the window), or when the pointer could not be delivered; not available inside frames. |
 | `getDevelopmentInfo` | Engine, measured viewport (`innerWidth`, `innerHeight`, device pixel ratio, touch), zoom, who holds the tab's development lease (`none`, `self`, `other`) and per-engine capabilities. Works with any grant. |
@@ -157,10 +157,11 @@ not replay verified refs or retry blocked controls through another tool.
 Reads and actions use document-bound references in the same isolated runtime.
 Replaced or unobserved targets are refused.
 
-Use `lookingFor` to search beyond the first excerpt, `scope` for a CSS control subtree,
-`viewportOnly` for visible controls, and `textOffset` / `controlOffset` to continue.
+Use `lookingFor` to search beyond the first excerpt, `scope` for the controls under every element a CSS selector
+matches, `viewportOnly` for visible controls, and `textOffset` / `controlOffset` to continue.
 Keep the query and scope unchanged when paging. Text offsets use UTF-16 units.
-The standard text response budget is about 6 KB before MCP framing; screenshot data is separate.
+The standard text response budget is about 6 KB before MCP framing; a screenshot is capped at 150 KB of JPEG, and its pixels shrink when needed.
+A ref the observation did not list gets a message saying so, not the stale-page message.
 Use screenshots only when text and control state do not answer the task.
 
 

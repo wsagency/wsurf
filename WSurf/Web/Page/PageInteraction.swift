@@ -20,7 +20,7 @@ extension PageDriver {
     }
 
     static func inspectControl(ref: Int, offset: Int = 0, in view: BrowserPage) async -> String {
-        guard await validateObservation(in: view, ref: ref) else { return staleMessage }
+        guard await validateObservation(in: view, ref: ref) else { return await referenceFailureMessage(ref: ref, in: view) }
         let start = max(0, offset)
         let script = scripted(
             """
@@ -58,7 +58,7 @@ extension PageDriver {
     static func setChecked(
         ref: Int, checked: Bool, in view: BrowserPage, announced: Bool = false, refreshControls: Bool = true
     ) async -> String {
-        guard await validateObservation(in: view, ref: ref) else { return staleMessage }
+        guard await validateObservation(in: view, ref: ref) else { return await referenceFailureMessage(ref: ref, in: view) }
         let state = await evaluateJSON(scripted("""
             const el = window.__wsurfRefs[\(ref) - 1];
             if (R.isSensitiveField(el)) return JSON.stringify({ refused: true });
@@ -159,9 +159,11 @@ extension PageDriver {
     /// refuse the capture, checked before and after, even for a crop. Never scrolls, stitches or changes the viewport.
     /// `developmentAllowed` is asked before any work, after each await and just before pixels are returned: an element
     /// registered only by `findElements` is captured while it answers true, never otherwise. Ordinary control refs, the
-    /// viewport and regions never ask for it.
+    /// viewport and regions never ask for it. `maximumBytes` bounds the returned JPEG and may shrink its pixels; the
+    /// returned `scale` always describes the image that is returned.
     static func screenshot(
-        _ target: ScreenshotTarget = .viewport, developmentAllowed: () -> Bool = { false }, in view: BrowserPage
+        _ target: ScreenshotTarget = .viewport, developmentAllowed: () -> Bool = { false }, maximumBytes: Int? = nil,
+        in view: BrowserPage
     ) async -> Result<ScreenshotCapture, ScreenshotFailure> {
         guard PageAutomationGuard.allowsExecution else { return .failure(.stale) }
         var ref = 0
@@ -240,10 +242,13 @@ extension PageDriver {
                 [now.minX - placed.minX, now.minY - placed.minY, now.width - placed.width, now.height - placed.height].allSatisfy({ abs($0) <= 0.5 })
             else { return .failure(.stale) }
         }
-        guard let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return .failure(.captureFailed) }
+        // The limit may have shrunk the pixels, so the scale comes from the image that is returned.
+        guard let jpeg = PageScreenshotEncoding.jpeg(bitmap, fitting: maximumBytes),
+            let encoded = NSBitmapImageRep(data: jpeg), encoded.pixelsWide > 0
+        else { return .failure(.captureFailed) }
         return .success(
             ScreenshotCapture(
-                jpeg: jpeg, bounds: css, scale: CGFloat(bitmap.pixelsWide) / css.width,
+                jpeg: jpeg, bounds: css, scale: CGFloat(encoded.pixelsWide) / css.width,
                 requiresDevelopment: foundOnly || after["foundOnly"] as? Bool == true))
     }
 }

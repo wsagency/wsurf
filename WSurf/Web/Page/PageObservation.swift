@@ -67,6 +67,13 @@ extension PageDriver {
         return await selectedFrameIsLive(in: view)
     }
 
+    /// Refusal for a ref that failed validation. Only an observation that is still current and never listed the ref
+    /// gets the specific message; every other failure returns `otherwise`.
+    static func referenceFailureMessage(ref: Int, in view: BrowserPage, otherwise: String = staleMessage) async -> String {
+        guard let current = observation(in: view), !current.refs.contains(ref), await validateObservation(in: view) else { return otherwise }
+        return "[\(ref)] was not listed in that observation. Use a ref it listed, or readPage with lookingFor to find the control."
+    }
+
     static func prepareAction(ref: Int, in view: BrowserPage) async -> String? {
         let deadline = ContinuousClock.now + .seconds(1)
         var previousBounds: [Double]?
@@ -74,7 +81,7 @@ extension PageDriver {
         var samples = 0
         var lastError = "The control did not become stable. Read the page again."
         repeat {
-            guard await validateObservation(in: view, ref: ref) else { return staleMessage }
+            guard await validateObservation(in: view, ref: ref) else { return await referenceFailureMessage(ref: ref, in: view) }
             let result = await evaluateJSON(
                 scripted(
                     """

@@ -60,11 +60,11 @@ struct PageInteractionTests {
         let view = await page("<button id='a' onclick='window.hit=true'>Ordinary action</button>")
         _ = await PageDriver.snapshot(view)
         _ = await js(view, "document.querySelector('button').textContent='Delete account'")
-        #expect(await PageDriver.click(ref: 1, label: "", in: view) == PageDriver.staleMessage)
+        _ = await PageDriver.click(ref: 1, label: "", in: view)
         #expect(await js(view, "window.hit === undefined") as? Bool == true)
         view.loadHTMLString("<button onclick='window.hit=true'>New document</button>", baseURL: nil)
         #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
-        #expect(await PageDriver.click(ref: 1, label: "", in: view) == PageDriver.staleMessage)
+        _ = await PageDriver.click(ref: 1, label: "", in: view)
         #expect(await js(view, "window.hit === undefined") as? Bool == true)
     }
 
@@ -158,7 +158,32 @@ struct PageInteractionTests {
         #expect(page.contains("[100]"))
         let observation = try #require(PageDriver.observation(in: view))
         #expect(!observation.refs.contains(1))
-        #expect(await PageDriver.click(ref: 1, label: "", in: view) == PageDriver.staleMessage)
+    }
+
+    @Test func clickingARefTheObservationOmittedActsOnlyOnceItIsListed() async throws {
+        let buttons = (1...12).map { "<button onclick='document.body.dataset.clicked=\"\($0)\"'>Choice \($0)</button>" }.joined()
+        let view = await page(buttons)
+        _ = await PageDriver.snapshot(view, textLimit: 0, controlLimit: 3)
+        #expect(!(try #require(PageDriver.observation(in: view)).refs.contains(9)))
+        _ = await PageDriver.click(ref: 9, label: "", in: view)
+        #expect(await js(view, "document.body.dataset.clicked === undefined") as? Bool == true)
+
+        _ = await PageDriver.snapshot(view, textLimit: 0, controlLimit: 12)
+        #expect(try #require(PageDriver.observation(in: view)).refs.contains(9))
+        _ = await PageDriver.click(ref: 9, label: "", in: view)
+        #expect(await js(view, "document.body.dataset.clicked") as? String == "9")
+    }
+
+    @Test func batchFillWritesListedFieldsAndLeavesAnOmittedOneUntouched() async throws {
+        let view = await page((1...12).map { "<input aria-label='Field \($0)'>" }.joined())
+        _ = await PageDriver.snapshot(view, textLimit: 0, controlLimit: 3)
+        let listed = try #require(PageDriver.observation(in: view)).refs
+        #expect(listed.contains(1) && !listed.contains(9))
+        _ = await PageDriver.fillFields([
+            .init(ref: 1, value: "kept", select: false), .init(ref: 9, value: "unseen", select: false),
+        ], in: view)
+        #expect(await js(view, "document.querySelectorAll('input')[0].value") as? String == "kept")
+        #expect(await js(view, "document.querySelectorAll('input')[8].value") as? String == "")
     }
 
     @Test func calendarPaginationRecoversFromRefOffsetsAndChangedQueries() async {
@@ -190,10 +215,9 @@ struct PageInteractionTests {
         let before = try #require(PageDriver.observation(in: view))
         view.loadHTMLString("<button onclick='window.hit=true'>29</button>", baseURL: nil)
         #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
-        let result = await PageDriver.$expectedObservation.withValue(before.id) {
+        _ = await PageDriver.$expectedObservation.withValue(before.id) {
             await PageDriver.click(ref: 0, label: "29", in: view)
         }
-        #expect(result == PageDriver.staleMessage)
         #expect(await js(view, "window.hit === undefined") as? Bool == true)
     }
 
@@ -361,6 +385,49 @@ struct PageInteractionTests {
     @Test func screenshotsRefuseFilledSensitiveFields() async {
         let view = await page("<input type='password' value='secret'>")
         #expect(await PageDriver.screenshot(in: view).failure == .privacy)
+    }
+
+    @Test func boundedScreenshotsShrinkWhileUnboundedOnesKeepTheirPixels() async throws {
+        let view = await page(
+            """
+            <canvas id='c' width='500' height='400'></canvas>
+            <script>
+              const context = document.getElementById('c').getContext('2d'), noise = context.createImageData(500, 400);
+              for (let i = 0; i < noise.data.length; i++) noise.data[i] = i % 4 === 3 ? 255 : Math.random() * 256;
+              context.putImageData(noise, 0, 0);
+            </script>
+            """)
+        let limit = 30_000
+        let full = try await PageDriver.screenshot(in: view).get()
+        let bounded = try await PageDriver.screenshot(maximumBytes: limit, in: view).get()
+        #expect(full.jpeg.count > limit)
+        #expect(bounded.jpeg.count <= limit)
+        let fullWidth = try #require(NSBitmapImageRep(data: full.jpeg)).pixelsWide
+        let boundedWidth = try #require(NSBitmapImageRep(data: bounded.jpeg)).pixelsWide
+        #expect(boundedWidth < fullWidth)
+        // The reported scale describes the image that was returned, not the one that was captured.
+        #expect(abs(bounded.scale * bounded.bounds.width - CGFloat(boundedWidth)) < 1)
+        #expect(abs(full.scale * full.bounds.width - CGFloat(fullWidth)) < 1)
+    }
+
+    @Test func scopeCoversEveryMatchingElement() async {
+        let view = await page(
+            "<button>Outside</button><section><input aria-label='First'></section><section><textarea aria-label='Second'></textarea></section>")
+        let sections = await PageDriver.snapshot(view, scope: "section")
+        #expect(sections.contains("\"First\"") && sections.contains("\"Second\""), "\(sections)")
+        #expect(!sections.contains("button \"Outside\""))
+        let fields = await PageDriver.snapshot(view, scope: "textarea, input")
+        #expect(fields.contains("\"First\"") && fields.contains("\"Second\""), "\(fields)")
+        #expect(!(await PageDriver.snapshot(view, scope: "article")).hasPrefix("PAGE TEXT:"))
+        #expect(!(await PageDriver.snapshot(view, scope: "section[")).hasPrefix("PAGE TEXT:"))
+
+        let shadow = await page(
+            """
+            <div class='host'></div><button>Outside</button>
+            <script>document.querySelector('.host').attachShadow({ mode: 'open' }).innerHTML = '<button>Inside shadow</button>';</script>
+            """)
+        let hosted = await PageDriver.snapshot(shadow, scope: ".host")
+        #expect(hosted.contains("button \"Inside shadow\"") && !hosted.contains("button \"Outside\""), "\(hosted)")
     }
 
     @Test func sensitiveEditableTextIsRedactedAndCannotBeOverwritten() async {

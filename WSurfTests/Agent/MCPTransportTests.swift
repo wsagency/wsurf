@@ -353,6 +353,33 @@ struct MCPTransportTests {
         #expect(throws: (any Error).self) { try shot.validate(["tabID": "tab", "x": 0]) }
     }
 
+    @Test func screenshotReplyGuardAgreesWithWhatTheFramerAccepts() throws {
+        func wire(imageBytes: Int) throws -> (line: Data, result: CallTool.Result) {
+            let content: Value = .object([
+                "tabID": .string(UUID().uuidString), "content": .string(String(repeating: "\"\n", count: 3_000)),
+                "observationID": .string(UUID().uuidString), "url": .string("https://example.test/" + String(repeating: "a/", count: 240)),
+            ])
+            let text = String(decoding: try JSONEncoder().encode(content), as: UTF8.self)
+            let image = Data((0..<imageBytes).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ ($0 >> 8)) })
+            let result = CallTool.Result(
+                content: [.text(text: text, annotations: nil, _meta: nil),
+                          .image(data: image.base64EncodedString(), mimeType: "image/jpeg", annotations: nil, _meta: nil)],
+                structuredContent: Optional.some(content), isError: false)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            return (try encoder.encode(Response<CallTool>(id: .random, result: result)) + Data("\n".utf8), result)
+        }
+        let capped = try wire(imageBytes: MCPBrowserSession.screenshotBytes)
+        #expect(MCPBrowserSession.replyBytes(capped.result) <= MCPMessageFramer.maximumBytes)
+        #expect(MCPBrowserSession.replyBytes(capped.result) >= capped.line.count - 1)
+        var accepting = MCPMessageFramer()
+        #expect(try accepting.append(capped.line).count == 1)
+
+        let oversized = try wire(imageBytes: 200_000)
+        #expect(MCPBrowserSession.replyBytes(oversized.result) > MCPMessageFramer.maximumBytes)
+        var rejecting = MCPMessageFramer()
+        #expect(throws: (any Error).self) { try rejecting.append(oversized.line) }
+    }
     @Test func fillFieldsContractAcceptsThirtyTwoControlsAndRejectsThirtyThree() throws {
         let fill = try #require(MCPToolCatalog.entries.first { $0.name == "fillFields" })
         let arguments: (Int) -> [String: Value] = { count in
