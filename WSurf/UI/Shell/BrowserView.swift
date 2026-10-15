@@ -159,11 +159,13 @@ struct BrowserView: View {
             )
 
             SidebarDragOverlay(browser: browser, model: coordinator.sidebarDrag)
+                .environment(\.sidebarStyle, sidebar.style)
 
             DownloadFlightLayer(flights: coordinator.downloadFlights)
                 .environment(\.sidebarStyle, sidebar.style)
 
             PaneDragOverlay(browser: browser, model: coordinator.sidebarDrag)
+                .environment(\.sidebarStyle, sidebar.style)
 
             if !sidebar.isShowing {
                 Color.clear

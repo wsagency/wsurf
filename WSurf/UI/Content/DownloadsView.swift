@@ -4,6 +4,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct DownloadsView: View {
     let browser: BrowserModel
@@ -79,9 +80,10 @@ private struct DownloadFileRow: View {
 
     var body: some View {
         HStack(spacing: 11) {
-            Image(systemName: symbol)
+            Image(systemName: hovering && item.state == .finished ? "arrow.up.forward.app" : symbol)
                 .font(.system(size: 14))
                 .foregroundStyle(item.state == .finished ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.secondary))
+                .transaction { $0.animation = nil }
                 .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -158,7 +160,7 @@ private struct DownloadFileRow: View {
         case .running:
             "arrow.down"
         case .finished:
-            "doc"
+            Self.symbol(forFilename: item.filename)
         case .interrupted:
             "pause.circle"
         case .failed:
@@ -166,6 +168,30 @@ private struct DownloadFileRow: View {
         case .cancelled:
             "slash.circle"
         }
+    }
+
+    /// The first entry the file's type conforms to wins, so specific types come before the general ones they refine.
+    private static let fileKindSymbols: [(UTType, String)] = [
+        (.pdf, "doc.richtext"),
+        (.image, "photo"),
+        (.movie, "film"),
+        (.audio, "music.note"),
+        (.diskImage, "externaldrive"),
+        (.archive, "doc.zipper"),
+        (.application, "app"),
+        (.applicationBundle, "app"),
+        (.presentation, "rectangle.on.rectangle"),
+        (.spreadsheet, "tablecells"),
+        (.font, "textformat"),
+        (.sourceCode, "chevron.left.forwardslash.chevron.right"),
+        (.html, "globe"),
+        (.text, "doc.text"),
+    ]
+
+    static func symbol(forFilename filename: String) -> String {
+        let ext = (filename as NSString).pathExtension
+        guard let type = UTType(filenameExtension: ext) else { return "doc" }
+        return fileKindSymbols.first { type.conforms(to: $0.0) }?.1 ?? "doc"
     }
 
     private var subtitle: Text {
