@@ -21,6 +21,7 @@ struct ThemeThumbnailPalette: Equatable {
         case dark
         case lightCalm
         case darkCalm
+        case preset(ThemePreset)
     }
 
     let id: Identifier
@@ -31,6 +32,8 @@ struct ThemeThumbnailPalette: Equatable {
     let primary: Color
     let secondary: Color
     let accent: Color
+    /// Only a preset paints the sidebar as its own surface; the other palettes share the backdrop.
+    var sidebar: Color?
 
     static let light = ThemeThumbnailPalette(
         id: .light,
@@ -106,6 +109,20 @@ struct ThemeThumbnailPalette: Equatable {
     }
 }
 
+extension ThemeThumbnailPalette {
+    init(preset: ThemePreset) {
+        func color(_ role: ThemePreset.Role) -> Color {
+            Color(nsColor: preset.nsColor(role))
+        }
+        self.init(
+            id: .preset(preset), backdrop: color(.window), chrome: color(.window),
+            canvas: color(.sidebar), surface: color(.surface),
+            primary: color(.text), secondary: color(.text).opacity(preset.unloadedTextOpacity), accent: color(.accent),
+            sidebar: color(.sidebar)
+        )
+    }
+}
+
 struct ThemePicker: View {
     let selection: AppearanceMode
     let onSelect: (AppearanceMode) -> Void
@@ -135,6 +152,25 @@ struct ThemePicker: View {
                 onSelect(mode)
             }
         }
+    }
+}
+
+/// One card per preset; the thumbnail shows the preset's own colors.
+struct ThemePresetPicker: View {
+    let selection: ThemePreset?
+    let onSelect: (ThemePreset) -> Void
+
+    var body: some View {
+        LazyVGrid(columns: AppearanceThumbnailMetrics.columns, spacing: AppearanceThumbnailMetrics.spacing) {
+            ForEach(ThemePreset.allCases) { preset in
+                PreviewChoiceCard(label: preset.label, isSelected: preset == selection) {
+                    onSelect(preset)
+                } thumbnail: {
+                    ThemeThumbnailWindow(palette: ThemeThumbnailPalette(preset: preset))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -193,15 +229,17 @@ private struct ThemeThumbnailWindow: View {
             ZStack {
                 palette.backdrop
 
-                LinearGradient(
-                    colors: [
-                        palette.accent.opacity(0.12),
-                        Color.white.opacity(0.055),
-                        Color.black.opacity(0.08),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
+                if palette.sidebar == nil {
+                    LinearGradient(
+                        colors: [
+                            palette.accent.opacity(0.12),
+                            Color.white.opacity(0.055),
+                            Color.black.opacity(0.08),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                }
             }
         }
     }
@@ -231,6 +269,11 @@ struct AppearanceBrowserThumbnail<Backdrop: View>: View {
             palette.chrome
                 .frame(maxWidth: .infinity)
                 .frame(height: 14, alignment: .top)
+            if let sidebar = palette.sidebar {
+                sidebar
+                    .frame(width: 27)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            }
 
             AppearanceBrowserPage(palette: palette)
                 .padding(.top, 14)
@@ -242,17 +285,20 @@ struct AppearanceBrowserThumbnail<Backdrop: View>: View {
                 ink: chromeInk,
                 secondaryInk: palette.secondary,
                 accent: palette.accent,
-                tintsSelectedTab: tintsSelectedTab
+                tintsSelectedTab: tintsSelectedTab,
+                dimsUnloadedRow: palette.sidebar != nil
             )
         }
         .overlay(alignment: .top) {
-            LinearGradient(
-                colors: [Color.white.opacity(0.13), .clear],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: 13)
-            .allowsHitTesting(false)
+            if palette.sidebar == nil {
+                LinearGradient(
+                    colors: [Color.white.opacity(0.13), .clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 13)
+                .allowsHitTesting(false)
+            }
         }
     }
 }
@@ -298,6 +344,7 @@ private struct AppearanceBrowserChrome: View {
     let secondaryInk: Color
     let accent: Color
     let tintsSelectedTab: Bool
+    let dimsUnloadedRow: Bool
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -305,7 +352,8 @@ private struct AppearanceBrowserChrome: View {
                 ink: ink,
                 secondaryInk: secondaryInk,
                 accent: accent,
-                tintsSelectedTab: tintsSelectedTab
+                tintsSelectedTab: tintsSelectedTab,
+                dimsUnloadedRow: dimsUnloadedRow
             )
                 .padding(.leading, 6)
                 .padding(.top, 17)
@@ -349,6 +397,12 @@ private struct AppearanceBrowserSidebar: View {
     let secondaryInk: Color
     let accent: Color
     let tintsSelectedTab: Bool
+    let dimsUnloadedRow: Bool
+
+    /// A preset shows loaded rows in its text color and the last row unloaded, as the sidebar draws them.
+    private func rowInk(_ index: Int) -> Color {
+        dimsUnloadedRow && index == 3 ? secondaryInk : ink
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -362,11 +416,11 @@ private struct AppearanceBrowserSidebar: View {
                         .fill(
                             index == 1 && tintsSelectedTab
                                 ? accent
-                                : secondaryInk.opacity(0.76)
+                                : (dimsUnloadedRow ? rowInk(index) : secondaryInk.opacity(0.76))
                         )
                         .frame(width: 3, height: 3)
                     Capsule()
-                        .fill(ink.opacity(index == 1 ? 0.78 : 0.43))
+                        .fill(rowInk(index).opacity(dimsUnloadedRow ? 1 : (index == 1 ? 0.78 : 0.43)))
                         .frame(width: index == 1 ? 10 : 12, height: 2)
                 }
                 .padding(.horizontal, 1.5)

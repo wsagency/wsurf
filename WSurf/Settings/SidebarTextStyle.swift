@@ -29,9 +29,9 @@ struct SidebarTextStyle: Codable, Equatable {
 extension BrowserSettings {
     func sidebarAppearance(scheme: ColorScheme) -> AppearanceMode {
         if forcesDarkAppearance {
-            return appearance == .lightCalm || appearance == .darkCalm ? .darkCalm : .dark
+            return resolvedAppearance == .lightCalm || resolvedAppearance == .darkCalm ? .darkCalm : .dark
         }
-        return appearance == .system ? (scheme == .dark ? .dark : .light) : appearance
+        return resolvedAppearance == .system ? (scheme == .dark ? .dark : .light) : resolvedAppearance
     }
 
     func sidebarTextStyle(theme: AppearanceMode, isDeferred: Bool) -> SidebarTextStyle {
@@ -46,11 +46,22 @@ extension BrowserSettings {
     }
 
     func sidebarTextBaseColor(theme: AppearanceMode, isDeferred: Bool) -> Color {
-        sidebarTextStyle(theme: theme, isDeferred: isDeferred).color
+        if let preset = themePreset {
+            return Color(nsColor: preset.nsColor(.text))
+        }
+        return sidebarTextStyle(theme: theme, isDeferred: isDeferred).color
             ?? (theme == .dark || theme == .darkCalm ? .white : .black)
     }
 
     func sidebarTextColor(isDeferred: Bool = false, scheme: ColorScheme) -> Color {
+        if let preset = themePreset {
+            // A window drawn in the other appearance (a private window) gets the standard text, like its surfaces;
+            // the saved custom colors belong to the theme the preset replaced and are left alone.
+            guard preset.isDark == (scheme == .dark) else {
+                return (scheme == .dark ? Color.white : .black).opacity(isDeferred ? 0.55 : 1)
+            }
+            return Color(nsColor: preset.nsColor(.text)).opacity(isDeferred ? preset.unloadedTextOpacity : 1)
+        }
         let theme = sidebarAppearance(scheme: scheme)
         let style = sidebarTextStyle(theme: theme, isDeferred: isDeferred)
         return (style.color ?? (scheme == .dark ? .white : .black)).opacity(style.opacity)

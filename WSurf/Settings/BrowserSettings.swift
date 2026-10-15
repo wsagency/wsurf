@@ -15,7 +15,7 @@ final class BrowserSettings {
         static let application = BrowserSettings(appliesAppearanceGlobally: true)
 #endif
 
-    private enum Key {
+    enum Key {
         static let appearance = "appearance.mode"
         static let websiteTint = "appearance.websiteTint"
         static let websiteColor = "appearance.websiteColor"
@@ -28,7 +28,9 @@ final class BrowserSettings {
         static let sidebarFolderTint = "appearance.sidebar.folderTint"
         static let sidebarTextStyles = "appearance.sidebar.textStyles"
         static let themeCustomizations = "appearance.themeCustomizations"
+        static let themePreset = "appearance.themePreset"
         static let sleepsInactiveTabs = "tabs.sleep"
+        static let sleepAfterMinutes = "tabs.sleepAfterMinutes"
         static let pageZoom = "content.defaultZoom"
         static let linkPreview = "content.linkPreview"
         static let linkPeek = "content.linkPeek"
@@ -94,12 +96,14 @@ final class BrowserSettings {
     @ObservationIgnored private var storedSidebarFolderTint: Double?
     @ObservationIgnored private var storedSidebarTextStyles: [String: SidebarTextStyle]?
     @ObservationIgnored private var storedThemeCustomizations: [String: ThemeCustomization]?
+    @ObservationIgnored var storedThemePreset: ThemePreset??
     @ObservationIgnored private var storedMatchesWebsiteColor: Bool?
     @ObservationIgnored private var storedUpdateChannel: UpdateChannel?
     @ObservationIgnored private var storedPageZoom: Double?
     @ObservationIgnored private var storedShowsMediaPlayer: Bool?
     @ObservationIgnored private var storedShowsLyrics: Bool?
     @ObservationIgnored private var storedSleepsInactiveTabs: Bool?
+    @ObservationIgnored var storedSleepAfterMinutes: Int?
     @ObservationIgnored private var storedShowsLinkPreview: Bool?
     @ObservationIgnored private var storedPeeksAtLinks: Bool?
     @ObservationIgnored private var storedRefractsTabColor: Bool?
@@ -116,6 +120,7 @@ final class BrowserSettings {
     @ObservationIgnored var onContentBlockingChanged: (() -> Void)?
     @ObservationIgnored var onUpdateChannelChanged: ((UpdateChannel) -> Void)?
     @ObservationIgnored var onLyricsChanged: ((Bool) -> Void)?
+    @ObservationIgnored var onSleepPolicyChanged: (() -> Void)?
     @ObservationIgnored var onMediaPlayerChanged: ((Bool) -> Void)?
     @ObservationIgnored var onAutomaticPictureInPictureChanged: ((Bool) -> Void)?
     @ObservationIgnored var onVideoInPlayerChanged: ((Bool) -> Void)?
@@ -156,7 +161,7 @@ final class BrowserSettings {
     private func stringArray(_ key: String) -> [String]? {
         store(for: key).stringArray(forKey: key)
     }
-    private func globalValue<Value>(
+    func globalValue<Value>(
         _ keyPath: KeyPath<BrowserSettings, Value>,
         storage: Value?
     ) -> Value {
@@ -167,7 +172,7 @@ final class BrowserSettings {
         return storage!
     }
 
-    private func setGlobal<Value: Equatable>(
+    func setGlobal<Value: Equatable>(
         _ keyPath: ReferenceWritableKeyPath<BrowserSettings, Value>,
         storage: ReferenceWritableKeyPath<BrowserSettings, Value?>,
         value: Value,
@@ -337,7 +342,11 @@ final class BrowserSettings {
 
     var sleepsInactiveTabs: Bool {
         get { globalValue(\.sleepsInactiveTabs, storage: storedSleepsInactiveTabs) }
-        set { setGlobal(\BrowserSettings.sleepsInactiveTabs, storage: \BrowserSettings.storedSleepsInactiveTabs, value: newValue, key: Key.sleepsInactiveTabs) }
+        set {
+            setGlobal(\BrowserSettings.sleepsInactiveTabs, storage: \BrowserSettings.storedSleepsInactiveTabs, value: newValue, key: Key.sleepsInactiveTabs, didChange: {
+                $0.onSleepPolicyChanged?()
+            })
+        }
     }
 
     var showsLinkPreview: Bool {
@@ -704,6 +713,7 @@ final class BrowserSettings {
             let storedThemes = defaults.data(forKey: Key.themeCustomizations)
                 .flatMap { try? JSONDecoder().decode([String: ThemeCustomization].self, from: $0) } ?? [:]
             storedThemeCustomizations = storedThemes.mapValues { $0.bounded() }
+            storedThemePreset = .some(string(Key.themePreset).flatMap(ThemePreset.init(rawValue:)))
             defaults.removeObject(forKey: "appearance.sidebar.directRemoveUnloadedTabs")
             storedSidebarTextStyles = Self.decodeSidebarTextStyles(defaults.data(forKey: Key.sidebarTextStyles))
 
@@ -711,6 +721,7 @@ final class BrowserSettings {
             storedShowsLyrics = object(Key.lyrics) as? Bool ?? true
             storedRefractsTabColor = object(Key.tabColorRefraction) as? Bool ?? true
             storedSleepsInactiveTabs = object(Key.sleepsInactiveTabs) as? Bool ?? false
+            storedSleepAfterMinutes = Self.clampedSleepMinutes(finiteNumber(Key.sleepAfterMinutes) ?? 0)
             storedShowsLinkPreview = object(Key.linkPreview) as? Bool ?? true
             storedPeeksAtLinks = object(Key.linkPeek) as? Bool ?? true
             storedAutomaticPictureInPicture = object(Key.automaticPiP) as? Bool ?? false
@@ -780,7 +791,7 @@ final class BrowserSettings {
         guard appliesAppearanceGlobally else { return }
         NSApp.appearance = forcesDarkAppearance
             ? NSAppearance(named: .darkAqua)
-            : appearance.nsAppearance
+            : resolvedAppearance.nsAppearance
     }
 
     func resetToDefaults() {
@@ -801,6 +812,7 @@ final class BrowserSettings {
         sidebarTextStyles = [:]
         refractsTabColor = true
         themeCustomizations = [:]
+        themePreset = nil
         pageZoom = 1
         searchEngineID = SearchEngine.duckDuckGo.id
         customSearchName = ""

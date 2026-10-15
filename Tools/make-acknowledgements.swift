@@ -167,7 +167,13 @@ struct Vendor {
 }
 
 let vendored = [
-    Vendor(name: "thinking-orbs", version: "0.3.1", url: "https://github.com/Jakubantalik/thinking-orbs")
+    Vendor(name: "thinking-orbs", version: "0.3.1", url: "https://github.com/Jakubantalik/thinking-orbs"),
+    // Color values for the Appearance presets; see WSurf/Settings/ThemePreset.swift.
+    Vendor(name: "catppuccin", version: "1.8.0", url: "https://github.com/catppuccin/palette"),
+    Vendor(name: "nord", version: "snapshot 2026-10-15", url: "https://www.nordtheme.com/docs/colors-and-palettes"),
+    Vendor(name: "dracula", version: "snapshot 2026-10-15", url: "https://draculatheme.com/contribute"),
+    Vendor(name: "gruvbox", version: "tinted-theming/schemes spec-0.11", url: "https://github.com/tinted-theming/schemes"),
+    Vendor(name: "rose-pine", version: "snapshot 2026-10-15", url: "https://github.com/rose-pine/palette"),
 ]
 
 let vendoredPackages: [Package] = vendored.map { vendor in

@@ -261,6 +261,9 @@ final class BrowserApplication {
         settings.onUpdateChannelChanged = { [weak self] channel in
             self?.updates.setChannel(channel)
         }
+        settings.onSleepPolicyChanged = { [weak self] in
+            self?.windows.forEach { $0.applySleepTimer() }
+        }
         settings.onLyricsChanged = { [weak self] enabled in
             self?.windows.forEach { $0.sidePanel.setAvailable(enabled, for: .lyrics) }
         }

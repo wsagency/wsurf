@@ -143,7 +143,7 @@ extension AppCoordinator {
         if profiles.isPrivate {
             browser.context.favicons.schemeOverride = .dark
         } else {
-            switch settings.appearance {
+            switch settings.resolvedAppearance {
             case .system:
                 browser.context.favicons.schemeOverride = nil
             case .light, .lightCalm:
@@ -153,7 +153,7 @@ extension AppCoordinator {
             }
         }
         nativeWindow?.appearance = profiles.isPrivate
-            ? NSAppearance(named: .darkAqua) : settings.appearance.nsAppearance
+            ? NSAppearance(named: .darkAqua) : settings.resolvedAppearance.nsAppearance
         nativeWindow?.title = windowTitle
         reloadFaviconsIfSchemeChanged()
     }
@@ -170,6 +170,7 @@ extension AppCoordinator {
         voicePreparation = nil
         activation.stop()
         memoryPressure.stop()
+        sleepTimer.stop()
         media.releaseControl()
         media.unwatch()
         downloadFlights.stopWatching()

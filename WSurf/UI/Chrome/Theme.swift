@@ -15,7 +15,7 @@ enum Theme {
         light: NSColor(red: 0.86, green: 0.80, blue: 0.79, alpha: 1)
     )
     static var windowBackground: Color {
-        palette(isCalm ? calmWindowBackground : standardWindowBackground)
+        palette(isCalm ? calmWindowBackground : standardWindowBackground, role: .window)
     }
 
     private static let standardControlSurface = adaptive(
@@ -27,7 +27,7 @@ enum Theme {
         light: NSColor(red: 0.91, green: 0.85, blue: 0.85, alpha: 1)
     )
     static var controlSurface: Color {
-        palette(isCalm ? calmControlSurface : standardControlSurface)
+        palette(isCalm ? calmControlSurface : standardControlSurface, role: .surface)
     }
 
     private static let standardSidebarTint = adaptive(
@@ -39,7 +39,7 @@ enum Theme {
         light: NSColor(red: 0.78, green: 0.70, blue: 0.74, alpha: 1)
     )
     static var sidebarTint: Color {
-        palette(isCalm ? calmSidebarTint : standardSidebarTint)
+        palette(isCalm ? calmSidebarTint : standardSidebarTint, role: .sidebar)
     }
 
     private static let standardAccent = Color.blue
@@ -48,7 +48,7 @@ enum Theme {
         light: NSColor(red: 0.68, green: 0.39, blue: 0.54, alpha: 1)
     )
     static var accent: Color {
-        palette(isCalm ? calmAccent : standardAccent, isAccent: true)
+        palette(isCalm ? calmAccent : standardAccent, role: .accent, isAccent: true)
     }
 
     private static let standardThinkingMax = adaptive(
@@ -72,7 +72,7 @@ enum Theme {
         light: NSColor(red: 0.68, green: 0.39, blue: 0.54, alpha: 1)
     )
     static var systemAccent: Color {
-        palette(isCalm ? calmSystemAccent : standardSystemAccent, isAccent: true)
+        palette(isCalm ? calmSystemAccent : standardSystemAccent, role: .accent, isAccent: true)
     }
 
     static let danger = Color(nsColor: .systemRed)
@@ -176,7 +176,7 @@ enum Theme {
     }
 
     static var isCalm: Bool {
-        switch BrowserSettings.application.appearance {
+        switch BrowserSettings.application.resolvedAppearance {
         case .lightCalm, .darkCalm:
             true
         case .system, .light, .dark:
@@ -199,8 +199,11 @@ enum Theme {
         )
     }
 
-    static func palette(_ base: Color, isAccent: Bool = false) -> Color {
+    static func palette(_ base: Color, role: ThemePreset.Role, isAccent: Bool = false) -> Color {
         let settings = BrowserSettings.application
+        if let preset = settings.themePreset {
+            return preset.color(role, fallback: base)
+        }
         let light = settings.themeCustomization(theme: settings.sidebarAppearance(scheme: .light))
         let dark = settings.themeCustomization(theme: settings.sidebarAppearance(scheme: .dark))
         guard light.changesPalette || dark.changesPalette else { return base }
@@ -214,13 +217,25 @@ enum Theme {
         })
     }
 
+    /// The ink a preset prescribes for icons and URL text, nil without a preset. It follows the appearance the view
+    /// is drawn in, so a private window forced dark under a light preset gets the standard ink, not the preset's.
+    private static var presetInk: Color? {
+        BrowserSettings.application.themePreset.map { $0.color(.text, fallback: .primary) }
+    }
+
     static var controlOverride: Color? {
+        if let ink = presetInk {
+            return ink
+        }
         let style = BrowserSettings.application.currentThemeCustomization.controls
         guard style.colorRGB != nil || style.opacity != 1 else { return nil }
         return (style.color ?? .primary).opacity(style.opacity)
     }
 
     static var urlOverride: Color? {
+        if let ink = presetInk {
+            return ink
+        }
         let style = BrowserSettings.application.currentThemeCustomization.url
         guard style.colorRGB != nil || style.opacity != 1 else { return nil }
         return (style.color ?? .primary).opacity(style.opacity)

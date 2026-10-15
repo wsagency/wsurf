@@ -80,6 +80,9 @@ final class BrowserModel {
                 noteActivation(activeTabID)
             }
             let previous = oldValue.flatMap { id in tabs.first { $0.id == id } }
+            let now = ContinuousClock.now
+            stampPanes(of: oldValue, in: splits, at: now)
+            stampForeground(at: now)
             if previous.map({ !isVisibleInSplit($0) }) ?? false {
                 previous?.refreshPreview()
                 previous?.noteHoveredLink(nil)
@@ -405,7 +408,12 @@ final class BrowserModel {
         return copy
     }
 
-    var splits = TabSplits()
+    /// A pane that a change removes from the visible split leaves the foreground now.
+    var splits = TabSplits() {
+        didSet {
+            stampPanes(of: activeTabID, in: oldValue, at: .now)
+        }
+    }
 
     var spaceAnchors: [UUID: UUID] = [:]
 
