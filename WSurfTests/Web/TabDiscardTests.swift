@@ -205,6 +205,73 @@ struct TabDiscardTests {
         #expect(!oldest.isDeferred)
     }
 
+    /// The idle sweep takes the same protections as memory pressure, and only
+    /// tabs left in the background longer than the limit.
+    @Test func idleSweepUnloadsOnlyUnprotectedTabsPastTheLimit() {
+        let model = makeModel()
+        let limit = Duration.seconds(3600)
+        let stale = model.newTab(url: URL(string: "https://example.com/stale"))
+        let favorite = model.newTab(url: URL(string: "https://example.com/favorite"))
+        favorite.isFavorite = true
+        let playing = model.newTab(url: URL(string: "https://example.com/playing"))
+        playing.isPlayingAudio = true
+        let active = model.newTab(url: URL(string: "https://example.com/active"))
+        let start = ContinuousClock.now
+
+        #expect(model.sleepIdleTabs(after: limit, now: start + .seconds(1800)) == 0)
+        #expect(!stale.isDeferred)
+        #expect(model.sleepIdleTabs(after: .seconds(Int(Int32.max) * 60), now: start + .seconds(7200)) == 0)
+
+        #expect(model.sleepIdleTabs(after: limit, now: start + .seconds(7200)) == 1)
+        #expect(stale.isDeferred)
+        #expect(!active.isDeferred)
+        #expect(!favorite.isDeferred)
+        #expect(!playing.isDeferred)
+    }
+
+    /// Idle time starts when a tab leaves the foreground, however long it was
+    /// in front before.
+    @Test func idleTimeStartsWhenATabLeavesTheForeground() {
+        let model = makeModel()
+        let first = model.newTab(url: URL(string: "https://example.com/first"))
+        let second = model.newTab(url: URL(string: "https://example.com/second"))
+        model.activate(first)
+        first.lastForegroundAt = .now - .seconds(4 * 3600)
+        let leaving = ContinuousClock.now
+        model.activate(second)
+
+        #expect(model.sleepIdleTabs(after: .seconds(3600), now: leaving + .seconds(1800)) == 0)
+        #expect(!first.isDeferred)
+        #expect(model.sleepIdleTabs(after: .seconds(3600), now: leaving + .seconds(3700)) == 1)
+        #expect(first.isDeferred)
+    }
+
+    /// The pane that stays behind when the user switches away, or is taken out
+    /// of the split, was on screen until then and starts its idle time there.
+    @Test func splitPanesStartIdleTimeWhenTheyLeaveTheScreen() {
+        let model = makeModel()
+        let left = model.newTab(url: URL(string: "https://example.com/left"))
+        let right = model.newTab(url: URL(string: "https://example.com/right"))
+        let other = model.newTab(url: URL(string: "https://example.com/other"))
+        model.split(left, with: right, axis: .sideBySide)
+        model.activate(left)
+        let hoursAgo = ContinuousClock.now - .seconds(4 * 3600)
+        left.lastForegroundAt = hoursAgo
+        right.lastForegroundAt = hoursAgo
+        let leaving = ContinuousClock.now
+        model.activate(other)
+
+        #expect(model.sleepIdleTabs(after: .seconds(3600), now: leaving + .seconds(1800)) == 0)
+        #expect(!left.isDeferred && !right.isDeferred)
+
+        model.activate(left)
+        right.lastForegroundAt = hoursAgo
+        let removing = ContinuousClock.now
+        model.removeFromSplit(right)
+        #expect(model.sleepIdleTabs(after: .seconds(3600), now: removing + .seconds(1800)) == 0)
+        #expect(!right.isDeferred)
+    }
+
     /// Critical means the app is about to be killed, so recency stops earning
     /// anything.
     @Test func criticalPressureTakesEveryBackgroundTab() {

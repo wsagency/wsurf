@@ -229,6 +229,19 @@ extension AppCoordinator {
         discoverContextWindow()
     }
 
+    /// Runs the idle-tab sweep while Sleep inactive tabs has a duration; otherwise the timer does not exist.
+    func applySleepTimer() {
+        let minutes = settings.sleepAfterMinutes
+        guard !isClosed, settings.sleepsInactiveTabs, minutes > 0 else {
+            sleepTimer.stop()
+            return
+        }
+        let limit = Duration.seconds(minutes * 60)
+        sleepTimer.start(every: min(.seconds(60), limit / 4)) { [weak self] in
+            self?.browser.sleepIdleTabs(after: limit)
+        }
+    }
+
     func followSettings() {
         let context = context
         let targets: () -> [AppCoordinator] = { [weak context, weak application, weak self] in
@@ -242,6 +255,7 @@ extension AppCoordinator {
         media.isEnabled = settings.showsMediaPlayer
         applyPictureLending()
         sidePanel.setAvailable(settings.showsLyrics, for: .lyrics)
+        applySleepTimer()
         updateWindowAppearance()
         browser.downloads.webViewProvider = {
             let windows = targets()

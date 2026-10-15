@@ -32,6 +32,19 @@ struct SettingsEntry: Identifiable, Hashable {
         String(localized: detail)
     }
 
+    /// Appearance rows that Settings hides while a color preset is on.
+    private static let hiddenByPreset: Set<String> = [
+        "appearance.theme", "appearance.themeCustomization", "appearance.windowStyle", "appearance.websiteTint",
+        "appearance.refraction", "appearance.transparency", "appearance.sidebarLoadedColor",
+        "appearance.sidebarUnloadedColor",
+    ]
+
+    /// `presetIsOn` sends a row the preset hides to the preset row, which is what controls those colors then.
+    func targetAnchor(presetIsOn: Bool) -> String {
+        if presetIsOn, Self.hiddenByPreset.contains(id) { return "appearance.themePreset" }
+        return targetAnchor
+    }
+
     var targetAnchor: String {
         if id == "appearance.transparency" { return "appearance.windowStyle" }
         if id == "websites.engine" { return "websites.list" }
@@ -82,7 +95,9 @@ enum SettingsIndex {
                       ["apple pay", "payment", "wallet", "touch id", "checkout"]),
         SettingsEntry("general.sleepTabs", .general, "Sleep inactive tabs",
                       "When your Mac runs low on memory, inactive tabs unload. They reload when you open them.",
-                      ["sleep", "sleeping", "discard", "unload", "memory", "ram", "background tabs", "reload"]),
+                      ["sleep", "sleeping", "discard", "unload", "memory", "ram", "background tabs", "reload",
+                       "sleep after", "timer", "idle", "inactive", "hours", "minutes", "custom",
+                      ]),
         SettingsEntry("general.linkPreview", .general, "Show link address",
                       "Show a link’s address at the bottom of the page when you point at it.",
                       ["link", "preview", "status bar", "hover", "url", "address", "capsule", "destination"]),
@@ -124,6 +139,11 @@ enum SettingsIndex {
 
         SettingsEntry("appearance.theme", .appearance, "Theme", "Choose light, dark, pastel Calm, or match your Mac.",
                       ["dark mode", "light mode", "calm", "pastel", "theme", "appearance", "colour", "color", "night"]),
+        SettingsEntry("appearance.themePreset", .appearance, "Color preset",
+                      "Use a named palette such as Catppuccin, Nord, Dracula, Gruvbox, or Rosé Pine.",
+                      ["preset", "catppuccin", "latte", "mocha", "nord", "dracula", "gruvbox", "rose pine",
+                       "rosé pine", "dawn", "palette", "theme", "color", "colour", "terminal",
+                      ]),
         SettingsEntry("appearance.themeCustomization", .appearance, "Theme customization",
                       "Adjust brightness, hue, main color, control icons, and URL color and opacity.",
                       ["theme", "brightness", "darker", "lighter", "hue", "color", "colour", "controls",

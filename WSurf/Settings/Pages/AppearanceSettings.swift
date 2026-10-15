@@ -29,10 +29,31 @@ struct AppearanceSettings: View {
         SettingsPageHeader(title: "Appearance")
 
         SettingsCard {
-            DetailRow(title: "Theme", layout: .stacked) {
-                ThemePicker(selection: settings.appearance) { settings.appearance = $0 }
+            if settings.themePreset == nil {
+                DetailRow(title: "Theme", layout: .stacked) {
+                    ThemePicker(selection: settings.appearance) { settings.appearance = $0 }
+                }
+                .settingsAnchor("appearance.theme")
+
+                RowSeparator()
             }
-            .settingsAnchor("appearance.theme")
+
+            DetailRow(
+                title: "Color preset",
+                caption: """
+                Use a named palette for the window, sidebar, and controls. While a preset is on, its colors replace \
+                the theme, your custom colors, window style, transparency, and website tint; Reset brings your own \
+                settings back.
+                """,
+                layout: .stacked
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    ThemePresetPicker(selection: settings.themePreset) { settings.themePreset = $0 }
+                    Button("Reset") { settings.themePreset = nil }
+                        .disabled(settings.themePreset == nil)
+                }
+            }
+            .settingsAnchor("appearance.themePreset")
 
             RowSeparator()
 
@@ -55,9 +76,10 @@ struct AppearanceSettings: View {
             .settingsAnchor("appearance.zoom")
         }
 
-        themeCustomizationSection
-
-        WindowStyleSettingsSection(settings: settings)
+        if settings.themePreset == nil {
+            themeCustomizationSection
+            WindowStyleSettingsSection(settings: settings)
+        }
 
         SettingsSection(title: "Sidebar", symbol: "sidebar.left") {
             DetailRow(title: "Show sidebar") {
@@ -123,25 +145,27 @@ struct AppearanceSettings: View {
 
             RowSeparator()
 
-            DetailRow(
-                title: "Loaded tab color",
-                caption: "Text and icon color and opacity are saved separately for each theme."
-            ) {
-                sidebarColorControls(isDeferred: false)
+            if settings.themePreset == nil {
+                DetailRow(
+                    title: "Loaded tab color",
+                    caption: "Text and icon color and opacity are saved separately for each theme."
+                ) {
+                    sidebarColorControls(isDeferred: false)
+                }
+                .settingsAnchor("appearance.sidebarLoadedColor")
+
+                RowSeparator()
+
+                DetailRow(
+                    title: "Unloaded tab color",
+                    caption: "Text and icon color and opacity are saved separately for each theme."
+                ) {
+                    sidebarColorControls(isDeferred: true)
+                }
+                .settingsAnchor("appearance.sidebarUnloadedColor")
+
+                RowSeparator()
             }
-            .settingsAnchor("appearance.sidebarLoadedColor")
-
-            RowSeparator()
-
-            DetailRow(
-                title: "Unloaded tab color",
-                caption: "Text and icon color and opacity are saved separately for each theme."
-            ) {
-                sidebarColorControls(isDeferred: true)
-            }
-            .settingsAnchor("appearance.sidebarUnloadedColor")
-
-            RowSeparator()
 
             DetailRow(
                 title: "Row spacing",

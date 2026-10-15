@@ -120,6 +120,8 @@ final class BrowserTab: Identifiable {
     @ObservationIgnored var presentationClock: any Clock<Duration> = ContinuousClock()
     @ObservationIgnored var coverHold: Task<Void, Never>?
     @ObservationIgnored var isArmingPresentation = false
+    /// When this tab last stopped being in front, or was created. Monotonic, so time the Mac spends asleep counts as idle.
+    @ObservationIgnored var lastForegroundAt = ContinuousClock.now
 
     private(set) var security: PageSecurity = .none
 

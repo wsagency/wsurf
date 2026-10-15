@@ -38,6 +38,12 @@ struct GeneralSettings: View {
                 SettingsToggle($settings.sleepsInactiveTabs)
             }
             .settingsAnchor("general.sleepTabs")
+
+            if settings.sleepsInactiveTabs {
+                RowSeparator()
+
+                SleepAfterRow(settings: settings)
+            }
         }
 
         SettingsSection(title: "Default browser", symbol: "arrow.up.forward.app") {

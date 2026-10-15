@@ -4761,10 +4761,70 @@
       "comment" : "Secondary button on the onboarding screens; ends onboarding without granting anything. Title Case."
     },
     "Sleep inactive tabs" : {
-      "comment" : "Title of the switch in Settings > General that lets WSurf release the pages of background tabs when the Mac runs short of memory, and the same row in Settings search. Off by default. Sentence case; “Sleep” is a verb the browser does to the tabs."
+      "comment" : "Title of the switch in Settings > General that lets WSurf release the pages of background tabs when the Mac runs short of memory or, with Sleep after, once they have been idle, and the same row in Settings search. Off by default. Sentence case; “Sleep” is a verb the browser does to the tabs."
     },
     "Sleep inactive tabs is off, so every website stays loaded." : {
 
+    },
+    "Sleep after" : {
+      "comment" : "Title of the row in Settings > General, shown under Sleep inactive tabs, that chooses how long a background tab may sit out of view before it unloads. Sentence case; Sleep is a verb."
+    },
+    "Background tabs unload after they have been out of view this long, and reload when you open them. Favorites and tabs that play audio, use a camera or microphone, hold unsaved form input or are downloading stay loaded. Unloaded Chromium tabs restore only their URL." : {
+      "comment" : "Caption of the Sleep after row in Settings > General. Explains the idle delay and which tabs are never unloaded. Chromium is a browser engine name and stays untranslated."
+    },
+    "When memory is low" : {
+      "comment" : "Choice in the Sleep after menu that sets no idle delay: tabs unload only when the Mac runs short of memory. Sentence case."
+    },
+    "Custom…" : {
+      "comment" : "Last choice in the Sleep after menu; reveals a field for a custom number of minutes or hours. Ends with an ellipsis because it asks for more input."
+    },
+    "Custom time" : {
+      "comment" : "Title and accessibility label of the Settings row and field where a custom Sleep after duration is typed. Noun phrase, sentence case."
+    },
+    "Applied: %@" : {
+      "comment" : "Caption under the Custom time field in Settings > General showing the Sleep after duration that is currently in effect, for example Applied: 1 hour 30 minutes. The placeholder is that formatted duration or the words When memory is low."
+    },
+    "minutes" : {
+      "comment" : "Unit choice next to the Custom time field; lowercase plural noun."
+    },
+    "hours" : {
+      "comment" : "Unit choice next to the Custom time field; lowercase plural noun."
+    },
+    "Enter a whole number greater than zero, no larger than 2,147,483,647 minutes." : {
+      "comment" : "Shown under the Custom time field when the typed number is empty, not whole, not above zero, or too large to store. The number is the largest accepted count of minutes."
+    },
+    "Color preset" : {
+      "comment" : "Title of the Appearance settings row that picks a named color palette such as Nord or Dracula, and the same words in the Settings search index. Noun phrase, sentence case."
+    },
+    "Use a named palette for the window, sidebar, and controls. While a preset is on, its colors replace the theme, your custom colors, window style, transparency, and website tint; Reset brings your own settings back." : {
+      "comment" : "Caption of the Color preset row in Appearance settings. Reset is the button next to the preset cards."
+    },
+    "Use a named palette such as Catppuccin, Nord, Dracula, Gruvbox, or Rosé Pine." : {
+      "comment" : "Settings search description for the Color preset row. The palette names are proper names and stay untranslated."
+    },
+    "Catppuccin Latte" : {
+      "comment" : "Name of a color preset (the light Catppuccin palette). Proper name; do not translate."
+    },
+    "Catppuccin Mocha" : {
+      "comment" : "Name of a color preset (the dark Catppuccin palette). Proper name; do not translate."
+    },
+    "Nord" : {
+      "comment" : "Name of a color preset. Proper name; do not translate."
+    },
+    "Dracula" : {
+      "comment" : "Name of a color preset. Proper name; do not translate."
+    },
+    "Gruvbox Light" : {
+      "comment" : "Name of a color preset (the light Gruvbox palette). Proper name; do not translate."
+    },
+    "Gruvbox Dark" : {
+      "comment" : "Name of a color preset (the dark Gruvbox palette). Proper name; do not translate."
+    },
+    "Rosé Pine" : {
+      "comment" : "Name of a color preset (the dark Rosé Pine palette). Proper name; do not translate."
+    },
+    "Rosé Pine Dawn" : {
+      "comment" : "Name of a color preset (the light Rosé Pine palette). Proper name; do not translate."
     },
     "Small" : {
       "comment" : "First of the four sizes in the lyrics text-size menu (Small, Regular, Large, Extra Large). An adjective for the size of the words. Title Case, as macOS menu items are."

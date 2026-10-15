@@ -41,6 +41,149 @@ struct AppearanceSettingsTests {
         #expect(!first.javaScriptEnabled)
         #expect(second.javaScriptEnabled)
     }
+
+    @Test func sleepAfterDefaultsToMemoryPressureOnlyAndNotifiesTheOwnerOnChange() {
+        let suite = "SleepAfter-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = BrowserSettings(defaults: defaults)
+        let changes = Mutex(0)
+        settings.onSleepPolicyChanged = { changes.withLock { $0 += 1 } }
+
+        #expect(!settings.sleepsInactiveTabs)
+        #expect(settings.sleepAfterMinutes == 0)
+
+        settings.sleepsInactiveTabs = true
+        settings.sleepAfterMinutes = 210
+        settings.sleepAfterMinutes = 210
+        #expect(changes.withLock { $0 } == 2)
+
+        let restored = BrowserSettings(defaults: defaults)
+        #expect(restored.sleepAfterMinutes == 210)
+        restored.sleepAfterMinutes = -5
+        #expect(restored.sleepAfterMinutes == 0)
+        restored.sleepAfterMinutes = .max
+        #expect(Duration.seconds(restored.sleepAfterMinutes * 60) > .zero)
+    }
+
+    /// A light preset in a window drawn dark (a private window) uses the standard sidebar text, not the saved light
+    /// custom colors; the saved styles stay untouched and apply again once the preset is cleared.
+    @MainActor
+    @Test func presetMismatchFallsBackToStandardSidebarTextWithoutTouchingSavedColors() throws {
+        let suite = "PresetFallback-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let savedNativeAppearance = NSApp.appearance
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            NSApp.appearance = savedNativeAppearance
+        }
+        let settings = BrowserSettings(defaults: defaults)
+        settings.appearance = .light
+        settings.setSidebarTextStyle(SidebarTextStyle(colorRGB: 0xCC3300, opacity: 0.8), theme: .light, isDeferred: false)
+        let saved = settings.sidebarTextStyles
+
+        settings.themePreset = .catppuccinLatte
+        let loaded = try #require(NSColor(settings.sidebarTextColor(scheme: .dark)).usingColorSpace(.sRGB))
+        let unloaded = try #require(NSColor(settings.sidebarTextColor(isDeferred: true, scheme: .dark)).usingColorSpace(.sRGB))
+        #expect(loaded.redComponent > 0.99 && loaded.greenComponent > 0.99 && abs(loaded.alphaComponent - 1) < 0.01)
+        #expect(unloaded.redComponent > 0.99 && abs(unloaded.alphaComponent - 0.55) < 0.01)
+        #expect(settings.sidebarTextStyles == saved)
+
+        settings.themePreset = nil
+        let restored = try #require(NSColor(settings.sidebarTextColor(scheme: .light)).usingColorSpace(.sRGB))
+        #expect(restored.redComponent > 0.7 && restored.blueComponent < 0.1)
+    }
+
+    /// Search results for rows a preset hides open the preset row instead; other rows keep their own anchor.
+    @Test func searchRedirectsHiddenAppearanceRowsToThePresetRowOnlyWhileOneIsOn() throws {
+        let hidden = try #require(SettingsIndex.all.first { $0.id == "appearance.websiteTint" })
+        let shown = try #require(SettingsIndex.all.first { $0.id == "appearance.sidebarFontSize" })
+        #expect(hidden.targetAnchor(presetIsOn: false) == "appearance.websiteTint")
+        #expect(hidden.targetAnchor(presetIsOn: true) == "appearance.themePreset")
+        #expect(shown.targetAnchor(presetIsOn: true) == "appearance.sidebarFontSize")
+    }
+
+    /// A typed custom duration is only accepted as a whole, positive number within the app's `Int32` minute bound.
+    @Test func customSleepAmountRejectsWhatItCannotStoreInsteadOfClamping() {
+        #expect(SleepAfterRow.minutes(from: " 90 ", factor: 1) == 90)
+        #expect(SleepAfterRow.minutes(from: "2", factor: 60) == 120)
+        #expect(SleepAfterRow.minutes(from: "35791394", factor: 60) == 35_791_394 * 60)
+        #expect(SleepAfterRow.minutes(from: "35791395", factor: 60) == nil)
+        for invalid in ["", "0", "-5", "1.5", "abc", "٣", "99999999999999999999"] {
+            #expect(SleepAfterRow.minutes(from: invalid, factor: 1) == nil, "\(invalid)")
+        }
+    }
+
+    @Test func presetPersistsAndLeavesTheSavedThemeAndColorsUntouched() throws {
+        let suite = "ThemePreset-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let previousAppearance = NSApp.appearance
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            NSApp.appearance = previousAppearance
+        }
+        let settings = BrowserSettings(defaults: defaults)
+        #expect(settings.themePreset == nil)
+        settings.appearance = .darkCalm
+        settings.setThemeCustomization(ThemeCustomization(brightness: 0.2), theme: .darkCalm)
+        settings.setSidebarTextStyle(SidebarTextStyle(colorRGB: 0x336699, opacity: 0.8), theme: .darkCalm, isDeferred: false)
+        let customizations = settings.themeCustomizations
+        let textStyles = settings.sidebarTextStyles
+
+        for preset in ThemePreset.allCases {
+            settings.themePreset = preset
+            #expect(BrowserSettings(defaults: defaults).themePreset == preset)
+            #expect(settings.resolvedAppearance == (preset.isDark ? .dark : .light))
+        }
+        #expect(settings.appearance == .darkCalm)
+        #expect(settings.themeCustomizations == customizations)
+        #expect(settings.sidebarTextStyles == textStyles)
+
+        settings.themePreset = nil
+        #expect(BrowserSettings(defaults: defaults).themePreset == nil)
+        #expect(settings.resolvedAppearance == .darkCalm)
+        #expect(BrowserSettings(defaults: defaults).themeCustomization(theme: .darkCalm).brightness == 0.2)
+
+        settings.themePreset = .nord
+        settings.resetToDefaults()
+        #expect(BrowserSettings(defaults: defaults).themePreset == nil)
+    }
+
+    /// A preset replaces the whole chrome palette, so every text and accent
+    /// color it ships has to stay legible on the surfaces it is drawn on.
+    @Test func everyPresetKeepsItsTextAndAccentLegible() {
+        func luminance(_ rgb: UInt32) -> Double {
+            func channel(_ shift: UInt32) -> Double {
+                let value = Double((rgb >> shift) & 255) / 255
+                return value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+        }
+        func contrast(_ first: Double, _ second: Double) -> Double {
+            (max(first, second) + 0.05) / (min(first, second) + 0.05)
+        }
+        for preset in ThemePreset.allCases {
+            let text = luminance(preset.rgb(.text))
+            for role in [ThemePreset.Role.window, .sidebar, .surface] {
+                #expect(contrast(text, luminance(preset.rgb(role))) >= 4.5, "\(preset) text on \(role)")
+            }
+            for role in [ThemePreset.Role.window, .sidebar] {
+                #expect(contrast(luminance(preset.rgb(.accent)), luminance(preset.rgb(role))) >= 3, "\(preset) accent on \(role)")
+            }
+            // The unloaded sidebar text is the preset's text at reduced opacity over the sidebar.
+            let alpha = preset.unloadedTextOpacity
+            let blended = [16, 8, 0].reduce(UInt32(0)) { result, shift in
+                let ink = Double((preset.rgb(.text) >> shift) & 255)
+                let ground = Double((preset.rgb(.sidebar) >> shift) & 255)
+                return result | UInt32((alpha * ink + (1 - alpha) * ground).rounded()) << shift
+            }
+            #expect(
+                contrast(luminance(blended), luminance(preset.rgb(.sidebar))) >= 4.5,
+                "\(preset) unloaded text"
+            )
+        }
+    }
+
     @Test func sidebarAppearancePersistsAndBoundsMalformedValues() throws {
         let suiteName = "AppearanceSettingsTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -293,6 +436,79 @@ struct AppearanceSettingsTests {
         #expect(Theme.controlOverride == nil && Theme.urlOverride == nil)
         #expect(LoomChrome.sampledColor(page, scheme: .light) == sampled)
     }
+
+    /// While a preset is on its colors are what the chrome draws, whatever the
+    /// website tint or the saved custom colors say; clearing it brings the
+    /// custom colors back, and a private window forced dark never shows a light preset.
+    @MainActor
+    @Test func presetColorsDriveTheChromeAndClearingItRestoresCustomColors() throws {
+        let settings = BrowserSettings.application
+        let savedPreset = settings.themePreset
+        let savedAppearance = settings.appearance
+        let savedThemes = settings.themeCustomizations
+        let savedForcedDark = settings.forcesDarkAppearance
+        let savedNativeAppearance = NSApp.appearance
+        defer {
+            settings.themePreset = savedPreset
+            settings.themeCustomizations = savedThemes
+            settings.appearance = savedAppearance
+            settings.forcesDarkAppearance = savedForcedDark
+            NSApp.appearance = savedNativeAppearance
+        }
+        func hex(_ color: NSColor?) throws -> UInt32 {
+            let rgb = try #require(color?.usingColorSpace(.sRGB))
+            func channel(_ value: CGFloat) -> UInt32 {
+                UInt32((value * 255).rounded())
+            }
+            return channel(rgb.redComponent) << 16 | channel(rgb.greenComponent) << 8 | channel(rgb.blueComponent)
+        }
+        settings.forcesDarkAppearance = false
+        settings.appearance = .light
+        settings.themePreset = nil
+        settings.themeCustomizations = [:]
+        settings.setThemeCustomization(
+            ThemeCustomization(controls: SidebarTextStyle(colorRGB: 0x00FF00)), theme: .light
+        )
+        let page = NSColor(srgbRed: 0, green: 0.2, blue: 1, alpha: 1)
+        let tinted = try hex(LoomChrome.sampledColor(page, scheme: .light))
+        #expect(try hex(Theme.controlOverride.map { NSColor($0) }) == 0x00FF00)
+
+        let preset = ThemePreset.catppuccinLatte
+        settings.themePreset = preset
+        #expect(try hex(LoomChrome.sampledColor(page, scheme: .light)) == preset.rgb(.window))
+        #expect(try hex(LoomChrome.sampledColor(page, scheme: .light, isFloating: true)) == preset.rgb(.sidebar))
+        #expect(try hex(Theme.controlOverride.map { NSColor($0) }) == preset.rgb(.text))
+        #expect(try hex(Theme.urlOverride.map { NSColor($0) }) == preset.rgb(.text))
+        let loaded = settings.sidebarTextColor(scheme: .light)
+        let unloaded = settings.sidebarTextColor(isDeferred: true, scheme: .light)
+        #expect(try hex(NSColor(loaded)) == preset.rgb(.text))
+        #expect(try hex(NSColor(unloaded)) == preset.rgb(.text))
+        let unloadedAlpha = try #require(NSColor(unloaded).usingColorSpace(.sRGB)).alphaComponent
+        #expect(abs(unloadedAlpha - preset.unloadedTextOpacity) < 0.01)
+
+        // The window is drawn dark under a light application appearance (a drawing-context check, not a real
+        // window): the ink follows the drawing appearance, so the light preset's text never lands on dark.
+        NSApp.appearance = NSAppearance(named: .aqua)
+        func ink(_ color: Color?, in name: NSAppearance.Name) throws -> UInt32 {
+            var resolved: NSColor?
+            try #require(NSAppearance(named: name)).performAsCurrentDrawingAppearance {
+                resolved = NSColor(color ?? .clear).usingColorSpace(.sRGB)
+            }
+            return try hex(resolved)
+        }
+        #expect(try ink(Theme.controlOverride, in: .aqua) == preset.rgb(.text))
+        #expect(try ink(Theme.controlOverride, in: .darkAqua) != preset.rgb(.text))
+        #expect(try ink(Theme.urlOverride, in: .darkAqua) != preset.rgb(.text))
+        #expect(try hex(LoomChrome.sampledColor(page, scheme: .dark)) != preset.rgb(.window))
+        // The preset's solid backdrop applies only in the appearance it was designed for.
+        #expect(LoomChrome.showsPresetExactly(in: .light))
+        #expect(!LoomChrome.showsPresetExactly(in: .dark))
+
+        settings.themePreset = nil
+        #expect(try hex(LoomChrome.sampledColor(page, scheme: .light)) == tinted)
+        #expect(try hex(Theme.controlOverride.map { NSColor($0) }) == 0x00FF00)
+    }
+
     @MainActor
     @Test func privateAppearanceDoesNotChangeTheApplicationAppearance() throws {
         let appName = "AppearanceApp-\(UUID().uuidString)"

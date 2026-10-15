@@ -28,12 +28,21 @@ enum LoomChrome {
         RoundedRectangle(cornerRadius: canvasRadius, style: .continuous)
     }
 
-    static func sampledColor(_ color: NSColor?, scheme: ColorScheme) -> NSColor {
+    /// True when a preset is on and the window is drawn in the appearance it was designed for. A window forced to
+    /// the other one, such as a private window, keeps the standard material instead.
+    static func showsPresetExactly(in scheme: ColorScheme) -> Bool {
+        BrowserSettings.application.themePreset.map { $0.isDark == (scheme == .dark) } ?? false
+    }
+
+    /// `isFloating` marks the sidebar surface, which a preset colors separately from the window.
+    static func sampledColor(_ color: NSColor?, scheme: ColorScheme, isFloating: Bool = false) -> NSColor {
         let settings = BrowserSettings.application
-        if settings.themeCustomization(theme: settings.sidebarAppearance(scheme: scheme)).changesPalette {
-            var resolved = NSColor(Theme.windowBackground)
+        if settings.themePreset != nil
+            || settings.themeCustomization(theme: settings.sidebarAppearance(scheme: scheme)).changesPalette {
+            let surface = isFloating && settings.themePreset != nil ? Theme.sidebarTint : Theme.windowBackground
+            var resolved = NSColor(surface)
             NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
-                resolved = NSColor(Theme.windowBackground).usingColorSpace(.sRGB) ?? resolved
+                resolved = NSColor(surface).usingColorSpace(.sRGB) ?? resolved
             }
             return resolved
         }
@@ -160,16 +169,22 @@ struct LoomAmbientBackdrop: View {
     let sampledPageColor: NSColor?
     let settings: BrowserSettings
 
+    @Environment(\.colorScheme) private var scheme
+
     var body: some View {
-        switch settings.loomStyle {
-        case .standard:
-            LoomTintedBackdrop(sampledPageColor: websiteTint, isFloating: false)
-        case .transparent:
-            LoomTransparentBackdrop(
-                sampledPageColor: websiteTint,
-                opacity: settings.transparency,
-                isFloating: false
-            )
+        if LoomChrome.showsPresetExactly(in: scheme) {
+            LoomPresetBackdrop(isFloating: false)
+        } else {
+            switch settings.loomStyle {
+            case .standard:
+                LoomTintedBackdrop(sampledPageColor: websiteTint, isFloating: false)
+            case .transparent:
+                LoomTransparentBackdrop(
+                    sampledPageColor: websiteTint,
+                    opacity: settings.transparency,
+                    isFloating: false
+                )
+            }
         }
     }
 
@@ -182,21 +197,41 @@ struct LoomFloatingFill: View {
     let sampledPageColor: NSColor?
     let settings: BrowserSettings
 
+    @Environment(\.colorScheme) private var scheme
+
     var body: some View {
-        switch settings.loomStyle {
-        case .standard:
-            LoomTintedBackdrop(sampledPageColor: websiteTint, isFloating: true)
-        case .transparent:
-            LoomTransparentBackdrop(
-                sampledPageColor: websiteTint,
-                opacity: settings.transparency,
-                isFloating: true
-            )
+        if LoomChrome.showsPresetExactly(in: scheme) {
+            LoomPresetBackdrop(isFloating: true)
+        } else {
+            switch settings.loomStyle {
+            case .standard:
+                LoomTintedBackdrop(sampledPageColor: websiteTint, isFloating: true)
+            case .transparent:
+                LoomTransparentBackdrop(
+                    sampledPageColor: websiteTint,
+                    opacity: settings.transparency,
+                    isFloating: true
+                )
+            }
         }
     }
 
     private var websiteTint: NSColor? {
         settings.matchesWebsiteColor ? sampledPageColor : nil
+    }
+}
+
+/// A preset's own color, solid, in either window style: translucency would dilute it, and the website tint never
+/// overrides it. The stored window style and transparency are untouched and apply again without a preset.
+private struct LoomPresetBackdrop: View {
+    let isFloating: Bool
+
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Color(nsColor: LoomChrome.sampledColor(nil, scheme: scheme, isFloating: isFloating))
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }
 
@@ -207,7 +242,7 @@ private struct LoomTintedBackdrop: View {
     @Environment(\.colorScheme) private var scheme
 
     private var sampled: NSColor {
-        LoomChrome.sampledColor(sampledPageColor, scheme: scheme)
+        LoomChrome.sampledColor(sampledPageColor, scheme: scheme, isFloating: isFloating)
     }
 
     private var washOpacity: CGFloat {
@@ -245,7 +280,7 @@ private struct LoomTransparentBackdrop: View {
     @Environment(\.colorScheme) private var scheme
 
     private var sampled: NSColor {
-        LoomChrome.sampledColor(sampledPageColor, scheme: scheme)
+        LoomChrome.sampledColor(sampledPageColor, scheme: scheme, isFloating: isFloating)
     }
 
     private var isLight: Bool {
