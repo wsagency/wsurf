@@ -21,7 +21,10 @@ struct CredentialSettings: View {
     }
 
     var body: some View {
+        // Kept by every state below. On the branching `Group` the modifier applied to each child of the current branch,
+        // and the weak anchor kept whichever view updated last, which could be one already removed from the window.
         SettingsPageHeader(title: "Credentials")
+            .background(CredentialWindowAnchorView(anchor: anchor))
         scratchWarnings
         Group {
             if let failClosed = model.failClosed {
@@ -41,7 +44,6 @@ struct CredentialSettings: View {
             }
         }
         .settingsAnchor("autofill.credentials")
-        .background(CredentialWindowAnchorView(anchor: anchor))
         .task(id: model.authorizationEpoch) { await model.load() }
         .onDisappear {
             work?.cancel()

@@ -7,6 +7,12 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-15 — Credentials: Unlock works again after the vault locks
+
+After a credential vault locked, **Unlock** could report "Couldn’t find this window to show the passkey prompt". The page remembers its window through a hidden view; that view was attached to the part of the page that changes between locked, unlocked and failed states, so SwiftUI created one per piece of the current state and the page kept whichever was updated last. After a state change the page could be left holding a view that was no longer on screen. The hidden view now sits on the page header, which every state keeps, so there is exactly one. Nothing about unlocking changed: the passkey prompt is still required and is still shown on the window that holds the page, never on another window.
+
+Checked: a small SwiftUI probe in a real (invisible) window reproduced the loss with the old placement after the content changed and kept the window with the new placement, through lock, unlock and lock again; `Tools/check-format.sh` (SwiftLint 0.65.1) reports no violations. Not run: no Xcode build or test, and the real Unlock button was not used. There is no permanent UI regression test, because no reliable test of the real page is available here; the native acceptance is lock, Unlock, lock, Unlock again on the built app.
+
 ### 2026-10-14 — Credentials: an Import & Export section, and password CSV files
 
 Credential Settings has one **Import & Export** section (it holds the incoming-credentials row that used to be its own section, and the Export… button that was on the Saved credentials header). **Choose File…** imports a password CSV and **Export to CSV…** writes one. A CSV is read by its header, not by column position: `URL` (or `Url`), `Username` and `Password` are required, `Title` or `Name` is used as the name, and both the 4-column `Title,Url,Username,Password` and the 6-column `Title,URL,Username,Password,Notes,OTPAuth` layouts work. That is compatibility with the layouts public third-party importers read, not a statement of Apple's format. A file over the vault's size limit is refused before it is read.
