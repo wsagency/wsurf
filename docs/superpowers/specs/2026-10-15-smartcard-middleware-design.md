@@ -51,6 +51,7 @@ Decided by the user (not re-litigated here):
 | C14 | Chromium bug 41351500 (intermediates not fetched from CTK tokens) is known only from an inaccessible search snippet; fix status unknown → **UNVERIFIED**, chain handling is a §10 test item | `RES` Browser surfaces § |
 | C15 | Croatian ZAPSP (NN 111/2021) art. 208/209 and EU Directive 2009/24 art. 5(3)/6/8 permit observation/testing by an authorised user and narrowly-scoped interoperability decompilation; contrary contract terms are void; AKD EULA §1/§3 restricts separation/distribution/RE except as law permits | [NN 111/2021](https://narodne-novine.nn.hr/clanci/sluzbeni/2021_10_111_1941.html), [2009/24/EC](https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32009L0024), `RES` legal § |
 | C16 | Local probes: `TKSmartCardSlotManager.default == nil`, zero slots; PC/SC `SCardListReaders` returned no reader names on the Air. User's reader/card were never attached to the dev machine | `RES` verification § |
+| C17 | `TKSmartCardTokenSession` receives its card from the OS: `getSmartCardWithError:` returns a `TKSmartCard` with an active, OS-managed exclusive session. A second PC/SC connection to the same slot from the CTK process would contend with that session | [Apple TKSmartCardTokenSession](https://developer.apple.com/documentation/cryptotokenkit/tksmartcardtokensession) |
 
 ## 4. Architecture (DESIGN)
 
@@ -59,22 +60,26 @@ One shared card engine, three system-facing frontends, one WSurf integration lay
 ```
                         ┌──────────────────────────────┐
                         │ CardCore (Swift package)     │
-                        │ PC/SC transport · ATR detect │
-                        │ card profiles · PIN/session  │
+                        │ ATR detect · card profiles · │
+                        │ APDU protocol · PIN/session  │
+                        │ over INJECTED APDU transport │
                         └───────────┬──────────────────┘
         ┌───────────────────────────┼────────────────────────────┐
 ┌───────▼────────┐        ┌─────────▼─────────┐        ┌─────────▼─────────┐
 │ CTK token      │        │ PKCS#11 module    │        │ Signer service    │
 │ extension      │        │ (.dylib)          │        │ (localhost)       │
 │ (.appex+host)  │        │ drop-in for       │        │ Certilia-protocol │
-│ → Keychain     │        │ libCertiliaPkcs11 │        │ compatible        │
+│ transport =    │        │ libCertiliaPkcs11 │        │ compatible        │
+│ OS-supplied    │        │ transport = own   │        │ transport = own   │
+│ TKSmartCard    │        │ PC/SC connection  │        │ PC/SC connection  │
+│ → Keychain     │        │                   │        │                   │
 └───────┬────────┘        └─────────┬─────────┘        └─────────┬─────────┘
   Safari/Chrome/WSurf          Firefox, signing apps        portal JS (any browser)
   WebKit/CEF (via Keychain)
 ```
 
-- **CardCore** — Swift package, statically linked into each frontend. PC/SC via `PCSC.framework`; ATR-based profile selection (§5); APDU sessions per profile; PIN entry via the frontend's native prompt, never stored. No UI, no network.
-- **CTK token extension** (`TKSmartCardTokenDriver`/`TKSmartCardToken`/`TKSmartCardTokenSession`, `com.apple.ctk.driver-class`) inside a minimal host app. Publishes card identities **with the full certificate chain** to Keychain (C14 mitigation), so Safari, Chrome and WSurf both engines see them (C1–C3). PIN via `TKTokenAuthOperation` system prompts. OS-managed lifecycle (C5).
+- **CardCore** — Swift package, statically linked into each frontend. **Transport-agnostic:** all protocol logic (ATR detection, §5 profile selection, APDU construction, PIN/session rules) runs over an injected APDU transport; CardCore itself never opens a PC/SC connection. Two transport implementations: `TKSmartCardTransport` wraps the OS-supplied `TKSmartCard` inside the CTK session (C17 — no second connection, no contention); `PCSCTransport` opens its own PC/SC connection (`PCSC.framework`) for the PKCS#11 module, signer service and probes. PIN entry via the frontend's native prompt, never stored. No UI, no network.
+- **CTK token extension** (`TKSmartCardTokenDriver`/`TKSmartCardToken`/`TKSmartCardTokenSession`, `com.apple.ctk.driver-class`) inside a minimal host app. Talks to the card only through the session-supplied `TKSmartCard` (C17). Publishes card identities **with the full certificate chain** to Keychain (C14 mitigation), so Safari, Chrome and WSurf both engines see them (C1–C3). PIN via `TKTokenAuthOperation` system prompts. OS-managed lifecycle (C5).
 - **PKCS#11 module** — standard PKCS#11 v2.40 (OASIS) dylib over CardCore; a drop-in where `libCertiliaPkcs11.dylib` is used today (C4, C6): Firefox Security Devices, Java SunPKCS11, signing apps. `C_Login` PIN via host prompt.
 - **Signer service** — localhost-only daemon implementing the **Certilia Signer-compatible protocol** (C6; exact protocol UNVERIFIED, §8 REA target) so existing portals work unmodified in any browser. Loopback bind, Origin validation, per-signature native confirmation showing origin + document hash. WSurf calls CardCore **in-process** instead (no loopback) through the integration layer.
 - **WSurf integration layer** (§9) — challenge handling for both engines + Extensions-surface lifecycle. Not part of the middleware product; it consumes it.
@@ -137,7 +142,7 @@ New X.509 subject type in the store (extends C12's closed subjects): public cert
 
 | Gate | What | Where |
 |---|---|---|
-| G1 | CardCore unit checks: ATR parsing, profile selection, PKCS#11 API surface responds to `pkcs11-tool --list-slots` with no card (clean empty state) | dev/CI on `pro` |
+| G1 | CardCore unit checks: ATR parsing, profile selection, protocol flows over a mock APDU transport (no hardware), PKCS#11 API surface responds to `pkcs11-tool --list-slots` with no card (clean empty state) | dev/CI on `pro` |
 | G2 | CTK extension registers on the stage Mac (`pluginkit -m -p com.apple.ctk-tokens`), appears in System Settings, publishes a test identity to Keychain | stage Air (WSURF_STAGE=1) |
 | G3 | Real card (user's reader+card): ATR detected → profile matched; cert chain read; PIN verify via native prompt; one signature over a throwaway challenge; removal mid-flow fails closed; PIN never touches logs. **User performs PIN steps; agents never handle the PIN** | user + agent on stage |
 | G4 | Browser matrix against a local TLS server requiring client certs: Safari, Chrome, Firefox (module loaded), WSurf WebKit, WSurf CEF — picker appears, correct identity works, cancel path clean, **chain builds in Chrome/CEF** (C14 check) | stage |
