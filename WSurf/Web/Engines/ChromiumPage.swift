@@ -447,13 +447,14 @@ final class ChromiumPage: NSView {
         responder === self || (responder as? NSView)?.isDescendant(of: self) == true
     }
 
-    func sendKeyEvent(_ event: NSEvent) {
-        guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return }
+    func sendKeyEvent(_ event: NSEvent) -> Bool {
+        guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return false }
         if event.type == .keyUp {
             responder.keyUp(with: event)
         } else {
             responder.keyDown(with: event)
         }
+        return true
     }
 
     func sendMouseMove(to point: CGPoint, modifiers: NSEvent.ModifierFlags) {

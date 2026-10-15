@@ -756,7 +756,7 @@ struct AppHandoffTests {
                 with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
                 isARepeat: false, keyCode: 36))
-            tab.page.sendKeyEvent(event)
+            try #require(tab.page.sendKeyEvent(event))
         }
         try #require(await waitUntil {
             (try? await tab.page.evaluateJavaScript("window.opaqueFrameActivated")) as? Bool == true

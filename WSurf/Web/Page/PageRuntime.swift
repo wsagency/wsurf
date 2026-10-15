@@ -5,9 +5,13 @@
 nonisolated enum PageRuntime {
     static let script = #"""
       const R = (window.__wsurf = window.__wsurf || (() => {
-      const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+      // A page can clobber `form.name` / `form.id` with a named control, so a non-string is empty text, never an exception.
+      const norm = s => typeof s === 'string' ? s.replace(/\s+/g, ' ').trim() : '';
       const documentID = Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16)).join('-');
       const refIDs = new WeakMap();
+      // Elements registered only by findAll. They may be inspected, but carry no action authority: matchesRef, resolve by
+      // ref and resolve by label all ignore them until readPage's collect emits the same element as a control.
+      const foundOnly = new WeakSet();
       const refSignatures = new Map();
       const expectedValues = new WeakMap();
       let lastControlQuery = null;
@@ -108,10 +112,11 @@ nonisolated enum PageRuntime {
 
       const signature = el => JSON.stringify([kindOf(el), labelOf(el, kindOf(el)), el.id, el.name,
         el.type, el.href, el.getAttribute('formaction'), el.form?.action, el.form?.method]);
-      const matchesRef = ref => {
+      const inspectableRef = ref => {
         const el = window.__wsurfRefs[ref - 1];
         return !!el?.isConnected && signature(el) === refSignatures.get(ref);
       };
+      const matchesRef = ref => inspectableRef(ref) && !foundOnly.has(window.__wsurfRefs[ref - 1]);
       const expectValue = (el, value) => expectedValues.set(el, { value, signature: signature(el) });
       const valueState = ref => {
         const el = window.__wsurfRefs[ref - 1];
@@ -140,6 +145,7 @@ nonisolated enum PageRuntime {
 
           let ref = refIDs.get(el);
           if (!ref) { ref = window.__wsurfRefs.push(el); refIDs.set(el, ref); }
+          foundOnly.delete(el);
           el.__wsurfRef = ref;
           refSignatures.set(ref, signature(el));
           const entry = { r: ref, k: kind, l: label };
@@ -225,13 +231,13 @@ nonisolated enum PageRuntime {
       const resolve = (ref, label, kinds) => {
         if (ref > 0) {
           const el = window.__wsurfRefs[ref - 1];
-          if (!el || !el.isConnected || !kinds.includes(kindOf(el))) return { stale: true };
+          if (!el || !el.isConnected || foundOnly.has(el) || !kinds.includes(kindOf(el))) return { stale: true };
           return { el };
         }
         const t = norm(label).toLowerCase();
         const candidates = [];
         for (const el of window.__wsurfRefs) {
-          if (!el.isConnected) continue;
+          if (!el.isConnected || foundOnly.has(el)) continue;
           const kind = kindOf(el);
           if (!kind || !kinds.includes(kind)) continue;
           candidates.push({ el, label: labelOf(el, kind).toLowerCase() });
@@ -344,6 +350,8 @@ nonisolated enum PageRuntime {
       };
 
       const observe = (query, textLimit, controlLimit, textOffset, controlOffset, scope, viewportOnly) => {
+        // A rejected scope must not rotate the snapshot or walk the page.
+        if (scope && selectorProblem(scope)) return { error: 'The scope selector is invalid or reads an attribute value that is not exposed.' };
         const all = collect();
         const text = pageText(viewportOnly);
         const terms = norm(query).toLowerCase().split(/\s+/).filter(Boolean);
@@ -356,8 +364,7 @@ nonisolated enum PageRuntime {
         if (start > 0 && /[\uDC00-\uDFFF]/.test(text[start] || '')) start++;
         let end = Math.min(text.length, start + textLimit);
         if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1] || '')) end--;
-        let root = null;
-        if (scope) { try { root = document.querySelector(scope); } catch (e) {} }
+        const root = scope ? document.querySelector(scope) : null;
         if (scope && !root) return { error: 'No element matches that scope.' };
         const candidates = all.filter(c => (!root || within(root, window.__wsurfRefs[c.r - 1])) && (!viewportOnly || c.vp));
         const availabilityOrder = (a, b) => Number(b.vp) - Number(a.vp) || Number(!!a.d) - Number(!!b.d);
@@ -380,9 +387,337 @@ nonisolated enum PageRuntime {
           snapshot: window.__wsurfSnapshot, document: documentID, url: location.href };
       };
 
-      return { matchesRef, expectValue, valueState, walk, documentID, norm, collect, pageText, viewportText, resolve, setValue, pressEnter,
-        labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe };
+      // MARK: Development inspection: elementState (waits), findAll, inspect
+      // Every result is bounded while it is built; nothing reads input values, hidden-field contents or raw HTML.
+
+      const STYLE_PROPERTIES = \#(styleLiteral);
+      const ATTRIBUTE_ALLOWLIST = new Set(['id', 'class', 'role', 'type', 'name', 'for', 'tabindex', 'alt', 'title', 'placeholder',
+        'href', 'src', 'target', 'rel', 'lang', 'dir', 'disabled', 'readonly', 'required', 'checked', 'selected', 'hidden', 'multiple',
+        'autocomplete', 'contenteditable', 'draggable', 'inert', 'open', 'width', 'height', 'colspan', 'rowspan', 'min', 'max', 'step']);
+      const clip = (s, n) => { s = norm(s); return s.length > n ? Array.from(s).slice(0, n).join('') : s; };
+      const round = n => Math.round(n * 100) / 100;
+      // Size of a result as delivered: Swift re-serialises the JSON (escaping "/"), and the text is then wrapped by
+      // AgentToolkit.untrusted, which escapes & < >. Measured here, on those exact bytes, so a budget cannot be missed by
+      // escaping. WIRE_LIMIT sits 8 KiB under the 32 KiB cap for the "ELEMENT:"/"observationID:" lines and Foundation's
+      // own formatting of numbers, which this measure cannot see.
+      const WIRE_LIMIT = 24576;
+      const WIRE_ESCAPES = { '/': '\\/', '&': '&amp;', '<': '&lt;', '>': '&gt;' };
+      const wireBytes = value => new TextEncoder().encode(JSON.stringify(value).replace(/[\/&<>]/g, c => WIRE_ESCAPES[c])).length;
+      const rectOf = el => { const r = el.getBoundingClientRect(); return { x: round(r.x), y: round(r.y), width: round(r.width), height: round(r.height) }; };
+      const hiddenInput = el => el.tagName === 'INPUT' && ((el.type || '') + '').toLowerCase() === 'hidden';
+      const inert = el => { for (let n = el; n; n = parentOf(n)) if (n.hasAttribute && n.hasAttribute('inert')) return true; return false; };
+
+      function* deep(root) {
+        for (const el of root.querySelectorAll('*')) {
+          yield el;
+          if (el.shadowRoot) yield* deep(el.shadowRoot);
+          if (el.tagName === 'IFRAME') {
+            try {
+              const inner = el.contentDocument;
+              if (inner && inner.documentElement) yield* deep(inner);
+            } catch (e) {}
+          }
+        }
+      }
+      // Selector policy. A selector is evaluated against the page, so an attribute predicate is a read of that attribute:
+      // `input[type=hidden][value^=s3]` (or the same under :has) would recover a hidden token a byte at a time. Attribute
+      // predicates are therefore limited to attributes this runtime already exposes. The selector is canonicalised by the
+      // engine's own CSS parser first, so escapes (`v\61lue`), case and namespace forms (`[*|value]`) cannot hide a name.
+      const URL_ATTRIBUTES = new Set(['href', 'src']);
+      const TEST_ATTRIBUTES = new Set(['data-testid', 'data-test', 'data-test-id', 'data-cy', 'data-qa', 'data-automation-id']);
+      const skipString = (text, start) => {
+        for (let k = start + 1; k < text.length; k++) {
+          if (text[k] === '\\') k++;
+          else if (text[k] === text[start]) return k;
+        }
+        return text.length;
+      };
+      const attributeSelectors = text => {
+        const out = [];
+        for (let i = 0; i < text.length; i++) {
+          const c = text[i];
+          if (c === '\\') { i++; continue; }
+          if (c === '"' || c === "'") { i = skipString(text, i); continue; }
+          if (c !== '[') continue;
+          let body = '', j = i + 1;
+          for (; j < text.length && text[j] !== ']'; j++) {
+            if (text[j] === '\\') { body += text.slice(j, j + 2); j++; continue; }
+            if (text[j] === '"' || text[j] === "'") { const e = skipString(text, j); body += text.slice(j, e + 1); j = e; continue; }
+            body += text[j];
+          }
+          out.push(body);
+          i = j;
+        }
+        return out;
+      };
+      const ATTRIBUTE_BODY = /^\s*(?:(?:[^\s|=~^$*\\\[\]"']*|\*)\|(?!=))?([^\s|=~^$*\\\[\]"']+)\s*(?:([~|^$*]?=)[\s\S]*)?$/;
+      // null when the selector may run; otherwise 'invalid' (not a selector) or 'unsafe' (reads an unexposed attribute).
+      const selectorProblem = selector => {
+        try { document.createDocumentFragment().querySelector(selector); } catch (e) { return 'invalid'; }
+        let canonical;
+        try {
+          const sheet = new CSSStyleSheet();
+          sheet.insertRule(selector + '{}');
+          if (sheet.cssRules.length !== 1 || !sheet.cssRules[0].selectorText) return 'invalid';
+          canonical = sheet.cssRules[0].selectorText;
+        } catch (e) { return 'invalid'; }
+        for (const body of attributeSelectors(canonical)) {
+          const m = ATTRIBUTE_BODY.exec(body);
+          if (!m) return 'unsafe';
+          const name = m[1].toLowerCase(), hasValue = !!m[2];
+          if (name.startsWith('aria-') || TEST_ATTRIBUTES.has(name)) continue;
+          if (!ATTRIBUTE_ALLOWLIST.has(name) || (hasValue && URL_ATTRIBUTES.has(name))) return 'unsafe';
+        }
+        return null;
+      };
+      const SELECTOR_ERRORS = { invalid: 'Invalid selector.',
+        unsafe: 'That selector reads an attribute value that is not exposed. Use id, class, role, type, name, aria-*, or a test attribute (data-testid); href and src by presence only.' };
+      const refFor = el => {
+        let ref = refIDs.get(el);
+        if (!ref) { ref = window.__wsurfRefs.push(el); refIDs.set(el, ref); foundOnly.add(el); }
+        refSignatures.set(ref, signature(el));
+        return ref;
+      };
+
+      const elementState = selector => {
+        const problem = selectorProblem(selector);
+        if (problem) return { problem, error: SELECTOR_ERRORS[problem] };
+        const matches = [];
+        for (const el of deep(document)) {
+          if (el.matches(selector)) { matches.push(el); if (matches.length > 1) break; }
+        }
+        if (matches.length !== 1) return { count: matches.length, visible: null, enabled: null };
+        const el = matches[0], rect = el.getBoundingClientRect();
+        return { count: 1, visible: visible(el) && rect.width > 0 && rect.height > 0, enabled: !disabled(el) && !inert(el) };
+      };
+
+      const nameOf = el => {
+        if (['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT', 'OPTION', 'OPTGROUP', 'DATALIST'].includes(el.tagName) || hiddenInput(el)) return '';
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return clip(fieldLabel(el), 80);
+        const aria = accessibleName(el);
+        if (aria || el.isContentEditable) return clip(aria, 80);
+        const kind = kindOf(el);
+        if (kind === 'button' || kind === 'link') return clip(controlLabel(el), 80);
+        let text = '';
+        for (const node of el.childNodes) { if (node.nodeType === 3) text += node.nodeValue + ' '; if (text.length > 400) break; }
+        return clip(text || el.getAttribute('alt') || el.getAttribute('title') || '', 80);
+      };
+
+      const summaryOf = (el, ref) => {
+        const tag = el.tagName.toLowerCase();
+        if (hiddenInput(el)) return { r: ref, tag, type: 'hidden' };
+        const out = { r: ref, tag };
+        if (el.id) out.id = clip(el.id, 80);
+        const cls = Array.from(el.classList || []).slice(0, 5).map(c => clip(c, 40));
+        if (cls.length) out.cls = cls;
+        const role = el.getAttribute('role');
+        if (role) out.role = clip(role, 40);
+        const name = nameOf(el);
+        if (name) out.name = name;
+        out.rect = rectOf(el);
+        out.visible = visible(el);
+        if (el.ownerDocument !== document) out.inFrame = true;
+        return out;
+      };
+
+      const findAll = (selector, offset, limit) => {
+        const problem = selectorProblem(selector);
+        if (problem) return { problem, error: SELECTOR_ERRORS[problem] };
+        if (!Number.isInteger(offset) || offset < 0 || offset > 10000 || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+          return { problem: 'range', error: 'offset must be 0 to 10000 and limit 1 to 100.' };
+        }
+        const observation = window.__wsurfSnapshot = Date.now().toString(36) + Math.random().toString(36);
+        const items = [];
+        const result = { observation, document: documentID, url: location.href, offset, limit, returned: 0, hasMore: true, items,
+          coverage: { crossOriginFrames: 'skipped', closedShadowRoots: 'skipped' } };
+        let used = wireBytes(result), index = 0;
+        result.hasMore = false;
+        for (const el of deep(document)) {
+          if (!el.matches(selector)) continue;
+          if (index++ < offset) continue;
+          if (items.length === limit) { result.hasMore = true; break; }
+          const item = summaryOf(el, refFor(el)), cost = wireBytes(item) + 1;
+          // The first item always fits (summaries are clipped), so a page always advances.
+          if (items.length && used + cost > WIRE_LIMIT) { result.hasMore = true; break; }
+          items.push(item);
+          used += cost;
+        }
+        result.returned = items.length;
+        return result;
+      };
+
+      const safeURL = (value, el) => {
+        try {
+          const u = new URL(value, el.baseURI);
+          return u.origin === 'null' ? u.protocol : u.origin + u.pathname;
+        } catch (e) { return ''; }
+      };
+
+      const inspect = ref => {
+        if (!inspectableRef(ref)) return { stale: true };
+        const el = window.__wsurfRefs[ref - 1], view = realm(el), style = view.getComputedStyle(el);
+        const px = name => round(parseFloat(style.getPropertyValue(name)) || 0);
+        const sides = (a, b = '') => ({ top: px(a + '-top' + b), right: px(a + '-right' + b), bottom: px(a + '-bottom' + b), left: px(a + '-left' + b) });
+        const rect = rectOf(el), padding = sides('padding'), border = sides('border', '-width');
+        const total = el.attributes.length, hidden = hiddenInput(el), attributes = {};
+        let kept = 0, scanned = 0;
+        for (; scanned < Math.min(total, 256) && kept < 32; scanned++) {
+          const attr = el.attributes[scanned], name = attr.name.toLowerCase();
+          if (hidden ? name !== 'type' : !(ATTRIBUTE_ALLOWLIST.has(name) || name.startsWith('aria-'))) continue;
+          attributes[name] = name === 'href' || name === 'src' ? safeURL(attr.value, el) : clip(attr.value, 120);
+          kept++;
+        }
+        const styles = {};
+        for (const property of STYLE_PROPERTIES) {
+          const value = style.getPropertyValue(property);
+          if (value !== '') styles[property] = clip(value, 120);
+        }
+        const ancestors = [];
+        let ancestorsTruncated = false;
+        for (let node = parentOf(el); node && node.nodeType === 1; node = parentOf(node)) {
+          if (ancestors.length === 16) { ancestorsTruncated = true; break; }
+          const s = realm(node).getComputedStyle(node), box = node.getBoundingClientRect();
+          const entry = { tag: node.tagName.toLowerCase(), display: s.display, position: s.position,
+            overflow: s.overflowX + ' ' + s.overflowY, width: round(box.width), height: round(box.height) };
+          if (node.id) entry.id = clip(node.id, 80);
+          const cls = Array.from(node.classList || []).slice(0, 3).map(c => clip(c, 40));
+          if (cls.length) entry.cls = cls;
+          ancestors.push(entry);
+        }
+        const out = {
+          r: ref, document: documentID, tag: el.tagName.toLowerCase(), name: nameOf(el),
+          attributes, attributesTotal: total, attributesTruncated: scanned < total,
+          rect,
+          scroll: { scrollWidth: el.scrollWidth, scrollHeight: el.scrollHeight, clientWidth: el.clientWidth, clientHeight: el.clientHeight,
+            scrollTop: round(el.scrollTop), scrollLeft: round(el.scrollLeft) },
+          box: { boxSizing: style.boxSizing, margin: sides('margin'), border, padding,
+            // Layout pixels (untransformed): clientWidth/Height already exclude borders and scrollbars.
+            content: { width: Math.max(0, round(el.clientWidth - padding.left - padding.right)),
+                       height: Math.max(0, round(el.clientHeight - padding.top - padding.bottom)) } },
+          style: styles, ancestors, ancestorsTruncated
+        };
+        if (el.ownerDocument !== document) out.inFrame = true;
+        while (wireBytes(out) > WIRE_LIMIT && out.ancestors.length) { out.ancestors.pop(); out.ancestorsTruncated = true; }
+        if (wireBytes(out) > WIRE_LIMIT) { out.attributes = {}; out.attributesTruncated = true; }
+        if (wireBytes(out) > WIRE_LIMIT) { out.style = {}; out.truncated = true; }
+        return out;
+      };
+      // Where a ref'd element, and everything that frames or clips it, sit in their own document's viewport, for a screenshot
+      // crop. Boxes are measured, never guessed: a bounding box, the layout size and the composed 2D linear part of every
+      // transform up to the document root (rotation, reflection, skew, scale); Swift derives the translation from the
+      // bounding box's centre and maps the polygon (`ScreenshotGeometry`). A 3D transform or an unreachable frame sets
+      // `unmappable`.
+      const screenshotGeometry = ref => {
+        const el = inspectableRef(ref) ? window.__wsurfRefs[ref - 1] : null;
+        if (!el || !el.isConnected) return { stale: true };
+        const out = { foundOnly: foundOnly.has(el), clips: [], frames: [] };
+        const r = (x, y, width, height) => ({ x, y, width, height });
+        const win = node => node.ownerDocument.defaultView, up = node => node.parentElement || node.getRootNode().host;
+        // [a, b, c, d] is matrix(a, b, c, d); mul(p, q) applies q first.
+        const mul = (p, q) => [p[0] * q[0] + p[2] * q[1], p[1] * q[0] + p[3] * q[1], p[0] * q[2] + p[2] * q[3], p[1] * q[2] + p[3] * q[3]];
+        const REPLACED = new Set(['IFRAME', 'IMG', 'VIDEO', 'AUDIO', 'CANVAS', 'svg', 'INPUT', 'SELECT', 'TEXTAREA', 'BUTTON', 'OBJECT', 'EMBED']);
+        const radians = token => { const n = parseFloat(token); return token.endsWith('grad') ? n * Math.PI / 200 : token.endsWith('deg') ? n * Math.PI / 180 : token.endsWith('turn') ? n * 2 * Math.PI : n; };
+        // The 2D linear part one node applies to itself: CSS `zoom` (which scales layout, unlike a transform: bounding boxes are
+        // zoomed while offset and client sizes are not), then `transform`, `scale` and `rotate` (translation is derived later).
+        // Null for a 3D transform, which a 2D polygon cannot carry.
+        const own = node => {
+          const s = win(node).getComputedStyle(node);
+          if (s.display === 'contents' || (s.display === 'inline' && !REPLACED.has(node.tagName))) return [1, 0, 0, 1];
+          const zoom = parseFloat(s.zoom) || 1;
+          let l = [zoom, 0, 0, zoom];
+          if (s.transform && s.transform !== 'none') {
+            const m = new DOMMatrix(s.transform);
+            if (m.m13 || m.m23 || m.m31 || m.m32 || m.m43 || m.m14 || m.m24 || m.m33 !== 1 || m.m44 !== 1) return null;
+            l = mul([m.m11, m.m12, m.m21, m.m22], l);
+          }
+          const scale = (s.scale || 'none').trim().split(/\s+/);
+          if (scale[0] !== 'none') { const sx = parseFloat(scale[0]); l = mul([sx, 0, 0, scale.length > 1 ? parseFloat(scale[1]) : sx], l); }
+          const rotate = (s.rotate || 'none').trim().split(/\s+/);
+          if (rotate[0] !== 'none') {
+            let t = radians(rotate[rotate.length - 1]);
+            if (rotate.length > 1) {
+              const word = rotate.length === 2 ? { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[rotate[0]] : null;
+              const v = word || (rotate.length === 4 ? rotate.slice(0, 3).map(parseFloat) : null);
+              if (!v || v[0] || v[1]) { if (t) return null; } else t *= Math.sign(v[2]);
+            }
+            l = mul([Math.cos(t), Math.sin(t), -Math.sin(t), Math.cos(t)], l);
+          }
+          // A non-zero z in `translate` is 3D: under a perspective ancestor it scales the box, which no 2D polygon carries.
+          const translate = (s.translate || 'none').trim().split(/\s+/);
+          if (translate.length > 2 && parseFloat(translate[2])) return null;
+          return l.every(Number.isFinite) ? l : null;
+        };
+        // Every transform from `node` up to its document's root, composed once.
+        const linearOf = node => { let acc = [1, 0, 0, 1]; for (let n = node; n; n = up(n)) { const l = own(n); if (!l) return null; acc = mul(l, acc); } return acc; };
+        // `local` is the region of interest in layout pixels from the node's border-box origin.
+        const place = (node, local) => {
+          // SVG nodes have no layout box (offset and client sizes): nothing to measure the placement from.
+          if (typeof node.offsetWidth !== 'number') { out.unmappable = true; return null; }
+          const linear = linearOf(node);
+          if (!linear) { out.unmappable = true; return null; }
+          const b = node.getBoundingClientRect();
+          return { border: r(b.x, b.y, b.width, b.height), layout: r(0, 0, node.offsetWidth, node.offsetHeight), linear, local };
+        };
+        // Padding boxes (what an `overflow` container shows) of the ancestors that cut `node` off, in its own viewport.
+        // An absolute or fixed node escapes the containers that are not its containing block.
+        const clipsOf = node => {
+          const view = win(node), clips = [];
+          let position = view.getComputedStyle(node).position;
+          for (let a = up(node); a; a = up(a)) {
+            const s = view.getComputedStyle(a), block = s.transform !== 'none' || s.filter !== 'none';
+            if (position === 'fixed' ? !block : position === 'absolute' && s.position === 'static' && !block) continue;
+            position = s.position;
+            const rootScroller = a === view.document.body && view.getComputedStyle(view.document.documentElement).overflow === 'visible';
+            if ((s.overflowX === 'visible' && s.overflowY === 'visible') || s.display === 'inline' || s.display === 'contents' || rootScroller) continue;
+            const p = place(a, r(a.clientLeft, a.clientTop, a.clientWidth, a.clientHeight));
+            if (p) clips.push(p);
+          }
+          return clips;
+        };
+        const box = el.getBoundingClientRect();
+        out.rect = r(box.x, box.y, box.width, box.height);
+        out.clips = clipsOf(el);
+        let w = win(el);
+        for (; w && w !== window && w.frameElement; w = w.parent) {
+          const frame = w.frameElement, style = win(frame).getComputedStyle(frame), pad = name => parseFloat(style[name]) || 0;
+          const p = place(frame, r(frame.clientLeft + pad('paddingLeft'), frame.clientTop + pad('paddingTop'),
+            frame.clientWidth - pad('paddingLeft') - pad('paddingRight'), frame.clientHeight - pad('paddingTop') - pad('paddingBottom')));
+          if (p) out.frames.push({ ...p, clips: clipsOf(frame) });
+        }
+        if (w !== window) out.unmappable = true;
+        return out;
+      };
+
+      return { matchesRef, inspectableRef, isFoundOnly: ref => foundOnly.has(window.__wsurfRefs[ref - 1]), expectValue, valueState, walk, documentID, norm, collect, pageText, viewportText, resolve, setValue, pressEnter,
+        labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe, elementState, findAll, inspect, selectorProblem, screenshotGeometry };
     })());
     """#
+
+    // MARK: Bounded inputs for development tools
+
+    static let maxSelectorBytes = 2_048
+
+    enum SelectorFailure: Error, Equatable { case empty, tooLong, invalid }
+
+    /// A CSS selector is accepted only when non-blank, free of NUL, and at most 2,048 UTF-8 bytes. Syntax is checked
+    /// by the page itself (`Invalid selector.`), never guessed here.
+    static func validate(selector: String) -> Result<String, SelectorFailure> {
+        if selector.allSatisfy(\.isWhitespace) { return .failure(.empty) }
+        if selector.utf8.count > maxSelectorBytes { return .failure(.tooLong) }
+        if selector.unicodeScalars.contains(where: { $0.value == 0 }) { return .failure(.invalid) }
+        return .success(selector)
+    }
+
+    /// Computed style properties `inspect` may return (≤ 64); the script receives this exact list.
+    static let inspectStyleProperties = [
+        "display", "position", "visibility", "opacity", "overflow-x", "overflow-y", "z-index", "top", "right", "bottom", "left",
+        "width", "height", "min-width", "min-height", "max-width", "max-height", "box-sizing", "float", "clear",
+        "flex-direction", "flex-wrap", "flex-grow", "flex-shrink", "flex-basis", "order", "justify-content", "justify-items",
+        "justify-self", "align-items", "align-content", "align-self", "row-gap", "column-gap",
+        "grid-template-columns", "grid-template-rows", "grid-auto-flow", "grid-column-start", "grid-column-end",
+        "grid-row-start", "grid-row-end", "font-family", "font-size", "font-weight", "line-height", "text-align", "white-space",
+        "color", "background-color", "border-radius", "transform", "pointer-events",
+    ]
+    private static let styleLiteral = "[" + inspectStyleProperties.map { "'\($0)'" }.joined(separator: ",") + "]"
 
 }

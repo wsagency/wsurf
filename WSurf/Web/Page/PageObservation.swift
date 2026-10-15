@@ -50,12 +50,14 @@ extension PageDriver {
         observations.object(forKey: view)
     }
 
-    static func validateObservation(in view: BrowserPage, ref: Int? = nil) async -> Bool {
+    /// `inspectable` also accepts refs only `findElements` registered. It exists for the one capture path that checks
+    /// development access itself; every action keeps the strict `matchesRef` check.
+    static func validateObservation(in view: BrowserPage, ref: Int? = nil, inspectable: Bool = false) async -> Bool {
         guard let prior = observation(in: view), ref.map({ prior.refs.contains($0) }) ?? true,
             expectedObservation == nil || expectedObservation == prior.id,
             await selectedFrameIsLive(in: view)
         else { return false }
-        let refState = ref.map { "window.__wsurf?.matchesRef(\($0)) ? 'valid' : 'changed'" } ?? "'valid'"
+        let refState = ref.map { "window.__wsurf?.\(inspectable ? "inspectableRef" : "matchesRef")(\($0)) ? 'valid' : 'changed'" } ?? "'valid'"
         let value =
             try? await view.evaluateJavaScript(
                 "[window.__wsurf?.documentID || '', window.__wsurfSnapshot || '', location.href, \(refState)]",

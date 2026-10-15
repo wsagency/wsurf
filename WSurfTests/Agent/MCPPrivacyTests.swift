@@ -41,7 +41,7 @@ struct MCPPrivacyTests {
     }
 
     private func session(_ browser: BrowserModel, access: MCPAccessConsent.Access = .control) -> MCPBrowserSession {
-        MCPBrowserSession(browser: browser, available: { true }, consent: { _, _ in access })
+        MCPBrowserSession(browser: browser, available: { true }, consent: { _, _, _ in access })
     }
 
     private func text(_ result: CallTool.Result) -> String {
@@ -188,7 +188,7 @@ struct MCPPrivacyTests {
         browser.tabs = [privateTab]
         browser.activeTabID = privateTab.id
         var asked = false
-        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, pages in
+        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, pages, _ in
             asked = true
             #expect(pages.isEmpty)
             return .control
@@ -204,7 +204,7 @@ struct MCPPrivacyTests {
         browser.tabs = []
         browser.activeTabID = nil
         var prompts = 0
-        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, pages in
+        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, pages, _ in
             prompts += 1
             return pages.isEmpty ? nil : .readOnly
         })
@@ -219,7 +219,7 @@ struct MCPPrivacyTests {
     @Test func changingPagesDuringConsentDoesNotShareTheReplacement() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
-        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, _ in
+        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, _, _ in
             tab.loadHTML("<p>Replacement secret</p>", baseURL: URL(string: "https://replacement.invalid/"))
             _ = await waitUntil { tab.page.url?.host() == "replacement.invalid" }
             return .control
@@ -346,7 +346,7 @@ struct MCPPrivacyTests {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
         var opens = 0
-        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, _ in .control }, openConsent: { _, _ in
+        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, _, _ in .control }, openConsent: { _, _ in
             opens += 1
             return true
         })

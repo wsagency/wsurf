@@ -108,7 +108,7 @@ struct FormConsumerBoundaryTests {
                 let session = MCPBrowserSession(
                     browser: browser,
                     available: { true },
-                    consent: { _, _ in .control }
+                    consent: { _, _, _ in .control }
                 )
                 defer { session.revoke() }
                 _ = try await session.call(name: "requestAccess", arguments: [:])

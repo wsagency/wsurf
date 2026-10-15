@@ -67,6 +67,7 @@ extension BrowserTab {
         holdPageColorUntilLoaded()
         refreshChrome()
         invalidateSessionState()
+        developmentDocumentChanged()
     }
 
     func navigationFinished(_ navigation: PageNavigation?) {

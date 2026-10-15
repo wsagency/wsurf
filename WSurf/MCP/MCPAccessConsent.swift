@@ -10,6 +10,8 @@ enum MCPAccessConsent {
     enum Access: Sendable {
         case readOnly
         case control
+        /// Control plus DOM inspection, console and network metadata, viewport and device emulation.
+        case development
     }
 
     struct Page: Equatable, Sendable {
@@ -18,7 +20,7 @@ enum MCPAccessConsent {
         let url: URL
     }
 
-    static func share(client: String, pages: [Page], in window: NSWindow?) async -> Access? {
+    static func share(client: String, pages: [Page], development: Bool = false, in window: NSWindow?) async -> Access? {
         guard !AppDatabase.isRunningTests, window != nil else { return nil }
         let alert = NSAlert()
         let name = displayName(for: client)
@@ -49,6 +51,13 @@ enum MCPAccessConsent {
             """)
         alert.addButton(withTitle: String(localized: "Read Only"))
         alert.addButton(withTitle: String(localized: "Allow Control"))
+        if development {
+            alert.informativeText += "\n" + String(localized: """
+                • Allow Development: also inspect page structure and styles, read console and network metadata, and change the viewport. \
+                These can disclose additional private site data, including text a page writes to its console.
+                """)
+            alert.addButton(withTitle: String(localized: "Allow Development"))
+        }
         alert.addButton(withTitle: String(localized: "Don’t Allow"))
         alert.buttons.last?.keyEquivalent = "\u{1b}"
         switch await present(alert, in: window) {
@@ -56,6 +65,8 @@ enum MCPAccessConsent {
             return .readOnly
         case .alertSecondButtonReturn:
             return .control
+        case .alertThirdButtonReturn where development:
+            return .development
         default:
             return nil
         }

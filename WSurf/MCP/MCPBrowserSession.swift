@@ -21,6 +21,13 @@ final class MCPBrowserSession: Identifiable {
         let documentURL: String
     }
 
+    /// What a tool needs from the connection's grant and the site's Assistant Access setting.
+    enum Scope {
+        case read, control
+        /// Control plus DOM inspection, diagnostics, and viewport/device emulation.
+        case development
+    }
+
     let id = UUID()
     var clientName = String(localized: "External Connection")
     private(set) var isConnected = true
@@ -29,11 +36,13 @@ final class MCPBrowserSession: Identifiable {
     private(set) var grants: [UUID: Grant] = [:]
     @ObservationIgnored private let browser: BrowserModel
     @ObservationIgnored private let available: () -> Bool
-    @ObservationIgnored private let consent: (String, [MCPAccessConsent.Page]) async -> MCPAccessConsent.Access?
+    @ObservationIgnored private let consent: (String, [MCPAccessConsent.Page], Bool) async -> MCPAccessConsent.Access?
     @ObservationIgnored private let openConsent: (String, URL) async -> Bool
     @ObservationIgnored private let actionPolicy = AgentActionPolicy(storage: MCPActionGrantStorage())
     @ObservationIgnored private let consentWindow: ExtensionWindowAdapter?
-    @ObservationIgnored private var observations: [UUID: PageObservation] = [:]
+    @ObservationIgnored var observations: [UUID: PageObservation] = [:]
+    /// Cleanup index only: the tab owns the lease, this lets disconnect find the tabs this connection holds.
+    @ObservationIgnored var developmentTabs: [UUID: (tab: BrowserTab, owner: DevelopmentOwner)] = [:]
     @ObservationIgnored private var destinations: Set<String> = []
     @ObservationIgnored private var hasReadContent = false
     @ObservationIgnored private var accessWasRequested = false
@@ -50,8 +59,8 @@ final class MCPBrowserSession: Identifiable {
     init(
         browser: BrowserModel,
         available: @escaping () -> Bool,
-        consent: @escaping (String, [MCPAccessConsent.Page]) async -> MCPAccessConsent.Access? = { client, pages in
-            await MCPAccessConsent.share(client: client, pages: pages, in: nil)
+        consent: @escaping (String, [MCPAccessConsent.Page], Bool) async -> MCPAccessConsent.Access? = { client, pages, development in
+            await MCPAccessConsent.share(client: client, pages: pages, development: development, in: nil)
         },
         openConsent: @escaping (String, URL) async -> Bool = { client, url in
             await MCPAccessConsent.open(client: client, url: url, in: nil)
@@ -69,6 +78,8 @@ final class MCPBrowserSession: Identifiable {
 
     func revoke() {
         isConnected = false
+        for (tab, owner) in Array(developmentTabs.values) { tab.releaseDevelopment(owner, reason: .disconnect) }
+        developmentTabs = [:]
         grants = [:]
         observations = [:]
         destinations = []
@@ -100,9 +111,10 @@ final class MCPBrowserSession: Identifiable {
     }
 
     private func execute(name: String, arguments: [String: Value]) async -> CallTool.Result {
+        releaseUnauthorizedDevelopment()
         switch name {
         case "requestAccess":
-            return await requestAccess()
+            return await requestAccess(development: arguments["development"]?.boolValue ?? false)
         case "listTabs":
             return tabList()
         case "newTab":
@@ -113,8 +125,11 @@ final class MCPBrowserSession: Identifiable {
         guard let id = arguments["tabID"]?.stringValue.flatMap(UUID.init(uuidString:)),
             let tab = sharedTab(id), let grant = grants[id]
         else { return failure("This tab is not shared with this connection.") }
-        let capability: AssistantPageCapability = ["readPage", "inspectControl", "waitForPage", "screenshotPage"].contains(name) ? .read : .control
-        guard permits(tab, capability: capability) else {
+        let capability: Scope =
+            ["readPage", "inspectControl", "waitForPage", "screenshotPage", "getDevelopmentInfo"].contains(name)
+            ? .read
+            : Self.developmentCalls.contains(name) || Self.developmentPageActions.contains(name) ? .development : .control
+        guard mayProceed(tab, capability: capability) else {
             return failure("This action is blocked by the connection’s access or the website’s Assistant Access setting.")
         }
         if name == "switchTab" {
@@ -142,10 +157,13 @@ final class MCPBrowserSession: Identifiable {
                 return failure("The previous page belongs to another website. Ask the user to open and share it.")
             }
         }
+        if Self.developmentCalls.contains(name) {
+            return await developmentCall(name: name, arguments: arguments, tab: tab)
+        }
         return await usePage(name: name, arguments: arguments, tab: tab, capability: capability)
     }
 
-    private func requestAccess() async -> CallTool.Result {
+    private func requestAccess(development: Bool) async -> CallTool.Result {
         guard !accessWasRequested else {
             return failure("Access has already been requested. The user can disconnect and reconnect to share different tabs.")
         }
@@ -155,12 +173,14 @@ final class MCPBrowserSession: Identifiable {
             return .init(id: tab.id, title: tab.title, url: url)
         }
         guard !pages.isEmpty else {
-            _ = await consent(clientName, [])
+            _ = await consent(clientName, [], development)
             return failure("No shareable webpage is on screen. WSurf showed the user how to open a webpage. Request access again after they have opened it.")
         }
         accessWasRequested = true
-        let answer = await consent(clientName, pages)
-        guard isConnected, available(), !Task.isCancelled, let answer else { return failure("Access was not granted.") }
+        var granted = await consent(clientName, pages, development)
+        // Development access can only come from a request that asked for it.
+        if granted == .development, !development { granted = .control }
+        guard isConnected, available(), !Task.isCancelled, let answer = granted else { return failure("Access was not granted.") }
         for page in pages {
             guard let tab = browser.tabs.first(where: { $0.id == page.id }),
                 !tab.isPrivate, webURL(of: tab) == page.url,
@@ -187,15 +207,18 @@ final class MCPBrowserSession: Identifiable {
     }
 
     private func usePage(
-        name: String, arguments: [String: Value], tab: BrowserTab, capability: AssistantPageCapability
+        name: String, arguments: [String: Value], tab: BrowserTab, capability: Scope
     ) async -> CallTool.Result {
         tab.setExternalAutomationWorking(true)
         defer { tab.setExternalAutomationWorking(false) }
         tab.realizeDeferredSession()
         let view = tab.page
+        // The view and generation this call started on. The guard below refuses to continue once either changes.
+        let generation = tab.pageGeneration
+        guard tab.isLive(view, generation: generation) else { return failure("The page is not ready. Try again.") }
         guard let url = webURL(of: tab) else { return failure("The webpage is unavailable.") }
         let usesRef =
-            ["clickOnPage", "typeOnPage", "selectOption", "fillFields", "inspectControl", "setChecked", "hoverOnPage", "pressKey"].contains(name)
+            ["clickOnPage", "typeOnPage", "selectOption", "fillFields", "inspectControl", "setChecked", "hoverOnPage", "pressKey", "inspectElement"].contains(name)
             || arguments["ref"] != nil
         let observation = observations[tab.id]
         if usesRef {
@@ -205,10 +228,10 @@ final class MCPBrowserSession: Identifiable {
         }
         let scope = PageAutomationGuard(
             documentURL: url.absoluteString, snapshot: usesRef ? observation?.snapshot : nil,
-            validate: { [weak self, weak tab] in
-                guard let self, let tab else { return false }
-                return self.permits(tab, capability: capability)
-                    && (capability == .read || self.onScreen(tab))
+            validate: { [weak self, weak tab, weak view] in
+                guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
+                return self.mayProceed(tab, capability: capability)
+                    && (capability != .control || self.onScreen(tab))
             }
         )
         return await PageAutomationGuard.$current.withValue(scope) {
@@ -217,11 +240,35 @@ final class MCPBrowserSession: Identifiable {
                 var capturedImage: Data?
                 let output: String
                 if name == "screenshotPage" {
-                    capturedImage = await PageDriver.screenshot(in: view)
-                    output =
-                        capturedImage == nil
-                        ? "Screenshot unavailable; use readPage for redacted text."
-                        : "Screenshot captured.\n" + (await PageDriver.snapshot(view, viewportOnly: true))
+                    let request = Self.screenshotTarget(arguments)
+                    if let message = request.error {
+                        output = message
+                    } else {
+                        // A control ref needs read access; a non-control inspection ref needs current development access, asked
+                        // again inside the driver before work, after each await and before pixels are returned.
+                        let developmentAllowed = { [weak self, weak tab] in
+                            guard let self, let tab else { return false }
+                            return self.mayProceed(tab, capability: .development)
+                        }
+                        switch await PageDriver.screenshot(request.target, developmentAllowed: developmentAllowed, in: view) {
+                        case .success(let capture):
+                            let box = capture.bounds
+                            let text =
+                                "Screenshot captured. Shows viewport CSS pixels x \(Int(box.minX.rounded())), y \(Int(box.minY.rounded())), "
+                                + "\(Int(box.width.rounded())) by \(Int(box.height.rounded())); image scale \(String(format: "%.2f", capture.scale)) px per CSS px.\n"
+                                + (await PageDriver.snapshot(view, viewportOnly: true))
+                            // The snapshot above was the last await: development access is asked once more right before the
+                            // image is attached, so a revoke during it never returns an inspection image.
+                            if capture.requiresDevelopment, !developmentAllowed() {
+                                output = ScreenshotFailure.needsDevelopment.message
+                            } else {
+                                capturedImage = capture.jpeg
+                                output = text
+                            }
+                        case .failure(let failure):
+                            output = failure.message
+                        }
+                    }
                 } else {
                     output = await pageAction(name: name, arguments: arguments, view: view)
                 }
@@ -231,7 +278,7 @@ final class MCPBrowserSession: Identifiable {
                 }
                 let prefixes = [
                     "PAGE TEXT:", "Clicked", "Typed", "Selected", "Scrolled", "Already at", "Went back.",
-                    "CONTROL:", "Condition met.", "Set checked", "Checked state", "Screenshot captured.", "Dispatched hover", "Sent ",
+                    "CONTROL:", "Condition met.", "Set checked", "Checked state", "Screenshot captured.", "Hovered.", "Sent ", "ELEMENTS:", "ELEMENT:",
                 ]
                 let succeeded =
                     prefixes.contains { output.hasPrefix($0) }
@@ -253,6 +300,23 @@ final class MCPBrowserSession: Identifiable {
                 return CallTool.Result(content: blocks, structuredContent: Optional.some(value), isError: !succeeded)
             }
         }
+    }
+
+    /// `ref` or `region`, never both. `region` was shape-checked by the catalog.
+    private static func screenshotTarget(_ arguments: [String: Value]) -> (target: ScreenshotTarget, error: String?) {
+        func number(_ box: [String: Value], _ key: String) -> CGFloat {
+            switch box[key] {
+            case .int(let value): CGFloat(value)
+            case .double(let value): CGFloat(value)
+            default: .nan
+            }
+        }
+        let ref = arguments["ref"]?.intValue
+        if case .object(let box)? = arguments["region"] {
+            if ref != nil { return (.viewport, "Use either ref or region, not both.") }
+            return (.region(CGRect(x: number(box, "x"), y: number(box, "y"), width: number(box, "width"), height: number(box, "height"))), nil)
+        }
+        return (ref.map { .element(ref: $0) } ?? .viewport, nil)
     }
 
     private func pageAction(name: String, arguments: [String: Value], view: BrowserPage) async -> String {
@@ -293,6 +357,12 @@ final class MCPBrowserSession: Identifiable {
             return await PageDriver.waitForPage(
                 condition: arguments["condition"]?.stringValue ?? "", value: arguments["value"]?.stringValue ?? "",
                 timeout: arguments["timeout"]?.intValue ?? 5, in: view)
+        case "findElements":
+            return await PageDriver.findElements(
+                selector: arguments["selector"]?.stringValue ?? "", offset: arguments["offset"]?.intValue ?? 0,
+                limit: arguments["limit"]?.intValue ?? MCPDevelopmentTools.defaultLimit, in: view)
+        case "inspectElement":
+            return await PageDriver.inspectElement(ref: ref, in: view)
         case "goBack":
             return await PageDriver.goBack(in: view)
         default:
@@ -309,7 +379,7 @@ final class MCPBrowserSession: Identifiable {
         if origin != grant.origin {
             guard await openConsent(clientName, url) else { return failure("Navigation was not approved.") }
         }
-        guard permits(tab, capability: .control), onScreen(tab), webURL(of: tab) == previousURL else {
+        guard mayProceed(tab, capability: .control), onScreen(tab), webURL(of: tab) == previousURL else {
             return failure("Page access changed before navigation.")
         }
         guard browser.sitePermissions.assistantAccess(for: origin) != .deny else { return failure("Assistant access is off for this website.") }
@@ -352,8 +422,10 @@ final class MCPBrowserSession: Identifiable {
         return parts?.url?.absoluteString ?? url.absoluteString
     }
 
+    /// Persistent state only: whether this connection still shares `id`. A task's own cancellation is not part of it, because
+    /// another connection evaluates this through the owner's `isAuthorized` (lease release) from its own, possibly cancelled, task.
     private func sharedTab(_ id: UUID) -> BrowserTab? {
-        guard isConnected, available(), !Task.isCancelled,
+        guard isConnected, available(),
             let grant = grants[id], let tab = browser.tabs.first(where: { $0.id == id }),
             !tab.isPrivate, !tab.isClosed, let url = webURL(of: tab),
             SitePermissions.origin(for: url) == grant.origin
@@ -362,22 +434,32 @@ final class MCPBrowserSession: Identifiable {
         return tab.assistantAccess.effectivePolicy == .deny ? nil : tab
     }
 
-    private func permits(_ tab: BrowserTab, capability: AssistantPageCapability) -> Bool {
+    /// Whether this connection's grant and the site's policy allow `capability` now. Persistent: never depends on the calling task.
+    func permits(_ tab: BrowserTab, capability: Scope) -> Bool {
         guard sharedTab(tab.id) === tab, let grant = grants[tab.id] else { return false }
-        if capability == .control {
-            return grant.access == .control && tab.assistantAccess.effectivePolicy != .readOnly
+        let writable = tab.assistantAccess.effectivePolicy != .readOnly
+        switch capability {
+        case .read: return true
+        case .control: return (grant.access == .control || grant.access == .development) && writable
+        case .development: return grant.access == .development && writable
         }
-        return true
     }
 
-    private func webURL(of tab: BrowserTab) -> URL? {
+    /// `permits` for the request this task is running: also false once the request itself was cancelled, so a cancelled
+    /// request neither continues nor returns contents. Use at request entry and after each await of that request, never to
+    /// decide the fate of a lease.
+    func mayProceed(_ tab: BrowserTab, capability: Scope) -> Bool {
+        !Task.isCancelled && permits(tab, capability: capability)
+    }
+
+    func webURL(of tab: BrowserTab) -> URL? {
         guard !tab.isShowingSystemPage else { return nil }
         let url = tab.isMaterialised ? tab.page.url : URL(string: tab.urlString)
         guard let url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }
         return url
     }
 
-    private func onScreen(_ tab: BrowserTab) -> Bool {
+    func onScreen(_ tab: BrowserTab) -> Bool {
         browser.activeTabID == tab.id || browser.splitPanes?.contains(where: { $0 === tab }) == true
     }
 

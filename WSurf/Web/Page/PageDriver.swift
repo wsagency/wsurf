@@ -51,6 +51,15 @@ enum PageDriver {
     ) async -> String {
         let textLength = max(0, min(textLimit ?? outputBudget.textCharacters, outputBudget.textCharacters))
         let count = max(1, min(controlLimit ?? outputBudget.controls, outputBudget.controls))
+        // Every caller of readPage reaches the page through here, so the scope bound is enforced once, before any script runs.
+        if !scope.isEmpty {
+            switch PageRuntime.validate(selector: scope) {
+            case .success: break
+            case .failure(.invalid): return "Invalid scope selector."
+            case .failure(.empty), .failure(.tooLong):
+                return "The scope selector must be 1 to \(PageRuntime.maxSelectorBytes) UTF-8 bytes."
+            }
+        }
         guard let query = jsonString(lookingFor), let selector = jsonString(scope) else { return "Invalid page query." }
         let script = scripted(
             "return JSON.stringify(R.observe(\(query), \(textLength), \(count), \(max(0, textOffset)), \(max(0, controlOffset)), \(selector), \(viewportOnly)));"
