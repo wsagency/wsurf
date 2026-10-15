@@ -11,8 +11,26 @@ nonisolated enum AttachmentRequest {
         return attachments.flatMap(\.images).map { .init(data: $0.data, mimeType: $0.mimeType) }
     }
 
+    static let hostedImageTokens = 1_600
+
+    /// Conservative on-device charge per image. On macOS 27.0 (Apple M5) the system model cost at most 195
+    /// input tokens for every image shape tried, including the importer's 1,600 px photos and 1,200x1,552 PDF pages.
+    /// ponytail: empirical margin, not a documented bound. Upgrade path: the framework's tokenCount(for:)
+    /// once it counts image prompts (it throws ModelManagerError 1001 on macOS 27.0).
+    static let onDeviceImageTokens = 256
+
+    /// Per-image charge used by every budget check: preflight, run loop and retained-transcript estimates.
+    static func imageTokens(onDevice: Bool) -> Int {
+        onDevice ? onDeviceImageTokens : hostedImageTokens
+    }
+
+    static func imageTokens(for provider: Provider) -> Int {
+        imageTokens(onDevice: provider.isOnDevice)
+    }
+
+    /// `imageTokens` is the per-image charge for the model that will receive them; see `imageTokens(onDevice:)`.
     static func validate(
-        _ attachments: [AssistantAttachment], message: String, textOnly: Bool, windowTokens: Int
+        _ attachments: [AssistantAttachment], message: String, textOnly: Bool, windowTokens: Int, imageTokens: Int
     ) throws {
         try AssistantAttachment.validate(attachments)
         guard !attachments.isEmpty else { return }
@@ -20,8 +38,8 @@ nonisolated enum AttachmentRequest {
             throw AttachmentFailure.message(String(localized: "No readable text was found in an image. Choose a model that can read images to send it."))
         }
         let characters = AssistantAttachment.prompt(message, attachments: attachments, textOnly: textOnly).count
-        let imageTokens = textOnly ? 0 : attachments.reduce(0) { $0 + $1.images.count * 1_600 }
-        guard characters / 3 + imageTokens < windowTokens / 2 else {
+        let attachedImageTokens = textOnly ? 0 : attachments.reduce(0) { $0 + $1.images.count * imageTokens }
+        guard characters / 3 + attachedImageTokens < windowTokens / 2 else {
             throw AttachmentFailure.message(String(localized: "These attachments exceed this model’s context budget. Attach fewer pages or choose a model with a larger context window."))
         }
     }

@@ -149,6 +149,19 @@ not completed or uncertain browser actions. Exhaustion saves a resumable checkpo
 without requesting another summary. Visual no-progress detection ignores pointer
 coordinates and screenshot variation on an unchanged page.
 
+Attached images follow the model's image input. The on-device model accepts them
+only when the system reports the vision capability. It never receives screenshots:
+its session omits the visual tools, a pending screenshot becomes a text note, and
+images in tool results are removed when a transcript is restored. A hosted model
+keeps its per-window, per-model image setting and receives screenshots as before.
+The on-device context window is the capacity the system model reports, unless a
+configured or discovered window exists; 4,096 tokens applies only when none is
+reported. The budget charges an attached or retained image a per-model estimate
+(`AttachmentRequest.imageTokens`: 256 on-device, 1,600 hosted) in the pre-send
+check (against half the window), the run-loop check, compaction and transcript estimates.
+The on-device value is an empirical margin over the measured peak of 195, to be
+replaced by the framework's token count once it supports images.
+
 Conversation messages, attachments and checkpoints belong to the originating
 profile, which stays task-local across awaits and focus changes. They are private
 conversation data, not diagnostic exports. Deleting a turn also

@@ -213,7 +213,8 @@ struct AssistantComposer: View {
         do {
             try AttachmentRequest.validate(
                 attachments.files, message: message, textOnly: effectiveTextOnly,
-                windowTokens: ContextWindow.tokens(for: coordinator.selectedProvider, model: coordinator.selectedModel)
+                windowTokens: ContextWindow.tokens(for: coordinator.selectedProvider, model: coordinator.selectedModel),
+                imageTokens: AttachmentRequest.imageTokens(for: coordinator.selectedProvider)
             )
         } catch {
             attachments.error = error.localizedDescription

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import AnyLanguageModel
 import Foundation
 
 nonisolated struct ContextBudget: Hashable, Sendable {
@@ -90,16 +91,33 @@ nonisolated enum ContextWindow {
         resolve(for: provider, model: model, settings: settings).tokens
     }
 
+    /// The window the system model reports for itself, or 0 when this toolchain cannot ask.
+    static func systemModelWindow() -> Int {
+        #if compiler(>=6.3)
+            SystemLanguageModel.default.contextSize
+        #else
+            0
+        #endif
+    }
+
+    /// `systemModelReportedTokens` replaces the live system read; only the on-device provider consults either.
     static func resolve(
         for provider: Provider,
         model: String,
-        settings: LLMSettings = .current
+        settings: LLMSettings = .current,
+        systemModelReportedTokens: Int? = nil
     ) -> Resolution {
         if let override = settings.contextWindow(for: provider) {
             return Resolution(tokens: override, source: .configured)
         }
         if let discovered = settings.discoveredContextWindow(for: provider, model: model) {
             return Resolution(tokens: discovered, source: .discovered)
+        }
+        if provider.adapter == .system {
+            let reported = systemModelReportedTokens ?? systemModelWindow()
+            if reported > 0 {
+                return Resolution(tokens: reported, source: .discovered)
+            }
         }
         let fallback = switch provider.adapter {
         case .system:

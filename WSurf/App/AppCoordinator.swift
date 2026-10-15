@@ -899,7 +899,8 @@ final class AppCoordinator {
         do {
             try AttachmentRequest.validate(
                 attachments, message: text, textOnly: attachmentTextOnly,
-                windowTokens: ContextWindow.tokens(for: selectedProvider, model: selectedModel, settings: modelSettings)
+                windowTokens: ContextWindow.tokens(for: selectedProvider, model: selectedModel, settings: modelSettings),
+                imageTokens: AttachmentRequest.imageTokens(for: selectedProvider)
             )
         } catch {
             statusMessage = error.localizedDescription
