@@ -79,13 +79,22 @@ struct PullToRefreshGateTests {
         #expect(PullToRefreshMonitor.canBeginPull(probe))
     }
 
+    /// The bug: a map cancels the wheel to zoom, the document never moves,
+    /// and the gesture read as a pull.
+    @Test func aPageThatClaimsTheWheelMayNotPull() {
+        #expect(!PullToRefreshMonitor.canBeginPull(
+            PullStartProbe(scrollY: 0, ancestors: [], wheelClaimed: true)
+        ))
+    }
+
     @Test func decodeReadsThePagesAnswerAndRefusesGarbage() {
         let decoded = PullStartProbe.decode(
-            #"{"scrollY":12,"ancestors":[{"overflowY":"auto","scrollHeight":900,"clientHeight":300}]}"#
+            #"{"scrollY":12,"ancestors":[{"overflowY":"auto","scrollHeight":900,"clientHeight":300}],"wheelClaimed":true}"#
         )
         #expect(decoded == PullStartProbe(
             scrollY: 12,
-            ancestors: [ancestor(overflowY: "auto", scrollHeight: 900, clientHeight: 300)]
+            ancestors: [ancestor(overflowY: "auto", scrollHeight: 900, clientHeight: 300)],
+            wheelClaimed: true
         ))
         #expect(PullStartProbe.decode("not json") == nil)
     }
@@ -142,32 +151,62 @@ struct PullToRefreshOwnershipTests {
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct PullToRefreshProbeTests {
-    private func loadedWebView(_ body: String) async -> WKWebView {
+    private func loadedPage(_ body: String, installsWatch: Bool = true) async -> BrowserPage {
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        let webView = WKWebView(
-            frame: NSRect(x: 0, y: 0, width: 500, height: 400),
-            configuration: configuration
+        let page = BrowserPage(
+            webKit: WKWebView(frame: NSRect(x: 0, y: 0, width: 500, height: 400), configuration: configuration),
+            context: BrowserProfileContext(profile: .privateBrowsing())
         )
-        webView.loadHTMLString(
+        if installsWatch {
+            PullToRefreshMonitor.install(in: page)
+        }
+        await load(body, in: page)
+        return page
+    }
+
+    private func load(_ body: String, in page: BrowserPage) async {
+        _ = page.loadHTMLString(
             "<!doctype html><html><body style=\"margin:0\">\(body)</body></html>",
             baseURL: nil
         )
-        #expect(await PageSettle.untilIdle(BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing())), timeout: .seconds(30)))
-        return webView
+        #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
     }
 
-    private func probe(_ webView: WKWebView, x: CGFloat, y: CGFloat) async throws -> PullStartProbe {
+    private func answer(_ script: String, from page: BrowserPage) async throws -> PullStartProbe {
         let answer = try #require(
-            (try? await webView.evaluateJavaScript(
-                PullToRefreshMonitor.startProbeScript(x: x, y: y)
-            )) as? String
+            (try? await page.evaluateJavaScript(script, in: nil, contentWorld: PullToRefreshMonitor.world)) as? String
         )
         return try #require(PullStartProbe.decode(answer))
     }
 
+    private func probe(_ page: BrowserPage, x: CGFloat, y: CGFloat) async throws -> PullStartProbe {
+        try await answer(PullToRefreshMonitor.startProbeScript(x: x, y: y), from: page)
+    }
+
+    private static let mapPage = """
+    <div id="map" style="width: 500px; height: 400px"></div>
+    <script>
+    document.getElementById('map').addEventListener('wheel', e => e.preventDefault(), { passive: false });
+    </script>
+    """
+
+    /// What a map does when it zooms on the wheel: the page's own world cancels the event.
+    private func wheel(on page: BrowserPage) async {
+        _ = try? await page.evaluateJavaScript(
+            "document.getElementById('map').dispatchEvent(new WheelEvent('wheel', { deltaY: -40, bubbles: true, cancelable: true }))"
+        )
+    }
+
+    /// A wheel event nothing cancels.
+    private func quietWheel(on page: BrowserPage) async {
+        _ = try? await page.evaluateJavaScript(
+            "window.dispatchEvent(new WheelEvent('wheel', { deltaY: -40, cancelable: true }))"
+        )
+    }
+
     @Test func theProbeSeesTheInnerScrollerAndOnlyIt() async throws {
-        let webView = await loadedWebView("""
+        let page = await loadedPage("""
         <div style="height: 3000px">
             <div id="chat" style="position: absolute; top: 50px; left: 0; width: 300px; height: 200px; overflow-y: auto">
                 <div style="height: 2000px">messages</div>
@@ -175,21 +214,104 @@ struct PullToRefreshProbeTests {
         </div>
         """)
 
-        let overChat = try await probe(webView, x: 150, y: 150)
+        let overChat = try await probe(page, x: 150, y: 150)
         #expect(overChat.ancestors.contains { $0.consumesVerticalScroll })
         #expect(!PullToRefreshMonitor.canBeginPull(overChat))
 
-        let overPage = try await probe(webView, x: 450, y: 30)
+        let overPage = try await probe(page, x: 450, y: 30)
         #expect(!overPage.ancestors.contains { $0.consumesVerticalScroll })
         #expect(PullToRefreshMonitor.canBeginPull(overPage))
     }
 
     @Test func theProbeReportsTheDocumentsOwnScroll() async throws {
-        let webView = await loadedWebView("<div style=\"height: 3000px\">tall</div>")
-        _ = try? await webView.evaluateJavaScript("window.scrollTo(0, 700)")
+        let page = await loadedPage("<div style=\"height: 3000px\">tall</div>")
+        _ = try? await page.evaluateJavaScript("window.scrollTo(0, 700)")
 
-        let scrolled = try await probe(webView, x: 250, y: 200)
+        let scrolled = try await probe(page, x: 250, y: 200)
         #expect(scrolled.scrollY == 700)
         #expect(!PullToRefreshMonitor.canBeginPull(scrolled))
+    }
+
+    @Test func theProbeSeesAPageThatCancelsTheWheel() async throws {
+        let page = await loadedPage(Self.mapPage)
+
+        let before = try await probe(page, x: 250, y: 200)
+        #expect(!before.wheelClaimed)
+        #expect(PullToRefreshMonitor.canBeginPull(before))
+
+        await wheel(on: page)
+        let after = try await probe(page, x: 250, y: 200)
+        #expect(after.wheelClaimed)
+        #expect(!PullToRefreshMonitor.canBeginPull(after))
+
+        let atFinish = try await answer(PullToRefreshMonitor.finishProbeScript, from: page)
+        #expect(!PullToRefreshMonitor.canBeginPull(atFinish))
+    }
+
+    @Test func aWheelThePageLeavesAloneIsNotAClaim() async throws {
+        let page = await loadedPage("<div id=\"map\" style=\"width: 500px; height: 400px\"></div>")
+
+        await wheel(on: page)
+        let after = try await probe(page, x: 250, y: 200)
+        #expect(!after.wheelClaimed)
+        #expect(PullToRefreshMonitor.canBeginPull(after))
+    }
+
+    /// A tab can be handed a page that already holds a document. The probe
+    /// starts the watch itself, so that document is covered from its first probe.
+    @Test func aDocumentLoadedBeforeTheInstallIsWatchedFromItsFirstProbe() async throws {
+        let page = await loadedPage(Self.mapPage, installsWatch: false)
+
+        #expect(try await !probe(page, x: 250, y: 200).wheelClaimed)
+        await wheel(on: page)
+        #expect(try await probe(page, x: 250, y: 200).wheelClaimed)
+    }
+
+    @Test func aNewDocumentStartsWithoutTheLastOnesClaim() async throws {
+        let page = await loadedPage(Self.mapPage)
+        await wheel(on: page)
+        #expect(try await probe(page, x: 250, y: 200).wheelClaimed)
+
+        await load("<div style=\"height: 400px\">plain</div>", in: page)
+        #expect(try await !probe(page, x: 250, y: 200).wheelClaimed)
+    }
+
+    /// The claim lasts a moment after the page's cancelled wheel, not until some other wheel arrives.
+    @Test func aClaimExpiresWhenNoOtherWheelFollows() async throws {
+        let page = await loadedPage(Self.mapPage)
+        await wheel(on: page)
+        #expect(try await probe(page, x: 250, y: 200).wheelClaimed)
+
+        #expect(await waitUntil(timeout: .seconds(10)) {
+            try await !probe(page, x: 250, y: 200).wheelClaimed
+        })
+        let atFinish = try await answer(PullToRefreshMonitor.finishProbeScript, from: page)
+        #expect(PullToRefreshMonitor.canBeginPull(atFinish))
+    }
+
+    /// The bug: the next wheel stamped the old cancelled one with its own time, so a pull
+    /// started long after the map was used still read as claimed. The wait reads only the
+    /// page's clock: a probe would drop the expired event itself and hide the bug.
+    @Test func aPullLongAfterTheMapWasUsedIsNotClaimed() async throws {
+        let page = await loadedPage(Self.mapPage)
+        await wheel(on: page)
+        let clock = "performance.now()"
+        let usedAt = try #require((try await page.evaluateJavaScript(clock) as? NSNumber)?.doubleValue)
+        #expect(await waitUntil(timeout: .seconds(10)) {
+            let now = (try? await page.evaluateJavaScript(clock) as? NSNumber)?.doubleValue ?? 0
+            return now - usedAt > PullToRefreshMonitor.wheelClaimWindow
+        })
+
+        await quietWheel(on: page)
+        let pull = try await probe(page, x: 250, y: 200)
+        #expect(!pull.wheelClaimed)
+        #expect(PullToRefreshMonitor.canBeginPull(pull))
+    }
+
+    @Test func aCancelledWheelFollowedByAnotherKeepsTheClaim() async throws {
+        let page = await loadedPage(Self.mapPage)
+        await wheel(on: page)
+        await wheel(on: page)
+        #expect(try await probe(page, x: 250, y: 200).wheelClaimed)
     }
 }

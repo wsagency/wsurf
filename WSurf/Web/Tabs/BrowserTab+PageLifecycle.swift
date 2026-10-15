@@ -255,6 +255,7 @@ extension BrowserTab {
             guard let view else { return }
             PageClickWatcher.shared.onClick?(view, point)
         }
+        PullToRefreshMonitor.install(in: view)
         SiteContentGuard.shared.install(in: view, permissions: sitePermissions, settings: context.settings) { [weak self] url in
             self?.popups.note(url)
         }
