@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="WSurf Dockstep mark">
+  <title>WSurf — Dockstep</title>
+  <defs>
+    <linearGradient id="dastra-body" x1="208" y1="816" x2="736" y2="208" gradientUnits="userSpaceOnUse">
+      <stop style="stop-color:var(--c1)"/>
+      <stop offset="0.55" style="stop-color:var(--c2)"/>
+      <stop offset="1" style="stop-color:var(--c3)"/>
+    </linearGradient>
+    <linearGradient id="dastra-insert" x1="580" y1="344" x2="900" y2="200" gradientUnits="userSpaceOnUse">
+      <stop style="stop-color:var(--c4)"/>
+      <stop offset="1" style="stop-color:var(--c5)"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#dastra-body)" d="M368 160 H512 Q560 160 560 208 V304 Q560 384 480 384 H432 Q368 384 368 448 V576 Q368 656 448 656 H576 Q656 656 656 576 V544 Q656 464 736 464 H816 Q864 464 864 512 V656 C864 771 771 864 656 864 H368 C253 864 160 771 160 656 V368 C160 253 253 160 368 160 Z"/>
+  <rect fill="url(#dastra-insert)" x="580" y="200" width="320" height="144" rx="72" transform="rotate(-45 740 272)"/>
+</svg>

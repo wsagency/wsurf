@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="WSurf Updraft mark">
+  <title>WSurf — Updraft</title>
+  <defs>
+    <linearGradient id="astra-ember" x1="240" y1="744" x2="776" y2="232" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D73550"/>
+      <stop offset="0.55" stop-color="#F65A46"/>
+      <stop offset="1" stop-color="#FFAC69"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#astra-ember)" d="M144 392 L348 466 L400 256 Q420 208 480 192 L568 424 L872 152 C842 450 757 678 600 800 Q576 820 568 792 L532 568 L386 774 Q345 802 318 752 Z"/>
+  <path fill="#FFC18A" d="M568 424 L872 152 C799 363 684 519 532 568 Z"/>
+</svg>
