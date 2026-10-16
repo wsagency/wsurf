@@ -16,6 +16,7 @@ struct FolderSection: View {
     @Environment(\.sidebarStyle) private var sidebarStyle
     @Environment(\.windowColorScheme) private var windowColorScheme
     @Environment(\.colorScheme) private var colorScheme
+    private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var windowFrame: CGRect = .zero
 
@@ -27,6 +28,14 @@ struct FolderSection: View {
     }
     private var isSelected: Bool {
         context.isSelected(item)
+    }
+    private var style: SidebarRowStyle {
+        browser.rowStyle(
+            of: folder,
+            isMarked: isSelected,
+            paletteOpen: context.coordinator.isNewTabPaletteOpen,
+            increasedContrast: inkSource.increasedContrast
+        )
     }
 
     static let outlineInset: CGFloat = 2
@@ -117,7 +126,7 @@ struct FolderSection: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: SidebarMetrics.rowHeight(settings: BrowserSettings.application))
             .sidebarRowSelectionEffect(
-                isSelected: isSelected,
+                isSelected: style.emphasis != .resting,
                 isHovering: hovering,
                 hoverTint: folder.color.tint,
                 radius: showsOutline ? Self.rowRadius(depth: depth) : Theme.Radius.hover

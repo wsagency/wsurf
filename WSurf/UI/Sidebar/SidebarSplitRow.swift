@@ -55,8 +55,11 @@ struct SidebarSplitRow: View {
     }
 
     private var isOnScreen: Bool {
-        guard case .tab = coordinator.sidebarDestination else { return false }
-        return browser.isVisibleInSplit(leading)
+        browser.isVisibleInSplit(leading)
+    }
+
+    private var style: SidebarRowStyle {
+        browser.rowStyle(ofSplitLedBy: leading, isMarked: isSelected, paletteOpen: coordinator.isNewTabPaletteOpen)
     }
 
     private var radius: CGFloat {
@@ -110,7 +113,7 @@ struct SidebarSplitRow: View {
         }
         .frame(height: height)
         .sidebarRowSelectionEffect(
-            isSelected: (isOnScreen && !coordinator.isNewTabPaletteOpen) || isSelected,
+            isSelected: style.emphasis != .resting,
             isHovering: interaction == .wholeRow && hoveringRow,
             radius: radius
         )

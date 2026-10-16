@@ -35,8 +35,17 @@ struct SidebarTabRow: View {
     private var isActive: Bool {
         coordinator.sidebarDestination == .tab(tab.id)
     }
+    private var style: SidebarRowStyle {
+        browser.rowStyle(
+            of: tab,
+            isMarked: isSelected,
+            paletteOpen: coordinator.isNewTabPaletteOpen,
+            increasedContrast: inkSource.increasedContrast
+        )
+    }
 
     @Environment(\.sidebarStyle) private var sidebarStyle
+    private var inkSource = SidebarRowInkSource()
     @Environment(\.colorScheme) private var windowColorScheme
     @State private var hovering = false
     @State private var returnHovering = false
@@ -238,7 +247,7 @@ struct SidebarTabRow: View {
         .frame(height: SidebarMetrics.rowHeight(settings: BrowserSettings.application))
         .environment(\.chromeIconExtent, SidebarMetrics.rowControlExtent)
         .sidebarRowSelectionEffect(
-            isSelected: (isActive && !coordinator.isNewTabPaletteOpen) || isSelected,
+            isSelected: style.emphasis != .resting,
             isHovering: hovering,
             glassTint: context.refractsTabColor
                 ? FaviconTint.of(tab.favicon, heldBy: tab.id)

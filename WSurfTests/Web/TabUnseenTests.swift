@@ -108,6 +108,48 @@ struct TabUnseenTests {
         #expect(imported.allSatisfy { !$0.isUnseen })
     }
 
+    /// A collapsed folder speaks for the tabs inside it, nested folders included. An open one does not: its rows do.
+    @Test func aCollapsedFolderReportsNewAndCurrentChildren() {
+        let model = makeModel()
+        let current = model.newTab()
+        let seen = model.newTab(activate: false)
+        seen.isUnseen = false
+        let unseen = model.newTab(activate: false)
+        let outer = model.createFolder(named: "Outer", containing: [seen])
+        let inner = model.createFolder(named: "Inner", containing: [unseen])
+        model.move([.folder(inner.id)], into: outer)
+        let holder = model.createFolder(named: "Holder", containing: [current])
+        outer.isExpanded = false
+        holder.isExpanded = false
+
+        let outerContents = model.collapsedContents(of: outer)
+        #expect(!outerContents.containsCurrent)
+        #expect(outerContents.containsNew, "the new tab sits one folder down")
+        let holderContents = model.collapsedContents(of: holder)
+        #expect(holderContents.containsCurrent)
+        #expect(!holderContents.containsNew)
+
+        outer.isExpanded = true
+        holder.isExpanded = true
+        #expect(model.collapsedContents(of: outer) == (false, false))
+        #expect(model.collapsedContents(of: holder) == (false, false))
+    }
+
+    @Test func openingTheNewTabInAFolderClearsTheFolder() {
+        let model = makeModel()
+        _ = model.newTab()
+        let unseen = model.newTab(activate: false)
+        let folder = model.createFolder(named: "Later", containing: [unseen])
+        folder.isExpanded = false
+        #expect(model.collapsedContents(of: folder).containsNew)
+
+        model.activate(unseen)
+
+        let contents = model.collapsedContents(of: folder)
+        #expect(contents.containsCurrent)
+        #expect(!contents.containsNew)
+    }
+
     /// Stage mode opens its sites in the background, so it has to say which of them stay new.
     @Test func everyStagedNewTabIsAStagedSite() {
         let staged = Set(

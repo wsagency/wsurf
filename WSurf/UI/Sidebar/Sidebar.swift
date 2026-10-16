@@ -422,6 +422,16 @@ private struct SidebarFavoriteButton: View {
     let coordinator: AppCoordinator
 
     @State private var hovering = false
+    private var inkSource = SidebarRowInkSource()
+
+    private var style: SidebarRowStyle {
+        browser.rowStyle(
+            of: tab,
+            isMarked: false,
+            paletteOpen: coordinator.isNewTabPaletteOpen,
+            increasedContrast: inkSource.increasedContrast
+        )
+    }
 
     var body: some View {
         Button {
@@ -432,7 +442,7 @@ private struct SidebarFavoriteButton: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
                 .sidebarRowSelectionEffect(
-                    isSelected: coordinator.sidebarDestination == .tab(tab.id) && !coordinator.isNewTabPaletteOpen,
+                    isSelected: style.emphasis != .resting,
                     isHovering: hovering
                 )
                 .contentShape(Rectangle())
@@ -442,6 +452,7 @@ private struct SidebarFavoriteButton: View {
         .help(Text(verbatim: tab.title))
         .accessibilityLabel(Text(verbatim: tab.title))
         .accessibilityValue(tab.isDeferred ? Text("Unloaded") : Text("Loaded"))
+        .accessibilityAddTraits(style.isSelected ? .isSelected : [])
         .contextMenu {
             SidebarLinkMenuItems(tabs: [tab], coordinator: coordinator)
             if !tab.isDeferred {
