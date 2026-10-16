@@ -22,8 +22,14 @@ enum ChromeInk {
         return onLight ? 0.75 : 0.85
     }
 
-    static func glyph(onLight: Bool, enabled: Bool = true, hovering: Bool = false, subdued: Bool = false) -> AnyShapeStyle {
-        if let override = Theme.controlOverride {
+    static func glyph(
+        onLight: Bool,
+        enabled: Bool = true,
+        hovering: Bool = false,
+        subdued: Bool = false,
+        honorsOverride: Bool = true
+    ) -> AnyShapeStyle {
+        if honorsOverride, let override = Theme.controlOverride {
             return AnyShapeStyle(override.opacity(enabled ? 1 : 0.35))
         }
         let base: Color = onLight ? .black : .white
@@ -262,13 +268,14 @@ struct ChromeIcon: View {
     @State private var hovering = false
     @Environment(\.chromeIsLight) private var chromeIsLight
     @Environment(\.chromeIconExtent) private var inheritedExtent
+    @Environment(\.ignoresControlOverride) private var ignoresOverride
 
     private var side: CGFloat {
         extent ?? inheritedExtent
     }
 
     private var style: AnyShapeStyle {
-        if let override = Theme.controlOverride {
+        if !ignoresOverride, let override = Theme.controlOverride {
             return AnyShapeStyle(override.opacity(isEnabled ? 1 : 0.35))
         }
         if let tint {
@@ -278,7 +285,8 @@ struct ChromeIcon: View {
             onLight: chromeIsLight,
             enabled: isEnabled,
             hovering: hovering,
-            subdued: isSubdued
+            subdued: isSubdued,
+            honorsOverride: !ignoresOverride
         )
     }
 
@@ -328,14 +336,28 @@ struct CloseButton: View {
 struct ChromeWash: Equatable {
     var isLight = false
     var luminance: Double = 0.12
+    /// The color the chrome sits on, when it is known. `groundColor` stands in for it otherwise.
+    var ground: NSColor?
 
     static let neutral = ChromeWash()
 
-    static func of(_ color: NSColor?, isLight: Bool) -> ChromeWash {
+    /// `ground` is the color the chrome really draws on when that differs from the sampled `color`, such as a
+    /// preset's sidebar color under a floating sidebar.
+    static func of(_ color: NSColor?, isLight: Bool, ground: NSColor? = nil) -> ChromeWash {
+        let ground = (ground ?? color)?.usingColorSpace(.sRGB)
         guard let srgb = color?.usingColorSpace(.sRGB) else {
-            return ChromeWash(isLight: isLight, luminance: isLight ? 0.87 : 0.011)
+            return ChromeWash(isLight: isLight, luminance: isLight ? 0.87 : 0.011, ground: ground)
         }
-        return ChromeWash(isLight: isLight, luminance: Double(PageInk.luminance(of: srgb)))
+        return ChromeWash(isLight: isLight, luminance: Double(PageInk.luminance(of: srgb)), ground: ground)
+    }
+
+    /// A neutral gray of this wash's luminance when the ground color is not known.
+    var groundColor: NSColor {
+        if let ground {
+            return ground
+        }
+        let level = luminance <= 0.0031308 ? 12.92 * luminance : 1.055 * pow(luminance, 1 / 2.4) - 0.055
+        return NSColor(srgbRed: level, green: level, blue: level, alpha: 1)
     }
 
     var ink: Color {
@@ -383,6 +405,9 @@ extension EnvironmentValues {
 
     @Entry var chromeIsLight: Bool = false
     @Entry var chromeIconExtent: CGFloat = 16
+    /// Set inside a sidebar row drawn on an inverse fill, where the saved control color was chosen for the
+    /// sidebar ground and would vanish against the fill.
+    @Entry var ignoresControlOverride: Bool = false
 
     @Entry var windowColorScheme: ColorScheme = .dark
 }

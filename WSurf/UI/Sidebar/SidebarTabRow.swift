@@ -46,7 +46,6 @@ struct SidebarTabRow: View {
 
     @Environment(\.sidebarStyle) private var sidebarStyle
     private var inkSource = SidebarRowInkSource()
-    @Environment(\.colorScheme) private var windowColorScheme
     @State private var hovering = false
     @State private var returnHovering = false
     @State private var isRenaming = false
@@ -67,8 +66,16 @@ struct SidebarTabRow: View {
         sidebarStyle == .full && (tab.isPlayingAudio || tab.isMuted)
     }
 
+    private var ink: SidebarRowInk {
+        inkSource.ink(for: style, isDeferred: tab.isDeferred)
+    }
+
     private var textColor: Color {
-        BrowserSettings.application.sidebarTextColor(isDeferred: tab.isDeferred, scheme: windowColorScheme)
+        ink.text
+    }
+
+    private var radius: CGFloat {
+        depth == 0 ? Theme.Radius.hover : FolderSection.rowRadius(depth: depth - 1)
     }
 
     private var returnHelp: String {
@@ -246,13 +253,14 @@ struct SidebarTabRow: View {
         }
         .frame(height: SidebarMetrics.rowHeight(settings: BrowserSettings.application))
         .environment(\.chromeIconExtent, SidebarMetrics.rowControlExtent)
+        .sidebarInverse(ink, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
         .sidebarRowSelectionEffect(
-            isSelected: style.emphasis != .resting,
-            isHovering: hovering,
+            isSelected: style.emphasis == .lit,
+            isHovering: hovering && style.emphasis != .current,
             glassTint: context.refractsTabColor
                 ? FaviconTint.of(tab.favicon, heldBy: tab.id)
                 : nil,
-            radius: depth == 0 ? Theme.Radius.hover : FolderSection.rowRadius(depth: depth - 1)
+            radius: radius
         )
         .opacity(isLifted ? 0 : 1)
         .contentShape(Rectangle())

@@ -29,7 +29,7 @@ struct FolderSection: View {
     private var isSelected: Bool {
         context.isSelected(item)
     }
-    private var style: SidebarRowStyle {
+    private var rowStyle: SidebarRowStyle {
         browser.rowStyle(
             of: folder,
             isMarked: isSelected,
@@ -75,6 +75,8 @@ struct FolderSection: View {
     var body: some View {
         let rows = browser.rows(in: folder)
         let audible = audibleTab
+        let style = rowStyle
+        let ink = inkSource.ink(for: style)
         let showsOutline = folder.isExpanded && !rows.isEmpty
         VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
             HStack(spacing: 7) {
@@ -86,6 +88,15 @@ struct FolderSection: View {
                     .contentTransition(.symbolEffect(.replace))
                     .animation(Theme.Motion.settle, value: audible?.id)
                     .help(audible.map { Text("“\($0.title)” is playing") } ?? Text(verbatim: ""))
+                    .overlay(alignment: .bottomTrailing) {
+                        // Icons only has no count badge, so a small inverse dot carries the current tab instead.
+                        if sidebarStyle == .icons, let badge = ink.badge {
+                            Circle()
+                                .fill(badge.fill)
+                                .frame(width: 7, height: 7)
+                                .offset(x: 3, y: 3)
+                        }
+                    }
 
                 if isRenaming && sidebarStyle == .full {
                     renameField
@@ -116,10 +127,13 @@ struct FolderSection: View {
 
                     countBadge(rows.count)
                         .font(BrowserSettings.application.sidebarFont)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(ink.badge.map { AnyShapeStyle($0.text) } ?? AnyShapeStyle(.tertiary))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1.5)
-                        .background(Theme.Wash.hairline, in: Capsule())
+                        .background(
+                            ink.badge.map { AnyShapeStyle($0.fill) } ?? AnyShapeStyle(Theme.Wash.hairline),
+                            in: Capsule()
+                        )
                 }
             }
             .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))

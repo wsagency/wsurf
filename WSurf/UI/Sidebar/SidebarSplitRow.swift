@@ -242,7 +242,7 @@ private struct SplitRowCell: View {
     let onTap: (BrowserTab) -> Void
 
     @Environment(\.sidebarStyle) private var sidebarStyle
-    @Environment(\.colorScheme) private var windowColorScheme
+    private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var controlsWidth: CGFloat = 0
     @State private var windowFrame: CGRect = .zero
@@ -254,8 +254,18 @@ private struct SplitRowCell: View {
         context.coordinator
     }
 
-    private var isFocused: Bool {
-        coordinator.sidebarDestination == .tab(tab.id) && browser.isVisibleInSplit(tab)
+    /// Only the pane in focus is current; the other keeps the glass of the row to show that it is on screen too.
+    private var style: SidebarRowStyle {
+        browser.rowStyle(
+            of: tab,
+            isMarked: false,
+            paletteOpen: coordinator.isNewTabPaletteOpen,
+            increasedContrast: inkSource.increasedContrast
+        )
+    }
+
+    private var ink: SidebarRowInk {
+        inkSource.ink(for: style, isDeferred: tab.isDeferred)
     }
 
     private var showsPinReturn: Bool {
@@ -280,10 +290,7 @@ private struct SplitRowCell: View {
                     browser.returnToPin(tab)
                 }
             } else {
-                TabIcon(tab: tab, tint: BrowserSettings.application.sidebarTextColor(
-                    isDeferred: tab.isDeferred,
-                    scheme: windowColorScheme
-                ))
+                TabIcon(tab: tab, tint: ink.text)
             }
 
             if sidebarStyle == .full, tab.isPlayingAudio || tab.isMuted {
@@ -295,10 +302,7 @@ private struct SplitRowCell: View {
             if sidebarStyle == .full, !isNarrow {
                 Text(verbatim: tab.title)
                     .font(BrowserSettings.application.sidebarFont)
-                    .foregroundStyle(BrowserSettings.application.sidebarTextColor(
-                        isDeferred: tab.isDeferred,
-                        scheme: windowColorScheme
-                    ))
+                    .foregroundStyle(ink.text)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .mask(alignment: .leading) { titleMask }
@@ -316,7 +320,8 @@ private struct SplitRowCell: View {
         }
         .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sidebarHoverFill(isHovering: answersAlone && hovering, in: shape)
+        .sidebarInverse(ink, in: shape)
+        .sidebarHoverFill(isHovering: answersAlone && hovering && style.emphasis != .current, in: shape)
         .contentShape(Rectangle())
         .onTapGesture { onTap(tab) }
         .onMiddleClick {

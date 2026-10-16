@@ -39,6 +39,15 @@ struct Sidebar: View {
         )
     }
 
+    /// What the sidebar surface really is: a preset colors a floating sidebar differently from the window.
+    private var groundColor: NSColor {
+        LoomChrome.sampledColor(
+            ChromeBand.measuredColor(browser: browser, coordinator: coordinator),
+            scheme: scheme,
+            isFloating: sidebar.isFloating
+        )
+    }
+
     private var inkIsLight: Bool {
         if !coordinator.isShowingSettings {
             return PageInk.isLight(
@@ -119,7 +128,7 @@ struct Sidebar: View {
             }
         }
         .environment(\.chromeIsLight, inkIsLight)
-        .environment(\.chromeWash, .of(inkColor, isLight: inkIsLight))
+        .environment(\.chromeWash, .of(inkColor, isLight: inkIsLight, ground: groundColor))
         .environment(\.windowColorScheme, scheme)
         .environment(\.colorScheme, inkIsLight ? .light : .dark)
         .animation(nil, value: inkIsLight)
@@ -434,6 +443,7 @@ private struct SidebarFavoriteButton: View {
     }
 
     var body: some View {
+        let ink = inkSource.ink(for: style, isDeferred: tab.isDeferred)
         Button {
             coordinator.tabPreview.dismiss()
             coordinator.openTab(tab)
@@ -441,9 +451,10 @@ private struct SidebarFavoriteButton: View {
             TabIcon(tab: tab)
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
+                .sidebarInverse(ink, in: RoundedRectangle(cornerRadius: Theme.Radius.hover, style: .continuous))
                 .sidebarRowSelectionEffect(
-                    isSelected: style.emphasis != .resting,
-                    isHovering: hovering
+                    isSelected: style.emphasis == .lit,
+                    isHovering: hovering && style.emphasis != .current
                 )
                 .contentShape(Rectangle())
         }

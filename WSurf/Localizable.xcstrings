@@ -1742,8 +1742,8 @@
     "Color" : {
       "comment" : "Label of the color swatches that tint a profile’s symbol."
     },
-    "Color the selected tab using the website icon." : {
-
+    "Color tabs you select together using the website icon." : {
+      "comment" : "Caption under the Appearance switch “Tint selected tab”. The tint applies to several selected tabs; the tab being shown is drawn in inverse colors instead."
     },
     "Compact" : {
 
