@@ -14,6 +14,6 @@ Flux brand system for WSurf. **Draft design and candidate art. Not wired into th
 | `licenses/Figtree-OFL.txt` | verbatim upstream SIL OFL 1.1 text for the Figtree Bold outlines in the wordmark (provenance only; the font binary is not shipped; see DESIGN.md section 13) |
 | `exports/` | **design candidates** per palette and mono: `mark/`, `lockup/`, `favicon/`, `mono/`, `dock/`; not placed anywhere, not production exports |
 
-The candidates were generated from `assets/` by a local script that is not tracked here, so they cannot be regenerated from this repository. A production export pipeline is not part of this draft; if wanted it belongs to the approved implementation plan and the existing `Tools/` convention.
+The candidates were generated from `assets/` by throwaway authoring/render scripts that were removed after verification; canonical SVG art is retained in `assets/`, and there is no production generator in this repository. A production export pipeline is not part of this draft; if wanted it belongs to the approved implementation plan and the existing `Tools/` convention.
 
 The `.png` files were rendered with the native macOS WebKit view. Dock tiles in them are drawn approximations, not real macOS icons.
