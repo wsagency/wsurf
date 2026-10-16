@@ -747,6 +747,11 @@ extension PageInteractionTests {
         try await withPage(engine: engine, url: first) { view in
             let none = await PageDriver.goBack(in: view)
             #expect(none == "There is no page to go back to.", "engine \(engine): \(none)")
+            // The startup page is not a history entry. The list is read asynchronously, so wait for the first page to appear in it.
+            #expect(await waitUntil {
+                let list = view.backForwardList
+                return list.currentItem?.url == first && list.backList.isEmpty
+            }, "engine \(engine): \(view.backForwardList.backList.map(\.url))")
             view.load(URLRequest(url: second))
             try #require(await waitUntil { view.url == second && !view.isLoading })
             let back = await PageDriver.goBack(in: view)

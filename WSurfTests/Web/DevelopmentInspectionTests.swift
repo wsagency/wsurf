@@ -580,6 +580,9 @@ struct PageDiagnosticsHookTests {
               window.__fetchSelf.push(this); window.__fetchArgs.push(a);
               return a[0] === '/reject' ? Promise.reject(window.__err) : Promise.resolve(new Response('x', { status: 201 }));
             };
+            // WebKit's own console.log converts its arguments to text, which would run the fixture's traps whether or not the hook
+            // touches them. A recording stub takes its place first, so the hook wraps it and a trap can only come from the hook.
+            console.log = function (...a) { window.__seen = a; };
             window.__orig = { fetch: window.fetch, warn: console.warn, log: console.log };
             return JSON.stringify({});
             """)
@@ -596,6 +599,7 @@ struct PageDiagnosticsHookTests {
             const proxy = new Proxy({}, { get() { trap.push('get'); return 1; }, getPrototypeOf() { trap.push('proto'); return Object.prototype; },
               has() { trap.push('has'); return true; }, ownKeys() { trap.push('keys'); return []; }, getOwnPropertyDescriptor() { trap.push('gopd'); } });
             console.log('a', evil, err, proxy, 5, null, undefined, true, 7n);
+            const seen = window.__seen;
 
             const thisObj = { marker: 1 };
             const init = { get method() { trap.push('init.method'); return 'POST'; } };
@@ -622,6 +626,7 @@ struct PageDiagnosticsHookTests {
               thisPreserved: window.__fetchSelf[1] === thisObj,
               argsPreserved: args.length === 2 && args[0] === '/api/y?token=s#f' && args[1] === init && window.__fetchArgs[2][0] === request,
               illegalInvocationStillThrows: illegal,
+              logArgumentsPassedThrough: seen.length === 9 && seen[0] === 'a' && seen[1] === evil && seen[2] === err && seen[3] === proxy,
               trap: window.__trap.slice(),
               log: window.__log,
             });
@@ -632,6 +637,7 @@ struct PageDiagnosticsHookTests {
         #expect(result["thisPreserved"] as? Bool == true)
         #expect(result["argsPreserved"] as? Bool == true)
         #expect(result["illegalInvocationStillThrows"] as? Bool == true)
+        #expect(result["logArgumentsPassedThrough"] as? Bool == true, "the wrapped console.log must receive the page's own arguments")
 
         let log = try #require(result["log"] as? [[String: Any]])
         let console = try #require(log.first)

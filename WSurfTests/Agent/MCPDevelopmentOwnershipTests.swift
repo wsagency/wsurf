@@ -34,6 +34,8 @@ struct MCPDevelopmentOwnershipTests {
         let url = try server.url()
         let tab = browser.newTab(url: url)
         #expect(await PageSettle.untilIdle(tab.page))
+        // The document identity arrives from the page after it loads; diagnostics cannot start before it does.
+        #expect(await waitUntil { tab.page.mainDocumentID != nil }, "the page registered its main document")
         if !profileWide {
             tab.assistantAccess.persistsAnswers = false
         }
@@ -65,6 +67,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func developmentIsOnlyGrantedWhenRequested() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         var asked: Bool?
         let subject = session(browser, asked: { asked = $0 })
         _ = try await call(subject, "requestAccess")
@@ -73,9 +77,17 @@ struct MCPDevelopmentOwnershipTests {
         #expect(denied.isError == true)
         #expect(tab.developmentOwner == nil)
         #expect(tab.page.developmentViewport == nil)
-        _ = try await call(subject, "requestAccess", nil, ["development": true])
+        // Access is requested once per connection: a second request is refused without asking the user again.
+        asked = nil
+        let repeated = try await call(subject, "requestAccess", nil, ["development": true])
+        #expect(repeated.isError == true)
+        #expect(asked == nil)
+        #expect(try await call(subject, "setViewport", tab, phone).isError == true)
+        // A new connection can ask for development, and only that request offers it.
+        let developer = session(browser, asked: { asked = $0 })
+        _ = try await call(developer, "requestAccess", nil, ["development": true])
         #expect(asked == true)
-        #expect(try await call(subject, "setViewport", tab, phone).isError == false)
+        #expect(try await call(developer, "setViewport", tab, phone).isError == false)
     }
 
     @Test func controlGrantCannotUseDevelopmentTools() async throws {
@@ -93,6 +105,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func onlyOneConnectionOwnsATab() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let first = session(browser), second = session(browser)
         _ = try await call(first, "requestAccess", nil, ["development": true])
         _ = try await call(second, "requestAccess", nil, ["development": true])
@@ -116,6 +130,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func disconnectReleasesTheLease() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let subject = session(browser)
         _ = try await call(subject, "requestAccess", nil, ["development": true])
         #expect(status(try await call(subject, "setViewport", tab, phone)) == "ok")
@@ -127,6 +143,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func policyDowngradeReleasesTheLeaseOnTheNextCall() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let subject = session(browser)
         _ = try await call(subject, "requestAccess", nil, ["development": true])
         #expect(status(try await call(subject, "setViewport", tab, phone)) == "ok")
@@ -142,7 +160,10 @@ struct MCPDevelopmentOwnershipTests {
         defer { _ = server }
         let subject = session(browser)
         _ = try await call(subject, "requestAccess", nil, ["development": true])
-        #expect(status(try await call(subject, "setViewport", tab, ["width": 10, "height": 700])) == "invalidInput")
+        // An axis below the schema minimum is refused before any tool runs.
+        await #expect(throws: (any Error).self) { try await call(subject, "setViewport", tab, ["width": 10, "height": 700]) }
+        // Each axis is within the schema, but the area is not: the tool refuses it before it claims the tab.
+        #expect(status(try await call(subject, "setViewport", tab, ["width": 4096, "height": 4096])) == "invalidInput")
         #expect(status(try await call(subject, "emulateDevice", tab, ["profile": "nope", "orientation": "portrait"])) == "invalidInput")
         #expect(tab.developmentOwner == nil)
         #expect(tab.page.developmentViewport == nil)
@@ -158,7 +179,8 @@ struct MCPDevelopmentOwnershipTests {
         _ = try await call(subject, "requestAccess", nil, ["development": true])
         let found = try await call(subject, "findElements", tab, ["selector": ".x"])
         #expect(found.isError == false)
-        #expect(try await call(subject, "findElements", tab, ["selector": ".x", "limit": 101]).isError == true)
+        // The schema allows at most 100 matches per call; the request is refused before the tool runs.
+        await #expect(throws: (any Error).self) { try await call(subject, "findElements", tab, ["selector": ".x", "limit": 101]) }
         let observation = try #require(found.structuredContent?.objectValue?["observationID"]?.stringValue)
         let inspected = try await call(subject, "inspectElement", tab, ["observationID": .string(observation), "ref": 1])
         #expect(inspected.isError == false)
@@ -167,6 +189,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func viewportIsMeasuredInThePageAndResetRestoresIt() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let subject = session(browser)
         _ = try await call(subject, "requestAccess", nil, ["development": true])
         let applied = try await call(subject, "setViewport", tab, phone)
@@ -349,13 +373,21 @@ struct MCPDevelopmentOwnershipTests {
         try await call(subject, "screenshotPage", tab, ["observationID": .string(target.observation), "ref": .int(target.ref)])
     }
 
-    /// Element screenshots need the page in a window: WebKit only snapshots a laid-out, attached view.
+    /// Hosts the tab's page in a window the way the app does, inside a `WebViewContainer`. Element screenshots need a laid-out,
+    /// attached view, and the container is what lays out a development viewport: a page outside one cannot be resized.
+    /// Returns once the page has the container's width, not the 800-point default of a page nobody hosts.
     private func show(_ tab: BrowserTab) async -> NSWindow {
         let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.contentView = tab.page
+        let container = WebViewContainer(page: tab.page)
+        window.contentView = container
         window.orderBack(nil)
-        #expect(await waitUntil { ((try? await tab.page.evaluateJavaScript("window.innerWidth")) as? Int ?? 0) >= 400 })
+        let width = Int(container.bounds.width)
+        #expect(
+            await waitUntil {
+                guard tab.page.superview === container else { return false }
+                return (try? await tab.page.evaluateJavaScript("window.innerWidth")) as? Int == width
+            }, "the page is laid out at the container's width \(width)")
         return window
     }
 
@@ -460,6 +492,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func aLateResetFromAReleasedLeaseLeavesTheNewOwnersViewportAlone() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let first = session(browser), second = session(browser)
         try await requestDevelopment(first)
         try await requestDevelopment(second)
@@ -484,6 +518,9 @@ struct MCPDevelopmentOwnershipTests {
     @Test func replacingThePageEndsTheLeaseAndTheNewPageStartsClean() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
+        let container = try #require(window.contentView as? WebViewContainer)
         let first = session(browser), second = session(browser)
         try await requestDevelopment(first)
         try await requestDevelopment(second)
@@ -495,8 +532,10 @@ struct MCPDevelopmentOwnershipTests {
         #expect(tab.developmentRelation(of: first.id) == .none)
         tab.realizeDeferredSession()
         let granted = try server.url()
-        #expect(await waitUntil { tab.page.url?.port == granted.port && !tab.page.isLoading })
-        #expect(tab.page !== outgoing)
+        // `tab.page` is still the outgoing page until its asynchronous close ends, so a wait on its address alone passes at once.
+        #expect(await waitUntil { tab.page !== outgoing && tab.page.url?.port == granted.port && !tab.page.isLoading })
+        // The app's view hierarchy shows the replacement page in the same container.
+        container.install(tab.page)
         #expect(tab.page.developmentViewport == nil)
         #expect(status(try await call(second, "setViewport", tab, ["width": 800, "height": 600])) == "ok")
         #expect(tab.developmentRelation(of: first.id) == .other)
@@ -505,6 +544,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func aReleasedLeasesLateApplyNeverUndoesTheNextLeasesViewport() async throws {
         let (server, _, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let page = tab.page
         let request = PageViewport.Request(width: 400, height: 700)
         let size = CGSize(width: 400, height: 700)
@@ -539,6 +580,8 @@ struct MCPDevelopmentOwnershipTests {
     func aSettingsChangeToTheSiteEndsAnIdleViewportLease(policy: AssistantAccessPolicy) async throws {
         let (server, browser, tab) = try await fixture(profileWide: true)
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let subject = session(browser)
         try await requestDevelopment(subject)
         #expect(status(try await call(subject, "setViewport", tab, phone)) == "ok")
@@ -550,14 +593,26 @@ struct MCPDevelopmentOwnershipTests {
     }
 
     /// Both ways Settings clears every site answer reach the lease: the assistant answers alone, and "remove everything"
-    /// (which cookie clearing calls on the shared store, with no tab involved).
+    /// (which cookie clearing calls on the shared store, with no tab involved). An MCP connection keeps its grant when an answer
+    /// returns to Ask, so the lease here is one whose authorization is the stored answer itself.
     @Test(arguments: [false, true])
     func resettingEverySiteAnswerEndsAnIdleViewportLease(removingEverything: Bool) async throws {
         let (server, browser, tab) = try await fixture(profileWide: true)
         defer { _ = server }
-        let subject = session(browser)
-        try await requestDevelopment(subject)
-        #expect(status(try await call(subject, "setViewport", tab, phone)) == "ok")
+        let window = await show(tab)
+        defer { hide(window) }
+        browser.sitePermissions.setAssistantAccess(.control, for: tab.assistantAccess.origin)
+        guard case .acquired(let owner) = tab.acquireDevelopment(
+            connection: UUID(), page: tab.page, isAuthorized: { [weak tab] in tab?.assistantAccess.effectivePolicy == .control })
+        else {
+            Issue.record("the first acquisition must succeed")
+            return
+        }
+        guard case .applied = await tab.page.applyDevelopmentViewport(.init(width: 400, height: 700), profile: nil, owner: owner, tab: tab) else {
+            Issue.record("the viewport must apply")
+            return
+        }
+        #expect(tab.developmentOwner === owner)
         if removingEverything {
             browser.sitePermissions.removeEverything()
         } else {
@@ -570,6 +625,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func aCancelledCallNeverEndsAnotherConnectionsLease() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let first = session(browser), second = session(browser)
         try await requestDevelopment(first)
         try await requestDevelopment(second)
@@ -794,7 +851,11 @@ struct MCPDevelopmentOwnershipTests {
         let element = try payload(result, prefix: "ELEMENT:")
         #expect(element["tag"] as? String == "p")
         let attributes = try #require(element["attributes"] as? [String: String])
-        for value in attributes.values where !value.isEmpty {
+        // `id` is allow-listed and keeps the page's own value; the hostile text is in the aria-x* attributes.
+        #expect(attributes["id"] == "t")
+        let hostile = attributes.filter { $0.key.hasPrefix("aria-x") }
+        #expect(!hostile.isEmpty, "the hostile attributes are returned")
+        for value in hostile.values where !value.isEmpty {
             #expect(value.allSatisfy { alphabet.contains($0) }, "hostile characters survive intact")
         }
     }

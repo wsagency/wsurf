@@ -113,6 +113,10 @@ struct AskSurfaceModelTests {
         Omnibox.$agentOnlyForTesting.withValue(true) {
             let model = model(placement: .startPage)
             model.fieldFocusDidChange(true)
+            // The normal results come from open tabs and shared history, so this test supplies the tab they must find.
+            let tab = model.browser.newTab()
+            tab.urlString = "https://radio.example/lofi"
+            tab.title = "Lofi radio"
             model.interaction.text = "youtube"
             #expect(model.activateSiteSearch())
             model.interaction.text = "lofi"
@@ -121,7 +125,10 @@ struct AskSurfaceModelTests {
             #expect(model.removeSearchSite())
             #expect(model.searchSite == nil)
             #expect(model.interaction.text == "lofi")
-            #expect(model.resultSections().flattened.count > 1)
+            let ids = model.resultSections().flattened.map(\.id)
+            #expect(ids.contains("ask-agent"), "\(ids)")
+            #expect(ids.contains("omnibox-tab-\(tab.id)"), "\(ids)")
+            #expect(!ids.contains { $0.hasPrefix("site-search-") }, "\(ids)")
             #expect(!model.removeSearchSite())
         }
     }
