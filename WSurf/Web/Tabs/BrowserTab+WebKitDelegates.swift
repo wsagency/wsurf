@@ -34,33 +34,8 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             return
         }
         if let url = navigationAction.request.url, !ExternalApp.staysInWebView(url) {
-            let origin = requestingOrigin(for: navigationAction)
-            let page = tab?.liveView
-            let sourceFrame = page.flatMap {
-                PageFrameRegistry.shared.captureSourceFrame(navigationAction.sourceFrame, in: $0)
-            }
-            let initialRedirect = sourceFrame == nil && tab?.committedNavigation == nil
-                && navigationAction.sourceFrame.isMainFrame && navigationAction.targetFrame?.isMainFrame == true
-                && !origin.isEmpty && navigationAction.responds(to: NSSelectorFromString("_isRedirect"))
-                && navigationAction.value(forKey: "_isRedirect") as? Bool == true
-            let actionGeneration = mainFrameActionGeneration
+            offerExternalApp(url, for: navigationAction, in: webView)
             decisionHandler(.cancel)
-            let window = webView.window
-            let document = tab?.committedNavigation
-            Task { [weak self, weak tab, weak webView, weak page] in
-                guard let self, let tab, !tab.isClosed, let webView, tab.liveView?.webKit === webView else { return }
-                await ExternalApp.offerToOpen(url, from: origin, policy: tab.externalApps, in: window, isCurrent: {
-                    guard let page else { return false }
-                    if let sourceFrame {
-                        guard await PageFrameRegistry.shared.isLiveAfterReady(sourceFrame, in: page) else { return false }
-                    } else {
-                        // A first HTTP redirect has no committed document token; bind its accepted request instead.
-                        guard initialRedirect, self.mainFrameActionGeneration == actionGeneration else { return false }
-                    }
-                    return !tab.isClosed && tab.liveView?.webKit === webView
-                        && tab.liveView === page && tab.committedNavigation === document
-                })
-            }
             return
         }
         if let tab, let onOpenInNewTab = tab.onOpenInNewTab,
@@ -107,6 +82,38 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         }
         decisionHandler(.cancel)
         tab.onNavigationOutsideExtension?(url)
+    }
+
+    /// Offers to hand `url` to its app on behalf of the page that navigated to it. The page itself never navigates.
+    /// The source frame is captured now, while WebKit is still deciding, and proven later.
+    private func offerExternalApp(_ url: URL, for action: WKNavigationAction, in webView: WKWebView) {
+        guard let tab, let page = tab.liveView else {
+            ExternalApp.noteDropped(url, .tabClosed)
+            return
+        }
+        let requested = requestingOrigin(for: action)
+        let source = PageFrameRegistry.shared.captureSourceFrame(action.sourceFrame, in: page)
+        // A first HTTP redirect has no committed document to prove; its accepted request is the proof instead.
+        let initialRedirect = source == nil && tab.committedNavigation == nil
+            && action.sourceFrame.isMainFrame && action.targetFrame?.isMainFrame == true
+            && !requested.isEmpty && action.responds(to: NSSelectorFromString("_isRedirect"))
+            && action.value(forKey: "_isRedirect") as? Bool == true
+        // A source that cannot be proven may still ask once, but it names no site, so nothing can be remembered.
+        let origin = source == nil && !initialRedirect ? "" : requested
+        let request = AppLinkRequest(
+            tab: tab, webView: webView, page: page, document: tab.committedNavigation,
+            source: source, origin: origin, generation: mainFrameActionGeneration,
+            currentGeneration: { [weak self] in self?.mainFrameActionGeneration }
+        )
+        let policy = tab.externalApps
+        let window = webView.window
+        Task {
+            await ExternalApp.offerToOpen(
+                url, from: origin, policy: policy, in: window,
+                staleness: { await request.staleness() },
+                approvalStaleness: { await request.approvalStaleness() }
+            )
+        }
     }
 
     /// WebKit numbers the middle button 4, not NSEvent's 2.
@@ -528,4 +535,46 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         tab?.contentProcessDidTerminate()
     }
 
+}
+
+/// A page's request to open an app, as the navigation delegate knew it when WebKit asked.
+/// It holds the tab and page weakly: an open prompt must not keep a closed tab alive.
+private struct AppLinkRequest {
+    weak var tab: BrowserTab?
+    weak var webView: WKWebView?
+    weak var page: BrowserPage?
+    let document: PageNavigation?
+    /// Nil when WebKit's source frame could not be matched to exactly one registered document.
+    let source: PageFrameRegistry.SourceFrameClaim?
+    let origin: String
+    let generation: Int
+    let currentGeneration: () -> Int?
+
+    private func live() -> (tab: BrowserTab, page: BrowserPage)? {
+        guard let tab, let webView, let page, !tab.isClosed,
+              tab.liveView?.webKit === webView, tab.liveView === page else { return nil }
+        return (tab, page)
+    }
+
+    /// Whether the page that asked is still the one on screen. A proven frame must also still be that live document.
+    /// Without a proven frame, any later main-frame navigation ends the request.
+    func staleness() async -> ExternalApp.Drop? {
+        guard let live = live() else { return .tabClosed }
+        guard live.tab.committedNavigation === document else { return .documentChanged }
+        guard let source else { return currentGeneration() == generation ? nil : .navigated }
+        guard await PageFrameRegistry.shared.isLiveAfterReady(source, in: live.page) else { return .frameChanged }
+        // The proof suspended; the tab may have moved on while it ran.
+        guard let again = self.live() else { return .tabClosed }
+        return again.tab.committedNavigation === document ? nil : .documentChanged
+    }
+
+    /// What the person approved was this link from this site. A page of that site that moved on, such as
+    /// a sign-in page showing "return to the app", does not withdraw it. Another site, a replaced frame
+    /// or a request that never named a site does.
+    func approvalStaleness() async -> ExternalApp.Drop? {
+        guard let reason = await staleness() else { return nil }
+        guard reason == .documentChanged, let source, source.frame.isMainFrame, !origin.isEmpty,
+              let live = live() else { return reason }
+        return SitePermissions.webOrigin(for: live.tab.committedURL) == origin ? nil : .siteChanged
+    }
 }

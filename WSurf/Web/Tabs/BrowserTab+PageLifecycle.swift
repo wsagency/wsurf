@@ -176,7 +176,10 @@ extension BrowserTab {
     private func offerChromiumExternalApp(_ url: URL, sourceURL: URL?, sourceFrame: BrowserFrame?) {
         let view = page
         guard let chromium = view.chromium, let client = chromium.client,
-              let native = client.externalAppSnapshot(for: sourceFrame) else { return }
+              let native = client.externalAppSnapshot(for: sourceFrame) else {
+            ExternalApp.noteDropped(url, .stale)
+            return
+        }
         let source = native.sourceIsUnique ? sourceFrame : nil
         let candidate = SitePermissions.webOrigin(for: sourceURL)
         let origin = source.map { ChromiumClient.sameOrigin(candidate, $0.securityOrigin) } == true ? candidate : ""
@@ -184,7 +187,10 @@ extension BrowserTab {
         // ponytail: ambiguous initiators bind every live native document until CEF can prove the source.
         let snapshot = source.map { [$0] } ?? chromium.devTools.frameSnapshot()
         Task { [weak self, weak view] in
-            guard let self, !isClosed, let view, liveView === view else { return }
+            guard let self, !isClosed, let view, liveView === view else {
+                ExternalApp.noteDropped(url, .tabClosed)
+                return
+            }
             await ExternalApp.offerToOpen(url, from: origin, policy: externalApps, in: view.window, isCurrent: {
                 // DevTools renderer RPCs are suspended by an unrelated pending top-level navigation.
                 client.isCurrentExternalAppSnapshot(native.documents)
