@@ -52,8 +52,8 @@ WSurf is a native macOS browser (macOS 26+, Apple silicon): WebKit by default an
 
 ## 4. Wordmark and lockup
 
-- "WSurf" in **Figtree Bold**, converted to outlines (`assets/wordmark.svg`); kerning from the font's GPOS (HarfBuzz), tracking +10/1000 em; ink `currentColor`.
-- Lockup (`assets/lockup.svg`): mark scale 0.2 (188.8 x 124), wordmark cap height 0.62 x mark height, gap 0.22 x mark width, caps centred on the mark, viewBox 556.75 x 124. Ink `#1D1D1F` on light, `#F5F5F7` on dark; mono = one ink.
+- "WSurf" in **Figtree Bold**, converted to outlines (`assets/wordmark.svg`); kerning from the font's GPOS (HarfBuzz), tracking +10/1000 em; ink `currentColor`. Outline bounds (font units, computed from the path incl. curve extrema): x 8..2973, y -719..12; `wordmark.svg` viewBox `-12 -739 3005 771` = those bounds plus 20 units on every side. The lockup viewBox width is 557 (the "f" terminal overhangs 556.75 by 0.13 px).
+- Lockup (`assets/lockup.svg`): mark scale 0.2 (188.8 x 124), wordmark cap height 0.62 x mark height, gap 0.22 x mark width, caps centred on the mark, viewBox 557 x 124. Ink `#1D1D1F` on light, `#F5F5F7` on dark; mono = one ink.
 - UI text is the system font (SF); Figtree appears only inside the outlined logo, so no web font is shipped. The tagline in `overview` is specimen text in the system font.
 
 ## 5. Palettes (DESIGN)
