@@ -91,6 +91,12 @@ enum StageSet {
         ]
     )
 
+    /// Addresses of staged tabs that stay unopened, so the sidebar shows its new-tab mark in screenshots.
+    static let unseen: Set<String> = [
+        "https://www.nasa.gov/image-of-the-day/",
+        "https://en.wikipedia.org/wiki/Bauhaus",
+    ]
+
     // MARK: - History
 
     static let history: [PastVisit] = [
