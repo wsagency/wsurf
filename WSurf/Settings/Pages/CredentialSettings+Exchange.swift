@@ -224,6 +224,9 @@ struct CredentialImportReviewSheet: View {
                 if let report = review.csvReport {
                     csvReportView(report)
                 }
+                if !review.omitted.isEmpty {
+                    omittedView(review.omitted)
+                }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         ForEach(review.candidates) { candidate in candidateView(candidate) }
@@ -274,16 +277,33 @@ struct CredentialImportReviewSheet: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    /// What the transfer held that WSurf won't import, before anything is saved. Fixed wording and item titles only: no values.
+    private func omittedView(_ omitted: [CredentialImportOmission]) -> some View {
+        let shown = omitted.prefix(20)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text("Not imported").fontWeight(.medium)
+            ForEach(Array(shown.enumerated()), id: \.offset) { _, omission in
+                Text(verbatim: omission.text)
+            }
+            if omitted.count > shown.count {
+                Text("and \(omitted.count - shown.count) more.")
+            }
+        }
+        .font(Theme.Font.label)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
     private func destination(_ review: CredentialImportReview) -> String {
         guard let vault = review.vaultName else {
             return String(localized: """
                 Importing into the profile “\(review.profileName)”. Nothing is saved until you choose Import. \
-                Imported passwords, passkeys and verification codes are encrypted in that profile’s vault.
+                Imported passwords, passkeys, verification codes and notes are encrypted in that profile’s vault.
                 """)
         }
         return String(localized: """
             Importing into the vault “\(vault)” of the profile “\(review.profileName)”. Nothing is saved until you \
-            choose Import. Imported passwords, passkeys and verification codes are encrypted in that vault.
+            choose Import. Imported passwords, passkeys, verification codes and notes are encrypted in that vault.
             """)
     }
 

@@ -970,7 +970,8 @@ final class CredentialExchangeCoordinator {
         }
         return CredentialImportReview(
             profileName: context.profileName, vaultName: context.vaultName,
-            candidates: candidates, revision: preview.revision, outcome: outcome, csvReport: context.csvReport
+            candidates: candidates, revision: preview.revision, outcome: outcome, csvReport: context.csvReport,
+            omitted: preview.omitted
         )
     }
 }

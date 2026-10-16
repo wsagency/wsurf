@@ -418,9 +418,15 @@ struct CredentialExchangeCoordinatorTests {
             try await f.seed(neighbours(3))
             let before = try f.diskBytes()
 
+            // One field id for both the username and the password: the vault cannot tell them apart, so nothing is imported.
+            let sharedID = Data([0x09])
+            let ambiguousLogin = ASImportableCredential.basicAuthentication(.init(
+                userName: .init(id: sharedID, fieldType: .string, value: "ada", label: nil),
+                password: .init(id: sharedID, fieldType: .concealedString, value: "pw", label: nil)
+            ))
             let mixed = handBuilt([
                 item(id: 1, scoped: true, [password("valid")]),
-                item(id: 2, scoped: true, [totpCredential(period: 0)]),
+                item(id: 2, scoped: true, [ambiguousLogin]),
             ])
             do {
                 try await f.stage(mixed)
@@ -432,7 +438,7 @@ struct CredentialExchangeCoordinatorTests {
                     return
                 }
                 #expect(error.record.description.hasPrefix("account[0]/item[1]"))
-                #expect(error.reason == .invalidData && error.credentialKind == .totp)
+                #expect(error.reason == .duplicateIdentifier && error.credentialKind == .basicAuthentication)
             }
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
             #expect(try f.diskBytes() == before)

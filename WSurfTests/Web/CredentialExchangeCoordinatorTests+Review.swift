@@ -137,6 +137,52 @@ extension CredentialExchangeCoordinatorTests {
         }
     }
 
+    // MARK: - Omissions
+
+    /// What WSurf cannot keep is listed in the review before Import; the rest imports, and nothing is written until then.
+    @Test func omissionsShownBeforeImport() async throws {
+        try await withFixture { f in
+            try await f.seed(neighbours(1))
+            let before = try f.diskBytes()
+            let secret = "must-not-appear-in-the-review"
+            let wifi = ASImportableCredential.wifi(.init(
+                ssid: .init(id: nil, fieldType: .string, value: "network", label: nil),
+                networkSecurityType: nil,
+                passphrase: .init(id: nil, fieldType: .concealedString, value: secret, label: nil)
+            ))
+            try await f.stage(handBuilt([
+                item(id: 1, scoped: true, [password("valid"), .generatedPassword(.init(password: secret))]),
+                item(id: 2, scoped: true, [wifi]),
+            ]))
+
+            let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
+            #expect(review.omitted.map(\.reason) == [.unsupportedKind, .unsupportedKind, .nothingToKeep])
+            #expect(review.omitted.map(\.kind) == [.generatedPassword, .wifi, nil])
+            #expect(review.omitted.map(\.title) == ["Item 1", "Item 2", "Item 2"])
+            #expect(!review.omitted.map(\.text).joined().contains(secret))
+            #expect(review.candidates.count == 1 && counts(review.outcome) == [1, 0])
+            #expect(try f.diskBytes() == before)
+
+            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            let stored = try await f.stored().accounts
+            #expect(stored.count == 2 && stored.contains { $0.password == "valid" })
+        }
+    }
+
+    @Test func aTransferOfOnlyUnsupportedContentIsReviewedNotRefused() async throws {
+        try await withFixture { f in
+            try await f.seed(neighbours(1))
+            try await f.stage(handBuilt([item(id: 1, scoped: true, [.generatedPassword(.init(password: "unstored"))])]))
+
+            let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
+            #expect(review.candidates.isEmpty && review.omitted.count == 2 && counts(review.outcome) == [0, 0])
+            await #expect(throws: CredentialTransferFailure.self) {
+                _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            }
+            #expect(try await f.stored().accounts.count == 1)
+        }
+    }
+
     // MARK: - Notes
 
     private func noteCredential(_ text: String) -> ASImportableCredential {
@@ -251,9 +297,9 @@ extension CredentialExchangeCoordinatorTests {
         #expect(!CredentialExchangeCoordinator.isUserCancellation(rejected))
         #expect(CredentialSettingsModel.message(for: CancellationError()) == nil)
 
-        let unsupported = CredentialExchangeError(record: .item(account: 0, item: 3), reason: .unsupported)
-        let unsupportedMessage = try #require(CredentialSettingsModel.message(for: unsupported))
-        #expect(unsupportedMessage.contains("item[3]"))
+        let refused = CredentialExchangeError(record: .item(account: 0, item: 3), reason: .invalidData)
+        let refusedMessage = try #require(CredentialSettingsModel.message(for: refused))
+        #expect(refusedMessage.contains("item[3]"))
     }
 
     // MARK: - Export hand-off

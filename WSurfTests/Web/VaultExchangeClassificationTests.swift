@@ -428,11 +428,11 @@ struct VaultExchangeClassificationTests {
     @Test func malformedPayloadStillFailsClosedWholeWithPositionOnly() throws {
         let secret = "must-not-appear-in-diagnostics"
         let good = h.importableItem(id: Data([0xB0, 0x01]), title: "Good", credentials: [login("fine")])
+        // One field id for the username and the password cannot be told apart, which no import keeps.
         let bad = h.importableItem(
             id: Data([0xB0, 0x02]),
             title: "Bad",
-            scope: ASImportableCredentialScope(urls: [URL(string: "javascript:alert(1)")!], androidApps: []),
-            credentials: [h.basicAuthentication(username: "other", password: secret)]
+            credentials: [h.basicAuthentication(username: "other", password: secret, usernameID: Data([0x66]), passwordID: Data([0x66]))]
         )
         let payload = ASExportedCredentialData(
             accounts: [ASImportableAccount(id: h.accountExternalID, userName: "ada", email: "ada@example.test", collections: [], items: [good, bad])],
@@ -446,7 +446,8 @@ struct VaultExchangeClassificationTests {
             Issue.record("Expected the whole payload to be rejected")
         } catch {
             let diagnostic = try #require(error as? CredentialExchangeError)
-            #expect(diagnostic.record == .item(account: 0, item: 1))
+            #expect(diagnostic.record == .credential(account: 0, item: 1, credential: 0))
+            #expect(diagnostic.reason == .duplicateIdentifier)
             #expect(!String(describing: error).contains(secret))
         }
     }

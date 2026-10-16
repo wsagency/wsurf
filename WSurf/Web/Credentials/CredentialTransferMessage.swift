@@ -126,8 +126,6 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
     /// Any bad record rejects the whole payload; only its position, reason and credential kind are shown, never content.
     static func malformed(_ error: CredentialExchangeError) -> Self {
         let reason = switch error.reason {
-        case .unsupported:
-            String(localized: "WSurf cannot import this part of the transfer")
         case .invalidData:
             String(localized: "WSurf could not validate this data")
         case .duplicateIdentifier:
