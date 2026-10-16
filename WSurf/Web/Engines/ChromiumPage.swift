@@ -43,6 +43,8 @@ final class ChromiumPage: NSView {
     private var awaitingNativeNavigation = false
     private var navigationStarted = false
     private var initialDocument = true
+    /// Chromium records the startup about:blank as a real history entry. It is dropped when the first page commits.
+    private var startupEntryInHistory = true
     private(set) var htmlDocumentURL: URL?
     private var hasAppliedInitialSettings = false
     private var zoom: CGFloat = 1
@@ -533,7 +535,12 @@ final class ChromiumPage: NSView {
         }
         updateNativeSecurity()
         owner?.onNavigationCommitted?(navigation)
-        refreshHistory()
+        if startupEntryInHistory {
+            startupEntryInHistory = false
+            dropStartupEntry()
+        } else {
+            refreshHistory()
+        }
         if restoredFromCache {
             owner?.isLoading = false
             owner?.estimatedProgress = 1
@@ -616,6 +623,21 @@ final class ChromiumPage: NSView {
     }
     func didChangeFullscreen(_ enabled: Bool) {
         owner?.isFullscreen = enabled
+    }
+
+    /// Back must never reach the startup page. The reset keeps only the committed entry; Chromium's own loading
+    /// state would otherwise keep reporting a page behind the first one.
+    private func dropStartupEntry() {
+        guard raw != nil, !closing, !isClosed else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            let dropped = (try? await command("Page.resetNavigationHistory")) != nil
+            guard !closing, !isClosed else { return }
+            if dropped {
+                owner?.canGoBack = false
+            }
+            refreshHistory()
+        }
     }
 
     private func refreshHistory() {
