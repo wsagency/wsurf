@@ -593,9 +593,9 @@ final class CredentialExchangeCoordinator {
         to url: URL
     ) async throws -> Int {
         do {
-            // A file holds passwords only: a passkey or code part of the selection is neither checked nor written.
+            // A file holds passwords and their notes only: a passkey or code part of the selection is neither checked nor written.
             let passwords = selection.filter(\.password).map {
-                CredentialExportSelection(accountID: $0.accountID, password: true, passkeyIDs: [], totp: false)
+                CredentialExportSelection(accountID: $0.accountID, password: true, passkeyIDs: [], totp: false, notes: $0.notes)
             }
             let (chosen, snapshot) = try await checkedSelection(passwords, expectedStamps: expectedStamps, from: manager, epoch: epoch)
             let exported = try CredentialCSVExport.encode(snapshot, selection: chosen)

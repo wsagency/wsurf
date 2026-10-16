@@ -52,8 +52,8 @@ struct CredentialExportSheet: View {
         )
         return String(localized: """
             A CSV file holds only passwords with a website. It will not contain: \(counts.noWebsite) logins without a website, \
-            \(counts.noPassword) credentials without a password, \(counts.passkeys) passkeys, \(counts.codes) verification code \
-            setups, or any notes.
+            \(counts.noPassword) credentials without a password, \(counts.passkeys) passkeys or \(counts.codes) verification \
+            code setups. Notes are written only for a login whose Notes choice is on.
             """)
     }
 
@@ -118,9 +118,9 @@ struct CredentialExportSheet: View {
                                 if summary.hasTOTP {
                                     Toggle("Verification code setup", isOn: binding(summary.id, \.totp))
                                 }
-                                if summary.hasNotes {
-                                    Toggle("Notes", isOn: binding(summary.id, \.notes))
-                                }
+                            }
+                            if summary.hasNotes {
+                                Toggle("Notes", isOn: binding(summary.id, \.notes))
                             }
                         }
                     }

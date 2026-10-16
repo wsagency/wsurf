@@ -12,8 +12,8 @@ nonisolated struct CredentialCSVReport: Sendable, Equatable {
         case unsupportedWebsite, missingPassword, passwordTooLong, wrongFieldCount, invalidRow
         /// An earlier row has the same website, username and password.
         case duplicateInFile(firstLine: Int)
-        /// The row is staged, but this column of it is not imported: passwords are all a CSV import carries.
-        case notesNotImported, oneTimeCodeNotImported
+        /// The row is staged, but this column of it is not imported: a CSV import carries passwords and notes.
+        case oneTimeCodeNotImported
         /// Several saved logins have this website and username, so no Replace target is offered: Skip or Add Separately.
         case matchesSeveralSaved
         /// An earlier row has the same website and username with another password. Every such row needs a choice in the review.
@@ -23,7 +23,7 @@ nonisolated struct CredentialCSVReport: Sendable, Equatable {
             switch self {
             case .unsupportedWebsite, .missingPassword, .passwordTooLong, .wrongFieldCount, .invalidRow, .duplicateInFile:
                 true
-            case .notesNotImported, .oneTimeCodeNotImported, .conflictsWithEarlierRow, .matchesSeveralSaved:
+            case .oneTimeCodeNotImported, .conflictsWithEarlierRow, .matchesSeveralSaved:
                 false
             }
         }
@@ -43,12 +43,10 @@ nonisolated struct CredentialCSVReport: Sendable, Equatable {
                 String(localized: "not imported: the row can’t be saved.")
             case let .duplicateInFile(first):
                 String(localized: "not imported: same as line \(first).")
-            case .notesNotImported:
-                String(localized: "notes in this row aren’t imported.")
             case .oneTimeCodeNotImported:
                 String(localized: "this row has a verification code, which isn’t imported. Set it up again with the website.")
             case let .conflictsWithEarlierRow(line):
-                String(localized: "same website and username as line \(line) with another password. Choose what to do with each of them.")
+                String(localized: "same website and username as line \(line) with another password or note. Choose what to do with each of them.")
             case .matchesSeveralSaved:
                 String(localized: "several saved logins have this website and username. Choose Skip or Add Separately.")
             }
@@ -73,7 +71,8 @@ nonisolated struct CredentialCSVReport: Sendable, Equatable {
     }
 }
 
-/// An Apple Passwords CSV as an import: header-driven (URL, Username and Password columns, any order), password logins only.
+/// An Apple Passwords CSV as an import: header-driven (URL, Username and Password columns, any order), password logins with their
+/// notes. A row's note is one note of that login.
 /// Its candidates are built here rather than through the exchange codec so they carry no exchange identifiers, no exporter
 /// metadata and no timestamps: the file says nothing about when anything was created or changed, and nothing may be invented.
 nonisolated enum CredentialCSVImport {
@@ -119,6 +118,8 @@ nonisolated enum CredentialCSVImport {
     private struct LoginAndPassword: Hashable {
         let login: LoginKey
         let password: ExactText
+        /// Rows that differ only in their note are two rows: dropping one would drop its note.
+        let note: ExactText
     }
 
     /// Where the recognised columns are. A header that names one twice has no single right column to read, so the file is
@@ -193,22 +194,20 @@ nonisolated enum CredentialCSVImport {
             let password = fields[columns.password]
             guard !password.isEmpty else { note(.missingPassword); continue }
             guard password.utf8.count <= 4_096 else { note(.passwordTooLong); continue }
-            if let notes = columns.notes, !fields[notes].isEmpty {
-                note(.notesNotImported)
-            }
+            let noteText = columns.notes.map { fields[$0] }.flatMap { $0.isEmpty ? nil : $0 }
             if let code = columns.code, !fields[code].isEmpty {
                 note(.oneTimeCodeNotImported)
             }
 
             let key = LoginKey(origin: origin, username: ExactText(username))
-            let exact = LoginAndPassword(login: key, password: ExactText(password))
+            let exact = LoginAndPassword(login: key, password: ExactText(password), note: ExactText(noteText ?? ""))
             if let first = seen[exact] {
                 note(.duplicateInFile(firstLine: first))
                 continue
             }
             seen[exact] = row.line
             let matches = saved[key] ?? []
-            if matches.contains(where: { $0.password?.utf8.elementsEqual(password.utf8) == true }) {
+            if matches.contains(where: { Self.holds($0, password: password, note: noteText) }) {
                 report.alreadySaved += 1
                 continue
             }
@@ -217,7 +216,7 @@ nonisolated enum CredentialCSVImport {
             // Replace names ONE stored login. With several saved logins for this website and username none is more right than
             // another, so none is offered: the review asks for Skip or Add Separately.
             let existing = matches.count == 1 ? matches.first : nil
-            let candidate = CredentialAccount(
+            var candidate = CredentialAccount(
                 id: UUID(),
                 username: username,
                 displayName: title?.isEmpty == false ? title : nil,
@@ -231,6 +230,7 @@ nonisolated enum CredentialCSVImport {
                 // Replacing keeps the stored login's field descriptors: only the password value changes.
                 basicAuthenticationMetadata: existing.flatMap(descriptors)
             )
+            candidate.notes = noteText.map { [CredentialNote(text: $0, field: nil)] }
             do {
                 try candidate.validate()
             } catch {
@@ -246,13 +246,12 @@ nonisolated enum CredentialCSVImport {
             if matches.count > 1 {
                 note(.matchesSeveralSaved)
             }
-            if let existing {
-                conflicts.append(CredentialImportConflict(incoming: identity, existing: .password(accountID: existing.id)))
-                classes[identity] = .noCommonBase
-            } else {
-                classes[identity] = matches.count > 1 ? .ambiguous : .new
+            let relation = Self.relation(of: candidate, to: existing, savedMatches: matches.count)
+            conflicts += relation.conflicts
+            classes.merge(relation.classes) { _, new in new }
+            for incoming in CredentialExchangeCodec.identities(in: candidate) {
+                lines[incoming] = row.line
             }
-            lines[identity] = row.line
             rowsPerLogin[key, default: 0] += 1
             staged.append((identity, key))
             candidates.append(candidate)
@@ -282,6 +281,41 @@ nonisolated enum CredentialCSVImport {
         )
     }
 
+    /// How a staged row relates to the saved login it can replace (`existing`, only when exactly one matches). A note the saved login
+    /// already holds needs no decision, and a saved login without notes takes the note with the login.
+    private static func relation(
+        of candidate: CredentialAccount, to existing: CredentialAccount?, savedMatches: Int
+    ) -> (conflicts: [CredentialImportConflict], classes: [CredentialIdentity: CredentialImportClass]) {
+        let login = CredentialIdentity.password(accountID: candidate.id)
+        // A row carries at most one note, its Notes cell.
+        let text = candidate.notes?.first?.text
+        let note = text == nil ? nil : CredentialIdentity.note(accountID: candidate.id)
+        guard let existing else {
+            let unmatched: CredentialImportClass = savedMatches > 1 ? .ambiguous : .new
+            return ([], Dictionary(uniqueKeysWithValues: [login, note].compactMap { $0 }.map { ($0, unmatched) }))
+        }
+        var conflicts = [CredentialImportConflict(incoming: login, existing: .password(accountID: existing.id))]
+        var classes: [CredentialIdentity: CredentialImportClass] = [login: .noCommonBase]
+        if let note, let text {
+            let differs = existing.notes != nil && !holdsNote(existing, text)
+            if differs {
+                conflicts.append(CredentialImportConflict(incoming: note, existing: .note(accountID: existing.id)))
+            }
+            classes[note] = differs ? .noCommonBase : existing.notes == nil ? .new : .unchanged
+        }
+        return (conflicts, classes)
+    }
+
+    /// Whether a saved login is this row: the same password, and the row's note among its notes when the row has one.
+    private static func holds(_ saved: CredentialAccount, password: String, note: String?) -> Bool {
+        guard saved.password?.utf8.elementsEqual(password.utf8) == true else { return false }
+        return note.map { holdsNote(saved, $0) } ?? true
+    }
+
+    private static func holdsNote(_ saved: CredentialAccount, _ text: String) -> Bool {
+        saved.notes?.contains { $0.text.utf8.elementsEqual(text.utf8) } == true
+    }
+
     /// Only a plain https address is a website: no scheme is assumed, and the existing origin rules decide the rest.
     private static func website(_ text: String) -> URL? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -301,7 +335,8 @@ nonisolated enum CredentialCSVImport {
 }
 
 /// Selected saved logins as an Apple Passwords CSV. Only a login with a password AND a website can be written; everything
-/// else a vault holds (passkeys, verification codes, notes) is never in the file, and the export sheet says so before it starts.
+/// else a vault holds (passkeys, verification codes) is never in the file, and the export sheet says so before it starts. Notes are
+/// written only for a login whose selection includes them, as one cell: several notes are joined by a blank line.
 nonisolated enum CredentialCSVExport {
     static let header = ["Title", "URL", "Username", "Password", "Notes", "OTPAuth"]
 
@@ -317,13 +352,15 @@ nonisolated enum CredentialCSVExport {
 
     static func encode(_ snapshot: StoreSnapshot, selection: [CredentialExportSelection]) throws -> Exported {
         let chosen = Set(selection.filter(\.password).map(\.accountID))
+        let withNotes = Set(selection.filter { $0.password && $0.notes }.map(\.accountID))
         var lines = [header]
         for account in snapshot.accounts where chosen.contains(account.id) {
             guard let password = account.password else { continue }
+            let notes = withNotes.contains(account.id) ? (account.notes ?? []).map(\.text).joined(separator: "\n\n") : ""
             for origin in account.origins {
                 let address = account.loginURLs.first { CredentialAccount.origin(for: $0) == origin }?.absoluteString ?? origin
                 let title = account.displayName.flatMap { $0.isEmpty ? nil : $0 } ?? URL(string: origin)?.host ?? origin
-                lines.append([title, address, account.username, password, "", ""])
+                lines.append([title, address, account.username, password, notes, ""])
             }
         }
         guard lines.count > 1 else { throw CredentialExchangeCoordinatorError.emptySelection }
