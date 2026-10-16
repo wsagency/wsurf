@@ -164,13 +164,15 @@ struct SidebarTabRow: View {
         }
     }
 
-    @ViewBuilder private var titleColumn: some View {
+    /// `color` is the row's text color. The rename popover of the icons-only sidebar sits outside the row, so it
+    /// takes the sidebar's own text color rather than the one on an inverse fill.
+    @ViewBuilder private func titleColumn(color: Color) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if isRenaming {
                 TextField("", text: $draftTitle)
                     .textFieldStyle(.plain)
                     .font(BrowserSettings.application.sidebarFont)
-                    .foregroundStyle(textColor)
+                    .foregroundStyle(color)
                     .focused($renameFocused)
                     .onSubmit(commitRename)
                     .onAppear { renameFocused = true }
@@ -193,7 +195,7 @@ struct SidebarTabRow: View {
                 HStack(spacing: 0) {
                     Text(verbatim: tab.title)
                         .font(ink.titleFont)
-                        .foregroundStyle(textColor)
+                        .foregroundStyle(color)
                         .lineLimit(1)
                         .sidebarRowAccessibility(style)
                     Spacer(minLength: 0)
@@ -235,7 +237,7 @@ struct SidebarTabRow: View {
                 }
 
                 if sidebarStyle == .full {
-                    titleColumn
+                    titleColumn(color: textColor)
                 }
             }
             .overlay(alignment: .trailing) {
@@ -294,7 +296,7 @@ struct SidebarTabRow: View {
             get: { isRenaming && sidebarStyle == .icons },
             set: { if !$0 { commitRename() } }
         )) {
-            titleColumn
+            titleColumn(color: ink.resting)
                 .frame(width: 220, height: 24)
                 .padding(12)
         }
