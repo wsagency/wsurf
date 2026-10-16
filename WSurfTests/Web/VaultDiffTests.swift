@@ -284,6 +284,107 @@ struct VaultDiffTests {
         #expect(!plan.setsModifiedAt.contains(id))
     }
 
+    // MARK: Notes
+
+    private nonisolated static let planted = [
+        CredentialNote(text: "planted-note-1", field: CredentialEditableFieldMetadata(id: Data([1]), label: "Note", fieldType: .string)),
+        CredentialNote(text: "planted-note-2", field: nil),
+    ]
+
+    private func withNotes(_ edit: (inout CredentialAccount) -> Void = { _ in }) throws -> CredentialAccount {
+        var account = try rich()
+        account.notes = Self.planted
+        edit(&account)
+        return account
+    }
+
+    @Test func noteEditCreatesNoteRevision() throws {
+        let old = try withNotes()
+        var new = old
+        new.notes = [CredentialNote(text: "changed", field: nil)]
+
+        let plan = try diff(old: old, new: new)
+
+        #expect(plan.persistence == .semantic)
+        #expect(plan.revisions.count == 1)
+        let revision = try pick(.note, in: plan)
+        #expect(revision.ownerID == id)
+        #expect(try decode([CredentialNote].self, revision) == Self.planted)
+        #expect(plan.removals.isEmpty)
+        #expect(plan.setsModifiedAt == [id])
+    }
+
+    @Test func addingTheFirstNoteSupersedesNothing() throws {
+        let plan = try diff { $0.notes = Self.planted }
+
+        #expect(plan.persistence == .semantic)
+        expectNoWork(plan)
+        #expect(plan.touched == [id])
+        #expect(plan.setsModifiedAt == [id])
+    }
+
+    @Test func clearingNotesMovesThemToTrash() throws {
+        let plan = try diff(old: withNotes(), new: rich())
+
+        #expect(plan.persistence == .semantic)
+        #expect(plan.revisions.isEmpty)
+        #expect(plan.removals == [.credential(ownerID: id, subject: .note, passkeyID: nil)])
+        #expect(plan.setsModifiedAt == [id])
+    }
+
+    @Test func aNoteEditLeavesEveryOtherPartAlone() throws {
+        let old = try withNotes()
+        var new = old
+        new.notes?[1].text = "other"
+
+        let plan = try diff(old: old, new: new)
+
+        #expect(plan.revisions.map(\.subject) == [.note])
+        #expect(plan.removals.isEmpty)
+    }
+
+    @Test func removingThePasswordKeepsAnAccountThatStillHasNotes() throws {
+        let owner = try withNotes {
+            $0.totp = nil
+            $0.passkeys = []
+        }
+        let scope = RemovalScope.credential(ownerID: id, subject: .password, passkeyID: nil)
+
+        let proposal = try ProfileVaultStore.removing(scope, from: [owner])
+
+        #expect(proposal.requires == scope)
+        let kept = try #require(proposal.accounts.first)
+        #expect(proposal.accounts.count == 1 && kept.password == nil && kept.username.isEmpty)
+        #expect(kept.notes == Self.planted)
+        try kept.validate()
+
+        // Without notes the same removal leaves nothing valid, so the whole account goes.
+        var noteless = owner
+        noteless.notes = nil
+        let whole = try ProfileVaultStore.removing(scope, from: [noteless])
+        #expect(whole.accounts.isEmpty && whole.requires == .account(id))
+    }
+
+    @Test func removingTheNotesKeepsTheRestAndRefusesWhenThereAreNone() throws {
+        let scope = RemovalScope.credential(ownerID: id, subject: .note, passkeyID: nil)
+
+        let proposal = try ProfileVaultStore.removing(scope, from: [withNotes()])
+
+        #expect(proposal.requires == scope)
+        #expect(proposal.accounts.first?.notes == nil)
+        #expect(proposal.accounts.first?.password == "s3cret")
+        #expect { try ProfileVaultStore.removing(scope, from: [rich()]) } throws: { Self.isInvalidData($0) }
+
+        // A note-only account has nothing else, so removing its notes removes the account.
+        var noteOnly = CredentialAccount(
+            id: id, username: "", displayName: nil, origins: [], loginURLs: [], password: nil, passkeys: [], totp: nil,
+            exchangeAccountID: nil, exchangeItemID: nil
+        )
+        noteOnly.notes = Self.planted
+        let whole = try ProfileVaultStore.removing(scope, from: [noteOnly])
+        #expect(whole.accounts.isEmpty && whole.requires == .account(id))
+    }
+
     // MARK: No revision
 
     @Test func passkeyAddLastSignedAtAndFIDO2RefreshMakeNoRevision() throws {

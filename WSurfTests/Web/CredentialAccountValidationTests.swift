@@ -203,4 +203,55 @@ struct CredentialAccountValidationTests {
         record.basicAuthenticationMetadata?.password?.id = id
         #expect(throws: (any Error).self) { try record.validate() }
     }
+
+    // MARK: Notes
+
+    private func noteOnlyAccount(_ notes: [CredentialNote]?) -> CredentialAccount {
+        var account = CredentialAccount(
+            id: UUID(), username: "", displayName: nil, origins: [], loginURLs: [], password: nil, passkeys: [], totp: nil,
+            exchangeAccountID: nil, exchangeItemID: nil
+        )
+        account.notes = notes
+        return account
+    }
+
+    @Test func noteOnlyAccountValidates() throws {
+        try noteOnlyAccount([CredentialNote(text: "only a note", field: nil)]).validate()
+        try noteOnlyAccount([
+            CredentialNote(text: "first", field: CredentialEditableFieldMetadata(id: Data([1]), label: "Note", fieldType: .string)),
+            CredentialNote(text: "second", field: nil),
+        ]).validate()
+
+        // An account with nothing at all is still invalid.
+        #expect(throws: (any Error).self) { try noteOnlyAccount(nil).validate() }
+    }
+
+    @Test func emptyNotesArrayRejected() throws {
+        #expect(throws: (any Error).self) { try noteOnlyAccount([]).validate() }
+        var withLogin = VaultFixtures.account()
+        withLogin.notes = []
+        #expect(throws: (any Error).self) { try withLogin.validate() }
+    }
+
+    @Test func noteLimitsAreEnforced() throws {
+        #expect(throws: (any Error).self) { try noteOnlyAccount([CredentialNote(text: "", field: nil)]).validate() }
+
+        let atLimit = (0..<CredentialAccount.noteLimit).map { CredentialNote(text: "note \($0)", field: nil) }
+        try noteOnlyAccount(atLimit).validate()
+        #expect(throws: (any Error).self) { try noteOnlyAccount(atLimit + [CredentialNote(text: "one more", field: nil)]).validate() }
+
+        let oversizedField = CredentialEditableFieldMetadata(id: Data(count: 1_025), label: nil, fieldType: .string)
+        #expect(throws: (any Error).self) { try noteOnlyAccount([CredentialNote(text: "x", field: oversizedField)]).validate() }
+
+        let tooLong = String(repeating: "n", count: CredentialVaultLimits.payloadBytes + 1)
+        #expect(throws: (any Error).self) { try noteOnlyAccount([CredentialNote(text: tooLong, field: nil)]).validate() }
+    }
+
+    @Test func notesCountTowardThePayloadBudget() throws {
+        let half = String(repeating: "n", count: CredentialVaultLimits.payloadBytes / 2 + 1)
+        let account = noteOnlyAccount([CredentialNote(text: half, field: nil), CredentialNote(text: half, field: nil)])
+        try account.validate()
+        let payload = CredentialVaultPayload(revision: 0, accounts: [account], blockedPasswordOrigins: [])
+        #expect(throws: (any Error).self) { try CredentialVaultCrypto.validate(payload) }
+    }
 }

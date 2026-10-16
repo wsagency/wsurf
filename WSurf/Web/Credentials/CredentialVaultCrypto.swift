@@ -358,6 +358,11 @@ nonisolated enum CredentialVaultCrypto {
                 try add(generator.issuer?.utf8.count ?? 0)
                 try add(generator.userName?.utf8.count ?? 0)
             }
+            for note in account.notes ?? [] {
+                try add(note.text.utf8.count)
+                try add(note.field?.id?.count ?? 0)
+                try add(note.field?.label?.utf8.count ?? 0)
+            }
             for passkey in account.passkeys {
                 guard credentialIDs.insert(passkey.credentialID).inserted,
                       passkeyIDs.insert(passkey.id).inserted else { throw CredentialVaultError.duplicateIdentifier }
