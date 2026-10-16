@@ -194,6 +194,97 @@ struct CredentialSettingsTests {
         #expect(draft.revision == 7)
     }
 
+    // MARK: - Notes
+
+    private func noted(_ notes: [CredentialNote]) -> CredentialAccount {
+        var result = account("ada", password: "pw")
+        result.notes = notes
+        return result
+    }
+
+    private let storedNotes = [
+        CredentialNote(text: "first", field: CredentialEditableFieldMetadata(id: Data([1]), label: "Memo", fieldType: .string)),
+        CredentialNote(text: "second", field: nil),
+    ]
+
+    @Test func unmodifiedDraftKeepsNotesTheirDescriptionAndOrder() throws {
+        let stored = noted(storedNotes)
+        let draft = CredentialDraft(editing: stored, revision: 3)
+
+        #expect(draft.notes == storedNotes)
+        #expect(try bytes(draft.account()) == bytes(stored))
+        #expect(draft.changesNothing)
+    }
+
+    @Test func editingNotesKeepsTheDescriptionOfTheOnesThatStay() throws {
+        var draft = CredentialDraft(editing: noted(storedNotes), revision: 0)
+        draft.notes[0].text = "first, edited"
+        draft.addNote()
+        draft.notes[2].text = "third"
+
+        var built = try draft.account()
+        #expect(built.notes?.map(\.text) == ["first, edited", "second", "third"])
+        #expect(built.notes?[0].field?.label == "Memo" && built.notes?[2].field == nil)
+
+        // Removing the first moves the description with it: the second note never inherits it.
+        draft.removeNote(at: 0)
+        built = try draft.account()
+        #expect(built.notes?.map(\.text) == ["second", "third"])
+        #expect(built.notes?.allSatisfy { $0.field == nil } == true)
+        draft.removeNote(at: 9)
+        #expect(draft.notes.count == 2)
+    }
+
+    @Test func emptyNotesAreDroppedAndNoNotesIsNone() throws {
+        var draft = CredentialDraft(editing: nil, revision: 0)
+        draft.username = "ada"
+        draft.addNote()
+        draft.addNote()
+        #expect(try draft.account().notes == nil)
+
+        draft.notes[1].text = "kept"
+        #expect(try draft.account().notes == [CredentialNote(text: "kept", field: nil)])
+
+        // Emptying every note of a stored account removes them, and a note alone is a valid credential.
+        var emptied = CredentialDraft(editing: noted(storedNotes), revision: 0)
+        emptied.notes[0].text = ""
+        emptied.notes[1].text = ""
+        #expect(try emptied.account().notes == nil)
+        var noteOnly = CredentialDraft(editing: nil, revision: 0)
+        noteOnly.addNote()
+        noteOnly.notes[0].text = "only a note"
+        #expect(try noteOnly.account().notes?.map(\.text) == ["only a note"])
+    }
+
+    @Test func savingNotesKeepsTheEarlierOnesAsAnEarlierVersionAndSummariesSayWhenThereAreNotes() async throws {
+        let stored = noted(storedNotes)
+        try await withFixture { f in
+            try await f.seed([stored])
+            await f.model.load()
+            #expect(f.model.summaries.first?.hasNotes == true)
+            try await f.model.beginEditing(accountID: stored.id)
+            f.model.draft?.notes[1].text = "second, edited"
+            _ = try await f.model.commitDraft()
+
+            let saved = try #require(try await f.stored().accounts.first)
+            #expect(saved.notes?.map(\.text) == ["first", "second, edited"])
+            #expect(saved.notes?[0].field?.label == "Memo")
+            try await f.model.loadVersions(accountID: stored.id)
+            #expect(f.model.revisionItems.contains { $0.subject == .note })
+
+            try await f.model.beginEditing(accountID: stored.id)
+            f.model.draft?.notes = []
+            _ = try await f.model.commitDraft()
+            #expect(try await f.stored().accounts.first?.notes == nil)
+            await f.model.load()
+            #expect(f.model.summaries.first?.hasNotes == false)
+        }
+    }
+
+    @Test func settingsSearchFindsNotes() {
+        #expect(SettingsIndex.search("notes").contains { $0.id == "autofill.credentials" })
+    }
+
     @Test func passkeyMetadataSurvivesSettingsEditing() async throws {
         let createdAt = Date(timeIntervalSince1970: 1_700_000_100)
         let lastSignedAt = Date(timeIntervalSince1970: 1_700_000_200)

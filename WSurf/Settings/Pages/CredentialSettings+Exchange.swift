@@ -86,7 +86,7 @@ struct CredentialExportSheet: View {
             } else {
                 Text("""
                     Choose what to send to another app. The system passes your selection to the app you pick next, and \
-                    that app can read it: any passwords, passkeys and verification code setups you select aren’t \
+                    that app can read it: any passwords, passkeys, verification code setups and notes you select aren’t \
                     encrypted by WSurf. WSurf doesn’t write a file, and your vault keeps its own copy.
                     """)
                     .foregroundStyle(.secondary)
@@ -117,6 +117,9 @@ struct CredentialExportSheet: View {
                                 }
                                 if summary.hasTOTP {
                                     Toggle("Verification code setup", isOn: binding(summary.id, \.totp))
+                                }
+                                if summary.hasNotes {
+                                    Toggle("Notes", isOn: binding(summary.id, \.notes))
                                 }
                             }
                         }
