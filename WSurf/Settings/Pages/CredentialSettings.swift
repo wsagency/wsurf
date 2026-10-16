@@ -507,6 +507,7 @@ private struct CredentialRow: View {
             parts.append(String(localized: "\(summary.passkeys.count) passkeys"))
         }
         if summary.hasTOTP { parts.append(String(localized: "Verification code")) }
+        if summary.hasNotes { parts.append(String(localized: "Notes")) }
         return parts.joined(separator: " · ")
     }
 
@@ -648,6 +649,7 @@ private struct CredentialEditorSheet: View {
                 }
                 .textFieldStyle(.roundedBorder)
                 totp(draft)
+                notes(draft)
                 passkeys(draft)
                 if let error = model.error {
                     Text(verbatim: error).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -725,6 +727,28 @@ private struct CredentialEditorSheet: View {
         }
     }
 
+    /// Notes can hold secrets, so each one is hidden from screen sharing like the other secret fields.
+    private func notes(_ draft: CredentialDraft) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Notes").font(Theme.Font.rowTitle)
+            ForEach(draft.notes.indices, id: \.self) { index in
+                HStack(alignment: .top, spacing: 8) {
+                    TextEditor(text: noteText(index))
+                        .font(.body)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .frame(height: 80)
+                        .background(Theme.Wash.faint, in: RoundedRectangle(cornerRadius: 8))
+                        .privacySensitive()
+                        .accessibilityLabel("Note \(index + 1)")
+                    Button("Remove", role: .destructive) { model.draft?.removeNote(at: index) }
+                        .accessibilityLabel("Remove note \(index + 1)")
+                }
+            }
+            Button("Add Note") { model.draft?.addNote() }
+        }
+    }
+
     @ViewBuilder
     private func passkeys(_ draft: CredentialDraft) -> some View {
         if !draft.passkeySummaries.isEmpty {
@@ -765,6 +789,16 @@ private struct CredentialEditorSheet: View {
             String(localized: "Last local signature \($0.formatted(date: .abbreviated, time: .shortened))")
         } ?? String(localized: "No local signature recorded")
         return [source, created, signed].joined(separator: " · ")
+    }
+
+    private func noteText(_ index: Int) -> Binding<String> {
+        Binding(
+            get: { model.draft.flatMap { $0.notes.indices.contains(index) ? $0.notes[index].text : nil } ?? "" },
+            set: { text in
+                guard model.draft?.notes.indices.contains(index) == true else { return }
+                model.draft?.notes[index].text = text
+            }
+        )
     }
 
     private func text(_ keyPath: WritableKeyPath<CredentialDraft, String>) -> Binding<String> {

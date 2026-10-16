@@ -357,6 +357,13 @@ extension ProfileVaultStore {
             }
             // A one-time code has no username of its own: it belongs to the owner's login.
             return otherAccountBlock(itemIDs: [body.exchangeItemID], username: owner.username)
+        case .note:
+            _ = try Self.decode([CredentialNote].self, from: value)
+            if owner.notes != nil {
+                return .slotOccupied(.note)
+            }
+            // Notes have no username of their own either: they belong to the owner.
+            return otherAccountBlock(itemIDs: [body.exchangeItemID], username: owner.username)
         case .passkey:
             let passkey = try Self.decode(WebsitePasskey.self, from: value)
             if let block = try passkeyBlock([passkey], among: accounts) {
@@ -438,6 +445,8 @@ extension ProfileVaultStore {
             owner.basicAuthenticationMetadata = password.basicAuthenticationMetadata
         case .totp:
             owner.totp = try decode(TOTPGenerator.self, from: value)
+        case .note:
+            owner.notes = try decode([CredentialNote].self, from: value)
         case .passkey:
             owner.passkeys.append(try decode(WebsitePasskey.self, from: value))
         case .account, .metadata:
@@ -468,6 +477,8 @@ extension ProfileVaultStore {
             account.basicAuthenticationMetadata = value.basicAuthenticationMetadata
         case .totp:
             account.totp = try decode(TOTPGenerator.self, from: body.value)
+        case .note:
+            account.notes = try decode([CredentialNote].self, from: body.value)
         case .metadata:
             let value = try decode(MetadataProjection.self, from: body.value)
             account.displayName = value.displayName

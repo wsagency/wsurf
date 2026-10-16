@@ -753,6 +753,214 @@ struct VaultTrashIdentityTests {
     }
 }
 
+/// Notes are their own history subject: they move to the Trash with their earlier versions, restore, and are erased by a purge.
+struct VaultNoteHistoryTests {
+    private nonisolated static let first = [
+        CredentialNote(text: "note-text-one-6b1c", field: CredentialEditableFieldMetadata(id: Data([4]), label: "Note", fieldType: .string)),
+        CredentialNote(text: "note-text-two-6b1c", field: nil),
+    ]
+    private nonisolated static let second = [CredentialNote(text: "note-text-three-6b1c", field: nil)]
+
+    private static func owner() throws -> CredentialAccount {
+        var owner = try MoveFixtures.fullAccount()
+        owner.notes = first
+        return owner
+    }
+
+    /// Occurrences of `text` in every reachable row of `vault`. A revision keeps its value as base64 inside the row, so that value is
+    /// decoded before it is searched.
+    private func textCount(_ text: String, in vault: UUID, _ f: VaultStoreFixture) throws -> Int {
+        var total = 0
+        for row in try f.moveLiveRows(of: vault) + f.moveHistoryRows(of: vault) {
+            var bytes = try f.moveSearchableBytes(of: row)
+            if row.kind == .revision {
+                bytes.append(try JSONDecoder().decode(RevisionBody.self, from: f.movePlaintext(of: row)).value)
+            }
+            total += MoveFixtures.occurrences(of: text, in: bytes)
+        }
+        return total
+    }
+
+    private func setNotes(
+        _ f: VaultStoreFixture, _ store: ProfileVaultStore, _ access: VaultAccess, _ notes: [CredentialNote]?
+    ) async throws {
+        try await f.edit(store, access) { accounts in
+            accounts.map { var live = $0; live.notes = notes; return live }
+        }
+    }
+
+    @Test func aNoteEditKeepsTheEarlierNotesAsAnEarlierVersion() async throws {
+        let owner = try Self.owner()
+        try await VaultStoreFixture.with(accounts: [owner]) { f in
+            try await f.withWallStore { store, access in
+                try await setNotes(f, store, access, Self.second)
+
+                let revisions = try f.sourceRevisions(of: owner.id).filter { $0.subject == .note }
+                #expect(revisions.count == 1)
+                let live = try #require(try await store.snapshot(vaultID: f.vaultID, using: access).accounts.first)
+                #expect(live.notes == Self.second)
+                let page = try await store.revisionPage(vaultID: f.vaultID, accountID: owner.id, after: nil, using: access)
+                #expect(page.items.contains { $0.subject == .note && $0.id == revisions[0].recordID })
+            }
+            try f.verify()
+        }
+    }
+
+    @Test func clearedNotesGoToTheTrashWithTheirHistoryAndComeBack() async throws {
+        let owner = try Self.owner()
+        try await VaultStoreFixture.with(accounts: [owner]) { f in
+            try await f.withWallStore { store, access in
+                try await setNotes(f, store, access, Self.second)
+                try await setNotes(f, store, access, nil)
+                let left = try #require(try await store.snapshot(vaultID: f.vaultID, using: access).accounts.first)
+                #expect(left.notes == nil && left.password == owner.password)
+
+                let entry = try f.trashEntry(of: owner.id, subject: .note)
+                #expect(entry.body.scope == .credential)
+                let value = try #require(entry.body.credentialValue)
+                #expect(try JSONDecoder().decode([CredentialNote].self, from: value) == Self.second)
+                #expect(try f.moveRevisions(in: f.trashID, owner: owner.id, subject: .note).count == 1)
+                #expect(try f.moveRevisions(in: f.vaultID, owner: owner.id, subject: .note).isEmpty)
+                let item = try #require(try await store.trashPage(vaultID: f.vaultID, after: nil, using: access).items.first)
+                #expect(item.subject == .note && item.revisionCount == 1)
+
+                let preview = try await store.previewUndelete(vaultID: f.vaultID, entryID: entry.row.recordID, using: access)
+                #expect(preview.block == nil)
+                try await f.undelete(store, access, entry.row.recordID)
+                let restored = try #require(try await store.snapshot(vaultID: f.vaultID, using: access).accounts.first)
+                #expect(restored.notes == Self.second)
+                #expect(try f.moveRevisions(in: f.vaultID, owner: owner.id, subject: .note).count == 1)
+            }
+            #expect(try f.moveHistoryRows(of: f.trashID).isEmpty)
+            try f.verify()
+        }
+    }
+
+    @Test func removingTheNotesLeavesTheRestOfTheCredential() async throws {
+        let owner = try Self.owner()
+        try await VaultStoreFixture.with(accounts: [owner]) { f in
+            try await f.withWallStore { store, access in
+                try await f.deleteCredential(store, access, owner: owner.id, subject: .note)
+                let left = try #require(try await store.snapshot(vaultID: f.vaultID, using: access).accounts.first)
+                #expect(left.notes == nil)
+                #expect(left.password == owner.password && left.totp == owner.totp && left.passkeys.count == owner.passkeys.count)
+                #expect(try f.trashEntry(of: owner.id, subject: .note).body.subject == .note)
+            }
+            try f.verify()
+        }
+    }
+
+    @Test func restoringNotesOverNewerNotesIsBlocked() async throws {
+        let owner = try Self.owner()
+        try await VaultStoreFixture.with(accounts: [owner]) { f in
+            try await f.withWallStore { store, access in
+                try await f.deleteCredential(store, access, owner: owner.id, subject: .note)
+                let entry = try f.trashEntry(of: owner.id, subject: .note)
+                try await setNotes(f, store, access, Self.second)
+                let image = try f.headWriteImage()
+
+                let preview = try await store.previewUndelete(vaultID: f.vaultID, entryID: entry.row.recordID, using: access)
+                #expect(preview.block == .slotOccupied(.note))
+                await #expect(throws: CredentialStoreError.undeleteBlocked(.slotOccupied(.note))) {
+                    try await f.undelete(store, access, entry.row.recordID)
+                }
+                #expect(try f.headWriteImage() == image)
+            }
+        }
+    }
+
+    @Test func anEarlierVersionOfTheNotesRestoresAndKeepsTheCurrentOnesAsAVersion() async throws {
+        let owner = try Self.owner()
+        try await VaultStoreFixture.with(accounts: [owner]) { f in
+            try await f.withWallStore { store, access in
+                try await setNotes(f, store, access, Self.second)
+                let chosen = try #require(try f.sourceRevisions(of: owner.id).first { $0.subject == .note })
+                let chosenRow = try f.storedRecord(f.vaultID, chosen.recordID)
+
+                let preview = try await store.previewRestoreRevision(vaultID: f.vaultID, revisionID: chosen.recordID, using: access)
+                #expect(preview.notes == Self.first)
+                #expect(RecordSubject.note.restoresFromEarlierVersions)
+                let revision = try await f.nextRevision(store, access)
+                _ = try await store.restoreRevision(
+                    vaultID: f.vaultID, revisionID: chosen.recordID, expectedRevision: revision, using: access
+                )
+
+                let live = try #require(try await store.snapshot(vaultID: f.vaultID, using: access).accounts.first)
+                #expect(live.notes == Self.first && live.password == owner.password)
+                #expect(try f.storedRecord(f.vaultID, chosen.recordID) == chosenRow)
+                #expect(try f.sourceRevisions(of: owner.id).filter { $0.subject == .note }.count == 2)
+            }
+            try f.verify()
+        }
+    }
+
+    @Test func aNoteRevisionOfTheWrongTypeIsRefused() async throws {
+        let owner = try Self.owner()
+        let wrong = try TrashFixtures.revisionBody(owner)
+        try await VaultStoreFixture.with(accounts: [owner], extraHistory: [FixtureHistoryRun(subject: .note, count: 1, plaintext: wrong)]) { f in
+            try await f.withWallStore { store, access in
+                let revision = try #require(try f.sourceRevisions(of: owner.id).first)
+                let image = try f.headWriteImage()
+                await #expect(throws: CredentialVaultError.invalidData) {
+                    _ = try await store.previewRestoreRevision(vaultID: f.vaultID, revisionID: revision.recordID, using: access)
+                }
+                #expect(try f.headWriteImage() == image)
+            }
+        }
+    }
+
+    @Test func purgeErasesNoteHistory() async throws {
+        let owner = try Self.owner()
+        try await VaultStoreFixture.with(accounts: [owner]) { f in
+            try await f.withWallStore { store, access in
+                try await setNotes(f, store, access, Self.second)
+                try await f.deleteCredential(store, access, owner: owner.id, subject: .note)
+                let entry = try f.trashEntry(of: owner.id, subject: .note)
+                let planted = ["note-text-one-6b1c", "note-text-three-6b1c"]
+                for text in planted {
+                    #expect(try textCount(text, in: f.trashID, f) >= 1, "\(text) is kept in the Trash until purged")
+                }
+
+                let receipt = try await store.purge(
+                    vaultID: f.vaultID, entryIDs: [entry.row.recordID], emptyAll: false, authorization: f.freshAuthorization, using: access
+                )
+
+                receipt.expectRemoved(1)
+                #expect(try f.moveRevisions(in: f.trashID, owner: owner.id, subject: .note).isEmpty)
+                for text in planted {
+                    #expect(try textCount(text, in: f.trashID, f) == 0, "\(text) is gone from the Trash")
+                    #expect(try textCount(text, in: f.vaultID, f) == 0, "\(text) is not in the vault")
+                }
+                let tombstone = try #require(try f.moveHistoryRows(of: f.trashID).first { $0.kind == .tombstone })
+                let body = try JSONDecoder().decode(TombstoneBody.self, from: try f.movePlaintext(of: tombstone))
+                #expect(body.scope == .credential && body.subject == .note && body.entryID == entry.row.recordID)
+            }
+            try f.verify()
+        }
+    }
+
+    @Test func purgeErasesTheNotesOfAWholeRemovedAccount() async throws {
+        let owner = try Self.owner()
+        try await VaultStoreFixture.with(accounts: [owner]) { f in
+            try await f.withWallStore { store, access in
+                try await setNotes(f, store, access, Self.second)
+                try await f.deleteAccount(store, access, owner.id)
+                #expect(try textCount("note-text-three-6b1c", in: f.trashID, f) >= 1)
+                #expect(try textCount("note-text-one-6b1c", in: f.trashID, f) >= 1)
+
+                try await store.purge(vaultID: f.vaultID, entryIDs: [], emptyAll: true, authorization: f.freshAuthorization, using: access)
+                    .expectRemoved(1)
+
+                for text in ["note-text-one-6b1c", "note-text-two-6b1c", "note-text-three-6b1c"] {
+                    #expect(try textCount(text, in: f.trashID, f) == 0)
+                    #expect(try textCount(text, in: f.vaultID, f) == 0)
+                }
+            }
+            try f.verify()
+        }
+    }
+}
+
 nonisolated extension PurgeReceipt {
     func expectRemoved(_ count: Int, sourceLocation: SourceLocation = #_sourceLocation) {
         #expect(removedEntries == count, sourceLocation: sourceLocation)

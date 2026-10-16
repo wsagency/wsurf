@@ -55,6 +55,17 @@ nonisolated extension CredentialAccount {
     }
 }
 
+/// One free-text note. `field` keeps how the exporter described it (id, label, type) so a note round-trips unchanged.
+nonisolated struct CredentialNote: Codable, Sendable, Equatable {
+    var text: String
+    var field: CredentialEditableFieldMetadata?
+
+    func validate() throws {
+        guard !text.isEmpty, text.utf8.count <= CredentialVaultLimits.payloadBytes else { throw CredentialVaultError.invalidData }
+        try field?.validate()
+    }
+}
+
 nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable {
     var id: UUID
     var username: String
@@ -64,6 +75,9 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
     var password: String?
     var passkeys: [WebsitePasskey]
     var totp: TOTPGenerator?
+    /// Free-text notes, in order. `nil` means none: an empty array is never stored. Notes can hold secrets, so they live in
+    /// their own encrypted part with their own history, never in `exchangeMetadata`.
+    var notes: [CredentialNote]?
     var exchangeAccountID: Data?
     var exchangeItemID: Data?
     var exchangeMetadata: Data?
@@ -77,7 +91,7 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
     var totpBase: ExchangeBase?
 
     func validate() throws {
-        guard !username.isEmpty || password != nil || !passkeys.isEmpty || totp != nil,
+        guard !username.isEmpty || password != nil || !passkeys.isEmpty || totp != nil || notes != nil,
               username.utf8.count <= CredentialVaultLimits.payloadBytes,
               (displayName?.utf8.count ?? 0) <= CredentialVaultLimits.payloadBytes,
               (password?.utf8.count ?? 0) <= 4_096,
@@ -112,12 +126,21 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
         if let totp {
             try totp.validate()
         }
+        if let notes {
+            guard !notes.isEmpty, notes.count <= CredentialAccount.noteLimit else { throw CredentialVaultError.invalidData }
+            for note in notes {
+                try note.validate()
+            }
+        }
         try passwordEvents?.validate()
         try totpEvents?.validate()
         for data in [exchangeAccountID, exchangeItemID].compactMap({ $0 }) where data.count > CredentialVaultLimits.payloadBytes {
             throw CredentialVaultError.invalidData
         }
     }
+
+    /// Most notes one credential keeps.
+    static let noteLimit = 64
 
     static func origin(for url: URL) -> String? {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),

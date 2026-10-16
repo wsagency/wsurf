@@ -39,6 +39,7 @@ nonisolated enum CredentialPart: Equatable, Sendable {
     case totp(CredentialAccount)
     case passkey(WebsitePasskey)
     case metadata(CredentialAccount)
+    case note(CredentialAccount)
 }
 
 /// §12.3 content hash: SHA-256 over `StoreWriter` bytes (u8 part tag, then the fields in a fixed order). No JSON is hashed.
@@ -86,6 +87,15 @@ nonisolated enum CredentialContent {
         case let .metadata(account):
             writer.u8(4)
             try writeMetadata(&writer, account)
+        case let .note(account):
+            // Tag 5. The exact UTF-8 of every note and its field description, in order; `nil` and "no notes" are the same bytes.
+            writer.u8(5)
+            writer.optional(account.notes) { writer, notes in
+                writer.array(notes) { writer, note in
+                    writer.text(note.text)
+                    writer.optional(note.field, writeField)
+                }
+            }
         }
         return Data(SHA256.hash(data: writer.data))
     }

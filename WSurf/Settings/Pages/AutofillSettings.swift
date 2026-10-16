@@ -48,7 +48,7 @@ struct AutofillSettings: View {
                         title: "Credential Manager",
                         symbol: "lock.shield",
                         tint: .indigo,
-                        caption: "Passwords, passkeys and verification codes in an encrypted vault."
+                        caption: "Passwords, passkeys, verification codes and notes in an encrypted vault."
                     ) {
                         destination = .credentials
                     }

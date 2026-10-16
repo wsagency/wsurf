@@ -97,7 +97,7 @@ nonisolated struct CredentialImportReview: Sendable {
     }
 
     struct Record: Identifiable, Sendable {
-        enum Kind: Sendable { case password, passkey, totp }
+        enum Kind: Sendable { case password, passkey, totp, note }
 
         /// Where the record ends up under its current choice, from the plan's own account data.
         enum Destination: Sendable, Equatable {
@@ -164,6 +164,8 @@ nonisolated struct CredentialImportReview: Sendable {
     let outcome: CredentialImportOutcome?
     /// What a CSV file held beyond what will be imported; `nil` for a system import. Counts the file as read (staged), not what is saved.
     var csvReport: CredentialCSVReport?
+    /// What the transfer held that WSurf will not import, shown before Import. Empty for a CSV file.
+    var omitted: [CredentialImportOmission] = []
 
     var conflicts: [Record] {
         candidates.flatMap(\.records).filter(\.isConflict)

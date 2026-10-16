@@ -53,6 +53,16 @@ nonisolated extension CredentialExchangeCodec {
                 base: \.totpBase,
                 identicalWithoutBaseIsUnchanged: true
             )
+        case let .note(accountID):
+            let candidate = try candidate(accountID, in: preview)
+            return try classifyLogin(
+                candidate,
+                destination: destination,
+                hasPart: { $0.notes != nil },
+                hash: { try CredentialContent.hash(.note($0)) },
+                base: { _ in nil },
+                identicalWithoutBaseIsUnchanged: true
+            )
         case let .passkey(accountID, passkeyID):
             guard let passkey = try candidate(accountID, in: preview).passkeys.first(where: { $0.id == passkeyID }) else {
                 throw CredentialVaultError.invalidData
@@ -66,13 +76,14 @@ nonisolated extension CredentialExchangeCodec {
         return candidate
     }
 
-    /// Password and TOTP: an exchange id is a hint, so a match counts only with a bound pairing.
+    /// Password, TOTP and notes: an exchange id is a hint, so a match counts only with a bound pairing. Notes keep no observed
+    /// base, so identical notes are unchanged and different ones have no common base.
     private static func classifyLogin(
         _ candidate: CredentialAccount,
         destination: ImportDestinationView,
         hasPart: (CredentialAccount) -> Bool,
         hash: (CredentialAccount) throws -> Data,
-        base: KeyPath<CredentialAccount, ExchangeBase?>,
+        base: (CredentialAccount) -> ExchangeBase?,
         identicalWithoutBaseIsUnchanged: Bool
     ) throws -> CredentialImportClass {
         let key = try externalItemID(for: candidate)
@@ -96,7 +107,7 @@ nonisolated extension CredentialExchangeCodec {
 
         let incomingHash = try hash(candidate)
         let localHash = try hash(local)
-        let observed = local[keyPath: base].flatMap { $0.itemID == key.item ? $0 : nil }
+        let observed = base(local).flatMap { $0.itemID == key.item ? $0 : nil }
         // Equal content is "unchanged" through a bound base; without one only an identical TOTP (§13.3) is.
         if incomingHash == localHash, observed != nil || identicalWithoutBaseIsUnchanged {
             return .unchanged

@@ -8,7 +8,7 @@ nonisolated enum PersistenceClass: Equatable, Sendable {
 }
 
 /// The earlier value being superseded: `superseded` is the canonical JSON of exactly one typed value
-/// (`PasswordValue`, `TOTPGenerator` or `MetadataProjection`).
+/// (`PasswordValue`, `TOTPGenerator`, `[CredentialNote]` or `MetadataProjection`).
 nonisolated struct RevisionDraft: Equatable, Sendable {
     let ownerID: UUID
     let subject: RecordSubject
@@ -108,9 +108,10 @@ nonisolated enum CredentialDiff {
             touched.insert(new.id)
             let passwordChanged = try comparePassword(old, new)
             let totpChanged = try compareTOTP(old, new)
+            let notesChanged = try compareNotes(old, new)
             let metadataChanged = try compareMetadata(old, new)
             let passkeysChanged = try comparePasskeys(old, new)
-            if passwordChanged || totpChanged || metadataChanged || passkeysChanged {
+            if passwordChanged || totpChanged || notesChanged || metadataChanged || passkeysChanged {
                 semantic = true
                 setsModifiedAt.insert(new.id)
             }
@@ -137,6 +138,17 @@ nonisolated enum CredentialDiff {
                 removals.append(.credential(ownerID: old.id, subject: .totp, passkeyID: nil))
             } else if let previous = old.totp {
                 revisions.append(RevisionDraft(ownerID: old.id, subject: .totp, superseded: try CredentialContent.canonicalJSON(previous)))
+            }
+            return true
+        }
+
+        /// Notes are one part: a change supersedes the whole earlier list, and clearing them removes the list to the Trash.
+        private mutating func compareNotes(_ old: CredentialAccount, _ new: CredentialAccount) throws -> Bool {
+            guard try CredentialContent.hash(.note(old)) != CredentialContent.hash(.note(new)) else { return false }
+            if new.notes == nil {
+                removals.append(.credential(ownerID: old.id, subject: .note, passkeyID: nil))
+            } else if let previous = old.notes {
+                revisions.append(RevisionDraft(ownerID: old.id, subject: .note, superseded: try CredentialContent.canonicalJSON(previous)))
             }
             return true
         }

@@ -11,6 +11,8 @@ nonisolated struct CredentialDraft: Sendable {
     var password: String?
     var websites: String
     var extraOrigins: String
+    /// The notes in order. Each keeps the exporter's field description while its text is edited; an empty one is dropped on save.
+    var notes: [CredentialNote]
     private(set) var totp: TOTPGenerator?
     private(set) var passkeys: [WebsitePasskey]
     let revision: UInt64
@@ -28,6 +30,7 @@ nonisolated struct CredentialDraft: Sendable {
         displayName = account?.displayName
         password = account?.password
         totp = account?.totp
+        notes = account?.notes ?? []
         passkeys = account?.passkeys ?? []
         usernameIsConcealed = account?.basicAuthenticationMetadata?.username?.fieldType == .concealedString
         self.websites = websites
@@ -54,6 +57,15 @@ nonisolated struct CredentialDraft: Sendable {
 
     mutating func removeTOTP() {
         totp = nil
+    }
+
+    mutating func addNote() {
+        notes.append(CredentialNote(text: "", field: nil))
+    }
+
+    mutating func removeNote(at index: Int) {
+        guard notes.indices.contains(index) else { return }
+        notes.remove(at: index)
     }
 
     /// Leaves the current generator untouched when `input` is not a valid secret or otpauth URI.
@@ -107,6 +119,8 @@ nonisolated struct CredentialDraft: Sendable {
         result.password = password
         result.passkeys = passkeys
         result.totp = totp
+        let kept = notes.filter { !$0.text.isEmpty }
+        result.notes = kept.isEmpty ? nil : kept
         try result.validate()
         return result
     }

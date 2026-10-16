@@ -106,7 +106,9 @@ nonisolated extension CredentialExchangeCodec {
         }
 
         for identity in identities(in: candidate) {
-            if let decision = decisionsByIncoming[identity] {
+            let decision = decisionsByIncoming[identity]
+                ?? (conflictByIncoming[identity] == nil ? followedDecision(for: identity, of: candidate, decisions: decisionsByIncoming) : nil)
+            if let decision {
                 switch decision {
                 case .keep:
                     continue
@@ -149,6 +151,24 @@ nonisolated extension CredentialExchangeCodec {
         }
     }
 
+    /// A note nobody decided goes where its item's lead credential was sent, a Skip included: choosing Skip, Merge Into or Add
+    /// Separately for a login moves the notes of that item with it. Only a note without a conflict of its own follows.
+    private static func followedDecision(
+        for identity: CredentialIdentity,
+        of candidate: CredentialAccount,
+        decisions: [CredentialIdentity: CredentialImportDecision]
+    ) -> CredentialImportDecision? {
+        guard case .note = identity, let lead = leadIdentity(of: candidate), let decision = decisions[lead] else { return nil }
+        switch decision {
+        case .keep:
+            return .keep(incoming: identity)
+        case let .add(_, targetAccountID):
+            return .add(incoming: identity, targetAccountID: targetAccountID)
+        case let .replace(_, target):
+            return .add(incoming: identity, targetAccountID: accountID(for: target))
+        }
+    }
+
     private static func carryAndMerge(
         _ identity: CredentialIdentity,
         from source: CredentialAccount,
@@ -163,7 +183,7 @@ nonisolated extension CredentialExchangeCodec {
 
     private static func sameKind(_ lhs: CredentialIdentity, _ rhs: CredentialIdentity) -> Bool {
         switch (lhs, rhs) {
-        case (.password, .password), (.passkey, .passkey), (.totp, .totp):
+        case (.password, .password), (.passkey, .passkey), (.totp, .totp), (.note, .note):
             true
         default:
             false
@@ -299,6 +319,14 @@ nonisolated extension CredentialExchangeCodec {
         case .totp:
             guard target.totp == nil else { throw CredentialVaultError.invalidData }
             target.totp = source.totp
+        case .note:
+            // Appends what the target does not already hold, compared as exact UTF-8; its own notes stay.
+            var notes = target.notes ?? []
+            for note in source.notes ?? [] where !notes.contains(where: { $0.text.utf8.elementsEqual(note.text.utf8) }) {
+                notes.append(note)
+            }
+            guard notes.count <= CredentialAccount.noteLimit else { throw CredentialVaultError.invalidData }
+            target.notes = notes.isEmpty ? nil : notes
         }
     }
 
@@ -323,6 +351,8 @@ nonisolated extension CredentialExchangeCodec {
             copyBasicAuthentication(from: source, to: &accounts[index])
         case (.totp, .totp):
             accounts[index].totp = source.totp
+        case (.note, .note):
+            accounts[index].notes = source.notes
         default:
             throw CredentialVaultError.invalidData
         }
@@ -337,6 +367,8 @@ nonisolated extension CredentialExchangeCodec {
             target.passkeys.append(value)
         case .totp:
             target.totp = source.totp
+        case .note:
+            target.notes = source.notes
         }
     }
 
@@ -348,7 +380,7 @@ nonisolated extension CredentialExchangeCodec {
 
     private static func accountID(for identity: CredentialIdentity) -> UUID {
         switch identity {
-        case let .password(accountID), let .totp(accountID):
+        case let .password(accountID), let .totp(accountID), let .note(accountID):
             accountID
         case let .passkey(accountID, _):
             accountID

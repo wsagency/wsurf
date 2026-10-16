@@ -273,6 +273,49 @@ struct VaultContentTests {
         #expect(Set(hashes).count == hashes.count)
     }
 
+    @Test func noteHashCoversTextAndField() throws {
+        func hash(_ notes: [CredentialNote]?) throws -> Data {
+            var account = try VaultFixtures.richAccount()
+            account.notes = notes
+            return try CredentialContent.hash(.note(account))
+        }
+        func note(_ text: String = "first", _ field: CredentialEditableFieldMetadata? = nil) -> CredentialNote {
+            CredentialNote(text: text, field: field)
+        }
+        let described = CredentialEditableFieldMetadata(id: Data([1]), label: "Note", fieldType: .string)
+
+        let hashes = try [
+            hash(nil),
+            hash([note()]),
+            hash([note("second")]),
+            hash([note("first", described)]),
+            hash([note("first", CredentialEditableFieldMetadata(id: Data([2]), label: "Note", fieldType: .string))]),
+            hash([note("first", CredentialEditableFieldMetadata(id: Data([1]), label: "Other", fieldType: .string))]),
+            hash([note("first", CredentialEditableFieldMetadata(id: nil, label: "Note", fieldType: .string))]),
+            hash([note("first", CredentialEditableFieldMetadata(id: Data([1]), label: nil, fieldType: .string))]),
+            hash([note("first", CredentialEditableFieldMetadata(id: Data([1]), label: "Note", fieldType: .concealedString))]),
+            hash([note("first"), note("second")]),
+            hash([note("second"), note("first")]),
+            // The exact UTF-8 counts: a composed and a decomposed "é" are two different notes.
+            hash([note("\u{e9}")]),
+            hash([note("e\u{301}")]),
+        ]
+        #expect(Set(hashes).count == hashes.count)
+
+        // Notes belong to their own part: no other part's hash moves with them, and no other part's change moves the note hash.
+        var withNotes = try VaultFixtures.richAccount()
+        withNotes.notes = [note()]
+        let plain = try VaultFixtures.richAccount()
+        for owner in Owner.allCases {
+            #expect(try CredentialContent.hash(owner.part(of: withNotes)) == CredentialContent.hash(owner.part(of: plain)), "\(owner)")
+        }
+        var edited = withNotes
+        edited.password = "other"
+        edited.totp?.secret = Data([9])
+        edited.displayName = "Home"
+        #expect(try CredentialContent.hash(.note(edited)) == CredentialContent.hash(.note(withNotes)))
+    }
+
     @Test func metadataHashExcludesInheritedDatesAndIDsButCoversEveryOtherKnownField() throws {
         let baseline = try CredentialContent.hash(.metadata(VaultFixtures.richAccount()))
 
@@ -353,6 +396,30 @@ struct VaultContentTests {
         #expect(try CredentialContent.hash(.password(undecodable)) == CredentialContent.hash(.password(VaultFixtures.richAccount())))
         #expect(try CredentialContent.hash(.totp(undecodable)).count == 32)
         #expect(try CredentialContent.hash(.passkey(undecodable.passkeys[0])).count == 32)
+    }
+
+    /// Accounts without notes hash exactly as they did before the note part existed (tags 1-4 untouched). The digests come from
+    /// the documented `StoreWriter` bytes (u8 tag, text = u32 length + UTF-8, opt = u8 0/1 + value, array = u32 count + elements),
+    /// computed with an independent script before the note part was written.
+    @Test func noteLessAccountHashesAreUnchanged() throws {
+        let plain = CredentialAccount(
+            id: VaultFixtures.fixedAccountID, username: "ada", displayName: "Work", origins: ["https://example.test"],
+            loginURLs: [URL(string: "https://example.test/login")!], password: "s3cret", passkeys: [], totp: nil,
+            exchangeAccountID: nil, exchangeItemID: nil
+        )
+        let usernameOnly = CredentialAccount(
+            id: VaultFixtures.fixedAccountID, username: "grace", displayName: nil, origins: [], loginURLs: [], password: nil,
+            passkeys: [], totp: nil, exchangeAccountID: nil, exchangeItemID: nil
+        )
+        #expect(hex(try CredentialContent.hash(.password(plain))) == "17b1675505ae09f51daaca310d30133f57b72ddb49083cda63f2f41eb51e86b8")
+        #expect(hex(try CredentialContent.hash(.totp(plain))) == "99be5efb88ca2013bd8e4eb035fd42d5245468fe9afa70d8ba9c1c419a48c4e8")
+        #expect(hex(try CredentialContent.hash(.metadata(plain))) == "db7e2be921061085334969afc4eac69abb1268d8ae6007a0b9024afeb6506beb")
+        #expect(hex(try CredentialContent.hash(.password(usernameOnly))) == "5f78d5f6811d3e5a01429d1d3f3375f7890b4f27effd5e8d65cea547e3a54e16")
+        #expect(hex(try CredentialContent.hash(.metadata(usernameOnly))) == "c6f378205327fa9e8eb42cfdbeff1702d60a5fbf5e1a909ba6c6ca0ecd971907")
+
+        // The persisted payload of a note-less account never mentions notes, so stored vaults stay byte-identical.
+        let json = String(decoding: try CredentialContent.canonicalJSON(plain), as: UTF8.self)
+        #expect(!json.contains("notes"))
     }
 
     /// Golden digests computed outside the app (throwaway script, SHA-256 over the documented `StoreWriter` bytes:

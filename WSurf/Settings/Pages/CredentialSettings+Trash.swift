@@ -16,6 +16,8 @@ extension RecordSubject {
             "Passkey"
         case .metadata:
             "Details"
+        case .note:
+            "Notes"
         }
     }
 }

@@ -52,8 +52,8 @@ struct CredentialExportSheet: View {
         )
         return String(localized: """
             A CSV file holds only passwords with a website. It will not contain: \(counts.noWebsite) logins without a website, \
-            \(counts.noPassword) credentials without a password, \(counts.passkeys) passkeys, \(counts.codes) verification code \
-            setups, or any notes.
+            \(counts.noPassword) credentials without a password, \(counts.passkeys) passkeys or \(counts.codes) verification \
+            code setups. Notes are written only for a login whose Notes choice is on.
             """)
     }
 
@@ -86,7 +86,7 @@ struct CredentialExportSheet: View {
             } else {
                 Text("""
                     Choose what to send to another app. The system passes your selection to the app you pick next, and \
-                    that app can read it: any passwords, passkeys and verification code setups you select aren’t \
+                    that app can read it: any passwords, passkeys, verification code setups and notes you select aren’t \
                     encrypted by WSurf. WSurf doesn’t write a file, and your vault keeps its own copy.
                     """)
                     .foregroundStyle(.secondary)
@@ -118,6 +118,9 @@ struct CredentialExportSheet: View {
                                 if summary.hasTOTP {
                                     Toggle("Verification code setup", isOn: binding(summary.id, \.totp))
                                 }
+                            }
+                            if summary.hasNotes {
+                                Toggle("Notes", isOn: binding(summary.id, \.notes))
                             }
                         }
                     }
@@ -224,6 +227,9 @@ struct CredentialImportReviewSheet: View {
                 if let report = review.csvReport {
                     csvReportView(report)
                 }
+                if !review.omitted.isEmpty {
+                    omittedView(review.omitted)
+                }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         ForEach(review.candidates) { candidate in candidateView(candidate) }
@@ -274,16 +280,33 @@ struct CredentialImportReviewSheet: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    /// What the transfer held that WSurf won't import, before anything is saved. Fixed wording and item titles only: no values.
+    private func omittedView(_ omitted: [CredentialImportOmission]) -> some View {
+        let shown = omitted.prefix(20)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text("Not imported").fontWeight(.medium)
+            ForEach(Array(shown.enumerated()), id: \.offset) { _, omission in
+                Text(verbatim: omission.text)
+            }
+            if omitted.count > shown.count {
+                Text("and \(omitted.count - shown.count) more.")
+            }
+        }
+        .font(Theme.Font.label)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
     private func destination(_ review: CredentialImportReview) -> String {
         guard let vault = review.vaultName else {
             return String(localized: """
                 Importing into the profile “\(review.profileName)”. Nothing is saved until you choose Import. \
-                Imported passwords, passkeys and verification codes are encrypted in that profile’s vault.
+                Imported passwords, passkeys, verification codes and notes are encrypted in that profile’s vault.
                 """)
         }
         return String(localized: """
             Importing into the vault “\(vault)” of the profile “\(review.profileName)”. Nothing is saved until you \
-            choose Import. Imported passwords, passkeys and verification codes are encrypted in that vault.
+            choose Import. Imported passwords, passkeys, verification codes and notes are encrypted in that vault.
             """)
     }
 
@@ -440,6 +463,8 @@ extension CredentialImportReview.Record.Kind {
             String(localized: "Passkey")
         case .totp:
             String(localized: "Verification code")
+        case .note:
+            String(localized: "Notes")
         }
     }
 }
