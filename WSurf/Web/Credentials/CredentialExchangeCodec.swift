@@ -8,6 +8,7 @@ nonisolated enum CredentialIdentity: Hashable, Sendable {
     case password(accountID: UUID)
     case passkey(accountID: UUID, passkeyID: UUID)
     case totp(accountID: UUID)
+    case note(accountID: UUID)
 }
 
 nonisolated struct CredentialImportConflict: Sendable {
@@ -36,6 +37,7 @@ nonisolated struct CredentialExportSelection: Sendable {
     var password: Bool
     var passkeyIDs: Set<UUID>
     var totp: Bool
+    var notes = false
 }
 
 nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringConvertible, Sendable, Equatable {
@@ -365,6 +367,8 @@ nonisolated enum CredentialExchangeCodec {
             try importPasskey(value, into: &candidate, state: &state)
         case let .totp(value):
             try importTOTP(value, into: &candidate, budget: &state.budget)
+        case let .note(value):
+            try importNote(value, into: &candidate, budget: &state.budget)
         default:
             throw CredentialExchangeError(record: state.record, reason: .unsupported)
         }
@@ -460,6 +464,22 @@ nonisolated enum CredentialExchangeCodec {
         )
         try generator.validate()
         candidate.totp = generator
+    }
+
+    /// Notes are kept in the order the exporter sent them. An empty one holds nothing to keep. A plain field (no id, no label,
+    /// ordinary text) is the default, so it is stored as none: the same text typed in WSurf then compares equal.
+    private static func importNote(
+        _ value: ASImportableCredential.Note,
+        into candidate: inout CredentialAccount,
+        budget: inout PayloadBudget
+    ) throws {
+        let field = try importField(value.content, budget: &budget)
+        guard !field.value.isEmpty else { return }
+        var notes = candidate.notes ?? []
+        guard notes.count < CredentialAccount.noteLimit else { throw CredentialVaultError.oversized }
+        let isPlain = field.metadata.id == nil && field.metadata.label == nil && field.metadata.fieldType == .string
+        notes.append(CredentialNote(text: field.value, field: isPlain ? nil : field.metadata))
+        candidate.notes = notes
     }
 
     private static func collection(
@@ -611,6 +631,14 @@ nonisolated enum CredentialExchangeCodec {
                         existing: .totp(accountID: linked.id)
                     ))
                 }
+                // Identical notes need no decision: merging them adds nothing.
+                if candidate.notes != nil, linked.notes != nil,
+                   try CredentialContent.hash(.note(candidate)) != CredentialContent.hash(.note(linked)) {
+                    conflicts.append(.init(
+                        incoming: .note(accountID: candidate.id),
+                        existing: .note(accountID: linked.id)
+                    ))
+                }
             }
             for passkey in candidate.passkeys {
                 let matches = existing.flatMap { account in
@@ -639,7 +667,20 @@ nonisolated enum CredentialExchangeCodec {
         if account.totp != nil {
             result.append(.totp(accountID: account.id))
         }
+        if account.notes != nil {
+            result.append(.note(accountID: account.id))
+        }
         return result
+    }
+
+    /// The identity a note follows when nobody decided it: the item's login, else its first passkey, else its code.
+    static func leadIdentity(of account: CredentialAccount) -> CredentialIdentity? {
+        identities(in: account).first {
+            if case .note = $0 {
+                return false
+            }
+            return true
+        }
     }
 
     static func hasBasicAuthentication(_ account: CredentialAccount) -> Bool {

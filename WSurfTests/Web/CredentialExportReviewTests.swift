@@ -71,6 +71,24 @@ struct CredentialExportReviewTests {
         #expect(review.changed == ["login"] && review.selection.isEmpty)
     }
 
+    @Test func aSelectedNotesPartThatNoLongerExistsIsDroppedAndTheCredentialIsNamed() {
+        var before = account("memo")
+        before.notes = [CredentialNote(text: "kept", field: nil)]
+        var after = before
+        after.notes = nil
+        let selection = [before.id: CredentialExportSelection(accountID: before.id, password: true, passkeyIDs: [], totp: false, notes: true)]
+        let review = summaryOnly(selection: selection, shown: [CredentialSummary(before)], fresh: [CredentialSummary(after)])
+
+        #expect(review.changed == ["memo"])
+        #expect(review.selection[before.id]?.password == true && review.selection[before.id]?.notes == false)
+
+        // Notes alone are a selection; without them nothing is left to send.
+        let onlyNotes = [before.id: CredentialExportSelection(accountID: before.id, password: false, passkeyIDs: [], totp: false, notes: true)]
+        #expect(onlyNotes[before.id]?.hasParts == true)
+        let gone = summaryOnly(selection: onlyNotes, shown: [CredentialSummary(before)], fresh: [CredentialSummary(after)])
+        #expect(gone.selection.isEmpty && gone.changed == ["memo"])
+    }
+
     @Test func theRetryOfAReconciledSelectionSendsOnlyWhatSurvived() async throws {
         try await base.withFixture { f in
             let gone = account("gone")

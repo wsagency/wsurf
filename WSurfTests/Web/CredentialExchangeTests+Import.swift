@@ -607,7 +607,6 @@ extension CredentialExchangeTests {
         #expect(supported.candidates[0].password == "pw" && supported.candidates[0].totp != nil)
 
         let cases: [(ASImportableCredential, CredentialExchangeError.Reason, CredentialExchangeError.CredentialKind)] = [
-            (.note(.init(content: .init(id: nil, fieldType: .string, value: "dummy"))), .unsupported, .note),
             (basicAuthentication(username: "two", password: "two", usernameID: Data([0x21]), passwordID: Data([0x22])), .invalidData, .basicAuthentication),
             (totp(period: 0), .invalidData, .totp),
             (passkey(key: Data([0x30, 0x82, 0x01])), .invalidData, .passkey),

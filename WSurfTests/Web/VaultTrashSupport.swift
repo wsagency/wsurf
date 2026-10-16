@@ -132,7 +132,7 @@ nonisolated enum TrashFixtures {
                 subject == .password
             case .totp:
                 subject == .totp
-            case .passkey:
+            case .passkey, .note:
                 false
             }
         }

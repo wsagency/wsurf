@@ -35,6 +35,7 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
     /// A stored login record: a password, or a username with or without one. The exchange codec's rule.
     let hasLogin: Bool
     let hasTOTP: Bool
+    let hasNotes: Bool
     let passkeys: [PasskeySummary]
 
     init(_ account: CredentialAccount) {
@@ -46,6 +47,7 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
         hasPassword = account.password != nil
         hasLogin = account.password != nil || account.basicAuthenticationMetadata != nil || !account.username.isEmpty
         hasTOTP = account.totp != nil
+        hasNotes = account.notes != nil
         passkeys = account.passkeys.map { PasskeySummary($0) }
     }
 

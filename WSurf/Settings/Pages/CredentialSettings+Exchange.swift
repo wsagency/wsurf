@@ -440,6 +440,8 @@ extension CredentialImportReview.Record.Kind {
             String(localized: "Passkey")
         case .totp:
             String(localized: "Verification code")
+        case .note:
+            String(localized: "Notes")
         }
     }
 }

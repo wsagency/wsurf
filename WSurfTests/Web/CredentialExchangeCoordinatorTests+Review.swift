@@ -137,6 +137,81 @@ extension CredentialExchangeCoordinatorTests {
         }
     }
 
+    // MARK: - Notes
+
+    private func noteCredential(_ text: String) -> ASImportableCredential {
+        .note(.init(content: .init(id: nil, fieldType: .string, value: text, label: nil)))
+    }
+
+    private func reviewRecords(_ f: Fixture) throws -> [CredentialImportReview.Record] {
+        try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)).candidates.flatMap(\.records)
+    }
+
+    /// A note nobody decided goes where its login goes, in the review as well as in the import itself.
+    @Test func undecidedNoteFollowsLogin() async throws {
+        try await withFixture { f in
+            let bare = account(username: "", password: nil, totp: generator())
+            try await f.seed([bare])
+            try await f.stage(handBuilt([item(id: 1, scoped: true, [password("pw1"), noteCredential("memo")])]))
+            let initial = try reviewRecords(f)
+            #expect(initial.map(\.kind) == [.password, .note])
+            #expect(initial.allSatisfy { $0.destination == .newAccount(origins: [Self.origin]) && !$0.needsChoice })
+
+            // Skip the login: the note is skipped with it, and the outcome says so.
+            try f.coordinator.choose(.skip, for: initial[0].incoming, owner: f.owner)
+            #expect(try reviewRecords(f).map(\.destination) == [.skipped, .skipped])
+            let skipped = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome)
+            #expect(counts(skipped) == [0, 0] && skipped.results.map(\.action) == [.skipped, .skipped])
+
+            // Merge the login into a stored account: the note goes there too.
+            try f.coordinator.choose(.merge(into: bare.id), for: initial[0].incoming, owner: f.owner)
+            for record in try reviewRecords(f) {
+                guard case let .existing(accountID, _, _, _) = record.destination else {
+                    Issue.record("\(record.kind) was not placed in the stored account")
+                    continue
+                }
+                #expect(accountID == bare.id)
+            }
+            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [0, 1])
+
+            // A note decided on its own no longer follows.
+            try f.coordinator.choose(.skip, for: initial[1].incoming, owner: f.owner)
+            #expect(try reviewRecords(f).map(\.destination).last == .skipped)
+
+            try f.coordinator.choose(.merge(into: bare.id), for: initial[1].incoming, owner: f.owner)
+            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            let stored = try #require(try await f.stored().accounts.first)
+            #expect(stored.password == "pw1" && stored.notes?.map(\.text) == ["memo"] && stored.totp != nil)
+        }
+    }
+
+    @Test func notesAreExportedOnlyWhenSelectedAndReimportInTheOtherProfile() async throws {
+        try await withFixture { f in
+            var source = account(username: "ada", password: "pw")
+            source.notes = [CredentialNote(text: "kept note", field: nil)]
+            try await f.seed([source])
+            let epoch = try #require(f.manager.authorizationEpoch)
+            let stamps = try await f.stored().stamps
+
+            let without = try await f.coordinator.prepareExport(
+                selection: [CredentialExportSelection(accountID: source.id, password: true, passkeyIDs: [], totp: false)],
+                expectedStamps: stamps, format: .v1, from: f.manager, epoch: epoch
+            )
+            #expect(!without.accounts.flatMap(\.items).flatMap(\.credentials).contains { if case .note = $0 { true } else { false } })
+
+            let notesOnly = [CredentialExportSelection(accountID: source.id, password: false, passkeyIDs: [], totp: false, notes: true)]
+            let data = try await f.coordinator.prepareExport(
+                selection: notesOnly, expectedStamps: stamps, format: .v1, from: f.manager, epoch: epoch
+            )
+            try await f.unlock(f.other)
+            try await f.stage(data, into: f.other)
+            _ = try await f.coordinator.commitImport(into: f.other, owner: f.owner)
+            let received = try #require(try await f.stored(f.other).accounts.first)
+            #expect(received.notes?.map(\.text) == ["kept note"] && received.password == nil)
+            #expect(try await f.stored().accounts.first?.notes?.map(\.text) == ["kept note"])
+        }
+    }
+
     @Test func aUsernameOnlyLoginIsExportedWithoutAPasswordAndReimportsAsOne() async throws {
         try await withFixture { f in
             let usernameOnly = account(username: "ada", password: nil)

@@ -34,8 +34,9 @@ nonisolated extension CredentialExchangeCodec {
             guard chosen.passkeyIDs.isSubset(of: allPasskeyIDs) else { throw CredentialVaultError.invalidData }
 
             let basic = chosen.password ? exportBasicAuthentication(account) : nil
+            let notes = chosen.notes ? account.notes ?? [] : []
             let selectedCredentialCount = chosen.passkeyIDs.count + (basic == nil ? 0 : 1) +
-                (chosen.totp && account.totp != nil ? 1 : 0)
+                (chosen.totp && account.totp != nil ? 1 : 0) + notes.count
             guard selectedCredentialCount <= CredentialVaultLimits.accounts - totalCredentials else {
                 throw CredentialVaultError.oversized
             }
@@ -62,6 +63,7 @@ nonisolated extension CredentialExchangeCodec {
                     issuer: totp.issuer
                 )))
             }
+            credentials += notes.map { .note(exportNote($0)) }
             guard !credentials.isEmpty else { continue }
             totalItems += 1
             guard totalItems <= CredentialVaultLimits.accounts else { throw CredentialVaultError.oversized }
@@ -225,6 +227,12 @@ nonisolated extension CredentialExchangeCodec {
         }
         guard username != nil || password != nil else { return nil }
         return ASImportableCredential.BasicAuthentication(userName: username, password: password)
+    }
+
+    private static func exportNote(_ note: CredentialNote) -> ASImportableCredential.Note {
+        let field = note.field.map { makeField(note.text, metadata: $0) }
+            ?? ASImportableEditableField(id: nil, fieldType: .string, value: note.text)
+        return ASImportableCredential.Note(content: field)
     }
 
     private static func makeField(_ value: String, metadata: CredentialEditableFieldMetadata) -> ASImportableEditableField {

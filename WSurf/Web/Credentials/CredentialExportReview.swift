@@ -38,9 +38,10 @@ nonisolated struct CredentialExportReview: Sendable {
             var kept = chosen
             kept.password = chosen.password && now.hasLogin
             kept.totp = chosen.totp && now.hasTOTP
+            kept.notes = chosen.notes && now.hasNotes
             kept.passkeyIDs = chosen.passkeyIDs.intersection(now.passkeys.map(\.id))
             let partsChanged = kept.password != chosen.password || kept.totp != chosen.totp
-                || kept.passkeyIDs != chosen.passkeyIDs
+                || kept.notes != chosen.notes || kept.passkeyIDs != chosen.passkeyIDs
             let stampChanged = freshStamps.map { $0[before.id] != shownStamps[before.id] } ?? false
             if partsChanged || now != before || stampChanged {
                 result.changed.append(now.title)
@@ -55,6 +56,6 @@ nonisolated struct CredentialExportReview: Sendable {
 
 nonisolated extension CredentialExportSelection {
     var hasParts: Bool {
-        password || totp || !passkeyIDs.isEmpty
+        password || totp || notes || !passkeyIDs.isEmpty
     }
 }

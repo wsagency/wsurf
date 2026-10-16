@@ -723,7 +723,7 @@ final class CredentialExchangeCoordinator {
     }
 
     private static func isNonEmpty(_ selection: [CredentialExportSelection]) -> Bool {
-        selection.contains { $0.password || $0.totp || !$0.passkeyIDs.isEmpty }
+        selection.contains { $0.password || $0.totp || $0.notes || !$0.passkeyIDs.isEmpty }
     }
 
     // The codec treats an account as holding a login when any of these is present, so a username-only
@@ -733,20 +733,12 @@ final class CredentialExchangeCoordinator {
     }
 
     private static func identities(in account: CredentialAccount) -> [CredentialIdentity] {
-        var result: [CredentialIdentity] = []
-        if hasLogin(account) {
-            result.append(.password(accountID: account.id))
-        }
-        result += account.passkeys.map { .passkey(accountID: account.id, passkeyID: $0.id) }
-        if account.totp != nil {
-            result.append(.totp(accountID: account.id))
-        }
-        return result
+        CredentialExchangeCodec.identities(in: account)
     }
 
     private nonisolated static func accountID(_ identity: CredentialIdentity) -> UUID {
         switch identity {
-        case let .password(id), let .totp(id):
+        case let .password(id), let .totp(id), let .note(id):
             id
         case let .passkey(id, _):
             id
@@ -767,6 +759,9 @@ final class CredentialExchangeCoordinator {
                 return !credentialIDIsStored(incoming, in: preview)
             case .totp:
                 return account.totp == nil
+            case .note:
+                // Notes are appended to what the account already holds.
+                return true
             }
         }
         return preview.base.accounts.filter(accepts).map { account in
@@ -871,6 +866,8 @@ final class CredentialExchangeCoordinator {
                 .passkey
             case .totp:
                 .totp
+            case .note:
+                .note
             }
         }
         let stored = Dictionary(preview.base.accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -911,6 +908,12 @@ final class CredentialExchangeCoordinator {
             let records = identities(in: candidate).map { incoming in
                 let existing = existingByIncoming[incoming]
                 let choice = choices[incoming]
+                // A note nobody decided goes where its item's lead credential goes (`CredentialExchangeCodec.apply`).
+                var placement = (existing: existing, choice: choice)
+                if case .note = incoming, existing == nil, choice == nil, !context.needsChoice.contains(incoming),
+                   let lead = CredentialExchangeCodec.leadIdentity(of: candidate) {
+                    placement = (existingByIncoming[lead], choices[lead])
+                }
                 if choice == nil, existing != nil || context.needsChoice.contains(incoming) {
                     resolved = false
                 }
@@ -927,7 +930,8 @@ final class CredentialExchangeCoordinator {
                     title: titles[candidate.id] ?? "",
                     existingTitle: existing.flatMap { titles[accountID($0)] },
                     relyingParty: relyingParty,
-                    destination: choice == nil && context.needsChoice.contains(incoming) ? nil : destination(existing, choice),
+                    destination: choice == nil && context.needsChoice.contains(incoming)
+                        ? nil : destination(placement.existing, placement.choice),
                     canAddSeparately: !credentialIDIsStored(incoming, in: preview),
                     removesStoredPasswordOnReplace: kind(incoming) == .password
                         && candidate.password == nil
