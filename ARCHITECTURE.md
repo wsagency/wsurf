@@ -90,8 +90,13 @@ tab closes that child, never the containing WSurf window.
 
 External-app approvals require a proven requesting origin and app identity.
 Ambiguous, inherited or opaque sources may request one-time consent but cannot
-reuse or persist an origin grant. WebKit binds suspended offers to its document
-and main-frame navigation generation. CEF binds them to native frame/document
+reuse or persist an origin grant. WebKit binds a suspended offer to its document
+and main-frame navigation generation; an unattributed request asks once and
+names no site. The person's approval of a main-frame request is for that link
+from that site, so it survives the page moving on within the site and ends if
+the tab closes or shows another site. A request that ends without opening an app
+and without the person declining logs its scheme and reason (category
+`app-handoff`), never the link. CEF binds offers to native frame/document
 epochs plus cached DevTools document/origin identity: renderer RPCs cannot
 validate a handoff while an unrelated top-level navigation suspends those RPCs.
 Native detach, replacement, non-aborted load failure, termination and close invalidate the offer;
