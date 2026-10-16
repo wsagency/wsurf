@@ -238,6 +238,61 @@ struct AppHandoffApprovalTests {
         await store.waitForPendingSave()
     }
 
+    // MARK: - Which frame asked
+
+    @Test(.boundedWebViews, arguments: [
+        "history.pushState({}, '', '/step-2')",
+        "history.replaceState({}, '', '/step-2')",
+        "location.hash = '#step-2'",
+    ])
+    func aPageThatChangedItsOwnAddressIsStillRecognized(change: String) async throws {
+        let server = try await signInServer()
+        let harness = HandoffHarness()
+        defer { harness.tearDown() }
+        let tab = BrowserTab(opensBlank: false, privately: true)
+        defer {
+            tab.detach()
+            withExtendedLifetime(server) {}
+        }
+        let signIn = try server.url("/sign-in")
+        tab.load(signIn)
+        try #require(await settled(tab, at: signIn))
+        _ = try await tab.page.evaluateJavaScript(change)
+        _ = try await tab.page.evaluateJavaScript("location.href = '\(appURL.absoluteString)'")
+        try #require(await waitUntil { harness.isPrompting || !harness.drops.isEmpty })
+        #expect(harness.dropReasons.isEmpty)
+        #expect(harness.requests.map(\.origin) == [SitePermissions.origin(for: signIn)])
+        #expect(harness.offeredToRemember == [true])
+        try #require(await harness.answerAndSettle(.alertFirstButtonReturn))
+        #expect(harness.opened == [appURL])
+    }
+
+    @Test(.boundedWebViews)
+    func aFormSubmittedAfterReplaceStateIsAttributedToTheAuthorizationSite() async throws {
+        let authServer = try await HTTPFixtureServer.start(routes: ["/finish": .redirect(to: appURL)])
+        let authURL = try authServer.url("/finish")
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/form": .html("<title>Form</title><form action='\(authURL.absoluteString)' method='get'></form>"),
+        ])
+        let harness = HandoffHarness()
+        defer { harness.tearDown() }
+        let tab = BrowserTab(opensBlank: false, privately: true)
+        defer {
+            tab.detach()
+            withExtendedLifetime((authServer, server)) {}
+        }
+        let form = try server.url("/form")
+        tab.load(form)
+        try #require(await settled(tab, at: form))
+        _ = try await tab.page.evaluateJavaScript("history.replaceState({}, '', '/form?step=2')")
+        _ = try await tab.page.evaluateJavaScript("document.forms[0].submit()")
+        try #require(await waitUntil { harness.isPrompting || !harness.drops.isEmpty })
+        #expect(harness.dropReasons.isEmpty)
+        #expect(harness.requests.map(\.origin) == [SitePermissions.origin(for: authURL)])
+        try #require(await harness.answerAndSettle(.alertFirstButtonReturn))
+        #expect(harness.opened == [appURL])
+    }
+
     // MARK: - A source that cannot be told apart
 
     /// A page with two identical frames; either one jumps to the app when it hears from the page.

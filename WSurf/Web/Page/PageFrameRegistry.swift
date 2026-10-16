@@ -739,6 +739,9 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
     /// Binds `source` to one registered or issued document without waiting for its acknowledgement. Ambiguity fails closed.
     /// A registered document is owned by `mainFrameNavigation` (early acknowledgements can precede the commit), an issued
     /// one by its own navigation; an unrelated navigation that is merely in flight does not own the source document.
+    /// WebKit's frame info is matched by identity first, then by URL and origin. A main frame whose script changed its
+    /// address (`pushState`, `replaceState`, a fragment) keeps its document, so it also matches by origin alone when no
+    /// frame matches by URL. `isLiveAfterReady` proves the document itself.
     func captureSourceFrame(_ source: WKFrameInfo, in view: BrowserPage) -> SourceFrameClaim? {
         guard let store = stores.object(forKey: view) else { return nil }
         let current = store.activeNavigation ?? store.committedNavigation
@@ -749,19 +752,20 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
         )
         let sourceURL = source.request.url
         let sourceIsMain = source.isMainFrame
-        var exact: (nonce: String, navigation: WKNavigation?)?
-        var similar: (nonce: String, navigation: WKNavigation?)?
-        var exactCount = 0
-        var similarCount = 0
+        typealias Hit = (nonce: String, navigation: WKNavigation?)
+        var exact: (count: Int, hit: Hit?) = (0, nil)
+        var sameURL: (count: Int, hit: Hit?) = (0, nil)
+        var sameOrigin: (count: Int, hit: Hit?) = (0, nil)
         func consider(_ nonce: String, _ frame: BrowserFrame, _ navigation: WKNavigation?) {
             if frame.webKit === source || frame.webKit?.isEqual(source) == true {
-                exactCount += 1
-                exact = (nonce, navigation)
-            } else if frame.isMainFrame == sourceIsMain
-                && frame.request.url == sourceURL
-                && frame.securityOrigin == origin {
-                similarCount += 1
-                similar = (nonce, navigation)
+                exact = (exact.count + 1, (nonce, navigation))
+            } else if frame.isMainFrame == sourceIsMain && frame.securityOrigin == origin {
+                if frame.request.url == sourceURL {
+                    sameURL = (sameURL.count + 1, (nonce, navigation))
+                }
+                if sourceIsMain {
+                    sameOrigin = (sameOrigin.count + 1, (nonce, navigation))
+                }
             }
         }
         if let mainFrame = store.mainFrame {
@@ -773,7 +777,8 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
         for (nonce, issued) in store.issued where Self.sameNavigation(issued.navigation, current) {
             consider(nonce, issued.frame, issued.navigation)
         }
-        guard let match = exactCount == 1 ? exact : (exactCount == 0 && similarCount == 1 ? similar : nil) else { return nil }
+        guard let tier = [exact, sameURL, sameOrigin].first(where: { $0.count > 0 }),
+              tier.count == 1, let match = tier.hit else { return nil }
         return SourceFrameClaim(frame: BrowserFrame(webKit: source, documentID: match.nonce), navigation: match.navigation)
     }
 
