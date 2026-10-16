@@ -60,6 +60,12 @@ has already supplied a worktree, skip them. Replace `my-change` with a unique
 name for your task and run development commands from that worktree, not from
 the original `main` checkout.
 
+On the existing Pro workspace, start at `~/projects/development/wsurf` instead
+of cloning over it. Read the primary root's [DevOps handoff](docs/devops-handoff.md)
+before starting OMP in a new worktree or native operations. New worktrees do not
+inherit uncommitted migration edits: verify/apply their own Pro OMP base path
+as documented there. Preserve migrated local-only work and historical build evidence.
+
 The `WSurf` scheme runs the `WSurfTests` target from `WSurf.xctestplan`.
 
 Hosted native workflows use GitHub's documented `xcode-27` ARM64 runner

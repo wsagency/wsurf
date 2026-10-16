@@ -218,9 +218,16 @@ for the code structure, and [Releasing](RELEASING.md) for distribution.
 ### Session worktrees
 
 omp sessions use [`.omp/config.yml`](.omp/config.yml) to place worktrees under
-`~/projects/wsurf/.worktrees`. Work on feature branches in those worktrees;
+`~/projects/wsurf/.worktrees` by default. Work on feature branches in those worktrees;
 keep the primary checkout on `main`. Changes to `main` must be merged through
 a pull request; never commit or push directly to `main`.
+
+The transferred Pro workspace is `~/projects/development/wsurf`. Read the
+[same-project DevOps handoff](docs/devops-handoff.md) from that primary root
+before starting OMP in a new worktree or performing native builds, signing,
+installation or release work. Fresh worktrees do not inherit uncommitted
+migration edits: verify/apply their own Pro OMP base path using the handoff.
+Migrated historical outputs are not a fresh acceptance result.
 
 ## Website and domain association
 
