@@ -7,6 +7,12 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+- Approving an app link such as “Open Claude?” now opens the app even when the sign-in page moves on within the same site. A link whose requesting frame can’t be confirmed now asks once instead of doing nothing.
+- Notes from Passwords are kept in the credentials store. A transfer is no longer refused because of a note or other data WSurf can’t store yet; the review lists what was left out. CSV import and export include notes.
+- The current tab is shown in inverse colors in the sidebar, and tabs opened in the background that you haven’t seen yet are marked with a dot.
+- Small element screenshots no longer fail, and Chromium tabs no longer go back to an empty startup page.
+- The native test suite no longer fails on 16 test defects and 4 timing-dependent diagnostics tests.
+
 ### 2026-10-16 — Preserve test checks under Swift compiler isolation and inference
 
 The pull-to-refresh and development-ownership tests now propagate errors from throwing wait predicates. The context-budget fallback comparison explicitly uses `[Int]`, and the development-ownership test's immutable hostile-alphabet arguments are `nonisolated` for test discovery. Assertions, test cases, production code and security checks are unchanged.
