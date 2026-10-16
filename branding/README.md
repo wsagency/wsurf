@@ -1,19 +1,18 @@
+<!-- SPDX-FileCopyrightText: 2026 WSurf Agency -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # branding/
 
-Flux brand system for WSurf. **Draft, not wired into the app or website.** Read [DESIGN.md](DESIGN.md) first.
+Flux brand system for WSurf. **Draft design and candidate art. Not wired into the app, website, README or release tooling.** Read [DESIGN.md](DESIGN.md) first.
 
 | Path | What |
 |---|---|
-| `DESIGN.md` | spec: identity, geometry, palettes, mono, texture, asset matrix, Dock icon design, provenance, approvals |
-| `specimen.svg` / `.png` | reference sheet (lockups, clear space, size ramp, 6 palettes x finish x light/dark, mono) |
-| `palettes.svg` / `.png` | hex swatches with contrast ratios |
-| `assets/` | source art: token-driven `mark`, `mark-small`, `lockup`, outlined `wordmark` (CSS vars `--wsurf-track-deep` etc., Flux light fallbacks) |
-| `exports/` | candidate production files per palette: `mark/`, `lockup/`, `favicon/`, `mono/`, `dock/` (not placed anywhere yet) |
-| `tools/` | `gen.py` regenerates everything except the two `.md` files; `render.swift` rasterises through WKWebView |
+| `DESIGN.md` | the spec: identity, words, palettes, mono, texture, asset matrix, Dock icon contract, provenance, approvals |
+| `overview.png` / `.svg` | one-glance design review (exact brand colours) |
+| `specimen.png` / `.svg` | full reference sheet |
+| `palettes.png` / `.svg` | hex swatches with contrast ratios |
+| `assets/` | committed source art and canonical geometry: `mark`, `mark-small`, `lockup`, outlined `wordmark` |
+| `exports/` | **design candidates** per palette and mono: `mark/`, `lockup/`, `favicon/`, `mono/`, `dock/`; not placed anywhere, not production exports |
 
-Regenerate (macOS, needs Figtree Bold from github.com/erikdkennedy/figtree, SIL OFL 1.1):
+The candidates were generated from `assets/` by a local script that is not tracked here, so they cannot be regenerated from this repository. A production export pipeline is not part of this draft; if wanted it belongs to the approved implementation plan and the existing `Tools/` convention.
 
-```sh
-python3 -m venv /tmp/bv && /tmp/bv/bin/pip install fonttools uharfbuzz pillow
-FIGTREE_BOLD=/path/to/Figtree-Bold.ttf /tmp/bv/bin/python branding/tools/gen.py
-```
+The `.png` files were rendered with the native macOS WebKit view. Dock tiles in them are drawn approximations, not real macOS icons.

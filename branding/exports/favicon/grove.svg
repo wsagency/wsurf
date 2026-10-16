@@ -1,2 +1,4 @@
-<!-- WSurf brand artwork, wsagency 2026. Original WSurf artwork (concept C), not derived from the Linen mark. Licence: repository LICENSE. Provenance: branding/DESIGN.md#provenance -->
+<!-- SPDX-FileCopyrightText: 2026 WSurf Agency
+     SPDX-License-Identifier: Apache-2.0
+     WSurf brand artwork. Provenance: branding/DESIGN.md, section Provenance and legal. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="32 32 960 960" role="img" aria-label="WSurf"><style>:root{--a:#0E4D3A;--b:#8FCB1F}@media (prefers-color-scheme:dark){:root{--a:#2FAE80;--b:#B6E64A}}</style><path style="fill:var(--a)" fill-rule="evenodd" d="M362 182H662A330 330 0 0 1 662 842H362A330 330 0 0 1 362 182ZM457.7 366.5A20 20 0 0 0 484.3 362.9A232 232 0 1 1 484.3 661.1A20 20 0 0 0 457.7 657.5A176 176 0 1 1 457.7 366.5Z"/><path style="fill:var(--b)" d="M410.4 436A104 104 0 0 0 548.6 416.9A148 148 0 1 1 548.6 607.1A104 104 0 0 0 410.4 588A92 92 0 1 1 410.4 436Z"/></svg>
