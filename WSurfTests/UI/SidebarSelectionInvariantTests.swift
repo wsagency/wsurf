@@ -18,11 +18,26 @@ struct SidebarSelectionInvariantTests {
         BrowserModel(database: .temporary())
     }
 
-    /// Exactly what the sidebar draws: the destination's row plus any marks.
+    /// Exactly what the sidebar draws: every tab row whose shared style is selected, plus marked folders.
     private func litRows(_ model: BrowserModel) -> Set<SidebarItem> {
-        var lit = model.sidebarSelection.items
-        if case .tab(let id) = SidebarDestination.resolve(activeTabID: model.activeTab?.id) {
-            lit.insert(.tab(id))
+        var lit = model.sidebarSelection.items.filter { item in
+            switch item {
+            case .folder:
+                true
+            case .tab:
+                false
+            }
+        }
+        for tab in model.tabs {
+            let style = model.rowStyle(
+                of: tab,
+                isMarked: model.sidebarSelection.contains(.tab(tab.id)),
+                paletteOpen: false,
+                increasedContrast: false
+            )
+            if style.isSelected {
+                lit.insert(.tab(tab.id))
+            }
         }
         return lit
     }

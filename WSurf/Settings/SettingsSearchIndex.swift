@@ -165,7 +165,7 @@ enum SettingsIndex {
                       ["zoom", "text size", "font size", "magnify", "bigger", "smaller", "scale"]),
         SettingsEntry("appearance.sidebar", .appearance, "Show sidebar", "Show or hide the list of tabs.",
                       ["sidebar", "tabs", "tab list", "column", "hide"]),
-        SettingsEntry("appearance.refraction", .appearance, "Tint selected tab", "Color the selected tab using the website icon.",
+        SettingsEntry("appearance.refraction", .appearance, "Tint selected tab", "Color tabs you select together using the website icon.",
                       ["refract", "glass", "colour", "color", "tint", "selected tab", "favicon", "sidebar"]),
         SettingsEntry("appearance.sidebarStyle", .appearance, "Icons only", "Narrow the sidebar to its icons.",
                       ["sidebar", "icons", "narrow", "compact", "tabs"]),

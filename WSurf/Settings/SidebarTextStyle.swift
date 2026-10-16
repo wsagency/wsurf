@@ -34,6 +34,16 @@ extension BrowserSettings {
         return resolvedAppearance == .system ? (scheme == .dark ? .dark : .light) : resolvedAppearance
     }
 
+    static func nativeSidebarFont(family: String, size: CGFloat, weight: SidebarFontWeight) -> NSFont {
+        guard !family.isEmpty else { return .systemFont(ofSize: size, weight: weight.nativeWeight) }
+        return NSFontManager.shared.font(
+            withFamily: family,
+            traits: [],
+            weight: weight.appKitWeight,
+            size: size
+        ) ?? .systemFont(ofSize: size, weight: weight.nativeWeight)
+    }
+
     func sidebarTextStyle(theme: AppearanceMode, isDeferred: Bool) -> SidebarTextStyle {
         sidebarTextStyles[Self.sidebarTextKey(theme: theme, isDeferred: isDeferred)]
             ?? SidebarTextStyle(opacity: isDeferred ? 0.55 : 1)

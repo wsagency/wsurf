@@ -362,7 +362,7 @@ private struct WindowStyleSettingsSection: View {
 
                 DetailRow(
                     title: "Tint selected tab",
-                    caption: "Color the selected tab using the website icon."
+                    caption: "Color tabs you select together using the website icon."
                 ) {
                     SettingsToggle($settings.refractsTabColor)
                 }

@@ -91,6 +91,7 @@ final class BrowserModel {
             for id in activeSplit?.tabs ?? [] {
                 tabsByID[id]?.realizeDeferredSession()
             }
+            markVisibleTabsSeen()
             activeTab?.measureBandUnderBar()
             onActiveTabChanged?(activeTab, previous)
         }
@@ -298,6 +299,8 @@ final class BrowserModel {
     ) -> BrowserTab {
         let tab = makeTab(for: url, adopting: adopting)
         insert(tab, after: opener)
+        // With no active tab the first tab is the one on screen, so a tab inserted there is seen at once.
+        tab.isUnseen = !activate && activeTab !== tab
         onTabOpened?(tab)
         if activate {
             activeTabID = tab.id
@@ -307,6 +310,14 @@ final class BrowserModel {
         }
         scheduleSave()
         return tab
+    }
+
+    /// A tab on screen is no longer new, whether it is the active tab or a pane beside it.
+    func markVisibleTabsSeen() {
+        activeTab?.isUnseen = false
+        for id in activeSplit?.tabs ?? [] {
+            tabsByID[id]?.isUnseen = false
+        }
     }
 
     func insert(_ tab: BrowserTab, after opener: BrowserTab?) {
@@ -416,6 +427,7 @@ final class BrowserModel {
     var splits = TabSplits() {
         didSet {
             stampPanes(of: activeTabID, in: oldValue, at: .now)
+            markVisibleTabsSeen()
         }
     }
 

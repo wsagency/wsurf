@@ -35,9 +35,17 @@ struct SidebarTabRow: View {
     private var isActive: Bool {
         coordinator.sidebarDestination == .tab(tab.id)
     }
+    private var style: SidebarRowStyle {
+        browser.rowStyle(
+            of: tab,
+            isMarked: isSelected,
+            paletteOpen: coordinator.isNewTabPaletteOpen,
+            increasedContrast: inkSource.increasedContrast
+        )
+    }
 
     @Environment(\.sidebarStyle) private var sidebarStyle
-    @Environment(\.colorScheme) private var windowColorScheme
+    private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var returnHovering = false
     @State private var isRenaming = false
@@ -58,8 +66,16 @@ struct SidebarTabRow: View {
         sidebarStyle == .full && (tab.isPlayingAudio || tab.isMuted)
     }
 
+    private var ink: SidebarRowInk {
+        inkSource.ink(for: style, isDeferred: tab.isDeferred)
+    }
+
     private var textColor: Color {
-        BrowserSettings.application.sidebarTextColor(isDeferred: tab.isDeferred, scheme: windowColorScheme)
+        ink.text
+    }
+
+    private var radius: CGFloat {
+        depth == 0 ? Theme.Radius.hover : FolderSection.rowRadius(depth: depth - 1)
     }
 
     private var returnHelp: String {
@@ -141,18 +157,22 @@ struct SidebarTabRow: View {
         if sidebarStyle == .full {
             TabIcon(tab: tab, tint: textColor)
                 .frame(width: SidebarMetrics.rowIconSize)
+                .sidebarNewMark(ink)
         } else {
             TabIcon(tab: tab, tint: textColor)
+                .sidebarNewMark(ink)
         }
     }
 
-    @ViewBuilder private var titleColumn: some View {
+    /// `color` is the row's text color. The rename popover of the icons-only sidebar sits outside the row, so it
+    /// takes the sidebar's own text color rather than the one on an inverse fill.
+    @ViewBuilder private func titleColumn(color: Color) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if isRenaming {
                 TextField("", text: $draftTitle)
                     .textFieldStyle(.plain)
                     .font(BrowserSettings.application.sidebarFont)
-                    .foregroundStyle(textColor)
+                    .foregroundStyle(color)
                     .focused($renameFocused)
                     .onSubmit(commitRename)
                     .onAppear { renameFocused = true }
@@ -174,9 +194,10 @@ struct SidebarTabRow: View {
             } else {
                 HStack(spacing: 0) {
                     Text(verbatim: tab.title)
-                        .font(BrowserSettings.application.sidebarFont)
-                        .foregroundStyle(textColor)
+                        .font(ink.titleFont)
+                        .foregroundStyle(color)
                         .lineLimit(1)
+                        .sidebarRowAccessibility(style)
                     Spacer(minLength: 0)
                 }
             }
@@ -206,6 +227,7 @@ struct SidebarTabRow: View {
 
             HStack(spacing: SidebarMetrics.rowIconSpacing) {
                 leadingIcon
+                    .sidebarRowName(tab.title, style: style, isIconOnly: sidebarStyle == .icons)
 
                 if showsSpeaker {
                     SidebarTabMuteButton(isMuted: tab.isMuted) {
@@ -215,7 +237,7 @@ struct SidebarTabRow: View {
                 }
 
                 if sidebarStyle == .full {
-                    titleColumn
+                    titleColumn(color: textColor)
                 }
             }
             .overlay(alignment: .trailing) {
@@ -237,13 +259,14 @@ struct SidebarTabRow: View {
         }
         .frame(height: SidebarMetrics.rowHeight(settings: BrowserSettings.application))
         .environment(\.chromeIconExtent, SidebarMetrics.rowControlExtent)
+        .sidebarInverse(ink, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
         .sidebarRowSelectionEffect(
-            isSelected: (isActive && !coordinator.isNewTabPaletteOpen) || isSelected,
-            isHovering: hovering,
+            isSelected: style.emphasis == .lit,
+            isHovering: hovering && style.emphasis != .current,
             glassTint: context.refractsTabColor
                 ? FaviconTint.of(tab.favicon, heldBy: tab.id)
                 : nil,
-            radius: depth == 0 ? Theme.Radius.hover : FolderSection.rowRadius(depth: depth - 1)
+            radius: radius
         )
         .opacity(isLifted ? 0 : 1)
         .contentShape(Rectangle())
@@ -273,7 +296,7 @@ struct SidebarTabRow: View {
             get: { isRenaming && sidebarStyle == .icons },
             set: { if !$0 { commitRename() } }
         )) {
-            titleColumn
+            titleColumn(color: ink.resting)
                 .frame(width: 220, height: 24)
                 .padding(12)
         }

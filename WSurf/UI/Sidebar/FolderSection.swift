@@ -16,6 +16,7 @@ struct FolderSection: View {
     @Environment(\.sidebarStyle) private var sidebarStyle
     @Environment(\.windowColorScheme) private var windowColorScheme
     @Environment(\.colorScheme) private var colorScheme
+    private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var windowFrame: CGRect = .zero
 
@@ -27,6 +28,14 @@ struct FolderSection: View {
     }
     private var isSelected: Bool {
         context.isSelected(item)
+    }
+    private var rowStyle: SidebarRowStyle {
+        browser.rowStyle(
+            of: folder,
+            isMarked: isSelected,
+            paletteOpen: context.coordinator.isNewTabPaletteOpen,
+            increasedContrast: inkSource.increasedContrast
+        )
     }
 
     static let outlineInset: CGFloat = 2
@@ -66,6 +75,8 @@ struct FolderSection: View {
     var body: some View {
         let rows = browser.rows(in: folder)
         let audible = audibleTab
+        let style = rowStyle
+        let ink = inkSource.ink(for: style)
         let showsOutline = folder.isExpanded && !rows.isEmpty
         VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
             HStack(spacing: 7) {
@@ -77,6 +88,17 @@ struct FolderSection: View {
                     .contentTransition(.symbolEffect(.replace))
                     .animation(Theme.Motion.settle, value: audible?.id)
                     .help(audible.map { Text("“\($0.title)” is playing") } ?? Text(verbatim: ""))
+                    .overlay(alignment: .bottomTrailing) {
+                        // Icons only has no count badge, so a small inverse dot carries the current tab instead.
+                        if sidebarStyle == .icons, let badge = ink.badge {
+                            Circle()
+                                .fill(badge.fill)
+                                .frame(width: 7, height: 7)
+                                .offset(x: 3, y: 3)
+                        }
+                    }
+                    .sidebarNewMark(ink)
+                    .sidebarRowName(folder.name, style: style, isIconOnly: sidebarStyle == .icons)
 
                 if isRenaming && sidebarStyle == .full {
                     renameField
@@ -85,6 +107,7 @@ struct FolderSection: View {
                         .font(BrowserSettings.application.sidebarFont)
                         .foregroundStyle(BrowserSettings.application.sidebarTextColor(scheme: colorScheme))
                         .lineLimit(1)
+                        .sidebarRowAccessibility(style)
                 }
 
                 if sidebarStyle == .full {
@@ -107,17 +130,20 @@ struct FolderSection: View {
 
                     countBadge(rows.count)
                         .font(BrowserSettings.application.sidebarFont)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(ink.badge.map { AnyShapeStyle($0.text) } ?? AnyShapeStyle(.tertiary))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1.5)
-                        .background(Theme.Wash.hairline, in: Capsule())
+                        .background(
+                            ink.badge.map { AnyShapeStyle($0.fill) } ?? AnyShapeStyle(Theme.Wash.hairline),
+                            in: Capsule()
+                        )
                 }
             }
             .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: SidebarMetrics.rowHeight(settings: BrowserSettings.application))
             .sidebarRowSelectionEffect(
-                isSelected: isSelected,
+                isSelected: style.emphasis != .resting,
                 isHovering: hovering,
                 hoverTint: folder.color.tint,
                 radius: showsOutline ? Self.rowRadius(depth: depth) : Theme.Radius.hover

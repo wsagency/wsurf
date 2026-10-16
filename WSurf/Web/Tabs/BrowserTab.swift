@@ -55,6 +55,9 @@ final class BrowserTab: Identifiable {
         processState.isAgentWorking
     }
     var isMuted = false
+    /// True from the moment a tab opens in the background until it first comes on screen. It is not saved, so a
+    /// restored, imported or reopened tab is never new.
+    var isUnseen = false
     var hasNoPageYet: Bool {
         urlString.isEmpty && !isLoading
     }

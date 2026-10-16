@@ -55,8 +55,11 @@ struct SidebarSplitRow: View {
     }
 
     private var isOnScreen: Bool {
-        guard case .tab = coordinator.sidebarDestination else { return false }
-        return browser.isVisibleInSplit(leading)
+        browser.isVisibleInSplit(leading)
+    }
+
+    private var style: SidebarRowStyle {
+        browser.rowStyle(ofSplitLedBy: leading, isMarked: isSelected, paletteOpen: coordinator.isNewTabPaletteOpen)
     }
 
     private var radius: CGFloat {
@@ -110,7 +113,7 @@ struct SidebarSplitRow: View {
         }
         .frame(height: height)
         .sidebarRowSelectionEffect(
-            isSelected: (isOnScreen && !coordinator.isNewTabPaletteOpen) || isSelected,
+            isSelected: style.emphasis != .resting,
             isHovering: interaction == .wholeRow && hoveringRow,
             radius: radius
         )
@@ -239,7 +242,7 @@ private struct SplitRowCell: View {
     let onTap: (BrowserTab) -> Void
 
     @Environment(\.sidebarStyle) private var sidebarStyle
-    @Environment(\.colorScheme) private var windowColorScheme
+    private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var controlsWidth: CGFloat = 0
     @State private var windowFrame: CGRect = .zero
@@ -251,12 +254,26 @@ private struct SplitRowCell: View {
         context.coordinator
     }
 
-    private var isFocused: Bool {
-        coordinator.sidebarDestination == .tab(tab.id) && browser.isVisibleInSplit(tab)
+    /// Only the pane in focus is current; the other keeps the glass of the row to show that it is on screen too.
+    private var style: SidebarRowStyle {
+        browser.rowStyle(
+            of: tab,
+            isMarked: false,
+            paletteOpen: coordinator.isNewTabPaletteOpen,
+            increasedContrast: inkSource.increasedContrast
+        )
+    }
+
+    private var ink: SidebarRowInk {
+        inkSource.ink(for: style, isDeferred: tab.isDeferred)
     }
 
     private var showsPinReturn: Bool {
         sidebarStyle == .full && tab.isAwayFromPin && hovering && answersAlone
+    }
+
+    private var showsTitle: Bool {
+        sidebarStyle == .full && !isNarrow
     }
 
     private var titleMask: some View {
@@ -277,10 +294,9 @@ private struct SplitRowCell: View {
                     browser.returnToPin(tab)
                 }
             } else {
-                TabIcon(tab: tab, tint: BrowserSettings.application.sidebarTextColor(
-                    isDeferred: tab.isDeferred,
-                    scheme: windowColorScheme
-                ))
+                TabIcon(tab: tab, tint: ink.text)
+                    .sidebarNewMark(ink)
+                    .sidebarRowName(tab.title, style: style, isIconOnly: !showsTitle)
             }
 
             if sidebarStyle == .full, tab.isPlayingAudio || tab.isMuted {
@@ -289,14 +305,12 @@ private struct SplitRowCell: View {
                 }
             }
 
-            if sidebarStyle == .full, !isNarrow {
+            if showsTitle {
                 Text(verbatim: tab.title)
-                    .font(BrowserSettings.application.sidebarFont)
-                    .foregroundStyle(BrowserSettings.application.sidebarTextColor(
-                        isDeferred: tab.isDeferred,
-                        scheme: windowColorScheme
-                    ))
+                    .font(ink.titleFont)
+                    .foregroundStyle(ink.text)
                     .lineLimit(1)
+                    .sidebarRowAccessibility(style)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .mask(alignment: .leading) { titleMask }
             }
@@ -313,7 +327,8 @@ private struct SplitRowCell: View {
         }
         .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sidebarHoverFill(isHovering: answersAlone && hovering, in: shape)
+        .sidebarInverse(ink, in: shape)
+        .sidebarHoverFill(isHovering: answersAlone && hovering && style.emphasis != .current, in: shape)
         .contentShape(Rectangle())
         .onTapGesture { onTap(tab) }
         .onMiddleClick {
