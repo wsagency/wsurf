@@ -59,7 +59,8 @@ struct ContextBudgetTests {
 
         #expect(reported.tokens == 8_192)
         #expect(reported.source == .discovered)
-        #expect([none.tokens, invalid.tokens] == [4_096, 4_096])
+        let fallbackTokens: [Int] = [none.tokens, invalid.tokens]
+        #expect(fallbackTokens == [4_096, 4_096])
         #expect([none.source, invalid.source] == [.fallback, .fallback])
         // Only the on-device provider reads the system capacity.
         #expect(

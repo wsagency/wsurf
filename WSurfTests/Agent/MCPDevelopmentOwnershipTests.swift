@@ -686,7 +686,7 @@ struct MCPDevelopmentOwnershipTests {
             (result.structuredContent?.objectValue?["records"]?.arrayValue ?? []).compactMap { $0.objectValue?[key]?.stringValue }
         }
         var console = try await call(subject, "readConsole", tab)
-        #expect(await waitUntil {
+        #expect(try await waitUntil {
             console = try await self.call(subject, "readConsole", tab)
             return lines(console, "text").contains { $0.contains("new-doc") }
         })
@@ -697,7 +697,7 @@ struct MCPDevelopmentOwnershipTests {
         #expect(document != firstDocument)
         #expect(Set(lines(console, "documentID")) == [document])
         var network = try await call(subject, "readNetwork", tab)
-        #expect(await waitUntil {
+        #expect(try await waitUntil {
             network = try await self.call(subject, "readNetwork", tab)
             return lines(network, "url").contains { $0.contains("new-fetch") }
         })
@@ -725,7 +725,7 @@ struct MCPDevelopmentOwnershipTests {
     // MARK: The bytes a client receives
 
     /// Every character class that grows when escaped (quote, backslash, `&<>`, `/`, a control character) plus multibyte text.
-    private static let hostileAlphabets = ["\"\\", "<&>", "/\u{1}", "€🙂"]
+    private nonisolated static let hostileAlphabets = ["\"\\", "<&>", "/\u{1}", "€🙂"]
 
     private static func attribute(_ value: String) -> String {
         value.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;")

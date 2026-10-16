@@ -7,6 +7,10 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-16 — Preserve test checks under Swift compiler isolation and inference
+
+The pull-to-refresh and development-ownership tests now propagate errors from throwing wait predicates. The context-budget fallback comparison explicitly uses `[Int]`, and the development-ownership test's immutable hostile-alphabet arguments are `nonisolated` for test discovery. Assertions, test cases, production code and security checks are unchanged.
+
 ### 2026-10-16 — Explicit WebKit import for bounded page replies
 
 `PageReply.swift` now imports WebKit explicitly for `WKContentWorld.page` and the `WKWebView.evaluateJavaScript` completion-handler API. The native Debug ARM64 integration build rejected these uses under `MemberImportVisibility` without the import. Reply handling and runtime behavior are unchanged.

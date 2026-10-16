@@ -282,7 +282,7 @@ struct PullToRefreshProbeTests {
         await wheel(on: page)
         #expect(try await probe(page, x: 250, y: 200).wheelClaimed)
 
-        #expect(await waitUntil(timeout: .seconds(10)) {
+        #expect(try await waitUntil(timeout: .seconds(10)) {
             try await !probe(page, x: 250, y: 200).wheelClaimed
         })
         let atFinish = try await answer(PullToRefreshMonitor.finishProbeScript, from: page)
