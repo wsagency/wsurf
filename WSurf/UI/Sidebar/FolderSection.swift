@@ -97,6 +97,8 @@ struct FolderSection: View {
                                 .offset(x: 3, y: 3)
                         }
                     }
+                    .sidebarNewMark(ink)
+                    .sidebarRowName(folder.name, style: style, isIconOnly: sidebarStyle == .icons)
 
                 if isRenaming && sidebarStyle == .full {
                     renameField
@@ -105,6 +107,7 @@ struct FolderSection: View {
                         .font(BrowserSettings.application.sidebarFont)
                         .foregroundStyle(BrowserSettings.application.sidebarTextColor(scheme: colorScheme))
                         .lineLimit(1)
+                        .sidebarRowAccessibility(style)
                 }
 
                 if sidebarStyle == .full {

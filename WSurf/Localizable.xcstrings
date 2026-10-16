@@ -1811,6 +1811,12 @@
     "Contacts and addresses" : {
 
     },
+    "Contains current tab" : {
+      "comment" : "VoiceOver value of a collapsed sidebar folder that holds the tab being shown. Sentence case."
+    },
+    "Contains new tabs" : {
+      "comment" : "VoiceOver value of a collapsed sidebar folder that holds tabs opened in the background and not yet shown. Sentence case."
+    },
     "Context compacted" : {
 
     },
@@ -3257,6 +3263,9 @@
     },
     "Never opened" : {
       "comment" : "Summary of a profile that has never been used, shown in place of its counts."
+    },
+    "New" : {
+      "comment" : "VoiceOver value of a sidebar tab that opened in the background and has not been shown yet. One word; it names the dot beside the tab’s icon."
     },
     "New Folder" : {
       "comment" : "The name a newly created sidebar folder carries until it is renamed. Title Case, the way macOS names new folders."

@@ -272,6 +272,10 @@ private struct SplitRowCell: View {
         sidebarStyle == .full && tab.isAwayFromPin && hovering && answersAlone
     }
 
+    private var showsTitle: Bool {
+        sidebarStyle == .full && !isNarrow
+    }
+
     private var titleMask: some View {
         let covered = answersAlone && hovering ? controlsWidth : 0
         return HStack(spacing: 0) {
@@ -291,6 +295,8 @@ private struct SplitRowCell: View {
                 }
             } else {
                 TabIcon(tab: tab, tint: ink.text)
+                    .sidebarNewMark(ink)
+                    .sidebarRowName(tab.title, style: style, isIconOnly: !showsTitle)
             }
 
             if sidebarStyle == .full, tab.isPlayingAudio || tab.isMuted {
@@ -299,11 +305,12 @@ private struct SplitRowCell: View {
                 }
             }
 
-            if sidebarStyle == .full, !isNarrow {
+            if showsTitle {
                 Text(verbatim: tab.title)
-                    .font(BrowserSettings.application.sidebarFont)
+                    .font(ink.titleFont)
                     .foregroundStyle(ink.text)
                     .lineLimit(1)
+                    .sidebarRowAccessibility(style)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .mask(alignment: .leading) { titleMask }
             }

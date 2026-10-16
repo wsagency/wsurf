@@ -157,8 +157,10 @@ struct SidebarTabRow: View {
         if sidebarStyle == .full {
             TabIcon(tab: tab, tint: textColor)
                 .frame(width: SidebarMetrics.rowIconSize)
+                .sidebarNewMark(ink)
         } else {
             TabIcon(tab: tab, tint: textColor)
+                .sidebarNewMark(ink)
         }
     }
 
@@ -190,9 +192,10 @@ struct SidebarTabRow: View {
             } else {
                 HStack(spacing: 0) {
                     Text(verbatim: tab.title)
-                        .font(BrowserSettings.application.sidebarFont)
+                        .font(ink.titleFont)
                         .foregroundStyle(textColor)
                         .lineLimit(1)
+                        .sidebarRowAccessibility(style)
                     Spacer(minLength: 0)
                 }
             }
@@ -222,6 +225,7 @@ struct SidebarTabRow: View {
 
             HStack(spacing: SidebarMetrics.rowIconSpacing) {
                 leadingIcon
+                    .sidebarRowName(tab.title, style: style, isIconOnly: sidebarStyle == .icons)
 
                 if showsSpeaker {
                     SidebarTabMuteButton(isMuted: tab.isMuted) {

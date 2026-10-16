@@ -293,6 +293,46 @@ struct SidebarRowStyleTests {
 
     // MARK: - What a row draws with
 
+    @Test func theDotTakesItsColorFromTheMarkOfTheRow() {
+        let white = rgb(1, 1, 1)
+        let colors = SidebarRowStyle.colors(text: white, ground: darkGround, accent: blue)
+        func mark(_ style: SidebarRowStyle) -> NSColor? {
+            SidebarRowInk(style: style, resting: .white, colors: colors).mark.map { NSColor($0) }
+        }
+
+        #expect(mark(resolve(unseen: true)).map { same($0, blue) } == true)
+        #expect(mark(resolve(unseen: true, increasedContrast: true)).map { same($0, white) } == true)
+        #expect(mark(resolve()) == nil)
+        #expect(mark(resolve(current: true, unseen: true)) == nil, "the current tab has no dot")
+    }
+
+    /// A new tab's title gets heavier, so the dot is not the only sign. It never gets lighter than the weight the
+    /// user chose.
+    @Test func aNewTitleIsNeverLighterThanSemibold() {
+        #expect(SidebarFontWeight.regular.emphasized == .semibold)
+        #expect(SidebarFontWeight.medium.emphasized == .semibold)
+        #expect(SidebarFontWeight.semibold.emphasized == .semibold)
+        #expect(SidebarFontWeight.bold.emphasized == .bold)
+    }
+
+    @Test func theEmphasizedFontFollowsTheFontSettings() {
+        let suite = "SidebarEmphasis-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = BrowserSettings(defaults: defaults)
+        settings.sidebarFontWeight = .regular
+
+        let regular = settings.sidebarFont
+        let emphasized = settings.sidebarEmphasizedFont
+        #expect(emphasized != regular)
+
+        settings.sidebarFontSize = 16
+        #expect(settings.sidebarEmphasizedFont != emphasized, "a size change drops the cached font")
+        settings.sidebarFontSize = 12
+        settings.sidebarFontWeight = .bold
+        #expect(settings.sidebarEmphasizedFont == settings.sidebarFont, "bold is already as heavy as it gets")
+    }
+
     @Test func theContentOfAnInverseRowFollowsTheFill() {
         let current = resolve(current: true)
         let colors = SidebarRowStyle.colors(text: rgb(1, 1, 1), ground: darkGround, accent: blue)

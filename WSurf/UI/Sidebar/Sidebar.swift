@@ -442,6 +442,12 @@ private struct SidebarFavoriteButton: View {
         )
     }
 
+    private var favoriteValue: Text {
+        let loaded = tab.isDeferred ? Text("Unloaded") : Text("Loaded")
+        guard let status = style.spokenStatus else { return loaded }
+        return Text("\(status), \(loaded)")
+    }
+
     var body: some View {
         let ink = inkSource.ink(for: style, isDeferred: tab.isDeferred)
         Button {
@@ -449,6 +455,7 @@ private struct SidebarFavoriteButton: View {
             coordinator.openTab(tab)
         } label: {
             TabIcon(tab: tab)
+                .sidebarNewMark(ink)
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
                 .sidebarInverse(ink, in: RoundedRectangle(cornerRadius: Theme.Radius.hover, style: .continuous))
@@ -462,7 +469,7 @@ private struct SidebarFavoriteButton: View {
         .onHover { hovering = $0 }
         .help(Text(verbatim: tab.title))
         .accessibilityLabel(Text(verbatim: tab.title))
-        .accessibilityValue(tab.isDeferred ? Text("Unloaded") : Text("Loaded"))
+        .accessibilityValue(favoriteValue)
         .accessibilityAddTraits(style.isSelected ? .isSelected : [])
         .contextMenu {
             SidebarLinkMenuItems(tabs: [tab], coordinator: coordinator)

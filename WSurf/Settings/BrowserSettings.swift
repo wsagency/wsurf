@@ -128,6 +128,7 @@ final class BrowserSettings {
     /// profile's pages; nothing global learns of it.
     @ObservationIgnored var onPasswordProviderChanged: (() -> Void)?
     @ObservationIgnored private var sidebarFontCache: Font?
+    @ObservationIgnored private var sidebarEmphasizedFontCache: Font?
     @ObservationIgnored private var sidebarLineHeightCache: CGFloat = 0
 
     private func store(for key: String) -> UserDefaults {
@@ -220,6 +221,7 @@ final class BrowserSettings {
         set {
             setGlobal(\BrowserSettings.sidebarFontFamily, storage: \BrowserSettings.storedSidebarFontFamily, value: newValue, key: Key.sidebarFontFamily, didChange: {
                 $0.sidebarFontCache = nil
+                $0.sidebarEmphasizedFontCache = nil
             })
         }
     }
@@ -230,6 +232,7 @@ final class BrowserSettings {
             let value = newValue.isFinite ? min(max(newValue, 10), 20) : 12
             setGlobal(\BrowserSettings.sidebarFontSize, storage: \BrowserSettings.storedSidebarFontSize, value: value, key: Key.sidebarFontSize, didChange: {
                 $0.sidebarFontCache = nil
+                $0.sidebarEmphasizedFontCache = nil
             })
         }
     }
@@ -239,6 +242,7 @@ final class BrowserSettings {
         set {
             setGlobal(\BrowserSettings.sidebarFontWeight, storage: \BrowserSettings.storedSidebarFontWeight, value: newValue, key: Key.sidebarFontWeight, encode: { $0.rawValue }) {
                 $0.sidebarFontCache = nil
+                $0.sidebarEmphasizedFontCache = nil
             }
         }
     }
@@ -283,20 +287,22 @@ final class BrowserSettings {
             return font
         }
 
-        let native: NSFont
-        if family.isEmpty {
-            native = .systemFont(ofSize: size, weight: weight.nativeWeight)
-        } else {
-            native = NSFontManager.shared.font(
-                withFamily: family,
-                traits: [],
-                weight: weight.appKitWeight,
-                size: size
-            ) ?? .systemFont(ofSize: size, weight: weight.nativeWeight)
-        }
+        let native = Self.nativeSidebarFont(family: family, size: size, weight: weight)
         let resolved = Font(native)
         settings.sidebarFontCache = resolved
         settings.sidebarLineHeightCache = (native.ascender - native.descender + native.leading).rounded(.up)
+        return resolved
+    }
+
+    /// The sidebar font one step heavier, for the title of a new tab. The metrics match, so rows keep their height.
+    var sidebarEmphasizedFont: Font {
+        let settings = globalSettings
+        let (family, size, weight) = (sidebarFontFamily, CGFloat(sidebarFontSize), sidebarFontWeight.emphasized)
+        if let font = settings.sidebarEmphasizedFontCache {
+            return font
+        }
+        let resolved = Font(Self.nativeSidebarFont(family: family, size: size, weight: weight))
+        settings.sidebarEmphasizedFontCache = resolved
         return resolved
     }
 

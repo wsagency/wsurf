@@ -96,6 +96,12 @@ enum SidebarFontWeight: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The weight of a title that has to stand out, such as a new tab: never lighter than semibold, and never
+    /// lighter than the weight the user chose.
+    var emphasized: Self {
+        self == .bold ? .bold : .semibold
+    }
+
     var appKitWeight: Int {
         switch self {
         case .regular:
