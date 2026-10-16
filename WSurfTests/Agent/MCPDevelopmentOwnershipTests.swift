@@ -34,6 +34,8 @@ struct MCPDevelopmentOwnershipTests {
         let url = try server.url()
         let tab = browser.newTab(url: url)
         #expect(await PageSettle.untilIdle(tab.page))
+        // The document identity arrives from the page after it loads; diagnostics cannot start before it does.
+        #expect(await waitUntil { tab.page.mainDocumentID != nil }, "the page registered its main document")
         if !profileWide {
             tab.assistantAccess.persistsAnswers = false
         }
