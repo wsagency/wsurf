@@ -93,6 +93,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func onlyOneConnectionOwnsATab() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let first = session(browser), second = session(browser)
         _ = try await call(first, "requestAccess", nil, ["development": true])
         _ = try await call(second, "requestAccess", nil, ["development": true])
@@ -116,6 +118,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func disconnectReleasesTheLease() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let subject = session(browser)
         _ = try await call(subject, "requestAccess", nil, ["development": true])
         #expect(status(try await call(subject, "setViewport", tab, phone)) == "ok")
@@ -127,6 +131,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func policyDowngradeReleasesTheLeaseOnTheNextCall() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let subject = session(browser)
         _ = try await call(subject, "requestAccess", nil, ["development": true])
         #expect(status(try await call(subject, "setViewport", tab, phone)) == "ok")
@@ -167,6 +173,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func viewportIsMeasuredInThePageAndResetRestoresIt() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let subject = session(browser)
         _ = try await call(subject, "requestAccess", nil, ["development": true])
         let applied = try await call(subject, "setViewport", tab, phone)
@@ -349,13 +357,21 @@ struct MCPDevelopmentOwnershipTests {
         try await call(subject, "screenshotPage", tab, ["observationID": .string(target.observation), "ref": .int(target.ref)])
     }
 
-    /// Element screenshots need the page in a window: WebKit only snapshots a laid-out, attached view.
+    /// Hosts the tab's page in a window the way the app does, inside a `WebViewContainer`. Element screenshots need a laid-out,
+    /// attached view, and the container is what lays out a development viewport: a page outside one cannot be resized.
+    /// Returns once the page has the container's width, not the 800-point default of a page nobody hosts.
     private func show(_ tab: BrowserTab) async -> NSWindow {
         let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.contentView = tab.page
+        let container = WebViewContainer(page: tab.page)
+        window.contentView = container
         window.orderBack(nil)
-        #expect(await waitUntil { ((try? await tab.page.evaluateJavaScript("window.innerWidth")) as? Int ?? 0) >= 400 })
+        let width = Int(container.bounds.width)
+        #expect(
+            await waitUntil {
+                guard tab.page.superview === container else { return false }
+                return (try? await tab.page.evaluateJavaScript("window.innerWidth")) as? Int == width
+            }, "the page is laid out at the container's width \(width)")
         return window
     }
 
@@ -460,6 +476,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func aLateResetFromAReleasedLeaseLeavesTheNewOwnersViewportAlone() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let first = session(browser), second = session(browser)
         try await requestDevelopment(first)
         try await requestDevelopment(second)
@@ -484,6 +502,9 @@ struct MCPDevelopmentOwnershipTests {
     @Test func replacingThePageEndsTheLeaseAndTheNewPageStartsClean() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
+        let container = try #require(window.contentView as? WebViewContainer)
         let first = session(browser), second = session(browser)
         try await requestDevelopment(first)
         try await requestDevelopment(second)
@@ -495,8 +516,10 @@ struct MCPDevelopmentOwnershipTests {
         #expect(tab.developmentRelation(of: first.id) == .none)
         tab.realizeDeferredSession()
         let granted = try server.url()
-        #expect(await waitUntil { tab.page.url?.port == granted.port && !tab.page.isLoading })
-        #expect(tab.page !== outgoing)
+        // `tab.page` is still the outgoing page until its asynchronous close ends, so a wait on its address alone passes at once.
+        #expect(await waitUntil { tab.page !== outgoing && tab.page.url?.port == granted.port && !tab.page.isLoading })
+        // The app's view hierarchy shows the replacement page in the same container.
+        container.install(tab.page)
         #expect(tab.page.developmentViewport == nil)
         #expect(status(try await call(second, "setViewport", tab, ["width": 800, "height": 600])) == "ok")
         #expect(tab.developmentRelation(of: first.id) == .other)
@@ -505,6 +528,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func aReleasedLeasesLateApplyNeverUndoesTheNextLeasesViewport() async throws {
         let (server, _, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let page = tab.page
         let request = PageViewport.Request(width: 400, height: 700)
         let size = CGSize(width: 400, height: 700)
@@ -539,6 +564,8 @@ struct MCPDevelopmentOwnershipTests {
     func aSettingsChangeToTheSiteEndsAnIdleViewportLease(policy: AssistantAccessPolicy) async throws {
         let (server, browser, tab) = try await fixture(profileWide: true)
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let subject = session(browser)
         try await requestDevelopment(subject)
         #expect(status(try await call(subject, "setViewport", tab, phone)) == "ok")
@@ -555,6 +582,8 @@ struct MCPDevelopmentOwnershipTests {
     func resettingEverySiteAnswerEndsAnIdleViewportLease(removingEverything: Bool) async throws {
         let (server, browser, tab) = try await fixture(profileWide: true)
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let subject = session(browser)
         try await requestDevelopment(subject)
         #expect(status(try await call(subject, "setViewport", tab, phone)) == "ok")
@@ -570,6 +599,8 @@ struct MCPDevelopmentOwnershipTests {
     @Test func aCancelledCallNeverEndsAnotherConnectionsLease() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
+        let window = await show(tab)
+        defer { hide(window) }
         let first = session(browser), second = session(browser)
         try await requestDevelopment(first)
         try await requestDevelopment(second)
