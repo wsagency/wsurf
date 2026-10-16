@@ -3,6 +3,7 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import Foundation
+import WebKit
 
 extension BrowserPage {
     /// The script's answer as `Value`, or nil when it errors, answers another type, the caller is

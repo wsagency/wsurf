@@ -7,6 +7,10 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+### 2026-10-16 — Explicit WebKit import for bounded page replies
+
+`PageReply.swift` now imports WebKit explicitly for `WKContentWorld.page` and the `WKWebView.evaluateJavaScript` completion-handler API. The native Debug ARM64 integration build rejected these uses under `MemberImportVisibility` without the import. Reply handling and runtime behavior are unchanged.
+
 ### 2026-10-15 — Credentials: Unlock works again after the vault locks
 
 After a credential vault locked, **Unlock** could report "Couldn’t find this window to show the passkey prompt". The page remembers its window through a hidden view; that view was attached to the part of the page that changes between locked, unlocked and failed states, so SwiftUI created one per piece of the current state and the page kept whichever was updated last. After a state change the page could be left holding a view that was no longer on screen. The hidden view now sits on the page header, which every state keeps, so there is exactly one. Nothing about unlocking changed: the passkey prompt is still required and is still shown on the window that holds the page, never on another window.
