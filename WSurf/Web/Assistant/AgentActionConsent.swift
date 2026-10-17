@@ -17,6 +17,13 @@ enum AgentActionConsent {
     @TaskLocal static var scopedPolicy: AgentActionPolicy?
     @TaskLocal static var scopedWindow: ExtensionWindowAdapter?
     @TaskLocal static var externalClientName: String?
+    /// Set only while an MCP connection runs a call in the Developer tier. It decides whether a consequential action on the
+    /// tab being driven goes through without asking.
+    @TaskLocal static var developerApproval: DeveloperApproval?
+
+    struct DeveloperApproval: @unchecked Sendable {
+        let approves: @MainActor (String, SensitiveAction.Category, String?) -> Bool
+    }
 
     struct Stub: @unchecked Sendable {
         let decide: @MainActor (String, SensitiveAction.Category, String?, NSWindow?) async -> Decision
@@ -35,6 +42,10 @@ enum AgentActionConsent {
     ) async -> Bool {
         guard !Task.isCancelled, hasCurrentWindow, let policy = scopedPolicy ?? policy else { return false }
         if policy.isAlwaysAllowed(category, host: host) {
+            return true
+        }
+        // Developer tier: the session checks its own grant, the developer site and the Developer profile, and records it.
+        if let developerApproval, developerApproval.approves(label, category, host) {
             return true
         }
 

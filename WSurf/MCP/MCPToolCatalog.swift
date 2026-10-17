@@ -209,10 +209,16 @@ nonisolated enum MCPToolCatalog {
                 """
                 Ask the user in WSurf to share the webpages currently on screen. Connecting grants no access. \
                 Respect a refusal; do not repeat the request. Set development only when you need DOM inspection, \
-                console/network metadata, or viewport changes; the user may still decline it.
+                console/network metadata, or viewport changes; the user may still decline it. Set developer only on a \
+                developer site (localhost by default) in the Developer profile, as a paired app; the user may still decline it. \
+                A paired app the user set to work without asking gets those sites without a prompt.
                 """,
             parameters: [
-                Parameter(name: "development", type: "boolean", description: "Also ask for development access. Omit for ordinary sharing.", required: false)
+                Parameter(name: "development", type: "boolean", description: "Also ask for development access. Omit for ordinary sharing.", required: false),
+                Parameter(
+                    name: "developer", type: "boolean",
+                    description: "Also ask for Developer access. Offered only to a paired app, for developer sites in the Developer profile.",
+                    required: false),
             ], scope: nil, title: "Request Tab Access"),
         Entry(
             name: "listTabs", description: "List only this connection’s shared tabs. Unshared, denied, private, and internal pages are never listed.",

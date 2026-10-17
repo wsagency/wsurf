@@ -14,7 +14,9 @@ an API key, a model, or an open conversation.
 4. Have the client call `requestAccess`. WSurf comes to the foreground and opens
    an approval prompt for the displayed pages. Choose **Read Only** or
    **Allow Control**. A client that asked for development access also sees
-   **Allow Development** (see Development access below).
+   **Allow Development** (see Development access below), and a paired client that
+   asked for Developer access on a developer site also sees **Allow Developer**
+   (see Developer work below).
    If no shareable webpage is open, the prompt explains how to proceed; open a
    webpage and have the client request access again.
 5. The client calls `listTabs`, then `readPage` with a returned `tabID`. Page
@@ -162,7 +164,7 @@ revoke it immediately.
 
 | Tool | Behavior |
 | --- | --- |
-| `requestAccess` | Ask once to share the webpages currently on screen. `development: true` also asks for development access; the user may grant less. |
+| `requestAccess` | Ask to share the webpages currently on screen. One sheet per connection; later calls only add tabs that a paired app's standing grant covers. `development: true` also asks for development access and `developer: true` for Developer access; the user may grant less. |
 | `listTabs` | List only tabs shared with this connection. |
 | `readPage` | Search rendered text, scope or paginate controls, and return an observation ID. |
 | `clickOnPage` | Click a numbered control. Returns what the click changed (see Action results). |
@@ -190,7 +192,7 @@ revoke it immediately.
 | `scrollPage` | Scroll vertically or horizontally, optionally inside a referenced container. |
 | `goBack` | Go back within the shared website. |
 | `navigate` | Navigate a shared tab; another website requires approval. |
-| `newTab` | Ask to open and share a new webpage. Requires existing control access. |
+| `newTab` | Ask to open and share a new webpage. Requires existing control access, except for a paired app's standing grant on a developer site, which needs neither a grant nor a sheet. |
 | `switchTab` | Activate an already shared tab before controlling it. |
 | `closeTab` | Close an already shared, unpinned tab. |
 | `handleDialog` | Read or answer a JavaScript dialog (alert, confirm, prompt, or Chromium's beforeunload "Leave site?") that a page opened in a shared tab. Needs control access. See Page dialogs below. |
@@ -396,6 +398,59 @@ main
 
 `readPerformance` reads the page's own Performance Timeline, never a trace. The reply is one JSON object of about 1 to 2 KB: `navigation` (type, `ttfbMs`, `domContentLoadedMs`, `loadMs`, `transferBytes`), `paint` (first paint, first contentful paint, largest contentful paint with its element), `layout` (cumulative shift), `longTasks` (count, total and longest), `resources` (count, transfer and decoded bytes, a count and transfer per initiator type, the five slowest with origin and path only, and `bufferFull` when the timeline's 250-entry buffer may have dropped later ones), `runtime` and `unsupported`. `sizeHidden` counts resources whose size the browser hides (cross-origin without `Timing-Allow-Origin`). Chromium adds `runtime` (heap, DOM nodes, documents, event listeners) from DevTools; WebKit has no equivalent and reports `runtime` as `null`. WebKit (as measured on macOS 26) does not expose layout shift or long tasks, so `layout` and `longTasks` are `null` and listed, and it reports no separate first paint, so `firstPaintMs` stays `null` without being listed. `null` without a listing means the engine supports the metric and has not observed it yet, for instance a first paint in a tab nobody can see.
 
+### Developer work and unattended runs
+
+A paired app can be set to work **without asking** on developer sites, in a profile
+set aside for developer work. This is the path for QA runs and CI: no sheet, no
+foreground app, and your everyday sign-ins stay out of reach. Four things are needed
+at once, and all four are stored in the keychain item that holds the pairing (never
+UserDefaults or a file), so a process with a shell cannot widen any of them:
+
+| Setting | Where | What it does |
+| --- | --- | --- |
+| Without asking: Off, Development or Developer | Settings › Assistant › Connected apps, per app | Off keeps today's behavior. Development shares a developer site as if the user chose **Allow Development**; Developer adds the Developer tier. Only a paired app can hold either. An unpaired connection never gets one. |
+| Developer profile | Connected apps › Developer work | The only profile where a standing grant or the Developer tier works. **Create Developer Profile** makes a new profile named Developer. Choosing any other profile, including your everyday one, asks for confirmation first. Private browsing can never be chosen. Nothing is chosen by default, so nothing applies until you choose one. |
+| Developer sites | Connected apps › Developer work | **This Mac** (on by default) is `localhost`, `127.0.0.1` and `[::1]` on any port over http or https. It is exact: not `*.localhost`, `127.0.0.2` or `0.0.0.0`. Add your own `host` or `host:port`, for example `staging.example.com:8443`. A site without a port means the usual web port (80 or 443) only, so other services on that host stay out. Wildcards, address ranges, paths and credentials are refused; at most 64 sites. |
+| Paused | **Resume** in Connected apps | A paused app keeps its record and token but gets no standing grant, and the grants it held are dropped, until you resume it. |
+
+**What a standing grant does.** After the app's hello, WSurf moves the connection to a
+window of the Developer profile (the most recently used one, or a new one opened behind
+your other windows; it never activates WSurf or takes focus). In that window,
+`requestAccess` shares tabs on developer sites at the app's level without a sheet, and
+`newTab` and `navigate` to developer sites need no prior grant, no sheet and no
+observed link. A tab that moves by itself between developer sites keeps the grant. Any
+other site still needs the usual sheet, at most one per connection, and a standing grant
+that takes an approved move to such a site comes along as Allow Control only. A site's
+own Assistant Access setting still caps the grant: Read Only blocks control, development
+and Developer, and No Access hides the tab.
+
+**Re-checked on every use.** The grant holds only while the app is still paired, not
+paused and not lowered, the page is on a developer site and the window is in the
+Developer profile. Pausing, lowering, revoking, removing a site or changing the profile
+takes effect on live connections at once: standing grants are dropped and the
+development leases they carried are released. Leaving the developer sites drops a
+standing grant; the app asks again and gets it back only where it applies.
+
+**The Developer tier** (**Allow Developer** in the sheet, or a standing level of
+Developer) requires a paired app, a developer site and a window of the Developer
+profile. The sheet offers it only for tabs that qualify, only to a request with
+`developer: true`, and never to an unpaired connection. If the profile or the developer
+sites change so that it no longer applies, a Developer grant from the sheet falls back
+to Development (a standing grant is dropped); a page that leaves the developer sites
+ends the grant. Today the tier lets consequential actions on developer sites (purchases,
+transfers, deletions, posting and sending) go through without the confirmation sheet;
+each one is logged and kept in the connection's recent list. Everywhere else, and for
+the in-app assistant, those confirmations stay. Later features that need an explicit
+tier build on it.
+
+**Unattended runs.** Use a signed WSurf build (the keychain item needs its access
+group), enable MCP, pair the client, choose or create a Developer profile, set the app to
+Development or Developer, and keep a logged-in Mac session with WSurf running and at
+least one regular window open. The client then calls `newTab("http://localhost:5173/")`
+and works in the Developer window. A connection is refused while the focused window is a
+private one, as before. Adding a staging host to the developer sites extends standing
+grants to it; Settings says so.
+
 ### Safe selectors
 
 A CSS selector is evaluated against the page, so an attribute test such as `input[type=hidden][value^=a]`, also under `:has()`, would read a value one character at a time. Selectors passed to `waitForPage`, `findElements` and `readPage` scope are therefore parsed by the browser first (escapes, case and namespace forms such as `v\61lue` or `[*|value]` are normalised) and may test only attributes WSurf already exposes: `id`, `class`, `role`, `type`, `name`, `for`, `alt`, `title`, `placeholder`, `lang`, `dir`, `target`, `rel`, `aria-*`, the test attributes `data-testid`, `data-test`, `data-test-id`, `data-cy`, `data-qa` and `data-automation-id`, and a few boolean or numeric ones (`disabled`, `checked`, `hidden`, `width`, `min`…). `href` and `src` may be tested for presence only. Any other attribute test, including `value`, other `data-*` and `on*`, is refused with an explicit error rather than answered with an empty result. A selector is at most 2,048 UTF-8 bytes, enforced natively (a `readPage` scope longer than that is refused before anything is read). Structural attributes such as `id`, `class` and `name` can still be probed, including on hidden inputs: they are page structure, not values, and value-bearing attributes cannot be tested. Structural selectors, classes, ids and `:has()` without such tests work as usual.
@@ -476,6 +531,10 @@ It does not cover signed-build features (Keychain, passkeys, Apple Passwords), w
   connection starts with no grants. The displayed client name is supplied by
   the client; it is not a verified app identity. A pairing token identifies an app
   you configured, not its code signature.
+- Standing grants and the Developer tier bind to paired apps only. They apply only on
+  developer sites, in the Developer profile, and are stored in the keychain with the
+  pairing. Your everyday profile is never reachable that way unless you choose it.
+  Private windows are never shared, whatever the setting.
 - Access is restricted to the captured tab IDs and their website origins. Other
   tabs, private browsing, internal pages, and denied sites cannot be listed or
   addressed by guessing an ID. Redirecting to another website does not grant

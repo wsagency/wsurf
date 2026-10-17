@@ -306,11 +306,13 @@ struct DetailRow<Content: View>: View {
         verbatimTitle: String,
         verbatimCaption: String? = nil,
         layout: Layout = .trailing,
+        controlWidth: CGFloat? = SettingsMetrics.controlWidth,
         @ViewBuilder content: () -> Content
     ) {
         self.title = Text(verbatim: verbatimTitle)
         self.caption = verbatimCaption.map { Text(verbatim: $0) }
         self.layout = layout
+        self.controlWidth = controlWidth
         self.content = content()
     }
 

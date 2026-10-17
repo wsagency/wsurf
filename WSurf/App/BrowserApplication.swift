@@ -58,8 +58,30 @@ final class BrowserApplication {
                 $0.browser === browser && !$0.isClosed && $0.nativeWindow != nil
                     && !$0.profiles.isPrivate && !$0.isSwitchingProfile && !$0.agentTurns.isRunning
             } == true
-        }
+        },
+        developerTarget: { [weak self] profileID in self?.developerWindow(profileID: profileID)?.browser }
     )
+
+    /// The regular window of the Developer profile a paired client with a standing grant works in: the one used most
+    /// recently, or a new one shown behind other windows. Never a private window, and it never activates WSurf or takes focus.
+    func developerWindow(profileID: UUID) -> AppCoordinator? {
+        guard profileID != Profile.privateID,
+              let profile = ProfileStore.shared.profiles.first(where: { $0.id == profileID }) else { return nil }
+        let recent = ([activeCoordinator].compactMap { $0 } + focusOrder.reversed().compactMap { id in windows.first { $0.windowID == id } })
+        if let existing = (recent + windows).first(where: {
+            !$0.isClosed && $0.nativeWindow != nil && !$0.profiles.isPrivate && !$0.isSwitchingProfile
+                && $0.context.profile.id == profileID
+        }) {
+            return existing
+        }
+        // Opening a window marks its profile as the current one; an unattended run must not change which profile the
+        // next launch or new window starts in.
+        let catalog = ProfileStore.shared
+        let previous = catalog.current
+        let opened = newWindow(profile: profile, show: false)
+        catalog.markCurrent(previous)
+        return opened
+    }
 
     func bootstrap() async {
         guard !isReady else { return }

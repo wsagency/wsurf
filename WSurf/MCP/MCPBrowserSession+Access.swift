@@ -4,36 +4,63 @@
 
 import Foundation
 import MCP
+import os
 
 /// Sharing tabs with the connection: the access request, the tab list, and navigation.
 @MainActor
 extension MCPBrowserSession {
-    func requestAccess(development: Bool) async -> CallTool.Result {
-        guard !accessWasRequested else {
-            return failure("Access has already been requested. The user can disconnect and reconnect to share different tabs.")
-        }
+    /// What the user said about the access sheet the first time this connection asked for tabs.
+    private static let alreadyRequested =
+        "Access has already been requested. The user can disconnect and reconnect to share different tabs."
+
+    func requestAccess(development: Bool, developer: Bool = false) async -> CallTool.Result {
         let tabs = browser.splitPanes ?? browser.activeTab.map { [$0] } ?? []
-        let pages = tabs.compactMap { tab -> MCPAccessConsent.Page? in
+        let candidates = tabs.compactMap { tab -> (page: MCPAccessConsent.Page, standing: MCPAccessConsent.Access?)? in
             guard !tab.isPrivate, let url = webURL(of: tab), tab.assistantAccess.effectivePolicy != .deny else { return nil }
-            return .init(id: tab.id, title: tab.title, url: url)
+            var page = MCPAccessConsent.Page(id: tab.id, title: tab.title, url: url)
+            page.developerEligible = developer && developerTierHolds(at: url)
+            return (page, standingAccess(at: url))
         }
+        // A paired client's standing grant covers its developer sites without a sheet.
+        for (page, standing) in candidates {
+            if let standing, (grants[page.id]?.access.rank ?? -1) < standing.rank {
+                grants[page.id] = Grant(origin: SitePermissions.origin(for: page.url), access: standing, source: .standing)
+            }
+        }
+        let wanted = developer ? MCPAccessConsent.Access.developer : development ? .development : .control
+        let pages = candidates.filter { ($0.standing?.rank ?? -1) < wanted.rank }.map { $0.page }
+        let covered = candidates.contains { $0.standing != nil }
         guard !pages.isEmpty else {
-            _ = await consent(clientName, [], development)
+            if covered {
+                return tabList()
+            }
+            guard !accessWasRequested else { return failure(Self.alreadyRequested) }
+            _ = await consent(clientName, [], development || developer)
             return failure("No shareable webpage is on screen. WSurf showed the user how to open a webpage. Request access again after they have opened it.")
         }
+        // At most one sheet per connection; later calls only add what a standing grant covers.
+        guard !accessWasRequested else { return covered ? tabList() : failure(Self.alreadyRequested) }
         accessWasRequested = true
-        var granted = await consent(clientName, pages, development)
-        // Development access can only come from a request that asked for it.
-        if granted == .development, !development {
-            granted = .control
-        }
-        guard isConnected, available(), !Task.isCancelled, let answer = granted else { return failure("Access was not granted.") }
+        let granted = await consent(clientName, pages, development || developer)
+        guard isConnected, available(), !Task.isCancelled else { return failure("Access was not granted.") }
+        guard let answer = granted else { return covered ? tabList() : failure("Access was not granted.") }
         for page in pages {
             guard let tab = browser.tabs.first(where: { $0.id == page.id }),
                 !tab.isPrivate, webURL(of: tab) == page.url,
                 tab.assistantAccess.effectivePolicy != .deny
             else { continue }
-            grants[page.id] = Grant(origin: SitePermissions.origin(for: page.url), access: answer)
+            // Only a request that asked for more can be given more, and Developer only where the sheet offered it.
+            var access = answer
+            if access == .developer, !(developer && page.developerEligible) {
+                access = .development
+            }
+            if access == .development, !(development || developer) {
+                access = .control
+            }
+            if let existing = grants[page.id], existing.access.rank >= access.rank {
+                continue
+            }
+            grants[page.id] = Grant(origin: SitePermissions.origin(for: page.url), access: access)
         }
         return tabList()
     }
@@ -54,12 +81,12 @@ extension MCPBrowserSession {
     }
 
     func navigate(_ raw: String, tab: BrowserTab, grant: Grant) async -> CallTool.Result {
-        guard let url = permittedDestination(raw) else {
+        guard let url = permittedDestination(raw, grant: grant) else {
             return failure("Use an HTTP(S) URL observed in a page link, or ask the user to open and share the page.")
         }
         let previousURL = webURL(of: tab)
         let origin = SitePermissions.origin(for: url)
-        if origin != grant.origin {
+        if origin != grant.origin, !followsDeveloperSites(grant, to: url) {
             guard await openConsent(clientName, url) else { return failure("Navigation was not approved.") }
         }
         guard mayProceed(tab, capability: .control), onScreen(tab), webURL(of: tab) == previousURL else {
@@ -67,7 +94,7 @@ extension MCPBrowserSession {
         }
         guard browser.sitePermissions.assistantAccess(for: origin) != .deny else { return failure("Assistant access is off for this website.") }
         observations[tab.id] = nil
-        grants[tab.id] = Grant(origin: origin, access: grant.access)
+        grants[tab.id] = followsDeveloperSites(grant, to: url) ? Grant(origin: origin, access: grant.access, source: grant.source) : moved(grant, to: origin)
         let immediate = tab.load(url, transition: .agent)
         let navigation = await tab.waitForPendingNavigation() ?? immediate
         guard navigation != nil else {
@@ -77,6 +104,15 @@ extension MCPBrowserSession {
     }
 
     func openNewTab(_ raw: String) async -> CallTool.Result {
+        if let url = webDestination(raw), let access = standingAccess(at: url) {
+            guard isConnected, available(), !Task.isCancelled else { return failure("Opening the page was not approved.") }
+            guard browser.sitePermissions.assistantAccess(for: SitePermissions.origin(for: url)) != .deny else {
+                return failure("Assistant access is off for this website.")
+            }
+            let tab = browser.newTab(url: url, transition: .agent)
+            grants[tab.id] = Grant(origin: SitePermissions.origin(for: url), access: access, source: .standing)
+            return success("Opened tab \(tab.id.uuidString). Use readPage after it loads.")
+        }
         guard grants.keys.contains(where: { sharedTab($0).map { permits($0, capability: .control) } ?? false }),
             let url = permittedDestination(raw)
         else { return failure("Opening a tab requires control access and an allowed HTTP(S) URL.") }
@@ -91,10 +127,18 @@ extension MCPBrowserSession {
         return success("Opened tab \(tab.id.uuidString). Use readPage after it loads.")
     }
 
-    private func permittedDestination(_ raw: String) -> URL? {
+    private func permittedDestination(_ raw: String, grant: Grant? = nil) -> URL? {
+        guard let url = webDestination(raw) else { return nil }
+        if let grant, followsDeveloperSites(grant, to: url) {
+            return url
+        }
+        guard !hasReadContent || destinations.contains(destinationKey(url)) else { return nil }
+        return url
+    }
+
+    private func webDestination(_ raw: String) -> URL? {
         guard let url = URL(string: raw), ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
-            url.host() != nil, url.user == nil, url.password == nil,
-            !hasReadContent || destinations.contains(destinationKey(url))
+            url.host() != nil, url.user == nil, url.password == nil
         else { return nil }
         return url
     }
@@ -110,10 +154,102 @@ extension MCPBrowserSession {
     func sharedTab(_ id: UUID) -> BrowserTab? {
         guard isConnected, available(),
             let grant = grants[id], let tab = browser.tabs.first(where: { $0.id == id }),
-            !tab.isPrivate, !tab.isClosed, let url = webURL(of: tab),
-            SitePermissions.origin(for: url) == grant.origin
+            !tab.isPrivate, !tab.isClosed, let url = webURL(of: tab)
         else { return nil }
+        let origin = SitePermissions.origin(for: url)
+        if origin != grant.origin {
+            // A page-initiated move between developer sites keeps the grant; any other move ends it. A standing grant that
+            // no longer holds is dropped: the app asks again, and gets it back only where it applies.
+            guard followsDeveloperSites(grant, to: url) else {
+                dropIfStanding(id)
+                return nil
+            }
+            grants[id] = Grant(origin: origin, access: grant.access, source: grant.source)
+        }
+        guard let current = grants[id], effectiveAccess(of: current, at: url) != nil else {
+            dropIfStanding(id)
+            return nil
+        }
         tab.assistantAccess.pageChanged(url: url)
         return tab.assistantAccess.effectivePolicy == .deny ? nil : tab
+    }
+
+    // MARK: Standing grants and the Developer tier
+
+    /// This connection's paired client as the trust store holds it now: nil when unpaired, revoked, or the store cannot be
+    /// read. A snapshot taken at connection time is never trusted.
+    var livePairedClient: PairedClient? {
+        guard trust.isAvailable else { return nil }
+        return pairedClient.flatMap { trust.client(id: $0.id) }
+    }
+
+    /// Whether the Developer tier can apply at `url`: a paired client, a developer site and a window of the Developer profile.
+    /// Private windows are never bound to a connection, and private browsing can never be the Developer profile.
+    func developerTierHolds(at url: URL) -> Bool {
+        livePairedClient != nil
+            && MCPDeveloperAccess.isDeveloperSite(url, trust: trust)
+            && MCPDeveloperAccess.isDeveloperProfile(browser.context, trust: trust)
+    }
+
+    /// What the paired client may do at `url` without asking: nil unless the Developer tier holds there and its standing
+    /// level is above Off and not paused.
+    func standingAccess(at url: URL) -> MCPAccessConsent.Access? {
+        developerTierHolds(at: url) ? MCPDeveloperAccess.standingAccess(for: pairedClient, trust: trust) : nil
+    }
+
+    /// What `grant` allows at `url` now. A Developer grant that stops qualifying falls back to Development; a standing
+    /// grant that stops holding (paused, lowered, the site or profile changed) is nil.
+    func effectiveAccess(of grant: Grant, at url: URL) -> MCPAccessConsent.Access? {
+        switch grant.source {
+        case .sheet:
+            guard grant.access == .developer else { return grant.access }
+            return developerTierHolds(at: url) ? .developer : .development
+        case .standing:
+            guard let standing = standingAccess(at: url) else { return nil }
+            return grant.access.rank <= standing.rank ? grant.access : standing
+        }
+    }
+
+    /// Developer-class grants (standing, or Developer from the sheet) move between developer sites without a sheet and
+    /// without the observed-link rule. Anything else, including a move to a site off the list, ends or re-asks.
+    func followsDeveloperSites(_ grant: Grant, to url: URL) -> Bool {
+        (grant.source == .standing || grant.access == .developer) && developerTierHolds(at: url)
+    }
+
+    /// A grant carried to a site the user approved in the Open and Share sheet. That sheet promises control only, so a
+    /// standing grant does not bring its Development level along.
+    private func moved(_ grant: Grant, to origin: String) -> Grant {
+        let access = grant.source == .standing && grant.access.rank > MCPAccessConsent.Access.control.rank ? .control : grant.access
+        return Grant(origin: origin, access: access)
+    }
+
+    private func dropIfStanding(_ id: UUID) {
+        guard grants[id]?.source == .standing else { return }
+        grants[id] = nil
+        observations[id] = nil
+    }
+
+    /// Drops standing grants that no longer hold and releases the leases they carried. Runs when the trust store changes.
+    func refreshStanding() {
+        for (id, grant) in grants where grant.source == .standing {
+            let holds = browser.tabs.first { $0.id == id }.flatMap(webURL(of:)).map { effectiveAccess(of: grant, at: $0) != nil }
+            if holds != true {
+                grants[id] = nil
+                observations[id] = nil
+            }
+        }
+        releaseUnauthorizedDevelopment()
+    }
+
+    /// The Developer tier's answer to a consequential-action confirmation: let it through on a developer site while this
+    /// connection holds Developer on the tab, and note it. Everywhere else the confirmation stays.
+    func developerApproval(for tab: BrowserTab) -> AgentActionConsent.DeveloperApproval {
+        .init { [weak self, weak tab] label, category, host in
+            guard let self, let tab, self.permits(tab, capability: .developer) else { return false }
+            self.developerApprovals.append(.init(date: Date(), category: category, label: String(label.prefix(80)), host: host))
+            self.developerApprovals.removeFirst(max(0, self.developerApprovals.count - 100))
+            Pipeline.log.notice("mcp: developer access let a \(category.rawValue, privacy: .public) action through without asking")
+            return true
+        }
     }
 }

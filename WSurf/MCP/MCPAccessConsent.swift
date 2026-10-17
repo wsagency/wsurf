@@ -12,12 +12,18 @@ enum MCPAccessConsent {
         case control
         /// Control plus DOM inspection, console and network metadata, viewport and device emulation.
         case development
+        /// Development, and no confirmation before consequential actions. Only a paired app on a developer site in the
+        /// Developer profile can hold it.
+        case developer
     }
 
     struct Page: Equatable, Sendable {
         let id: UUID
         let title: String
         let url: URL
+        /// Whether this page qualifies for Allow Developer: a paired app asked for it on a developer site in the
+        /// Developer profile. The sheet offers the choice only when at least one page qualifies.
+        var developerEligible = false
     }
 
     /// The access sheet as data: its text and its buttons in display order. Built apart from presenting it so the order and the
@@ -74,6 +80,13 @@ enum MCPAccessConsent {
                 These can disclose additional private site data, including text a page writes to its console.
                 """)
             buttons.append(.init(title: String(localized: "Allow Development"), access: .development, isEscape: false))
+            if pages.contains(where: \.developerEligible) {
+                message += "\n" + String(localized: """
+                    • Allow Developer: also acts without asking before purchases, sending, and deleting. \
+                    Only on developer sites in your Developer profile.
+                    """)
+                buttons.append(.init(title: String(localized: "Allow Developer"), access: .developer, isEscape: false))
+            }
         }
         buttons.append(.init(title: String(localized: "Don’t Allow"), access: nil, isEscape: true))
         return Sheet(
