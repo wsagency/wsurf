@@ -55,7 +55,8 @@ extension MCPBrowserSession {
         activity.client = displayName
         activity.record(
             tool: tool, tab: subject.tab, target: subject.target, outcome: outcome, detail: subject.detail,
-            milliseconds: Int((ContinuousClock.now - start) / .milliseconds(1)), bytes: ExternalActivityLog.bytes(of: result))
+            milliseconds: Int((ContinuousClock.now - start) / .milliseconds(1)), bytes: ExternalActivityLog.bytes(of: result),
+            scrub: scrubbedForAudit)
     }
 
     func recordStop() {

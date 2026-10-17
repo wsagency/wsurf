@@ -146,4 +146,36 @@ struct MCPSecretConnectionTests {
         #expect(running.server.sessions.isEmpty)
         #expect(!"\(session.secrets)".contains(Self.password))
     }
+
+    @Test(.timeLimit(.minutes(2)))
+    func theActivityLogHidesATypedPasswordFromAPageTitleButNotAPhraseTheAgentRegistered() async throws {
+        let fixture = try await HTTPFixtureServer.start(routes: ["/": .html(Self.page)])
+        let (running, _) = try await start()
+        defer { Task { await stop(running) } }
+        let connection = try await connect(running)
+        defer { Task { await connection.transport.disconnect() } }
+        defer { withExtendedLifetime(fixture) {} }
+        let session = try #require(running.server.sessions.first)
+
+        _ = try await connection.client.callTool(name: "newTab", arguments: ["url": .string(try fixture.url().absoluteString)])
+        let tab = try #require(running.developer.tabs.first)
+        let tabID: Value = .string(tab.id.uuidString)
+        #expect(await PageSettle.untilIdle(tab.page))
+        let (readContent, _) = try await connection.client.callTool(name: "readPage", arguments: ["tabID": tabID])
+        let read = try page(readContent)
+        let line = try #require(read.content.split(separator: "\n").first { $0.contains("field \"Password\"") })
+        let ref = try #require(Int(line.dropFirst().prefix { $0.isNumber }))
+        // The agent can register any text it likes. That must not blank what the user reads about what it did.
+        #expect(session.secrets.register("Signed in") == .registered)
+
+        let (typed, typeFailed) = try await connection.client.callTool(
+            name: "typeOnPage", arguments: ["tabID": tabID, "ref": .int(ref), "text": .string(Self.password), "secret": true])
+        #expect(typeFailed == false, "\(text(typed))")
+        _ = try await connection.client.callTool(name: "readPage", arguments: ["tabID": tabID])
+
+        let titles = session.activity.entries.filter { $0.event == .tool("typeOnPage") || $0.event == .tool("readPage") }.compactMap(\.tabTitle)
+        #expect(titles.count == 3)
+        #expect(titles.last == "Signed in with \(MCPSecretScrubber.auditReplacement)", "\(titles)")
+        #expect(!"\(session.activity.entries)".contains(Self.password))
+    }
 }

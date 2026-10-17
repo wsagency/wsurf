@@ -55,15 +55,17 @@ final class ExternalActivityLog: Identifiable {
         self.client = client
     }
 
+    /// `scrub` is applied to the tab title, target and note before they are kept: a page can echo what an agent typed into its
+    /// title. The session passes its audit scrubbing, which hides only values written into password, code or card fields.
     func record(
         tool: String, tab: BrowserTab? = nil, target: String? = nil, outcome: Entry.Outcome, detail: String? = nil,
-        milliseconds: Int = 0, bytes: Int = 0
+        milliseconds: Int = 0, bytes: Int = 0, scrub: (String) -> String = { $0 }
     ) {
         append(
             .init(
-                date: Date(), event: .tool(tool), tabID: tab?.id, tabTitle: Self.clean(tab?.title, limit: Self.titleLimit),
-                target: Self.clean(target, limit: Self.targetLimit),
-                detail: Self.clean(detail, limit: Self.detailLimit), outcome: outcome, milliseconds: milliseconds, bytes: bytes))
+                date: Date(), event: .tool(tool), tabID: tab?.id, tabTitle: Self.clean(tab.map { scrub($0.title) }, limit: Self.titleLimit),
+                target: Self.clean(target.map(scrub), limit: Self.targetLimit),
+                detail: Self.clean(detail.map(scrub), limit: Self.detailLimit), outcome: outcome, milliseconds: milliseconds, bytes: bytes))
     }
 
     func recordStop() {
