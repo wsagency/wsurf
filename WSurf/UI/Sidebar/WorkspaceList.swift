@@ -546,7 +546,7 @@ struct SidebarDragChip: View {
         switch item {
         case .tab(let id):
             if let tab = browser.tab(id: id) {
-                HStack(spacing: 8) {
+                HStack(spacing: SidebarMetrics.rowIconSpacing) {
                     TabIcon(tab: tab, tint: BrowserSettings.application.sidebarTextColor(
                         isDeferred: tab.isDeferred,
                         scheme: windowColorScheme
@@ -559,20 +559,23 @@ struct SidebarDragChip: View {
                                 scheme: windowColorScheme
                             ))
                             .lineLimit(1)
+                            .sidebarTitleCentered()
                         Spacer(minLength: 0)
                     }
                 }
             }
         case .folder(let id):
             if let folder = browser.folder(id: id) {
-                HStack(spacing: 7) {
+                HStack(spacing: SidebarMetrics.rowIconSpacing) {
                     Image(systemName: "folder.fill")
                         .font(Theme.Font.caption)
                         .foregroundStyle(folder.color.tint)
+                        .frame(width: SidebarMetrics.rowIconSize, height: SidebarMetrics.rowIconSize)
                     if sidebarStyle == .full {
                         Text(verbatim: folder.name)
                             .font(BrowserSettings.application.sidebarFont)
                             .foregroundStyle(BrowserSettings.application.sidebarTextColor(scheme: windowColorScheme))
+                            .sidebarTitleCentered()
                         Spacer(minLength: 0)
                     }
                 }

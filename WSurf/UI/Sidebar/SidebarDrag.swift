@@ -260,6 +260,7 @@ struct SidebarDropMark: View {
                 label
                     .font(BrowserSettings.application.sidebarFont)
                     .lineLimit(1)
+                    .sidebarTitleCentered()
                 Spacer(minLength: 0)
             }
         }

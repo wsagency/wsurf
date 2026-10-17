@@ -79,7 +79,7 @@ struct FolderSection: View {
         let ink = inkSource.ink(for: style)
         let showsOutline = folder.isExpanded && !rows.isEmpty
         VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
-            HStack(spacing: 7) {
+            HStack(spacing: SidebarMetrics.rowIconSpacing) {
                 Image(systemName: audible == nil
                     ? (folder.isExpanded ? "folder" : "folder.fill")
                     : "speaker.wave.2.fill")
@@ -87,6 +87,7 @@ struct FolderSection: View {
                     .foregroundStyle(folder.color.tint)
                     .contentTransition(.symbolEffect(.replace))
                     .animation(Theme.Motion.settle, value: audible?.id)
+                    .frame(width: SidebarMetrics.rowIconSize, height: SidebarMetrics.rowIconSize)
                     .help(audible.map { Text("“\($0.title)” is playing") } ?? Text(verbatim: ""))
                     .overlay(alignment: .bottomTrailing) {
                         // Icons only has no count badge, so a small inverse dot carries the current tab instead.
@@ -108,6 +109,7 @@ struct FolderSection: View {
                         .foregroundStyle(BrowserSettings.application.sidebarTextColor(scheme: colorScheme))
                         .lineLimit(1)
                         .sidebarRowAccessibility(style)
+                        .sidebarTitleCentered()
                 }
 
                 if sidebarStyle == .full {

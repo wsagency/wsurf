@@ -87,7 +87,8 @@ struct SidebarRowInkSource: DynamicProperty {
     }
 }
 
-/// The dot on a new tab, ringed in the sidebar color.
+/// The dot on a new tab, ringed in the sidebar color. Its middle is on the icon's trailing edge, 2 pt below the top
+/// of the icon, so the ring reaches 2 pt above it and stays inside the row at the shortest height.
 private struct SidebarNewMark: View {
     let color: Color
     let ring: Color
@@ -97,13 +98,49 @@ private struct SidebarNewMark: View {
             .fill(color)
             .frame(width: 6, height: 6)
             .background { Circle().fill(ring).padding(-1) }
-            .offset(x: 3, y: -3)
+            .offset(x: 3, y: -1)
             .accessibilityHidden(true)
     }
 }
 
+/// Holds one title so that the middle of its letters is the middle of the layout. An alignment guide would move the
+/// title, but the row would still center the bounds of everything in it, and those are lopsided once the title is
+/// moved. Here the bounds are balanced around the middle of the letters, so the row centers that.
+private struct SidebarTitleLayout: Layout {
+    /// How far above the baseline the middle of the letters is. `nil` keeps the title centered on its own box.
+    let midline: CGFloat?
+
+    private func measure(_ subview: LayoutSubview, in proposal: ProposedViewSize) -> (size: CGSize, middle: CGFloat) {
+        let dimensions = subview.dimensions(in: proposal)
+        let middle = midline.map { dimensions[.firstTextBaseline] - $0 } ?? dimensions.height / 2
+        return (CGSize(width: dimensions.width, height: dimensions.height), middle)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let subview = subviews.first else { return .zero }
+        let (size, middle) = measure(subview, in: proposal)
+        return CGSize(width: size.width, height: 2 * max(middle, size.height - middle))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let subview = subviews.first else { return }
+        let (size, middle) = measure(subview, in: proposal)
+        subview.place(
+            at: CGPoint(x: bounds.minX, y: bounds.midY - middle),
+            proposal: ProposedViewSize(width: bounds.width, height: size.height)
+        )
+    }
+}
+
 extension View {
-    /// The new-tab dot on the top trailing corner of an icon. A row that is not new is left as it is.
+    /// Centers a title on the middle of its letters instead of on its line box, which is centered on the capitals
+    /// and leaves lowercase text low. Put it on the title in a row, so the icon beside it meets that middle.
+    /// A column that grows a second line keeps the center of both lines (`applies: false`).
+    func sidebarTitleCentered(_ applies: Bool = true) -> some View {
+        SidebarTitleLayout(midline: applies ? BrowserSettings.application.sidebarTitleMidline : nil) { self }
+    }
+
+    /// The new-tab dot on the top trailing edge of an icon. A row that is not new is left as it is.
     func sidebarNewMark(_ ink: SidebarRowInk) -> some View {
         overlay(alignment: .topTrailing) {
             if let mark = ink.mark {
