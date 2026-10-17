@@ -123,6 +123,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(command("Reopen Last Closed Window", #selector(reopenClosedWindow)))
         menu.addItem(.separator())
         menu.addItem(command("Unload Tab", #selector(unloadTab), key: "w"))
+        menu.addItem(command("Free Memory", #selector(freeMemory)))
         menu.addItem(.separator())
         menu.addItem(command("Pin This Page", #selector(pinPage), key: "d"))
         menu.addItem(command(
@@ -308,6 +309,9 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         }
         guard let tab = coordinator.browser.activeTab else { return }
         coordinator.unloadTab(tab)
+    }
+    @objc private func freeMemory() {
+        coordinator.freeMemory()
     }
     @objc private func reopenClosedTab() {
         if let application, application.activeCoordinator == nil {

@@ -195,6 +195,12 @@ final class BrowserApplication {
         ensureActiveWindow().showBrowser()
     }
 
+    /// Unloads the background tabs of every open window. Each window keeps its current tab.
+    @discardableResult
+    func freeMemory() -> Int {
+        windows.filter { !$0.isClosed }.reduce(0) { $0 + $1.browser.freeMemory() }
+    }
+
     func focus(_ coordinator: AppCoordinator) {
         guard !coordinator.isClosed, windows.contains(where: { $0 === coordinator }) else { return }
         activeWindowID = coordinator.windowID

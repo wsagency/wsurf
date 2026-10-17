@@ -95,6 +95,14 @@ enum SettingsIndex {
                       ["sleep", "sleeping", "discard", "unload", "memory", "ram", "background tabs", "reload",
                        "sleep after", "timer", "idle", "inactive", "hours", "minutes", "custom",
                       ]),
+        SettingsEntry("general.freeMemory", .general, "Free memory",
+                      """
+                      Unloads background tabs now, in WebKit and Chromium. They reload when you open them; Chromium tabs \
+                      restore their address but not Back/Forward history. Chromium’s helper processes stay until you quit WSurf.
+                      """,
+                      ["free memory", "unload", "unload all", "background tabs", "release", "ram", "memory", "chromium",
+                       "helper processes", "reclaim",
+                      ]),
         SettingsEntry("general.linkPreview", .general, "Show link address",
                       "Show a link’s address at the bottom of the page when you point at it.",
                       ["link", "preview", "status bar", "hover", "url", "address", "capsule", "destination"]),

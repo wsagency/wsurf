@@ -43,6 +43,7 @@ enum CommandPaletteAction: String, CaseIterable {
     case openLocation
     case privateBrowsing
     case unloadTab
+    case freeMemory
     case reopenTab
     case duplicateTab
     case togglePin
@@ -318,8 +319,16 @@ enum CommandPaletteCatalog {
                     title: "Unload Tab",
                     symbol: "moon.zzz",
                     shortcut: "⌘W",
-                    aliases: ["close page", "sleep tab", "release memory"],
+                    aliases: ["close page", "sleep tab"],
                     isAvailable: context.hasActiveTab
+                ),
+                make(
+                    .freeMemory,
+                    group: .tabs,
+                    title: "Free Memory",
+                    detail: "unload every background tab",
+                    symbol: "memorychip",
+                    aliases: ["release memory", "unload all tabs", "sleep all tabs", "reclaim memory", "ram"]
                 ),
                 make(
                     .togglePin,

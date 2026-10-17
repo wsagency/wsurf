@@ -27,6 +27,15 @@ extension BrowserModel {
         return discarded
     }
 
+    /// Unloads every background tab now, with the protections memory pressure uses, whether or not Sleep inactive tabs is on.
+    @discardableResult
+    func freeMemory() -> Int {
+        context.webViewPool.discardIdleForMemoryPressure()
+        let discarded = discardBackgroundTabs()
+        Pipeline.log.notice("free memory: unloaded \(discarded, privacy: .public) background tabs")
+        return discarded
+    }
+
     /// Unloads background tabs idle for `limit`, with the protections memory pressure uses. A tab on screen when this
     /// runs restarts its clock, so a split pane that was in front all along is not idle the moment the split closes.
     @discardableResult

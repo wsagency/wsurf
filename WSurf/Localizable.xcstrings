@@ -391,6 +391,27 @@
     "Unload %lld Tabs" : {
       "comment" : "Sidebar context-menu command that unloads selected tabs without removing their links or pins."
     },
+    "Free Memory" : {
+      "comment" : "Command that unloads every background tab in every window now, in WebKit and Chromium. Title Case. File menu item, command palette entry and the button in Settings > General."
+    },
+    "Free memory" : {
+      "comment" : "Title of the Settings > General row, and its Settings search entry, with the Free Memory button. Sentence case."
+    },
+    "Unloads background tabs now, in WebKit and Chromium. They reload when you open them; Chromium tabs restore their address but not Back/Forward history. Chromium’s helper processes stay until you quit WSurf." : {
+      "comment" : "Caption of the Free memory row in Settings > General, and its Settings search entry. Chromium’s graphics, network and storage helper processes cannot be released without quitting WSurf."
+    },
+    "unload every background tab" : {
+      "comment" : "Caption under the Free Memory command in the command palette. Sentence fragment, lower case."
+    },
+    "No background tabs to unload." : {
+      "comment" : "Brief notice after Free Memory when every tab is the current tab, already unloaded or protected."
+    },
+    "Unloaded 1 tab." : {
+      "comment" : "Brief notice after Free Memory unloaded exactly one tab."
+    },
+    "Unloaded %lld tabs." : {
+      "comment" : "Brief notice after Free Memory. The integer is how many tabs were unloaded, at least 2."
+    },
     "This tab has unsaved form changes." : {
       "comment" : "Notice explaining why a tab cannot safely be unloaded."
     },
