@@ -689,6 +689,8 @@ final class CommandPaletteModel {
             if !coordinator.closePeek(), let tab {
                 coordinator.unloadTab(tab)
             }
+        case .freeMemory:
+            coordinator.freeMemory()
         case .reopenTab:
             browser.reopenLastClosedTab()
         case .duplicateTab:

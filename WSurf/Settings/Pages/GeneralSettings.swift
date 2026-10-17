@@ -44,6 +44,21 @@ struct GeneralSettings: View {
 
                 SleepAfterRow(settings: settings)
             }
+
+            RowSeparator()
+
+            DetailRow(
+                title: "Free memory",
+                caption: """
+                Unloads background tabs now, in WebKit and Chromium. They reload when you open them; Chromium tabs \
+                restore their address but not Back/Forward history. Chromium’s helper processes stay until you quit WSurf.
+                """
+            ) {
+                SettingsButton(title: "Free Memory") {
+                    coordinator.freeMemory()
+                }
+            }
+            .settingsAnchor("general.freeMemory")
         }
 
         SettingsSection(title: "Default browser", symbol: "arrow.up.forward.app") {
