@@ -193,8 +193,8 @@ revoke it immediately.
 | `readPerformance` | Development. Navigation timing, paint, layout shift, long tasks and resource counts and sizes by type, with the five slowest resources and no query values. A metric the engine does not expose is `null` and named in `unsupported`. |
 | `scrollPage` | Scroll vertically or horizontally, optionally inside a referenced container. |
 | `goBack` | Go back within the shared website. |
-| `navigate` | Navigate a shared tab; another website requires approval. |
-| `newTab` | Ask to open and share a new webpage. Requires existing control access, except for a paired app's standing grant on a developer site, which needs neither a grant nor a sheet. |
+| `navigate` | Navigate a shared tab; another website requires approval, except for a paired app that follows the Website access default (see Website access default). |
+| `newTab` | Ask to open and share a new webpage. Requires existing control access, except for a paired app's standing grant on a developer site, which needs neither a grant nor a sheet. A paired app that follows the Website access default needs no sheet for the new website either, but still needs the existing control access. |
 | `switchTab` | Activate an already shared tab before controlling it. |
 | `closeTab` | Close an already shared, unpinned tab. |
 | `handleDialog` | Read or answer a JavaScript dialog (alert, confirm, prompt, or Chromium's beforeunload "Leave site?") that a page opened in a shared tab. Needs control access. See Page dialogs below. |
@@ -497,6 +497,34 @@ and works in the Developer window. A connection is refused while the focused win
 private one, as before. Adding a staging host to the developer sites extends standing
 grants to it; Settings says so.
 
+### Website access default
+
+A paired app can follow the **Website access** default (Settings › Assistant › Acting on websites) instead of
+asking before every new website. It is off until you turn on **Follow Website access** in Settings › Assistant ›
+Connected apps › Websites. When it is on and the default is **Allow Control**, a paired app that already has control of a
+shared tab can `navigate` that tab to a new website, or open one with `newTab`, without the Open and Share sheet.
+Everything else about the connection stays: the first request for access still shows its sheet, and navigation still
+needs a link the page showed.
+
+| Rule | What happens |
+| --- | --- |
+| Where the setting lives | The switch and the default level you approved are stored in the keychain item that holds the pairings, as the standing grants are. Settings is the only place that writes them. The profile's SitePermissions.json holds the default for the assistant, and a process with a shell can edit it, so an app never uses that file to get more: it gets the **lower** of the two levels. Edit the file to Allow Control and nothing changes; edit it to Ask and the app asks. |
+| Keychain unreadable | Off. An unsigned build, a locked or damaged item and a newer item all turn it off, as they turn pairing off. |
+| Which apps | Paired apps only. An unpaired connection keeps asking, and a paused app (see Stop) gets no default access until you resume it. |
+| Which websites | A website with no setting of its own, or **Allow Control**. A website set to **Ask**, **Read Only** or **No Access** keeps its own rule: the sheet, or a refusal. |
+| How much | Control, never more. The new website does not get Development or Developer, even if the tab had it before. |
+| Private windows | Never. The default does not apply there, and private windows are never shared. |
+| Re-checked on every use | The access ends when you turn the switch off, lower the default, pause or revoke the app, or give the website its own setting. A page that leaves the website ends it, as before. |
+
+**Pages with sign-in or payment fields.** As for the assistant, a page that shows a password or payment field asks
+before the app controls it: WSurf shows "Allow *app* to Use This Page?". Allowing it gives the app control of that website
+for the rest of the connection, like the Open and Share sheet. Reading the page needs no question. Signing in, giving
+another website access to the account, and purchases, transfers, deletions and posting ask for confirmation exactly as
+they do without the default; the default never skips those, and neither does the Developer tier for signing in.
+
+**Stop.** **Stop External Connections** pauses an app that follows the default, as it pauses one with a standing grant.
+Choose **Resume** in Connected apps to bring it back.
+
 ### Test credentials
 
 In the Developer tier an app can type **test** credentials that it supplies itself into
@@ -634,9 +662,11 @@ It does not cover signed-build features (Keychain, passkeys, Apple Passwords), w
   **Assistant Access: No Access** blocks external access; **Read Only** blocks external
   control even when the connection has a control grant. External sharing does
   not change those settings.
-- The assistant's default **Website access** (Settings › Assistant) does not
-  apply to external connections. Only a website's own Assistant Access setting
-  limits a connection.
+- The assistant's default **Website access** (Settings › Assistant) never limits
+  an external connection: only a website's own Assistant Access setting does. It can
+  only open: a paired app that you let follow the default skips the Open and Share
+  sheet for new websites (see Website access default), with the level and the switch
+  kept in the keychain and the profile's file able only to lower them.
 - The existing page driver detects and masks sensitive fields and refuses to
   fill them; the one exception is a test secret typed in the Developer tier, which
   is hidden from every result (see Test credentials). Consequential actions use WSurf's native confirmation UI. External
@@ -674,8 +704,8 @@ command palette. It ends every connection bound to that window at once:
 - the running call is cancelled and returns nothing;
 - development leases are released, so viewport, emulation and diagnostics are removed;
 - the connection's grants and remembered action approvals are revoked and its socket is closed;
-- a paired app that has a standing grant (Settings › Assistant › Connected apps) is paused, so reconnecting does not
-  bring the grant back until you choose **Resume** there;
+- a paired app that has a standing grant, or opens new websites under the Website access default (Settings › Assistant ›
+  Connected apps), is paused, so reconnecting does not bring that back until you choose **Resume** there;
 - other windows' connections are not touched.
 
 The client can reconnect on its next call, but it starts with no access and the user has to approve it again.
@@ -714,7 +744,9 @@ unchanged. Malformed messages still reach the normal protocol validation.
 It calls the existing `PageDriver` and honors `TabAssistantAccessCenter` policy.
 `AgentToolkit` and assistant conversation scoping retain their existing behavior.
 `PageAutomationGuard` supplies additional revocation and document checks only
-while an external page call is executing.
+while an external page call is executing. `MCPDefaultAccess` decides whether a paired
+app follows the Website access default; a grant it gives (`Grant.Source.appDefault`)
+is checked against it again on every use, like a standing grant.
 
 WebKit and Chromium use the same page driver and privacy checks. Chromium
 Back/Forward-cache restores retain isolated-world contexts and rebind them to
