@@ -339,7 +339,12 @@ final class BrowserPage: NSView {
         try await evaluateJavaScript(script, in: nil, contentWorld: .page)
     }
 
+    /// Script round trips made through this page, counted so a test can show that a wait asks the page once instead of polling.
+    private(set) var evaluations = 0
+    private(set) var asyncCalls = 0
+
     func evaluateJavaScript(_ script: String, in frame: BrowserFrame?, contentWorld: WKContentWorld) async throws -> Any {
+        evaluations += 1
         guard !closed else { throw ChromiumError.closed }
         if let webKit {
             if let frame, frame.webKit == nil {
@@ -373,6 +378,7 @@ final class BrowserPage: NSView {
     }
 
     func callAsyncJavaScript(_ body: String, arguments: [String: Any] = [:], in frame: BrowserFrame?, contentWorld: WKContentWorld) async throws -> Any {
+        asyncCalls += 1
         guard !closed else { throw ChromiumError.closed }
         if let webKit {
             if let frame, frame.webKit == nil {

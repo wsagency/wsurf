@@ -96,7 +96,9 @@ extension PageDriver {
             details.insert("Verified refs: " + verified.map { "[\($0)]" }.joined(separator: ", ") + ".", at: 0)
         }
         let snapshot: String
-        if await canContinueBatch(fields.first?.ref ?? 0, in: webView) {
+        if feedbackMode == .delta {
+            snapshot = ""
+        } else if await canContinueBatch(fields.first?.ref ?? 0, in: webView) {
             let observationBeforeSnapshot = observation(in: webView)?.documentID
             let refreshed = await Self.snapshot(webView)
             snapshot = observation(in: webView)?.documentID == observationBeforeSnapshot

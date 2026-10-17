@@ -165,14 +165,14 @@ revoke it immediately.
 | `requestAccess` | Ask once to share the webpages currently on screen. `development: true` also asks for development access; the user may grant less. |
 | `listTabs` | List only tabs shared with this connection. |
 | `readPage` | Search rendered text, scope or paginate controls, and return an observation ID. |
-| `clickOnPage` | Click a numbered control from that observation. |
+| `clickOnPage` | Click a numbered control. Returns what the click changed (see Action results). |
 | `typeOnPage` | Fill a nonsensitive field, optionally submitting it. |
 | `selectOption` | Choose an option in a select control. |
 | `fillFields` | Fill up to 32 distinct nonsensitive form controls without submitting; report exactly which refs retained their values. |
 | `inspectControl` | Read control state and paginate dropdown options. |
 | `setChecked` | Set a checkbox, switch, or radio to the requested state. |
-| `waitForPage` | Wait up to 15 seconds for text, absent text, a URL substring, document readiness, or a CSS selector that matches exactly one element to be visible, hidden/absent, or enabled. An element wait ends as stale if the page navigates. Selectors are limited to a safe subset; see below. |
-| `screenshotPage` | Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part, also when it sits in a same-origin iframe (the frame's border, padding, scale, clipping, CSS zoom and any 2D rotation, reflection or skew are applied; a selected frame, a frame or clipping container under a 3D transform or perspective, or a frame or clipping container inside SVG content, is refused). A control ref from `readPage` needs only read access; any other element ref from `findElements` needs development access, checked before the work, after every wait and again just before the image is returned. The image is shrunk to fit the message limit, and the result states the covered rectangle and the scale of the image actually returned. Never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop. |
+| `waitForPage` | Wait up to 15 seconds for text, absent text, a URL substring, document readiness, or a CSS selector that matches exactly one element to be visible, hidden/absent, or enabled. An element wait ends as stale if the page navigates. The page watches for the condition itself, so a wait is one call, not a poll. Selectors are limited to a safe subset; see below. |
+| `screenshotPage` | Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part, also when it sits in a same-origin iframe (the frame's border, padding, scale, clipping, CSS zoom and any 2D rotation, reflection or skew are applied; a selected frame, a frame or clipping container under a 3D transform or perspective, or a frame or clipping container inside SVG content, is refused). A control ref from `readPage` needs only read access; any other element ref from `findElements` needs development access, checked before the work, after every wait and again just before the image is returned. The image has one pixel per CSS pixel unless `maxWidth` (320–2,048) asks for another width, and is shrunk further to fit the message limit; the result states the covered rectangle and the scale of the image actually returned. `fullPage: true` (development access, asked again before the image is returned; Chromium only, WebKit reports that it cannot) captures the document from its top-left corner, at most 4,096 by 4,096 CSS pixels and 2,048 image pixels wide, whatever size the page reports. At most two captures a second per connection. Otherwise never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop. |
 | `pressKey` | Send a supported keyboard key to a control in a visible tab. |
 | `hoverOnPage` | Move the real pointer to a referenced element, so CSS `:hover` and pointer/mouse handlers run. Needs WSurf to be the active app with a key window and the tab on screen; it never activates or raises WSurf. Refused with a specific message when the element is offscreen, covered, or clipped by the window (a development viewport larger than the window), or when the pointer could not be delivered; not available inside frames. |
 | `getDevelopmentInfo` | Engine, measured viewport (`innerWidth`, `innerHeight`, device pixel ratio, touch), zoom, who holds the tab's development lease (`none`, `self`, `other`) and per-engine capabilities. Works with any grant. |
@@ -195,9 +195,10 @@ These tools cover browser page and tab actions. Assistant conversations, backgro
 research, the media player, arbitrary JavaScript, cookies, credential stores and
 filesystem access are not exposed.
 
-Successful page actions return fresh controls and an `observationID`; reuse that
-result for the next action. `fillFields` accepts positive, distinct refs from the
-latest observation: text, supported value controls, dropdowns and checked states
+A page action reports what it changed (see Action results) and an `observationID`.
+A ref stays valid for as long as its document does and its control is unchanged, so
+the next action needs no new read. `fillFields` accepts positive, distinct refs
+the client was given: text, supported value controls, dropdowns and checked states
 (`true`/`false`). Password/payment controls remain blocked, disabled/read-only
 controls are skipped, and file pickers cannot be opened by a batch. No batch submits
 a form. Navigation, cancellation or access revocation stops remaining writes.
@@ -211,10 +212,63 @@ Replaced or unobserved targets are refused.
 Use `lookingFor` to search beyond the first excerpt, `scope` for the controls under every element a CSS selector
 matches, `viewportOnly` for visible controls, and `textOffset` / `controlOffset` to continue.
 Keep the query and scope unchanged when paging. Text offsets use UTF-16 units.
-The standard text response budget is about 6 KB before MCP framing; a screenshot is capped at 150 KB of JPEG, and its pixels shrink when needed.
+The text of a full read is about 6 KB before MCP framing; an action's report defaults to at most 4 KB and is about 1 KB for a typical click. A screenshot is capped at 150 KB of JPEG, and its pixels shrink when needed.
 A ref the observation did not list gets a message saying so, not the stale-page message.
 Use screenshots only when text and control state do not answer the task.
 
+
+### Action results
+
+`clickOnPage`, `typeOnPage`, `selectOption`, `setChecked`, `fillFields`, `scrollPage`, `pressKey` and
+`hoverOnPage` return what the action changed instead of the whole page. The page is digested before and after
+(controls, text, focus, scroll position); only the difference is sent: 0.3 to 1 KB for a click, a
+field change or a selection on a typical page, where the same action returned 3.3 KB of text before. The reply keeps the earlier keys (`tabID`, `content`,
+`observationID`, `url` after a navigation) and adds `status` (`ok` or `failed`), `action`, `navigation` and `cost`.
+`content` is the report inside the untrusted-content wrapper; every string in it comes from the page.
+
+```
+Clicked “Add to cart”.
+added (1):
+[34] button "Checkout"
+changed:
+[3] text "Cart (0)" → "Cart (1)"
+text added: "Added to cart"
+```
+
+| Line | Meaning |
+| --- | --- |
+| `navigation: load → URL` | The action loaded a new document. There is nothing to diff: the new page's title, text and up to 15 controls follow, and their refs work. `sameDocument` is a URL change inside the document (`pushState`, a hash). |
+| `added (n):` | Controls that did not exist for the client before, viewport first, up to 10, each as `readPage` prints it (so a listed link is an observed link). |
+| `removed:` | Refs that left the page. Not reported for a scroll, where leaving the viewport is not a removal. |
+| `changed:` | A control's `text`, `value`, `filled`, `checked`, `expanded`, `pressed`, `selected` or `disabled`, up to 20. A sensitive field reports `filled` and never its value. |
+| `text added:` / `text removed:` | Up to 3 text blocks (160 characters each) that appeared or went away and are not a control's own label. The first 600 text blocks of the page are compared; for a scroll, the text in the viewport. |
+| `focus: A → B` | The focused element moved. |
+| `scroll: y of max px` | The scroll position, for `scrollPage` only (acting on a control scrolls it into view, which is not reported). |
+| `console:` / `failed requests:` | New console errors (first 3) and requests that failed or returned 400 or more, only while this connection's `startDiagnostics` capture runs on the tab. Otherwise the reply says `"diagnostics": "off"`. |
+| `opened:` | A tab the action's own page opened (a popup, or a link that opens a new tab). It is not shared; its URL counts as an observed link. A tab a person or another window opened meanwhile is neither reported nor an observed link. |
+| `No visible change.` | Nothing above changed. |
+
+`cost` states `bytes` (the size of the text block), `settleMs` (time spent waiting for the page) and `totalMs`, and
+`truncated` when a limit cut the report. Optional arguments on these tools:
+
+- `result`: `delta` (default) or `full`, the whole page and observation as before.
+- `budget`: `maxBytes` (1,000–60,000, default 4,000) caps the reply text for `delta`; the report gives up detail in
+  steps (page text, text blocks, changes, additions) until it fits. `settleMs` (200–5,000, default 1,500) is the longest
+  wait for the page to go quiet.
+- `screenshotOnFailure`: `element` or `viewport` attaches a small JPEG (at most 60 KB and 640 px wide) when the action
+  fails: the element first, then the viewport. Refused wherever a screenshot is.
+
+**Waiting.** After an action the page is asked once and answers when its DOM and finished resources have been quiet
+for 120 ms (the highlight ring does not count), or at the ceiling. A navigation the action started is followed to its
+end. A request still running when the page goes quiet is not waited for; use `waitForPage`. A page that never stops
+changing costs the `settleMs` ceiling.
+
+**Refs.** `observationID` is optional for a ref. A ref is accepted while the client was given it for the current
+document and its control is unchanged (kind, label, id, name, type, link target and form target). A ref from another
+document, or of a control that changed under the client, is refused: a ref keeps the state its control had when the client
+last saw it listed (in a read or in a report), so a control that changed and was not listed again stays refused until the
+page is read. An `observationID` that is sent must still be the
+latest. A failed action leaves the client's observation as it is.
 
 ### Development access
 
@@ -305,9 +359,11 @@ It does not cover signed-build features (Keychain, passkeys, Apple Passwords), w
   confirmations do not inherit the assistant's saved action approvals; any
   remembered approval lasts only for that connection.
 - External page scripts run in WebKit's isolated client world. Observation IDs
-  belong to one connection and one document. Another read invalidates the
-  underlying control snapshot. Revocation and navigation are checked again
-  after suspension and before returning page data.
+  belong to one connection and one document. A read or an action takes a new
+  snapshot, but a ref the connection was given stays usable for its document
+  while the control is unchanged; an observation ID that is sent must be the
+  latest. Revocation and navigation are checked again after suspension and
+  before returning page data.
 - After reading untrusted content, outbound navigation must use an observed
   link, including its query string. The client cannot construct an arbitrary
   address from page content and navigate to it through these tools.

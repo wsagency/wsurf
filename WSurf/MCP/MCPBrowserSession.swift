@@ -44,6 +44,7 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored private let actionPolicy = AgentActionPolicy(storage: MCPActionGrantStorage())
     @ObservationIgnored private let consentWindow: ExtensionWindowAdapter?
     @ObservationIgnored var observations: [UUID: PageObservation] = [:]
+    @ObservationIgnored var feedback = MCPActionFeedbackState()
     /// Cleanup index only: the tab owns the lease, this lets disconnect find the tabs this connection holds.
     @ObservationIgnored var developmentTabs: [UUID: (tab: BrowserTab, owner: DevelopmentOwner)] = [:]
     @ObservationIgnored var destinations: Set<String> = []

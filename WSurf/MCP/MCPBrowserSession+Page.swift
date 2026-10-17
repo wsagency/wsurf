@@ -24,7 +24,9 @@ extension MCPBrowserSession {
         let usesRef = entry.usesRef || arguments["ref"] != nil
         let observation = observations[tab.id]
         if usesRef {
-            guard let observation, observation.id == arguments["observationID"]?.stringValue,
+            // A ref stays valid for as long as its document does, so the observation ID is optional. One that is sent must
+            // still be the latest.
+            guard let observation, arguments["observationID"]?.stringValue.map({ $0 == observation.id }) ?? true,
                 observation.documentURL == url.absoluteString
             else { return failure("The observation is stale. Use readPage again.") }
         }
@@ -36,79 +38,119 @@ extension MCPBrowserSession {
                     && (capability != .control || self.onScreen(tab))
             }
         )
+        // What a finished action may report: the page may have left the screen (a popup took its place) without the
+        // connection losing the right to read it.
+        let reading = PageAutomationGuard(
+            documentURL: url.absoluteString, snapshot: nil,
+            validate: { [weak self, weak tab, weak view] in
+                guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
+                return self.mayProceed(tab, capability: .read)
+            }
+        )
         return await PageAutomationGuard.$current.withValue(scope) {
             guard scope.validate(), webURL(of: tab) == url else { return failure("Page access changed. Read the page again.") }
-            return await PageDriver.$expectedObservation.withValue(usesRef ? observation?.snapshot : nil) {
-                var capturedImage: Data?
-                let output: String
-                if name == "screenshotPage" {
-                    let request = Self.screenshotTarget(arguments)
-                    if let message = request.error {
-                        output = message
-                    } else {
-                        // A control ref needs read access; a non-control inspection ref needs current development access, asked
-                        // again inside the driver before work, after each await and before pixels are returned.
-                        let developmentAllowed = { [weak self, weak tab] in
-                            guard let self, let tab else { return false }
-                            return self.mayProceed(tab, capability: .development)
-                        }
-                        let outcome = await PageDriver.screenshot(
-                            request.target, developmentAllowed: developmentAllowed, maximumBytes: Self.screenshotBytes, in: view)
-                        switch outcome {
-                        case .success(let capture):
-                            let box = capture.bounds
-                            let text =
-                                "Screenshot captured. Shows viewport CSS pixels x \(Int(box.minX.rounded())), y \(Int(box.minY.rounded())), "
-                                + "\(Int(box.width.rounded())) by \(Int(box.height.rounded())); image scale \(String(format: "%.2f", capture.scale)) px per CSS px.\n"
-                                + (await PageDriver.snapshot(view, viewportOnly: true))
-                            // The snapshot above was the last await: development access is asked once more right before the
-                            // image is attached, so a revoke during it never returns an inspection image.
-                            if capture.requiresDevelopment, !developmentAllowed() {
-                                output = ScreenshotFailure.needsDevelopment.message
-                            } else {
-                                capturedImage = capture.jpeg
-                                output = text
-                            }
-                        case .failure(let failure):
-                            output = failure.message
-                        }
-                    }
-                } else {
-                    output = await pageAction(name: name, arguments: arguments, view: view)
+            return await PageDriver.$accumulatesRefs.withValue(true) {
+                await PageDriver.$expectedObservation.withValue(usesRef ? observation?.snapshot : nil) {
+                    await pageReply(
+                        name: name, arguments: arguments, tab: tab, view: view, scope: scope, reading: reading, observation: observation)
                 }
-                guard scope.validate(), !Task.isCancelled else {
-                    observations[tab.id] = nil
-                    return failure("Page access changed before the operation finished. Its contents were not returned.")
-                }
-                let prefixes = [
-                    "PAGE TEXT:", "Clicked", "Typed", "Selected", "Scrolled", "Already at", "Went back.",
-                    "CONTROL:", "Condition met.", "Set checked", "Checked state", "Screenshot captured.", "Hovered.", "Sent ", "ELEMENTS:", "ELEMENT:",
-                ]
-                let succeeded =
-                    prefixes.contains { output.hasPrefix($0) }
-                    || (name == "fillFields" && output.hasPrefix("Filled "))
-                var content: [String: Value] = ["tabID": .string(tab.id.uuidString), "content": .string(AgentToolkit.untrusted(output))]
-                var delivered: PageObservation?
-                if let current = PageDriver.observation(in: view), current.url == webURL(of: tab)?.absoluteString,
-                    output.contains("observationID: " + current.id) {
-                    delivered = PageObservation(id: current.id, snapshot: current.id, documentURL: current.url)
-                    content["observationID"] = .string(current.id)
-                    if PageOutputBudget.cost(current.url) <= 512 { content["url"] = .string(current.url) }
-                }
-                let value: Value = .object(content)
-                var blocks: [MCP.Tool.Content] = [.text(text: encoded(value), annotations: nil, _meta: nil)]
-                if let capturedImage { blocks.append(.image(data: capturedImage.base64EncodedString(), mimeType: "image/jpeg", annotations: nil, _meta: nil)) }
-                let result = CallTool.Result(content: blocks, structuredContent: Optional.some(value), isError: !succeeded)
-                // A refused reply grants nothing: the client never saw its observation ID or links.
-                if capturedImage != nil, Self.replyBytes(result) > MCPMessageFramer.maximumBytes {
-                    observations[tab.id] = nil
-                    return failure("The screenshot is too large to return. Use readPage for redacted text.")
-                }
-                observations[tab.id] = delivered
-                hasReadContent = true
-                destinations.formUnion(PageDriver.listedLinks(in: output).map { destinationKey($0.url) })
-                return result
             }
+        }
+    }
+
+    /// The reply for a page tool whose guard and expected observation are already in place.
+    private func pageReply(
+        name: String, arguments: [String: Value], tab: BrowserTab, view: BrowserPage, scope: PageAutomationGuard,
+        reading: PageAutomationGuard, observation: PageObservation?
+    ) async -> CallTool.Result {
+        if Self.feedbackActions.contains(name), arguments["result"]?.stringValue != "full",
+            let reply = await deltaAction(
+                name: name, arguments: arguments, tab: tab, view: view, scope: scope, reading: reading, observation: observation) {
+            return reply
+        }
+        var capturedImage: Data?
+        let output: String
+        if name == "screenshotPage" {
+            (output, capturedImage) = await screenshotOutput(arguments: arguments, tab: tab, view: view)
+        } else {
+            // `result: full` keeps the old grace for a navigation to start; only the longest wait follows the budget.
+            let limits = PageSettle.Limits(quietCeiling: .milliseconds(FeedbackBudget(arguments["budget"]).settleMs))
+            output = await PageSettle.$limits.withValue(limits) { await pageAction(name: name, arguments: arguments, view: view) }
+        }
+        guard scope.validate(), !Task.isCancelled else {
+            observations[tab.id] = nil
+            return failure("Page access changed before the operation finished. Its contents were not returned.")
+        }
+        let succeeded = Self.succeeded(name, output)
+        if !succeeded, name != "screenshotPage" {
+            capturedImage = await failureImage(
+                arguments["screenshotOnFailure"]?.stringValue, ref: arguments["ref"]?.intValue, tab: tab, view: view, scope: scope)
+        }
+        var content: [String: Value] = ["tabID": .string(tab.id.uuidString), "content": .string(AgentToolkit.untrusted(output))]
+        var delivered: PageObservation?
+        if let current = PageDriver.observation(in: view), current.url == webURL(of: tab)?.absoluteString,
+            output.contains("observationID: " + current.id) {
+            delivered = PageObservation(id: current.id, snapshot: current.id, documentURL: current.url)
+            content["observationID"] = .string(current.id)
+            if PageOutputBudget.cost(current.url) <= 512 { content["url"] = .string(current.url) }
+        }
+        let value: Value = .object(content)
+        var blocks: [MCP.Tool.Content] = [.text(text: encoded(value), annotations: nil, _meta: nil)]
+        if let capturedImage {
+            blocks.append(.image(data: capturedImage.base64EncodedString(), mimeType: "image/jpeg", annotations: nil, _meta: nil))
+        }
+        let result = CallTool.Result(content: blocks, structuredContent: Optional.some(value), isError: !succeeded)
+        // A refused reply grants nothing: the client never saw its observation ID or links.
+        if capturedImage != nil, Self.replyBytes(result) > MCPMessageFramer.maximumBytes {
+            observations[tab.id] = nil
+            return failure("The screenshot is too large to return. Use readPage for redacted text.")
+        }
+        // A reply that carries no new observation leaves the client with the one it has, while the page still has it.
+        if delivered == nil, let observation, PageDriver.observation(in: view)?.id == observation.id {
+            observations[tab.id] = observation
+        } else {
+            observations[tab.id] = delivered
+        }
+        hasReadContent = true
+        destinations.formUnion(PageDriver.listedLinks(in: output).map { destinationKey($0.url) })
+        return result
+    }
+
+    /// `screenshotPage`: the text a client reads and the image, when there is one.
+    private func screenshotOutput(arguments: [String: Value], tab: BrowserTab, view: BrowserPage) async -> (String, Data?) {
+        let request = Self.screenshotTarget(arguments)
+        if let message = request.error {
+            return (message, nil)
+        }
+        if request.target == .fullPage, !mayProceed(tab, capability: .development) {
+            return ("A full-page screenshot needs development access.", nil)
+        }
+        // A control ref needs read access; a non-control inspection ref needs current development access, asked
+        // again inside the driver before work, after each await and before pixels are returned.
+        let developmentAllowed = { [weak self, weak tab] in
+            guard let self, let tab else { return false }
+            return self.mayProceed(tab, capability: .development)
+        }
+        await throttleCapture()
+        let outcome = await PageDriver.screenshot(
+            request.target, developmentAllowed: developmentAllowed, maximumBytes: Self.screenshotBytes,
+            maxWidth: arguments["maxWidth"]?.intValue, in: view)
+        switch outcome {
+        case .success(let capture):
+            let box = capture.bounds
+            let shows = request.target == .fullPage ? "the full page, CSS pixels" : "viewport CSS pixels"
+            let text =
+                "Screenshot captured. Shows \(shows) x \(Int(box.minX.rounded())), y \(Int(box.minY.rounded())), "
+                + "\(Int(box.width.rounded())) by \(Int(box.height.rounded())); image scale \(String(format: "%.2f", capture.scale)) px per CSS px.\n"
+                + (await PageDriver.snapshot(view, viewportOnly: true))
+            // The snapshot above was the last await: development access is asked once more right before the
+            // image is attached, so a revoke during it never returns an inspection image.
+            if capture.requiresDevelopment, !developmentAllowed() {
+                return (ScreenshotFailure.needsDevelopment.message, nil)
+            }
+            return (text, capture.jpeg)
+        case .failure(let failure):
+            return (failure.message, nil)
         }
     }
 
@@ -125,6 +167,10 @@ extension MCPBrowserSession {
             }
         }
         let ref = arguments["ref"]?.intValue
+        if arguments["fullPage"]?.boolValue == true {
+            if ref != nil || arguments["region"] != nil { return (.viewport, "Use fullPage alone, not with ref or region.") }
+            return (.fullPage, nil)
+        }
         if case .object(let box)? = arguments["region"] {
             if ref != nil { return (.viewport, "Use either ref or region, not both.") }
             return (.region(CGRect(x: number(box, "x"), y: number(box, "y"), width: number(box, "width"), height: number(box, "height"))), nil)
@@ -132,7 +178,7 @@ extension MCPBrowserSession {
         return (ref.map { .element(ref: $0) } ?? .viewport, nil)
     }
 
-    private func pageAction(name: String, arguments: [String: Value], view: BrowserPage) async -> String {
+    func pageAction(name: String, arguments: [String: Value], view: BrowserPage) async -> String {
         let ref = arguments["ref"]?.intValue ?? 0
         switch name {
         case "readPage":
