@@ -91,6 +91,8 @@ h3 { font: 650 20px/1.3 var(--font-text); letter-spacing: -0.015em; }
 .site-footer { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 16px 32px; padding-block: 32px 40px; border-top: 1px solid var(--line); }
 .site-footer .brand img { height: 24px; }
 .site-footer .brand { display: inline-flex; align-items: center; min-height: 44px; }
+.footer-brand { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.site-footer .footer-brand p { text-align: left; }
 .footer-legal { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .site-footer p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; text-align: right; }
 .site-footer p a:hover { color: var(--accent-text); }
