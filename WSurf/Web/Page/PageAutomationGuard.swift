@@ -40,6 +40,21 @@ struct PageAutomationGuard: Sendable {
         return await $current.withValue(updated) { await operation() }
     }
 
+    /// `operation` against the document the page is on now. After a navigation the guard's document URL and snapshot describe
+    /// the old page, so a script of the new one would be refused as stale. Nil when execution is no longer allowed.
+    /// `validate` replaces the guard's own check, for work that may continue after the page it began on left the screen.
+    static func rescoped<T>(
+        in view: BrowserPage, validate: (@MainActor @Sendable () -> Bool)? = nil, _ operation: () async -> T?
+    ) async -> T? {
+        guard !Task.isCancelled else { return nil }
+        guard let prior = current else { return await operation() }
+        let check = validate ?? prior.validate
+        guard check() else { return nil }
+        let updated = Self(documentURL: PageDriver.selectedFrame?.url.absoluteString ?? view.url?.absoluteString ?? prior.documentURL,
+                           snapshot: nil, validate: check)
+        return await $current.withValue(updated) { await operation() }
+    }
+
     private static func encode(_ value: String) -> String? {
         guard let data = try? JSONEncoder().encode(value) else { return nil }
         return String(data: data, encoding: .utf8)

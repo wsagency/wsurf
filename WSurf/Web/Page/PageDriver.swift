@@ -10,6 +10,15 @@ enum PageDriver {
     // MARK: - The page-side runtime
 
     static func scripted(_ body: String) -> String {
+        "(() => {\n" + prelude + body + "\n})()"
+    }
+
+    /// `scripted` for `callAsyncJavaScript`, whose body is already a function body that may `await`.
+    static func scriptedAsync(_ body: String) -> String {
+        prelude + body
+    }
+
+    private static var prelude: String {
         let frameCheck: String
         if let frame = selectedFrame {
             if frame.frame.webKit != nil, let id = jsonString(frame.frame.documentID) {
@@ -22,7 +31,7 @@ enum PageDriver {
         } else {
             frameCheck = ""
         }
-        return "(() => {\n" + PageAutomationGuard.scriptCheck + PageRuntime.script + "\n" + frameCheck + body + "\n})()"
+        return PageAutomationGuard.scriptCheck + PageRuntime.script + "\n" + frameCheck
     }
 
     // MARK: - Reading
@@ -111,8 +120,14 @@ enum PageDriver {
         if nextControl < totalControls {
             result += "\nMore controls: readPage controlOffset=\(nextControl) (\(totalControls) total); keep the same query and scope."
         }
-        observations.setObject(PageObservation(id: id, documentID: documentID, url: url, refs: refs), forKey: webView)
+        observations.setObject(PageObservation(id: id, documentID: documentID, url: url, refs: delivered(refs, in: documentID, of: webView)), forKey: webView)
         return result
+    }
+
+    /// `refs` plus, for a connection that keeps refs across observations, those already delivered for the same document.
+    static func delivered(_ refs: Set<Int>, in documentID: String, of webView: BrowserPage) -> Set<Int> {
+        guard accumulatesRefs, let prior = observation(in: webView), prior.documentID == documentID else { return refs }
+        return prior.refs.union(refs)
     }
 
     nonisolated struct ListedLink: Equatable, Sendable {
@@ -152,7 +167,7 @@ enum PageDriver {
         return "CONTROLS:\n" + lines.joined(separator: "\n")
     }
 
-    private static func renderControl(_ control: [String: Any]) -> String {
+    static func renderControl(_ control: [String: Any]) -> String {
         guard let ref = control["r"] as? Int, let kind = control["k"] as? String else { return "" }
         let label = control["l"] as? String ?? ""
         var line = "[\(ref)] \(kind) \"\(label)\""
@@ -295,7 +310,7 @@ enum PageDriver {
                   el.click();
                   return JSON.stringify({ ok: true });
                 """)
-            guard let object = await evaluateJSON(script, in: webView) else { return staleMessage }
+            guard let object = await evaluateAction(script, fallback: ["ok": true], in: webView) else { return staleMessage }
             if let error = object["error"] as? String { return error }
             guard object["ok"] as? Bool == true else { return staleMessage }
             return "Clicked “\(found.label)”. " + (refreshControls ? await settleAndSnippet(webView) : "")
@@ -377,7 +392,7 @@ enum PageDriver {
                   if (\(submit ? "true" : "false") && retained) { R.pressEnter(el); }
                   return JSON.stringify({ ok: true, submitted: \(submit ? "true" : "false") && retained });
                 """)
-            guard let object = await evaluateJSON(script, in: webView) else {
+            guard let object = await evaluateAction(script, fallback: ["ok": true, "submitted": submit], in: webView) else {
                 return "The page didn't respond to typing."
             }
             if let error = object["error"] as? String { return error }
@@ -490,8 +505,11 @@ enum PageDriver {
             """)
         guard let result = await evaluateJSON(script, in: webView) else { return staleMessage }
         if let error = result["error"] as? String { return error }
-        await PageSettle.untilQuiet(webView, ceiling: .milliseconds(900))
+        await PageSettle.untilQuiet(webView, ceiling: min(.milliseconds(900), PageSettle.limits.quietCeiling))
         let status = result["moved"] as? Bool == true ? "Scrolled \(direction)." : "Already at the \(direction) scroll boundary."
+        if feedbackMode == .delta {
+            return status
+        }
         return status + "\n" + (await PageAutomationGuard.withCurrentDocument(in: webView) {
             await snapshot(webView, viewportOnly: ref == 0)
         })
@@ -619,6 +637,7 @@ enum PageDriver {
 
     static func settleAndSnippet(_ webView: BrowserPage, refreshControls: Bool = true) async -> String {
         await PageSettle.afterInteraction(webView)
+        if feedbackMode == .delta { return "" }
         guard refreshControls else { return "The page now shows: \(await snippet(of: webView))" }
         return await PageAutomationGuard.withCurrentDocument(in: webView) {
             await snapshot(webView)

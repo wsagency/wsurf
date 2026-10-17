@@ -14,9 +14,12 @@ nonisolated enum MCPToolCatalog {
         credentials, cookies, arbitrary JavaScript, or private pages. The in-browser assistant \
         runs independently; retry after it finishes if the browser is busy. After WSurf restarts \
         or disconnects, the next call reconnects automatically with no tab access. Request fresh \
-        access then. Interrupted actions are never automatically retried. Successful actions return fresh \
-        observations; reuse those without an extra read. Use fillFields for independent form fields, \
-        waitForPage for expected changes, and readPage queries or offsets for missing content. Prefer \
+        access then. Interrupted actions are never automatically retried. Use fillFields for independent form fields, \
+        waitForPage for expected changes, and readPage queries or offsets for missing content. An action \
+        returns what it changed (added, removed and changed controls, new text, focus, console errors and \
+        failed requests when diagnostics run) in about 1 KB, not the whole page; a ref stays valid while its \
+        document and control are unchanged, so the observationID is optional. Pass result full to get the \
+        whole page. Prefer \
         text over screenshots. Keyboard input needs a visible tab; hover moves the real pointer and needs WSurf active with the tab on screen. \
         Inspection, viewport and diagnostics tools need requestAccess with development set; one connection owns a tab's development state, so call resetDevelopment when done.
         """
@@ -29,8 +32,25 @@ nonisolated enum MCPToolCatalog {
         var minimum = 1
         var maximum = 100_000
         var maxLength: Int?
+        /// The only values a string accepts, when it is an enumeration.
+        var choices: [String]?
 
         var schema: Value {
+            if type == "budget" {
+                return .object([
+                    "type": "object", "additionalProperties": false, "description": .string(description),
+                    "properties": .object([
+                        "maxBytes": .object([
+                            "type": "integer", "minimum": .int(FeedbackBudget.bytes.lowerBound), "maximum": .int(FeedbackBudget.bytes.upperBound),
+                            "description": "Cap on the reply text in bytes (default \(FeedbackBudget.defaultBytes)).",
+                        ]),
+                        "settleMs": .object([
+                            "type": "integer", "minimum": .int(FeedbackBudget.settle.lowerBound), "maximum": .int(FeedbackBudget.settle.upperBound),
+                            "description": "Longest wait for the page to go quiet after the action (default \(FeedbackBudget.defaultSettle)).",
+                        ]),
+                    ]),
+                ])
+            }
             if type == "array" {
                 return .object([
                     "type": "array", "minItems": 1, "maxItems": 32, "description": .string(description),
@@ -61,6 +81,7 @@ nonisolated enum MCPToolCatalog {
             }
             // JSON Schema counts characters, not UTF-8 bytes, so this is only a hint; the byte bound is enforced natively.
             if let maxLength { fields["maxLength"] = .int(maxLength) }
+            if let choices { fields["enum"] = .array(choices.map { .string($0) }) }
             return .object(fields)
         }
     }
@@ -122,7 +143,9 @@ nonisolated enum MCPToolCatalog {
                 let valid: Bool =
                     switch (parameter.type, value) {
                     case ("string", .string(let text)):
-                        text.utf8.count <= 32_768
+                        text.utf8.count <= 32_768 && (parameter.choices?.contains(text) ?? true)
+                    case ("budget", .object(let box)):
+                        FeedbackBudget.isValid(box)
                     case ("integer", .int(let number)):
                         number >= parameter.minimum && number <= parameter.maximum
                     case ("array", .array(let fields)):
@@ -150,7 +173,26 @@ nonisolated enum MCPToolCatalog {
     static let tab = Parameter(name: "tabID", type: "string", description: "Exact tab ID returned by listTabs.")
     static let snapshot = Parameter(
         name: "observationID", type: "string", description: "Observation ID from the latest read or successful action result for this tab.")
-    static let ref = Parameter(name: "ref", type: "integer", description: "Positive control reference from that observation.")
+    /// A ref stays valid for as long as its document does, so an action does not need the observation ID. A client that
+    /// sends one still gets it checked against the latest.
+    static let currentSnapshot = Parameter(
+        name: "observationID", type: "string",
+        description: "Optional. The observationID of the latest result for this tab; a ref stays valid without it while the document and the control are unchanged.",
+        required: false)
+    static let ref = Parameter(name: "ref", type: "integer", description: "Positive control reference from readPage or a result that listed it.")
+    /// The reply options every action shares.
+    static let feedback: [Parameter] = [
+        Parameter(
+            name: "result", type: "string",
+            description: "delta (default): what the action changed, about 1 KB. full: the whole page as before.", required: false,
+            choices: ["delta", "full"]),
+        Parameter(
+            name: "budget", type: "budget", description: "Limits for this call: maxBytes of reply text and settleMs of waiting for the page.", required: false),
+        Parameter(
+            name: "screenshotOnFailure", type: "string",
+            description: "Attach a small image when the action fails: the element first, or the viewport.", required: false,
+            choices: ["element", "viewport"]),
+    ]
     static let url = Parameter(name: "url", type: "string", description: "Full HTTP(S) URL. The user approves new websites in WSurf.")
 
     /// Every tool, in the order `tools/list` reports them. A tool group adds one line here and defines its entries in its own file.
@@ -187,18 +229,20 @@ nonisolated enum MCPToolCatalog {
                     maxLength: PageRuntime.maxSelectorBytes),
                 Parameter(name: "viewportOnly", type: "boolean", description: "Only viewport controls.", required: false),
             ], scope: .read, readOnly: true),
-        Entry(name: "clickOnPage", description: AgentToolkit.Descriptions.clickOnPage, parameters: [tab, snapshot, ref], scope: .control, usesRef: true),
+        Entry(
+            name: "clickOnPage", description: AgentToolkit.Descriptions.clickOnPage, parameters: [tab, currentSnapshot, ref] + feedback,
+            scope: .control, usesRef: true),
         Entry(
             name: "typeOnPage", description: AgentToolkit.Descriptions.typeOnPage,
             parameters: [
-                tab, snapshot, ref, Parameter(name: "text", type: "string", description: "Text to enter."),
+                tab, currentSnapshot, ref, Parameter(name: "text", type: "string", description: "Text to enter."),
                 Parameter(name: "submit", type: "boolean", description: "Press Enter after typing.", required: false),
-            ], scope: .control, usesRef: true),
+            ] + feedback, scope: .control, usesRef: true),
         Entry(
             name: "selectOption", description: AgentToolkit.Descriptions.selectOption,
             parameters: [
-                tab, snapshot, ref, Parameter(name: "option", type: "string", description: "Visible option text."),
-            ], scope: .control, usesRef: true),
+                tab, currentSnapshot, ref, Parameter(name: "option", type: "string", description: "Visible option text."),
+            ] + feedback, scope: .control, usesRef: true),
         Entry(
             name: "hoverOnPage",
             description:
@@ -207,31 +251,31 @@ nonisolated enum MCPToolCatalog {
                 Needs WSurf to be the active app with the tab on screen; elements inside frames are not supported. \
                 Verify the returned page.
                 """,
-            parameters: [tab, snapshot, ref], scope: .control, usesRef: true),
+            parameters: [tab, currentSnapshot, ref] + feedback, scope: .control, usesRef: true),
         Entry(
             name: "pressKey", description: "Send a keyboard key to a control in a visible shared tab.",
             parameters: [
-                tab, snapshot, ref,
+                tab, currentSnapshot, ref,
                 Parameter(
                     name: "key", type: "string",
                     description: "Enter, Tab, Escape, Space, ArrowLeft, ArrowRight, ArrowDown, ArrowUp, Home, End, Backspace, or Delete"),
-            ], scope: .control, usesRef: true),
+            ] + feedback, scope: .control, usesRef: true),
         Entry(
             name: "fillFields", description: AgentToolkit.Descriptions.fillFields,
             parameters: [
-                tab, snapshot, Parameter(name: "fields", type: "array",
+                tab, currentSnapshot, Parameter(name: "fields", type: "array",
                                          description: "One to 32 controls with ref, value, and select. Use true/false for checkbox/radio states, #RRGGBB for colors, and numbers for ranges."),
-            ], scope: .control, usesRef: true),
+            ] + feedback, scope: .control, usesRef: true),
         Entry(
             name: "inspectControl", description: "Inspect control state and up to twelve dropdown options.",
             parameters: [
-                tab, snapshot, ref, Parameter(name: "offset", type: "integer", description: "Option continuation offset.", required: false, minimum: 0),
+                tab, currentSnapshot, ref, Parameter(name: "offset", type: "integer", description: "Option continuation offset.", required: false, minimum: 0),
             ], scope: .read, readOnly: true, usesRef: true),
         Entry(
             name: "setChecked", description: "Set a checkbox, switch, or radio to the requested state.",
             parameters: [
-                tab, snapshot, ref, Parameter(name: "checked", type: "boolean", description: "Requested checked state."),
-            ], scope: .control, usesRef: true),
+                tab, currentSnapshot, ref, Parameter(name: "checked", type: "boolean", description: "Requested checked state."),
+            ] + feedback, scope: .control, usesRef: true),
         Entry(
             name: "waitForPage", description: "Wait for a condition and return one fresh observation.",
             parameters: [
@@ -246,24 +290,34 @@ nonisolated enum MCPToolCatalog {
                 Capture the viewport, one element (observationID + ref), or a region {x, y, width, height} in viewport CSS pixels \
                 that must lie fully inside the viewport, as an image. A ref from readPage (a control) needs only read access; \
                 a ref from findElements that is not a control needs development access. Never scrolls or stitches. \
+                The image has one pixel per CSS pixel unless maxWidth says otherwise. \
                 Filled sensitive fields prevent any capture. Prefer readPage for text.
                 """,
             parameters: [
                 tab,
                 Parameter(
                     name: "ref", type: "integer",
-                    description: "Element to capture: a readPage control, or with development access a findElements element; needs observationID.",
+                    description: "Element to capture: a readPage control, or with development access a findElements element.",
                     required: false),
-                Parameter(name: "observationID", type: "string", description: "Required when ref is supplied.", required: false),
+                Parameter(
+                    name: "observationID", type: "string",
+                    description: "The observation of a findElements ref; a readPage control ref does not need it.", required: false),
                 Parameter(name: "region", type: "region", description: "Viewport-relative CSS-pixel rectangle; not with ref.", required: false),
+                Parameter(
+                    name: "maxWidth", type: "integer", description: "Widest image in pixels, 320 to 2,048 (default: one pixel per CSS pixel).",
+                    required: false, minimum: 320, maximum: 2_048),
+                Parameter(
+                    name: "fullPage", type: "boolean",
+                    description: "Capture the whole page up to 4,096 CSS pixels tall instead of the viewport. Needs development access; Chromium only.",
+                    required: false),
             ], scope: .read, readOnly: true),
         Entry(
             name: "scrollPage", description: AgentToolkit.Descriptions.scrollPage,
             parameters: [
                 tab, Parameter(name: "direction", type: "string", description: "up, down, left, or right"),
                 Parameter(name: "ref", type: "integer", description: "Control inside a scrollable container.", required: false),
-                Parameter(name: "observationID", type: "string", description: "Required when ref is supplied.", required: false),
-            ], scope: .control),
+                currentSnapshot,
+            ] + feedback, scope: .control),
     ]
 
     static let navigationEntries: [Entry] = [

@@ -7,7 +7,7 @@ import Foundation
 
 /// Why a screenshot request produced no image. Each case maps to a distinct MCP error text.
 nonisolated enum ScreenshotFailure: Error, Equatable {
-    case stale, privacy, invalidGeometry, offscreen, captureFailed, unmappableFrame, needsDevelopment
+    case stale, privacy, invalidGeometry, offscreen, captureFailed, unmappableFrame, needsDevelopment, fullPageUnsupported
 
     var message: String {
         switch self {
@@ -27,6 +27,8 @@ nonisolated enum ScreenshotFailure: Error, Equatable {
                 + "Screenshot the viewport instead."
         case .needsDevelopment:
             "Screenshots of elements found with findElements need development access. Use a control ref from readPage, or a viewport or region screenshot."
+        case .fullPageUnsupported:
+            "A full-page screenshot needs a Chromium page. Capture the viewport, scroll with scrollPage and capture again."
         }
     }
 }
@@ -37,6 +39,10 @@ nonisolated enum ScreenshotTarget: Equatable, Sendable {
     case element(ref: Int)
     /// CSS pixels, relative to the viewport's top-left corner.
     case region(CGRect)
+    /// The document from its top-left corner, up to `fullPageHeight` CSS pixels tall.
+    case fullPage
+
+    static let fullPageHeight: CGFloat = 4_096
 }
 
 /// A captured image and the CSS-pixel rectangle it shows. `scale` is bitmap pixels per CSS pixel.

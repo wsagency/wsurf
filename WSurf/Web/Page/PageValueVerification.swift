@@ -34,7 +34,7 @@ extension PageDriver {
         default:
             result = "Could not verify the field value after the page changed. Inspect the current page before retrying."
         }
-        guard refreshControls else { return result }
+        guard refreshControls, feedbackMode == .snapshot else { return result }
         return result + " " + (await PageAutomationGuard.withCurrentDocument(in: view) { await snapshot(view) })
     }
 }

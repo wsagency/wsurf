@@ -123,8 +123,10 @@ nonisolated enum PageRuntime {
         return actual === expected.value ? 'matched' : 'mismatch';
       };
 
-      const collect = () => {
-        window.__wsurfSnapshot = Date.now().toString(36) + Math.random().toString(36);
+      // `commit` makes the walk an observation: it rotates the snapshot id, gives every control a ref and refreshes the ref
+      // signatures. Without it the walk only reads, so a digest taken around an action cannot launder a retargeted control.
+      const collect = (commit = true) => {
+        if (commit) window.__wsurfSnapshot = Date.now().toString(36) + Math.random().toString(36);
         const out = [];
         if (!document.body) return out;
         for (const el of walk(document.body)) {
@@ -139,11 +141,13 @@ nonisolated enum PageRuntime {
           if (dup) continue;
 
           let ref = refIDs.get(el);
-          if (!ref) { ref = window.__wsurfRefs.push(el); refIDs.set(el, ref); }
-          foundOnly.delete(el);
-          el.__wsurfRef = ref;
-          refSignatures.set(ref, signature(el));
-          const entry = { r: ref, k: kind, l: label };
+          if (!ref && commit) { ref = window.__wsurfRefs.push(el); refIDs.set(el, ref); }
+          if (commit) {
+            foundOnly.delete(el);
+            el.__wsurfRef = ref;
+            refSignatures.set(ref, signature(el));
+          }
+          const entry = { r: ref || 0, k: kind, l: label };
           if (kind === 'link' && el.href.length <= 2048) entry.h = el.href;
           if (kind === 'field') {
             if (el.readOnly || el.getAttribute('aria-readonly') === 'true') entry.ro = 1;
@@ -172,7 +176,10 @@ nonisolated enum PageRuntime {
           entry.vp = inViewport(el);
           const frame = el.ownerDocument.defaultView?.frameElement;
           if (frame) entry.frame = frame.title || frame.name || 'embedded frame';
-          if (el.getAttribute('aria-expanded')) entry.expanded = el.getAttribute('aria-expanded');
+          if (el.tagName === 'SUMMARY' && el.parentElement?.tagName === 'DETAILS') entry.expanded = el.parentElement.open ? 'true' : 'false';
+          else if (el.getAttribute('aria-expanded')) entry.expanded = el.getAttribute('aria-expanded');
+          if (el.getAttribute('aria-pressed')) entry.pr = el.getAttribute('aria-pressed') === 'true' ? 1 : 0;
+          if (el.getAttribute('aria-selected')) entry.se = el.getAttribute('aria-selected') === 'true' ? 1 : 0;
           out.push(entry);
         }
         return out;
@@ -688,9 +695,12 @@ nonisolated enum PageRuntime {
         return out;
       };
 
+      \#(feedbackScript)
+
       return { matchesRef, inspectableRef, isFoundOnly: ref => foundOnly.has(window.__wsurfRefs[ref - 1]), expectValue, valueState, walk, documentID, norm, collect,
         pageText, viewportText, resolve, setValue, pressEnter,
-        labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe, elementState, findAll, inspect, selectorProblem, screenshotGeometry };
+        labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe, elementState, findAll, inspect, selectorProblem, screenshotGeometry,
+        digest, waitFor };
     })());
     """#
 
