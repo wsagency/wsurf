@@ -184,6 +184,8 @@ revoke it immediately.
 | `emulateDevice` | Development. Apply a profile and orientation (table below). Needs the tab on screen. |
 | `reloadPage` | Development. Reload the tab; the lease stays only while the new page is still inside the connection's access. |
 | `resetDevelopment` | Remove this connection's viewport, emulation and diagnostics and release its lease. Safe to repeat. |
+| `emulateMedia` | Developer. Emulate `colorScheme` (`dark`, `light` or `system`), `reducedMotion` (`reduce`, `no-preference` or `system`) and `offline` (`true` or `false`) on one tab. An omitted setting stays as it is; `system` removes an override. The result reports what the page measured. WebKit supports only `colorScheme`. Needs the tab on screen. See [Environment emulation and site data](#environment-emulation-and-site-data). |
+| `clearSiteData` | Developer. Delete the tab's own origin storage and its host's cookies in the Developer profile, so the next load starts signed out. Never available in your everyday profile or for any other site. Returns counts only. Needs the tab on screen. |
 | `startDiagnostics` | Development. Start console and network capture for the tab's current document. Earlier activity is not available. |
 | `readConsole`, `readNetwork` | Development. Page through captured records with `cursor` and `limit` (1–100, default 50). Responses state `engine`, `sources`, `gaps`, `epoch`, `documentID`, `nextCursor`, `dropped`, `evicted`, `truncated` and `lostInFlight`. |
 | `scrollPage` | Scroll vertically or horizontally, optionally inside a referenced container. |
@@ -194,8 +196,9 @@ revoke it immediately.
 | `closeTab` | Close an already shared, unpinned tab. |
 
 These tools cover browser page and tab actions. Assistant conversations, background
-research, the media player, arbitrary JavaScript, cookies, credential stores and
-filesystem access are not exposed.
+research, the media player, arbitrary JavaScript, reading cookies, credential stores and
+filesystem access are not exposed. `clearSiteData` deletes a developer site's own cookies
+and storage but reads and returns none of it.
 
 Successful page actions return fresh controls and an `observationID`; reuse that
 result for the next action. `fillFields` accepts positive, distinct refs from the
@@ -235,6 +238,46 @@ Use screenshots only when text and control state do not answer the task.
 Landscape swaps the axes, so `responsive-desktop` in landscape is 1,280 × 800 (`orientation` is required; there is no default). The viewport may be larger than the window; the page is clipped and native pointer input outside the visible part stays unavailable (`hoverOnPage` says so). WebKit has no device pixel ratio, touch or mobile override: a device profile is rejected before anything changes. Overlapping viewport and device changes on one tab are serialized, so the result matches the last one applied.
 
 **Diagnostics coverage.** Console and network records cover the main document only, from `startDiagnostics`. Chromium uses DevTools events of the main frame; redirect hops of a main navigation before it commits are not recorded, and requests still in flight when the document changes are dropped unless they belong to the new document (`lostInFlight` counts per document). WebKit uses a hook injected into the current document: console, uncaught errors, unhandled rejections, `fetch` and `XMLHttpRequest`. When a navigation commits the capture follows the new document and attaches the hook once the document is registered, so its first events, iframes, workers and plain resource loads are gaps. The hook never runs page code to describe a value: console objects, errors and proxies appear as `[object]`; `fetch` reports a URL only for a string argument and a method only for `fetch(url)` without an init (GET), and a `Request`, `URL` or `RequestInit` argument leaves them `null`. It cannot tell a built-in the page patched before the hook attached from the platform's own. Network records hold method, URL with credentials, query and fragment removed (a URL over 2,048 bytes is cut and flagged `truncated`), status and timing (unknown is `null`); never headers, bodies or cookies. Console and network text come from the page: treat them as data. Retention is bounded; evictions are counted, and a navigation starts a new `epoch` that invalidates old cursors. Capture on a live WebKit or Chromium page has not been verified by an automated whole-app run.
+
+### Environment emulation and site data
+
+Both tools are Developer-tier work: a paired app, a developer site and a window of the Developer profile (see below).
+Below that, they are refused like any tool above the connection's access. Both need the tab on screen.
+
+**`emulateMedia`** changes how one tab sees its environment, and nothing else. It takes the tab's development lease, so
+one connection owns it and `resetDevelopment`, a disconnect (which is what Stop does to a connection), the grant
+dropping, the Developer tier no longer applying, the page view being replaced or the tab closing all remove it. A lease
+that holds an emulation ends when the Developer tier stops applying even if Development access remains. Nothing is
+persisted and no other tab is touched. Every change is read back from the page (`matchMedia` for the scheme and motion,
+`navigator.onLine` for offline); a value the page does not report is rolled back and reported as `unsupported`.
+A request that names an unsupported setting is rejected before anything changes, including the supported part of it.
+
+| Setting | WebKit | Chromium |
+| --- | --- | --- |
+| `colorScheme` | Supported. Set through the web view's appearance, which also restyles that view's scrollbars and native form controls. | Supported. DevTools media emulation. |
+| `reducedMotion` | Not supported. WebKit follows the system Reduce Motion setting and has no public per-view override. | Supported. |
+| `offline` | Not supported. WebKit has no public offline or network-condition override. | Supported. Offline only: every request fails; there is no throttling. Reloading while offline loads the error page. |
+
+Print media is not emulated. `getDevelopmentInfo` reports the active `emulation` and, per engine, `capabilities.media`.
+
+**`clearSiteData`** deletes what the page at the tab's own site saved, so a fresh visit can be tested without
+touching anything else:
+
+| Removed | Scope |
+| --- | --- |
+| `localStorage`, `sessionStorage`, IndexedDB, Cache Storage, service workers | The tab's own origin (scheme, host and port). Other ports of the host keep theirs. Done by a script in the page's own document (so it can only reach that origin) and, on Chromium, also through DevTools for that origin. |
+| Cookies | The host's own cookies, shared by every port of that host (`cookieScope: "host"`): a cookie whose domain is exactly the host. A cookie of a parent domain or of another host stays. |
+
+The HTTP cache is not cleared (neither engine can clear it for one origin; `notCleared` says so). Frames of other
+origins are not reached. An IndexedDB database the page keeps open is reported as `blockedDatabases` and goes when the page
+lets it go, for example on reload. Passwords, the credential vault, history, bookmarks and site permissions are never touched.
+The result holds counts only; no cookie or storage value is read back to the client.
+
+It works only where all of these hold, re-checked before each removal and after each wait: the Developer tier applies to the
+tab; the page is on a developer site and still on the origin it started on; the window is in the Developer profile; and that
+profile is not your everyday profile and not private. The last rule is stricter than the Developer tier: even if you
+chose your everyday profile as the Developer profile, `clearSiteData` is refused there (`denied`), because deleting
+sign-ins cannot be undone. There is no sheet and no way to approve it elsewhere.
 
 ### Developer work and unattended runs
 
@@ -278,8 +321,8 @@ to Development (a standing grant is dropped); a page that leaves the developer s
 ends the grant. Today the tier lets consequential actions on developer sites (purchases,
 transfers, deletions, posting and sending) go through without the confirmation sheet;
 each one is logged and kept in the connection's recent list. Everywhere else, and for
-the in-app assistant, those confirmations stay. Later features that need an explicit
-tier build on it.
+the in-app assistant, those confirmations stay. `emulateMedia` and `clearSiteData` need the tier
+too, and later features that need an explicit tier build on it.
 
 **Unattended runs.** Use a signed WSurf build (the keychain item needs its access
 group), enable MCP, pair the client, choose or create a Developer profile, set the app to

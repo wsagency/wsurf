@@ -151,6 +151,13 @@ profile; `MCPBrowserSession` judges a standing or Developer grant against the st
 every use, and a paired client with a standing level is moved to a window of the
 Developer profile when its hello arrives.
 
+Developer-tier tools act on one tab through its development lease: `DevelopmentOwner`
+records the viewport, the media and network emulation (`DevelopmentMediaState`) and
+the diagnostics it applied, and one release removes exactly those. `clearSiteData`
+holds no lease. It removes the tab's own origin storage and its host's cookies, and
+`MCPBrowserSession.siteDataRefusal` re-checks the Developer profile (never the
+everyday one) and the developer site before every removal.
+
 ## Assistant execution and context
 
 Providers propose actions. WSurf checks permissions, runs each action once, and
