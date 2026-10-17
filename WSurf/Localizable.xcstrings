@@ -27,10 +27,16 @@
         }
       }
     },
+    "All %lld passwords from the old list are in Credential Manager." : {
+
+    },
     "Allow for this private tab" : {
 
     },
     "Always allow for this website" : {
+
+    },
+    "and %lld more entries with notes." : {
 
     },
     "Ask before opening %@" : {
@@ -39,13 +45,43 @@
     "Ask next time" : {
 
     },
+    "Create a vault to import the passwords saved before Credential Manager." : {
+
+    },
+    "Credential Manager changed. Review the old list again." : {
+
+    },
     "Developer" : {
+
+    },
+    "Entry" : {
+
+    },
+    "Entry %lld of the old list" : {
 
     },
     "Fill form controls together without submitting." : {
 
     },
+    "Import the passwords saved before Credential Manager. WSurf doesn’t fill them until you do." : {
+
+    },
+    "Imported into WSurf: %lld added, %lld updated. The old Passwords list is still on this Mac until you remove it." : {
+
+    },
+    "Import…" : {
+
+    },
+    "Keep for Now" : {
+
+    },
+    "Later" : {
+
+    },
     "Move Tab to Window" : {
+
+    },
+    "Move Your Saved Passwords" : {
 
     },
     "New Page" : {
@@ -60,10 +96,28 @@
     "No app installed on this Mac handles %@ links." : {
 
     },
+    "No passkey for this website in WSurf." : {
+
+    },
+    "No sites are excluded." : {
+
+    },
+    "not imported: same as entry %lld." : {
+
+    },
+    "Nothing is saved until you review and confirm. The old list stays until you remove it." : {
+
+    },
+    "Old Passwords list removed" : {
+
+    },
     "Open %@" : {
 
     },
     "Open %@?" : {
+
+    },
+    "Open Credential Manager" : {
 
     },
     "Open downloads" : {
@@ -81,6 +135,9 @@
     "opens %@ without asking" : {
 
     },
+    "Passwords saved before Credential Manager" : {
+
+    },
     "Paused because the provider is rate limited. Your progress is saved; wait, then choose Continue." : {
 
     },
@@ -90,16 +147,46 @@
     "Remove %@ search" : {
       "comment" : "Accessibility label and tooltip for removing the active site search chip. %@ is the website's name and should not be translated."
     },
+    "Remove Old List" : {
+
+    },
+    "Remove Old List…" : {
+
+    },
+    "Remove the Old Passwords List?" : {
+
+    },
     "Reopen Last Closed Window" : {
 
     },
     "Restart Page" : {
 
     },
+    "Restore prompts on %lld excluded sites." : {
+
+    },
+    "Restore prompts on 1 excluded site." : {
+
+    },
+    "Review the old list before removing it." : {
+
+    },
+    "Review…" : {
+
+    },
+    "same website and username as entry %lld with another password. Choose what to do with each of them." : {
+
+    },
+    "Save passwords in Credential Manager?" : {
+
+    },
     "Search %@" : {
       "comment" : "Command palette site search hint, placeholder, and result detail. %@ is the website's name and should not be translated. Search is a verb."
     },
     "Search in current tab" : {
+
+    },
+    "Set Up Vault…" : {
 
     },
     "Tabs cannot move between profiles or private sessions." : {
@@ -111,7 +198,22 @@
     "The browser window is no longer available." : {
 
     },
+    "The import ended because %@, and nothing was saved. Your saved passwords are still in the old list. To import them, choose Review again." : {
+
+    },
     "The model is rate limited. Retrying shortly without repeating browser actions." : {
+
+    },
+    "The old list has no passwords. Remove it to finish the move to Credential Manager." : {
+
+    },
+    "The old Passwords list has %lld passwords. %lld already saved here, %lld can’t be imported." : {
+
+    },
+    "The passkey is saved in Credential Manager." : {
+
+    },
+    "This import was discarded. No data was written. Your saved passwords are still in the old list. To import them, choose Review again." : {
 
     },
     "This page wants to open %@." : {
@@ -201,6 +303,18 @@
     "Hold ⌘" : {
       "comment" : "Choice requiring the Command modifier to remove an unloaded tab."
     },
+    "Unlock the vault to import the passwords saved before Credential Manager." : {
+
+    },
+    "Use Another Device or Key…" : {
+
+    },
+    "WSurf can’t save a passkey here: Credential Manager has no vault yet." : {
+
+    },
+    "WSurf now keeps passwords only in Credential Manager, an encrypted vault you unlock with a passkey. Passwords saved in the profile “%@” aren’t filled until you import them. Nothing is deleted without your confirmation." : {
+
+    },
     "X next to Play" : {
       "comment" : "Choice showing a separate remove X immediately left of the unloaded-tab Play button."
     },
@@ -257,6 +371,12 @@
     },
     "" : {
       "comment" : "Not shown to anyone: the empty branch of a conditional tooltip on the sidebar's New Tab and Settings rows, used when the sidebar is wide enough to show the row's own title. Leave the translation empty."
+    },
+    "Your passwords are imported. Remove the old list in Credential Manager when you’re ready." : {
+
+    },
+    "Your saved passwords are now only in Credential Manager." : {
+
     },
     "“%@” is playing" : {
       "comment" : "Tooltip on the speaker glyph of a collapsed folder in the sidebar, saying which tab inside it is making sound. %@ is the tab's title, written by the website — never translated. Keep the curly quotation marks around it."

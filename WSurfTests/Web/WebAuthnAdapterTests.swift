@@ -52,7 +52,7 @@ struct WebAuthnAdapterTests {
         case absent, failed
     }
 
-    /// `enabled: false` models a profile on the legacy provider: native decides `legacy` and the engine runs untouched.
+    /// `enabled: false` models a private page: native decides `legacy` and the engine runs untouched.
     /// `answer` models the other native decisions: no answer at all, or a manager that refuses this page (stale/foreign
     /// profile). A manager document without an identity (empty document) is always refused, as the real adapter does.
     enum Answer { case normal, silent, staleManager }
@@ -408,7 +408,7 @@ struct WebAuthnAdapterTests {
           navigator.credentials.get(options); return originalCalls.join() + ':' + (originalOptions[0] === options); })()
         """) as? String
         #expect(outcome == "get:true", "the engine had the call, with the very same options object, before the script returned")
-        #expect(native.messages.isEmpty, "the legacy provider is never consulted per call")
+        #expect(native.messages.isEmpty, "a private page is never consulted per call")
     }
 
     /// A provider change reaches a document that is already live as a newer announcement; an older one never overrides it.
@@ -705,8 +705,8 @@ struct WebAuthnAdapterTests {
         return (try #require(decoded["control"]), try #require(decoded["routed"]), native)
     }
 
-    /// The legacy provider keeps every engine behaviour the manager restricts (conditional create, silent mediation, a
-    /// cross-realm AbortSignal, other credential types alongside publicKey, required largeBlob). Under the legacy provider
+    /// A private page keeps every engine behaviour the manager restricts (conditional create, silent mediation, a
+    /// cross-realm AbortSignal, other credential types alongside publicKey, required largeBlob). On a private page
     /// the routed call settles exactly as the real engine's own method does; the manager-only checks run first and give
     /// other answers, which is what makes the comparison meaningful.
     @Test(.boundedWebViews) func legacyRoutesAbortedRequestsToTheRealEngineExactlyAsItsOwnMethodSettlesThem() async throws {

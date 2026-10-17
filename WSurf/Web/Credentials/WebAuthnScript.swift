@@ -27,7 +27,7 @@ nonisolated enum WebAuthnScript {
     /// handshake (a non-writable global in this isolated world, never in the page world and never in any event or message
     /// to the page), so native can tell the live document from an older same-origin one. The relay waits on the
     /// handshake's own promise: no polling, no timer. A document with no handshake, or a failed one, is sent as
-    /// unidentified: native passes it through under the legacy provider and refuses it under the encrypted one, and never
+    /// unidentified: native passes it through on a private page and refuses it on any other, and never
     /// builds a frame or ceremony for it. Chromium identifies documents natively over CDP, so its relay keeps a random
     /// per-document fence.
     static func relay(nativeNonce: Bool) -> String { "const NATIVE = \(nativeNonce);\n" + relaySource }
@@ -520,15 +520,15 @@ nonisolated enum WebAuthnScript {
       }), {});
       // Signal APIs ask the authenticator to update or hide credentials it holds. This authenticator does not implement
       // them, and forwarding them to the engine would address the system store, not the encrypted manager (a credential
-      // ID imported from another provider could be altered at its source). So in manager mode they reject honestly; with
-      // the legacy provider the engine's own behaviour is untouched. An engine that lacks a signal method keeps lacking it.
+      // ID imported from another provider could be altered at its source). So in manager mode they reject honestly; on a
+      // private page the engine's own behaviour is untouched. An engine that lacks a signal method keeps lacking it.
       for (const name of ['signalUnknownCredential', 'signalAllAcceptedCredentials', 'signalCurrentUserDetails']) {
         if (typeof PublicKeyCredential[name] !== 'function') continue;
         const original = PublicKeyCredential[name].bind(PublicKeyCredential);
         const wrapper = {[name]: async function (...args) {
           const state = await queryCapabilities();
           // Only an explicit native "legacy" decision reaches the engine. No answer, a stale or unknown page and the
-          // manager itself all reject: an unavailable bridge is never taken to mean the legacy provider.
+          // manager itself all reject: an unavailable bridge is never taken to mean a private page.
           if (!state || state.provider !== 'legacy') throw fail('NotSupportedError', 'This authenticator does not support credential signals.');
           return original(...args);
         }}[name];

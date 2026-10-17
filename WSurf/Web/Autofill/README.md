@@ -5,7 +5,7 @@
 isolated content world, once per content controller, in every frame. Password,
 card, contact, and save clients share that model. No autofill UI is inserted into
 the document and this form bridge exposes no credential API to the page. The
-separate page-world WebAuthn API is described under Password providers.
+separate page-world WebAuthn API is described under Credential Manager.
 
 ## Form model
 
@@ -49,33 +49,23 @@ and policy changes discard pending state. Canceled redirects can continue the
 flow. Username steps are restricted to their HTTPS origin and expire after five
 minutes. A native address-bar popover presents the pending offer without changing
 page layout. Closing it keeps the offer available from its icon until expiry or
-explicit dismissal. Only explicit Save/Update writes a candidate to the selected
-provider's store (Passwords by default).
+explicit dismissal. Only explicit Save/Update writes a candidate to its store: a
+password goes to Credential Manager, a card or an address to its own vault. A
+profile with no vault gets one offer per run of the app to set one up, and
+nothing is saved by it.
 
 Native code binds messages to the WebKit or CEF frame identity and origin.
 Filling additionally checks the document/form/field identity, selection token,
 focus, geometry, and policy before and after authentication. A new document at
 the same URL is still a different document.
 
-Legacy (Passwords provider): browser password fills reuse an authenticated
-context for five minutes on the same top-level document, profile, and credential
-origin. It is cleared on policy changes, authentication failure, sleep, screen
-lock, or user-session switch, and is not the Credential Manager's lease.
-Password settings own a separate, page-scoped context that is invalidated on
-page dismissal, sleep, screen lock, and user-session switch. Browser fills and
-save prompts never share that context. Diagnostics contain static event names/counts only.
+Diagnostics contain static event names/counts only.
 
-## Password providers
+## Credential Manager
 
-Settings › Autofill › Password provider chooses what fills and saves logins,
-per profile. Source behavior, not exercised end to end:
+Credential Manager is the only built-in password store. Source behavior, not
+exercised end to end:
 
-- Passwords (the Keychain store above) is the default and its data is untouched.
-  Credential Manager is a separate, explicit choice with its own encrypted
-  vault. There is no migration or read-through, and switching rewrites neither
-  store.
-- Only the built-in writers are mutually exclusive. An installed password
-  extension can still act until the user turns it off; Settings warns about it.
 - Every request is scoped by the originating page's native context: its
   profile, document, origin and the vault authorization epoch, on WebKit and
   CEF. A stale epoch or document is refused.
@@ -83,8 +73,26 @@ per profile. Source behavior, not exercised end to end:
   of its windows. Private browsing has no Credential Manager.
 - The user picks the account; nothing is chosen automatically. A chosen
   account's password or one-time code is read again at delivery.
+- An installed password extension can still act until the user turns it off;
+  Settings warns about it.
+- Passwords saved by earlier builds are imported once through the reviewed
+  import in Settings › Autofill › Credential Manager. The Keychain list is
+  read only after the user chooses Review, and erased only after a successful
+  import and an explicit confirmation that names every password the vault does
+  not hold. Detection at launch asks the Keychain whether the list exists and
+  reads nothing. Nothing writes that list any more; private windows never touch
+  it. Sites excluded with "Never for This Site" in the old list were stored as
+  one-way digests and cannot be moved, so those sites are offered again.
 - WebAuthn is a separate page-world adapter. It returns standard WebAuthn
-  results to the page and never exposes a private key or seed.
+  results to the page and never exposes a private key or seed. In a normal tab
+  every passkey request is shown to the user first, in the same words whether
+  the profile has a vault, a passkey for the site, or neither, so the page
+  cannot tell. The sheet offers Credential Manager and "Use Another Device or
+  Key…", which hands the same request to the system's authenticator (passkeys
+  in Apple Passwords, a phone, a security key). Nothing is handed over unless
+  the user chooses that. Private tabs use the system's authenticator directly.
+  The vault's own unlock passkey (relying party wsurf.app) is a separate
+  native ceremony and is not part of this.
 
 ## Limits and validation
 
@@ -118,9 +126,13 @@ Use synthetic credentials and card details on a test page.
 - Delete a saved entry and submit it again. The browser should offer to save it.
 - Switch profiles and enter private browsing. Saved data must not cross profiles,
   and private browsing must not use saved autofill.
-- Leave password settings, lock the screen, or switch macOS users. Returning to
-  password settings must require authentication again.
-- Turn on Credential Manager, fill and save a login, then turn it off. Passwords
-  must be selected again, with its entries intact and nothing moved.
+- Leave Credential Manager, lock the screen, or switch macOS users. Returning to
+  it must require unlocking again.
+- With synthetic data in a test build, import an old list, cancel once, import
+  again, then remove it. The list must stay until the final confirmation.
+- Request a passkey on a test page in a profile with no vault, with a vault that
+  has no passkey for the site, and with one that does. The first sheet must look
+  alike to the page (it sees nothing until you answer), and "Use Another Device
+  or Key…" must be the only way to the system's authenticator.
 - Not performed: Settings keyboard and VoiceOver, real passkey unlock (PRF),
   user presence and verification, Apple Passwords transfers, and Stage UI runs.

@@ -106,14 +106,14 @@ extension WebAuthnAdapterTests {
         #expect(posts.count == 0)
     }
 
-    /// Legacy provider: a refused restore must not take the engine's own WebAuthn away. Native decides `legacy` for the
+    /// Private page (the `legacy` route): a refused restore must not take the engine's own WebAuthn away. Native decides `legacy` for the
     /// unidentified document and the engine's behaviour, with the untouched options, is what the page gets.
     @Test(.boundedWebViews, .requiresBackForwardCache) func aRefusedResumeStillRunsTheEngineUnderTheLegacyProvider() async throws {
         let (view, native, _) = try await restoredFromBackForwardCache(prelude: engineCalls, enabled: false)
         try await settleRestore(view, accepted: false)
 
         #expect(try await settled(view, "navigator.credentials.get({ publicKey: { challenge: new Uint8Array(4) } })") as? String == "engine-get")
-        #expect(native.requests.isEmpty, "the legacy provider never reaches the manager")
+        #expect(native.requests.isEmpty, "a private page never reaches the vault")
         #expect(native.queries.isEmpty, "the page script never asks native first: the announced provider decides in the caller's turn")
         #expect(try await view.evaluateJavaScript("originalCalls.join()") as? String == "get")
     }
