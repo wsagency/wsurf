@@ -478,9 +478,11 @@ WSurf cannot reach, and the page under test receives the value like any other in
 - **Your records stay complete.** The app decides what it registers as a secret, so that
   registry only shapes what the app is told, never what you read about what it did. A
   record of an action (a confirmation the Developer tier skipped, an activity entry) hides
-  only a value that went into a password, code or card field, shows `‹hidden secret›`
-  where it did, and still names the action, the site and the control. A phrase typed
-  into an ordinary field is never hidden there.
+  only a value of at least 8 characters that a password, code or card field kept as typed
+  (or the grouped form the page stored for it), and only as a whole word. It shows
+  `‹hidden secret›` where it did. The action's kind, the site and the amount stay fields
+  of their own, and a long label keeps its start and end, so padding cannot push the action
+  out. A phrase typed into an ordinary field is never hidden there.
 - **Screenshots cover the fields.** In the Developer tier, filled sensitive fields and
   fields a secret was typed into are painted black in the returned image instead of
   refusing the capture (a field inside a frame is covered by the whole frame, and one
