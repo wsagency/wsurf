@@ -25,6 +25,9 @@ extension CredentialExchangeCoordinator {
         /// How each part relates to the vault: what classification says, except that a part of a duplicate that equals what is saved
         /// is unchanged.
         private let classes: [CredentialIdentity: CredentialImportClass]
+        /// The parts that must be decided although nothing conflicts: the file rows that clash with others, and every part of a
+        /// duplicate whose merge would be the default although it leaves websites out (`Duplicate.needsDecision`).
+        let mustDecide: Set<CredentialIdentity>
 
         init(_ preview: CredentialImportPreview, _ context: ReviewContext) {
             self.preview = preview
@@ -46,6 +49,7 @@ extension CredentialExchangeCoordinator {
                     isLinked: { linked.linkedAccountID(for: $0) != nil }, title: { titles[$0] ?? "" }
                 ) : ImportDuplicates.Found()
             duplicates = found.duplicates
+            mustDecide = context.needsChoice.union(found.duplicates.values.filter(\.needsDecision).flatMap { $0.mergeChoices.keys })
             classes = context.classes.merging(found.unchanged.map { ($0, CredentialImportClass.unchanged) }, uniquingKeysWith: { _, new in new })
         }
 
@@ -58,7 +62,10 @@ extension CredentialExchangeCoordinator {
                 let identities = CredentialExchangeCoordinator.identities(in: candidate)
                 if let duplicate = duplicates[candidate.id] {
                     // Merged into the saved credential that holds it: what that credential lacks is added, everything else is kept.
-                    choices.merge(duplicate.mergeChoices) { _, new in new }
+                    // Unless the item lists websites the merge leaves out: then nothing is decided for it.
+                    if !duplicate.needsDecision {
+                        choices.merge(duplicate.mergeChoices) { _, new in new }
+                    }
                     continue
                 }
                 for incoming in identities {
@@ -74,7 +81,7 @@ extension CredentialExchangeCoordinator {
                 // a Skip: a note the saved credential doesn't hold yet still belongs in it.
                 if let note = identities.first(where: { if case .note = $0 { true } else { false } }),
                    let lead = CredentialExchangeCodec.leadIdentity(of: candidate), choices[lead] == .skip,
-                   choices[note] == nil, existingByIncoming[note] == nil, !context.needsChoice.contains(note),
+                   choices[note] == nil, existingByIncoming[note] == nil, !mustDecide.contains(note),
                    CredentialImportDefaults.isAdditive(classes[note]) {
                     if let linked = lookup.linkedAccountID(for: candidate) {
                         choices[note] = .merge(into: linked)
@@ -188,18 +195,18 @@ extension CredentialExchangeCoordinator {
         func records(at itemPosition: Int, choices: [CredentialIdentity: CredentialImportChoice]) -> [CredentialImportReview.Record] {
             let candidate = preview.candidates[itemPosition]
             let linked = lookup.linkedAccountID(for: candidate)
-            // A duplicate decided as its merge takes the item's websites too (the saved credential's own stay first).
+            // A duplicate decided as its merge takes some of the item's websites too (the saved credential's own stay first).
             let merging = duplicates[candidate.id]?.isApplied(by: choices) == true
             func into(_ id: UUID) -> CredentialImportReview.Record.Destination? {
                 guard let account = stored[id] else { return nil }
-                let added = candidate.origins.filter { !account.origins.contains($0) }
-                let takesWebsites = merging && id == duplicates[candidate.id]?.target
-                return .existing(
-                    accountID: id,
-                    title: storedTitles[id] ?? "",
-                    origins: takesWebsites ? account.origins + added : account.origins,
-                    ignoredOrigins: takesWebsites ? [] : added
-                )
+                var left = candidate.origins.filter { !account.origins.contains($0) }
+                var origins = account.origins
+                // A duplicate decided as its merge takes the websites the merge names, and no others.
+                if merging, let duplicate = duplicates[candidate.id], id == duplicate.target {
+                    origins += duplicate.origins
+                    left = left.filter { !duplicate.origins.contains($0) }
+                }
+                return .existing(accountID: id, title: storedTitles[id] ?? "", origins: origins, ignoredOrigins: left)
             }
             func destination(_ existing: CredentialIdentity?, _ choice: CredentialImportChoice?) -> CredentialImportReview.Record.Destination? {
                 switch choice {
@@ -223,7 +230,7 @@ extension CredentialExchangeCoordinator {
                 let choice = choices[incoming]
                 // A note nobody decided goes where its item's lead credential goes (`CredentialExchangeCodec.apply`).
                 var placement = (existing: existing, choice: choice)
-                if case .note = incoming, existing == nil, choice == nil, !context.needsChoice.contains(incoming),
+                if case .note = incoming, existing == nil, choice == nil, !mustDecide.contains(incoming),
                    let lead = CredentialExchangeCodec.leadIdentity(of: candidate) {
                     placement = (existingByIncoming[lead], choices[lead])
                 }
@@ -233,7 +240,7 @@ extension CredentialExchangeCoordinator {
                 } else {
                     relyingParty = nil
                 }
-                let needsChoice = existing != nil || context.needsChoice.contains(incoming)
+                let needsChoice = existing != nil || mustDecide.contains(incoming)
                 return CredentialImportReview.Record(
                     incoming: incoming,
                     existing: existing,
@@ -241,7 +248,7 @@ extension CredentialExchangeCoordinator {
                     title: summaries[itemPosition].title,
                     existingTitle: existing.flatMap { storedTitles[CredentialExchangeCoordinator.accountID($0)] },
                     relyingParty: relyingParty,
-                    destination: choice == nil && context.needsChoice.contains(incoming)
+                    destination: choice == nil && mustDecide.contains(incoming)
                         ? nil : destination(placement.existing, placement.choice),
                     canAddSeparately: !lookup.holdsStoredCredentialID(incoming),
                     removesStoredPasswordOnReplace: removesStoredPassword(incoming, of: candidate, existing: existing),
@@ -404,7 +411,7 @@ extension CredentialExchangeCoordinator {
         var trial = live.choices
         trial[incoming] = choice
         do {
-            _ = try Self.plan(live.preview, choices: trial, required: live.context.needsChoice, duplicates: live.index.duplicates)
+            _ = try Self.plan(live.preview, choices: trial, required: live.index.mustDecide, duplicates: live.index.duplicates)
         } catch CredentialVaultError.invalidData, CredentialVaultError.duplicateIdentifier {
             throw CredentialExchangeCoordinatorError.invalidChoice
         } catch CredentialExchangeCoordinatorError.unresolvedConflicts {

@@ -203,9 +203,12 @@ struct CredentialImportReviewTests {
     // MARK: Exact duplicates
 
     private func duplicate(
-        _ additions: [CredentialImportReview.Duplicate.Addition], links: Bool = false, choices: [CredentialIdentity: CredentialImportChoice] = [:]
+        _ additions: [CredentialImportReview.Duplicate.Addition], links: Bool = false, choices: [CredentialIdentity: CredentialImportChoice] = [:],
+        notAdded: [String] = []
     ) -> CredentialImportReview.Duplicate {
-        CredentialImportReview.Duplicate(target: UUID(), title: "Saved", additions: additions, linksItem: links, mergeChoices: choices)
+        CredentialImportReview.Duplicate(
+            target: UUID(), title: "Saved", additions: additions, linksItem: links, mergeChoices: choices, origins: [], notAdded: notAdded
+        )
     }
 
     @Test func aDuplicateIsOfferedItsMergeOnlyWhenMergingDoesSomething() {
@@ -214,6 +217,12 @@ struct CredentialImportReviewTests {
         #expect(CredentialImportReview.availableActions(for: records, duplicate: duplicate([], links: true)) == [.mergeIntoSaved, .importNew, .skip])
         #expect(CredentialImportReview.availableActions(for: records, duplicate: duplicate([])) == [.importNew, .skip], "nothing to add or link")
         #expect(duplicate([.notes(2)]).isMergeable && !duplicate([]).isMergeable)
+    }
+
+    @Test func aMergeThatLeavesWebsitesOutIsTheUsersDecisionOnlyWhereItWouldBeTheDefault() {
+        let other = ["https://other.test"]
+        #expect(duplicate([.code], notAdded: other).needsDecision && duplicate([], links: true, notAdded: other).needsDecision)
+        #expect(!duplicate([.code]).needsDecision && !duplicate([], notAdded: other).needsDecision, "nothing to merge, nothing to decide")
     }
 
     @Test func aDuplicateIsMergedOnlyWhileEveryPartIsDecidedAsItsMergeSays() {

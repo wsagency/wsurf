@@ -262,6 +262,126 @@ extension CredentialExchangeCoordinatorTests {
         }
     }
 
+    // MARK: - Websites
+
+    /// An item with websites on several sites, for the tests of what a merge may add. The importer keeps them sorted.
+    func item(id: UInt8, sites: [String], _ credentials: [ASImportableCredential]) -> ASImportableItem {
+        ASImportableItem(
+            id: Data([0xB0, id]), created: .distantPast, lastModified: .distantPast, title: "Item \(id)", subtitle: nil, favorite: false,
+            scope: ASImportableCredentialScope(urls: sites.compactMap { URL(string: $0) }, androidApps: []), credentials: credentials, tags: []
+        )
+    }
+
+    /// An item that is found by its passkey takes the websites on the passkey's own site by default.
+    @Test func aPasskeyMatchAddsAWebsiteOnTheRelyingPartysSiteByDefault() async throws {
+        try await withFixture { f in
+            let held = try passkey(7)
+            let saved = account(username: "ada", password: "pw1", passkeys: [held])
+            try await f.seed([saved] + neighbours(1))
+            try await f.stage(handBuilt([item(id: 3, sites: ["https://login.example.test/signin"], [sent(held), plainNote("n")])]))
+
+            let staged = try review(f)
+            let item = try #require(staged.candidates.first)
+            #expect(titles(of: .merge, in: staged) == ["Item 3"] && staged.isResolved)
+            #expect(item.duplicate?.additions == [.notes(1), .websites(1)] && item.duplicate?.notAdded == [] && item.effect == .merge)
+            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            let merged = try #require(try await f.stored().accounts.first { $0.id == saved.id })
+            #expect(merged.origins == [Self.origin, "https://login.example.test"] && merged.password == "pw1")
+        }
+    }
+
+    /// A website on another site is not carried, and the item waits for the user: the merge is not the default. Even decided, the
+    /// merge leaves it out, so the saved password is never filled there.
+    @Test func aPasskeyMatchDoesNotCarryAnotherSiteAndWaitsForADecision() async throws {
+        try await withFixture { f in
+            let held = try passkey(7)
+            let saved = account(username: "ada", password: "pw1", passkeys: [held])
+            try await f.seed([saved] + neighbours(1))
+            try await f.stage(handBuilt([
+                item(id: 3, sites: ["https://login.example.test/signin", "https://other.test/"], [sent(held), plainNote("n")]),
+            ]))
+
+            let staged = try review(f)
+            let item = try #require(staged.candidates.first)
+            #expect(titles(of: .decide, in: staged) == ["Item 3"] && !staged.isResolved && item.effect == .undecided)
+            #expect(item.duplicate?.origins == ["https://login.example.test"] && item.duplicate?.notAdded == ["https://other.test"])
+            #expect(item.statusLine.contains("other.test") && item.statusLine.contains("a note"), "the row says what is and is not added")
+            await #expect(throws: CredentialExchangeCoordinatorError.unresolvedConflicts) {
+                _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            }
+
+            try f.coordinator.chooseItem(.mergeIntoSaved, for: item.id, owner: f.owner)
+            let decided = try review(f)
+            #expect(decided.isResolved && decided.candidates.first?.effect == .merge && counts(planned(f)) == [0, 1])
+            #expect(decided.candidates.first?.statusLine.contains("other.test") == true, "still listed as not added")
+            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            let merged = try #require(try await f.stored().accounts.first { $0.id == saved.id })
+            #expect(merged.origins == [Self.origin, "https://login.example.test"], "nothing on other.test")
+            #expect(merged.notes?.map(\.text) == ["n"] && merged.password == "pw1")
+        }
+    }
+
+    /// A login match has the same rule: a website on a site the two did not match on is never carried into a saved password's
+    /// credential, whichever way the user decides the item.
+    @Test func aSavedPasswordNeverGainsASiteItWasNotMatchedOn() async throws {
+        for action in [CredentialImportReview.ItemAction.mergeIntoSaved, .skip, .importNew] {
+            try await withFixture { f in
+                let saved = legacyLogin()
+                try await f.seed([saved] + neighbours(1))
+                let before = try #require(try await f.stored().accounts.first { $0.id == saved.id })
+                let diskBefore = try f.diskBytes()
+                try await f.stage(handBuilt([
+                    item(id: 1, sites: [Self.origin + "/login", "https://other.test/"], [password("pw1"), plainNote("memo")]),
+                ]))
+
+                let staged = try review(f)
+                let item = try #require(staged.candidates.first)
+                #expect(titles(of: .decide, in: staged) == ["Item 1"] && !staged.isResolved, "nothing is merged by default")
+                #expect(item.duplicate?.origins == [] && item.duplicate?.notAdded == ["https://other.test"])
+                try f.coordinator.chooseItem(action, for: item.id, owner: f.owner)
+
+                switch action {
+                case .skip:
+                    #expect(counts(planned(f)) == [0, 0])
+                    f.coordinator.cancelImport(for: f.manager, owner: f.owner)
+                    #expect(try f.diskBytes() == diskBefore)
+                case .importNew:
+                    _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+                    let after = try await f.stored().accounts
+                    #expect(after.first { $0.id == saved.id } == before, "the saved credential is untouched")
+                    #expect(after.first { $0.exchangeItemID == Data([0xB0, 1]) }?.origins == ["https://example.test", "https://other.test"])
+                default:
+                    _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+                    let merged = try #require(try await f.stored().accounts.first { $0.id == saved.id })
+                    #expect(merged.origins == [Self.origin] && merged.notes?.map(\.text) == ["memo"] && merged.password == "pw1")
+                }
+            }
+        }
+    }
+
+    /// Linking is the merge too: an item that adds nothing but lists another site waits as well. One that can't be merged at all
+    /// has nothing to decide, and says what it leaves out.
+    @Test func otherSitesAskForADecisionOnlyWhereTheMergeWouldBeTheDefault() async throws {
+        try await withFixture { f in
+            try await f.seed([legacyLogin()] + neighbours(1))
+            try await f.stage(handBuilt([item(id: 1, sites: [Self.origin, "https://other.test/"], [password("pw1")])]))
+            let linking = try review(f)
+            #expect(titles(of: .decide, in: linking) == ["Item 1"] && linking.candidates.first?.duplicate?.additions == [])
+            f.coordinator.cancelImport(for: f.manager, owner: f.owner)
+        }
+        try await withFixture { f in
+            var saved = legacyLogin()
+            saved.exchangeAccountID = Data([0x01])
+            saved.exchangeItemID = Data([0x02])
+            try await f.seed([saved] + neighbours(1))
+            try await f.stage(handBuilt([item(id: 1, sites: [Self.origin, "https://other.test/"], [password("pw1")])]))
+            let staged = try review(f)
+            let item = try #require(staged.candidates.first)
+            #expect(titles(of: .saved, in: staged) == ["Item 1"] && staged.isResolved && item.duplicate?.isMergeable == false)
+            #expect(item.statusLine.contains("other.test"))
+        }
+    }
+
     // MARK: - Deciding
 
     @Test func theUserCanImportADuplicateAsNewOrSkipItOrMergeItAgain() async throws {

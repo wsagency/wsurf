@@ -108,10 +108,10 @@ extension CredentialExchangeCoordinator {
     /// The items that are decided exactly as their merge into the saved credential they duplicate (`ImportDuplicates`), by candidate.
     static func duplicateMerges(
         _ choices: [CredentialIdentity: CredentialImportChoice], _ duplicates: [UUID: CredentialImportReview.Duplicate]
-    ) -> [UUID: UUID] {
-        var merges: [UUID: UUID] = [:]
+    ) -> [UUID: CredentialExchangeCodec.DuplicateMerge] {
+        var merges: [UUID: CredentialExchangeCodec.DuplicateMerge] = [:]
         for (candidate, duplicate) in duplicates where duplicate.isApplied(by: choices) {
-            merges[candidate] = duplicate.target
+            merges[candidate] = CredentialExchangeCodec.DuplicateMerge(target: duplicate.target, origins: duplicate.origins)
         }
         return merges
     }
@@ -131,7 +131,7 @@ extension CredentialExchangeCoordinator {
         }
         let merges = duplicateMerges(choices, duplicates)
         let accounts = try CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: merges)
-        let duplicated = Set(merges.values)
+        let duplicated = Set(merges.values.map(\.target))
         let before = Dictionary(preview.base.accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var touched: [CredentialAccount] = []
         var added = 0
@@ -174,7 +174,7 @@ extension CredentialExchangeCoordinator {
     /// import is turned into writes, for the success message and for the commit alike.
     static func planned(_ session: Session) throws -> (touched: [CredentialAccount], outcome: CredentialImportOutcome) {
         var planned = try plan(
-            session.preview, choices: session.choices, required: session.context.needsChoice, duplicates: session.index.duplicates
+            session.preview, choices: session.choices, required: session.index.mustDecide, duplicates: session.index.duplicates
         )
         let changed = Set(planned.touched.map(\.id))
         planned.outcome.results = session.review.candidates.flatMap(\.records).map { record in

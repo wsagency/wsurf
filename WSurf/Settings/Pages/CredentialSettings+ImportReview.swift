@@ -150,10 +150,41 @@ extension CredentialImportReview.Candidate {
         return parts.joined(separator: " · ")
     }
 
-    /// One sentence on why the item is where it is and what will happen to it.
+    /// One sentence on why the item is where it is and what will happen to it. For a duplicate, the websites of the item that the
+    /// merge leaves out are named, so what is added and what is not can be read before Import.
     var statusLine: String {
+        let line = baseStatusLine
+        guard let duplicate, !duplicate.notAdded.isEmpty, duplicate.isApplied(by: records) || !duplicate.isMergeable else { return line }
+        return line + " " + String(localized: "Not added, as they are on other sites: \(notAddedHosts(of: duplicate)).")
+    }
+
+    /// The hosts of the websites a merge leaves out: three at most, then how many more.
+    private func notAddedHosts(of duplicate: CredentialImportReview.Duplicate) -> String {
+        let hosts = duplicate.notAdded.compactMap { URL(string: $0)?.host }
+        let shown = hosts.prefix(3).joined(separator: ", ")
+        return hosts.count > 3 ? shown + " " + String(localized: "+\(hosts.count - 3) more") : shown
+    }
+
+    /// What the item has in common with the saved credential it duplicates.
+    private func sameLine(as duplicate: CredentialImportReview.Duplicate) -> String {
+        records.contains { $0.kind == .password }
+            ? String(localized: "Same website, username and password as “\(duplicate.title)”.")
+            : String(localized: "Same passkey as “\(duplicate.title)”.")
+    }
+
+    private var baseStatusLine: String {
         switch effect {
         case .undecided:
+            if let duplicate, duplicate.needsDecision {
+                let merging = duplicate.additions.isEmpty
+                    ? String(localized: "Merging only links the two.")
+                    : String(localized: "Merging adds \(duplicate.additions.map(\.text).formatted(.list(type: .and))).")
+                return [
+                    sameLine(as: duplicate), merging,
+                    String(localized: "Not added, as they are on other sites: \(notAddedHosts(of: duplicate))."),
+                    String(localized: "Choose what to do."),
+                ].joined(separator: " ")
+            }
             guard let record = records.first(where: { $0.needsChoice && $0.choice == nil }) else { return "" }
             if record.classification == .bothChanged {
                 return String(localized: "Changed here and in the other app since the last import.")
@@ -179,10 +210,7 @@ extension CredentialImportReview.Candidate {
         case .merge:
             guard let duplicate, duplicate.isApplied(by: records) else { return String(localized: "Merged into a saved credential.") }
             let added = duplicate.additions.map(\.text).formatted(.list(type: .and))
-            let same = records.contains { $0.kind == .password }
-                ? String(localized: "Same website, username and password as “\(duplicate.title)”.")
-                : String(localized: "Same passkey as “\(duplicate.title)”.")
-            return same + " " + String(localized: "Adds \(added).")
+            return sameLine(as: duplicate) + " " + String(localized: "Adds \(added).")
         case .linked:
             return String(localized: "Already saved as “\(duplicate?.title ?? "")”. Import links the two, so the next import finds it unchanged.")
         case .unchanged:
@@ -634,7 +662,7 @@ private struct CredentialImportRow: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                if record.needsChoice, record.existingTitle == nil {
+                if record.needsChoice, record.existingTitle == nil, candidate.duplicate == nil {
                     Text("Other logins have this website and username with a different password. Choose Skip or Add Separately for each.")
                         .font(Theme.Font.label)
                         .foregroundStyle(.secondary)

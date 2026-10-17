@@ -585,7 +585,8 @@ extension CredentialExchangeTests {
         // Without the duplicate named, the explicit merge of an identical login, or into a differently named account, is refused.
         #expect(throws: (any Error).self) { try CredentialExchangeCodec.apply(preview, decisions: decisions) }
 
-        let merged = try #require(CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: [candidate.id: saved.id]).first)
+        let merge = CredentialExchangeCodec.DuplicateMerge(target: saved.id, origins: [origin])
+        let merged = try #require(CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: [candidate.id: merge]).first)
         #expect(merged.id == saved.id && merged.displayName == "My name" && merged.password == "same-password")
         #expect(merged.origins == ["https://www.example.test", origin] && merged.notes?.map(\.text) == ["mine"])
         #expect(merged.totp == candidate.totp)
@@ -603,7 +604,8 @@ extension CredentialExchangeTests {
         let candidate = try #require(preview.candidates.first)
         #expect(!CredentialExchangeCodec.canLinkDuplicate(candidate, to: saved))
         let decisions = [CredentialImportDecision.add(incoming: .password(accountID: candidate.id), targetAccountID: saved.id)]
-        let merged = try #require(CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: [candidate.id: saved.id]).first)
+        let merge = CredentialExchangeCodec.DuplicateMerge(target: saved.id, origins: [])
+        let merged = try #require(CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: [candidate.id: merge]).first)
         #expect(merged == saved, "an identical login adds nothing to an account that is another item's")
     }
 
@@ -615,7 +617,38 @@ extension CredentialExchangeTests {
         let candidate = try #require(preview.candidates.first)
         let decisions = [CredentialImportDecision.add(incoming: .password(accountID: candidate.id), targetAccountID: saved.id)]
         #expect(throws: (any Error).self) {
-            try CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: [candidate.id: saved.id])
+            try CredentialExchangeCodec.apply(
+                preview, decisions: decisions, duplicates: [candidate.id: .init(target: saved.id, origins: [])]
+            )
         }
+    }
+
+    /// The websites a duplicate merge adds are the ones it names. A saved password is filled on its account's websites, so the
+    /// item's other sites are not added, whatever the item lists.
+    @Test func aDuplicateMergeAddsNoWebsiteItDoesNotName() throws {
+        var saved = account(password: "same-password")
+        saved.origins = ["https://www.example.test"]
+        let incoming = data(
+            scope: ASImportableCredentialScope(
+                urls: [URL(string: "https://example.test/login")!, URL(string: "https://other.test/login")!], androidApps: []
+            ),
+            credentials: [basicAuthentication(username: "ada", password: "same-password"), totp()]
+        )
+        let preview = try CredentialExchangeCodec.preview(incoming, against: snapshot([saved]))
+        let candidate = try #require(preview.candidates.first)
+        #expect(candidate.origins == ["https://example.test", "https://other.test"])
+        let decisions = [
+            CredentialImportDecision.add(incoming: .password(accountID: candidate.id), targetAccountID: saved.id),
+            .add(incoming: .totp(accountID: candidate.id), targetAccountID: saved.id),
+        ]
+        let merge = CredentialExchangeCodec.DuplicateMerge(target: saved.id, origins: ["https://example.test"])
+        let merged = try #require(CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: [candidate.id: merge]).first)
+        #expect(merged.origins == ["https://www.example.test", "https://example.test"])
+        #expect(merged.loginURLs.map(\.absoluteString) == ["https://example.test/login"], "nor the login address of a site it does not add")
+
+        // Named nothing, it adds nothing.
+        let none = CredentialExchangeCodec.DuplicateMerge(target: saved.id, origins: [])
+        let kept = try #require(CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: [candidate.id: none]).first)
+        #expect(kept.origins == ["https://www.example.test"] && kept.loginURLs.isEmpty)
     }
 }

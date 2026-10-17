@@ -10,10 +10,11 @@ nonisolated extension CredentialExchangeCodec {
     /// is a new array, and any invalid, unknown or repeated decision rejects the whole call.
     ///
     /// `duplicates` names, by candidate, the saved account that holds an exact copy of the item (`ImportDuplicates`) and that the user
-    /// merges it into. The merge adds what that account lacks and replaces nothing: the item's websites, its name if the account has
-    /// none, and the item's identity when the account has none of its own, so the next import finds it unchanged.
+    /// merges it into. The merge adds what that account lacks and replaces nothing: the item's websites that the merge names (and
+    /// no others, since a saved password is filled on its credential's websites), its name if the account has none, and the item's
+    /// identity when the account has none of its own, so the next import finds it unchanged.
     static func apply(
-        _ preview: CredentialImportPreview, decisions: [CredentialImportDecision], duplicates: [UUID: UUID] = [:]
+        _ preview: CredentialImportPreview, decisions: [CredentialImportDecision], duplicates: [UUID: DuplicateMerge] = [:]
     ) throws -> [CredentialAccount] {
         try validateAccounts(preview.base.accounts)
         try validateAccounts(preview.candidates)
@@ -28,7 +29,7 @@ nonisolated extension CredentialExchangeCodec {
         var positionByID = Dictionary(result.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         for candidate in preview.candidates {
             try place(
-                candidate, decisions: decisionsByIncoming, conflicts: conflictByIncoming, duplicateTarget: duplicates[candidate.id],
+                candidate, decisions: decisionsByIncoming, conflicts: conflictByIncoming, duplicateMerge: duplicates[candidate.id],
                 storedByItem: storedByItem, positionByID: &positionByID, into: &result
             )
         }
@@ -63,6 +64,12 @@ nonisolated extension CredentialExchangeCodec {
                 }
             }
         }
+    }
+
+    /// Where an exact duplicate is merged: the saved account, and the only websites of the item the merge may add to it.
+    struct DuplicateMerge: Sendable, Equatable {
+        let target: UUID
+        let origins: [String]
     }
 
     private static func incomingIdentity(of decision: CredentialImportDecision) -> CredentialIdentity {
@@ -129,7 +136,7 @@ nonisolated extension CredentialExchangeCodec {
         _ candidate: CredentialAccount,
         decisions decisionsByIncoming: [CredentialIdentity: CredentialImportDecision],
         conflicts conflictByIncoming: [CredentialIdentity: CredentialImportConflict],
-        duplicateTarget: UUID?,
+        duplicateMerge: DuplicateMerge?,
         storedByItem: [ExternalItemID: [Int]],
         positionByID: inout [UUID: Int],
         into result: inout [CredentialAccount]
@@ -147,10 +154,10 @@ nonisolated extension CredentialExchangeCodec {
         // other destination is given fresh identifiers and a remapped copy of the metadata.
         var claimed = linkedIndex != nil
         var carried = Set<UUID>()
-        if let duplicateTarget {
-            guard let index = positionByID[duplicateTarget], linkedIndex == nil else { throw CredentialVaultError.invalidData }
-            try carryDuplicate(candidate, id: candidateExternalID, into: &result[index], claimed: &claimed)
-            carried.insert(duplicateTarget)
+        if let duplicateMerge {
+            guard let index = positionByID[duplicateMerge.target], linkedIndex == nil else { throw CredentialVaultError.invalidData }
+            try carryDuplicate(candidate, adding: duplicateMerge.origins, into: &result[index], claimed: &claimed)
+            carried.insert(duplicateMerge.target)
         }
 
         func addToSeparateAccount(_ identity: CredentialIdentity, forceFork: Bool) throws {
@@ -187,7 +194,7 @@ nonisolated extension CredentialExchangeCodec {
                             into: &result[index],
                             claimed: &claimed,
                             carried: &carried,
-                            keepsIdenticalLogin: targetAccountID == duplicateTarget
+                            keepsIdenticalLogin: targetAccountID == duplicateMerge?.target
                         )
                     } else {
                         try addToSeparateAccount(identity, forceFork: conflictByIncoming[identity] != nil)
@@ -256,9 +263,10 @@ nonisolated extension CredentialExchangeCodec {
 
     /// The part of an exact duplicate's merge that is not one of its credentials. Adds, never replaces.
     private static func carryDuplicate(
-        _ source: CredentialAccount, id: ExternalItemID, into target: inout CredentialAccount, claimed: inout Bool
+        _ source: CredentialAccount, adding allowed: [String], into target: inout CredentialAccount, claimed: inout Bool
     ) throws {
-        let origins = source.origins.filter { !target.origins.contains($0) }
+        // Only the websites the merge names: the item's others are not the saved credential's to be filled on.
+        let origins = source.origins.filter { allowed.contains($0) && !target.origins.contains($0) }
         target.origins += origins
         target.loginURLs += source.loginURLs.filter { url in CredentialAccount.origin(for: url).map(origins.contains) ?? false }
         guard target.origins.count <= CredentialAccount.websiteLimit, target.loginURLs.count <= CredentialAccount.websiteLimit else {
