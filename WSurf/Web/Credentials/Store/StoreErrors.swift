@@ -3,7 +3,8 @@
 
 import Foundation
 
-nonisolated enum StoreLimit: Equatable, Sendable { case accounts, payloadBytes, fieldBytes, wrappers, historyRow, blockedOrigins }
+/// A live limit a write is refused over, named for the caller. Held in memory only; nothing persists it.
+nonisolated enum StoreLimit: Equatable, Sendable { case accounts, accountBytes, payloadBytes, fieldBytes, wrappers, historyRow, blockedOrigins }
 
 nonisolated enum UndeleteBlock: Equatable, Sendable {
     case ownerMissing, idCollision, exchangeIDCollision, originUsernameOverlap, passkeyCollision

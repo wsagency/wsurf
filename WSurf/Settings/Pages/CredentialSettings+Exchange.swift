@@ -231,7 +231,8 @@ struct CredentialImportReviewSheet: View {
                     omittedView(review.omitted)
                 }
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
+                    // Lazy: a real library is thousands of rows, and only the few on screen are built.
+                    LazyVStack(alignment: .leading, spacing: 16) {
                         ForEach(review.candidates) { candidate in candidateView(candidate) }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)

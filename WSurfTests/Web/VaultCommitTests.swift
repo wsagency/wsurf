@@ -25,7 +25,7 @@ nonisolated enum CommitDuplicate: CaseIterable, Sendable {
 }
 
 nonisolated enum CommitLimit: CaseIterable, Sendable {
-    case accounts, payloadBytes
+    case accounts, accountBytes
 }
 
 struct VaultCommitTests {
@@ -375,19 +375,49 @@ struct VaultCommitTests {
         }
     }
 
+    // MARK: scale
+
+    /// A transfer the size of a real Passwords library, read by the real codec and written by the real commit: the checks of the
+    /// preview, `apply` and the store agree, so what the codec accepted the store keeps.
+    @Test func importOf5000ItemsCommitsToTheStore() async throws {
+        let transfer = try ExchangeScale.transfer(items: 5_000)
+        let base = StoreSnapshot(vaultID: UUID(), revision: 0, accounts: [], blockedPasswordOrigins: [], stamps: [:])
+        let preview = try CredentialExchangeCodec.preview(transfer, against: base)
+        let imported = try CredentialExchangeCodec.apply(preview, decisions: [])
+        #expect(imported.count == 5_000)
+
+        try await VaultStoreFixture.with(accounts: [VaultFixtures.account(username: "stored")]) { f in
+            let (store, access) = try await f.unlocked()
+            let before = try await store.snapshot(vaultID: f.vaultID, using: access)
+
+            let receipt = try await store.commit(
+                vaultID: f.vaultID, before.accounts + imported, expectedRevision: before.revision, cause: nil, using: access
+            )
+
+            #expect(receipt.revision == before.revision + 1)
+            #expect(try f.recordIDs(of: f.vaultID, kind: .account).count == 5_001)
+            let after = try await store.snapshot(vaultID: f.vaultID, using: access)
+            #expect(after.accounts.count == 5_001)
+            #expect(Set(after.accounts.map(\.id)) == Set((before.accounts + imported).map(\.id)))
+            #expect(after.accounts.filter { !$0.passkeys.isEmpty }.count == 500)
+            #expect(after.accounts.filter { $0.notes != nil }.count == 5_000)
+            try f.verify()
+        }
+    }
+
     // MARK: limits
 
     @Test(arguments: CommitLimit.allCases)
     func liveLimitRefusalsNameTheLimit(_ limit: CommitLimit) async throws {
         switch limit {
         case .accounts:
-            try await refusesThe1001stAccount()
-        case .payloadBytes:
-            try await refusesAnOversizedPayload()
+            try await refusesOneAccountOverTheLiveCap()
+        case .accountBytes:
+            try await refusesAnOversizedAccount()
         }
     }
 
-    private func refusesThe1001stAccount() async throws {
+    private func refusesOneAccountOverTheLiveCap() async throws {
         let stored = (0..<CredentialVaultLimits.accounts).map { VaultFixtures.account(username: "user\($0)", password: "pw\($0)") }
         try await VaultStoreFixture.with(accounts: stored) { f in
             let (store, access) = try await f.unlocked()
@@ -400,7 +430,7 @@ struct VaultCommitTests {
             #expect(receipt.revision == before.revision + 1)
             let image = try f.headWriteImage()
 
-            // ... and the 1,001st account is refused by name, with nothing written.
+            // ... and one account over it is refused by name, with nothing written.
             let error = await store.vaultCommitFailure(
                 vaultID: f.vaultID, atCap + [VaultFixtures.account(username: "one too many")], expectedRevision: receipt.revision, using: access
             )
@@ -410,15 +440,15 @@ struct VaultCommitTests {
         }
     }
 
-    private func refusesAnOversizedPayload() async throws {
+    private func refusesAnOversizedAccount() async throws {
         let stored = VaultFixtures.account(username: "ada")
         try await VaultStoreFixture.with(accounts: [stored], historyRows: 1) { f in
             let (store, access) = try await f.unlocked()
             let before = try await store.snapshot(vaultID: f.vaultID, using: access)
             let image = try f.headWriteImage()
-            // Each field is within its own bound; together they exceed the payload cap.
+            // Each field is within its own bound; together they exceed the cap of one account.
             let big = String(repeating: "x", count: 2_500_000)
-            #expect(big.utf8.count * 2 > CredentialVaultLimits.payloadBytes)
+            #expect(big.utf8.count * 2 > CredentialVaultLimits.accountBytes)
             let proposed = commitEditing(before.accounts, stored.id) {
                 $0.username = big
                 $0.displayName = big
@@ -426,7 +456,7 @@ struct VaultCommitTests {
 
             let error = await store.vaultCommitFailure(vaultID: f.vaultID, proposed, expectedRevision: before.revision, using: access)
 
-            #expect(error as? CredentialStoreError == .limit(.payloadBytes))
+            #expect(error as? CredentialStoreError == .limit(.accountBytes))
             #expect(try f.headWriteImage() == image)
             let after = try await store.snapshot(vaultID: f.vaultID, using: access)
             #expect(after.revision == before.revision)
@@ -441,7 +471,7 @@ struct VaultCommitTests {
             let (store, access) = try await f.unlocked()
             let before = try await store.snapshot(vaultID: f.vaultID, using: access)
             let image = try f.headWriteImage()
-            let flood = (0..<5_000).map { VaultFixtures.account(username: "flood\($0)") }
+            let flood = (0..<CredentialVaultLimits.accounts).map { VaultFixtures.account(username: "flood\($0)") }
 
             let error = await store.vaultCommitFailure(
                 vaultID: f.vaultID, before.accounts + flood, expectedRevision: before.revision, using: access

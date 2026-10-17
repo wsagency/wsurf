@@ -8,6 +8,9 @@ nonisolated enum StoreFormat {
     static let rowLabel = "WSurf credential store", registryLabel = "WSurf registry v1"
     static let busyTimeoutMS = 5000, historyPage = 50, nameLimit = 64, activeVaultLimit = 16
     static let journalOpsPerRow = 1000, historyRowBytes = 8_000_000, blockedOriginLimit = 4_096
+    /// What a history row holds beside the account data it carries: provenance and envelope fields (spec section 5, 4,096 B) and a
+    /// display label (512 B).
+    static let historyBodyBytes = 4_608
     static let lockWait: Duration = .seconds(5), verifyingThreshold: Duration = .milliseconds(250)
 }
 

@@ -254,4 +254,116 @@ struct CredentialAccountValidationTests {
         let payload = CredentialVaultPayload(revision: 0, accounts: [account], blockedPasswordOrigins: [])
         #expect(throws: (any Error).self) { try CredentialVaultCrypto.validate(payload) }
     }
+
+    // MARK: Live budgets
+
+    /// Accounts that all share one note string, so a vault of megabytes costs the test no memory.
+    private func noteAccounts(_ count: Int, bytes: Int) -> [CredentialAccount] {
+        let text = String(repeating: "n", count: bytes)
+        return (0..<count).map { _ in noteOnlyAccount([CredentialNote(text: text, field: nil)]) }
+    }
+
+    @Test func liveBytesCountEachVariableField() throws {
+        var account = VaultFixtures.account()
+        // username 3 + password 6 + origin 20 + login address 26
+        #expect(try CredentialVaultCrypto.liveBytes(of: account) == 55)
+        account.notes = [CredentialNote(text: "memo", field: CredentialEditableFieldMetadata(id: Data([1, 2]), label: "Note", fieldType: .string))]
+        account.totp = VaultFixtures.totp()
+        // note text 4 + field id 2 + label 4, then the code: secret 5 + issuer 7
+        #expect(try CredentialVaultCrypto.liveBytes(of: account) == 55 + 10 + 12)
+    }
+
+    @Test func liveBytesAreCappedPerAccountAndInTotal() throws {
+        func payload(_ accounts: [CredentialAccount], origins: Set<String> = []) -> CredentialVaultPayload {
+            CredentialVaultPayload(revision: 0, accounts: accounts, blockedPasswordOrigins: origins)
+        }
+        // 32 accounts of 3.9 MB are 124.8 MB: inside the 128 MB total, and every account is inside its own 4 MB.
+        let fits = noteAccounts(32, bytes: 3_900_000)
+        try CredentialVaultCrypto.validate(payload(fits))
+        try ProfileVaultStore.validate(fits, blockedOrigins: [])
+
+        // The 33rd takes the total over 128 MB although no account is over its own cap.
+        let overTotal = noteAccounts(33, bytes: 3_900_000)
+        #expect(throws: CredentialVaultError.oversized) { try CredentialVaultCrypto.validate(payload(overTotal)) }
+        #expect(throws: CredentialStoreError.limit(.payloadBytes)) { try ProfileVaultStore.validate(overTotal, blockedOrigins: []) }
+
+        // One account of 4.1 MB is over its own cap, however small the vault is.
+        let bigNotes = [
+            CredentialNote(text: String(repeating: "n", count: 3_900_000), field: nil),
+            CredentialNote(text: String(repeating: "n", count: 200_000), field: nil),
+        ]
+        let overOne = [noteOnlyAccount(bigNotes)]
+        #expect(throws: CredentialVaultError.oversized) { try CredentialVaultCrypto.validate(payload(overOne)) }
+        #expect(throws: CredentialStoreError.limit(.accountBytes)) { try ProfileVaultStore.validate(overOne, blockedOrigins: []) }
+
+        // One account at exactly its cap is kept.
+        try CredentialVaultCrypto.validate(payload(noteAccounts(1, bytes: CredentialVaultLimits.accountBytes)))
+    }
+
+    @Test func blockedOriginsCountTowardTheTotal() throws {
+        // 32 accounts of 3,999,000 B are 127,968,000 B: 32,000 B of room.
+        let accounts = noteAccounts(32, bytes: 3_999_000)
+        let origins = Set((0..<2_000).map { "https://origin\($0).example.test" })
+        #expect(origins.reduce(0) { $0 + $1.utf8.count } > 32_000)
+
+        try ProfileVaultStore.validate(accounts, blockedOrigins: [])
+        #expect(throws: CredentialStoreError.limit(.payloadBytes)) {
+            try ProfileVaultStore.validate(accounts, blockedOrigins: Array(origins))
+        }
+    }
+
+    @Test func legacyPayloadOver1000AccountsIsRefused() throws {
+        func decoded(_ count: Int) throws -> CredentialVaultPayload {
+            let accounts = (0..<count).map { VaultFixtures.account(username: "user\($0)") }
+            let encoded = try JSONEncoder().encode(CredentialVaultPayload(revision: 1, accounts: accounts, blockedPasswordOrigins: []))
+            return try JSONDecoder().decode(CredentialVaultPayload.self, from: encoded)
+        }
+        #expect(CredentialVaultLimits.legacyAccounts == 1_000)
+        #expect(try decoded(CredentialVaultLimits.legacyAccounts).accounts.count == 1_000)
+        #expect(throws: CredentialVaultError.oversized) { try decoded(CredentialVaultLimits.legacyAccounts + 1) }
+    }
+
+    @Test func legacyFileStaysAtFourMegabytesWhateverTheLiveCaps() throws {
+        // An account of exactly 4 MB is inside the live caps, but its encoding is not inside the v1 file's 4 MB plaintext.
+        let account = noteOnlyAccount([
+            CredentialNote(text: String(repeating: "n", count: 3_000_000), field: nil),
+            CredentialNote(text: String(repeating: "m", count: 1_000_000), field: nil),
+        ])
+        let payload = CredentialVaultPayload(revision: 0, accounts: [account], blockedPasswordOrigins: [])
+        try CredentialVaultCrypto.validate(payload)
+        #expect(throws: CredentialVaultError.oversized) { try CredentialVaultCrypto.encodePayload(payload) }
+    }
+
+    // MARK: Stored size
+
+    /// A note of `count` control characters: one byte each as text, six once the store escapes them (`\u0001`).
+    private func controlNote(_ count: Int) -> CredentialNote {
+        CredentialNote(text: String(repeating: "\u{01}", count: count), field: nil)
+    }
+
+    @Test func aHistoryRowAlwaysHoldsAnAccountAtTheEncodedCap() {
+        // A removed account holds its encoding; a revision or a removed credential holds a part of it as base64 text (4/3).
+        let encoded = CredentialVaultLimits.encodedAccountBytes
+        #expect(encoded + StoreFormat.historyBodyBytes <= StoreFormat.historyRowBytes)
+        #expect(4 * ((encoded + 2) / 3) + StoreFormat.historyBodyBytes <= StoreFormat.historyRowBytes)
+        // Every raw cap is under it, so the encoded cap is the one that decides for text that escapes.
+        #expect(CredentialVaultLimits.accountBytes < encoded)
+    }
+
+    @Test func anAccountThatGrowsWhenEncodedIsRefusedWhateverItsRawSize() throws {
+        // 1.2 MB of control characters is under every raw cap but encodes to about 7.2 MB, more than a history row can carry.
+        let account = noteOnlyAccount([controlNote(1_200_000)])
+        #expect(try CredentialVaultCrypto.liveBytes(of: account) == 1_200_000)
+        #expect(try CredentialVaultCrypto.storedBytes(of: account) > CredentialVaultLimits.encodedAccountBytes)
+
+        let payload = CredentialVaultPayload(revision: 0, accounts: [account], blockedPasswordOrigins: [])
+        #expect(throws: CredentialVaultError.oversized) { try CredentialVaultCrypto.validate(payload) }
+        #expect(throws: CredentialStoreError.limit(.accountBytes)) { try ProfileVaultStore.validate([account], blockedOrigins: []) }
+        #expect(throws: CredentialVaultError.oversized) { try CredentialExchangeCodec.validateAccounts([account]) }
+
+        // 900,000 of them encode to 5.4 MB and are kept, by the store and by the import's check alike.
+        let kept = noteOnlyAccount([controlNote(900_000)])
+        try ProfileVaultStore.validate([kept], blockedOrigins: [])
+        try CredentialExchangeCodec.validateAccounts([kept])
+    }
 }

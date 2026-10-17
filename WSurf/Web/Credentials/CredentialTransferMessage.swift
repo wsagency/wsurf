@@ -131,7 +131,7 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
         case .duplicateIdentifier:
             String(localized: "an identifier is repeated")
         case .oversized:
-            String(localized: "the transfer is over WSurf’s import limits")
+            error.limit?.text ?? String(localized: "the transfer is over WSurf’s import limits")
         }
         let kind = error.credentialKind.map { " (\($0.rawValue))" } ?? ""
         return Self(.malformed(error), .none, String(localized: """
@@ -206,6 +206,35 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
         Self(.exportNotSent, .none, String(localized: """
             The CSV file could not be saved, so nothing was exported. Anything already at that location was left as it was.
             """))
+    }
+}
+
+/// What a refusal says about the limit it hit: the bound, from the same constants the import checks, and never a title, a value
+/// or the amount the transfer held.
+nonisolated extension CredentialExchangeError.Limit {
+    var text: String {
+        switch self {
+        case .items:
+            String(localized: "the transfer has more than \(CredentialVaultLimits.accounts.formatted()) items")
+        case .credentials:
+            String(localized: "the transfer has more than \(CredentialVaultLimits.credentials.formatted()) credentials")
+        case .collections:
+            String(localized: "the transfer has more than \(CredentialVaultLimits.accounts.formatted()) collections")
+        case .nesting:
+            String(localized: "its collections are nested more than \(CredentialExchangeCodec.maximumCollectionDepth.formatted()) levels deep")
+        case .websites:
+            String(localized: "this item has more than \(CredentialExchangeCodec.maximumWebsites.formatted()) websites")
+        case .notes:
+            String(localized: "this item has more than \(CredentialAccount.noteLimit.formatted()) notes")
+        case .keyBytes:
+            String(localized: "a passkey key is larger than \(PasskeyKeyEncoding.maximumDERBytes.formatted()) bytes")
+        case .itemBytes:
+            String(localized: "this item holds more than \((CredentialVaultLimits.accountBytes / 1_000_000).formatted()) MB")
+        case .itemEncodedBytes:
+            String(localized: "this item would be larger than \((Double(CredentialVaultLimits.encodedAccountBytes) / 1_000_000).formatted()) MB once saved")
+        case .transferBytes:
+            String(localized: "the transfer holds more than \((CredentialVaultLimits.liveBytes / 1_000_000).formatted()) MB")
+        }
     }
 }
 

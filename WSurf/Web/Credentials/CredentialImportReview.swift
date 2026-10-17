@@ -174,3 +174,29 @@ nonisolated struct CredentialImportReview: Sendable {
         candidates.allSatisfy { $0.records.allSatisfy { !$0.needsChoice || $0.choice != nil } }
     }
 }
+
+/// What the review asks about every candidate, indexed once: a review of thousands of credentials must not search the preview or
+/// the stored accounts again for each of them.
+nonisolated struct ReviewLookup {
+    private let linkedIDs: [CredentialExchangeCodec.ExternalItemID: UUID]
+    private let candidatesByID: [UUID: CredentialAccount]
+    private let storedCredentialIDs: Set<Data>
+
+    init(_ preview: CredentialImportPreview) {
+        linkedIDs = CredentialExchangeCodec.linkedAccountIDs(in: preview.base.accounts)
+        candidatesByID = Dictionary(preview.candidates.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        storedCredentialIDs = Set(preview.base.accounts.flatMap { $0.passkeys.map(\.credentialID) })
+    }
+
+    /// The stored account that already holds `candidate`'s exporter item, if there is one.
+    func linkedAccountID(for candidate: CredentialAccount) -> UUID? {
+        (try? CredentialExchangeCodec.externalItemID(for: candidate)).flatMap { linkedIDs[$0] }
+    }
+
+    /// Whether `incoming` is a passkey whose credential ID is already held by a stored passkey.
+    func holdsStoredCredentialID(_ incoming: CredentialIdentity) -> Bool {
+        guard case let .passkey(accountID, passkeyID) = incoming,
+              let value = candidatesByID[accountID]?.passkeys.first(where: { $0.id == passkeyID }) else { return false }
+        return storedCredentialIDs.contains(value.credentialID)
+    }
+}

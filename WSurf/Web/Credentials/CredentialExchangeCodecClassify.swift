@@ -17,10 +17,46 @@ nonisolated enum CredentialImportClass: Equatable, Sendable {
     case passkeyHardConflict
 }
 
-/// The destination vault as classification sees it: its live accounts and the identifiers of what it removed.
+/// The destination vault as classification sees it: its live accounts and the identifiers of what it removed. The accounts are
+/// indexed once, by exporter item and by passkey identity, so classifying every credential of a transfer costs the size of the
+/// transfer and not the transfer times the vault.
 nonisolated struct ImportDestinationView: Sendable {
     let accounts: [CredentialAccount]
     let removed: RemovedIdentifiers
+    /// Positions in `accounts`, in order, of the accounts that hold each exporter item.
+    fileprivate let positionsByItem: [CredentialExchangeCodec.ExternalItemID: [Int]]
+    /// Every stored passkey by its identity (website and credential id), in the order the accounts and passkeys are stored.
+    fileprivate let passkeysByIdentity: [PasskeyIdentity: [WebsitePasskey]]
+    /// Some stored account has an exporter id that cannot be derived. Classifying a login, a code or a note then fails, as it
+    /// always did when it met such an account.
+    fileprivate let hasUnreadableIdentity: Bool
+
+    fileprivate struct PasskeyIdentity: Hashable, Sendable {
+        let relyingPartyID: String
+        let credentialID: Data
+    }
+
+    init(accounts: [CredentialAccount], removed: RemovedIdentifiers) {
+        self.accounts = accounts
+        self.removed = removed
+        var positions: [CredentialExchangeCodec.ExternalItemID: [Int]] = [:]
+        var passkeys: [PasskeyIdentity: [WebsitePasskey]] = [:]
+        var unreadable = false
+        for (position, account) in accounts.enumerated() {
+            if let key = try? CredentialExchangeCodec.externalItemID(for: account) {
+                positions[key, default: []].append(position)
+            } else {
+                unreadable = true
+            }
+            for passkey in account.passkeys {
+                passkeys[PasskeyIdentity(relyingPartyID: passkey.rpID.lowercased(), credentialID: passkey.credentialID), default: []]
+                    .append(passkey)
+            }
+        }
+        positionsByItem = positions
+        passkeysByIdentity = passkeys
+        hasUnreadableIdentity = unreadable
+    }
 }
 
 nonisolated extension CredentialExchangeCodec {
@@ -32,9 +68,20 @@ nonisolated extension CredentialExchangeCodec {
         in preview: CredentialImportPreview,
         destination: ImportDestinationView
     ) throws -> CredentialImportClass {
+        let candidate = try candidate(owner(of: incoming), in: preview)
+        return try classify(incoming, of: candidate, destination: destination)
+    }
+
+    /// The same, for a caller that already holds the candidate `incoming` belongs to (a loop over the preview's candidates), so
+    /// the preview is not searched for it again.
+    static func classify(
+        _ incoming: CredentialIdentity,
+        of candidate: CredentialAccount,
+        destination: ImportDestinationView
+    ) throws -> CredentialImportClass {
+        guard candidate.id == owner(of: incoming) else { throw CredentialVaultError.invalidData }
         switch incoming {
-        case let .password(accountID):
-            let candidate = try candidate(accountID, in: preview)
+        case .password:
             return try classifyLogin(
                 candidate,
                 destination: destination,
@@ -43,8 +90,7 @@ nonisolated extension CredentialExchangeCodec {
                 base: \.passwordBase,
                 identicalWithoutBaseIsUnchanged: false
             )
-        case let .totp(accountID):
-            let candidate = try candidate(accountID, in: preview)
+        case .totp:
             return try classifyLogin(
                 candidate,
                 destination: destination,
@@ -53,8 +99,7 @@ nonisolated extension CredentialExchangeCodec {
                 base: \.totpBase,
                 identicalWithoutBaseIsUnchanged: true
             )
-        case let .note(accountID):
-            let candidate = try candidate(accountID, in: preview)
+        case .note:
             return try classifyLogin(
                 candidate,
                 destination: destination,
@@ -63,11 +108,20 @@ nonisolated extension CredentialExchangeCodec {
                 base: { _ in nil },
                 identicalWithoutBaseIsUnchanged: true
             )
-        case let .passkey(accountID, passkeyID):
-            guard let passkey = try candidate(accountID, in: preview).passkeys.first(where: { $0.id == passkeyID }) else {
+        case let .passkey(_, passkeyID):
+            guard let passkey = candidate.passkeys.first(where: { $0.id == passkeyID }) else {
                 throw CredentialVaultError.invalidData
             }
             return try classifyPasskey(passkey, destination: destination)
+        }
+    }
+
+    private static func owner(of identity: CredentialIdentity) -> UUID {
+        switch identity {
+        case let .password(accountID), let .totp(accountID), let .note(accountID):
+            accountID
+        case let .passkey(accountID, _):
+            accountID
         }
     }
 
@@ -87,7 +141,8 @@ nonisolated extension CredentialExchangeCodec {
         identicalWithoutBaseIsUnchanged: Bool
     ) throws -> CredentialImportClass {
         let key = try externalItemID(for: candidate)
-        let matches = try destination.accounts.filter { try externalItemID(for: $0) == key }
+        guard !destination.hasUnreadableIdentity else { throw CredentialVaultError.invalidData }
+        let matches = (destination.positionsByItem[key] ?? []).map { destination.accounts[$0] }
         guard let local = matches.first else {
             // A removed row keeps the external ids as stored; a native account has none and exported under its own
             // id, so both sides are derived exactly like the live accounts' (no wildcard, no raw comparison).
@@ -132,9 +187,9 @@ nonisolated extension CredentialExchangeCodec {
     /// Passkeys: only the cryptographic identity decides. Exchange ids never match a passkey.
     private static func classifyPasskey(_ passkey: WebsitePasskey, destination: ImportDestinationView) throws -> CredentialImportClass {
         let rpID = passkey.rpID.lowercased()
-        let live = destination.accounts.flatMap(\.passkeys).filter {
-            $0.credentialID == passkey.credentialID && $0.rpID.lowercased() == rpID
-        }
+        let live = destination.passkeysByIdentity[
+            ImportDestinationView.PasskeyIdentity(relyingPartyID: rpID, credentialID: passkey.credentialID)
+        ] ?? []
         guard !live.isEmpty else {
             return previouslyRemoved(destination.removed) { entry in
                 entry.passkeyCredentialID == passkey.credentialID && entry.rpID?.lowercased() == rpID
