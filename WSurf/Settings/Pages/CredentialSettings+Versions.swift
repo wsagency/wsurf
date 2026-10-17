@@ -31,7 +31,7 @@ struct CredentialVersionsSheet: View {
                 Text("No earlier versions are kept.").font(Theme.Font.label).foregroundStyle(.secondary)
             }
             ScrollView {
-                VStack(spacing: 0) {
+                LazyVStack(spacing: 0) {
                     ForEach(model.revisionItems) { item in
                         DetailRow(verbatimTitle: item.title, verbatimCaption: item.detail) {
                             if item.subject.restoresFromEarlierVersions {

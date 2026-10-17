@@ -74,6 +74,7 @@ extension CredentialSettings {
             title: "Trash",
             symbol: "trash",
             footnote: "Removed credentials stay here, encrypted, with their earlier versions, until you delete them permanently.",
+            isLongList: true,
             accessory: {
                 HStack(spacing: 10) {
                     listSwitch

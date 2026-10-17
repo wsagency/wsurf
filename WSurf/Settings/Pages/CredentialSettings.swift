@@ -18,7 +18,12 @@ struct CredentialSettings: View {
     @State private var exportContext: CredentialExportContext?
 
     init(profile: Profile) {
-        _model = State(initialValue: CredentialSettingsModel(profile: profile))
+        self.init(model: CredentialSettingsModel(profile: profile))
+    }
+
+    /// Test seam: a page over a model that already has its own manager.
+    init(model: CredentialSettingsModel) {
+        _model = State(initialValue: model)
     }
 
     var body: some View {
@@ -356,7 +361,7 @@ struct CredentialSettings: View {
             DetailRow(title: "Export passwords to a CSV file") {
                 Button("Export to CSV…") { openExport(csv: true) }
                     .buttonStyle(.bordered)
-                    .disabled(model.isBusy || model.summaries.filter(CredentialCSVExport.isExportable).isEmpty)
+                    .disabled(model.isBusy || !model.summaries.contains(where: CredentialCSVExport.isExportable))
             }
         }
         if model.hasUnconfirmedPasskeys {
@@ -407,10 +412,12 @@ struct CredentialSettings: View {
         if showsTrash {
             trashSection
         } else {
+            // A vault holds thousands of credentials: the list is lazy, so only the rows on screen are built and laid out.
             SettingsSection(
                 title: "Saved credentials",
                 symbol: "key",
                 footnote: "Passwords, passkeys and verification codes stay hidden until you reveal or copy them.",
+                isLongList: true,
                 accessory: {
                     HStack(spacing: 10) {
                         listSwitch
