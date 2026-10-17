@@ -175,8 +175,9 @@ nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringC
 nonisolated enum CredentialExchangeCodec {
     /// Deepest nesting of collections an import accepts.
     static let maximumCollectionDepth = 32
-    /// Most websites one item may list in a transfer.
-    static let maximumWebsites = 64
+    /// Most websites one item may list in a transfer before the transfer is refused. An item keeps its first
+    /// `CredentialAccount.websiteLimit` and the rest are named as left out, so this only bounds the work.
+    static let maximumWebsites = 1_024
 
     struct ExternalItemID: Hashable {
         let account: Data
@@ -647,6 +648,7 @@ nonisolated enum CredentialExchangeCodec {
         var origins = Set<String>()
         var loginURLs = Set<URL>()
         var dropped = false
+        var surplus = false
         for url in scope.urls {
             try state.budget.add(url.absoluteString)
             guard let sanitized = try? CredentialAccount.sanitizedLoginURL(url),
@@ -654,11 +656,20 @@ nonisolated enum CredentialExchangeCodec {
                 dropped = true
                 continue
             }
+            // A website already kept is the same website. Past the account's limit the rest are named, not kept; each login
+            // address has an origin, so the origins stay inside the limit as well.
+            guard loginURLs.contains(sanitized) || loginURLs.count < CredentialAccount.websiteLimit else {
+                surplus = true
+                continue
+            }
             origins.insert(origin)
             loginURLs.insert(sanitized)
         }
         if dropped {
             omit(.websitesNotKept, &state)
+        }
+        if surplus {
+            omit(.extraWebsites, &state)
         }
         if !scope.androidApps.isEmpty {
             omit(.androidAppsNotKept, &state)

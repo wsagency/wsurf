@@ -96,7 +96,7 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
               (displayName?.utf8.count ?? 0) <= CredentialVaultLimits.payloadBytes,
               (password?.utf8.count ?? 0) <= 4_096,
               (exchangeMetadata?.count ?? 0) <= CredentialVaultLimits.payloadBytes,
-              origins.count <= 64, loginURLs.count <= 64, passkeys.count <= 1_000,
+              origins.count <= Self.websiteLimit, loginURLs.count <= Self.websiteLimit, passkeys.count <= 1_000,
               Set(origins).count == origins.count,
               Set(passkeys.map(\.id)).count == passkeys.count else { throw CredentialVaultError.invalidData }
 
@@ -141,6 +141,9 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
 
     /// Most notes one credential keeps.
     static let noteLimit = 64
+
+    /// Most websites (origins, and login addresses) one account keeps.
+    static let websiteLimit = 64
 
     static func origin(for url: URL) -> String? {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),

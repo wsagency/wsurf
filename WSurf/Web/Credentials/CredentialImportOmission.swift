@@ -22,6 +22,8 @@ nonisolated struct CredentialImportOmission: Equatable, Sendable {
         case emptyLogin
         /// A website that is not an HTTPS address.
         case websitesNotKept
+        /// Websites past the first 64 of one item: the first 64 are kept.
+        case extraWebsites
         case androidAppsNotKept
         /// Who the item is shared with.
         case sharingNotKept
@@ -59,6 +61,8 @@ nonisolated struct CredentialImportOmission: Equatable, Sendable {
             return String(localized: "A login has no username and no password, so it wasn’t imported.")
         case .websitesNotKept:
             return String(localized: "Some websites aren’t secure HTTPS addresses, so they weren’t imported.")
+        case .extraWebsites:
+            return String(localized: "It has more than \(CredentialAccount.websiteLimit) websites. Only the first \(CredentialAccount.websiteLimit) were imported.")
         case .androidAppsNotKept:
             return String(localized: "Android apps can’t be used here, so they weren’t imported.")
         case .sharingNotKept:

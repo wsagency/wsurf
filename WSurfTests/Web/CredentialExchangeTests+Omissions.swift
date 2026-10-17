@@ -250,6 +250,40 @@ extension CredentialExchangeTests {
         #expect(!String(describing: preview.omitted).contains("secret"))
     }
 
+    private func websites(_ count: Int) -> ASImportableCredentialScope {
+        ASImportableCredentialScope(urls: (0..<count).map { URL(string: "https://site\($0).example.test/login")! }, androidApps: [])
+    }
+
+    @Test func anItemKeepsItsFirst64WebsitesAndNamesTheRest() throws {
+        let preview = try imported([basicAuthentication(username: "ada", password: "pw")], scope: websites(65))
+
+        let candidate = try #require(preview.candidates.first)
+        #expect(candidate.origins.count == 64 && candidate.loginURLs.count == 64)
+        #expect(candidate.origins.contains("https://site63.example.test") && !candidate.origins.contains("https://site64.example.test"))
+        try candidate.validate()
+        #expect(preview.omitted == [omission(nil, .extraWebsites)])
+        let text = try #require(preview.omitted.first?.text)
+        #expect(text.contains("64") && text.contains("websites") && !text.contains("site64"), "the wording names the bound, never an address")
+
+        // A website listed twice is one website, so 64 distinct addresses beside a repeat are all kept and nothing is left out.
+        let repeated = ASImportableCredentialScope(urls: websites(64).urls + [websites(64).urls[0]], androidApps: [])
+        let kept = try imported([basicAuthentication(username: "ada", password: "pw")], scope: repeated)
+        #expect(kept.candidates.first?.origins.count == 64 && kept.omitted.isEmpty)
+    }
+
+    @Test func websitesPastTheLimitAndWebsitesThatAreNotHTTPSAreNamedSeparately() throws {
+        let urls = [URL(string: "http://insecure.test/")!] + websites(70).urls
+        let scope = ASImportableCredentialScope(urls: urls, androidApps: [])
+
+        let preview = try imported([basicAuthentication(username: "ada", password: "pw")], scope: scope)
+
+        #expect(preview.candidates.first?.origins.count == 64)
+        #expect(preview.omitted == [omission(nil, .websitesNotKept), omission(nil, .extraWebsites)])
+        // The kept item is exactly what the store would write: nothing about the omitted websites makes it invalid.
+        let accounts = try CredentialExchangeCodec.apply(preview, decisions: [])
+        try ProfileVaultStore.validate(accounts, blockedOrigins: [])
+    }
+
     @Test func itemSharingIsIgnoredAndNamed() throws {
         guard #available(macOS 26.4, *) else { return }
         var item = importableItem(id: itemExternalID, title: "Shared", credentials: [basicAuthentication(username: "ada", password: "pw")])
@@ -337,8 +371,9 @@ extension CredentialExchangeTests {
         let samePasskey = importableItem(id: Data([0xB2]), title: "two", credentials: [passkey(key: key)])
         expectRefused(transfer([onePasskey, samePasskey]), against: base, .duplicateIdentifier, at: .credential(account: 0, item: 1, credential: 0))
 
-        // Size budgets: more than 64 websites for one item, and collections nested deeper than 32 levels.
-        let manyWebsites = ASImportableCredentialScope(urls: (0...64).map { URL(string: "https://site\($0).example.test/")! }, androidApps: [])
+        // Size budgets: more than 1,024 websites for one item (up to that many it keeps its first 64), and collections nested deeper
+        // than 32 levels.
+        let manyWebsites = websites(CredentialExchangeCodec.maximumWebsites + 1)
         expectRefused(data(scope: manyWebsites, credentials: [login]), against: base, .oversized, at: .item(account: 0, item: 0), limit: .websites)
         var chain = ASImportableCollection(id: Data([0xC0, 0]), created: nil, lastModified: nil, title: "leaf", subtitle: nil, items: [], subcollections: [])
         for level in 1...33 {
