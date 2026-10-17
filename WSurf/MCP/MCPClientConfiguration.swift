@@ -121,6 +121,7 @@ enum MCPClientDiscovery {
 
 nonisolated enum MCPClientSetupError: Error, LocalizedError {
     case invalidConfiguration, conflictingServer, unsafeFile, changedFile, missingCodex, commandFailed, fileAccess
+    case pairingUnavailable, pairingFailed
 
     var errorDescription: String? {
         switch self {
@@ -138,6 +139,10 @@ nonisolated enum MCPClientSetupError: Error, LocalizedError {
             String(localized: "Codex could not update the configuration. Check it in Codex or use Copy Configuration.")
         case .fileAccess:
             String(localized: "WSurf couldn’t save the configuration. Check the file’s permissions and try again.")
+        case .pairingUnavailable:
+            String(localized: "Pairing isn’t available because WSurf can’t reach its secure storage. The app asks for approval each time it connects.")
+        case .pairingFailed:
+            String(localized: "WSurf added the app but couldn’t save its pairing. Choose Pair to try again.")
         }
     }
 }
@@ -156,18 +161,65 @@ nonisolated enum MCPClientConfiguration {
         return ["--mcp"]
     }
 
-    static func entry(command: String, kind: MCPClientKind, arguments: [String] = MCPClientConfiguration.arguments) -> [String: Any] {
+    static func entry(
+        command: String, kind: MCPClientKind, arguments: [String] = MCPClientConfiguration.arguments, token: String? = nil
+    ) -> [String: Any] {
         var value: [String: Any] = ["command": command, "args": arguments]
         if kind == .claudeCode { value["type"] = "stdio" }
+        if let token { value["env"] = [MCPPairing.environmentName: token] }
         return value
     }
 
+    /// Whether the entry launches this command. Its `env` and other client settings are not compared.
     static func matches(_ entry: [String: Any], command: String, arguments: [String] = MCPClientConfiguration.arguments) -> Bool {
         entry["command"] as? String == command && entry["args"] as? [String] == arguments
             && entry["url"] == nil && (entry["type"] == nil || entry["type"] as? String == "stdio")
     }
 
-    static func addingJSON(to data: Data?, kind: MCPClientKind, command: String, arguments: [String] = MCPClientConfiguration.arguments) throws -> Data? {
+    /// The pairing token an entry passes to the relay, if it passes one.
+    static func token(in entry: [String: Any]) -> String? {
+        (entry["env"] as? [String: Any])?[MCPPairing.environmentName] as? String
+    }
+
+    static func installation(
+        in data: Data?, command: String, arguments: [String] = MCPClientConfiguration.arguments
+    ) throws -> MCPClientInstallation {
+        let (_, servers) = try parse(data)
+        guard let existing = servers["wsurf"] else { return .absent }
+        guard let entry = existing as? [String: Any], matches(entry, command: command, arguments: arguments) else {
+            throw MCPClientSetupError.conflictingServer
+        }
+        return .installed(token: token(in: entry))
+    }
+
+    /// Adds the `wsurf` entry, or with a token sets only `env.WSURF_MCP_TOKEN` on a matching entry. Everything else in
+    /// the file and in the entry stays as it is. Returns nil when nothing needs to change.
+    static func addingJSON(
+        to data: Data?, kind: MCPClientKind, command: String,
+        arguments: [String] = MCPClientConfiguration.arguments, token: String? = nil
+    ) throws -> Data? {
+        var (root, servers) = try parse(data)
+        if let existing = servers["wsurf"] {
+            guard var entry = existing as? [String: Any], matches(entry, command: command, arguments: arguments) else {
+                throw MCPClientSetupError.conflictingServer
+            }
+            guard let token else { return nil }
+            var environment: [String: Any] = [:]
+            if let current = entry["env"] {
+                guard let dictionary = current as? [String: Any] else { throw MCPClientSetupError.conflictingServer }
+                environment = dictionary
+            }
+            environment[MCPPairing.environmentName] = token
+            entry["env"] = environment
+            servers["wsurf"] = entry
+        } else {
+            servers["wsurf"] = entry(command: command, kind: kind, arguments: arguments, token: token)
+        }
+        root["mcpServers"] = servers
+        return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) + Data([10])
+    }
+
+    private static func parse(_ data: Data?) throws -> (root: [String: Any], servers: [String: Any]) {
         var root: [String: Any] = [:]
         if let data {
             guard let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -180,14 +232,12 @@ nonisolated enum MCPClientConfiguration {
             guard let dictionary = existing as? [String: Any] else { throw MCPClientSetupError.invalidConfiguration }
             servers = dictionary
         }
-        if let existing = servers["wsurf"] {
-            guard let entry = existing as? [String: Any], matches(entry, command: command, arguments: arguments) else {
-                throw MCPClientSetupError.conflictingServer
-            }
-            return nil
-        }
-        servers["wsurf"] = entry(command: command, kind: kind, arguments: arguments)
-        root["mcpServers"] = servers
-        return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) + Data([10])
+        return (root, servers)
     }
+}
+
+/// Whether a client's configuration has the WSurf server, and the pairing token it passes.
+nonisolated enum MCPClientInstallation: Equatable, Sendable {
+    case absent
+    case installed(token: String?)
 }

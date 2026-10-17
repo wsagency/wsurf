@@ -9,13 +9,16 @@ import Network
 
 actor MCPStdioRelay {
     private let socketPath: String
+    /// The client's pairing token. It goes only into the hello line on the socket.
+    private let hello: Data?
     private var clientName = "External Connection"
     private var backend: (client: MCP.Client, transport: LocalMCPTransport)?
     private var busy = false
     private var stopped = false
 
-    init(socketPath: String) {
+    init(socketPath: String, token: String? = nil) {
         self.socketPath = socketPath
+        hello = token.flatMap(MCPPairing.helloMessage)
     }
 
     func run(transport: any Transport) async throws {
@@ -73,7 +76,8 @@ actor MCPStdioRelay {
             let client = MCP.Client(name: clientName, version: "1.0.0")
             let transport = LocalMCPTransport(
                 connection: NWConnection(to: .unix(path: socketPath), using: .tcp),
-                onDisconnect: { await client.disconnect() }
+                onDisconnect: { await client.disconnect() },
+                hello: hello
             )
             backend = (client, transport)
             do {
