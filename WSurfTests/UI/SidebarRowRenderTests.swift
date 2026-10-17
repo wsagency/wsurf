@@ -61,9 +61,8 @@ struct SidebarRowRenderTests {
             .background(Color(red: 0.5, green: 0.5, blue: 0.5))
     }
 
-    /// The pixel at `(x, y)` points from the top left, drawn by AppKit in an unshown window: the rows hold
-    /// AppKit views that `ImageRenderer` cannot draw.
-    private func pixel(of view: some View, x: CGFloat, y: CGFloat) throws -> NSColor {
+    /// `view` drawn by AppKit in an unshown window: the rows hold AppKit views that `ImageRenderer` cannot draw.
+    private func rendered(_ view: some View) throws -> (bitmap: NSBitmapImageRep, scale: CGFloat) {
         let host = NSHostingView(rootView: view)
         let size = host.fittingSize
         host.frame = CGRect(origin: .zero, size: size)
@@ -76,7 +75,12 @@ struct SidebarRowRenderTests {
         host.displayIfNeeded()
         let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
-        let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
+        return (bitmap, CGFloat(bitmap.pixelsWide) / host.bounds.width)
+    }
+
+    /// The pixel at `(x, y)` points from the top left.
+    private func pixel(of view: some View, x: CGFloat, y: CGFloat) throws -> NSColor {
+        let (bitmap, scale) = try rendered(view)
         return try #require(
             bitmap.colorAt(x: Int(x * scale), y: Int(y * scale))?.usingColorSpace(.sRGB)
         )
@@ -100,9 +104,9 @@ struct SidebarRowRenderTests {
         CGPoint(x: rowWidth - 60, y: rowHeight / 2)
     }
 
-    /// The top trailing corner of the icon in a full-width row.
-    private var iconCorner: CGPoint {
-        CGPoint(x: 9 + SidebarMetrics.rowIconSize, y: (rowHeight - SidebarMetrics.rowIconSize) / 2)
+    /// The middle of the new-tab dot in a full-width row: on the icon's trailing edge, 2 pt below its top.
+    private var dotCenter: CGPoint {
+        CGPoint(x: 9 + SidebarMetrics.rowIconSize, y: (rowHeight - SidebarMetrics.rowIconSize) / 2 + 2)
     }
 
     // MARK: - Tab rows
@@ -140,9 +144,12 @@ struct SidebarRowRenderTests {
         let newRow = sidebar(SidebarTabRow(tab: background, depth: 0, context: fixture.context))
         let currentRow = sidebar(SidebarTabRow(tab: current, depth: 0, context: fixture.context))
 
-        #expect(isBlue(try pixel(of: newRow, x: iconCorner.x, y: iconCorner.y)), "the dot sits on the icon corner")
+        #expect(
+            isBlue(try pixel(of: newRow, x: dotCenter.x, y: dotCenter.y)),
+            "the dot sits on the icon's trailing edge"
+        )
         #expect(isBase(try pixel(of: newRow, x: emptySpot.x, y: emptySpot.y)), "a new tab is not filled")
-        #expect(!isBlue(try pixel(of: currentRow, x: iconCorner.x, y: iconCorner.y)), "the current tab has no dot")
+        #expect(!isBlue(try pixel(of: currentRow, x: dotCenter.x, y: dotCenter.y)), "the current tab has no dot")
     }
 
     @Test func openingTheNewTabTakesTheDotAndFillsTheRow() throws {
@@ -150,13 +157,13 @@ struct SidebarRowRenderTests {
         _ = fixture.browser.newTab()
         let background = fixture.browser.newTab(activate: false)
         let row = SidebarTabRow(tab: background, depth: 0, context: fixture.context)
-        #expect(isBlue(try pixel(of: sidebar(row), x: iconCorner.x, y: iconCorner.y)))
+        #expect(isBlue(try pixel(of: sidebar(row), x: dotCenter.x, y: dotCenter.y)))
 
         fixture.browser.activate(background)
 
         let opened = sidebar(SidebarTabRow(tab: background, depth: 0, context: fixture.context))
         #expect(isWhite(try pixel(of: opened, x: emptySpot.x, y: emptySpot.y)))
-        #expect(!isBlue(try pixel(of: opened, x: iconCorner.x, y: iconCorner.y)))
+        #expect(!isBlue(try pixel(of: opened, x: dotCenter.x, y: dotCenter.y)))
     }
 
     // MARK: - Color presets
@@ -224,16 +231,16 @@ struct SidebarRowRenderTests {
         let background = fixture.browser.newTab(activate: false)
         fixture.browser.activate(current)
         let width = SidebarMetrics.iconsWidth
-        let corner = CGPoint(
+        let dot = CGPoint(
             x: (width + SidebarMetrics.rowIconSize) / 2,
-            y: (rowHeight - SidebarMetrics.rowIconSize) / 2
+            y: (rowHeight - SidebarMetrics.rowIconSize) / 2 + 2
         )
 
         let row = sidebar(
             SidebarTabRow(tab: background, depth: 0, context: fixture.context), width: width, style: .icons
         )
 
-        #expect(isBlue(try pixel(of: row, x: corner.x, y: corner.y)))
+        #expect(isBlue(try pixel(of: row, x: dot.x, y: dot.y)))
     }
 
     // MARK: - Splits
@@ -253,6 +260,325 @@ struct SidebarRowRenderTests {
 
         #expect(isWhite(rightPane), "the focused pane is inverse")
         #expect(!isWhite(leftPane), "the other pane keeps the glass of the row")
+    }
+
+    // MARK: - Vertical centering
+
+    /// A drawn row read as ink: how far each pixel has moved from the base toward the thing drawn, 0 where the base
+    /// shows and 1 where the ink is. An edge is placed from the partial coverage of its pixel, so it holds to a
+    /// fraction of a point at any display scale.
+    private struct Ink {
+        let bitmap: NSBitmapImageRep
+        let scale: CGFloat
+        let base: [CGFloat]
+
+        init(bitmap: NSBitmapImageRep, scale: CGFloat, baseAt spot: CGPoint) throws {
+            self.bitmap = bitmap
+            self.scale = scale
+            let color = try #require(
+                bitmap.colorAt(x: Int(spot.x * scale), y: Int(spot.y * scale))?.usingColorSpace(.sRGB)
+            )
+            base = [color.redComponent, color.greenComponent, color.blueComponent]
+        }
+
+        var height: CGFloat {
+            CGFloat(bitmap.pixelsHigh) / scale
+        }
+
+        private func distance(_ x: Int, _ y: Int) -> CGFloat {
+            guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return 0 }
+            return max(
+                abs(color.redComponent - base[0]),
+                abs(color.greenComponent - base[1]),
+                abs(color.blueComponent - base[2])
+            )
+        }
+
+        /// How much of each pixel the ink covers in `columns`, against the strongest pixel there.
+        private func coverage(columns: Range<Int>) -> [[CGFloat]] {
+            let grid = (0..<bitmap.pixelsHigh).map { y in columns.map { distance($0, y) } }
+            let strongest = grid.joined().max() ?? 0
+            guard strongest > 0 else { return grid }
+            return grid.map { row in row.map { $0 / strongest < 0.05 ? 0 : $0 / strongest } }
+        }
+
+        /// The top and bottom edge, in points, of the ink between the columns `xs` (points). An edge sits where the
+        /// ink covers as much of the outermost row as that row holds against the row just inside it.
+        func vertical(in xs: ClosedRange<CGFloat>) -> ClosedRange<CGFloat>? {
+            let columns = Int((xs.lowerBound * scale).rounded(.down))..<Int((xs.upperBound * scale).rounded(.up))
+            let rows = coverage(columns: columns).map { $0.reduce(0, +) }
+            guard let peak = rows.max(), peak > 0 else { return nil }
+            let inked = rows.indices.filter { rows[$0] > 0.05 * peak }
+            guard let first = inked.first, let last = inked.last, last - first > 2 else { return nil }
+            let top = CGFloat(first) + 1 - min(rows[first] / rows[first + 1], 1)
+            let bottom = CGFloat(last) + min(rows[last] / rows[last - 1], 1)
+            return (top / scale)...(bottom / scale)
+        }
+
+        /// The first column, in points, right of `x` where the ink reaches a quarter of its densest column.
+        func leading(from x: CGFloat) -> CGFloat? {
+            let start = Int(x * scale)
+            let grid = coverage(columns: start..<bitmap.pixelsWide)
+            let columns = (0..<(bitmap.pixelsWide - start)).map { column in grid.reduce(0) { $0 + $1[column] } }
+            guard let peak = columns.max(), peak > 0,
+                  let first = columns.firstIndex(where: { $0 >= 0.25 * peak }) else { return nil }
+            return CGFloat(start + first) / scale
+        }
+    }
+
+    private func readInk(of view: some View, baseAt spot: CGPoint? = nil) throws -> Ink {
+        let drawn = try rendered(view)
+        return try Ink(bitmap: drawn.bitmap, scale: drawn.scale, baseAt: spot ?? emptySpot)
+    }
+
+    /// A solid white square, so the icon of a tab has flat edges to measure.
+    private let solidIcon = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { bounds in
+        NSColor.white.setFill()
+        bounds.fill()
+        return true
+    }
+
+    /// A tab that shows a page, titled with four capitals: capitals are as tall as the font says and their edges
+    /// are flat, so the baseline can be read off the drawing.
+    private func measurable(_ tab: BrowserTab) {
+        tab.title = Self.measuredTitle
+        tab.urlString = "https://example.com/"
+        tab.favicon = solidIcon
+    }
+
+    private static let measuredTitle = "HHH"
+
+    private func width(of title: String, in font: NSFont) -> CGFloat {
+        (title as NSString).size(withAttributes: [.font: font]).width
+    }
+
+    private func sidebarFont(size: Double, family: String) -> NSFont {
+        BrowserSettings.nativeSidebarFont(
+            family: family,
+            size: CGFloat(size),
+            weight: BrowserSettings.application.sidebarFontWeight
+        )
+    }
+
+    /// Runs `body` with the sidebar set in `family` at `size`, and puts the settings back.
+    private func withSidebarFont(size: Double, family: String, _ body: () throws -> Void) rethrows {
+        let settings = BrowserSettings.application
+        let saved = (settings.sidebarFontSize, settings.sidebarFontFamily)
+        defer { (settings.sidebarFontSize, settings.sidebarFontFamily) = saved }
+        settings.sidebarFontSize = size
+        settings.sidebarFontFamily = family
+        try body()
+    }
+
+    /// Half a point, as asked for, and a tenth for reading an edge off the pixel grid: a display of 1x puts text and
+    /// icons on whole pixels, which moves them by up to half a point by itself.
+    private let tolerance: CGFloat = 0.6
+
+    /// Where the ink of the folder symbol sits in its 16 pt frame, in points below the middle. The drawing of the
+    /// symbol is not centered on its own box, and a display of 1x moves a frame that starts between two pixels.
+    private func folderSymbolBias() throws -> CGFloat {
+        let frame = Image(systemName: "folder.fill")
+            .font(Theme.Font.caption)
+            .foregroundStyle(.white)
+            .frame(width: SidebarMetrics.rowIconSize, height: SidebarMetrics.rowIconSize)
+            .background(Color(red: 0.5, green: 0.5, blue: 0.5))
+        let ink = try readInk(of: frame, baseAt: CGPoint(x: 0.5, y: 0.5))
+        let edges = try #require(ink.vertical(in: 0...SidebarMetrics.rowIconSize))
+        return (edges.lowerBound + edges.upperBound) / 2 - ink.height / 2
+    }
+
+    /// The icon is as high as the row's middle, and so is the middle of the letters in the title: halfway between
+    /// the tops of capitals and of lowercase letters, above the baseline. `iconBias` is where the ink of the icon
+    /// sits in its own frame.
+    private func expectCentered(
+        _ ink: Ink,
+        icon: ClosedRange<CGFloat>,
+        iconBias: CGFloat = 0,
+        font: NSFont,
+        _ name: String,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) throws {
+        let center = ink.height / 2
+        let iconEdges = try #require(ink.vertical(in: icon), "\(name): no icon was drawn", sourceLocation: sourceLocation)
+        let title = try #require(
+            ink.vertical(in: 33...(33 + width(of: Self.measuredTitle, in: font))),
+            "\(name): no title was drawn",
+            sourceLocation: sourceLocation
+        )
+        let midline = (font.capHeight + font.xHeight) / 4
+        let iconOff = (iconEdges.lowerBound + iconEdges.upperBound) / 2 - center - iconBias
+        let titleOff = title.upperBound - midline - center
+        let capitals = title.upperBound - title.lowerBound
+
+        #expect(
+            abs(capitals - font.capHeight) <= 1,
+            "\(name): measured capitals \(capitals) pt tall, expected \(font.capHeight)",
+            sourceLocation: sourceLocation
+        )
+        #expect(
+            abs(iconOff) <= tolerance,
+            "\(name): the icon is \(iconOff) pt off the row's middle",
+            sourceLocation: sourceLocation
+        )
+        #expect(
+            abs(titleOff) <= tolerance,
+            "\(name): the title is \(titleOff) pt off the row's middle",
+            sourceLocation: sourceLocation
+        )
+    }
+
+    @Test(arguments: [10.0, 12, 14, 16, 20], ["", "Helvetica Neue", "Menlo", "Georgia"])
+    func theIconAndTheTitleMeetOnTheMiddleOfTheRow(size: Double, family: String) throws {
+        try withSidebarFont(size: size, family: family) {
+            let font = sidebarFont(size: size, family: family)
+            let fixture = makeFixture()
+            let resting = fixture.browser.newTab()
+            let inFolder = fixture.browser.newTab()
+            let left = fixture.browser.newTab()
+            let right = fixture.browser.newTab()
+            let current = fixture.browser.newTab()
+            let new = fixture.browser.newTab(activate: false)
+            [resting, inFolder, left, right, current, new].forEach(measurable)
+            let folder = fixture.browser.createFolder(named: Self.measuredTitle, containing: [inFolder])
+            folder.isExpanded = false
+            fixture.browser.split(left, with: right, axis: .sideBySide)
+            fixture.browser.activate(current)
+            let split = try #require(fixture.browser.splits.split(containing: left.id))
+            let context = fixture.context
+            let middle = rowHeight / 2
+
+            for (name, tab) in [("a tab", resting), ("a new tab", new), ("the current tab", current)] {
+                let row = sidebar(SidebarTabRow(tab: tab, depth: 0, context: context))
+                try expectCentered(readInk(of: row), icon: 10...20, font: font, name)
+            }
+            try expectCentered(
+                readInk(of: sidebar(FolderSection(folder: folder, depth: 0, context: context))),
+                icon: 9...25, iconBias: folderSymbolBias(), font: font, "a folder"
+            )
+            try expectCentered(
+                readInk(
+                    of: sidebar(SidebarSplitRow(leading: left, split: split, depth: 0, context: context)),
+                    baseAt: CGPoint(x: 33 + width(of: Self.measuredTitle, in: font) + 6, y: middle)
+                ),
+                icon: 10...20, font: font, "a split pane"
+            )
+        }
+    }
+
+    @Test func aFolderTitleStartsWhereATabTitleStarts() throws {
+        let fixture = makeFixture()
+        let tab = fixture.browser.newTab()
+        let inFolder = fixture.browser.newTab()
+        let current = fixture.browser.newTab()
+        [tab, inFolder, current].forEach(measurable)
+        let folder = fixture.browser.createFolder(named: Self.measuredTitle, containing: [inFolder])
+        folder.isExpanded = false
+
+        let tabRow = sidebar(SidebarTabRow(tab: tab, depth: 0, context: fixture.context))
+        let folderRow = sidebar(FolderSection(folder: folder, depth: 0, context: fixture.context))
+        // Past the icon of either row, which ends at 25 pt.
+        let tabStart = try #require(try readInk(of: tabRow).leading(from: 26))
+        let folderStart = try #require(try readInk(of: folderRow).leading(from: 26))
+
+        #expect(
+            abs(tabStart - folderStart) <= tolerance,
+            "the folder title starts at \(folderStart) pt, a tab title at \(tabStart) pt"
+        )
+    }
+
+    @Test(arguments: [10.0, 12, 20])
+    func theIconIsCenteredInTheIconsOnlySidebar(size: Double) throws {
+        try withSidebarFont(size: size, family: "") {
+            let fixture = makeFixture()
+            let tab = fixture.browser.newTab()
+            let inFolder = fixture.browser.newTab()
+            let current = fixture.browser.newTab()
+            [tab, inFolder, current].forEach(measurable)
+            let folder = fixture.browser.createFolder(named: Self.measuredTitle, containing: [inFolder])
+            folder.isExpanded = false
+            let width = SidebarMetrics.iconsWidth
+            let corner = CGPoint(x: 1, y: 1)
+
+            let rows: [(String, AnyView, CGFloat)] = try [
+                ("a tab", AnyView(SidebarTabRow(tab: tab, depth: 0, context: fixture.context)), 0),
+                (
+                    "a folder",
+                    AnyView(FolderSection(folder: folder, depth: 0, context: fixture.context)),
+                    folderSymbolBias()
+                ),
+            ]
+            for (name, row, bias) in rows {
+                let ink = try readInk(of: sidebar(row, width: width, style: .icons), baseAt: corner)
+                let edges = try #require(ink.vertical(in: 0...width), "\(name): no icon was drawn")
+                let off = (edges.lowerBound + edges.upperBound) / 2 - ink.height / 2 - bias
+                #expect(abs(off) <= tolerance, "\(name): the icon is \(off) pt off the row's middle")
+            }
+        }
+    }
+
+    @Test func aFavoriteIsCenteredInItsTile() throws {
+        let fixture = makeFixture()
+        _ = fixture.browser.newTab()
+        let favorite = fixture.browser.newTab()
+        measurable(favorite)
+
+        let tile = sidebar(
+            SidebarFavoriteButton(tab: favorite, browser: fixture.browser, coordinator: fixture.coordinator),
+            width: 32, height: 32
+        )
+        let ink = try readInk(of: tile, baseAt: CGPoint(x: 1, y: 1))
+        let edges = try #require(ink.vertical(in: 9...23))
+        let off = (edges.lowerBound + edges.upperBound) / 2 - ink.height / 2
+
+        #expect(abs(off) <= tolerance, "the icon is \(off) pt off the tile's middle")
+    }
+
+    @Test func theNewTabDotStaysInsideTheRow() throws {
+        try withSidebarFont(size: 10, family: "") {
+            let fixture = makeFixture()
+            let current = fixture.browser.newTab()
+            let background = fixture.browser.newTab(activate: false)
+            fixture.browser.activate(current)
+            #expect(rowHeight == 24, "the shortest row")
+
+            let row = sidebar(SidebarTabRow(tab: background, depth: 0, context: fixture.context))
+            let drawn = try rendered(row)
+            let ink = try Ink(bitmap: drawn.bitmap, scale: drawn.scale, baseAt: emptySpot)
+
+            // A dot and its ring would show against the base. Nothing may reach the top 1.5 pt of the row.
+            var touched = 0
+            for y in 0..<Int(1.5 * drawn.scale) {
+                for x in 0..<drawn.bitmap.pixelsWide {
+                    let color = try #require(drawn.bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB))
+                    if abs(color.redComponent - ink.base[0]) > 0.03 || abs(color.blueComponent - ink.base[2]) > 0.03 {
+                        touched += 1
+                    }
+                }
+            }
+            #expect(touched == 0, "\(touched) pixels in the top 1.5 pt of the row are not the base")
+            #expect(isBlue(try pixel(of: row, x: dotCenter.x, y: dotCenter.y)), "the dot is still there")
+        }
+    }
+
+    @Test func thePinReturnButtonFitsTheRow() throws {
+        let fixture = makeFixture()
+        let tab = fixture.browser.newTab()
+        let margin: CGFloat = 8
+        // The red shows the space the button takes. Beside the row it would spill over the margin.
+        let button = PinReturnSegment(tab: tab, help: "", tint: .white, isHovering: .constant(false)) {}
+            .background(Color(red: 1, green: 0, blue: 0))
+            .frame(height: rowHeight)
+            .padding(.vertical, margin)
+            .background(Color(red: 0.5, green: 0.5, blue: 0.5))
+
+        // Left of the arrow, which sits in the middle of the button.
+        let above = try pixel(of: button, x: 4, y: margin - 2)
+        let inside = try pixel(of: button, x: 4, y: margin + rowHeight / 2)
+        let below = try pixel(of: button, x: 4, y: margin + rowHeight + 2)
+
+        #expect(inside.redComponent - inside.greenComponent > 0.3, "the button fills the row")
+        #expect(isBase(above), "the button does not rise above the row")
+        #expect(isBase(below), "the button does not hang below the row")
     }
 
     // MARK: - Folders

@@ -160,7 +160,7 @@ struct SidebarRowInkRenderTests {
         #expect(!seen.ignoresOverride)
     }
 
-    @Test func theNewTabDotIsDrawnAtTheIconCorner() throws {
+    @Test func theNewTabDotIsDrawnOnTheIconsTrailingEdge() throws {
         let colors = SidebarRowStyle.colors(
             text: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1), ground: darkGround, accent: blue
         )
@@ -168,17 +168,20 @@ struct SidebarRowInkRenderTests {
             isCurrent: false, isMarked: false, isUnseen: true, paletteOpen: false, increasedContrast: false
         )
         let ink = SidebarRowInk(style: unseen, resting: .white, colors: colors, ground: Color(nsColor: darkGround))
-        // The dot is centered on the icon's top trailing corner: here (40, 8) in the frame of a 40 x 40 padded canvas.
+        // The dot's middle is on the icon's trailing edge, 2 pt below its top: here (48, 10) in the frame of a
+        // 40 x 40 padded canvas. Its ring reaches 2 pt above the icon, to y = 6.
         let view = Color.clear
             .frame(width: 40, height: 40)
             .sidebarNewMark(ink)
             .padding(8)
             .background(Color(red: 0, green: 1, blue: 0))
 
-        let atCorner = try pixel(of: view, at: CGPoint(x: 48, y: 8))
+        let atMiddle = try pixel(of: view, at: CGPoint(x: 48, y: 10))
+        let aboveRing = try pixel(of: view, at: CGPoint(x: 48, y: 5))
         let awayFromIt = try pixel(of: view, at: CGPoint(x: 28, y: 28))
 
-        #expect(atCorner.blueComponent > 0.9 && atCorner.greenComponent < 0.5, "the dot is the accent blue")
+        #expect(atMiddle.blueComponent > 0.9 && atMiddle.greenComponent < 0.5, "the dot is the accent blue")
+        #expect(aboveRing.greenComponent > 0.4 && aboveRing.blueComponent < 0.1, "the dot stays near the icon")
         #expect(awayFromIt.greenComponent > 0.4 && awayFromIt.blueComponent < 0.1, "the rest of the icon is untouched")
     }
 

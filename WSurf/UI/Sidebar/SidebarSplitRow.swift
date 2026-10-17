@@ -313,6 +313,7 @@ private struct SplitRowCell: View {
                     .sidebarRowAccessibility(style)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .mask(alignment: .leading) { titleMask }
+                    .sidebarTitleCentered()
             }
         }
         .overlay(alignment: .trailing) {

@@ -425,7 +425,7 @@ private struct SidebarFavorites: View {
     }
 }
 
-private struct SidebarFavoriteButton: View {
+struct SidebarFavoriteButton: View {
     let tab: BrowserTab
     let browser: BrowserModel
     let coordinator: AppCoordinator

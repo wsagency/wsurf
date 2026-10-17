@@ -211,6 +211,7 @@ struct SidebarTabRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .mask(alignment: .leading) { titleMask }
+        .sidebarTitleCentered(!returnHovering)
     }
 
     var body: some View {
@@ -378,7 +379,7 @@ struct SidebarTabRow: View {
     }
 }
 
-private struct PinReturnSegment: View {
+struct PinReturnSegment: View {
     let tab: BrowserTab
     let help: String
     let tint: Color
@@ -407,7 +408,8 @@ private struct PinReturnSegment: View {
                     .foregroundStyle(.secondary)
                     .opacity(hovering || isSameSite || pinnedFavicon == nil ? 1 : 0)
             }
-            .frame(width: 34, height: 32)
+            .frame(width: 34)
+            .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -125,6 +125,7 @@ final class BrowserSettings {
     @ObservationIgnored private var sidebarFontCache: Font?
     @ObservationIgnored private var sidebarEmphasizedFontCache: Font?
     @ObservationIgnored private var sidebarLineHeightCache: CGFloat = 0
+    @ObservationIgnored private var sidebarTitleMidlineCache: CGFloat = 0
 
     private func store(for key: String) -> UserDefaults {
         Self.sessionKeySet.contains(key) ? sessionDefaults : appDefaults
@@ -286,6 +287,9 @@ final class BrowserSettings {
         let resolved = Font(native)
         settings.sidebarFontCache = resolved
         settings.sidebarLineHeightCache = (native.ascender - native.descender + native.leading).rounded(.up)
+        settings.sidebarTitleMidlineCache = native.capHeight > 0 && native.xHeight > 0
+            ? (native.capHeight + native.xHeight) / 4
+            : (native.ascender + native.descender) / 2
         return resolved
     }
 
@@ -304,6 +308,13 @@ final class BrowserSettings {
     var sidebarLineHeight: CGFloat {
         _ = sidebarFont
         return globalSettings.sidebarLineHeightCache
+    }
+
+    /// How far above the baseline the middle of the sidebar's text sits: halfway between the middle of a capital
+    /// and the middle of a lowercase letter, which is where the weight of a title is.
+    var sidebarTitleMidline: CGFloat {
+        _ = sidebarFont
+        return globalSettings.sidebarTitleMidlineCache
     }
 
     var matchesWebsiteColor: Bool {
