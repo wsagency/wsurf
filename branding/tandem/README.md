@@ -56,6 +56,9 @@ These are the Flux draft's default pair (track deep, knob start). The five other
 | `favicon/favicon.ico` | 16, 32 (small cut) and 48 px (master), Day colours only |
 | `favicon/apple-touch-icon.png`, `icon-192.png`, `icon-512.png` | opaque, mark on `#FFFFFF` |
 | `proof/` | review sheets for the mark, wordmark and lockup |
+| `3d/` | the mark as a 3D object: USDZ (Day and Night), 2048 px stills, 3D app-icon renders, turntable videos, SceneKit sources. See [3d/README.md](3d/README.md) |
+| `loader/` | the Tandem loader (the follower orbits the lead, 1.6 s): CSS/SVG for the web, SwiftUI for the app, MP4/GIF/HEVC-alpha, generator. See [loader/README.md](loader/README.md) |
+| `relief/` | the pair as a planet and its moon (Earth & Moon, Clay, Topographic): 2048×1024 maps, stills, 540 px loops, SceneKit sources. See [relief/README.md](relief/README.md) |
 
 ## Provenance
 
@@ -70,3 +73,4 @@ These are the Flux draft's default pair (track deep, knob start). The five other
 2. Website: lockup in the header and footer, favicons as files, colour tokens.
 3. README `<picture>` and `.github/assets/`; DMG background (`Tools/make-dmg-background.swift`).
 4. `NOTICE` line about the "new WSurf wave mark and icon".
+5. Loader in the app (`loader/app/TandemLoader.swift`) and on the website (`loader/web/`); 3D and relief art for the site hero and the About window.
