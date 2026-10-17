@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 
 /// Account, passkey and verification-code management for one profile's vault. Reached from `AutofillSettings`.
 struct CredentialSettings: View {
+    /// How many credentials of a finished import are listed by name; the transfer message has the totals.
+    private static let listedResults = 50
     @State var model: CredentialSettingsModel
     @State private var anchor = CredentialWindowAnchor()
     @State var showsCreateWarning = false
@@ -390,9 +392,14 @@ struct CredentialSettings: View {
                     .buttonStyle(.bordered)
                 }
                 if message.receipt != nil, let results = model.lastImport?.results {
-                    ForEach(results) { result in
+                    // A real import is thousands of credentials: the first rows, and the count of the rest (the message has the totals).
+                    ForEach(results.prefix(Self.listedResults)) { result in
                         RowSeparator()
                         DetailRow(verbatimTitle: result.title, verbatimCaption: resultCaption(result)) { EmptyView() }
+                    }
+                    if results.count > Self.listedResults {
+                        RowSeparator()
+                        DetailRow(verbatimTitle: String(localized: "and \(results.count - Self.listedResults) more")) { EmptyView() }
                     }
                 }
             }

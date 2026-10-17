@@ -39,8 +39,8 @@ extension CredentialExchangeCoordinatorTests {
             try await time("stage (preview, classify, review)") { try await f.stage(transfer) }
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.candidates.count == count)
-            #expect(review.isResolved)
-            #expect(counts(review.outcome) == [count, 0])
+            #expect(review.isResolved && review.tally.new == count)
+            #expect(counts(try await time("plan (20,000)") { planned(f) }) == [count, 0])
 
             _ = try await time("commit") { try await f.coordinator.commitImport(into: f.manager, owner: f.owner) }
             let committed = try await f.stored()
@@ -55,12 +55,15 @@ extension CredentialExchangeCoordinatorTests {
             #expect(reloaded.accounts.count == count)
             #expect(Set(reloaded.accounts.map(\.id)) == Set(committed.accounts.map(\.id)))
 
-            // The same transfer again against 20,000 stored items: every login is a conflict to decide, everything else is unchanged.
+            // The same transfer again against 20,000 stored items: the first import recorded what it brought in, so every item is
+            // already saved and nothing is a question. Every login is still a conflict with its stored copy, kept by default.
             try await time("stage again (20,000 x 20,000)") { try await f.stage(transfer) }
             let again = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(again.candidates.count == count)
-            #expect(!again.isResolved)
-            #expect(again.candidates.allSatisfy { $0.records.contains { $0.isConflict && $0.kind == .password } })
+            #expect(again.isResolved && again.tally.unchanged == count && again.sections[.saved]?.count == count)
+            #expect(again.candidates.allSatisfy { $0.records.contains { $0.isConflict && $0.kind == .password && $0.choice == .skip } })
+            let reimport = try await time("plan again (20,000)") { try #require(planned(f)) }
+            #expect(counts(reimport) == [0, 0] && reimport.results.allSatisfy { $0.action == .unchanged })
             f.coordinator.cancelImport(for: f.manager, owner: f.owner)
 
             // One edit pays for the whole vault too.
@@ -77,5 +80,31 @@ extension CredentialExchangeCoordinatorTests {
             #expect(try await f.stored().accounts.first { $0.id == victim.id }?.password == "changed-password")
         }
 
+    }
+
+    /// A decision in the review is local to its own item. Deciding 1,000 items of a 25,000-item review must cost 1,000 small steps, not
+    /// 1,000 passes over the whole review; the budget is generous, and the loop stops at it so a regression fails in seconds, not hours.
+    @Test(.timeLimit(.minutes(2)))
+    func deciding1000ItemsOfA25000ItemReviewIsNotQuadratic() async throws {
+        let clock = ContinuousClock()
+        let transfer = try ExchangeScale.transfer(items: 25_000)
+        try await withFixture { f in
+            try await f.seed([])
+            let staging = try await clock.measure { try await f.stage(transfer) }
+            print("[scale] stage 25,000: \(staging.formatted(.units(allowed: [.seconds, .milliseconds], width: .narrow)))")
+            let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
+            let records = review.candidates.prefix(1_000).compactMap(\.records.first)
+            #expect(records.count == 1_000)
+
+            let started = clock.now
+            var decided = 0
+            for record in records where clock.now - started < .seconds(30) {
+                try f.coordinator.choose(.skip, for: record.incoming, owner: f.owner)
+                decided += 1
+            }
+            let elapsed = clock.now - started
+            print("[scale] decide \(decided) of 1,000: \(elapsed.formatted(.units(allowed: [.seconds, .milliseconds], width: .narrow)))")
+            #expect(decided == 1_000, "only \(decided) of 1,000 decisions fit in 30 seconds")
+        }
     }
 }

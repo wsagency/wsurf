@@ -31,7 +31,7 @@ extension CredentialSettingsModel {
     /// password that would be lost.
     func continueLegacyImport() async {
         guard let manager, let review = importReview, review.origin == .legacyPasswords, review.isResolved,
-              (review.outcome.map { $0.added + $0.updated } ?? 0) == 0,
+              review.tally.writes == 0,
               exchange.cancelImport(for: manager, owner: owner) == .reviewCancelled else { return }
         await legacyImportCommitted(.legacyPasswords)
     }

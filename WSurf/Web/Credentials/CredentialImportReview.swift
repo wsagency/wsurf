@@ -129,13 +129,14 @@ nonisolated struct CredentialImportReview: Sendable {
         /// What the vault already says about this credential: new, unchanged, changed on either side, previously removed,
         /// ambiguous, or a passkey with a conflicting key (never replaced).
         let classification: CredentialImportClass
-        /// `true` until the user decides it: a conflict with a stored credential, or (CSV) a row that shares its website and
-        /// username with another row of the file or with several stored logins, each with a different password. Nothing
-        /// is imported or dropped for such a record by default.
+        /// `true` for a conflict with a stored credential, or (CSV) a row that shares its website and username with another row
+        /// of the file or with several stored logins, each with a different password. Such a record is imported or dropped only
+        /// by a choice: the defaults (`CredentialImportDefaults`) make it for what the vault can settle (unchanged, changed in
+        /// one place only, removed before), and the user makes it for the rest.
         let needsChoice: Bool
         /// The line of the CSV file the record came from; `nil` for a system import.
         let csvLine: Int?
-        /// `nil` for an unresolved conflict, or an automatic import for any other record.
+        /// `nil` for an undecided conflict, or the automatic placement for any other record.
         var choice: CredentialImportChoice?
         var isConflict: Bool {
             existing != nil
@@ -145,35 +146,162 @@ nonisolated struct CredentialImportReview: Sendable {
         }
     }
 
+    /// Where an item sits in the review, most urgent first. The group is assigned once, when the review is staged, from what the vault
+    /// says about the item's parts and the defaults (`CredentialImportDefaults`), so a decision never moves a row.
+    enum Group: Int, CaseIterable, Sendable, Comparable {
+        /// A part that only the user can settle: both sides changed, no common base, or an unmatched link.
+        case decide
+        /// Looks like a credential that is already saved under another item. Filled by duplicate detection; empty until then.
+        case merge
+        /// Nothing is saved for it yet.
+        case new
+        /// Changed in the other app only.
+        case update
+        /// Already saved, or changed only here.
+        case saved
+        /// Left out by default: removed here before, or a passkey whose key conflicts with the saved one.
+        case skipped
+
+        static func < (lhs: Self, rhs: Self) -> Bool {
+            lhs.rawValue < rhs.rawValue
+        }
+    }
+
+    /// What an item will do under the choices made so far. One item has one effect, the most active of its parts.
+    enum Effect: Sendable {
+        case undecided, new, update, merge, unchanged, skipped
+    }
+
+    /// The whole item decided in one step (`CredentialExchangeCoordinator.chooseItem`). Each maps to a choice for every part it applies to.
+    enum ItemAction: Sendable, Equatable {
+        /// Imports what is not saved yet. Parts that conflict with a saved one are added as separate credentials.
+        case importNew
+        /// Keeps the saved version of every part that conflicts with a saved one.
+        case keepSaved
+        /// Replaces the saved version of every part that conflicts with the other app's.
+        case useIncoming
+        /// Adds the other app's version of every conflicting part next to the saved one.
+        case keepBoth
+        /// Imports nothing of this item.
+        case skip
+    }
+
+    /// How many items fall under each effect: the review's footer, without a pass over the review.
+    struct Tally: Equatable, Sendable {
+        var undecided = 0
+        var new = 0
+        var updates = 0
+        var merges = 0
+        var unchanged = 0
+        var skipped = 0
+
+        /// Items that write to the vault.
+        var writes: Int {
+            new + updates + merges
+        }
+
+        mutating func add(_ effect: Effect, _ count: Int = 1) {
+            switch effect {
+            case .undecided:
+                undecided += count
+            case .new:
+                new += count
+            case .update:
+                updates += count
+            case .merge:
+                merges += count
+            case .unchanged:
+                unchanged += count
+            case .skipped:
+                skipped += count
+            }
+        }
+    }
+
     struct Candidate: Identifiable, Sendable {
         let summary: CredentialSummary
         /// Holds a login or TOTP seed but no approved website, so autofill never offers it until the user adds one.
         let needsManualAssociation: Bool
-        let records: [Record]
+        var records: [Record]
+        /// Where the row sits (see `Group`); fixed when the review is staged.
+        let group: Group
+        /// What a search matches: the lower-cased title, username (unless concealed) and websites. Never a password, seed or note.
+        let searchKey: String
+        /// The stored credential that already holds this item of the other app, if there is one.
+        let linkedAccountID: UUID?
+        /// The parts of this item that were not kept, with fixed wording.
+        let omissions: [CredentialImportOmission]
+        /// What the item does under the current choices.
+        var effect: Effect
+        /// The last choice made for the whole item; `nil` after a choice for one of its parts, and before any.
+        var action: ItemAction?
         var id: UUID {
             summary.id
         }
+
+        /// Items with a conflict have a saved credential to keep or replace.
+        var hasConflict: Bool {
+            records.contains(where: \.isConflict)
+        }
+
+        /// What can be done with the item as a whole, as `CredentialExchangeCoordinator.chooseItem` accepts it.
+        var availableActions: [ItemAction] {
+            CredentialImportReview.availableActions(for: records)
+        }
+    }
+
+    /// The actions that apply to an item with these records. An action that would replace a saved password with a login that has
+    /// none, that has no saved version to keep, replace or keep alongside, or that would add an identical copy of what is saved, is
+    /// not offered. Import is offered for an item with no conflict, and Add Separately for a part that needs a choice.
+    static func availableActions(for records: [Record]) -> [ItemAction] {
+        let conflicts = records.filter(\.isConflict)
+        var actions: [ItemAction] = []
+        if conflicts.isEmpty {
+            actions.append(.importNew)
+        } else {
+            actions.append(.keepSaved)
+            let replaceable = conflicts.filter { $0.kind != .passkey && !keepsSavedWhenUsingIncoming($0) }
+            if !replaceable.isEmpty, replaceable.allSatisfy({ !$0.removesStoredPasswordOnReplace }) {
+                actions.append(.useIncoming)
+            }
+            if conflicts.contains(where: { $0.kind != .passkey && $0.classification != .unchanged && $0.canAddSeparately }) {
+                actions.append(.keepBoth)
+            }
+        }
+        actions.append(.skip)
+        return actions
+    }
+
+    /// Whether Use Incoming leaves this conflicting part as it is saved: it is the same, or it changed only here (the other app's copy
+    /// is the old one, and replacing would undo the user's edit).
+    static func keepsSavedWhenUsingIncoming(_ record: Record) -> Bool {
+        record.classification == .unchanged || record.classification == .localChanged
     }
 
     /// Whose vault the credentials go into: the profile, and the vault when its name is readable.
     let profileName: String
     let vaultName: String?
-    let candidates: [Candidate]
+    var candidates: [Candidate]
     let revision: UInt64
-    /// `nil` until every conflict has a decision.
-    let outcome: CredentialImportOutcome?
+    /// Candidate positions by group, in transfer order; built once.
+    let sections: [Group: [Int]]
+    /// What the choices made so far add up to.
+    var tally: Tally
     /// What a CSV file held beyond what will be imported; `nil` for a system import. Counts the file as read (staged), not what is saved.
     var csvReport: CredentialCSVReport?
     /// Where the credentials came from, which decides the wording of the review.
     var origin = CredentialTransferMessage.Origin.system
     /// What the transfer held that WSurf will not import, shown before Import. Empty for a CSV file.
     var omitted: [CredentialImportOmission] = []
+    /// The omissions that belong to no kept item (an item with nothing storable, say).
+    var unattachedOmissions: [CredentialImportOmission] = []
 
     var conflicts: [Record] {
         candidates.flatMap(\.records).filter(\.isConflict)
     }
+    /// `true` once nothing needs the user's decision.
     var isResolved: Bool {
-        candidates.allSatisfy { $0.records.allSatisfy { !$0.needsChoice || $0.choice != nil } }
+        tally.undecided == 0
     }
 }
 

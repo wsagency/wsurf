@@ -111,7 +111,7 @@ struct CredentialCSVTests {
             try await stage(f, [row("ada", "pw1"), row("grace", "pw2", url: "https://other.test")])
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.csvReport?.rowsRead == 2 && review.csvReport?.alreadySaved == 0)
-            #expect(base.counts(review.outcome) == [2, 0])
+            #expect(base.counts(base.planned(f)) == [2, 0])
 
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             let added = try await f.stored().accounts.filter { $0.username == "ada" || $0.username == "grace" }
@@ -129,7 +129,7 @@ struct CredentialCSVTests {
             try await stage(f, [row("Alice", "same")])
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.csvReport?.alreadySaved == 0 && review.conflicts.isEmpty)
-            #expect(base.counts(review.outcome) == [1, 0])
+            #expect(base.counts(base.planned(f)) == [1, 0])
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             #expect(try await f.stored().accounts.map(\.username).sorted() == ["Alice", "alice"])
         }
@@ -162,7 +162,7 @@ struct CredentialCSVTests {
             // Four distinct logins; none is imported by default. Two differ from the saved login, two from each other.
             #expect(records.count == 4 && records.allSatisfy(\.needsChoice) && records.allSatisfy { $0.choice == nil })
             #expect(review.conflicts.count == 2)
-            #expect(!review.isResolved && review.outcome == nil)
+            #expect(!review.isResolved && base.planned(f) == nil)
 
             await #expect(throws: CredentialExchangeCoordinatorError.unresolvedConflicts) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
@@ -182,7 +182,7 @@ struct CredentialCSVTests {
             try decide(f, .addSeparately, line: 6)
 
             let resolved = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
-            #expect(resolved.isResolved && base.counts(resolved.outcome) == [1, 1])
+            #expect(resolved.isResolved && base.counts(base.planned(f)) == [1, 1])
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             #expect(try await f.stored().accounts.compactMap(\.password).sorted() == ["g2", "p2"])
         }
@@ -253,7 +253,7 @@ struct CredentialCSVTests {
             #expect(review.conflicts.isEmpty && !review.isResolved)
             try decide(f, .skip, line: 2)
             try decide(f, .skip, line: 3)
-            #expect(base.counts(try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)).outcome) == [0, 0])
+            #expect(base.counts(base.planned(f)) == [0, 0])
             try decide(f, .addSeparately, line: 3)
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             #expect(try await f.stored().accounts.compactMap(\.password) == ["p2"])
@@ -275,7 +275,7 @@ struct CredentialCSVTests {
             #expect(throws: CredentialExchangeCoordinatorError.invalidChoice) { try decide(f, .replace, line: 2) }
 
             try decide(f, .skip, line: 2)
-            #expect(base.counts(try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)).outcome) == [0, 0])
+            #expect(base.counts(base.planned(f)) == [0, 0])
             let failure = await #expect(throws: CredentialTransferFailure.self) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
@@ -345,7 +345,7 @@ struct CredentialCSVTests {
             try await stage(f, [row("ada", "pw", url: "example.test")])
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.candidates.isEmpty && review.csvReport?.omittedRows == 1)
-            #expect(base.counts(review.outcome) == [0, 0])
+            #expect(base.counts(base.planned(f)) == [0, 0])
         }
     }
 
@@ -359,7 +359,7 @@ struct CredentialCSVTests {
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.csvReport?.issues.isEmpty == true && review.csvReport?.omittedRows == 0)
             #expect(review.candidates.flatMap(\.records).map(\.kind) == [.password, .note, .password])
-            #expect(base.counts(review.outcome) == [2, 0])
+            #expect(base.counts(base.planned(f)) == [2, 0])
 
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             let stored = try await f.stored().accounts
@@ -396,7 +396,7 @@ struct CredentialCSVTests {
             #expect(review.conflicts.map(\.incoming).count == 1, "only the login is a conflict")
 
             try decide(f, .replace, line: 2)
-            #expect(base.counts(try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)).outcome) == [0, 1])
+            #expect(base.counts(base.planned(f)) == [0, 1])
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             let stored = try #require(try await f.stored().accounts.first)
             #expect(stored.password == "pw" && stored.notes?.map(\.text) == ["added by the file"])
@@ -448,7 +448,7 @@ struct CredentialCSVTests {
             try decide(f, .skip, line: 2)
             let skipped = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(skipped.candidates.flatMap(\.records).map(\.destination) == [.skipped, .skipped])
-            #expect(base.counts(skipped.outcome) == [0, 0])
+            #expect(base.counts(base.planned(f)) == [0, 0])
         }
     }
 

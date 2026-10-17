@@ -26,8 +26,37 @@ nonisolated extension CredentialExchangeCodec {
                 storedByItem: storedByItem, positionByID: &positionByID, into: &result
             )
         }
+        try recordObservedBases(&result, candidates: preview.candidates)
         try validateAccounts(result, blockedOrigins: preview.base.blockedPasswordOrigins)
         return result
+    }
+
+    /// Spec §13.2(a): an item that arrived through a user-applied import is an accepted remote observation. For every candidate whose
+    /// exporter item is now held by a stored account, a login or code that equals what the exporter sent is recorded as its base (the
+    /// content hash and the item), so a later import can tell which side changed. A part the user kept different from the incoming one
+    /// is not an observation of it and keeps the base it had. Notes have no base, and passkeys are matched by their identity.
+    /// Pure: no dates, and an account the item was not placed in (a fork has fresh identifiers) is never touched.
+    private static func recordObservedBases(_ result: inout [CredentialAccount], candidates: [CredentialAccount]) throws {
+        var positions: [ExternalItemID: Int] = [:]
+        for (position, account) in result.enumerated() {
+            positions[try externalItemID(for: account)] = position
+        }
+        for candidate in candidates {
+            guard let itemID = candidate.exchangeItemID,
+                  let position = positions[try externalItemID(for: candidate)] else { continue }
+            if hasBasicAuthentication(candidate), hasBasicAuthentication(result[position]) {
+                let hash = try CredentialContent.hash(.password(candidate))
+                if try CredentialContent.hash(.password(result[position])) == hash {
+                    result[position].passwordBase = ExchangeBase(contentHash: hash, itemID: itemID)
+                }
+            }
+            if candidate.totp != nil, result[position].totp != nil {
+                let hash = try CredentialContent.hash(.totp(candidate))
+                if try CredentialContent.hash(.totp(result[position])) == hash {
+                    result[position].totpBase = ExchangeBase(contentHash: hash, itemID: itemID)
+                }
+            }
+        }
     }
 
     private static func incomingIdentity(of decision: CredentialImportDecision) -> CredentialIdentity {

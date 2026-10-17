@@ -160,7 +160,7 @@ extension CredentialExchangeCoordinatorTests {
             #expect(review.omitted.map(\.kind) == [.generatedPassword, .wifi, nil])
             #expect(review.omitted.map(\.title) == ["Item 1", "Item 2", "Item 2"])
             #expect(!review.omitted.map(\.text).joined().contains(secret))
-            #expect(review.candidates.count == 1 && counts(review.outcome) == [1, 0])
+            #expect(review.candidates.count == 1 && counts(planned(f)) == [1, 0])
             #expect(try f.diskBytes() == before)
 
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
@@ -175,7 +175,7 @@ extension CredentialExchangeCoordinatorTests {
             try await f.stage(handBuilt([item(id: 1, scoped: true, [.generatedPassword(.init(password: "unstored"))])]))
 
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
-            #expect(review.candidates.isEmpty && review.omitted.count == 2 && counts(review.outcome) == [0, 0])
+            #expect(review.candidates.isEmpty && review.omitted.count == 2 && counts(planned(f)) == [0, 0])
             await #expect(throws: CredentialTransferFailure.self) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
@@ -206,7 +206,7 @@ extension CredentialExchangeCoordinatorTests {
             // Skip the login: the note is skipped with it, and the outcome says so.
             try f.coordinator.choose(.skip, for: initial[0].incoming, owner: f.owner)
             #expect(try reviewRecords(f).map(\.destination) == [.skipped, .skipped])
-            let skipped = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome)
+            let skipped = try #require(planned(f))
             #expect(counts(skipped) == [0, 0] && skipped.results.map(\.action) == [.skipped, .skipped])
 
             // Merge the login into a stored account: the note goes there too.
@@ -218,7 +218,7 @@ extension CredentialExchangeCoordinatorTests {
                 }
                 #expect(accountID == bare.id)
             }
-            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [0, 1])
+            #expect(counts(planned(f)) == [0, 1])
 
             // A note decided on its own no longer follows.
             try f.coordinator.choose(.skip, for: initial[1].incoming, owner: f.owner)

@@ -157,7 +157,12 @@ nonisolated extension CredentialExchangeCodec {
         }
         guard matches.count == 1 else { return .ambiguous }
         _ = try CredentialContent.exchangeMetadata(local)
-        guard isBound(local, to: key.item) else { return .ambiguous }
+        guard isBound(local, to: key.item) else {
+            // No accepted pairing yet: the item was saved before bases were recorded. The exchange id is still only a hint, but a
+            // part that equals what is saved is the same credential whoever pairs it; anything that differs waits for the user.
+            guard hasPart(local), try hash(candidate) == hash(local) else { return .ambiguous }
+            return .unchanged
+        }
         guard hasPart(local) else { return .new }
 
         let incomingHash = try hash(candidate)

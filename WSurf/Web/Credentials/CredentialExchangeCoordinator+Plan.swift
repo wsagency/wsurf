@@ -30,26 +30,34 @@ extension CredentialExchangeCoordinator {
         in preview: CredentialImportPreview
     ) -> [CredentialImportReview.Target] {
         guard let source = preview.candidates.first(where: { $0.id == accountID(incoming) }) else { return [] }
-        func accepts(_ account: CredentialAccount) -> Bool {
-            guard CredentialExchangeCodec.canMerge(source, into: account) else { return false }
-            switch incoming {
-            case .password:
-                return !hasLogin(account)
-            case .passkey:
-                return !credentialIDIsStored(incoming, in: preview)
-            case .totp:
-                return account.totp == nil
-            case .note:
-                // Notes are appended to what the account already holds.
-                return true
+        let passkeyIDIsStored = credentialIDIsStored(incoming, in: preview)
+        return preview.base.accounts
+            .filter { accepts(incoming, source: source, into: $0, passkeyIDIsStored: passkeyIDIsStored) }
+            .map { account in
+                CredentialImportReview.Target(
+                    accountID: account.id,
+                    title: CredentialSummary(account).title,
+                    allowedOrigins: account.origins
+                )
             }
-        }
-        return preview.base.accounts.filter(accepts).map { account in
-            CredentialImportReview.Target(
-                accountID: account.id,
-                title: CredentialSummary(account).title,
-                allowedOrigins: account.origins
-            )
+    }
+
+    /// Whether `incoming`, a credential of `source`, can be merged into the stored `account`: the account doesn't already hold that
+    /// kind of credential, and nothing of the exporter's item would be lost.
+    static func accepts(
+        _ incoming: CredentialIdentity, source: CredentialAccount, into account: CredentialAccount, passkeyIDIsStored: Bool
+    ) -> Bool {
+        guard CredentialExchangeCodec.canMerge(source, into: account) else { return false }
+        switch incoming {
+        case .password:
+            return !hasLogin(account)
+        case .passkey:
+            return !passkeyIDIsStored
+        case .totp:
+            return account.totp == nil
+        case .note:
+            // Notes are appended to what the account already holds.
+            return true
         }
     }
 
@@ -116,7 +124,14 @@ extension CredentialExchangeCoordinator {
         var updated = 0
         for account in accounts {
             if let old = before[account.id] {
-                if old != account {
+                // An account whose only difference is a base that apply recorded is not written: an import writes the accounts it
+                // changes, however many items it compared, so a long review isn't discarded because an unrelated account changed.
+                // A base is recorded for the accounts that are written anyway. (An item saved before bases were recorded stays
+                // unbound until an import changes it; identical content is still recognised as unchanged.)
+                var withoutBases = account
+                withoutBases.passwordBase = old.passwordBase
+                withoutBases.totpBase = old.totpBase
+                if withoutBases != old {
                     updated += 1
                     touched.append(account)
                 }
@@ -126,5 +141,35 @@ extension CredentialExchangeCoordinator {
             }
         }
         return (touched, CredentialImportOutcome(added: added, updated: updated))
+    }
+
+    /// The plan the codec makes of the session's choices, with what became of every incoming credential. The one place a staged
+    /// import is turned into writes, for the success message and for the commit alike.
+    static func planned(_ session: Session) throws -> (touched: [CredentialAccount], outcome: CredentialImportOutcome) {
+        var planned = try plan(session.preview, choices: session.choices, required: session.context.needsChoice)
+        let changed = Set(planned.touched.map(\.id))
+        planned.outcome.results = session.review.candidates.flatMap(\.records).map { record in
+            let action: CredentialImportOutcome.Result.Action
+            switch record.destination {
+            case nil:
+                action = .skipped
+            case .skipped:
+                // Keeping what is saved is not leaving a credential out.
+                switch record.classification {
+                case .unchanged, .localChanged:
+                    action = .unchanged
+                default:
+                    action = .skipped
+                }
+            case .newAccount:
+                action = .added
+            case let .existing(accountID, _, _, _):
+                action = record.classification != .unchanged && changed.contains(accountID) ? .updated : .unchanged
+            }
+            return CredentialImportOutcome.Result(
+                id: record.incoming, kind: record.kind, title: record.title, relyingParty: record.relyingParty, action: action
+            )
+        }
+        return planned
     }
 }
