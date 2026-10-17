@@ -145,12 +145,17 @@ extension MCPBrowserSession {
         let clock = ContinuousClock()
         let started = clock.now
         let meter = PageSettle.Meter()
-        let output = await PageSettle.$meter.withValue(meter) {
+        // A dialog the action opens blocks the page, so the action cannot return until it is answered.
+        let acted = await PageSettle.$meter.withValue(meter) {
             await PageSettle.$limits.withValue(.init(grace: .zero, quietCeiling: .milliseconds(budget.settleMs))) {
                 await PageDriver.$feedbackMode.withValue(.delta) {
-                    await pageAction(name: name, arguments: arguments, view: view)
+                    await interrupting(tab) { await self.pageAction(name: name, arguments: arguments, view: view) }
                 }
             }
+        }
+        guard let output = acted else {
+            observations[tab.id] = nil
+            return interruptedResult(tab)
         }
         guard reading.validate(), !Task.isCancelled else {
             observations[tab.id] = nil

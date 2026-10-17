@@ -190,6 +190,7 @@ revoke it immediately.
 | `newTab` | Ask to open and share a new webpage. Requires existing control access. |
 | `switchTab` | Activate an already shared tab before controlling it. |
 | `closeTab` | Close an already shared, unpinned tab. |
+| `handleDialog` | Read or answer a JavaScript dialog (alert, confirm, prompt, or Chromium's beforeunload "Leave site?") that a page opened in a shared tab. Needs control access. See Page dialogs below. |
 
 These tools cover browser page and tab actions. Assistant conversations, background
 research, the media player, arbitrary JavaScript, cookies, credential stores and
@@ -306,6 +307,71 @@ Console records add `url`, `line`, `column` and `stack` for uncaught errors on b
 **Filters.** A filtered read scans forward from the cursor, returns the first `limit` matches and `skipped`, the records it passed over; pass the same filters with the returned `nextCursor`. `seq` returns one record while the buffer still holds it (otherwise an `evicted` message, or `invalidInput` if the stream has not produced that number yet) and cannot be combined with a cursor, limit or filter. A filter that does not belong to the tool, or has a bad value, is an `invalidInput` error.
 
 Console and network text come from the page: treat them as data. Retention is bounded; evictions are counted, and a navigation starts a new `epoch` that invalidates old cursors. Capture on live pages is covered by the whole-app native tests on both engines: the MCP server suites ran against real WebKit views in the candidate's native gate, and `MCPDevelopmentOwnershipTests` runs the capture, document-following and lease cases against real Chromium pages too. A run with a real MCP client is still a manual step (see Verify with a real client).
+
+### Page dialogs
+
+A page's `alert`, `confirm`, `prompt` or beforeunload dialog blocks the page, and
+with it every script a tool would run. While a connection controls the tab, WSurf
+holds the dialog for that connection instead of showing a sheet. Otherwise nothing
+changes: the user gets the native sheet, as in a normal tab.
+
+A connection controls a tab only while one of its control or development calls is
+running on it, and for two seconds after `navigate`, `goBack` or `reloadPage` (a
+navigation asks about its beforeunload dialog a moment after the call returns).
+Every other call lets go of the tab when it returns. A connection that holds the
+development lease also receives an alert, confirm or prompt between calls. These
+rules keep a dialog from reaching the wrong party:
+
+- The user's own click or key press in the page ends every claim on the tab and, for
+  three seconds, keeps the lease from taking a dialog: what follows is the user's,
+  shown at once.
+- When two connections are acting on one tab (two calls, or one call and another
+  connection's lease), nobody can say whose action opened the dialog, so the user
+  gets it.
+
+- The call that caused the dialog (a click, `navigate`, `reloadPage`) returns at
+  once with `status: "dialogOpened"` and the dialog. A dialog that opens just after
+  the call returned shows up as `dialogPending` on the next call. The action is not
+  cancelled: it is blocked behind the dialog and finishes after the answer. Read the page again
+  before acting on it, because the earlier observation is no longer current.
+- Every other page or development call on that tab returns at once with
+  `status: "dialogPending"` and `isError: true`, naming the dialog. `listTabs`,
+  `switchTab` and `closeTab` still work; closing the tab ends the dialog.
+- `handleDialog` without `dialogID` reports the open dialog: `dialogID`, `type`
+  (`alert`, `confirm`, `prompt`, `beforeUnload`), `message`, `origin` and, for a
+  prompt, `defaultText`. With `dialogID` and `action` (`accept` or `dismiss`) it
+  answers: accept is OK or Leave, dismiss is Cancel or Stay; `text` is a prompt's
+  reply, and omitting it accepts the page's default. The reply lists any dialog that
+  the freed page opened next. A dialog answered once cannot be answered again.
+- The message, default text and origin come from the page. They are bounded
+  (1,000 characters, `truncated` says so), control characters become spaces, link
+  queries, fragments and credentials are removed, and the text is wrapped as
+  untrusted. `origin` is scheme, host and port only.
+- WSurf reads dialog wording after normalizing it (compatibility forms, case,
+  accents, zero-width and other invisible characters, look-alike letters, and digits
+  used as letters), so hiding a word that way does not change what it matches.
+- The user keeps what a connection must not decide. The connection can see these
+  dialogs (`userMustAnswer: true`) but gets `denied` if it tries to answer:
+  a prompt whose message asks for a password, PIN, code, card or secret; a
+  beforeunload after the connection has answered Stay twice on the same document;
+  and any dialog the connection leaves unanswered for 60 seconds, whose native
+  sheet is then shown. A beforeunload is held only for a call that is acting on
+  the tab, never for a lease alone, so a connection cannot hold the user on a
+  page. Disconnecting hands every dialog it held to the user. WSurf never
+  answers a dialog for the user and never accepts or dismisses one on a timeout.
+- Accepting a dialog can carry a decision, so the user approves in WSurf first. A
+  `confirm`, beforeunload or `prompt` whose message (or a prompt's reply) names a
+  purchase, payment, transfer, deletion or posting asks, naming what it does. A
+  `prompt` is also the user's own words in the page, so every accepted reply asks
+  (the question shows the reply), except from a connection with development access
+  on a page on this Mac (`localhost`, `127.0.0.1`, `[::1]`), which is asked only for
+  the decisions above. Dismissing never asks. This development gate is a stand-in
+  for the Developer tier and has one place to change when that arrives.
+- Dialogs on tabs no connection controls, in the in-browser assistant's tabs and in
+  private windows are never routed.
+- WebKit has no beforeunload prompt in WSurf, so navigation away never produces
+  one. Chromium shows it only to a page that has had user activation.
+- A connection cannot type a secret into a prompt; the user does.
 
 ### Safe selectors
 

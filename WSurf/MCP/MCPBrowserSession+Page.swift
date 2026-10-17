@@ -75,7 +75,15 @@ extension MCPBrowserSession {
         } else {
             // `result: full` keeps the old grace for a navigation to start; only the longest wait follows the budget.
             let limits = PageSettle.Limits(quietCeiling: .milliseconds(FeedbackBudget(arguments["budget"]).settleMs))
-            output = await PageSettle.$limits.withValue(limits) { await pageAction(name: name, arguments: arguments, view: view) }
+            // A dialog the action opens blocks the page, so the action cannot return until it is answered.
+            let acted = await PageSettle.$limits.withValue(limits) {
+                await interrupting(tab) { await self.pageAction(name: name, arguments: arguments, view: view) }
+            }
+            guard let acted else {
+                observations[tab.id] = nil
+                return interruptedResult(tab)
+            }
+            output = acted
         }
         guard scope.validate(), !Task.isCancelled else {
             observations[tab.id] = nil

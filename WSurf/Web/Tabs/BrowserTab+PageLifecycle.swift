@@ -68,6 +68,7 @@ extension BrowserTab {
         refreshChrome()
         invalidateSessionState()
         developmentDocumentChanged()
+        dialogs.documentCommitted()
     }
 
     func navigationFinished(_ navigation: PageNavigation?) {
@@ -203,6 +204,8 @@ extension BrowserTab {
     func adopt(_ view: BrowserPage) {
         precondition(view.context === context)
         liveView = view
+        view.dialogs = dialogs
+        dialogs.leaseHolder = { [weak self] in self?.dialogLeaseHolder }
         engine = view.engine
         Self.applyObscuredInsets(to: view)
         fullscreenObservation = view.observe(\.isFullscreen, options: [.new]) { view, _ in
@@ -440,6 +443,7 @@ extension BrowserTab {
     func contentProcessDidTerminate() {
         guard !isClosed else { return }
         isPlayingAudio = false
+        dialogs.cancelAll()
         onContentProcessTerminated?()
         // Only a WebKit page can come back from its saved interaction state; a Chromium page
         // reloads in place, as before, because unloading would drop its back/forward history.
