@@ -12,7 +12,14 @@ extension PageDriver {
         let select: Bool
     }
 
-    static func fillFields(_ fields: [FieldValue], in webView: BrowserPage, announced: Bool = false) async -> String {
+    /// - Parameters:
+    ///   - secretRefs: The refs whose values are test secrets, typed even into a sensitive text field (see `type`'s
+    ///     `allowSensitive`). Every other field keeps the sensitive-field refusal.
+    ///   - storedSecret: See `type`.
+    static func fillFields(
+        _ fields: [FieldValue], secretRefs: Set<Int> = [], storedSecret: ((String) -> Void)? = nil, in webView: BrowserPage,
+        announced: Bool = false
+    ) async -> String {
         guard (1...32).contains(fields.count), fields.allSatisfy({ $0.ref > 0 }),
             Set(fields.map(\.ref)).count == fields.count
         else {
@@ -43,7 +50,8 @@ extension PageDriver {
                 details.append("[\(field.ref)] could not be inspected because the page or access changed.")
                 break
             }
-            if let reason = fillRejection(for: control) {
+            let secret = secretRefs.contains(field.ref)
+            if let reason = fillRejection(for: control, secret: secret) {
                 details.append("[\(field.ref)] skipped: \(reason)")
                 continue
             }
@@ -64,8 +72,8 @@ extension PageDriver {
                 details.append("[\(field.ref)] not filled: select is only valid for a dropdown.")
                 continue
             } else {
-                result = await type(text: field.value, intoField: "", ref: field.ref, submit: false,
-                                    in: webView, announced: announced && index == 0, refreshControls: false)
+                result = await type(text: field.value, intoField: "", ref: field.ref, submit: false, allowSensitive: secret,
+                                    storedSecret: storedSecret, in: webView, announced: announced && index == 0, refreshControls: false)
             }
             if ["Typed", "Selected", "Set checked", "Checked state already"].contains(where: result.hasPrefix) {
                 written.append(field)
@@ -84,6 +92,11 @@ extension PageDriver {
         var verified: [Int] = []
         for field in written {
             guard await canContinueBatch(field.ref, in: webView) else { break }
+            // A secret was checked where it was typed; the runtime never reads a sensitive field back.
+            if secretRefs.contains(field.ref) {
+                verified.append(field.ref)
+                continue
+            }
             let state = await valueState(ref: field.ref, documentID: documentID, in: webView)
             guard await canContinueBatch(field.ref, in: webView) else { break }
             if state == "matched" {
@@ -108,8 +121,11 @@ extension PageDriver {
         return "Filled \(verified.count) of \(fields.count) fields. " + details.joined(separator: "\n") + "\n" + snapshot
     }
 
-    private static func fillRejection(for control: [String: Any]) -> String? {
-        if control["sensitive"] as? Bool == true {
+    private static func fillRejection(for control: [String: Any], secret: Bool) -> String? {
+        if secret, ["checkbox", "radio", "select"].contains(control["kind"] as? String) {
+            return "a secret is typed text; this control takes a choice, not a secret."
+        }
+        if control["sensitive"] as? Bool == true, !secret {
             return "sensitive field; the user must fill it. Do not retry with another tool."
         }
         if control["type"] as? String == "file" {
