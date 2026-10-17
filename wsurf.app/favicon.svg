@@ -1,0 +1,4 @@
+<!-- SPDX-FileCopyrightText: 2026 WSurf Agency
+     SPDX-License-Identifier: Apache-2.0
+     WSurf brand artwork (Tandem). Provenance: branding/tandem/README.md. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="WSurf"><title>WSurf</title><style>.l{fill:#3B1FD1}.f{fill:#14C79A}@media (prefers-color-scheme:dark){.l{fill:#6D55FF}.f{fill:#2FE0B2}}</style><path class="l" fill="#3B1FD1" d="M 487.68 929.81 A 332.5 332.5 0 0 0 147.5 385.4 A 430.55 430.55 0 1 1 487.68 929.81 Z"/><path class="f" fill="#14C79A" d="M 476.5 703.59 A 232.5 232.5 0 1 0 11.5 703.59 A 232.5 232.5 0 1 0 476.5 703.59 Z"/></svg>
