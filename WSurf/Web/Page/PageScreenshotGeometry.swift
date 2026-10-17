@@ -40,10 +40,13 @@ nonisolated enum ScreenshotTarget: Equatable, Sendable {
     case element(ref: Int)
     /// CSS pixels, relative to the viewport's top-left corner.
     case region(CGRect)
-    /// The document from its top-left corner, up to `fullPageHeight` CSS pixels tall.
+    /// The document from its top-left corner, up to `fullPageWidth` by `fullPageHeight` CSS pixels. The size comes from the
+    /// page, so the engine is never asked for more, and never for an image wider than `fullPagePixelWidth`.
     case fullPage
 
+    static let fullPageWidth: CGFloat = 4_096
     static let fullPageHeight: CGFloat = 4_096
+    static let fullPagePixelWidth = 2_048
 }
 
 /// A captured image and the CSS-pixel rectangle it shows. `scale` is bitmap pixels per CSS pixel.

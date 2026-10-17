@@ -247,7 +247,8 @@ extension PageDriver {
         let zoom = view.pageZoom
         guard css.width * zoom >= 1, css.height * zoom >= 1 else { return .failure(.invalidGeometry) }
         // One image pixel per CSS pixel unless the caller asks for a width: the pixels a screen adds only cost bytes.
-        let pixelLimit = maxWidth ?? max(64, Int(css.width.rounded(.up)))
+        let requested = maxWidth ?? max(64, Int(css.width.rounded(.up)))
+        let pixelLimit = target == .fullPage ? min(requested, ScreenshotTarget.fullPagePixelWidth) : requested
         let crop: CGRect? = target == .viewport ? nil : CGRect(x: css.minX * zoom, y: css.minY * zoom, width: css.width * zoom, height: css.height * zoom)
         let pointWidth = crop?.width ?? view.bounds.width
         let captured: NSImage?
@@ -315,8 +316,9 @@ extension PageDriver {
         case .fullPage:
             let width = (before["dw"] as? NSNumber).map { CGFloat($0.doubleValue) } ?? viewport.width
             let height = (before["dh"] as? NSNumber).map { CGFloat($0.doubleValue) } ?? viewport.height
-            guard width > 0, height > 0 else { return .failure(.invalidGeometry) }
-            return .success((css: CGRect(x: 0, y: 0, width: width, height: min(height, ScreenshotTarget.fullPageHeight)), placed: nil))
+            guard width.isFinite, height.isFinite, width > 0, height > 0 else { return .failure(.invalidGeometry) }
+            let size = CGSize(width: min(width, ScreenshotTarget.fullPageWidth), height: min(height, ScreenshotTarget.fullPageHeight))
+            return .success((css: CGRect(origin: .zero, size: size), placed: nil))
         case .region(let requested):
             switch ScreenshotGeometry.region(requested, inViewportCSS: viewport) {
             case .success(let clipped):
