@@ -14,8 +14,57 @@
         }
       }
     },
+    "assistant asks first" : {
+      "comment" : "Fragment in the one-line summary under a website, meaning its Assistant Access is set to Ask even if the default would allow more. Lower case: joined with other fragments by a separator, never shown alone."
+    },
+    "Default (%@)" : {
+      "comment" : "Menu item in a website’s Assistant Access choices that removes the website’s own setting so it follows the Website access default. %@ names that default, for example Allow Control, written as the menu spells it."
+    },
+    "Actions the assistant may take on these websites without asking again, such as purchases or posting." : {
+      "comment" : "Caption of the Approved actions page in Settings."
+    },
+    "Approved actions" : {
+      "comment" : "Row title in Settings › Assistant and title of the page it opens: the sensitive actions, such as purchases or posting, that the assistant may take on certain websites without asking again. Sentence case. Replaces Allowed without asking."
+    },
+    "A website’s own Assistant Access setting wins over this default. Private windows always ask." : {
+      "comment" : "Note under the Acting on websites section in Settings. Assistant Access is the name of the per-website setting in the site menu and on a website’s settings page; this default is the Website access row above."
+    },
     "%@ — Private Browsing" : {
 
+    },
+    "The assistant wants to click “%@” %@. This %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The assistant wants to click “%1$@” %2$@. This %3$@."
+          }
+        }
+      }
+    },
+    "signing in" : {
+      "comment" : "Lowercase name of one category of assistant permission, inserted mid-sentence into a list under a website’s name, which reads roughly: purchases and signing in without asking. Deliberately lowercase. The capitalised label Signing in is a separate string."
+    },
+    "Signing in" : {
+      "comment" : "Label of one category of sensitive action in the assistant-permissions list in Settings, covering signing in with another account and giving a website access to an account. A lowercase mid-sentence form of the same phrase exists separately."
+    },
+    "signs in or gives another website access to your account" : {
+      "comment" : "Clause that completes the sentence This … in the dialog asking the user to approve an action the assistant wants to take, for buttons such as Continue with Google or Authorize. Lowercase, third person singular; the implied subject is the action."
+    },
+    "This page has a password or payment field." : {
+      "comment" : "First sentence of the question asking whether the assistant may use a page. It says why the question appears even though the Website access default would allow it. Followed by the usual explanation of Read Only and Allow Control."
+    },
+    "The assistant reads and uses websites without asking. It still asks before purchases, payments, sending, deleting, and signing in, and on pages with password or payment fields." : {
+      "comment" : "Caption of the Website access row when it is set to Allow Control. It lists what the assistant still asks about."
+    },
+    "The assistant reads websites without asking. It asks before it clicks, types, or submits on a website." : {
+      "comment" : "Caption of the Website access row when it is set to Read Only."
+    },
+    "The assistant asks before it reads or uses each website." : {
+      "comment" : "Caption of the Website access row when it is set to Ask. The assistant is the name of the feature."
+    },
+    "Private windows always ask." : {
+      "comment" : "Caption of the Website access row when Settings is open in a private window, and the end of the note under the Acting on websites section. The Website access default never applies in private windows."
     },
     "%@ wants to open %@." : {
       "localizations" : {
@@ -308,6 +357,9 @@
     },
     "Use Another Device or Key…" : {
 
+    },
+    "Website access" : {
+      "comment" : "Row title in Settings › Assistant, Acting on websites. It chooses how much of a website the assistant may use when that website has no setting of its own: Ask, Read Only or Allow Control. Sentence case."
     },
     "WSurf can’t save a passkey here: Credential Manager has no vault yet." : {
 
@@ -1164,9 +1216,6 @@
     },
     "Allowed until you leave" : {
       "comment" : "Caption under a permission's name in the site permission panel: the grant lasts only until the user navigates away from the website. Sentence case, one line, tight."
-    },
-    "Allowed without asking" : {
-      "comment" : "Heading of the list of websites the assistant may act on without confirming first. Past participle describing the websites below, not an instruction."
     },
     "Already installed in WSurf" : {
 
@@ -5832,9 +5881,6 @@
     },
     "Websites appear here after you grant or deny permission." : {
       "comment" : "Guidance under No websites yet, explaining that the list fills itself as websites ask for the permission. Third person plural."
-    },
-    "Websites the assistant may act on without asking." : {
-      "comment" : "Settings search caption for the Assistant permissions section."
     },
     "Websites use this data to keep you signed in and remember your preferences." : {
       "comment" : "Caption under the Website data page title, saying what the stored data is for before offering to remove it. Third person plural."

@@ -81,9 +81,20 @@ private struct AssistantOverview: View {
 
         AssistantExecutionSettings()
 
-        SettingsSection(title: "Acting on websites", symbol: "hand.raised") {
+        SettingsSection(
+            title: "Acting on websites",
+            symbol: "hand.raised",
+            footnote: "A website’s own Assistant Access setting wins over this default. Private windows always ask."
+        ) {
+            WebsiteAccessRow(
+                permissions: coordinator.context.sitePermissions,
+                isPrivate: coordinator.context.profile.isPrivate
+            )
+
+            RowSeparator()
+
             DrillInRow(
-                title: "Allowed without asking",
+                title: "Approved actions",
                 detail: model.actionPolicy.grantsByHost.isEmpty
                     ? "None" : "\(model.actionPolicy.grantsByHost.count) websites"
             ) {
