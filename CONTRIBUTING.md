@@ -140,11 +140,11 @@ switch case’s body on the line after the label. Do not write a declaration or
 control-flow body inside single-line braces; short closures, `guard … else
 { return }` and accessor lists (`{ get set }`) stay inline. Coverage thresholds
 do not replace meaningful assertions. CI also checks the
-blank-tab, tab-switching, command-palette, Start Page and Ask surface budgets in
-`Tools/check-performance.sh`. Each budget is about twice the measured
-baseline to allow for roughly 50% variation on shared runners. These checks
-detect large regressions rather than small percentage changes. Change a budget
-only with measurements that justify it.
+blank-tab, tab-switching, command-palette, Start Page, Ask surface and
+crowded-sidebar budgets in `Tools/check-performance.sh`. Each budget is about
+twice the measured baseline to allow for roughly 50% variation on shared
+runners. These checks detect large regressions rather than small percentage
+changes. Change a budget only with measurements that justify it.
 
 Debug builds take their bundle identifier from `WSURF_BUNDLE_ID_SUFFIX`, empty by
 default, so a Debug app is `io.wsagency.wsurf` and its extension
