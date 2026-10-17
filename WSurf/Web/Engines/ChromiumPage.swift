@@ -43,8 +43,17 @@ final class ChromiumPage: NSView {
     private var awaitingNativeNavigation = false
     private var navigationStarted = false
     private var initialDocument = true
-    /// Chromium records the startup about:blank as a real history entry. It is dropped when the first page commits.
-    private var startupEntryInHistory = true
+    /// Chromium records the startup about:blank as a real history entry. The first commit starts the reset that drops it;
+    /// until that reset is answered Chromium reports a page behind the first one, so Back is held off (see `didChangeLoading`).
+    private enum StartupEntry {
+        case inHistory, resetting, dropped
+    }
+    private var startupEntry = StartupEntry.inHistory
+    private var mainFrameCommits = 0
+    private static let startupResetAttempts = 10
+    private static let startupResetRetryDelay: Duration = .milliseconds(100)
+    /// Test seam: runs in place of the `Page.resetNavigationHistory` command; a throw is a refused reset.
+    var startupResetCommand: (@MainActor () async throws -> Void)?
     private(set) var htmlDocumentURL: URL?
     private var hasAppliedInitialSettings = false
     private var zoom: CGFloat = 1
@@ -535,8 +544,9 @@ final class ChromiumPage: NSView {
         }
         updateNativeSecurity()
         owner?.onNavigationCommitted?(navigation)
-        if startupEntryInHistory {
-            startupEntryInHistory = false
+        mainFrameCommits += 1
+        if startupEntry == .inHistory {
+            startupEntry = .resetting
             dropStartupEntry()
         } else {
             refreshHistory()
@@ -592,7 +602,9 @@ final class ChromiumPage: NSView {
     }
     func didChangeLoading(_ loading: Bool, canGoBack: Bool, canGoForward: Bool) {
         guard !closing, !isClosed, !initialDocument else { return }
-        owner?.canGoBack = canGoBack
+        // Chromium counts the startup page until the reset has landed, and reports it on every loading change meanwhile. The
+        // reset's answer sets Back from the history it leaves; a report from before it must not make Back reach the startup page.
+        owner?.canGoBack = canGoBack && startupEntry == .dropped
         owner?.canGoForward = canGoForward
         guard !awaitingNativeNavigation || loading else { return }
         owner?.isLoading = loading
@@ -625,38 +637,68 @@ final class ChromiumPage: NSView {
         owner?.isFullscreen = enabled
     }
 
-    /// Back must never reach the startup page. The reset keeps only the committed entry; Chromium's own loading
-    /// state would otherwise keep reporting a page behind the first one.
+    /// Back must never reach the startup page. The reset keeps only the committed entry. Chromium refuses it ("Not attached to
+    /// an active page") while the first commit is still swapping renderers, so a refusal is retried, but only while no later
+    /// page has committed: a reset then would drop that page's Back entry too. If the reset never lands, the startup entry
+    /// stays in the history and Back follows the history as it is.
     private func dropStartupEntry() {
         guard raw != nil, !closing, !isClosed else { return }
+        let commit = mainFrameCommits
         Task { [weak self] in
             guard let self else { return }
-            let dropped = (try? await command("Page.resetNavigationHistory")) != nil
-            guard !closing, !isClosed else { return }
-            if dropped {
-                owner?.canGoBack = false
+            for attempt in 1...Self.startupResetAttempts {
+                if await resetNavigationHistory() {
+                    break
+                }
+                guard attempt < Self.startupResetAttempts, mainFrameCommits == commit else { break }
+                try? await Task.sleep(for: Self.startupResetRetryDelay)
+                guard !closing, !isClosed else { return }
             }
-            refreshHistory()
+            guard !closing, !isClosed else { return }
+            startupEntry = .dropped
+            if await loadHistory() {
+                owner?.canGoBack = !history.backList.isEmpty
+            }
+        }
+    }
+
+    private func resetNavigationHistory() async -> Bool {
+        do {
+            if let startupResetCommand {
+                try await startupResetCommand()
+            } else {
+                _ = try await command("Page.resetNavigationHistory")
+            }
+            return true
+        } catch {
+            return false
         }
     }
 
     private func refreshHistory() {
         guard raw != nil, !closing, !isClosed else { return }
         Task { [weak self] in
-            guard let self, let response = try? await command("Page.getNavigationHistory"),
-                  let index = response["currentIndex"] as? Int,
-                  let entries = response["entries"] as? [[String: Any]] else { return }
-            let items = entries.enumerated().compactMap { position, entry -> (Int, PageHistoryItem)? in
-                guard let id = entry["id"] as? Int, let address = entry["url"] as? String,
-                      let url = URL(string: address) else { return nil }
-                return (position, PageHistoryItem(url: url, title: entry["title"] as? String, chromiumIndex: id))
-            }
-            history = PageHistoryList(
-                backList: items.filter { $0.0 < index }.map(\.1),
-                forwardList: items.filter { $0.0 > index }.map(\.1),
-                currentItem: items.first { $0.0 == index }?.1)
-            owner?.onHistoryChanged?()
+            await self?.loadHistory()
         }
+    }
+
+    /// Reads Chromium's history into `history`. False when the read fails.
+    @discardableResult
+    private func loadHistory() async -> Bool {
+        guard raw != nil, !closing, !isClosed, let response = try? await command("Page.getNavigationHistory"),
+              let index = response["currentIndex"] as? Int,
+              let entries = response["entries"] as? [[String: Any]] else { return false }
+        let items = entries.enumerated().compactMap { position, entry -> (Int, PageHistoryItem)? in
+            guard let id = entry["id"] as? Int, let address = entry["url"] as? String,
+                  let url = URL(string: address) else { return nil }
+            return (position, PageHistoryItem(url: url, title: entry["title"] as? String, chromiumIndex: id))
+        }
+        history = PageHistoryList(
+            backList: items.filter { $0.0 < index }.map(\.1),
+            forwardList: items.filter { $0.0 > index }.map(\.1),
+            currentItem: items.first { $0.0 == index }?.1)
+        owner?.onHistoryChanged?()
+        return true
     }
 
     func close() async {
