@@ -193,7 +193,7 @@ struct WebAuthnAdapterTests {
         return (view, native)
     }
 
-    private func deliver(_ value: [String: Any], id: String, document: String, in view: BrowserPage) async throws -> Bool {
+    func deliver(_ value: [String: Any], id: String, document: String, in view: BrowserPage) async throws -> Bool {
         let json = try String(data: JSONSerialization.data(withJSONObject: value), encoding: .utf8) ?? "{}"
         let result = try await view.callAsyncJavaScript(
             "return globalThis.__wsurfWebAuthnFence.deliver(documentID, id, JSON.parse(value));",

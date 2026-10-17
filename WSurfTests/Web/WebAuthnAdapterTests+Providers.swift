@@ -244,7 +244,8 @@ extension WebAuthnAdapterTests {
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
     func aNormalPageIsAlwaysTheVaultsAndAPrivatePageAlwaysTheEngines(engine: BrowserEngine) async throws {
         try await withRealm(engine) { realm in
-            let regularContext = try await realm.context(), otherRegularContext = try await realm.context()
+            // A conditional request stays registered only where a vault could answer it, so the page that makes one has a locked vault.
+            let regularContext = try await realm.context(vaults: [.locked]), otherRegularContext = try await realm.context()
             let privateContext = realm.privateContext()
             let regular = try await realm.open(regularContext), other = try await realm.open(otherRegularContext)
             let page = try await realm.open(privateContext)
@@ -288,7 +289,7 @@ extension WebAuthnAdapterTests {
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
     func cancellingByProfileIDRefusesOnlyThatProfilesPendingCeremonies(engine: BrowserEngine) async throws {
         try await withRealm(engine) { realm in
-            let contextA = try await realm.context(), contextB = try await realm.context()
+            let contextA = try await realm.context(vaults: [.locked]), contextB = try await realm.context(vaults: [.locked])
             let a1 = try await realm.open(contextA), a2 = try await realm.open(contextA), b = try await realm.open(contextB)
             for page in [a1, a2, b] {
                 try await requestConditionalGet(in: page)
@@ -344,18 +345,95 @@ extension WebAuthnAdapterTests {
         }
     }
 
-    /// No usable vault: the page's modal request is refused as `NotAllowedError`, never handed to the engine and never answered
-    /// by a native prompt.
+    /// The relay's result events as the page world sees them, minus the fence's own questions (see `recordResults`), that carry a
+    /// hand-off: the mode native named.
+    private func handOffs(of page: BrowserPage) async throws -> [String] {
+        try await results(of: page).compactMap { $0["handoff"] as? String }
+    }
+
+    /// No usable vault: the page's modal request goes to the system's authenticator. Native answers it with a hand-off, never a
+    /// refusal and never a sheet of ours; the page script then runs the caller's own call in the engine.
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
-    func aModalRequestWithNoUsableVaultIsRefusedAndNeverFallsBackToTheEngine(engine: BrowserEngine) async throws {
+    func aModalRequestWithNoUsableVaultIsHandedToTheEngine(engine: BrowserEngine) async throws {
         try await withRealm(engine) { realm in
             let context = try await realm.context()
             let page = try await realm.open(context)
+            try await recordResults(in: page)
             try await requestModalGet(in: page)
-            #expect(try await waitUntil { try await outcomes(of: page) == ["NotAllowedError"] }, "the unavailable route refuses")
-            #expect(provider(of: try await fence(page)) == "manager", "the page is still the manager's, not rerouted to the engine")
-            #expect(try await outcomes(of: page) == ["NotAllowedError"], "exactly one refusal and nothing after it")
+            #expect(try await waitUntil { try await handOffs(of: page) == ["modal"] }, "native handed the request to the engine")
+            #expect(try await results(of: page).allSatisfy { $0["error"] == nil }, "it is not a refusal")
+            try await fence(page)
+            #expect(try await handOffs(of: page) == ["modal"], "exactly one answer")
             #expect(CredentialManager.unlockedManagers(for: context.profile).isEmpty)
+        }
+    }
+
+    /// A discovery in a profile with no vault has nothing for a vault to wait for: it runs in the engine as a conditional request
+    /// at once. With a vault, it stays registered and silent until the user clicks a field.
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
+    func aConditionalRequestIsHandedOverOnlyWhereThereIsNoVault(engine: BrowserEngine) async throws {
+        try await withRealm(engine) { realm in
+            let without = try await realm.open(try await realm.context())
+            let with = try await realm.open(try await realm.context(vaults: [.locked]))
+            for page in [without, with] {
+                try await recordResults(in: page)
+                try await requestConditionalGet(in: page)
+            }
+            #expect(try await waitUntil { try await handOffs(of: without) == ["conditional"] }, "no vault: the engine's own discovery")
+            try await fence(with)
+            #expect(try await handOffs(of: with).isEmpty, "a vault keeps its discovery registered")
+            #expect(try await results(of: with).isEmpty, "and silent")
+            #expect(try await outcomes(of: with).isEmpty)
+        }
+    }
+
+    /// "Use Another Device or Key…" on the offer a locked vault shows first: the request is handed over and the vault was never
+    /// unlocked for it. The vault's own unlock passkey is a separate ceremony and still opens it afterwards.
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
+    func anotherDeviceOrKeyOnTheLockedOfferHandsOverWithoutUnlocking(engine: BrowserEngine) async throws {
+        try await withRealm(engine) { realm in
+            let passkeys = VaultPasskeys()
+            let context = try await realm.context(passkeys: passkeys, vaults: [.locked])
+            let profileID = context.profile.id
+            let user = WebsiteAuthenticatorCeremonyTests.User()
+            user.offer = { _ in .handOff }
+            WebAuthnAdapter.interactionForTesting[profileID] = { user }
+            defer { WebAuthnAdapter.interactionForTesting[profileID] = nil }
+            let page = try await realm.open(context)
+            let before = passkeys.assertions.count
+
+            try await recordResults(in: page)
+            try await requestModalGet(in: page)
+            #expect(try await waitUntil { try await handOffs(of: page) == ["modal"] })
+            #expect(user.offers == [true] && user.prompts.isEmpty && user.verifications == 0, "the offer was the only sheet")
+            #expect(passkeys.assertions.count == before, "no unlock passkey was used for the request")
+            #expect(CredentialManager.unlockedManagers(for: context.profile).isEmpty)
+
+            // The vault's own unlock still works, with its own passkey, after a request was handed over.
+            let listing = try await CredentialManager.store(for: context.profile).listing()
+            let vault = try CredentialManager.forVault(context.profile, vaultID: try #require(listing.first).vaultID, native: passkeys.native)
+            try await vault.unlock(in: VaultManagerFixture.anchor())
+            #expect(vault.isUnlocked && passkeys.assertions.count == before + 1)
+        }
+    }
+
+    /// The "which vault?" prompt of a passkey request offers the same way out, and taking it unlocks nothing.
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
+    func anotherDeviceOrKeyOnTheVaultChoiceHandsOverWithoutUnlocking(engine: BrowserEngine) async throws {
+        try await withRealm(engine) { realm in
+            let passkeys = VaultPasskeys()
+            let context = try await realm.context(passkeys: passkeys, vaults: [.locked, .locked])
+            let profileID = context.profile.id
+            VaultChoicePrompt.handOffForTesting.insert(profileID)
+            defer { VaultChoicePrompt.handOffForTesting.remove(profileID) }
+            let page = try await realm.open(context)
+            let before = passkeys.assertions.count
+
+            try await recordResults(in: page)
+            try await requestModalGet(in: page)
+            #expect(try await waitUntil { try await handOffs(of: page) == ["modal"] })
+            #expect(passkeys.assertions.count == before && CredentialManager.unlockedManagers(for: context.profile).isEmpty)
+            #expect(try await results(of: page).allSatisfy { $0["error"] == nil })
         }
     }
 

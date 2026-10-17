@@ -17,7 +17,7 @@ import WebKit
 
 @MainActor
 struct WebsiteAuthenticatorCeremonyTests {
-    private let rpID = "localhost"
+    let rpID = "localhost"
 
     // MARK: Doubles
 
@@ -172,7 +172,7 @@ struct WebsiteAuthenticatorCeremonyTests {
         await fixture.cleanup()
     }
 
-    private func creation(
+    func creation(
         challenge: String = "create challenge",
         userVerification: WebAuthnUserVerification = .discouraged,
         exclude: [Data] = [],
@@ -251,7 +251,7 @@ struct WebsiteAuthenticatorCeremonyTests {
 
     /// A passkey registered through the ceremony itself, so the account is one the ceremony would offer again.
     @discardableResult
-    private func seed(_ fixture: Fixture, _ number: UInt8, userName: String = "ada@example.com") async throws -> UUID {
+    func seed(_ fixture: Fixture, _ number: UInt8, userName: String = "ada@example.com") async throws -> UUID {
         let outcome = try await create(fixture, User(), request: creation(challenge: "seed \(number)", userID: Data([number]), userName: userName))
         let accounts = try await fixture.manager.snapshot().accounts
         return try #require(accounts.first { $0.passkeys.contains { $0.credentialID == outcome.result.credentialID } }).id
@@ -589,70 +589,6 @@ struct WebsiteAuthenticatorCeremonyTests {
             #expect(filtered.prompts[0].choices.count == 1)
             #expect(only.credentialID == first.credentialID && only.credentialID != second.credentialID)
         }
-    }
-
-    /// A vault with no matching passkey must not answer instantly: that would let a page probe for credentials with no
-    /// native step. The prompt (here the scripted user, with the origin and relying party) comes first, has nothing to
-    /// approve, and the page's refusal arrives only after it is dismissed or expires.
-    @Test(.boundedWebViews) func aGetWithNoMatchingPasskeyAsksFirstHasNothingToApproveAndFailsOnlyAfterTheDecision() async throws {
-        try await withFixture { fixture in
-            let seeded = try await seed(fixture, 1)
-            let stored = try #require(try await passkeys(fixture).first)
-            let before = try fixture.bytes()
-
-            @MainActor func outcome(_ decision: WebAuthnDecision, allow: [Data] = [Data([0xFF])]) async throws -> (String, User) {
-                let user = User()
-                user.respond = { _ in decision }
-                do {
-                    try await get(fixture, user, request: assertion(allow: allow))
-                    return ("signed", user)
-                } catch WebsiteAuthenticatorError.notAllowed {
-                    return ("notAllowed", user)
-                } catch WebsiteAuthenticatorError.expired {
-                    return ("expired", user)
-                } catch is CancellationError {
-                    return ("cancelled", user)
-                } catch {
-                    return ("other \(error)", user)
-                }
-            }
-
-            for (decision, expected) in [
-                (WebAuthnDecision.declined, "notAllowed"), (.expired, "expired"), (.cancelled, "cancelled"),
-                // Nothing is approvable, whatever a (scripted) approval names, including a real passkey of this vault.
-                (.approved(choice: nil), "notAllowed"), (.approved(choice: stored.id), "notAllowed"), (.approved(choice: seeded), "notAllowed"),
-            ] {
-                let (result, user) = try await outcome(decision)
-                #expect(result == expected, "\(decision)")
-                #expect(user.prompts.count == 1, "the user is asked before any refusal: \(decision)")
-                let prompt = try #require(user.prompts.first)
-                #expect(prompt.operation == .get && prompt.choices.isEmpty && !prompt.offersNewAccount)
-                #expect(prompt.origin == fixture.origin && prompt.rpID == rpID)
-                #expect(user.verifications == 0 && user.offers.isEmpty)
-            }
-            #expect(try fixture.bytes() == before)
-            // A get that does match is still exactly one prompt: no extra dialog was added to the success path.
-            let matching = User()
-            matching.respond = { prompt in .approved(choice: prompt.choices[0].id) }
-            try await get(fixture, matching)
-            #expect(matching.prompts.count == 1 && matching.offers.isEmpty)
-        }
-    }
-
-    /// The native no-match sheet cannot be approved: the only decision it ever reports is a dismissal.
-    @Test func theNativeNoMatchPromptCarriesNoChoicesAndNothingToChoose() {
-        let prompt = WebAuthnPrompt(
-            operation: .get, origin: "https://login.example", topOrigin: nil, rpID: "login.example", requestedUserName: nil,
-            choices: [], offersNewAccount: false, userVerification: .preferred, willVerifyUser: true
-        )
-        #expect(NativeWebAuthnInteraction.hasNothingToApprove(prompt))
-        #expect(NativeWebAuthnInteraction.makeChooser(for: prompt) == nil)
-        let withChoice = WebAuthnPrompt(
-            operation: .get, origin: "https://login.example", topOrigin: nil, rpID: "login.example", requestedUserName: nil,
-            choices: [WebAuthnPromptChoice(id: UUID(), title: "Ada", detail: "")], offersNewAccount: false,
-            userVerification: .preferred, willVerifyUser: true
-        )
-        #expect(!NativeWebAuthnInteraction.hasNothingToApprove(withChoice))
     }
 
     @Test(.boundedWebViews) func assertionCancelledDeclinedStaleOrRemovedSignsNothing() async throws {

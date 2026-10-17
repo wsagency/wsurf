@@ -226,9 +226,9 @@ extension WebsiteAuthenticator {
         )
         let listed = try await snapshot(manager, bound: bound)
         let candidates = assertionCandidates(listed.accounts, rpID: bound.rpID, allowed: options.allowCredentials)
-        // No matching passkey is still a user-visible decision, never an immediate error: an instant failure would tell a
-        // page whether this vault holds a passkey for it, with no origin-bearing native step. The prompt names the site and
-        // has nothing to approve; the page learns NotAllowed only after the user dismissed it or the deadline passed.
+        // A vault with no passkey for this request has nothing to offer, so it asks nothing and answers nothing: the request
+        // goes to the system's authenticator, with no vault sheet in front of it. The page is never told "no passkey" here.
+        guard !candidates.isEmpty else { throw WebsiteAuthenticatorError.handOff }
         let decision = await interaction.decide(
             WebAuthnPrompt(
                 operation: .get,
@@ -244,10 +244,6 @@ extension WebsiteAuthenticator {
             in: anchor,
             until: request.deadline
         )
-        guard !candidates.isEmpty else {
-            _ = try approval(decision)
-            throw WebsiteAuthenticatorError.notAllowed
-        }
         guard let selected = try approval(decision),
               let pick = candidates.first(where: { $0.choice.id == selected }) else {
             throw WebsiteAuthenticatorError.notAllowed
@@ -470,6 +466,8 @@ extension WebsiteAuthenticator {
             throw WebsiteAuthenticatorError.expired
         case .cancelled:
             throw CancellationError()
+        case .handOff:
+            throw WebsiteAuthenticatorError.handOff
         }
     }
 

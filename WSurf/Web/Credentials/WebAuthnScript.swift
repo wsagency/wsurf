@@ -10,8 +10,10 @@ import Foundation
 ///   conditional requests. The page cannot make it authorize anything; native derives origin, frame, policy and profile.
 /// - `page` runs in the page world. It only marshals options and results into browser-facing objects.
 ///
-/// Native decides the provider before the page script touches a call: `legacy` hands the untouched call to the engine,
-/// `manager` is handled here and never falls back to the engine, and no answer is a refusal, never implicit legacy.
+/// Native decides the route before the page script touches a call: `legacy` (a private page) hands the untouched call to the
+/// engine, `manager` is handled here, and no answer is a refusal, never implicit legacy. A call handled here reaches the
+/// engine only when native says so afterwards (`handoff`): the user chose another device or key, or the vault holds nothing
+/// for it.
 nonisolated enum WebAuthnScript {
     static let handlerName = "wsurfWebAuthn"
     static let requestEvent = "wsurf-webauthn-request"
@@ -361,8 +363,32 @@ nonisolated enum WebAuthnScript {
         if (!value || typeof value.id !== 'string') return;
         const query = queryHandlers.get(value.id);
         if (query) { queryHandlers.delete(value.id); query(value.result ?? null); return; }
+        if (value.handoff !== undefined) {
+          if (value.handoff === 'modal' || value.handoff === 'conditional') handOff(value.id, value.handoff);
+          return;
+        }
         settle(value.id, value.error, value.result);
       });
+
+      // Native decided that this request goes to the engine's own authenticator, in place of the vault's answer: the user chose
+      // another device or key, or the vault holds nothing for it. The caller's own values are passed on once. A request the user
+      // never saw (a discovery in a profile with no vault) keeps its conditional mediation; one the user chose to hand over is
+      // modal. The request stays registered until the engine settles it, so a second foreground request is refused exactly as
+      // while the vault was answering, and the engine's own timeout and the caller's abort signal take over from ours.
+      function handOff(id, mode) {
+        const pending = requests.get(id);
+        if (!pending || pending.handedOff) return;
+        pending.handedOff = true;
+        clearTimeout(pending.timer);
+        pending.signal?.removeEventListener('abort', pending.abort);
+        const options = {publicKey: pending.publicKey, signal: pending.signal};
+        if (pending.mediation !== undefined) options.mediation = pending.mediation;
+        if (mode === 'modal' && pending.conditional) options.mediation = 'optional';
+        const done = settleWith => value => { requests.delete(id); settleWith(value); };
+        let call;
+        try { call = originals[pending.operation](options); } catch (error) { done(pending.reject)(error); return; }
+        Promise.resolve(call).then(done(pending.resolve), done(pending.reject));
+      }
       // The provider routing for this document is native's: delivered as an event by the isolated relay, which holds the
       // announcement of the document-start script native installed (and of every later change). It is a hint, not an
       // authority: the page can forge it, and native refuses any manager request it does not itself serve. `pending` is a
@@ -448,7 +474,7 @@ nonisolated enum WebAuthnScript {
             emit({action: 'cancel', id});
             settle(id, signal.reason ?? fail('AbortError', 'The request was aborted.'));
           };
-          requests.set(id, {resolve, reject, timer, signal, abort, conditional, operation});
+          requests.set(id, {resolve, reject, timer, signal, abort, conditional, operation, publicKey, mediation});
           signal?.addEventListener('abort', abort, {once: true});
           const body = {action: 'request', id, operation, options: marshalled, mediation: mediation || 'optional'};
           try {
