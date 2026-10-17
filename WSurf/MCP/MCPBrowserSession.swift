@@ -40,6 +40,11 @@ final class MCPBrowserSession: Identifiable {
         }
     }
 
+    struct ComparisonPair {
+        let webKit: UUID
+        let chromium: UUID
+    }
+
     struct PageObservation {
         let id: String
         let snapshot: String
@@ -77,6 +82,8 @@ final class MCPBrowserSession: Identifiable {
     /// Cleanup index only: the tab owns the lease, this lets disconnect find the tabs this connection holds.
     @ObservationIgnored var developmentTabs: [UUID: (tab: BrowserTab, owner: DevelopmentOwner)] = [:]
     @ObservationIgnored var destinations: Set<String> = []
+    /// The WebKit and Chromium tabs `openComparison` opened, so that the next comparison reuses or replaces them.
+    @ObservationIgnored var comparison: ComparisonPair?
     @ObservationIgnored var hasReadContent = false
     @ObservationIgnored var accessWasRequested = false
     /// The latest consequential actions let through without asking (see `Grant.Source`), newest last, bounded.
@@ -139,6 +146,7 @@ final class MCPBrowserSession: Identifiable {
         grants = [:]
         observations = [:]
         destinations = []
+        comparison = nil
         actionPolicy.revokeAll()
         secrets.wipe()
         secretFields = [:]
@@ -183,7 +191,11 @@ final class MCPBrowserSession: Identifiable {
         case "listTabs":
             return tabList()
         case "newTab":
-            return await openNewTab(arguments["url"]?.stringValue ?? "")
+            return await openNewTab(arguments["url"]?.stringValue ?? "", engine: arguments["engine"]?.stringValue.flatMap(BrowserEngine.init(rawValue:)))
+        case "openComparison":
+            return await openComparison(arguments["url"]?.stringValue ?? "")
+        case "compareTabs":
+            return await compareTabs(arguments)
         default:
             break
         }

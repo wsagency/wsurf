@@ -41,11 +41,11 @@ extension MCPBrowserSession {
     }
 
     func logSubject(for tool: String, arguments: [String: Value]) -> LogSubject {
-        let tab = arguments["tabID"]?.stringValue.flatMap(UUID.init(uuidString:)).flatMap { id in
+        let tab = (arguments["tabID"] ?? arguments["tabA"])?.stringValue.flatMap(UUID.init(uuidString:)).flatMap { id in
             browser.tabs.first { $0.id == id }
         }
         // The host says where the connection went; the path and query can carry data and are not kept.
-        let host = ["navigate", "newTab"].contains(tool) ? arguments["url"]?.stringValue.flatMap { URL(string: $0)?.host() } : nil
+        let host = ["navigate", "newTab", "openComparison"].contains(tool) ? arguments["url"]?.stringValue.flatMap { URL(string: $0)?.host() } : nil
         return LogSubject(tab: tab, target: arguments["ref"]?.intValue.map { String(localized: "element \($0)") }, detail: host)
     }
 

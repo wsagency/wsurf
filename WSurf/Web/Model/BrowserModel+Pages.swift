@@ -160,7 +160,8 @@ extension BrowserModel {
 
     func applyStoredEngine(to origin: String) async {
         let engine = sitePermissions.engine(for: origin)
-        for tab in tabs where siteOrigin(for: tab) == origin && tab.isMaterialised {
+        // A tab opened to compare engines keeps its own engine until it is closed.
+        for tab in tabs where siteOrigin(for: tab) == origin && tab.isMaterialised && tab.engineOverride == nil {
             guard tab.page.engine != engine else { continue }
             _ = await tab.switchEngine(to: engine)
         }

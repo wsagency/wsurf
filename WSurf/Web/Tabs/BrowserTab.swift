@@ -241,8 +241,10 @@ final class BrowserTab: Identifiable {
         return view
     }
 
+    var engineOverride: BrowserEngine?  // A tab opened to compare engines: wins over the site's setting, never written to it.
     func preferredEngine(for url: URL?) -> BrowserEngine {
-        guard extensionBaseURL == nil, let url else { return .webKit }
+        guard extensionBaseURL == nil else { return .webKit }
+        guard engineOverride == nil, let url else { return engineOverride ?? .webKit }
         let origin = SitePermissions.origin(for: url)
         guard !origin.isEmpty else { return .webKit }
         return sitePermissions.engine(for: origin)

@@ -103,15 +103,21 @@ extension MCPBrowserSession {
         return success("Navigation started. Use readPage after the page loads. Redirects to a different website require new sharing.")
     }
 
-    func openNewTab(_ raw: String) async -> CallTool.Result {
+    /// `engine` opens the tab in that engine, whatever the website's setting says; it is a development tool, so it needs
+    /// development access to a shared page, or a standing grant for the address.
+    func openNewTab(_ raw: String, engine: BrowserEngine? = nil) async -> CallTool.Result {
+        if engine != nil, !mayChooseEngine(for: webDestination(raw)) {
+            return failure(Self.engineNeedsDevelopment)
+        }
+        let opened = engine.map { " It runs in \(String(localized: $0.label))." } ?? ""
         if let url = webDestination(raw), let access = standingAccess(at: url) {
             guard isConnected, available(), !Task.isCancelled else { return failure("Opening the page was not approved.") }
             guard browser.sitePermissions.assistantAccess(for: SitePermissions.origin(for: url)) != .deny else {
                 return failure("Assistant access is off for this website.")
             }
-            let tab = browser.newTab(url: url, transition: .agent)
+            let tab = browser.newTab(url: url, transition: .agent, engine: engine)
             grants[tab.id] = Grant(origin: SitePermissions.origin(for: url), access: access, source: .standing)
-            return success("Opened tab \(tab.id.uuidString). Use readPage after it loads.")
+            return success("Opened tab \(tab.id.uuidString).\(opened) Use readPage after it loads.")
         }
         guard grants.keys.contains(where: { sharedTab($0).map { permits($0, capability: .control) } ?? false }),
             let url = permittedDestination(raw)
@@ -122,9 +128,99 @@ extension MCPBrowserSession {
         guard browser.sitePermissions.assistantAccess(for: SitePermissions.origin(for: url)) != .deny else {
             return failure("Assistant access is off for this website.")
         }
-        let tab = browser.newTab(url: url, transition: .agent)
+        let tab = browser.newTab(url: url, transition: .agent, engine: engine)
         grants[tab.id] = Grant(origin: SitePermissions.origin(for: url), access: .control)
-        return success("Opened tab \(tab.id.uuidString). Use readPage after it loads.")
+        return success("Opened tab \(tab.id.uuidString).\(opened) Use readPage after it loads.")
+    }
+
+    // MARK: Comparing engines
+
+    private static let engineNeedsDevelopment =
+        "Choosing an engine needs development access to a shared page. Call requestAccess with development set, or use a developer site."
+
+    /// Whether this connection holds development access on a shared page, or a standing grant covers `url`.
+    private func mayChooseEngine(for url: URL?) -> Bool {
+        if let url, standingAccess(at: url) != nil {
+            return true
+        }
+        return grants.keys.contains { sharedTab($0).map { permits($0, capability: .development) } ?? false }
+    }
+
+    /// What a pair of comparison tabs at `url` get: a paired client's standing grant on a developer site, or, anywhere else, the
+    /// development access this connection already holds on a page of the same website. Nil when neither applies, because a
+    /// comparison needs development access to both tabs and the Open and Share sheet promises control only.
+    private func comparisonGrant(for url: URL) -> Grant? {
+        let origin = SitePermissions.origin(for: url)
+        if let standing = standingAccess(at: url) {
+            return Grant(origin: origin, access: standing, source: .standing)
+        }
+        let holders = grants.compactMap { id, grant -> BrowserTab? in
+            guard grant.origin == origin, grant.source == .sheet, let tab = sharedTab(id), permits(tab, capability: .development) else { return nil }
+            return tab
+        }
+        // The address of a page the user shared is known; any other needs to be a link the connection has seen.
+        let shared = holders.contains { webURL(of: $0).map(destinationKey) == destinationKey(url) }
+        guard !holders.isEmpty, shared || permittedDestination(url.absoluteString) != nil else { return nil }
+        return Grant(origin: origin, access: .development)
+    }
+
+    /// Opens `raw` in WebKit and in Chromium, side by side, and shares both with the grant `comparisonGrant` names. WSurf is
+    /// not brought to the front. A pair this connection opened before is loaded again when the website is the same, and closed
+    /// when it is not, so a connection keeps at most one pair.
+    func openComparison(_ raw: String) async -> CallTool.Result {
+        guard let url = webDestination(raw) else { return failure("Use a full HTTP(S) URL.") }
+        guard let grant = comparisonGrant(for: url) else {
+            return failure(
+                "Comparing engines needs development access to this website. Share a page of it with requestAccess (development set), or use a developer site.")
+        }
+        guard isConnected, available(), !Task.isCancelled else { return failure("Opening the pages was not approved.") }
+        guard browser.sitePermissions.assistantAccess(for: grant.origin) != .deny else { return failure("Assistant access is off for this website.") }
+        if let comparison, let webKit = comparisonTab(comparison.webKit, for: grant), let chromium = comparisonTab(comparison.chromium, for: grant) {
+            for tab in [webKit, chromium] {
+                observations[tab.id] = nil
+                rotateDiagnosticsKey(on: tab)
+                tab.load(url, transition: .agent)
+            }
+            return comparisonOpened(webKit, chromium, reused: true)
+        }
+        closeComparison()
+        // Opened unseen, split, and only then shown: Chromium does not load until its view is on screen.
+        let webKit = browser.newTab(url: url, activate: false, transition: .agent, engine: .webKit)
+        let chromium = browser.newTab(url: url, activate: false, transition: .agent, engine: .chromium)
+        browser.split(webKit, with: chromium, axis: .sideBySide)
+        browser.activate(webKit)
+        grants[webKit.id] = grant
+        grants[chromium.id] = grant
+        comparison = ComparisonPair(webKit: webKit.id, chromium: chromium.id)
+        return comparisonOpened(webKit, chromium, reused: false)
+    }
+
+    /// A tab of the pair this connection opened, while it is still open and still holds the grant for this website. A page that
+    /// has not loaded yet counts: it is the pair, whatever its address says for now.
+    private func comparisonTab(_ id: UUID, for grant: Grant) -> BrowserTab? {
+        guard grants[id]?.origin == grant.origin else { return nil }
+        return browser.tabs.first { $0.id == id && !$0.isClosed && !$0.isPrivate }
+    }
+
+    private func comparisonOpened(_ webKit: BrowserTab, _ chromium: BrowserTab, reused: Bool) -> CallTool.Result {
+        let value: Value = .object([
+            "status": "ok", "webkit": .string(webKit.id.uuidString), "chromium": .string(chromium.id.uuidString),
+            "reused": .bool(reused),
+            "message": "Both tabs load the page side by side. Call compareTabs with them once it has loaded.",
+        ])
+        return CallTool.Result(content: [.text(text: encoded(value), annotations: nil, _meta: nil)], structuredContent: Optional.some(value), isError: false)
+    }
+
+    /// Closes the pair this connection opened, unless the user pinned a tab of it. It leaves nothing to reopen.
+    private func closeComparison() {
+        guard let comparison else { return }
+        self.comparison = nil
+        for id in [comparison.webKit, comparison.chromium] {
+            guard let tab = browser.tabs.first(where: { $0.id == id }), tab.pinnedURL == nil else { continue }
+            browser.close(tab, recordForReopening: false)
+            grants[id] = nil
+            observations[id] = nil
+        }
     }
 
     private func permittedDestination(_ raw: String, grant: Grant? = nil) -> URL? {
