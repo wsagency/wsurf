@@ -21,12 +21,21 @@ final class BrowserApplication {
     private var queuedURLs: [URL] = []
     private var usedProfiles: [UUID: BrowserProfileContext] = [:]
     private var focusOrder: [UUID] = []
-    private let defaults = BrowserMCPServer.appDefaults
+    private let defaults: UserDefaults
     private static let lastWindowKey = "browser.lastFocusedWindow"
+    /// Profile and window of the last regular window the user closed, kept until another regular window opens.
+    private static let closedAsLastKey = "browser.windowClosedAsLast"
     private var mainMenu: MainMenu?
 
-    init() {
+    init(defaults: UserDefaults? = nil, notifications: NotificationCenter = .default) {
+        // Tests keep what they write to themselves instead of leaving it in the preferences of their bundle identifier.
+        self.defaults = defaults ?? (AppDatabase.isRunningTests ? InMemoryUserDefaults(inheriting: .standard) : BrowserMCPServer.appDefaults)
         installSharedRouting()
+        // AppKit closes every window right after posting this, on the main thread. Those closes come from the quit, not
+        // from the user, so the flag must be set before the post returns: an observer queue would set it too late.
+        _ = notifications.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated { self?.isTerminating = true }
+        }
     }
 
     var activeCoordinator: AppCoordinator? {
@@ -72,18 +81,7 @@ final class BrowserApplication {
         updates.start()
         let lastWindowID = defaults.string(forKey: Self.lastWindowKey).flatMap(UUID.init(uuidString:))
         let catalog = ProfileStore.shared
-        for profile in catalog.profiles {
-            let context = BrowserProfileContext.shared(for: profile)
-            for saved in BrowserModel.savedWindows(in: context.database).reversed() {
-                var id = saved.id
-                if id == BrowserModel.legacyWindowID || windows.contains(where: { $0.windowID == id }) {
-                    let uniqueID = UUID()
-                    guard BrowserModel.remapSavedWindow(in: context.database, from: id, to: uniqueID) else { continue }
-                    id = uniqueID
-                }
-                newWindow(profile: profile, windowID: id, restoring: true)
-            }
-        }
+        restoreWindows(of: catalog.profiles)
         if windows.isEmpty {
             newWindow(profile: catalog.current)
         }
@@ -106,6 +104,45 @@ final class BrowserApplication {
         if let coordinator = activeCoordinator {
             Task { await coordinator.offerLegacyPasswordImport() }
         }
+    }
+
+    /// Opens the windows each profile had open when the app last ran. A profile with none gets back the window the user
+    /// closed last, but only when that window was the last regular window open and nothing opened after it. A window closed
+    /// while others stayed open is left to Reopen Last Closed Window.
+    func restoreWindows(of profiles: [Profile], show: Bool = true) {
+        let closedAsLast = takeWindowClosedAsLast()
+        for profile in profiles {
+            let context = BrowserProfileContext.shared(for: profile)
+            for saved in BrowserModel.savedWindows(in: context.database).reversed() {
+                openSavedWindow(saved, of: profile, show: show)
+            }
+            if let closedAsLast, closedAsLast.profileID == profile.id,
+               !windows.contains(where: { $0.context === context }),
+               let saved = BrowserModel.savedWindows(in: context.database, includeClosed: true)
+                .first(where: { $0.id == closedAsLast.windowID && $0.closedAt != nil }) {
+                openSavedWindow(saved, of: profile, show: show)
+            }
+        }
+    }
+
+    private func openSavedWindow(_ saved: BrowserModel.SavedBrowserWindow, of profile: Profile, show: Bool = true) {
+        var id = saved.id
+        if id == BrowserModel.legacyWindowID || windows.contains(where: { $0.windowID == id }) {
+            let uniqueID = UUID()
+            guard BrowserModel.remapSavedWindow(
+                in: BrowserProfileContext.shared(for: profile).database, from: id, to: uniqueID
+            ) else { return }
+            id = uniqueID
+        }
+        newWindow(profile: profile, windowID: id, restoring: true, show: show)
+    }
+
+    private func takeWindowClosedAsLast() -> (profileID: UUID, windowID: UUID)? {
+        defer { defaults.removeObject(forKey: Self.closedAsLastKey) }
+        guard let ids = defaults.stringArray(forKey: Self.closedAsLastKey), ids.count == 2,
+              let profileID = UUID(uuidString: ids[0]), let windowID = UUID(uuidString: ids[1])
+        else { return nil }
+        return (profileID, windowID)
     }
 
     @discardableResult
@@ -142,6 +179,9 @@ final class BrowserApplication {
         precondition(!windows.contains { $0.windowID == coordinator.windowID })
         coordinator.application = self
         windows.append(coordinator)
+        if !coordinator.profiles.isPrivate {
+            defaults.removeObject(forKey: Self.closedAsLastKey)
+        }
         remember(coordinator.context)
         configureExtensions(coordinator.extensions, profile: coordinator.profiles.current)
     }
@@ -177,6 +217,10 @@ final class BrowserApplication {
         focusOrder.removeAll { $0 == coordinator.windowID }
         if activeWindowID == coordinator.windowID {
             activeWindowID = focusOrder.last ?? windows.last?.windowID
+        }
+        // A private window keeps nothing, so it neither counts as an open window nor leaves a window to bring back.
+        if !coordinator.profiles.isPrivate, !windows.contains(where: { !$0.isClosed && !$0.profiles.isPrivate }) {
+            defaults.set([coordinator.context.profile.id.uuidString, coordinator.windowID.uuidString], forKey: Self.closedAsLastKey)
         }
     }
 
@@ -216,15 +260,7 @@ final class BrowserApplication {
 
     func reopenLastClosedWindow() {
         guard let (profile, saved) = mostRecentlyClosedWindow() else { return }
-        var id = saved.id
-        if windows.contains(where: { $0.windowID == id }) {
-            let uniqueID = UUID()
-            guard BrowserModel.remapSavedWindow(
-                in: BrowserProfileContext.shared(for: profile).database, from: id, to: uniqueID
-            ) else { return }
-            id = uniqueID
-        }
-        newWindow(profile: profile, windowID: id, restoring: true)
+        openSavedWindow(saved, of: profile)
     }
 
     private func mostRecentlyClosedWindow() -> (Profile, BrowserModel.SavedBrowserWindow)? {
@@ -352,6 +388,11 @@ final class BrowserApplication {
     }
 
     func closePagesForTermination() async {
+        await closeTabsForTermination()
+        await ChromiumRuntime.shared.shutdown()
+    }
+
+    func closeTabsForTermination() async {
         for coordinator in windows {
             coordinator.media.releaseControl()
             coordinator.media.unwatch()
@@ -362,10 +403,10 @@ final class BrowserApplication {
                 await tab.waitForRetirement()
             }
         }
-        await ChromiumRuntime.shared.shutdown()
     }
 
     func finishTermination() {
+        isTerminating = true
         for context in usedProfiles.values {
             context.downloads.clearOnQuitIfNeeded(context.settings.downloadRetention)
         }
@@ -383,30 +424,43 @@ final class BrowserApplication {
 
     func configureExtensions(_ manager: ExtensionManager, profile: Profile) {
         manager.onOpenWindow = { [weak self, weak manager] configuration in
-            guard let self, let manager,
-                  let source = windows.first(where: { !$0.isClosed && $0.extensions === manager }) else { return nil }
-            let owner = source.profiles.isPrivate ? source.profiles.profileToReturnTo : profile
-            let coordinator = newWindow(
-                profile: configuration.shouldBePrivate ? .privateBrowsing() : owner,
-                settingsOwner: owner, show: configuration.shouldBeFocused
+            guard let self, let manager else { return nil }
+            return openExtensionWindow(
+                for: manager, profile: profile, privately: configuration.shouldBePrivate,
+                focused: configuration.shouldBeFocused, urls: configuration.tabURLs,
+                tabs: configuration.tabs.compactMap { $0 as? ExtensionTabAdapter }
             )
-            let initialTabs = coordinator.browser.tabs
-            var hasRequestedTab = !configuration.tabURLs.isEmpty
-            for url in configuration.tabURLs.reversed() {
-                coordinator.openNewTab(url: url)
-            }
-            for adapter in configuration.tabs.compactMap({ $0 as? ExtensionTabAdapter }) {
-                guard let oldOwner = adapter.browser, let tab = adapter.tab else { continue }
-                if coordinator.browser.adoptTab(tab, from: oldOwner) {
-                    hasRequestedTab = true
-                }
-            }
-            if hasRequestedTab {
-                for tab in initialTabs {
-                    coordinator.browser.close(tab, recordForReopening: false)
-                }
-            }
-            return coordinator.extensions.adapter(for: coordinator.browser)
         }
+    }
+
+    /// Opens the window an extension asked for. The window starts with a tab of its own, which the requested
+    /// pages replace.
+    func openExtensionWindow(
+        for manager: ExtensionManager, profile: Profile, privately: Bool, focused: Bool,
+        urls: [URL], tabs requested: [ExtensionTabAdapter]
+    ) -> ExtensionWindowAdapter? {
+        guard let source = windows.first(where: { !$0.isClosed && $0.extensions === manager }) else { return nil }
+        let owner = source.profiles.isPrivate ? source.profiles.profileToReturnTo : profile
+        let coordinator = newWindow(
+            profile: privately ? .privateBrowsing() : owner, settingsOwner: owner, show: focused
+        )
+        // The profile's pins fill every new window. Closing one would remove it from all of them.
+        let initialTabs = coordinator.browser.tabs.filter { $0.pinID == nil }
+        var hasRequestedTab = !urls.isEmpty
+        for url in urls.reversed() {
+            coordinator.openNewTab(url: url)
+        }
+        for adapter in requested {
+            guard let oldOwner = adapter.browser, let tab = adapter.tab else { continue }
+            if coordinator.browser.adoptTab(tab, from: oldOwner) {
+                hasRequestedTab = true
+            }
+        }
+        if hasRequestedTab {
+            for tab in initialTabs {
+                coordinator.browser.close(tab, recordForReopening: false)
+            }
+        }
+        return coordinator.extensions.adapter(for: coordinator.browser)
     }
 }

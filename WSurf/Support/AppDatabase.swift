@@ -136,6 +136,11 @@ struct AppDatabase: Sendable {
                 )
                 """)
         }
+        // The pins and Favorites of every window, open or closed, become the profile's, once and in one transaction.
+        migrator.registerMigration("v3-profile-pins") { db in
+            try defineSchema(in: db)
+            try ProfilePinMigration.run(in: db)
+        }
         return migrator
     }
 
@@ -262,6 +267,33 @@ struct AppDatabase: Sendable {
         }
 
         try defineWindowSessions(in: db)
+        try defineProfilePins(in: db)
+    }
+
+    /// Pins, pinned folders and Favorites belong to the profile, not to a window. A window's tab and folder rows
+    /// keep a `pinID` for the profile row they stand for.
+    private nonisolated static func defineProfilePins(in db: Database) throws {
+        try db.create(table: "profilePin", options: .ifNotExists) { t in
+            t.primaryKey("id", .blob)
+            t.column("parentID", .blob).references("profilePin", onDelete: .cascade)
+            t.column("orderKey", .text).notNull()
+            t.column("kind", .text).notNull()
+            t.column("url", .text).notNull().defaults(to: "")
+            t.column("title", .text).notNull().defaults(to: "")
+            t.column("customTitle", .text)
+            t.column("pinnedURL", .text)
+            t.column("pinnedTitle", .text)
+            t.column("isFavorite", .boolean).notNull().defaults(to: false)
+            t.column("color", .text)
+            t.column("isExpanded", .boolean).notNull().defaults(to: true)
+            t.column("isPinned", .boolean).notNull().defaults(to: false)
+        }
+        for table in ["sessionTab", "sessionFolder"] {
+            guard try !db.columns(in: table).contains(where: { $0.name == "pinID" }) else { continue }
+            try db.alter(table: table) { t in
+                t.add(column: "pinID", .blob)
+            }
+        }
     }
 
     private nonisolated static func defineSessionSchema(in db: Database) throws {

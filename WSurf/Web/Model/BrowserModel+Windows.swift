@@ -23,6 +23,15 @@ extension BrowserModel {
               (source.database.writer as AnyObject) === (database.writer as AnyObject),
               let oldIndex = source.tabs.firstIndex(where: { $0 === tab }),
               !tabs.contains(where: { $0.id == tab.id }), !tab.isClosed else { return false }
+        // The page leaves as an ordinary tab. Its pin stays in this window and every other one, so the source
+        // gets a new unloaded page for it below.
+        let wasPin = tab.pinID != nil
+        if wasPin {
+            tab.pinID = nil
+            tab.pinnedURL = nil
+            tab.pinnedTitle = ""
+            tab.isFavorite = false
+        }
         source.cancelPendingSave()
         cancelPendingSave()
         // Undo snapshots contain tab and tree ownership; neither old stack may replay across a move.
@@ -44,6 +53,9 @@ extension BrowserModel {
             source.paneInAir = nil
         }
         source.sidebarDidChange()
+        if wasPin, let store = source.attachedPinStore {
+            source.applyProfilePins(store.pins)
+        }
         if wasActive {
             source.activeTabID = survivor?.id
         }

@@ -76,7 +76,9 @@ extension AppCoordinator {
 
         browser.restoreSession()
         retainAgentMemory()
-        browser.ensureActiveTab()
+        if browser.activeTabID == nil {
+            browser.newTab()
+        }
         timing.mark("restore session")
 
         show(notice: profile.name)

@@ -264,6 +264,7 @@ struct FolderSection: View {
             withAnimation(Theme.Motion.settle) {
                 folder.isExpanded.toggle()
             }
+            browser.scheduleSave()
         }
         context.selection.excludeFavorites(browser.favorites)
     }

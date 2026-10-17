@@ -360,9 +360,10 @@ struct SidebarTabRow: View {
         } label: {
             Label("Remove Tab", systemImage: "xmark")
         }
-        if tab.pinnedURL == nil, browser.tabs.count > 1 {
+        let others = browser.tabs.filter { $0 !== tab && $0.pinID == nil }
+        if tab.pinnedURL == nil, !others.isEmpty {
             Button(role: .destructive) {
-                let count = browser.tabs.count - 1
+                let count = others.count
                 Task {
                     guard await ConfirmAlert.destructive(
                         "Remove \(count) tabs?",

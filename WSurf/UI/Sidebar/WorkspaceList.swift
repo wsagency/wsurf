@@ -289,6 +289,10 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             for id in reopening {
                 browser.folder(id: id)?.isExpanded = true
             }
+            if !reopening.isEmpty {
+                // A drop saved the folders collapsed; the profile keeps whether a folder is open.
+                browser.scheduleSave()
+            }
             reopening = []
             coordinator.tabPreview.endSuppression()
             model.clearDrop()

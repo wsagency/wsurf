@@ -37,11 +37,16 @@ extension AppCoordinator {
         timing.mark("web setup")
         if restoring {
             browser.restoreSession()
+        } else {
+            browser.attachProfilePins()
         }
         for url in urls.reversed() {
             browser.newTab(url: url, transition: .link)
         }
-        browser.ensureActiveTab()
+        // The profile's pins fill a window before it has a page of its own, so the first tab would be a pin.
+        if browser.activeTabID == nil {
+            browser.newTab()
+        }
         retainAgentMemory()
         timing.mark("session")
         wireMedia()

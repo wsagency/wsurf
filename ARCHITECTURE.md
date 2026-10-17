@@ -82,6 +82,29 @@ native view without navigation, cancels source assistant/voice/media/Peek activi
 rebinds callbacks, invalidates both sidebar Undo histories and saves both windows
 atomically. Closed or superseded owners cannot resurrect tabs with queued saves.
 
+Only a close the user makes records a window as closed. AppKit closes every window
+after `applicationWillTerminate`, so the application is marked terminating before that
+(`prepareToTerminate`, `finishTermination` and the will-terminate notification) and
+those closes leave the saved session open. The last regular window the user closes is
+remembered in `UserDefaults` until another regular window opens; if the app quits in
+between, the next launch reopens it for a profile with no open window. A window closed
+while another stays open, and any private window, is never brought back this way.
+
+Pins, pinned folders with everything inside them, and Favorites belong to the profile,
+not to a window. They are `profilePin` rows in the profile's database: a stable UUID, a
+parent, and a fractional order key (`OrderKey`) for each item. The upgrade merges the
+pins of every window, closed ones included, once and in one transaction; it fills
+`pinID` on the window rows and deletes none of them. Every regular window shows the set
+and keeps its own page for each pin, linked by `BrowserTab.pinID`, so navigating or
+unloading one window's page never touches another's. `scheduleSave` first publishes a
+changed set to `ProfilePinStore`, which writes it in one transaction and applies it to
+the profile's other windows before returning. A loaded page whose pin was removed
+elsewhere stays open as an ordinary tab; an unloaded one closes. Only the person removes
+a pin: a page or extension that closes one only unloads it, and the assistant and MCP
+refuse. A window detaches when it closes, quits or switches profile, so it never
+publishes an empty set. A private window has an in-memory store of its own and neither
+sees nor changes the profile's pins.
+
 `ChromiumRuntime` initializes CEF only for the first Chromium page and stays
 initialized until quit because CEF cannot be restarted in-process. Its AppKit
 application subclass is installed at startup without loading Chromium.

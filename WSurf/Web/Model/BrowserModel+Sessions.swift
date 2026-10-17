@@ -90,6 +90,7 @@ extension BrowserModel {
         var internalPage: BrowserTab.InternalPage?
         var isActive: Bool
         var isFavorite: Bool
+        var pinID: UUID?
     }
 
     private nonisolated struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -102,6 +103,8 @@ extension BrowserModel {
         var color: TabFolderColor
         var isExpanded: Bool
         var isPinned: Bool
+        /// Marks a folder the migration moved to the profile. A window never writes it.
+        var pinID: UUID?
     }
 
     private nonisolated struct ItemRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -162,6 +165,7 @@ extension BrowserModel {
     }
 
     func scheduleSave(now: ContinuousClock.Instant = ContinuousClock.now) {
+        publishProfilePins()
         let since = saveWaitingSince ?? now
         saveWaitingSince = since
         let delay = Self.saveDelay(
@@ -266,14 +270,16 @@ extension BrowserModel {
                 pinnedTitle: tab.pinnedTitle.isEmpty ? nil : tab.pinnedTitle,
                 internalPage: tab.internalPage,
                 isActive: tab.id == activeTabID,
-                isFavorite: tab.isFavorite
+                isFavorite: tab.isFavorite,
+                pinID: tab.pinID
             )
         }
         writtenStateGeneration = writtenStateGeneration.filter { id, _ in
             persisted.contains { $0.id == id }
         }
 
-        let folderRecords = folders.enumerated().map { position, folder in
+        // Profile folders and the places of profile pins are saved with the profile; the window keeps its page.
+        let folderRecords = folders.filter { !profileFolderIDs.contains($0.id) }.enumerated().map { position, folder in
             FolderRecord(
                 windowID: windowID,
                 id: folder.id,
@@ -281,21 +287,24 @@ extension BrowserModel {
                 name: folder.name,
                 color: folder.color,
                 isExpanded: folder.isExpanded,
-                isPinned: folder.isPinned
+                isPinned: folder.isPinned,
+                pinID: nil
             )
         }
         let known = Set(persisted.map(\.id))
+        let linked = Set(persisted.filter { $0.pinID != nil }.map(\.id))
         let tree = reconciledTree()
         var itemRecords: [ItemRecord] = []
         func write(_ parent: UUID?) {
             for item in tree.rows(in: parent) {
                 switch item {
                 case .tab(let id):
-                    guard known.contains(id) else { continue }
+                    guard known.contains(id), !linked.contains(id) else { continue }
                     itemRecords.append(ItemRecord(
                         windowID: windowID, position: itemRecords.count, tabID: id, folderID: nil, parentID: parent
                     ))
                 case .folder(let id):
+                    guard !profileFolderIDs.contains(id) else { continue }
                     itemRecords.append(ItemRecord(
                         windowID: windowID, position: itemRecords.count, tabID: nil, folderID: id, parentID: parent
                     ))
@@ -355,8 +364,8 @@ extension BrowserModel {
                 sql: """
                     INSERT INTO sessionTab
                         (id, windowID, title, customTitle, url, state, pinnedURL, pinnedTitle,
-                         internalPage, isActive, isFavorite)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         internalPage, isActive, isFavorite, pinID)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         windowID = excluded.windowID,
                         title = excluded.title,
@@ -367,12 +376,13 @@ extension BrowserModel {
                         pinnedTitle = excluded.pinnedTitle,
                         internalPage = excluded.internalPage,
                         isActive = excluded.isActive,
-                        isFavorite = excluded.isFavorite
+                        isFavorite = excluded.isFavorite,
+                        pinID = excluded.pinID
                     """,
                 arguments: [
                     tab.id, tab.windowID, tab.title, tab.customTitle, tab.url, tab.state,
                     tab.pinnedURL, tab.pinnedTitle,
-                    tab.internalPage?.rawValue, tab.isActive, tab.isFavorite,
+                    tab.internalPage?.rawValue, tab.isActive, tab.isFavorite, tab.pinID,
                 ]
             )
         }
@@ -430,7 +440,10 @@ extension BrowserModel {
                 items: try ItemRecord.filter(belongsToWindow).order(Column("position")).fetchAll(db)
             )
         }
-        guard let stored else { return }
+        guard let stored else {
+            attachProfilePins()
+            return
+        }
 
         let storedTrees = (try? database.writer.read { db in
             try SplitTreeRecord.filter(belongsToWindow).order(Column("position")).fetchAll(db)
@@ -444,16 +457,21 @@ extension BrowserModel {
             }) ?? []
             : []
 
-        let byID = Dictionary(stored.tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var ordered: [TabRecord] = []
+        let allByID = Dictionary(stored.tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var inOrder: [TabRecord] = []
         var seen: Set<UUID> = []
         for item in stored.items {
-            guard let id = item.tabID, let record = byID[id], seen.insert(id).inserted else { continue }
-            ordered.append(record)
+            guard let id = item.tabID, let record = allByID[id], seen.insert(id).inserted else { continue }
+            inOrder.append(record)
         }
         for record in stored.tabs where seen.insert(record.id).inserted {
-            ordered.append(record)
+            inOrder.append(record)
         }
+        // A page of a pin the profile no longer holds is gone, and so is a second page of one pin.
+        let store = pinStore
+        let ordered = Self.pagesOfCurrentPins(inOrder, in: store)
+        let byID = Dictionary(ordered.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let profileHoldsPins = store.isAvailable
 
         let activeID = (ordered.first { $0.isActive } ?? ordered.first)?.id
         let grids = Self.grids(from: storedTrees) + Self.grids(fromFlat: storedPanes)
@@ -478,6 +496,7 @@ extension BrowserModel {
             tab.pinnedURL = record.pinnedURL
             tab.pinnedTitle = record.pinnedTitle ?? ""
             tab.isFavorite = record.isFavorite
+            tab.pinID = record.pinID
             tab.deferRestore(state: record.state, url: restoredURL)
             if let host = URL(string: record.url)?.host() {
                 dressRow(tab, fromHost: host)
@@ -491,8 +510,8 @@ extension BrowserModel {
         }
 
         var foldersByStoredID: [UUID: TabFolder] = [:]
-        for record in stored.folders {
-            let folder = TabFolder(name: record.name)
+        for record in stored.folders where record.pinID == nil || !profileHoldsPins {
+            let folder = TabFolder(id: record.id, name: record.name)
             folder.color = record.color
             folder.isExpanded = record.isExpanded
             folder.isPinned = record.isPinned
@@ -504,7 +523,9 @@ extension BrowserModel {
         var children: [UUID: [SidebarItem]] = [:]
         for record in stored.items {
             let item: SidebarItem
-            if let id = record.tabID, byID[id] != nil {
+            if let id = record.tabID, let page = byID[id] {
+                // The profile places its pins; this window only keeps its page for each.
+                guard page.pinID == nil else { continue }
                 item = .tab(id)
             } else if let id = record.folderID, let folder = foldersByStoredID[id] {
                 item = .folder(folder.id)
@@ -521,6 +542,7 @@ extension BrowserModel {
         storedTree = SidebarTree(root: root, children: children)
         splits = TabSplits(grids)
         sidebarDidChange()
+        attachProfilePins()
 
         activeTabID = activeID
         for pane in activeTab.map({ splitOthers(of: $0) }) ?? [] {
@@ -529,6 +551,24 @@ extension BrowserModel {
         Pipeline.log.notice(
             "session: restored \(self.tabs.count) of \(stored.tabs.count) stored tabs, \(self.folders.count) folders"
         )
+    }
+
+    /// The records that are not pins plus the first record of each pin the profile still holds.
+    private static func pagesOfCurrentPins(_ records: [TabRecord], in store: ProfilePinStore) -> [TabRecord] {
+        guard store.isAvailable else {
+            // The stored pins cannot be read, so every page stays as an ordinary tab.
+            return records.map { record in
+                var plain = record
+                plain.pinID = nil
+                return plain
+            }
+        }
+        let current = Set(store.pins.map(\.id))
+        var claimed: Set<UUID> = []
+        return records.filter { record in
+            guard let pinID = record.pinID else { return true }
+            return current.contains(pinID) && claimed.insert(pinID).inserted
+        }
     }
 
     private nonisolated static func grids(from records: [SplitTreeRecord]) -> [TabSplit] {
@@ -587,6 +627,8 @@ extension BrowserModel {
         if saving {
             saveBlocking()
         }
+        // Without this, the empty window would publish an empty set and take every pin with it.
+        detachProfilePins()
         for tab in tabs {
             tab.detach()
         }
@@ -611,6 +653,7 @@ extension BrowserModel {
         privately: Bool = false
     ) {
         cancelPendingSave()
+        detachProfilePins()
         if privately, !database.isEphemeral {
             Pipeline.log.error("profile: a private model refused a persistent database")
             self.database = .temporary()

@@ -75,8 +75,9 @@ extension BrowserModel {
         let moved = Set(items)
         let rest = reconciledTree().root.filter { !moved.contains($0) }
         let boundary = pinnedBoundary(in: rest, ignoring: [])
-        move(items, into: nil, before: rest.indices.contains(boundary) ? rest[boundary] : nil)
+        // Pin first: a bookmark-less child of a pinned folder would otherwise leave the profile's pins for a moment.
         setPinned(true, for: items)
+        move(items, into: nil, before: rest.indices.contains(boundary) ? rest[boundary] : nil)
     }
 
     func setPinned(_ pinned: Bool, for items: some Sequence<SidebarItem>) {
@@ -320,8 +321,9 @@ extension BrowserModel {
         return (try? await webView.evaluateJavaScript(script)) as? Bool ?? false
     }
 
+    /// Pins, and what a pinned folder holds, stay: the person removes those one by one.
     func closeOthers(_ kept: BrowserTab) {
-        close(tabs.filter { $0 !== kept }.map { .tab($0.id) })
+        close(tabs.filter { $0 !== kept && $0.pinID == nil }.map { .tab($0.id) })
     }
 
     func closeActiveTab() {
@@ -347,6 +349,7 @@ extension BrowserModel {
         let pinnedURL: URL?
         let pinnedTitle: String
         let isFavorite: Bool
+        let pinID: UUID?
         let wasActive: Bool
         let folderID: UUID?
         let before: SidebarItem?
@@ -363,6 +366,7 @@ extension BrowserModel {
             pinnedURL = tab.pinnedURL
             pinnedTitle = tab.pinnedTitle
             isFavorite = tab.isFavorite
+            pinID = tab.pinID
             wasActive = model.activeTabID == tab.id
             folderID = model.folder(containing: tab)?.id
             before = model.sidebarTree.successor(of: .tab(tab.id))
