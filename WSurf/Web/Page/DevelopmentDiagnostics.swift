@@ -19,6 +19,16 @@ import WebKit
 @MainActor
 final class DevelopmentDiagnostics {
     let buffer: PageDiagnostics.Buffer
+    /// What this capture was asked to record beyond metadata. Fixed when it starts; the policy decides, at every event, whether
+    /// the Developer tier still allows it.
+    let options: PageDiagnostics.DetailOptions
+    /// Supplies the live policy (the Developer tier, the developer sites) and takes the options from this capture. Nil: none.
+    var policyProvider: (@MainActor () -> PageDiagnostics.DetailPolicy)?
+    /// Hides the secrets the connection typed. Applied to headers, bodies and previews before they are cut to their limits.
+    var scrub: (String) -> String = { $0 }
+    /// Bytes of body text this capture may still keep (`PageDiagnostics.Redaction.captureBodyBytes` in all).
+    private(set) var bodyBudget = PageDiagnostics.Redaction.captureBodyBytes
+    private var bodyFetches = 0
     private weak var page: BrowserPage?
     private weak var owner: DevelopmentOwner?
     /// Conceals the query of every URL this capture records (see `PageDiagnostics.QueryValues`). Its key belongs to one document:
@@ -36,6 +46,8 @@ final class DevelopmentDiagnostics {
     private let event = "wsurf-diag-" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
     /// The document-start script this capture added to the page's content controller, until `stop()` removes it.
     private var startScript: String?
+    /// The hook as this capture installs it, in the document-start script and into a document that is already running.
+    private var hookSource = ""
     /// The document (registry nonce) the live hook was verified against. Nil: no hook is known to be attached.
     private var hookDocumentID: String?
     private var handlerRegistered = false
@@ -47,12 +59,25 @@ final class DevelopmentDiagnostics {
     /// Events of the current document that the page-side start-up buffer had to drop before the relay attached.
     private(set) var lostEarly = 0
 
-    init?(owner: DevelopmentOwner, page: BrowserPage, tabID: String) {
+    init?(owner: DevelopmentOwner, page: BrowserPage, tabID: String, options: PageDiagnostics.DetailOptions = .init()) {
         guard let documentID = page.mainDocumentID else { return nil }
         self.owner = owner
         self.page = page
-        buffer = PageDiagnostics.Buffer(connection: owner.connection, tab: tabID, documentID: documentID)
+        self.options = options
+        // A record with headers and bodies is larger than a metadata record, and the capture keeps its bodies besides.
+        let limits = options.network
+            ? (maxBytes: 2 * 1_048_576 + PageDiagnostics.Redaction.captureBodyBytes, maxRecordBytes: 96 * 1_024)
+            : (maxBytes: 2 * 1_048_576, maxRecordBytes: options.console ? 16 * 1_024 : 8 * 1_024)
+        buffer = PageDiagnostics.Buffer(
+            connection: owner.connection, tab: tabID, documentID: documentID, maxBytes: limits.maxBytes, maxRecordBytes: limits.maxRecordBytes)
         mapper = ChromiumDiagnosticsMapper(queryValues: queryValues)
+    }
+
+    /// The policy for this event: the options this capture was started with, under the tier as it is now.
+    private func currentPolicy() -> PageDiagnostics.DetailPolicy {
+        guard options.isEnabled, var policy = policyProvider?() else { return .off }
+        policy.options = options
+        return policy
     }
 
     var engine: String { page?.chromium != nil ? "chromium" : "webkit" }
@@ -70,10 +95,14 @@ final class DevelopmentDiagnostics {
     var gaps: [String] {
         var gaps = [
             "Nothing before startDiagnostics is available.",
-            "Header values, bodies, cookies and object contents are never captured.",
+            options.isEnabled
+                ? "Cookies are never captured, and nothing in the Developer tier's detail is kept after the capture ends."
+                : "Header values, bodies, cookies and object contents are never captured.",
             "URL query values are concealed: a value that looks generated (a token, id or key) is a ~tag that matches only inside one document, "
-                + "any other value shows only a length class (*short, *medium, *long); only plain parameter names stay.",
+                + "any other value shows only a length class (*short, *medium, *long); only plain parameter names stay"
+                + (options.clearQueries ? ", except on requests to developer sites, where values are shown as written." : "."),
         ]
+        gaps += detailGaps
         if engine == "chromium" {
             gaps.append("Subframes, workers and extension worlds are not captured.")
             gaps.append(
@@ -87,7 +116,7 @@ final class DevelopmentDiagnostics {
                     + "The previous document's records are discarded. A page that was already loaded when startDiagnostics ran is captured from that point only.")
             gaps.append(
                 "Console objects and proxies are not read and appear as [object]; an Error appears as its name and message and contributes its stack when they are "
-                    + "plain data properties. A call without an Error has no stack. "
+                    + "plain data properties. A call without an Error has no stack unless the full console was asked for. "
                     + "fetch reports a URL only for a string URL argument, and a method only for fetch(url) without an init (GET); "
                     + "a Request, URL or RequestInit argument is not read, so its method or URL is absent (unknown). "
                     + "XMLHttpRequest reports method and URL when passed as strings. fetch and XMLHttpRequest records carry status, media type and timing but no size, "
@@ -102,6 +131,34 @@ final class DevelopmentDiagnostics {
         return gaps
     }
 
+    /// What the opt-in detail records and leaves out, for the engine of this capture.
+    private var detailGaps: [String] {
+        var gaps: [String] = []
+        if options.network {
+            gaps.append(
+                "Headers and text bodies are recorded only for requests to developer sites while Developer access holds; every other request is recorded without them "
+                    + "(its detail field says so). A header named like Authorization, Cookie, a token, key, secret or session, and any header whose value looks generated, shows only its name "
+                    + "and \(PageDiagnostics.Redaction.hidden). Form fields, JSON keys and name=value pairs named like a password, token, secret, one-time code or card are hidden at any depth, "
+                    + "JSON is re-encoded compactly, and values the connection typed as secrets are removed. A body is cut at \(PageDiagnostics.Redaction.maxBodyBytes / 1_024) KiB and this capture "
+                    + "keeps \(PageDiagnostics.Redaction.captureBodyBytes / 1_048_576) MiB of bodies; binary and multipart bodies are summarized by type and size.")
+            gaps.append(
+                engine == "chromium"
+                    ? "Chromium records the headers DevTools reports, including the ones the browser added on the wire (cookies show as names only), and the bodies of finished main-frame requests."
+                    : "WebKit records what the page can see of fetch and XMLHttpRequest: the headers the page set itself (not the ones the browser adds, such as cookies and the user agent), "
+                        + "the response headers it may read, and text bodies. A fetch of a Request object shows its address, method and headers but no body. "
+                        + "A redirect that leaves the developer sites drops the record's detail. Resource loads, navigations, WebSockets and worker traffic have no headers or bodies.")
+        }
+        if options.console {
+            gaps.append(
+                "Full console: every call carries a stack (up to \(PageDiagnostics.maxFullStackFrames) frames) and objects appear in preview as bounded JSON "
+                    + "(depth 3, up to \(PageDiagnostics.Redaction.maxPreviewBytes / 1_024) KB) with credential-named keys hidden"
+                    + (engine == "chromium"
+                        ? ", taken from the preview DevTools makes, which never calls a getter."
+                        : ", read from the object's own data properties: an accessor shows as [getter] and is not called, but a Proxy's traps may run."))
+        }
+        return gaps
+    }
+
     // MARK: Lifecycle
 
     func start() async {
@@ -112,9 +169,9 @@ final class DevelopmentDiagnostics {
         } else {
             // Documents that start after this point are hooked before their first script. The current one, already running,
             // is hooked by the follow-up below.
-            let source = PageDiagnosticsHook.pageHook(event: event)
-            page.installScript(source, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-            startScript = source
+            hookSource = PageDiagnosticsHook.pageHook(event: event, detail: currentPolicy())
+            page.installScript(hookSource, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+            startScript = hookSource
             await follow()?.value
         }
     }
@@ -123,6 +180,8 @@ final class DevelopmentDiagnostics {
         guard !stopped else { return }
         stopped = true
         following = nil
+        // Headers and bodies are not kept past the capture, whoever still holds the buffer.
+        buffer.reset()
         guard let page else { return }
         page.chromium?.devTools.diagnosticsSink = nil
         guard let webKit = page.webKit else { return }
@@ -182,9 +241,98 @@ final class DevelopmentDiagnostics {
 
     private func receive(method: String, params: [String: Any]) {
         guard !stopped, let chromium = page?.chromium, page?.mainDocumentID != nil, adoptCurrentDocument() else { return }
+        mapper.detail = currentPolicy()
         guard let entry = mapper.entry(method: method, params: params), belongsToDocument(entry, chromium.devTools) else { return }
-        buffer.append(
-            stream: entry.stream, timestamp: Date(), documentID: buffer.documentID, fields: entry.fields, truncated: entry.truncated)
+        guard let fetch = entry.bodyFetch else {
+            record(entry)
+            return
+        }
+        complete(entry, fetch: fetch, devTools: chromium.devTools)
+    }
+
+    // MARK: Records
+
+    /// Appends `entry`. A network record gets its headers and bodies only if the policy covers its address now, which is checked
+    /// here, after whatever suspension came before, and not when the request began.
+    private func record(_ entry: PageDiagnostics.Entry) {
+        var fields = entry.fields
+        var truncated = entry.truncated
+        if entry.stream == .network, options.network {
+            let policy = currentPolicy()
+            if let input = entry.detail, policy.network(input.url) {
+                let detail = PageDiagnostics.detailFields(input, options: options, budget: &bodyBudget, scrub: scrub)
+                fields.merge(detail.fields) { $1 }
+                truncated = truncated || detail.truncated
+            } else {
+                fields["detail"] = .text(noDetail(for: entry, policy))
+            }
+        }
+        if options.clearQueries {
+            for key in ["url", "redirectTo"] {
+                if case .text(let address)? = fields[key] {
+                    fields[key] = .text(scrub(address))
+                }
+            }
+        }
+        if case .text(let preview)? = fields["preview"] {
+            fields["preview"] = .text(scrub(preview))
+        }
+        buffer.append(stream: entry.stream, timestamp: Date(), documentID: buffer.documentID, fields: fields, truncated: truncated)
+    }
+
+    private func noDetail(for entry: PageDiagnostics.Entry, _ policy: PageDiagnostics.DetailPolicy) -> String {
+        if entry.fields["source"] == "webkit-resource" {
+            return "not captured: resource loads have no headers or bodies on WebKit"
+        }
+        guard policy.tier else { return "not captured: Developer access does not hold for this page" }
+        if case .text(let address)? = entry.fields["url"], let url = URL(string: address), !policy.isDeveloperSite(url) {
+            return "not captured: not a developer site"
+        }
+        return "not captured: the request left the developer sites or could not be read"
+    }
+
+    /// Reads what DevTools holds for a finished request, then records it if the capture, the document and the policy still stand.
+    private func complete(_ entry: PageDiagnostics.Entry, fetch: PageDiagnostics.BodyFetch, devTools: ChromiumDevTools) {
+        guard bodyFetches < Self.maxConcurrentFetches else {
+            var skipped = entry
+            skipped.detail?.responseBody = fetch.response ? PageDiagnostics.RawBody(note: "not captured: too many bodies were being read") : nil
+            record(skipped)
+            return
+        }
+        bodyFetches += 1
+        let (document, epoch) = (buffer.documentID, buffer.epoch)
+        Task { [weak self] in
+            var done = entry
+            if fetch.response {
+                done.detail?.responseBody = await Self.responseBody(fetch.requestID, mime: fetch.mimeType, devTools: devTools)
+            }
+            if fetch.requestPost {
+                done.detail?.requestBody = await Self.requestBody(fetch.requestID, was: entry.detail?.requestBody, devTools: devTools)
+            }
+            guard let self else { return }
+            bodyFetches -= 1
+            guard !stopped, buffer.documentID == document, buffer.epoch == epoch else { return }
+            record(done)
+        }
+    }
+
+    private static let maxConcurrentFetches = 6
+
+    private static func responseBody(_ id: String, mime: String?, devTools: ChromiumDevTools) async -> PageDiagnostics.RawBody {
+        guard let result = try? await devTools.command("Network.getResponseBody", params: ["requestId": id]), let body = result["body"] as? String else {
+            return PageDiagnostics.RawBody(contentType: mime, note: "not captured: Chromium no longer holds this body")
+        }
+        let text = result["base64Encoded"] as? Bool == true ? Data(base64Encoded: body).flatMap { String(data: $0, encoding: .utf8) } : body
+        return PageDiagnostics.RawBody(
+            text: text, contentType: mime, size: text?.utf8.count, note: text == nil ? "not captured: the body is not UTF-8 text" : nil)
+    }
+
+    private static func requestBody(_ id: String, was: PageDiagnostics.RawBody?, devTools: ChromiumDevTools) async -> PageDiagnostics.RawBody? {
+        guard let result = try? await devTools.command("Network.getRequestPostData", params: ["requestId": id]), let post = result["postData"] as? String else {
+            return was
+        }
+        return PageDiagnostics.RawBody(
+            text: PageDiagnostics.clip(post, bytes: PageDiagnostics.Redaction.maxIntakeBytes).text, contentType: was?.contentType, size: post.utf8.count)
     }
 
     /// Only the main frame's page world of the current document: console and exceptions through their execution context,
@@ -272,7 +420,7 @@ final class DevelopmentDiagnostics {
         func current() -> Bool {
             !stopped && page.mainDocumentID == document
         }
-        guard await run(PageDiagnosticsHook.pageHook(event: event), in: .page, on: webKit), current() else { return }
+        guard await run(hookSource, in: .page, on: webKit), current() else { return }
         guard await run(PageDiagnosticsHook.relay(event: event, token: token, handler: handlerName), in: PageAutomationGuard.world, on: webKit) else {
             if current() {
                 Self.tearDown(event, in: webKit)
@@ -301,8 +449,7 @@ final class DevelopmentDiagnostics {
             lostEarly += lost
             return
         }
-        guard let entry = PageDiagnosticsHook.entry(from: body, queryValues: queryValues) else { return }
-        buffer.append(
-            stream: entry.stream, timestamp: Date(), documentID: buffer.documentID, fields: entry.fields, truncated: entry.truncated)
+        guard let entry = PageDiagnosticsHook.entry(from: body, queryValues: queryValues, detail: currentPolicy()) else { return }
+        record(entry)
     }
 }

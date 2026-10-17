@@ -55,7 +55,7 @@ extension ChromiumDevTools {
 
     private static let diagnosticEvents: Set<String> = [
         "Runtime.consoleAPICalled", "Runtime.exceptionThrown", "Network.requestWillBeSent", "Network.responseReceived",
-        "Network.loadingFinished", "Network.loadingFailed",
+        "Network.loadingFinished", "Network.loadingFailed", "Network.requestWillBeSentExtraInfo", "Network.responseReceivedExtraInfo",
     ]
 
     private func documentResponseReceived(_ params: [String: Any]) {
