@@ -321,8 +321,9 @@ extension BrowserModel {
         return (try? await webView.evaluateJavaScript(script)) as? Bool ?? false
     }
 
+    /// Pins, and what a pinned folder holds, stay: the person removes those one by one.
     func closeOthers(_ kept: BrowserTab) {
-        close(tabs.filter { $0 !== kept }.map { .tab($0.id) })
+        close(tabs.filter { $0 !== kept && $0.pinID == nil }.map { .tab($0.id) })
     }
 
     func closeActiveTab() {

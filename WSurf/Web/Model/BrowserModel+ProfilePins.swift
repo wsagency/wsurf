@@ -116,6 +116,16 @@ extension BrowserModel {
         }
     }
 
+    /// Closes a page that closed itself or that an extension closed. A pin is the person's to remove, so its
+    /// page is only unloaded.
+    func closeFromPage(_ tab: BrowserTab) {
+        if tab.pinID != nil {
+            _ = unload(tab)
+        } else {
+            close(tab)
+        }
+    }
+
     // MARK: - Applying the set
 
     /// Makes this window show `pins`. A pin this window has no page for gets an unloaded one at its link; a

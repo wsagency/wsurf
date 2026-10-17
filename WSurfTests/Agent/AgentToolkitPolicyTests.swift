@@ -156,6 +156,26 @@ struct AgentToolkitPolicyTests {
         #expect(browser.tabs.first === first)
     }
 
+    @Test func theAssistantDoesNotClosePinnedPages() {
+        let browser = BrowserModel(database: .temporary())
+        let pinned = browser.newTab()
+        pinned.customTitle = "Pinned project"
+        pinned.urlString = "https://pinned.example/"
+        browser.pin(pinned)
+        // A page inside a pinned folder has a pin but no bookmark of its own.
+        let inFolder = browser.newTab()
+        inFolder.customTitle = "Folder project"
+        inFolder.pinID = UUID()
+        browser.activate(pinned)
+        let subject = toolkit(browser: browser)
+        subject.beginTask(AgentTaskContext(id: UUID(), tabID: pinned.id, mentionedTabIDs: [inFolder.id]))
+
+        #expect(subject.closeTab(matching: "Pinned").contains("must be closed by the user"))
+        #expect(subject.closeTab(matching: "Folder").contains("must be closed by the user"))
+        #expect(subject.closeTab(matching: nil).contains("must be closed by the user"))
+        #expect(browser.tabs.count == 2)
+    }
+
     @Test func visiblePageToolsReadTypeSelectClickAndScroll() async throws {
         let server = try await HTTPFixtureServer.start(routes: [
             "/": .html("""

@@ -385,6 +385,154 @@ struct ProfilePinTests {
         }
     }
 
+    @Test(.boundedWebViews) func movingAPinnedTabToAnotherWindowKeepsThePinInBoth() async throws {
+        try await withPins { fixture in
+            let source = fixture.window()
+            let destination = fixture.window()
+            source.pinned("https://one.example/")
+            let page = source.pinned("https://two.example/")
+            let pinID = try #require(page.pinID)
+            let before = fixture.pins
+
+            #expect(destination.adoptTab(page, from: source))
+
+            // The page arrives as an ordinary tab, below the destination's own copies of the pins.
+            #expect(destination.tab(id: page.id) === page)
+            #expect(page.pinID == nil && page.pinnedURL == nil && !page.isFavorite)
+            #expect(destination.sidebarItems.last == .tab(page.id))
+            // The pin stays in both windows, and the source gets a new unloaded page in the same place.
+            #expect(fixture.pins == before)
+            let stays = try #require(source.page(for: pinID))
+            #expect(stays !== page && stays.isDeferred)
+            #expect(source.tab(id: page.id) == nil)
+            #expect(source.pinOutline == "https://one.example/ https://two.example/")
+            #expect(destination.pinOutline == "https://one.example/ https://two.example/")
+            fixture.expectConverged()
+        }
+    }
+
+    @Test(.boundedWebViews) func onlyThePersonRemovesPins() async throws {
+        try await withPins { fixture in
+            let first = fixture.window()
+            let second = fixture.window()
+            let page = first.pinned("https://one.example/")
+            let work = first.createFolder(named: "Work")
+            first.pin(work)
+            let child = first.addPage("https://work.example/")
+            first.move([.tab(child.id)], into: work, settlingPins: false)
+            let pins = fixture.pins
+            #expect(child.pinID != nil && child.pinnedURL == nil)
+
+            // A page that closes itself, or an extension that closes it, only unloads it.
+            page.realizeDeferredSession()
+            #expect(page.isMaterialised && !page.isDeferred)
+            page.onCloseRequested?()
+            #expect(first.tab(id: page.id) === page && page.isDeferred)
+            first.closeFromPage(child)
+            #expect(first.tab(id: child.id) === child)
+            #expect(fixture.pins == pins)
+
+            // Remove Other Tabs keeps pins and what a pinned folder holds.
+            let loose = first.addPage("https://loose.example/")
+            let keep = first.addPage("https://keep.example/")
+            first.closeOthers(keep)
+            #expect(first.tab(id: loose.id) == nil)
+            #expect(first.tab(id: page.id) === page && first.tab(id: child.id) === child && first.tab(id: keep.id) === keep)
+            #expect(fixture.pins == pins)
+            #expect(second.pinOutline == first.pinOutline)
+
+            // The person removes a pin, and it goes from every window.
+            first.close([.tab(page.id)])
+            #expect(second.page(at: "https://one.example/") == nil)
+            fixture.expectConverged()
+        }
+    }
+
+    /// A fixed sequence, so a failure reproduces.
+    private struct Sequence {
+        var state: UInt64 = 0x2545_F491_4F6C_DD1D
+
+        mutating func below(_ bound: Int) -> Int {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Int((state >> 33) % UInt64(bound))
+        }
+    }
+
+    /// Windows open and close, pages move and navigate, and the person pins, unpins, renames and removes. The
+    /// profile's pins change by exactly what the person did, and every open window shows them in the same order.
+    @Test func pinsOnlyChangeWhenThePersonChangesThem() async throws {
+        try await withPins { fixture in
+            var random = Sequence()
+            var windows = [fixture.window(), fixture.window()]
+            var expected: Set<String> = []
+            var created = 0
+
+            @MainActor func pinPages(of window: BrowserModel) -> [BrowserTab] {
+                window.tabs.filter { $0.pinID != nil }
+            }
+            @MainActor func link(_ tab: BrowserTab) -> String {
+                tab.pinnedURL?.absoluteString ?? ""
+            }
+
+            for step in 0..<400 {
+                let window = windows[random.below(windows.count)]
+                let pages = pinPages(of: window)
+                switch random.below(10) {
+                case 0, 1, 2:
+                    created += 1
+                    let address = "https://pin\(created).example/"
+                    window.pinned(address)
+                    expected.insert(address)
+                case 3 where !pages.isEmpty:
+                    let page = pages[random.below(pages.count)]
+                    expected.remove(link(page))
+                    window.close([.tab(page.id)])
+                case 4 where !pages.isEmpty:
+                    let page = pages[random.below(pages.count)]
+                    expected.remove(link(page))
+                    window.unpin(page)
+                case 5 where pages.count > 1:
+                    let moved = pages[random.below(pages.count)]
+                    let target = pages[random.below(pages.count)]
+                    window.move([.tab(moved.id)], into: nil, before: .tab(target.id))
+                case 6 where !pages.isEmpty:
+                    window.renameTab(pages[random.below(pages.count)], to: "Renamed \(step)")
+                case 7 where !window.tabs.isEmpty:
+                    let tab = window.tabs[random.below(window.tabs.count)]
+                    tab.urlString = "https://moved\(step).example/"
+                    window.scheduleSave()
+                case 8 where windows.count < 4:
+                    windows.append(fixture.window())
+                case 9 where windows.count > 1:
+                    let leaving = windows.remove(at: random.below(windows.count))
+                    if random.below(2) == 0 {
+                        fixture.close(leaving)
+                    } else {
+                        leaving.closeAllTabs(saving: false)
+                    }
+                    leaving.scheduleSave()
+                default:
+                    break
+                }
+
+                let rows = try fixture.storedPins().filter { $0.kind == .tab }
+                #expect(Set(rows.map(\.url)) == expected && rows.count == expected.count, "step \(step)")
+                let order = rows.map(\.id)
+                for open in windows {
+                    let shown = pinPages(of: open)
+                    #expect(Set(shown.map(link)) == expected && shown.count == expected.count, "step \(step)")
+                    let placed = open.sidebarTree.root.compactMap { item -> UUID? in
+                        guard case .tab(let id) = item else { return nil }
+                        return open.tab(id: id)?.pinID
+                    }
+                    #expect(placed == order, "step \(step)")
+                }
+                fixture.expectConverged()
+            }
+            #expect(created > 20 && !expected.isEmpty)
+        }
+    }
+
     @Test(.boundedWebViews) func aRestartPreservesProfileFolderIDsAndOrder() async throws {
         let file = FileManager.default.temporaryDirectory
             .appendingPathComponent("ProfilePins-\(UUID().uuidString).sqlite")

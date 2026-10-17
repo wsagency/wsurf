@@ -424,30 +424,43 @@ final class BrowserApplication {
 
     func configureExtensions(_ manager: ExtensionManager, profile: Profile) {
         manager.onOpenWindow = { [weak self, weak manager] configuration in
-            guard let self, let manager,
-                  let source = windows.first(where: { !$0.isClosed && $0.extensions === manager }) else { return nil }
-            let owner = source.profiles.isPrivate ? source.profiles.profileToReturnTo : profile
-            let coordinator = newWindow(
-                profile: configuration.shouldBePrivate ? .privateBrowsing() : owner,
-                settingsOwner: owner, show: configuration.shouldBeFocused
+            guard let self, let manager else { return nil }
+            return openExtensionWindow(
+                for: manager, profile: profile, privately: configuration.shouldBePrivate,
+                focused: configuration.shouldBeFocused, urls: configuration.tabURLs,
+                tabs: configuration.tabs.compactMap { $0 as? ExtensionTabAdapter }
             )
-            let initialTabs = coordinator.browser.tabs
-            var hasRequestedTab = !configuration.tabURLs.isEmpty
-            for url in configuration.tabURLs.reversed() {
-                coordinator.openNewTab(url: url)
-            }
-            for adapter in configuration.tabs.compactMap({ $0 as? ExtensionTabAdapter }) {
-                guard let oldOwner = adapter.browser, let tab = adapter.tab else { continue }
-                if coordinator.browser.adoptTab(tab, from: oldOwner) {
-                    hasRequestedTab = true
-                }
-            }
-            if hasRequestedTab {
-                for tab in initialTabs {
-                    coordinator.browser.close(tab, recordForReopening: false)
-                }
-            }
-            return coordinator.extensions.adapter(for: coordinator.browser)
         }
+    }
+
+    /// Opens the window an extension asked for. The window starts with a tab of its own, which the requested
+    /// pages replace.
+    func openExtensionWindow(
+        for manager: ExtensionManager, profile: Profile, privately: Bool, focused: Bool,
+        urls: [URL], tabs requested: [ExtensionTabAdapter]
+    ) -> ExtensionWindowAdapter? {
+        guard let source = windows.first(where: { !$0.isClosed && $0.extensions === manager }) else { return nil }
+        let owner = source.profiles.isPrivate ? source.profiles.profileToReturnTo : profile
+        let coordinator = newWindow(
+            profile: privately ? .privateBrowsing() : owner, settingsOwner: owner, show: focused
+        )
+        // The profile's pins fill every new window. Closing one would remove it from all of them.
+        let initialTabs = coordinator.browser.tabs.filter { $0.pinID == nil }
+        var hasRequestedTab = !urls.isEmpty
+        for url in urls.reversed() {
+            coordinator.openNewTab(url: url)
+        }
+        for adapter in requested {
+            guard let oldOwner = adapter.browser, let tab = adapter.tab else { continue }
+            if coordinator.browser.adoptTab(tab, from: oldOwner) {
+                hasRequestedTab = true
+            }
+        }
+        if hasRequestedTab {
+            for tab in initialTabs {
+                coordinator.browser.close(tab, recordForReopening: false)
+            }
+        }
+        return coordinator.extensions.adapter(for: coordinator.browser)
     }
 }

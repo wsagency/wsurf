@@ -190,7 +190,7 @@ final class BrowserModel {
         }
         tab.onCloseRequested = { [weak self, weak tab] in
             guard let tab else { return }
-            self?.close(tab)
+            self?.closeFromPage(tab)
         }
         tab.onPictureInPictureChanged = { [weak self, weak tab] isOut in
             guard let tab else { return }

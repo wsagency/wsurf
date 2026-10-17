@@ -154,6 +154,25 @@ struct MCPPrivacyTests {
         #expect(browser.sitePermissions.assistantAccess(for: tab.assistantAccess.origin) == .ask)
     }
 
+    @Test func aPageInAPinnedFolderIsNotClosedByAnExternalClient() async throws {
+        let (server, browser, tab) = try await fixture()
+        defer { _ = server }
+        let subject = session(browser)
+        _ = try await call(subject, "requestAccess")
+        _ = try await observation(subject, tab: tab)
+        // A page inside a pinned folder has a pin but no bookmark of its own.
+        tab.pinID = UUID()
+
+        let refused = try await call(subject, "closeTab", tab: tab)
+        #expect(refused.isError == true)
+        #expect(text(refused).contains("Pinned tabs must be closed by the user."))
+        #expect(browser.tabs.contains { $0 === tab })
+
+        tab.pinID = nil
+        #expect(try await call(subject, "closeTab", tab: tab).isError == false)
+        #expect(browser.tabs.isEmpty)
+    }
+
     @Test func readOnlyConnectionCannotControlAnOtherwiseAllowedSite() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }

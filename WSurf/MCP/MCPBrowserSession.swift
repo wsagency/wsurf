@@ -139,7 +139,7 @@ final class MCPBrowserSession: Identifiable {
             return success("Tab activated. Use readPage for fresh controls.")
         }
         if name == "closeTab" {
-            guard tab.pinnedURL == nil else { return failure("Pinned tabs must be closed by the user.") }
+            guard !tab.isPinnedForProfile else { return failure("Pinned tabs must be closed by the user.") }
             browser.close(tab)
             grants[id] = nil
             observations[id] = nil

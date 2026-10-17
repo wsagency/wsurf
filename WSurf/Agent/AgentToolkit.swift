@@ -433,6 +433,8 @@ final class AgentToolkit {
         return output
     }
 
+    private static let pinnedTabRefusal = "Pinned tabs must be closed by the user."
+
     func closeTab(matching reference: String?) -> String {
         let step = beginTool(
             name: "closeTab",
@@ -446,6 +448,10 @@ final class AgentToolkit {
                 let output = "No tab in this conversation matches that."
                 completeTool(step, output: output, failed: true)
                 return output
+            }
+            guard !tab.isPinnedForProfile else {
+                completeTool(step, output: Self.pinnedTabRefusal, failed: true)
+                return Self.pinnedTabRefusal
             }
             browser.close(tab)
             let output = "Closed “\(tab.title)”."
@@ -461,6 +467,10 @@ final class AgentToolkit {
             let output = String(localized: "The active tab changed before the assistant could use it.")
             completeTool(step, output: output, failed: true)
             return output
+        }
+        guard !active.isPinnedForProfile else {
+            completeTool(step, output: Self.pinnedTabRefusal, failed: true)
+            return Self.pinnedTabRefusal
         }
         browser.close(active)
         let output = "Closed the active tab."

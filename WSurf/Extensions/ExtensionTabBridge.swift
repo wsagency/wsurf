@@ -96,7 +96,7 @@ final class ExtensionTabAdapter: NSObject, WKWebExtensionTab {
             completionHandler(ExtensionWindowError.unavailable)
             return
         }
-        browser.close(tab)
+        browser.closeFromPage(tab)
         completionHandler(nil)
     }
 }

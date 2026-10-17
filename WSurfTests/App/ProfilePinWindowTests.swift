@@ -75,6 +75,30 @@ struct ProfilePinWindowTests {
         }
     }
 
+    @Test func anExtensionWindowOpensWithoutClosingThePinsOfTheProfile() async throws {
+        try await withProfile { profile in
+            let app = run(InMemoryUserDefaults(inheriting: .standard))
+            let first = app.newWindow(profile: profile, show: false)
+            pin(in: first)
+            let pins = first.browser.pinStore.pins
+            #expect(pins.count == 2)
+
+            _ = app.openExtensionWindow(
+                for: first.extensions, profile: profile, privately: false, focused: false,
+                urls: [URL(string: "https://opened.example/")!], tabs: []
+            )
+
+            #expect(app.windows.count == 2)
+            let opened = try #require(app.windows.last)
+            // The window's own first tab gave way to the requested page, and the pins were left alone.
+            #expect(opened.browser.tabs.filter { $0.pinID == nil }.count == 1)
+            #expect(opened.browser.pinOutline == "https://one.example/ Work[]")
+            #expect(first.browser.pinOutline == "https://one.example/ Work[]")
+            #expect(first.browser.pinStore.pins == pins)
+            finish(app)
+        }
+    }
+
     @Test func everyWindowShowsThePinsOnceAfterAQuitAndARelaunch() async throws {
         try await withProfile { profile in
             let defaults = InMemoryUserDefaults(inheriting: .standard)

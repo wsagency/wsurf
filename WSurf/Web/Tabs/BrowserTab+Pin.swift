@@ -9,6 +9,11 @@ extension BrowserTab {
         return !urlString.isEmpty && urlString != pinnedURL.absoluteString
     }
 
+    /// A bookmarked tab, or a page in a pinned folder. Only the person removes these.
+    var isPinnedForProfile: Bool {
+        pinnedURL != nil || pinID != nil
+    }
+
     var isShowingPin: Bool {
         guard let pinnedURL else { return false }
         return urlString == pinnedURL.absoluteString
