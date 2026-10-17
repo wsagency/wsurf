@@ -237,7 +237,7 @@ enum SettingsIndex {
         SettingsEntry("assistant.connectedApps", .provider, "Connected apps", "Apps you paired with WSurf.",
                       ["mcp", "pair", "paired", "token", "claude", "codex", "cursor", "omp", "client", "external",
                        "revoke", "connection", "developer", "profile", "localhost", "sites", "without asking", "standing",
-                       "qa", "test",
+                       "qa", "test", "default", "website access", "follow", "new websites", "allow control",
                        ]),
 
         SettingsEntry("websites.javascript", .websites, "JavaScript", "Turn scripts off for every website.",

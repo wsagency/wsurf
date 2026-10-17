@@ -8,6 +8,9 @@ import SwiftUI
 struct ConnectedAppsPage: View {
     let server: BrowserMCPServer
     var profiles: ProfileStore = .shared
+    /// The Website access default of the profile this window shows, which Follow Website access copies when it is turned on.
+    var permissions: SitePermissions
+    var isPrivateProfile = false
     let onBack: () -> Void
 
     @State private var revoking: PairedClient?
@@ -74,6 +77,9 @@ struct ConnectedAppsPage: View {
         }
 
         if store.isAvailable {
+            WebsiteDefaultSection(store: store, permissions: permissions, isPrivate: isPrivateProfile)
+                .padding(.top, 6)
+
             DeveloperWorkSection(store: store, profiles: profiles)
                 .padding(.top, 6)
         }
@@ -137,6 +143,52 @@ private struct ConnectedAppRow: View {
 
                 SettingsButton(title: "Revoke…", isDestructive: true, action: revoke)
             }
+        }
+    }
+}
+
+/// Whether paired apps open and use new websites under the Website access default. The choice and the level it follows are
+/// kept in the keychain with the pairings, so only this switch (and the Website access menu next to it) can change them.
+private struct WebsiteDefaultSection: View {
+    let store: MCPTrustStore
+    let permissions: SitePermissions
+    let isPrivate: Bool
+
+    @State private var failure: String?
+
+    var body: some View {
+        SettingsSection(
+            title: "Websites", symbol: "globe",
+            footnote: "A website’s own Assistant Access setting wins. Private windows always ask. Stop External Connections pauses an app until you resume it."
+        ) {
+            DetailRow(title: "Follow Website access", caption: caption) {
+                SettingsToggle(Binding(
+                    get: { store.appsFollowDefault },
+                    set: { follows in change { try store.setAppsFollowDefault(follows, level: permissions.assistantDefault) } }
+                ))
+                .disabled(isPrivate)
+            }
+
+            if let failure {
+                RowSeparator()
+                DetailRow(verbatimTitle: failure) { EmptyView() }
+            }
+        }
+    }
+
+    private var caption: LocalizedStringResource {
+        isPrivate ? "Private windows always ask." : """
+            With the default set to Allow Control, paired apps open and use new websites without asking again. \
+            They still ask on pages with a password or payment field, and before signing in, purchases, and deleting.
+            """
+    }
+
+    private func change(_ body: () throws -> Void) {
+        do {
+            try body()
+            failure = nil
+        } catch {
+            failure = String(localized: "WSurf couldn’t save this change. Try again.")
         }
     }
 }

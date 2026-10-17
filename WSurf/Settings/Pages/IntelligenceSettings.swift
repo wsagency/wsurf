@@ -27,7 +27,9 @@ struct AssistantSettings: View {
             case .grants:
                 AssistantGrantsPage(policy: model.actionPolicy, onBack: { model.showOverview() })
             case .connectedApps:
-                ConnectedAppsPage(server: coordinator.mcpServer, onBack: { model.showOverview() })
+                ConnectedAppsPage(
+                    server: coordinator.mcpServer, permissions: coordinator.context.sitePermissions,
+                    isPrivateProfile: coordinator.context.profile.isPrivate, onBack: { model.showOverview() })
             }
         }
         .task { await model.onAppear() }
@@ -92,7 +94,8 @@ private struct AssistantOverview: View {
         ) {
             WebsiteAccessRow(
                 permissions: coordinator.context.sitePermissions,
-                isPrivate: coordinator.context.profile.isPrivate
+                isPrivate: coordinator.context.profile.isPrivate,
+                trust: coordinator.mcpServer.trustStore
             )
 
             RowSeparator()

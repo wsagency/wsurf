@@ -16,6 +16,12 @@ struct ConnectedAppsSettingsTests {
         #expect(SettingsIndex.link(to: "assistant.connectedApps") != nil)
     }
 
+    @Test func followWebsiteAccessIsFoundOnTheConnectedAppsEntry() {
+        for query in ["follow", "new websites", "default"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "assistant.connectedApps" }, "\(query)")
+        }
+    }
+
     @Test func theExternalConnectionsLinkReachesAnIndexedPage() {
         let caption = SettingsIndex.caption(
             "Review paired apps in Connected apps.", naming: "Connected apps", at: "assistant.connectedApps"

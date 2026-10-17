@@ -7,6 +7,8 @@ import SwiftUI
 struct WebsiteAccessRow: View {
     let permissions: SitePermissions
     let isPrivate: Bool
+    /// Where the level paired apps may follow is kept. Changing the default here keeps it in step; nothing else does.
+    var trust: MCPTrustStore?
 
     var body: some View {
         DetailRow(
@@ -19,7 +21,11 @@ struct WebsiteAccessRow: View {
                 },
                 selection: Binding(
                     get: { permissions.assistantDefault },
-                    set: { permissions.setAssistantDefault($0) }
+                    set: { policy in
+                        permissions.setAssistantDefault(policy)
+                        // Best effort: if the keychain write fails, apps keep the level they had.
+                        try? trust?.setAppsDefaultLevel(policy)
+                    }
                 )
             )
             .disabled(isPrivate)
