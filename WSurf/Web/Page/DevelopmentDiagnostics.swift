@@ -2,29 +2,40 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import CryptoKit
 import Foundation
 import WebKit
 
 /// Console and network capture for one development lease. Nothing is installed or recorded until `start()`, and `stop()`
-/// removes everything `start()` installed. Chromium subscribes to events its DevTools session already receives; WebKit gets a
-/// hook injected into this page's current document only (never a user script on the shared content controller).
+/// removes everything `start()` installed. Chromium subscribes to events its DevTools session already receives. WebKit gets the
+/// hook injected into this page's current document, and a copy of it as a main-frame document-start user script on this page's
+/// own content controller, so the documents that follow are hooked before their first script runs and the hook buffers (at
+/// most 128 events) until the relay attaches. The script is removed again by `stop()`. A popup the page opens shares the
+/// controller and so runs the buffering hook, but no relay ever attaches there: its events stay in the popup.
 ///
 /// The capture follows the document from native boundaries, not from reads: the owner calls `documentMayHaveChanged()` when
 /// a navigation commits, WebKit then waits for the new document's frame registration (its native nonce) and attaches the
-/// hook, and `sync()` on a read is only the safety net.
+/// relay, and `sync()` on a read is only the safety net.
 @MainActor
 final class DevelopmentDiagnostics {
     let buffer: PageDiagnostics.Buffer
     private weak var page: BrowserPage?
     private weak var owner: DevelopmentOwner?
-    private let mapper = ChromiumDiagnosticsMapper()
+    /// Conceals the query of every URL this capture records (see `PageDiagnostics.QueryValues`). Its key belongs to one document:
+    /// it is replaced when the document changes and when an agent navigates, so a tag matches only inside the document it was
+    /// made in and a value an agent has the page request cannot be compared with one the previous page used.
+    private(set) var queryValues = PageDiagnostics.QueryValues.tagged(SymmetricKey(size: .bits256))
+    private let mapper: ChromiumDiagnosticsMapper
     /// Unique per capture. The controller registration can be shared with sibling views and other captures, so a capture
     /// may only ever remove a registration whose name it alone owns.
     private let handlerName = "wsurfDiag" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-    /// The current install's secret. A message is accepted only when it carries it.
-    private var token = ""
-    /// DOM event name of the latest install: the single address `stop()` and a superseding install tear down.
-    private var event: String?
+    /// This capture's secret. A message is accepted only when it carries it.
+    private let token = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+    /// The DOM event name of this capture's hook, in every document: the document-start script, a late install and the relay
+    /// all address one hook through it, and `stop()` tears it down through it.
+    private let event = "wsurf-diag-" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+    /// The document-start script this capture added to the page's content controller, until `stop()` removes it.
+    private var startScript: String?
     /// The document (registry nonce) the live hook was verified against. Nil: no hook is known to be attached.
     private var hookDocumentID: String?
     private var handlerRegistered = false
@@ -33,12 +44,15 @@ final class DevelopmentDiagnostics {
     private var stopped = false
     /// Document changes this capture followed (each one cleared the buffer and started a new epoch).
     private(set) var reattachments = 0
+    /// Events of the current document that the page-side start-up buffer had to drop before the relay attached.
+    private(set) var lostEarly = 0
 
     init?(owner: DevelopmentOwner, page: BrowserPage, tabID: String) {
         guard let documentID = page.mainDocumentID else { return nil }
         self.owner = owner
         self.page = page
         buffer = PageDiagnostics.Buffer(connection: owner.connection, tab: tabID, documentID: documentID)
+        mapper = ChromiumDiagnosticsMapper(queryValues: queryValues)
     }
 
     var engine: String { page?.chromium != nil ? "chromium" : "webkit" }
@@ -46,27 +60,43 @@ final class DevelopmentDiagnostics {
     var sources: [String] {
         engine == "chromium"
             ? ["DevTools Runtime.consoleAPICalled/exceptionThrown and Network request events of the main frame"]
-            : ["Injected page hook: console, uncaught errors, unhandled rejections, fetch and XMLHttpRequest of the current document"]
+            : [
+                "Injected page hook: console, uncaught errors, unhandled rejections, fetch and XMLHttpRequest of the document, "
+                    + "installed at document start for every document after startDiagnostics",
+                "PerformanceObserver resource entries of the document: images, scripts, stylesheets, fonts and frames",
+            ]
     }
 
     var gaps: [String] {
-        var gaps = ["Nothing before startDiagnostics is available.", "Header values, bodies, cookies and object contents are never captured."]
+        var gaps = [
+            "Nothing before startDiagnostics is available.",
+            "Header values, bodies, cookies and object contents are never captured.",
+            "URL query values are concealed: a value that looks generated (a token, id or key) is a ~tag that matches only inside one document, "
+                + "any other value shows only a length class (*short, *medium, *long); only plain parameter names stay.",
+        ]
         if engine == "chromium" {
             gaps.append("Subframes, workers and extension worlds are not captured.")
             gaps.append(
                 "Requests still in flight when the document changes are dropped unless they belong to the new document, "
                     + "and the redirect hops of a main-frame navigation that happen before its document commits are not recorded (only the final request is).")
+            gaps.append("Stacks cover the first \(PageDiagnostics.maxStackFrames) frames of warnings, errors and uncaught exceptions; async parent stacks are not followed.")
         } else {
             gaps.append(
-                "After a navigation commits, the hook attaches once the new document's frame registration completes; "
-                    + "console messages, errors, fetch and XMLHttpRequest calls before that are never captured, and the previous document's records are discarded.")
+                "A navigation's first events are kept by a page-side buffer of at most 128 events until the new document's frame registration completes, "
+                    + "then delivered in order with the time they were delivered; events beyond the buffer are counted in lostEarly. "
+                    + "The previous document's records are discarded. A page that was already loaded when startDiagnostics ran is captured from that point only.")
             gaps.append(
-                "Console objects, errors and proxies are not read and appear as [object]. "
+                "Console objects and proxies are not read and appear as [object]; an Error appears as its name and message and contributes its stack when they are "
+                    + "plain data properties. A call without an Error has no stack. "
                     + "fetch reports a URL only for a string URL argument, and a method only for fetch(url) without an init (GET); "
                     + "a Request, URL or RequestInit argument is not read, so its method or URL is absent (unknown). "
-                    + "XMLHttpRequest reports method and URL when passed as strings. Workers, iframes and resource loads are not captured.")
+                    + "XMLHttpRequest reports method and URL when passed as strings. fetch and XMLHttpRequest records carry status, media type and timing but no size, "
+                    + "and redirect hops are not visible. Resource loads carry type (from their initiator and file extension), size when the server exposes it, and timing; "
+                    + "they have no method or redirect information. Workers and iframes are not captured.")
             if hookDocumentID != buffer.documentID {
-                gaps.append("The hook is not attached to the current document (its frame registration is pending or the install failed); events are being missed until it attaches.")
+                gaps.append(
+                    "The hook is not attached to the current document (its frame registration is pending or the install failed); "
+                        + "the page keeps at most 128 events for it until it attaches, and a failed install loses them.")
             }
         }
         return gaps
@@ -80,6 +110,11 @@ final class DevelopmentDiagnostics {
             mapper.reset()
             chromium.devTools.diagnosticsSink = { [weak self] method, params in self?.receive(method: method, params: params) }
         } else {
+            // Documents that start after this point are hooked before their first script. The current one, already running,
+            // is hooked by the follow-up below.
+            let source = PageDiagnosticsHook.pageHook(event: event)
+            page.installScript(source, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+            startScript = source
             await follow()?.value
         }
     }
@@ -91,15 +126,24 @@ final class DevelopmentDiagnostics {
         guard let page else { return }
         page.chromium?.devTools.diagnosticsSink = nil
         guard let webKit = page.webKit else { return }
+        // No later document gets the script; documents that already ran it are turned off through the DOM below.
+        if let startScript {
+            page.removeScript(startScript, in: .page)
+            self.startScript = nil
+        }
         // Synchronous and ordered after any hook script this capture already issued, so a hook still being installed is
         // torn down too (its install rechecks `stopped` and never issues the relay). It needs neither the relay nor a
         // content-world global.
-        if let event {
-            Self.tearDown(event, in: webKit)
-        }
+        Self.tearDown(event, in: webKit)
         guard handlerRegistered else { return }
         page.removeScriptMessageHandler(name: handlerName, in: PageAutomationGuard.world)
         webKit.configuration.userContentController.removeScriptMessageHandler(forName: handlerName, contentWorld: PageAutomationGuard.world)
+    }
+
+    /// Starts a new key for the query tags. Records already in the buffer keep the tags they have.
+    func rotateQueryKey() {
+        queryValues = .tagged(SymmetricKey(size: .bits256))
+        mapper.queryValues = queryValues
     }
 
     /// A navigation committed (called by the owning tab): follow the new document now instead of at the next read. Chromium
@@ -126,8 +170,10 @@ final class DevelopmentDiagnostics {
             stop()
             return false
         }
+        rotateQueryKey()
         buffer.reset(documentID: current)
         mapper.reset(keeping: current)
+        lostEarly = 0
         reattachments += 1
         return true
     }
@@ -209,38 +255,31 @@ final class DevelopmentDiagnostics {
         }
     }
 
-    /// Attaches the hook to `document`. Every await is followed by a recheck of the lease and the document; a superseded
-    /// install tears down its own hook and leaves any newer state alone.
+    /// Attaches the relay to `document`, evaluating the hook first when the document-start script did not run there (the
+    /// document that was loaded when the capture began). Both scripts are idempotent for this capture's event, so a document
+    /// that already has them is left as it is. Every await is followed by a recheck of the lease and the document; a superseded
+    /// install touches nothing, because a hook of this capture may by now be live in the document that replaced it.
     private func installHook(on page: BrowserPage, document: String) async {
         guard let webKit = page.webKit else { return }
-        // A hook of an earlier install can still be alive in this document (history restore): retire it first.
-        if let previous = event {
-            Self.tearDown(previous, in: webKit)
-        }
-        let mine = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        token = mine
-        let name = "wsurf-diag-" + mine
-        event = name
-        hookDocumentID = nil
         if !handlerRegistered {
             handlerRegistered = true
             page.addScriptMessageHandler(name: handlerName, in: PageAutomationGuard.world, bridge: false) { [weak self] message in
                 self?.receive(message: message)
             }
         }
+        hookDocumentID = nil
+        let event = event
         func current() -> Bool {
-            !stopped && token == mine && page.mainDocumentID == document
+            !stopped && page.mainDocumentID == document
         }
-        guard await run(PageDiagnosticsHook.pageHook(event: name), in: .page, on: webKit), current() else {
-            Self.tearDown(name, in: webKit)
+        guard await run(PageDiagnosticsHook.pageHook(event: event), in: .page, on: webKit), current() else { return }
+        guard await run(PageDiagnosticsHook.relay(event: event, token: token, handler: handlerName), in: PageAutomationGuard.world, on: webKit) else {
+            if current() {
+                Self.tearDown(event, in: webKit)
+            }
             return
         }
-        guard await run(PageDiagnosticsHook.relay(event: name, token: mine, handler: handlerName), in: PageAutomationGuard.world, on: webKit),
-            current()
-        else {
-            Self.tearDown(name, in: webKit)
-            return
-        }
+        guard current() else { return }
         hookDocumentID = document
     }
 
@@ -256,9 +295,13 @@ final class DevelopmentDiagnostics {
 
     private func receive(message: BrowserScriptMessage) {
         guard !stopped, message.frameInfo.isMainFrame, let page, page.mainDocumentID == buffer.documentID,
-            let body = message.body as? [String: Any], body["t"] as? String == token,
-            let entry = PageDiagnosticsHook.entry(from: body)
+            let body = message.body as? [String: Any], body["t"] as? String == token
         else { return }
+        if let lost = PageDiagnosticsHook.lostEarly(from: body) {
+            lostEarly += lost
+            return
+        }
+        guard let entry = PageDiagnosticsHook.entry(from: body, queryValues: queryValues) else { return }
         buffer.append(
             stream: entry.stream, timestamp: Date(), documentID: buffer.documentID, fields: entry.fields, truncated: entry.truncated)
     }

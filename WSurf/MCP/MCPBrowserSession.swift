@@ -153,9 +153,11 @@ final class MCPBrowserSession: Identifiable {
             return failure("Use switchTab before controlling this shared tab.")
         }
         if name == "navigate" {
+            rotateDiagnosticsKey(on: tab)
             return await navigate(arguments["url"]?.stringValue ?? "", tab: tab, grant: grant)
         }
         if name == "goBack", let refusal = goBackRefusal(tab, grant: grant) { return refusal }
+        if name == "goBack" { rotateDiagnosticsKey(on: tab) }
         if Self.developmentCalls.contains(name) {
             return await developmentCall(name: name, arguments: arguments, tab: tab)
         }

@@ -588,6 +588,8 @@ struct PageDiagnosticsHookTests {
             """)
         let installed = try await page.webView.evaluateJavaScript(PageDiagnosticsHook.pageHook(event: event), in: nil, contentWorld: .page)
         #expect(installed as? Bool == true)
+        // The hook holds its events until the relay announces itself; the test plays the relay.
+        _ = try await page.webView.evaluateJavaScript("document.dispatchEvent(new CustomEvent('\(event)-ready')); true", in: nil, contentWorld: .page)
 
         let result = try await json(page, """
             const trap = window.__trap;
@@ -641,17 +643,20 @@ struct PageDiagnosticsHookTests {
 
         let log = try #require(result["log"] as? [[String: Any]])
         let console = try #require(log.first)
-        #expect(console["text"] as? String == "a [object] [object] [object] 5 null undefined true 7n")
-        let network = try log.filter { $0["k"] as? String == "net" }.map { try #require(PageDiagnosticsHook.entry(from: $0)) }
+        // A genuine Error is named from its prototype (its own name and message are accessors here, so neither is read).
+        #expect(console["text"] as? String == "a [object] Error [object] 5 null undefined true 7n")
+        let network = try log.filter { $0["k"] as? String == "net" }.map { try #require(PageDiagnosticsHook.entry(from: $0, queryValues: DiagnosticsTestKey.values)) }
         #expect(network.count == 5, "\(log)")
         let fields = network.map(\.fields)
         // A string URL without an init: the method is GET and the relative URL resolves against the document.
         #expect(fields[0]["method"] == "GET" && fields[0]["url"] == "https://fixture.test/api/x" && fields[0]["status"] == 201)
         // An init object or a Request is never read: method and/or URL are unknown, not guessed.
-        #expect(fields[1]["method"] == nil && fields[1]["url"] == "https://fixture.test/api/y")
+        #expect(fields[1]["method"] == nil && fields[1]["url"] == .text("https://fixture.test/api/y?token=*short"))
         #expect(fields[2]["method"] == nil && fields[2]["url"] == nil)
         #expect(fields[3]["url"] == "https://fixture.test/reject" && fields[3]["outcome"] == "failed" && fields[3]["status"] == nil)
-        #expect(fields[4]["method"] == "GET" && fields[4]["url"] == "https://fixture.test/xhr/path" && fields[4]["outcome"] == "aborted")
+        #expect(
+            fields[4]["method"] == "GET" && fields[4]["url"] == .text("https://fixture.test/xhr/path?q=*short")
+                && fields[4]["outcome"] == "aborted")
 
         // The page wraps over the hook's console.log; off must not clobber that, only stop reporting through it.
         _ = try await json(page, """
