@@ -261,6 +261,10 @@ extension MCPBrowserSession {
                 limit: arguments["limit"]?.intValue ?? MCPDevelopmentTools.defaultLimit, in: view)
         case "inspectElement":
             return await PageDriver.inspectElement(ref: ref, in: view)
+        case "readAccessibility":
+            return await PageDriver.readAccessibility(offset: arguments["offset"]?.intValue ?? 0, scope: arguments["scope"]?.stringValue ?? "", in: view)
+        case "readPerformance":
+            return await PageDriver.readPerformance(in: view)
         case "goBack":
             return await PageDriver.goBack(in: view)
         default:
