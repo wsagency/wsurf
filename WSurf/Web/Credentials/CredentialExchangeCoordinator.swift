@@ -234,7 +234,7 @@ final class CredentialExchangeCoordinator {
             let destination = ImportDestinationView(accounts: snapshot.accounts, removed: removed)
             for candidate in preview.candidates {
                 for incoming in Self.identities(in: candidate) {
-                    classes[incoming] = try CredentialExchangeCodec.classify(incoming, in: preview, destination: destination)
+                    classes[incoming] = try CredentialExchangeCodec.classify(incoming, of: candidate, destination: destination)
                 }
             }
         case let .csv(data):
@@ -871,9 +871,10 @@ final class CredentialExchangeCoordinator {
             }
         }
         let stored = Dictionary(preview.base.accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let lookup = ReviewLookup(preview)
         var resolved = true
         let candidates = preview.candidates.map { candidate in
-            let linked = CredentialExchangeCodec.linkedAccountID(for: candidate, in: preview.base.accounts)
+            let linked = lookup.linkedAccountID(for: candidate)
             // Mirrors what `CredentialExchangeCodec.apply` does with each decision: a stored account keeps its own
             // websites, and only a new account takes the exporter's.
             func destination(
@@ -932,7 +933,7 @@ final class CredentialExchangeCoordinator {
                     relyingParty: relyingParty,
                     destination: choice == nil && context.needsChoice.contains(incoming)
                         ? nil : destination(placement.existing, placement.choice),
-                    canAddSeparately: !credentialIDIsStored(incoming, in: preview),
+                    canAddSeparately: !lookup.holdsStoredCredentialID(incoming),
                     removesStoredPasswordOnReplace: kind(incoming) == .password
                         && candidate.password == nil
                         && existing.flatMap { stored[accountID($0)]?.password } != nil,

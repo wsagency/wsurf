@@ -15,8 +15,16 @@ nonisolated extension CredentialExchangeCodec {
         let decisionsByIncoming = try validatedDecisions(decisions, for: preview, conflicts: conflictByIncoming)
 
         var result = preview.base.accounts
+        // Indexed once so placing a candidate does not scan the vault. Both are exact for this loop: the candidates have distinct
+        // exporter items (validated above), so only a stored account that held a candidate's item when the loop began can still hold
+        // it; `place` re-checks the account it finds. `result` only grows, so a position stays valid.
+        let storedByItem = try positionsByItem(in: result)
+        var positionByID = Dictionary(result.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         for candidate in preview.candidates {
-            try place(candidate, decisions: decisionsByIncoming, conflicts: conflictByIncoming, into: &result)
+            try place(
+                candidate, decisions: decisionsByIncoming, conflicts: conflictByIncoming,
+                storedByItem: storedByItem, positionByID: &positionByID, into: &result
+            )
         }
         try validateAccounts(result, blockedOrigins: preview.base.blockedPasswordOrigins)
         return result
@@ -72,15 +80,26 @@ nonisolated extension CredentialExchangeCodec {
         return decisionsByIncoming
     }
 
+    /// Where each exporter item sits in `accounts`, in order.
+    private static func positionsByItem(in accounts: [CredentialAccount]) throws -> [ExternalItemID: [Int]] {
+        var positions: [ExternalItemID: [Int]] = [:]
+        for (position, account) in accounts.enumerated() {
+            positions[try externalItemID(for: account), default: []].append(position)
+        }
+        return positions
+    }
+
     /// Places every credential of `candidate` into `result` as its decision, or the default, directs.
     private static func place(
         _ candidate: CredentialAccount,
         decisions decisionsByIncoming: [CredentialIdentity: CredentialImportDecision],
         conflicts conflictByIncoming: [CredentialIdentity: CredentialImportConflict],
+        storedByItem: [ExternalItemID: [Int]],
+        positionByID: inout [UUID: Int],
         into result: inout [CredentialAccount]
     ) throws {
         let candidateExternalID = try externalItemID(for: candidate)
-        let linkedIndices = try result.indices.filter {
+        let linkedIndices = try (storedByItem[candidateExternalID] ?? []).filter {
             try externalItemID(for: result[$0]) == candidateExternalID
         }
         guard linkedIndices.count <= 1 else { throw CredentialVaultError.duplicateIdentifier }
@@ -113,10 +132,11 @@ nonisolated extension CredentialExchangeCodec {
                 case .keep:
                     continue
                 case let .replace(_, target):
-                    try replace(identity, from: candidate, target: target, in: &result)
+                    guard let index = positionByID[accountID(for: target)] else { throw CredentialVaultError.invalidData }
+                    try replace(identity, from: candidate, target: target, at: index, in: &result)
                 case let .add(_, targetAccountID):
                     if let targetAccountID {
-                        guard let index = result.firstIndex(where: { $0.id == targetAccountID }) else {
+                        guard let index = positionByID[targetAccountID] else {
                             throw CredentialVaultError.invalidData
                         }
                         try carryAndMerge(
@@ -148,6 +168,7 @@ nonisolated extension CredentialExchangeCodec {
         }
         if !identities(in: unattached).isEmpty {
             result.append(unattached)
+            positionByID[unattached.id] = result.count - 1
         }
     }
 
@@ -236,10 +257,16 @@ nonisolated extension CredentialExchangeCodec {
         return lhs == rhs
     }
 
-    /// The stored account that already holds `candidate`'s exporter item, which is where its credentials go unless
-    /// the user decides otherwise. `nil` when the item is new here.
-    static func linkedAccountID(for candidate: CredentialAccount, in accounts: [CredentialAccount]) -> UUID? {
-        accounts.first { isSameItem(candidate, $0) }?.id
+    /// The first stored account that holds each exporter item: where a candidate's credentials go unless the user decides
+    /// otherwise. An item that is not in the result is new here.
+    static func linkedAccountIDs(in accounts: [CredentialAccount]) -> [ExternalItemID: UUID] {
+        var linked: [ExternalItemID: UUID] = [:]
+        for account in accounts {
+            if let key = try? externalItemID(for: account), linked[key] == nil {
+                linked[key] = account.id
+            }
+        }
+        return linked
     }
 
     /// A credential can be merged into `target` when nothing of the exporter's item would be lost: the item
@@ -334,11 +361,9 @@ nonisolated extension CredentialExchangeCodec {
         _ incoming: CredentialIdentity,
         from source: CredentialAccount,
         target: CredentialIdentity,
+        at index: Int,
         in accounts: inout [CredentialAccount]
     ) throws {
-        guard let index = accounts.firstIndex(where: { $0.id == accountID(for: target) }) else {
-            throw CredentialVaultError.invalidData
-        }
         // The same exporter item is being refreshed, so its newer metadata comes with the credential.
         if source.exchangeMetadata != nil,
            let lhs = try? externalItemID(for: source), let rhs = try? externalItemID(for: accounts[index]), lhs == rhs {

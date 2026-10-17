@@ -697,6 +697,15 @@ nonisolated enum CredentialExchangeCodec {
             }
         }
 
+        // Every stored passkey by identity, so each incoming passkey finds its match without scanning the vault.
+        var existingPasskeys: [ExternalPasskeyID: [(account: CredentialAccount, passkey: WebsitePasskey)]] = [:]
+        for account in existing {
+            for passkey in account.passkeys {
+                existingPasskeys[ExternalPasskeyID(relyingPartyID: passkey.rpID, credentialID: passkey.credentialID), default: []]
+                    .append((account, passkey))
+            }
+        }
+
         var conflicts: [CredentialImportConflict] = []
         for candidate in candidates {
             let linked = existingByExternalID[try externalItemID(for: candidate)]
@@ -723,11 +732,7 @@ nonisolated enum CredentialExchangeCodec {
                 }
             }
             for passkey in candidate.passkeys {
-                let matches = existing.flatMap { account in
-                    account.passkeys.filter {
-                        $0.credentialID == passkey.credentialID && $0.rpID == passkey.rpID
-                    }.map { (account, $0) }
-                }
+                let matches = existingPasskeys[ExternalPasskeyID(relyingPartyID: passkey.rpID, credentialID: passkey.credentialID)] ?? []
                 guard matches.count <= 1 else { throw CredentialVaultError.duplicateIdentifier }
                 if let (account, existingPasskey) = matches.first {
                     conflicts.append(.init(
