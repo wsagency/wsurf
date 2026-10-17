@@ -252,7 +252,7 @@ struct WindowSessionTests {
             #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
             #expect(try db.tableExists("profilePin"))
             let migrations = try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
-            #expect(Set(migrations).isSuperset(of: ["v1", "v2-folder-pinning"]))
+            #expect(Set(migrations).isSuperset(of: ["v1", "v2-folder-pinning", "v3-profile-pins"]))
             #expect(try String.fetchAll(db, sql: """
                 SELECT url FROM historyPage_ft WHERE historyPage_ft MATCH 'sentinel'
                 """) == ["https://history.example/"])

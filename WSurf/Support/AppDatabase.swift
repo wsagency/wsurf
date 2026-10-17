@@ -136,6 +136,11 @@ struct AppDatabase: Sendable {
                 )
                 """)
         }
+        // The pins and Favorites of every window, open or closed, become the profile's, once and in one transaction.
+        migrator.registerMigration("v3-profile-pins") { db in
+            try defineSchema(in: db)
+            try ProfilePinMigration.run(in: db)
+        }
         return migrator
     }
 
