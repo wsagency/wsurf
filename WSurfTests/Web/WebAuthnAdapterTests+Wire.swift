@@ -87,6 +87,26 @@ extension WebAuthnAdapterTests {
         #expect(options.authenticatorAttachment == .platform && options.attestation == .direct && options.extensions.credProps)
     }
 
+    /// `user.id` is kept up to `WebsitePasskey.userHandleLimit` bytes, well past the 64 WebAuthn recommends, and no further.
+    @Test func wireCarriesUserIDsUpToTheLimit() throws {
+        func parse(userID: Data) throws -> WebAuthnRequest {
+            try WebAuthnWire.parse([
+                "id": "c1", "operation": "create", "mediation": "optional",
+                "options": [
+                    "challenge": WebAuthnWire.base64URL(Data([1])),
+                    "rp": ["name": "Example", "id": "example.com"],
+                    "user": ["id": WebAuthnWire.base64URL(userID), "name": "ada", "displayName": "Ada"],
+                ] as [String: Any],
+            ]).request
+        }
+        for length in [1, 64, 65, 96, 512, WebsitePasskey.userHandleLimit] {
+            let userID = Data((0..<length).map { UInt8(truncatingIfNeeded: $0 &+ 3) })
+            guard case let .creation(options) = try parse(userID: userID).options else { Issue.record("not a creation request"); return }
+            #expect(options.userID == userID, "\(length) bytes")
+        }
+        #expect(throws: WebAuthnWire.Malformed.self) { try parse(userID: Data(repeating: 1, count: WebsitePasskey.userHandleLimit + 1)) }
+    }
+
     @Test func nativeFailuresMapToTheDOMExceptionsTheSpecDefines() {
         let cases: [(any Error, String)] = [
             (WebsiteAuthenticatorError.invalidRequest, "SecurityError"), (WebsiteAuthenticatorError.invalidContext, "SecurityError"),

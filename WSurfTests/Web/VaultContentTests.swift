@@ -448,4 +448,24 @@ struct VaultContentTests {
         #expect(hex(try CredentialContent.hash(.metadata(rich))) == "8461c70568b54c9b8520ead97f6a332457760c38c3e4f67e3f894b8c8916eea1")
         #expect(hex(try CredentialContent.hash(.metadata(noExchange))) == "db7e2be921061085334969afc4eac69abb1268d8ae6007a0b9024afeb6506beb")
     }
+
+    /// A user handle is length-prefixed like every other byte field, so allowing more than 64 bytes changed no encoding: the
+    /// 3-byte handle of `hashIsStable` still hashes to its old digest, and the longer ones hash to digests computed outside the app
+    /// (the same throwaway script, handle bytes 0, 1, 2, ... modulo 256, tag 3, then rpID, credential ID, handle and the P-256
+    /// public point of scalar 0x01...0x20, each as u32 length + bytes).
+    @Test func longUserHandlesHashByTheSameLengthPrefixedEncoding() throws {
+        var passkey = try VaultFixtures.fixedPasskey()
+        #expect(hex(try CredentialContent.hash(.passkey(passkey))) == "3290ec9caa92ed4bdb6ecb0289d8545556f15f3c7762d317fd90fe1f71ee56c0")
+
+        let golden = [
+            (96, "b29c48f0e8b287bed0cdc6f92cd719a468195084700115ca326410e09ad75b9c"),
+            (512, "baac78ae2c4ea01fb62c2be7bf8b85bb5cf7b96504292b3ed179a48255484a18"),
+            (WebsitePasskey.userHandleLimit, "26603b2d076a7efa9a3cd26d49ff17d9be6ee1f9bab8e9c9f6b7d121e58179e8"),
+        ]
+        for (length, digest) in golden {
+            passkey.userHandle = Data((0..<length).map { UInt8(truncatingIfNeeded: $0) })
+            try passkey.validate()
+            #expect(hex(try CredentialContent.hash(.passkey(passkey))) == digest, "\(length) bytes")
+        }
+    }
 }

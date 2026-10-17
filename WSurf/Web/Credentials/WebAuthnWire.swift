@@ -109,7 +109,7 @@ nonisolated enum WebAuthnWire {
             parsed = .creation(WebAuthnCreationOptions(
                 challenge: challenge,
                 rpID: rp["id"] as? String,
-                userID: try base64URLDecode(user["id"], maximum: 64),
+                userID: try base64URLDecode(user["id"], maximum: WebsitePasskey.userHandleLimit),
                 userName: userName,
                 userDisplayName: displayName,
                 publicKeyAlgorithms: integers,
