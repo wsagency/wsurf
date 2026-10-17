@@ -8,7 +8,7 @@ The Flux draft below was superseded by Tandem on 2026-10-16. Its files stay as t
 
 | Path | What |
 |---|---|
-| `tandem/` | **the chosen mark**: master and small cut, mono, Inter Display Bold wordmark, lockups, app icon draft, favicons, proofs |
+| `tandem/` | **the chosen mark**: master and small cut, mono, Inter Display Bold wordmark, lockups, app icon draft, favicons, proofs; plus `3d/`, `loader/` and `relief/` for 3D, motion and hero art |
 | `licenses/Inter-OFL.txt` | verbatim upstream SIL OFL 1.1 text for the Inter Display Bold outlines in the Tandem wordmark (provenance only; the font binary is not shipped) |
 | `DESIGN.md` | superseded Flux spec: identity, words, palettes, mono, texture, asset matrix, Dock icon contract, provenance, approvals |
 | `overview.png` / `.svg` | one-glance design review (exact brand colours) |
