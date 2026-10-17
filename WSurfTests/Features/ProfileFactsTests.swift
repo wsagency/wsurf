@@ -74,6 +74,23 @@ struct ProfileFactsTests {
         #expect(facts.bytes > 0)
     }
 
+    @Test func pinnedFoldersOfTheProfileAreCountedAsFolders() throws {
+        let root = sandbox()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "WSurf.sqlite")
+        let database = AppDatabase(at: url)
+        try database.writer.write { db in
+            let folder = ProfilePin(id: UUID(), parentID: nil, orderKey: "V", kind: .folder, title: "Work")
+            try folder.insert(db)
+            try ProfilePin(id: UUID(), parentID: folder.id, orderKey: "V", kind: .tab, url: "https://example.com/").insert(db)
+            try ProfilePin(id: UUID(), parentID: folder.id, orderKey: "W", kind: .folder, title: "Nested").insert(db)
+        }
+
+        let facts = ProfileFacts.read(sources(in: root, database: url))
+
+        #expect(facts.folders == 2)
+    }
+
     @Test func onlyWebsitesWithASavedAnswerAreCounted() async throws {
         let root = sandbox()
         defer { try? FileManager.default.removeItem(at: root) }
