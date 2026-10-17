@@ -497,7 +497,7 @@ normal WSurf. Nothing here bypasses consent.
    ```
 
    It prints the fixture address. Open it in the Stage window, press Return, and choose **Allow Development** on the
-   access sheet. It then calls `initialize`, `tools/list` (29 tools), `requestAccess`, `listTabs`, `readPage`,
+   access sheet. It then calls `initialize`, `tools/list` (33 tools), `requestAccess`, `listTabs`, `readPage`,
    `screenshotPage`, `getDevelopmentInfo`, `setViewport`, `emulateDevice` (`phone`), `startDiagnostics`, `readConsole` and
    `resetDevelopment`, closes stdin, and expects the relay to exit 0. Every step prints `PASS` or `FAIL`; the exit code is 1 if any failed.
 4. Repeat step 3 with the fixture page on Chromium: in the Stage app open **Settings → Websites**, choose `127.0.0.1`,
@@ -511,7 +511,7 @@ normal WSurf. Nothing here bypasses consent.
      -- /path/to/owned/WSurf.app/Contents/MacOS/WSurf --mcp
    ```
 
-   Start `claude` in that project, run `/mcp` and check that `wsurf-stage` is connected with 29 tools. With the fixture
+   Start `claude` in that project, run `/mcp` and check that `wsurf-stage` is connected with 33 tools. With the fixture
    page open in the Stage window, send:
 
    > Use the wsurf-stage MCP server. Call requestAccess with development true, then listTabs. For the tab on 127.0.0.1

@@ -35,6 +35,25 @@ struct MCPAccessConsentTests {
         #expect(asked.access(forButton: -2002) == nil)
     }
 
+    @Test func allowDeveloperIsOfferedOnlyForAnEligiblePageWhenDevelopmentIsAsked() {
+        var eligible = pages
+        eligible[0].developerEligible = true
+        let offered = MCPAccessConsent.sheet(client: "Claude Code", pages: eligible, development: true)
+        #expect(offered.buttons.map(\.access) == [.readOnly, .control, .development, .developer, nil])
+        #expect(offered.message.contains("Allow Developer"))
+        #expect(offered.access(forButton: 3) == .developer)
+        #expect(offered.access(forButton: 4) == nil, "Don’t Allow stays last")
+        #expect(offered.buttons.last?.isEscape == true)
+        // Without a qualifying page, or without a development request, the sheet is the one it always was.
+        for sheet in [
+            MCPAccessConsent.sheet(client: "Claude Code", pages: pages, development: true),
+            MCPAccessConsent.sheet(client: "Claude Code", pages: eligible, development: false),
+        ] {
+            #expect(!sheet.buttons.contains { $0.access == .developer })
+            #expect(!sheet.message.contains("Allow Developer"))
+        }
+    }
+
     @Test(arguments: [false, true])
     func escapeDeclines(development: Bool) throws {
         let sheet = MCPAccessConsent.sheet(client: "Claude Code", pages: pages, development: development)
