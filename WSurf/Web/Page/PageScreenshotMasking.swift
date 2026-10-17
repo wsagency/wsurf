@@ -9,7 +9,8 @@ import Foundation
 /// test secrets itself, so a page with a filled password field is the normal case there, not a reason to return nothing.
 ///
 /// The boxes are measured in the page, in viewport CSS pixels, and painted over the bitmap that is returned, so the page is
-/// never touched. A filled field inside a frame is covered by the whole frame, and a box that cannot be measured refuses the
+/// never touched. A full-page image starts at the document's origin, so for it each box is also taken shifted by the page's
+/// scroll (a fixed box lands where it is in the viewport, any other where it is in the document): both places are covered. A filled field inside a frame is covered by the whole frame, and a box that cannot be measured refuses the
 /// capture. The pixels of page text that merely echo a secret are not covered: read the page, where the registered value is
 /// hidden by `MCPSecretScrubber`.
 struct ScreenshotMasking: Sendable {
@@ -17,6 +18,8 @@ struct ScreenshotMasking: Sendable {
     /// the page still shows `documentID`, the document those refs were issued for.
     var secretRefs: Set<Int> = []
     var documentID: String?
+    /// The image is a full page, drawn from the document's origin rather than the viewport's.
+    var documentSpace = false
 
     /// Adds `masks` (boxes) and `unmaskable` to the probe's result. Runs inside the page runtime scope.
     var probeScript: String {
@@ -41,6 +44,9 @@ struct ScreenshotMasking: Sendable {
                 const r = box.getBoundingClientRect();
                 if (![r.x, r.y, r.width, r.height].every(Number.isFinite)) { unmaskable = true; continue; }
                 masks.push({ x: r.x, y: r.y, width: r.width, height: r.height });
+                if (\(documentSpace) && (window.scrollX || window.scrollY)) {
+                  masks.push({ x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height });
+                }
               }
               out.masks = masks;
               out.unmaskable = unmaskable;

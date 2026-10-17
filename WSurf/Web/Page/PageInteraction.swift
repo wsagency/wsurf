@@ -201,6 +201,8 @@ extension PageDriver {
         maxWidth: Int? = nil, masking: ScreenshotMasking? = nil, in view: BrowserPage
     ) async -> Result<ScreenshotCapture, ScreenshotFailure> {
         guard PageAutomationGuard.allowsExecution else { return .failure(.stale) }
+        var masking = masking
+        masking?.documentSpace = target == .fullPage
         guard target != .fullPage || view.chromium != nil else { return .failure(.fullPageUnsupported) }
         // Asked before the first await as well as after each one: a caller may have waited (for its turn to capture) since it
         // checked.

@@ -267,4 +267,40 @@ struct PageSecretEntryTests {
             #expect(plain.blue > 0.6, "engine \(engine): \(plain)")
         }
     }
+
+    @Test func aFullPageScreenshotCoversAFilledFieldWhereverThePageHasScrolledTo() async throws {
+        // A full-page image starts at the document's origin, while a field is measured against the viewport: on a page that has
+        // scrolled, the box has to be moved by the scroll or the password shows beside a black patch.
+        let tall = """
+            <!doctype html><title>Tall</title>
+            <style>
+              body { margin: 0 }
+              #spacer { height: 2000px }
+              #pw { display: block; width: 240px; height: 32px; border: 0; padding: 0; margin: 0 0 8px 0; background: #f00; color: #fff }
+              #plain { width: 240px; height: 32px; background: #00f }
+            </style>
+            <div id=spacer></div>
+            <input id=pw type=password aria-label="Password">
+            <div id=plain></div>
+            """
+        try await withPage(engine: .chromium, html: tall) { view in
+            let refs = try await refs(in: view)
+            _ = await PageDriver.type(text: Self.password, intoField: "", ref: try #require(refs.first), submit: false, allowSensitive: true, in: view)
+            let scrolled = try await view.evaluateJavaScript("window.scrollY") as? Double ?? 0
+            try #require(scrolled > 500, "the page scrolled to the field")
+
+            guard case .success(let capture) = await PageDriver.screenshot(
+                .fullPage, developmentAllowed: { true }, masking: ScreenshotMasking(), in: view)
+            else {
+                Issue.record("a masked full-page capture must succeed")
+                return
+            }
+            // Document coordinates: the viewport position plus the scroll.
+            let field = try await center("pw", in: view)
+            let password = try color(of: capture, at: CGPoint(x: field.x, y: field.y + scrolled))
+            let plain = try color(of: capture, at: CGPoint(x: field.x, y: try await center("plain", in: view).y + scrolled))
+            #expect(password.red < 0.15 && password.green < 0.15 && password.blue < 0.15, "the field is black, not red: \(password)")
+            #expect(plain.blue > 0.6 && plain.red < 0.3, "the rest of the page is untouched: \(plain)")
+        }
+    }
 }
