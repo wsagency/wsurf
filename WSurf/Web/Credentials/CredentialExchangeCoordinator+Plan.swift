@@ -116,7 +116,14 @@ extension CredentialExchangeCoordinator {
         var updated = 0
         for account in accounts {
             if let old = before[account.id] {
-                if old != account {
+                // An account whose only difference is a base that apply recorded is not written: an import writes the accounts it
+                // changes, however many items it compared, so a long review isn't discarded because an unrelated account changed.
+                // A base is recorded for the accounts that are written anyway. (An item saved before bases were recorded stays
+                // unbound until an import changes it; identical content is still recognised as unchanged.)
+                var withoutBases = account
+                withoutBases.passwordBase = old.passwordBase
+                withoutBases.totpBase = old.totpBase
+                if withoutBases != old {
                     updated += 1
                     touched.append(account)
                 }

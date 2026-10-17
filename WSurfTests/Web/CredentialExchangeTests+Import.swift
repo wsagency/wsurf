@@ -527,4 +527,38 @@ extension CredentialExchangeTests {
             return true
         }
     }
+
+    /// Spec §13.2(a): what an import brought in is recorded, so the next one can tell which side changed. A part the user kept
+    /// different from the incoming one is not an observation of it.
+    @Test func appliedImportRecordsTheObservedBaseOfEachPart() throws {
+        let incoming = data(credentials: [basicAuthentication(username: "ada", password: "v1"), totp()])
+        let preview = try CredentialExchangeCodec.preview(incoming, against: snapshot([]))
+        let candidate = try #require(preview.candidates.first)
+        let imported = try #require(CredentialExchangeCodec.apply(preview, decisions: []).first)
+        #expect(imported.passwordBase == ExchangeBase(contentHash: try CredentialContent.hash(.password(candidate)), itemID: itemExternalID))
+        #expect(imported.totpBase == ExchangeBase(contentHash: try CredentialContent.hash(.totp(candidate)), itemID: itemExternalID))
+        #expect(imported.passwordEvents == nil && imported.totpEvents == nil, "no date is recorded: an unknown date is not now")
+
+        // The same item again, with another password. The code is the same, so it is a conflict too, and every conflict needs a decision.
+        let changed = try CredentialExchangeCodec.preview(
+            data(credentials: [basicAuthentication(username: "ada", password: "v2"), totp()]), against: snapshot([imported])
+        )
+        let login = try #require(changed.conflicts.first { if case .password = $0.incoming { true } else { false } })
+        let code = try #require(changed.conflicts.first { if case .totp = $0.incoming { true } else { false } })
+        let keepCode = CredentialImportDecision.keep(incoming: code.incoming)
+
+        // Kept out by the user: nothing changes, and the base is still the first one's.
+        #expect(try CredentialExchangeCodec.apply(changed, decisions: [.keep(incoming: login.incoming), keepCode]) == [imported])
+
+        // Replacing is an observation of the new version; adding it separately is a new item that is paired with nothing.
+        let replaced = try #require(
+            CredentialExchangeCodec.apply(changed, decisions: [.replace(incoming: login.incoming, target: login.existing), keepCode]).first
+        )
+        let newCandidate = try #require(changed.candidates.first)
+        let newHash = try CredentialContent.hash(.password(newCandidate))
+        #expect(replaced.password == "v2" && replaced.passwordBase?.contentHash == newHash)
+        #expect(replaced.passwordBase != imported.passwordBase)
+        let added = try CredentialExchangeCodec.apply(changed, decisions: [.add(incoming: login.incoming, targetAccountID: nil), keepCode])
+        #expect(added.count == 2 && added.first == imported && added.last?.passwordBase == nil)
+    }
 }
