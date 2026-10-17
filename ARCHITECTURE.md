@@ -82,6 +82,14 @@ native view without navigation, cancels source assistant/voice/media/Peek activi
 rebinds callbacks, invalidates both sidebar Undo histories and saves both windows
 atomically. Closed or superseded owners cannot resurrect tabs with queued saves.
 
+Only a close the user makes records a window as closed. AppKit closes every window
+after `applicationWillTerminate`, so the application is marked terminating before that
+(`prepareToTerminate`, `finishTermination` and the will-terminate notification) and
+those closes leave the saved session open. The last regular window the user closes is
+remembered in `UserDefaults` until another regular window opens; if the app quits in
+between, the next launch reopens it for a profile with no open window. A window closed
+while another stays open, and any private window, is never brought back this way.
+
 `ChromiumRuntime` initializes CEF only for the first Chromium page and stays
 initialized until quit because CEF cannot be restarted in-process. Its AppKit
 application subclass is installed at startup without loading Chromium.
