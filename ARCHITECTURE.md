@@ -255,6 +255,16 @@ website permissions, page zoom and the download list — use atomic writes throu
 the support layer. A write needed for quit or profile teardown
 must be awaited or flushed synchronously before its owner is released.
 
+Appearance is a theme plus the person's knobs. A built-in theme in `ThemeCatalog`
+is read-only and holds a light and a dark variant of its colors; changing one of
+its colors saves a copy under `appearance.themes.user`. The knobs — Plain or
+Glass, brightness and shape — are stored per theme id under
+`appearance.themes.adjustments` and never make a copy. `BrowserSettings.resolvedTheme`
+resolves both into one cached `ResolvedTheme` that `Theme`, the sidebar and the
+window backdrops read; it is rebuilt only when the selected theme, a saved theme
+or an adjustment changes. The appearance keys from before themes stay in place:
+`ThemeMigration` reads them once, and an older build still finds them.
+
 ## Tests
 
 Tests use Swift Testing, with XCTest for the two things it cannot express:

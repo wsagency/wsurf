@@ -41,8 +41,8 @@ struct ThemePickerTests {
 
         let settings = BrowserSettings(defaults: suite)
         for mode in AppearanceMode.allCases {
-            settings.appearance = mode
-            #expect(BrowserSettings(defaults: suite).appearance == mode)
+            settings.colorMode = mode
+            #expect(BrowserSettings(defaults: suite).colorMode == mode)
         }
     }
 

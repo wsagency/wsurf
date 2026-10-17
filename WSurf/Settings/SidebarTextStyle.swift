@@ -9,13 +9,7 @@ struct SidebarTextStyle: Codable, Equatable {
     var opacity: Double = 1
 
     var color: Color? {
-        colorRGB.map {
-            Color(
-                red: Double(($0 >> 16) & 255) / 255,
-                green: Double(($0 >> 8) & 255) / 255,
-                blue: Double($0 & 255) / 255
-            )
-        }
+        colorRGB.map(Color.init(hex:))
     }
 
     func bounded(defaultOpacity: Double) -> Self {
@@ -24,16 +18,25 @@ struct SidebarTextStyle: Codable, Equatable {
             opacity: opacity.isFinite ? min(max(opacity, 0), 1) : defaultOpacity
         )
     }
+
+    /// `0xRRGGBB` for `color`, or nil when it has no finite sRGB value.
+    static func rgb(of color: Color) -> UInt32? {
+        guard let rgb = NSColor(color).usingColorSpace(.sRGB),
+              rgb.redComponent.isFinite, rgb.greenComponent.isFinite, rgb.blueComponent.isFinite
+        else { return nil }
+        func channel(_ value: CGFloat) -> UInt32 {
+            UInt32((min(max(value, 0), 1) * 255).rounded())
+        }
+        return channel(rgb.redComponent) << 16 | channel(rgb.greenComponent) << 8 | channel(rgb.blueComponent)
+    }
+
+    mutating func setColor(_ color: Color) {
+        guard let rgb = Self.rgb(of: color) else { return }
+        colorRGB = rgb
+    }
 }
 
 extension BrowserSettings {
-    func sidebarAppearance(scheme: ColorScheme) -> AppearanceMode {
-        if forcesDarkAppearance {
-            return resolvedAppearance == .lightCalm || resolvedAppearance == .darkCalm ? .darkCalm : .dark
-        }
-        return resolvedAppearance == .system ? (scheme == .dark ? .dark : .light) : resolvedAppearance
-    }
-
     static func nativeSidebarFont(family: String, size: CGFloat, weight: SidebarFontWeight) -> NSFont {
         guard !family.isEmpty else { return .systemFont(ofSize: size, weight: weight.nativeWeight) }
         return NSFontManager.shared.font(
@@ -44,61 +47,9 @@ extension BrowserSettings {
         ) ?? .systemFont(ofSize: size, weight: weight.nativeWeight)
     }
 
-    func sidebarTextStyle(theme: AppearanceMode, isDeferred: Bool) -> SidebarTextStyle {
-        sidebarTextStyles[Self.sidebarTextKey(theme: theme, isDeferred: isDeferred)]
-            ?? SidebarTextStyle(opacity: isDeferred ? 0.55 : 1)
-    }
-
-    func setSidebarTextStyle(_ style: SidebarTextStyle, theme: AppearanceMode, isDeferred: Bool) {
-        sidebarTextStyles[Self.sidebarTextKey(theme: theme, isDeferred: isDeferred)] = style.bounded(
-            defaultOpacity: isDeferred ? 0.55 : 1
-        )
-    }
-
-    func sidebarTextBaseColor(theme: AppearanceMode, isDeferred: Bool) -> Color {
-        if let preset = themePreset {
-            return Color(nsColor: preset.nsColor(.text))
-        }
-        return sidebarTextStyle(theme: theme, isDeferred: isDeferred).color
-            ?? (theme == .dark || theme == .darkCalm ? .white : .black)
-    }
-
+    /// The text color of a sidebar row in the appearance `scheme` names, from the cached theme.
     func sidebarTextColor(isDeferred: Bool = false, scheme: ColorScheme) -> Color {
-        if let preset = themePreset {
-            // A window drawn in the other appearance (a private window) gets the standard text, like its surfaces;
-            // the saved custom colors belong to the theme the preset replaced and are left alone.
-            guard preset.isDark == (scheme == .dark) else {
-                return (scheme == .dark ? Color.white : .black).opacity(isDeferred ? 0.55 : 1)
-            }
-            return Color(nsColor: preset.nsColor(.text)).opacity(isDeferred ? preset.unloadedTextOpacity : 1)
-        }
-        let theme = sidebarAppearance(scheme: scheme)
-        let style = sidebarTextStyle(theme: theme, isDeferred: isDeferred)
-        return (style.color ?? (scheme == .dark ? .white : .black)).opacity(style.opacity)
-    }
-
-    func setSidebarTextColor(_ color: Color, theme: AppearanceMode, isDeferred: Bool) {
-        guard let rgb = NSColor(color).usingColorSpace(.sRGB),
-              rgb.redComponent.isFinite, rgb.greenComponent.isFinite, rgb.blueComponent.isFinite
-        else { return }
-        func channel(_ value: CGFloat) -> UInt32 {
-            UInt32((min(max(value, 0), 1) * 255).rounded())
-        }
-        var style = sidebarTextStyle(theme: theme, isDeferred: isDeferred)
-        style.colorRGB = channel(rgb.redComponent) << 16
-            | channel(rgb.greenComponent) << 8
-            | channel(rgb.blueComponent)
-        setSidebarTextStyle(style, theme: theme, isDeferred: isDeferred)
-    }
-
-    static func sidebarTextKey(theme: AppearanceMode, isDeferred: Bool) -> String {
-        "\(theme.rawValue).\(isDeferred ? "unloaded" : "loaded")"
-    }
-
-    static func decodeSidebarTextStyles(_ data: Data?) -> [String: SidebarTextStyle] {
-        guard let data, let stored = try? JSONDecoder().decode([String: SidebarTextStyle].self, from: data) else {
-            return [:]
-        }
-        return stored.mapValues { $0.bounded(defaultOpacity: 1) }
+        let variant = resolvedTheme.variant(scheme)
+        return isDeferred ? variant.unloadedInk : variant.loadedInk
     }
 }

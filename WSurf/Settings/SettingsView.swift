@@ -54,7 +54,7 @@ final class SettingsWorkspace {
         highlight = nil
         category = entry.category
         onRoute?(entry.category)
-        let anchor = entry.targetAnchor(presetIsOn: BrowserSettings.application.themePreset != nil)
+        let anchor = entry.targetAnchor(themeIsSolid: BrowserSettings.application.selectedTheme.ground == .solid)
         highlightTask = Task { [weak self] in
             await Task.yield()
             guard !Task.isCancelled else { return }

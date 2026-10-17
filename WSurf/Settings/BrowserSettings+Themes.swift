@@ -34,7 +34,7 @@ extension BrowserSettings {
         get { globalValue(\.themeID, storage: storedThemeID) }
         set {
             setGlobal(\BrowserSettings.themeID, storage: \BrowserSettings.storedThemeID, value: newValue,
-                      key: Key.themeID)
+                      key: Key.themeID, didChange: { $0.themeCache = nil })
         }
     }
 
@@ -43,7 +43,9 @@ extension BrowserSettings {
         get { globalValue(\.userThemes, storage: storedUserThemes) }
         set {
             setGlobal(\BrowserSettings.userThemes, storage: \BrowserSettings.storedUserThemes,
-                      value: Self.normalized(newValue), key: Key.userThemes, encode: { try? JSONEncoder().encode($0) })
+                      value: Self.normalized(newValue), key: Key.userThemes, encode: { try? JSONEncoder().encode($0) }) {
+                $0.themeCache = nil
+            }
         }
     }
 
@@ -53,7 +55,7 @@ extension BrowserSettings {
         set {
             setGlobal(\BrowserSettings.themeAdjustments, storage: \BrowserSettings.storedThemeAdjustments,
                       value: newValue.mapValues { $0.bounded() }, key: Key.themeAdjustments,
-                      encode: { try? JSONEncoder().encode($0) })
+                      encode: { try? JSONEncoder().encode($0) }) { $0.themeCache = nil }
         }
     }
 
@@ -76,6 +78,82 @@ extension BrowserSettings {
             adjustments[selectedTheme.id] = newValue == ThemeAdjustment() ? nil : newValue
             themeAdjustments = adjustments
         }
+    }
+
+    /// The selected theme with its knobs applied, for both appearances. Every chrome color reads this cache, which
+    /// is rebuilt only when the theme, a saved theme or an adjustment changes.
+    var resolvedTheme: ResolvedTheme {
+        let settings = globalSettings
+        // Reading these registers the observation of the caller; the cache itself is not observed.
+        _ = themeID
+        _ = userThemes
+        _ = themeAdjustments
+        if let cached = settings.themeCache {
+            return cached
+        }
+        let theme = selectedTheme
+        let resolved = ResolvedTheme(theme, adjustment: themeAdjustments[theme.id] ?? ThemeAdjustment())
+        settings.themeCache = resolved
+        return resolved
+    }
+
+    // MARK: - Window style, as the Appearance page still shows it
+
+    var loomStyle: LoomStyle {
+        get { themeAdjustment.material == .glass ? .transparent : .standard }
+        set {
+            var adjustment = themeAdjustment
+            adjustment.material = newValue == .transparent ? .glass : .plain
+            themeAdjustment = adjustment
+        }
+    }
+
+    var transparency: Double {
+        get { themeAdjustment.glassOpacity }
+        set {
+            var adjustment = themeAdjustment
+            adjustment.glassOpacity = newValue
+            themeAdjustment = adjustment.bounded()
+        }
+    }
+
+    // MARK: - Editing
+
+    /// Applies `edit` to the colors the window shows for `scheme`. A built-in theme is read-only, so the first edit
+    /// copies it, with its knobs, selects the copy and edits that. The copy limit makes an edit a no-op.
+    func editColors(scheme: ColorScheme, _ edit: (inout ThemeVariant) -> Void) {
+        var theme = selectedTheme
+        let wasBuiltIn = ThemeCatalog.isBuiltIn(theme.id)
+        if wasBuiltIn {
+            guard userThemes.count < Self.userThemeLimit else { return }
+            theme.basedOn = theme.id
+            theme.id = UUID().uuidString
+            theme.name = ThemeNames.unique(String(localized: "\(theme.name) copy"), among: allThemes.map(\.name))
+        }
+        var variant = theme.variant(scheme)
+        edit(&variant)
+        theme.setVariant(variant, for: scheme)
+        if wasBuiltIn {
+            let adjustment = themeAdjustment
+            userThemes += [theme]
+            themeAdjustments[theme.id] = adjustment == ThemeAdjustment() ? nil : adjustment
+            themeID = theme.id
+        } else {
+            userThemes = userThemes.map { $0.id == theme.id ? theme : $0 }
+        }
+    }
+
+    /// Restores the colors and the brightness of the shown variant: a copy takes the colors of the built-in theme
+    /// it came from, and a built-in theme only has its brightness to reset.
+    func resetColors(scheme: ColorScheme) {
+        var adjustment = themeAdjustment
+        adjustment.setBrightness(0, for: scheme)
+        themeAdjustment = adjustment
+        let theme = selectedTheme
+        guard !ThemeCatalog.isBuiltIn(theme.id), let original = theme.basedOn.flatMap(ThemeCatalog.builtIn) else { return }
+        var restored = theme
+        restored.setVariant(original.variant(scheme), for: scheme)
+        userThemes = userThemes.map { $0.id == restored.id ? restored : $0 }
     }
 
     // MARK: - Loading

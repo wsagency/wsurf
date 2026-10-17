@@ -65,7 +65,7 @@ private struct LoomStyleThumbnail: View {
 
     private var palette: ThemeThumbnailPalette {
         ThemeThumbnailPalette(
-            id: .dark,
+            id: "windowStyle",
             backdrop: .clear,
             chrome: .clear,
             canvas: Color(red: 0.055, green: 0.06, blue: 0.07),

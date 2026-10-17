@@ -29,13 +29,13 @@ struct ProfileSettingsTests {
         let personalSettings = BrowserSettings(sessionDefaults: personal, application: appSettings)
         workSettings.searchEngineID = "kagi"
         personalSettings.searchEngineID = "brave"
-        workSettings.appearance = .dark
+        workSettings.colorMode = .dark
 
         #expect(workSettings.searchEngineID == "kagi")
         #expect(personalSettings.searchEngineID == "brave")
         #expect(BrowserSettings(defaults: app, sessionDefaults: work).searchEngineID == "kagi")
         #expect(BrowserSettings(defaults: app, sessionDefaults: personal).searchEngineID == "brave")
-        #expect(personalSettings.appearance == .dark)
+        #expect(personalSettings.colorMode == .dark)
     }
 
     @Test func profileSettingsChangesPersistWithoutRetargetingOtherWindows() throws {

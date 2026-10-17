@@ -170,36 +170,25 @@ struct SidebarRowStyleTests {
         #expect(!same(colors.fill, colors.content), "fill and content differ, \(context)")
     }
 
-    private func appearances(of mode: AppearanceMode) -> [ColorScheme] {
-        switch mode {
-        case .system:
-            [.light, .dark]
-        case .light, .lightCalm:
-            [.light]
-        case .dark, .darkCalm:
-            [.dark]
-        }
-    }
-
-    /// The five themes on the grounds the sidebar takes from a page, and every preset on both of its surfaces.
-    /// Colors come from the same settings, loom and theme calls the sidebar uses.
-    @Test func theCurrentRowIsInverseInEveryTheme() {
+    /// Every built-in theme in both appearances: the two tinted themes on the grounds the sidebar takes from a
+    /// page, and every solid theme on both of its surfaces. Colors come from the same settings, loom and theme
+    /// calls the sidebar uses.
+    @Test func theCurrentRowIsInverseInEveryTheme() throws {
         let settings = BrowserSettings.application
-        let savedAppearance = settings.appearance
-        let savedPreset = settings.themePreset
-        let savedThemes = settings.themeCustomizations
+        let saved = (settings.colorMode, settings.themeID, settings.userThemes, settings.themeAdjustments)
         let savedForcedDark = settings.forcesDarkAppearance
         let savedNativeAppearance = NSApp.appearance
         defer {
-            settings.themePreset = savedPreset
-            settings.themeCustomizations = savedThemes
-            settings.appearance = savedAppearance
+            settings.userThemes = saved.2
+            settings.themeAdjustments = saved.3
+            settings.themeID = saved.1
+            settings.colorMode = saved.0
             settings.forcesDarkAppearance = savedForcedDark
             NSApp.appearance = savedNativeAppearance
         }
         settings.forcesDarkAppearance = false
-        settings.themeCustomizations = [:]
-        settings.themePreset = nil
+        settings.userThemes = []
+        settings.themeAdjustments = [:]
 
         func colors(on ground: NSColor, scheme: ColorScheme) -> SidebarRowStyle.Colors {
             let ink: ColorScheme = PageInk.isLight(ground, scheme: scheme) ? .light : .dark
@@ -213,31 +202,40 @@ struct SidebarRowStyleTests {
         let pages: [NSColor?] = [
             nil, blue, rgb(1, 0.9, 0.2), rgb(0.5, 0.5, 0.5), rgb(0.02, 0.02, 0.03), rgb(1, 1, 1),
         ]
-        var checked = 0
-        for mode in AppearanceMode.allCases {
-            settings.appearance = mode
-            for scheme in appearances(of: mode) {
-                for page in pages {
-                    let ground = LoomChrome.sampledColor(page, scheme: scheme)
-                    expectInverse(colors(on: ground, scheme: scheme), on: ground, "\(mode) \(scheme) \(String(describing: page))")
-                    checked += 1
+        var tinted = 0
+        var solid = 0
+        for theme in ThemeCatalog.builtIn {
+            settings.themeID = theme.id
+            for scheme in [ColorScheme.light, .dark] {
+                settings.colorMode = scheme == .dark ? .dark : .light
+                if theme.ground == .solid {
+                    let ink = try #require(theme.variant(scheme).text)
+                    for isFloating in [false, true] {
+                        let ground = LoomChrome.sampledColor(blue, scheme: scheme, isFloating: isFloating)
+                        let result = colors(on: ground, scheme: scheme)
+                        let context = "\(theme.id) \(scheme) floating \(isFloating)"
+                        expectInverse(result, on: ground, context)
+                        #expect(same(result.fill, rgb(
+                            CGFloat((ink >> 16) & 255) / 255, CGFloat((ink >> 8) & 255) / 255, CGFloat(ink & 255) / 255
+                        )), "\(context) keeps its own text color")
+                        #expect(same(result.content, ground), "\(context) draws the row in its own sidebar color")
+                        solid += 1
+                    }
+                } else {
+                    for page in pages {
+                        let ground = LoomChrome.sampledColor(page, scheme: scheme)
+                        expectInverse(
+                            colors(on: ground, scheme: scheme), on: ground,
+                            "\(theme.id) \(scheme) \(String(describing: page))"
+                        )
+                        tinted += 1
+                    }
                 }
             }
         }
-        // Five themes, with Auto drawn in both appearances, on six grounds each.
-        #expect(checked == 6 * pages.count)
-
-        for preset in ThemePreset.allCases {
-            settings.themePreset = preset
-            let scheme: ColorScheme = preset.isDark ? .dark : .light
-            for isFloating in [false, true] {
-                let ground = LoomChrome.sampledColor(blue, scheme: scheme, isFloating: isFloating)
-                let result = colors(on: ground, scheme: scheme)
-                expectInverse(result, on: ground, "\(preset) floating \(isFloating)")
-                #expect(same(result.fill, preset.nsColor(.text)), "\(preset) keeps its own text color")
-                #expect(same(result.content, ground), "\(preset) draws the row in its own sidebar color")
-            }
-        }
+        // Standard and Calm in two appearances on six grounds each; five solid themes, two appearances, two surfaces.
+        #expect(tinted == 2 * 2 * pages.count)
+        #expect(solid == 5 * 2 * 2)
     }
 
     @Test func aCustomTextColorFillsTheCurrentRow() {

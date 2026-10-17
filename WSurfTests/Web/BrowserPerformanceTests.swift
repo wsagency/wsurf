@@ -235,4 +235,59 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             browser.cancelPendingSave()
         }
     }
+
+    /// What a 300-row sidebar asks the theme for while it draws: the loaded and unloaded text, the accent, and the
+    /// icon and URL inks, ten times over. With a copy that changes the palette, so no color is the plain default.
+    func testResolvingThemeColorsForACrowdedSidebar() {
+        MainActor.assumeIsolated {
+            let suite = "BrowserPerformanceTests-\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suite) else { return }
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let settings = BrowserSettings(defaults: defaults)
+            settings.editColors(scheme: .dark) {
+                $0.hue = 0.1
+                $0.primary = 0x3366FF
+                $0.icons = SidebarTextStyle(colorRGB: 0xFFAA00, opacity: 0.6)
+                $0.url = SidebarTextStyle(colorRGB: 0x88DDFF, opacity: 0.8)
+            }
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                var colors = 0
+                for _ in 0..<10 {
+                    for _ in 0..<300 {
+                        let theme = settings.resolvedTheme
+                        colors += settings.sidebarTextColor(scheme: .dark) == theme.dark.loadedInk ? 1 : 0
+                        colors += settings.sidebarTextColor(isDeferred: true, scheme: .dark) == theme.dark.unloadedInk ? 1 : 0
+                        colors += settings.resolvedTheme.accent == theme.accent ? 1 : 0
+                        colors += theme.dark.controlInk == nil ? 0 : 1
+                        colors += theme.dark.urlInk == nil ? 0 : 1
+                    }
+                }
+                XCTAssertEqual(colors, 15_000)
+            }
+        }
+    }
+
+    /// Choosing each built-in theme ten times: every choice rebuilds the cached colors once.
+    func testSwitchingThemes() {
+        MainActor.assumeIsolated {
+            let suite = "BrowserPerformanceTests-\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suite) else { return }
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let settings = BrowserSettings(defaults: defaults)
+            let ids = ThemeCatalog.builtIn.map(\.id)
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                var switched = 0
+                for _ in 0..<10 {
+                    for id in ids {
+                        settings.themeID = id
+                        let theme = settings.resolvedTheme
+                        if theme.id == id {
+                            switched += 1
+                        }
+                    }
+                }
+                XCTAssertEqual(switched, 10 * ids.count)
+            }
+        }
+    }
 }

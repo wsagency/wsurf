@@ -32,16 +32,14 @@ struct SettingsEntry: Identifiable, Hashable {
         String(localized: detail)
     }
 
-    /// Appearance rows that Settings hides while a color preset is on.
-    private static let hiddenByPreset: Set<String> = [
-        "appearance.theme", "appearance.themeCustomization", "appearance.windowStyle", "appearance.websiteTint",
-        "appearance.refraction", "appearance.transparency", "appearance.sidebarLoadedColor",
-        "appearance.sidebarUnloadedColor",
+    /// Appearance rows that Settings hides while the theme draws a solid ground of its own.
+    private static let hiddenBySolidTheme: Set<String> = [
+        "appearance.windowStyle", "appearance.websiteTint", "appearance.transparency",
     ]
 
-    /// `presetIsOn` sends a row the preset hides to the preset row, which is what controls those colors then.
-    func targetAnchor(presetIsOn: Bool) -> String {
-        if presetIsOn, Self.hiddenByPreset.contains(id) { return "appearance.themePreset" }
+    /// `themeIsSolid` sends a row the theme hides to the theme row, which is what controls those colors then.
+    func targetAnchor(themeIsSolid: Bool) -> String {
+        if themeIsSolid, Self.hiddenBySolidTheme.contains(id) { return "appearance.theme" }
         return targetAnchor
     }
 
@@ -142,15 +140,15 @@ enum SettingsIndex {
         SettingsEntry("general.defaultBrowser", .general, "Open links from other apps", "Whether WSurf is your default browser.",
                       ["default browser", "default", "links", "handler", "http", "https", "system"]),
 
-        SettingsEntry("appearance.theme", .appearance, "Theme", "Choose light, dark, pastel Calm, or match your Mac.",
-                      ["dark mode", "light mode", "calm", "pastel", "theme", "appearance", "colour", "color", "night"]),
-        SettingsEntry("appearance.themePreset", .appearance, "Color preset",
-                      "Use a named palette such as Catppuccin, Nord, Dracula, Gruvbox, or Rosé Pine.",
-                      ["preset", "catppuccin", "latte", "mocha", "nord", "dracula", "gruvbox", "rose pine",
-                       "rosé pine", "dawn", "palette", "theme", "color", "colour", "terminal",
+        SettingsEntry("appearance.mode", .appearance, "Appearance", "Use light or dark, or match your Mac.",
+                      ["dark mode", "light mode", "system", "automatic", "auto", "night", "appearance", "theme"]),
+        SettingsEntry("appearance.theme", .appearance, "Theme",
+                      "Choose a theme such as Standard, Calm, Catppuccin, Nord, Dracula, Gruvbox, or Rosé Pine.",
+                      ["calm", "pastel", "theme", "colour", "color", "preset", "catppuccin", "latte", "mocha", "nord",
+                       "dracula", "gruvbox", "rose pine", "rosé pine", "dawn", "palette", "terminal", "copy",
                       ]),
         SettingsEntry("appearance.themeCustomization", .appearance, "Theme customization",
-                      "Adjust brightness, hue, main color, control icons, and URL color and opacity.",
+                      "Adjust brightness, hue, main color, control icons, and URL color and opacity. Built-in themes make a copy.",
                       ["theme", "brightness", "darker", "lighter", "hue", "color", "colour", "controls",
                        "icons", "url", "opacity", "reset", "palette",
                       ]),
@@ -184,10 +182,10 @@ enum SettingsIndex {
                       "Adjust the text size in the sidebar.",
                       ["sidebar", "font", "size", "text", "larger", "smaller"]),
         SettingsEntry("appearance.sidebarLoadedColor", .appearance, "Loaded tab color",
-                      "Text and icon color and opacity are saved separately for each theme.",
+                      "Text and icon color and opacity are saved with the theme.",
                       ["sidebar", "font", "text", "color", "colour", "opacity", "loaded", "theme"]),
         SettingsEntry("appearance.sidebarUnloadedColor", .appearance, "Unloaded tab color",
-                      "Text and icon color and opacity are saved separately for each theme.",
+                      "Text and icon color and opacity are saved with the theme.",
                       ["sidebar", "font", "text", "color", "colour", "opacity", "unloaded", "sleep", "theme"]),
 
         SettingsEntry("appearance.sidebarRowSpacing", .appearance, "Sidebar row spacing",

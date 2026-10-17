@@ -291,12 +291,37 @@ struct SettingsList<Content: View>: View {
 }
 
 struct PreviewChoiceCard<Thumbnail: View>: View {
-    let label: LocalizedStringResource
+    private let label: Text
     let isSelected: Bool
     let action: () -> Void
-    @ViewBuilder let thumbnail: Thumbnail
+    let thumbnail: Thumbnail
 
     @State private var hovering = false
+
+    init(
+        label: LocalizedStringResource,
+        isSelected: Bool,
+        action: @escaping () -> Void,
+        @ViewBuilder thumbnail: () -> Thumbnail
+    ) {
+        self.label = Text(label)
+        self.isSelected = isSelected
+        self.action = action
+        self.thumbnail = thumbnail()
+    }
+
+    /// A card named by text that is not a localized key, such as the name of a saved theme.
+    init(
+        verbatim name: String,
+        isSelected: Bool,
+        action: @escaping () -> Void,
+        @ViewBuilder thumbnail: () -> Thumbnail
+    ) {
+        self.label = Text(verbatim: name)
+        self.isSelected = isSelected
+        self.action = action
+        self.thumbnail = thumbnail()
+    }
 
     private var shape: RoundedRectangle {
         RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
@@ -326,7 +351,7 @@ struct PreviewChoiceCard<Thumbnail: View>: View {
                     )
                     .scaleEffect(hovering ? 1.015 : 1)
 
-                Text(label)
+                label
                     .font(.system(size: 11.5, weight: isSelected ? .semibold : .regular))
                     .frame(width: AppearanceThumbnailMetrics.width, alignment: .center)
             }

@@ -17,13 +17,6 @@ struct AppearancePickerFitTests {
         return renderer.nsImage?.size.width ?? 0
     }
 
-    @Test func theThemeCardsWrapIntoANarrowPage() {
-        let narrow = AppearanceThumbnailMetrics.width + 20
-        let picker = ThemePicker(selection: .system, onSelect: { _ in })
-
-        #expect(widthTaken(picker, proposing: narrow) <= narrow)
-    }
-
     @Test func theWindowStyleCardsWrapIntoANarrowPage() {
         let narrow = AppearanceThumbnailMetrics.width + 20
         let picker = LoomStylePicker(
@@ -34,13 +27,5 @@ struct AppearancePickerFitTests {
         )
 
         #expect(widthTaken(picker, proposing: narrow) <= narrow)
-    }
-
-    @Test func theCardsStayInOneRowWhenThereIsRoom() {
-        let roomy = AppearanceThumbnailMetrics.width * 3
-            + AppearanceThumbnailMetrics.spacing * 2
-        let picker = ThemePicker(selection: .system, onSelect: { _ in })
-
-        #expect(widthTaken(picker, proposing: roomy) <= roomy)
     }
 }

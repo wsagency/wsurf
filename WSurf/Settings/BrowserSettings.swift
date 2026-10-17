@@ -16,6 +16,8 @@ final class BrowserSettings {
 #endif
 
     enum Key {
+        /// The settings from before themes. The migration reads them once; nothing writes or removes them, so an
+        /// older build still finds them.
         static let appearance = "appearance.mode"
         static let websiteTint = "appearance.websiteTint"
         static let websiteColor = "appearance.websiteColor"
@@ -86,24 +88,20 @@ final class BrowserSettings {
     @ObservationIgnored private let sessionDefaults: UserDefaults
     @ObservationIgnored private let appliesAppearanceGlobally: Bool
     @ObservationIgnored private var applicationSettings: BrowserSettings?
-    private var globalSettings: BrowserSettings {
+    var globalSettings: BrowserSettings {
         applicationSettings ?? self
     }
     @ObservationIgnored var storedColorMode: AppearanceMode?
     @ObservationIgnored var storedThemeID: String?
     @ObservationIgnored var storedUserThemes: [ThemeDefinition]?
     @ObservationIgnored var storedThemeAdjustments: [String: ThemeAdjustment]?
-    @ObservationIgnored private var storedAppearance: AppearanceMode?
-    @ObservationIgnored private var storedLoomStyle: LoomStyle?
-    @ObservationIgnored private var storedTransparency: Double?
+    /// The resolved colors of the selected theme, rebuilt after the theme, a saved theme or an adjustment changes.
+    @ObservationIgnored var themeCache: ResolvedTheme?
     @ObservationIgnored private var storedSidebarFontFamily: String?
     @ObservationIgnored private var storedSidebarFontSize: Double?
     @ObservationIgnored private var storedSidebarFontWeight: SidebarFontWeight?
     @ObservationIgnored private var storedSidebarRowSpacing: Double?
     @ObservationIgnored private var storedSidebarFolderTint: Double?
-    @ObservationIgnored private var storedSidebarTextStyles: [String: SidebarTextStyle]?
-    @ObservationIgnored private var storedThemeCustomizations: [String: ThemeCustomization]?
-    @ObservationIgnored var storedThemePreset: ThemePreset??
     @ObservationIgnored private var storedMatchesWebsiteColor: Bool?
     @ObservationIgnored private var storedUpdateChannel: UpdateChannel?
     @ObservationIgnored private var storedPageZoom: Double?
@@ -204,23 +202,6 @@ final class BrowserSettings {
 
     // MARK: - Appearance
 
-    var appearance: AppearanceMode {
-        get { globalValue(\.appearance, storage: storedAppearance) }
-        set {
-            setGlobal(\BrowserSettings.appearance, storage: \BrowserSettings.storedAppearance, value: newValue, key: Key.appearance, encode: { $0.rawValue }) { $0.applyAppearance() }
-        }
-    }
-
-    var loomStyle: LoomStyle {
-        get { globalValue(\.loomStyle, storage: storedLoomStyle) }
-        set { setGlobal(\BrowserSettings.loomStyle, storage: \BrowserSettings.storedLoomStyle, value: newValue, key: Key.loomStyle, encode: { $0.rawValue }) }
-    }
-
-    var transparency: Double {
-        get { globalValue(\.transparency, storage: storedTransparency) }
-        set { setGlobal(\BrowserSettings.transparency, storage: \BrowserSettings.storedTransparency, value: newValue, key: Key.transparency) }
-    }
-
     var sidebarFontFamily: String {
         get { globalValue(\.sidebarFontFamily, storage: storedSidebarFontFamily) }
         set {
@@ -265,21 +246,6 @@ final class BrowserSettings {
         set {
             let value = newValue.isFinite ? min(max(newValue, 0), 1) : 0.35
             setGlobal(\BrowserSettings.sidebarFolderTint, storage: \BrowserSettings.storedSidebarFolderTint, value: value, key: Key.sidebarFolderTint)
-        }
-    }
-
-    var sidebarTextStyles: [String: SidebarTextStyle] {
-        get { globalValue(\.sidebarTextStyles, storage: storedSidebarTextStyles) }
-        set {
-            setGlobal(\BrowserSettings.sidebarTextStyles, storage: \BrowserSettings.storedSidebarTextStyles, value: newValue, key: Key.sidebarTextStyles, encode: { try? JSONEncoder().encode($0) })
-        }
-    }
-
-    var themeCustomizations: [String: ThemeCustomization] {
-        get { globalValue(\.themeCustomizations, storage: storedThemeCustomizations) }
-        set {
-            setGlobal(\BrowserSettings.themeCustomizations, storage: \BrowserSettings.storedThemeCustomizations,
-                      value: newValue, key: Key.themeCustomizations, encode: { try? JSONEncoder().encode($0) })
         }
     }
 
@@ -698,10 +664,7 @@ final class BrowserSettings {
             storedThemeID = themes.themeID
             storedUserThemes = Self.normalized(themes.userThemes)
             storedThemeAdjustments = themes.adjustments.mapValues { $0.bounded() }
-            storedAppearance = string(Key.appearance)
-                .flatMap(AppearanceMode.init(rawValue:)) ?? .system
             let legacyLoomStyle = string(Key.loomStyle)
-            storedLoomStyle = legacyLoomStyle == LoomStyle.transparent.rawValue ? .transparent : .standard
             if let storedWebsiteTint = object(Key.websiteTint) as? Bool {
                 storedMatchesWebsiteColor = storedWebsiteTint
             } else if legacyLoomStyle == "websiteTint" {
@@ -711,21 +674,13 @@ final class BrowserSettings {
             } else {
                 storedMatchesWebsiteColor = false
             }
-            storedTransparency = object(Key.transparency) == nil
-                ? 0.5
-                : min(max(double(Key.transparency), 0), 1)
             storedSidebarFontFamily = string(Key.sidebarFontFamily) ?? ""
             storedSidebarFontSize = min(max(finiteNumber(Key.sidebarFontSize) ?? 12, 10), 20)
             storedSidebarFontWeight = string(Key.sidebarFontWeight)
                 .flatMap(SidebarFontWeight.init(rawValue:)) ?? .medium
             storedSidebarRowSpacing = min(max(finiteNumber(Key.sidebarRowSpacing) ?? 1, 0), 8)
             storedSidebarFolderTint = min(max(finiteNumber(Key.sidebarFolderTint) ?? 0.35, 0), 1)
-            let storedThemes = defaults.data(forKey: Key.themeCustomizations)
-                .flatMap { try? JSONDecoder().decode([String: ThemeCustomization].self, from: $0) } ?? [:]
-            storedThemeCustomizations = storedThemes.mapValues { $0.bounded() }
-            storedThemePreset = .some(string(Key.themePreset).flatMap(ThemePreset.init(rawValue:)))
             defaults.removeObject(forKey: "appearance.sidebar.directRemoveUnloadedTabs")
-            storedSidebarTextStyles = Self.decodeSidebarTextStyles(defaults.data(forKey: Key.sidebarTextStyles))
 
             storedShowsMediaPlayer = object(Key.mediaPlayer) as? Bool ?? true
             storedShowsLyrics = object(Key.lyrics) as? Bool ?? true
@@ -804,26 +759,24 @@ final class BrowserSettings {
         guard appliesAppearanceGlobally else { return }
         NSApp.appearance = forcesDarkAppearance
             ? NSAppearance(named: .darkAqua)
-            : resolvedAppearance.nsAppearance
+            : colorMode.nsAppearance
     }
 
     func resetToDefaults() {
         fillsPasswords = true
         fillsContacts = true
         fillsPaymentCards = true
-        appearance = .system
-        loomStyle = .standard
+        // Saved themes stay: deleting them would lose the person's work.
+        colorMode = .system
+        themeID = ThemeCatalog.defaultID
+        themeAdjustments = [:]
         matchesWebsiteColor = true
-        transparency = 0.5
         sidebarFontFamily = ""
         sidebarFontSize = 12
         sidebarFontWeight = .medium
         sidebarRowSpacing = 1
         sidebarFolderTint = 0.35
-        sidebarTextStyles = [:]
         refractsTabColor = true
-        themeCustomizations = [:]
-        themePreset = nil
         pageZoom = 1
         searchEngineID = SearchEngine.duckDuckGo.id
         customSearchName = ""

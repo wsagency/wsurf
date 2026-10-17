@@ -3,6 +3,26 @@
 
 import Foundation
 
+/// The stored format of the per-appearance customizations from before themes had variants. Only the migration
+/// reads it: the keys stay in place, so an older build still finds them.
+struct ThemeCustomization: Codable, Equatable {
+    var brightness: Double = 0
+    var hue: Double = 0
+    var primary = SidebarTextStyle()
+    var controls = SidebarTextStyle()
+    var url = SidebarTextStyle()
+
+    func bounded() -> Self {
+        var result = self
+        result.brightness = brightness.isFinite ? min(max(brightness, -0.5), 0.5) : 0
+        result.hue = hue.isFinite ? min(max(hue, -0.5), 0.5) : 0
+        result.primary = primary.bounded(defaultOpacity: 1)
+        result.controls = controls.bounded(defaultOpacity: 1)
+        result.url = url.bounded(defaultOpacity: 1)
+        return result
+    }
+}
+
 /// The appearance settings of an install that predates themes, as the old keys stored them.
 struct LegacyAppearance {
     /// False for a fresh install, which starts with the default theme.

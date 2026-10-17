@@ -151,3 +151,27 @@ check_average \
   '4096' \
   'Credential Manager page layout memory growth' \
   'kB'
+check_average \
+  'BrowserPerformanceTests/testResolvingThemeColorsForACrowdedSidebar()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.008' \
+  '15,000 theme color lookups for a 300-row sidebar' \
+  's'
+check_average \
+  'BrowserPerformanceTests/testResolvingThemeColorsForACrowdedSidebar()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Theme color lookup memory growth' \
+  'kB'
+check_average \
+  'BrowserPerformanceTests/testSwitchingThemes()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.015' \
+  'Seventy theme switches' \
+  's'
+check_average \
+  'BrowserPerformanceTests/testSwitchingThemes()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Theme switching memory growth' \
+  'kB'

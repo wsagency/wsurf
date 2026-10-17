@@ -166,43 +166,46 @@ struct SidebarRowRenderTests {
         #expect(!isBlue(try pixel(of: opened, x: dotCenter.x, y: dotCenter.y)))
     }
 
-    // MARK: - Color presets
+    // MARK: - Solid themes
 
-    @Test func theCurrentRowWearsEachPresetsOwnTextColor() throws {
+    @Test func theCurrentRowWearsEachSolidThemesOwnTextColor() throws {
         let settings = BrowserSettings.application
-        let savedPreset = settings.themePreset
-        let savedAppearance = settings.appearance
-        let savedThemes = settings.themeCustomizations
+        let saved = (settings.colorMode, settings.themeID, settings.userThemes, settings.themeAdjustments)
         let savedForcedDark = settings.forcesDarkAppearance
         let savedNativeAppearance = NSApp.appearance
         defer {
-            settings.themePreset = savedPreset
-            settings.themeCustomizations = savedThemes
-            settings.appearance = savedAppearance
+            settings.userThemes = saved.2
+            settings.themeAdjustments = saved.3
+            settings.themeID = saved.1
+            settings.colorMode = saved.0
             settings.forcesDarkAppearance = savedForcedDark
             NSApp.appearance = savedNativeAppearance
         }
         settings.forcesDarkAppearance = false
+        settings.userThemes = []
+        settings.themeAdjustments = [:]
         let fixture = makeFixture()
         _ = fixture.browser.newTab()
         let current = fixture.browser.newTab()
 
-        for preset in ThemePreset.allCases {
-            settings.themePreset = preset
-            let scheme: ColorScheme = preset.isDark ? .dark : .light
-            let ground = LoomChrome.sampledColor(nil, scheme: scheme, isFloating: true)
-            let row = sidebar(
-                SidebarTabRow(tab: current, depth: 0, context: fixture.context), scheme: scheme, ground: ground
-            )
+        for theme in ThemeCatalog.builtIn where theme.ground == .solid {
+            settings.themeID = theme.id
+            for scheme in [ColorScheme.light, .dark] {
+                settings.colorMode = scheme == .dark ? .dark : .light
+                let ground = LoomChrome.sampledColor(nil, scheme: scheme, isFloating: true)
+                let row = sidebar(
+                    SidebarTabRow(tab: current, depth: 0, context: fixture.context), scheme: scheme, ground: ground
+                )
 
-            let painted = try pixel(of: row, x: emptySpot.x, y: emptySpot.y)
-            let wanted = preset.nsColor(.text)
+                let painted = try pixel(of: row, x: emptySpot.x, y: emptySpot.y)
+                let ink = try #require(theme.variant(scheme).text)
 
-            // The window reads colors back through its own color space, which moves them by a few percent. A
-            // fallback to black or white would be off by far more.
-            #expect(abs(painted.redComponent - wanted.redComponent) < 0.06, "\(preset) red")
-            #expect(abs(painted.greenComponent - wanted.greenComponent) < 0.06, "\(preset) green")
-            #expect(abs(painted.blueComponent - wanted.blueComponent) < 0.06, "\(preset) blue")
+                // The window reads colors back through its own color space, which moves them by a few percent. A
+                // fallback to black or white would be off by far more.
+                #expect(abs(painted.redComponent - CGFloat((ink >> 16) & 255) / 255) < 0.06, "\(theme.id) \(scheme) red")
+                #expect(abs(painted.greenComponent - CGFloat((ink >> 8) & 255) / 255) < 0.06, "\(theme.id) \(scheme) green")
+                #expect(abs(painted.blueComponent - CGFloat(ink & 255) / 255) < 0.06, "\(theme.id) \(scheme) blue")
+            }
         }
     }
 

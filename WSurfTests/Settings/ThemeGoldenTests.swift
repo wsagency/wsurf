@@ -84,21 +84,32 @@ struct ThemeGoldenTests {
 
     // MARK: - Installing a scenario
 
-    /// Puts `scenario` on the application settings. This is the one place that knows how the settings are stored.
+    /// Puts `scenario` on the application settings the way an upgrade does: as the old keys, read by a new
+    /// `BrowserSettings` that migrates them. This is the one place that knows how the settings are stored.
     private func install(_ scenario: Scenario) throws {
+        let name = "ThemeGolden-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(true, forKey: "appearance.websiteTint")
+        defaults.set(scenario.mode, forKey: "appearance.mode")
+        defaults.set(scenario.preset, forKey: "appearance.themePreset")
+        defaults.set(try JSONEncoder().encode(scenario.customizations), forKey: "appearance.themeCustomizations")
+        defaults.set(try JSONEncoder().encode(scenario.textStyles), forKey: "appearance.sidebar.textStyles")
+        let upgraded = BrowserSettings(defaults: defaults)
+
         let settings = BrowserSettings.application
         settings.forcesDarkAppearance = false
-        settings.appearance = try #require(AppearanceMode(rawValue: scenario.mode))
-        settings.themePreset = scenario.preset.flatMap(ThemePreset.init(rawValue:))
-        settings.themeCustomizations = scenario.customizations
-        settings.sidebarTextStyles = scenario.textStyles
+        settings.userThemes = upgraded.userThemes
+        settings.themeAdjustments = upgraded.themeAdjustments
+        settings.themeID = upgraded.themeID
+        settings.colorMode = upgraded.colorMode
     }
 
     private struct Snapshot {
         let mode: AppearanceMode
-        let preset: ThemePreset?
-        let customizations: [String: ThemeCustomization]
-        let textStyles: [String: SidebarTextStyle]
+        let themeID: String
+        let userThemes: [ThemeDefinition]
+        let adjustments: [String: ThemeAdjustment]
         let forcesDark: Bool
         let native: NSAppearance?
     }
@@ -106,17 +117,17 @@ struct ThemeGoldenTests {
     private func snapshot() -> Snapshot {
         let settings = BrowserSettings.application
         return Snapshot(
-            mode: settings.appearance, preset: settings.themePreset, customizations: settings.themeCustomizations,
-            textStyles: settings.sidebarTextStyles, forcesDark: settings.forcesDarkAppearance, native: NSApp.appearance
+            mode: settings.colorMode, themeID: settings.themeID, userThemes: settings.userThemes,
+            adjustments: settings.themeAdjustments, forcesDark: settings.forcesDarkAppearance, native: NSApp.appearance
         )
     }
 
     private func restore(_ saved: Snapshot) {
         let settings = BrowserSettings.application
-        settings.themePreset = saved.preset
-        settings.themeCustomizations = saved.customizations
-        settings.sidebarTextStyles = saved.textStyles
-        settings.appearance = saved.mode
+        settings.userThemes = saved.userThemes
+        settings.themeAdjustments = saved.adjustments
+        settings.themeID = saved.themeID
+        settings.colorMode = saved.mode
         settings.forcesDarkAppearance = saved.forcesDark
         NSApp.appearance = saved.native
     }
@@ -191,6 +202,25 @@ struct ThemeGoldenTests {
         }
     }
 
+    /// Rows whose old colors came from the other appearance's settings: a window drawn dark under a light mode or a
+    /// light preset, as a private window is. The old code fell back to Standard or to the light customizations
+    /// there. A theme has a dark variant for exactly that window, so these rows differ on purpose. A value is the
+    /// row of the same family in the appearance the window now shows, which the table holds; nil means the new
+    /// colors have no counterpart in the table and are checked by `ThemeResolutionTests` and `ThemeCatalogTests`.
+    private static let privateWindowRows: [String: String?] = [
+        "preset-catppuccinLatte|darkAqua": "preset-catppuccinMocha|darkAqua",
+        "preset-catppuccinMocha|aqua": "preset-catppuccinLatte|aqua",
+        "preset-gruvboxLight|darkAqua": "preset-gruvboxDark|darkAqua",
+        "preset-gruvboxDark|aqua": "preset-gruvboxLight|aqua",
+        "preset-rosePineDawn|darkAqua": "preset-rosePine|darkAqua",
+        "preset-rosePine|aqua": "preset-rosePineDawn|aqua",
+        "preset-nord|aqua": nil,
+        "preset-dracula|aqua": nil,
+        "preset-over-customizations|aqua": nil,
+        "mode-light-customized-both|darkAqua": nil,
+        "calm-customized|darkAqua": nil,
+    ]
+
     @Test func everyRecordedColorSurvivesTheMigration() throws {
         let saved = snapshot()
         defer { restore(saved) }
@@ -206,7 +236,12 @@ struct ThemeGoldenTests {
             }
             let appearance = try #require(NSAppearance(named: row.appearance))
             let measured = measure(appearance, scheme: row.scheme)
-            let expected = parts[2].split(separator: " ").map(String.init)
+            var expected = parts[2].split(separator: " ").map(String.init)
+            if let changed = Self.privateWindowRows["\(parts[0])|\(parts[1])"] {
+                guard let partner = changed else { continue }
+                let row = try #require(Self.table.split(separator: "\n").first { $0.hasPrefix(partner + "|") })
+                expected = row.split(separator: "|")[2].split(separator: " ").map(String.init)
+            }
             #expect(expected.count == Self.cellNames.count && measured.count == expected.count)
             for (name, pair) in zip(Self.cellNames, zip(expected, measured)) {
                 #expect(
@@ -216,7 +251,8 @@ struct ThemeGoldenTests {
                 checked += 1
             }
         }
-        #expect(checked == Self.scenarios.count * Self.appearances.count * Self.cellNames.count)
+        let skipped = Self.privateWindowRows.values.filter { $0 == nil }.count
+        #expect(checked == (Self.scenarios.count * Self.appearances.count - skipped) * Self.cellNames.count)
     }
 
     // MARK: - The recorded colors

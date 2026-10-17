@@ -143,17 +143,17 @@ extension AppCoordinator {
         if profiles.isPrivate {
             browser.context.favicons.schemeOverride = .dark
         } else {
-            switch settings.resolvedAppearance {
+            switch settings.colorMode {
             case .system:
                 browser.context.favicons.schemeOverride = nil
-            case .light, .lightCalm:
+            case .light:
                 browser.context.favicons.schemeOverride = .light
-            case .dark, .darkCalm:
+            case .dark:
                 browser.context.favicons.schemeOverride = .dark
             }
         }
         nativeWindow?.appearance = profiles.isPrivate
-            ? NSAppearance(named: .darkAqua) : settings.resolvedAppearance.nsAppearance
+            ? NSAppearance(named: .darkAqua) : settings.colorMode.nsAppearance
         nativeWindow?.title = windowTitle
         reloadFaviconsIfSchemeChanged()
     }

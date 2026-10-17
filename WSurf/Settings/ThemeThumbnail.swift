@@ -16,15 +16,7 @@ enum AppearanceThumbnailMetrics {
 }
 
 struct ThemeThumbnailPalette: Equatable {
-    enum Identifier: Hashable {
-        case light
-        case dark
-        case lightCalm
-        case darkCalm
-        case preset(ThemePreset)
-    }
-
-    let id: Identifier
+    let id: String
     let backdrop: Color
     let chrome: Color
     let canvas: Color
@@ -32,11 +24,11 @@ struct ThemeThumbnailPalette: Equatable {
     let primary: Color
     let secondary: Color
     let accent: Color
-    /// Only a preset paints the sidebar as its own surface; the other palettes share the backdrop.
+    /// Only a solid theme paints the sidebar as its own surface; the other palettes share the backdrop.
     var sidebar: Color?
 
-    static let light = ThemeThumbnailPalette(
-        id: .light,
+    private static let light = ThemeThumbnailPalette(
+        id: "light",
         backdrop: Color(red: 0.88, green: 0.90, blue: 0.94),
         chrome: Color(white: 0.91),
         canvas: Color(white: 0.985),
@@ -46,8 +38,8 @@ struct ThemeThumbnailPalette: Equatable {
         accent: Color(red: 0.18, green: 0.48, blue: 0.94)
     )
 
-    static let dark = ThemeThumbnailPalette(
-        id: .dark,
+    private static let dark = ThemeThumbnailPalette(
+        id: "dark",
         backdrop: Color(red: 0.07, green: 0.08, blue: 0.11),
         chrome: Color(white: 0.16),
         canvas: Color(white: 0.105),
@@ -57,8 +49,8 @@ struct ThemeThumbnailPalette: Equatable {
         accent: Color(red: 0.26, green: 0.57, blue: 1.0)
     )
 
-    static let lightCalm = ThemeThumbnailPalette(
-        id: .lightCalm,
+    private static let lightCalm = ThemeThumbnailPalette(
+        id: "lightCalm",
         backdrop: Color(red: 0.80, green: 0.73, blue: 0.75),
         chrome: Color(red: 0.86, green: 0.80, blue: 0.79),
         canvas: Color(red: 0.91, green: 0.85, blue: 0.85),
@@ -68,8 +60,8 @@ struct ThemeThumbnailPalette: Equatable {
         accent: Color(red: 0.70, green: 0.40, blue: 0.55)
     )
 
-    static let darkCalm = ThemeThumbnailPalette(
-        id: .darkCalm,
+    private static let darkCalm = ThemeThumbnailPalette(
+        id: "darkCalm",
         backdrop: Color(red: 0.12, green: 0.11, blue: 0.17),
         chrome: Color(red: 0.18, green: 0.16, blue: 0.24),
         canvas: Color(red: 0.15, green: 0.14, blue: 0.21),
@@ -79,135 +71,63 @@ struct ThemeThumbnailPalette: Equatable {
         accent: Color(red: 0.82, green: 0.57, blue: 0.72)
     )
 
-    static func palettes(for mode: AppearanceMode) -> [ThemeThumbnailPalette] {
-        switch mode {
-        case .system:
-            [.light, .dark]
-        case .light:
-            [.light]
-        case .dark:
-            [.dark]
-        case .lightCalm:
-            [.lightCalm]
-        case .darkCalm:
-            [.darkCalm]
+    /// The thumbnail of `theme` in one appearance. A solid theme shows its own colors; the tinted themes show a
+    /// fixed picture of their material, with the person's palette changes and inks laid over it.
+    init(_ theme: ThemeDefinition, adjustment: ThemeAdjustment, scheme: ColorScheme) {
+        let isDark = scheme == .dark
+        let variant = ResolvedVariant(theme.variant(scheme), isDark: isDark, brightness: adjustment.brightness(scheme))
+        let appearance = NSAppearance(named: isDark ? .darkAqua : .aqua) ?? NSApp.effectiveAppearance
+        func color(_ role: RoleColor) -> Color {
+            Color(nsColor: role.resolved(in: appearance))
         }
-    }
-
-    func customized(for theme: AppearanceMode) -> Self {
-        let customization = BrowserSettings.application.themeCustomization(theme: theme)
+        let id = "\(theme.id).\(isDark ? "dark" : "light")"
+        if theme.ground == .solid {
+            self.init(
+                id: id, backdrop: color(variant.window), chrome: color(variant.window), canvas: color(variant.sidebar),
+                surface: color(variant.surface), primary: variant.controlInk ?? variant.loadedInk,
+                secondary: variant.urlInk ?? variant.unloadedInk, accent: color(variant.accent),
+                sidebar: color(variant.sidebar)
+            )
+            return
+        }
+        let base = switch (theme.ground, isDark) {
+        case (.softTinted, false):
+            Self.lightCalm
+        case (.softTinted, true):
+            Self.darkCalm
+        case (_, false):
+            Self.light
+        case (_, true):
+            Self.dark
+        }
         func adjusted(_ color: Color, accent: Bool = false) -> Color {
-            Color(nsColor: Theme.customized(NSColor(color), customization: customization, isAccent: accent))
-        }
-        return Self(
-            id: id, backdrop: adjusted(backdrop), chrome: adjusted(chrome),
-            canvas: canvas, surface: adjusted(surface),
-            primary: (customization.controls.color ?? primary).opacity(customization.controls.opacity),
-            secondary: (customization.url.color ?? secondary).opacity(customization.url.opacity),
-            accent: adjusted(accent, accent: true)
-        )
-    }
-}
-
-extension ThemeThumbnailPalette {
-    init(preset: ThemePreset) {
-        func color(_ role: ThemePreset.Role) -> Color {
-            Color(nsColor: preset.nsColor(role))
+            guard variant.changesPalette else { return color }
+            return Color(nsColor: Theme.customized(NSColor(color), change: variant.change, isAccent: accent))
         }
         self.init(
-            id: .preset(preset), backdrop: color(.window), chrome: color(.window),
-            canvas: color(.sidebar), surface: color(.surface),
-            primary: color(.text), secondary: color(.text).opacity(preset.unloadedTextOpacity), accent: color(.accent),
-            sidebar: color(.sidebar)
+            id: id, backdrop: adjusted(base.backdrop), chrome: adjusted(base.chrome), canvas: base.canvas,
+            surface: adjusted(base.surface), primary: variant.controlInk ?? base.primary,
+            secondary: variant.urlInk ?? base.secondary, accent: adjusted(base.accent, accent: true)
         )
     }
-}
 
-struct ThemePicker: View {
-    let selection: AppearanceMode
-    let onSelect: (AppearanceMode) -> Void
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: AppearanceThumbnailMetrics.spacing) {
-                cards
-            }
-            LazyVGrid(
-                columns: AppearanceThumbnailMetrics.columns,
-                spacing: AppearanceThumbnailMetrics.spacing
-            ) {
-                cards
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    @ViewBuilder
-    private var cards: some View {
-        ForEach(AppearanceMode.allCases) { mode in
-            ThemeThumbnailCard(
-                mode: mode,
-                isSelected: mode == selection
-            ) {
-                onSelect(mode)
-            }
-        }
+    init(
+        id: String, backdrop: Color, chrome: Color, canvas: Color, surface: Color, primary: Color,
+        secondary: Color, accent: Color, sidebar: Color? = nil
+    ) {
+        self.id = id
+        self.backdrop = backdrop
+        self.chrome = chrome
+        self.canvas = canvas
+        self.surface = surface
+        self.primary = primary
+        self.secondary = secondary
+        self.accent = accent
+        self.sidebar = sidebar
     }
 }
 
-/// One card per preset; the thumbnail shows the preset's own colors.
-struct ThemePresetPicker: View {
-    let selection: ThemePreset?
-    let onSelect: (ThemePreset) -> Void
-
-    var body: some View {
-        LazyVGrid(columns: AppearanceThumbnailMetrics.columns, spacing: AppearanceThumbnailMetrics.spacing) {
-            ForEach(ThemePreset.allCases) { preset in
-                PreviewChoiceCard(label: preset.label, isSelected: preset == selection) {
-                    onSelect(preset)
-                } thumbnail: {
-                    ThemeThumbnailWindow(palette: ThemeThumbnailPalette(preset: preset))
-                }
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
-private struct ThemeThumbnailCard: View {
-    let mode: AppearanceMode
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        PreviewChoiceCard(label: mode.label, isSelected: isSelected, action: action) {
-            thumbnail
-        }
-    }
-
-    private var thumbnail: some View {
-        let palettes = ThemeThumbnailPalette.palettes(for: mode).map {
-            $0.customized(for: mode == .system ? ($0.id == .dark ? .dark : .light) : mode)
-        }
-        return ZStack(alignment: .leading) {
-            ForEach(Array(palettes.enumerated()), id: \.element.id) { index, palette in
-                ThemeThumbnailWindow(palette: palette)
-                    .frame(
-                        width: AppearanceThumbnailMetrics.width,
-                        height: AppearanceThumbnailMetrics.height
-                    )
-                    .clipShape(
-                        Slice(
-                            start: CGFloat(index) / CGFloat(palettes.count),
-                            end: CGFloat(index + 1) / CGFloat(palettes.count)
-                        )
-                    )
-            }
-        }
-    }
-}
-
-private nonisolated struct Slice: Shape {
+nonisolated struct Slice: Shape {
     let start: CGFloat
     let end: CGFloat
 
@@ -221,7 +141,7 @@ private nonisolated struct Slice: Shape {
     }
 }
 
-private struct ThemeThumbnailWindow: View {
+struct ThemeThumbnailWindow: View {
     let palette: ThemeThumbnailPalette
 
     var body: some View {

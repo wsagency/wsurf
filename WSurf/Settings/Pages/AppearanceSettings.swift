@@ -29,31 +29,23 @@ struct AppearanceSettings: View {
         SettingsPageHeader(title: "Appearance")
 
         SettingsCard {
-            if settings.themePreset == nil {
-                DetailRow(title: "Theme", layout: .stacked) {
-                    ThemePicker(selection: settings.appearance) { settings.appearance = $0 }
-                }
-                .settingsAnchor("appearance.theme")
-
-                RowSeparator()
+            DetailRow(title: "Appearance") {
+                SettingsMenu(
+                    options: AppearanceMode.allCases.map { .init(value: $0, label: String(localized: $0.label)) },
+                    selection: $settings.colorMode
+                )
             }
+            .settingsAnchor("appearance.mode")
 
-            DetailRow(
-                title: "Color preset",
-                caption: """
-                Use a named palette for the window, sidebar, and controls. While a preset is on, its colors replace \
-                the theme, your custom colors, window style, transparency, and website tint; Reset brings your own \
-                settings back.
-                """,
-                layout: .stacked
-            ) {
-                VStack(alignment: .leading, spacing: 12) {
-                    ThemePresetPicker(selection: settings.themePreset) { settings.themePreset = $0 }
-                    Button("Reset") { settings.themePreset = nil }
-                        .disabled(settings.themePreset == nil)
-                }
+            RowSeparator()
+
+            DetailRow(title: "Theme") {
+                SettingsMenu(
+                    options: settings.allThemes.map { .init(value: $0.id, label: $0.name) },
+                    selection: Binding(get: { settings.selectedTheme.id }, set: { settings.themeID = $0 })
+                )
             }
-            .settingsAnchor("appearance.themePreset")
+            .settingsAnchor("appearance.theme")
 
             RowSeparator()
 
@@ -76,10 +68,8 @@ struct AppearanceSettings: View {
             .settingsAnchor("appearance.zoom")
         }
 
-        if settings.themePreset == nil {
-            themeCustomizationSection
-            WindowStyleSettingsSection(settings: settings)
-        }
+        themeCustomizationSection
+        WindowStyleSettingsSection(settings: settings)
 
         SettingsSection(title: "Sidebar", symbol: "sidebar.left") {
             DetailRow(title: "Show sidebar") {
@@ -145,27 +135,25 @@ struct AppearanceSettings: View {
 
             RowSeparator()
 
-            if settings.themePreset == nil {
-                DetailRow(
-                    title: "Loaded tab color",
-                    caption: "Text and icon color and opacity are saved separately for each theme."
-                ) {
-                    sidebarColorControls(isDeferred: false)
-                }
-                .settingsAnchor("appearance.sidebarLoadedColor")
-
-                RowSeparator()
-
-                DetailRow(
-                    title: "Unloaded tab color",
-                    caption: "Text and icon color and opacity are saved separately for each theme."
-                ) {
-                    sidebarColorControls(isDeferred: true)
-                }
-                .settingsAnchor("appearance.sidebarUnloadedColor")
-
-                RowSeparator()
+            DetailRow(
+                title: "Loaded tab color",
+                caption: "Text and icon color and opacity are saved with the theme."
+            ) {
+                sidebarColorControls(isDeferred: false)
             }
+            .settingsAnchor("appearance.sidebarLoadedColor")
+
+            RowSeparator()
+
+            DetailRow(
+                title: "Unloaded tab color",
+                caption: "Text and icon color and opacity are saved with the theme."
+            ) {
+                sidebarColorControls(isDeferred: true)
+            }
+            .settingsAnchor("appearance.sidebarUnloadedColor")
+
+            RowSeparator()
 
             DetailRow(
                 title: "Row spacing",
@@ -202,18 +190,39 @@ struct AppearanceSettings: View {
         }
     }
 
-    private var customizationTheme: AppearanceMode {
-        settings.sidebarAppearance(scheme: windowColorScheme)
+    /// The appearance whose colors the rows below edit: the one the window shows, or the one chosen in System mode.
+    private var shownScheme: ColorScheme {
+        switch settings.colorMode {
+        case .system:
+            windowColorScheme
+        case .light:
+            .light
+        case .dark:
+            .dark
+        }
     }
 
-    private func customizationBinding<Value>(_ keyPath: WritableKeyPath<ThemeCustomization, Value>) -> Binding<Value> {
-        let theme = customizationTheme
+    private var shownVariant: ThemeVariant {
+        settings.selectedTheme.variant(shownScheme)
+    }
+
+    /// Reads a color of the shown variant. Writing edits the theme, and edits a copy when it is a built-in one.
+    private func colorBinding<Value>(_ keyPath: WritableKeyPath<ThemeVariant, Value>) -> Binding<Value> {
+        let scheme = shownScheme
         return Binding(
-            get: { settings.themeCustomization(theme: theme)[keyPath: keyPath] },
+            get: { settings.selectedTheme.variant(scheme)[keyPath: keyPath] },
+            set: { value in settings.editColors(scheme: scheme) { $0[keyPath: keyPath] = value } }
+        )
+    }
+
+    private var brightnessBinding: Binding<Double> {
+        let scheme = shownScheme
+        return Binding(
+            get: { settings.themeAdjustment.brightness(scheme) },
             set: {
-                var value = settings.themeCustomization(theme: theme)
-                value[keyPath: keyPath] = $0
-                settings.setThemeCustomization(value, theme: theme)
+                var adjustment = settings.themeAdjustment
+                adjustment.setBrightness($0, for: scheme)
+                settings.themeAdjustment = adjustment
             }
         )
     }
@@ -222,30 +231,33 @@ struct AppearanceSettings: View {
         SettingsSection(title: "Theme customization", symbol: "paintpalette") {
             DetailRow(
                 title: "Customize current theme",
-                caption: "Changes preview live. System uses the matching Light or Dark settings; custom palette colors take precedence over website tint."
+                caption: """
+                Changes preview live. Changing a built-in theme’s colors saves them as a copy; brightness stays with \
+                the theme. Custom palette colors take precedence over website tint.
+                """
             ) {
-                Text(customizationTheme.label)
+                Text("\(settings.selectedTheme.name), \(shownScheme == .dark ? String(localized: "dark") : String(localized: "light"))")
                     .foregroundStyle(.secondary)
             }
             RowSeparator()
             DetailRow(title: "Brightness") {
-                Slider(value: customizationBinding(\.brightness), in: -0.5...0.5)
+                Slider(value: brightnessBinding, in: -0.5...0.5)
                     .frame(width: 160)
                     .accessibilityLabel("Theme brightness")
             }
             RowSeparator()
             DetailRow(title: "Hue") {
-                Slider(value: customizationBinding(\.hue), in: -0.5...0.5)
+                Slider(value: colorBinding(\.hue), in: -0.5...0.5)
                     .frame(width: 160)
                     .accessibilityLabel("Theme hue")
             }
             RowSeparator()
             DetailRow(title: "Primary color", caption: "Derives the background, surface, and accent palette without changing website content.") {
-                themeColorControls(\.primary, label: "Primary color")
+                primaryColorPicker
             }
             RowSeparator()
             DetailRow(title: "Control icons") {
-                themeColorControls(\.controls, label: "Control icons", opacityLabel: "Control icons opacity")
+                themeColorControls(\.icons, label: "Control icons", opacityLabel: "Control icons opacity")
             }
             RowSeparator()
             DetailRow(title: "URL text") {
@@ -253,21 +265,38 @@ struct AppearanceSettings: View {
             }
             RowSeparator()
             DetailRow(title: "Reset theme", caption: "Restore this theme’s original palette and chrome colors.") {
-                Button("Reset") { settings.resetThemeCustomization(theme: customizationTheme) }
+                Button("Reset") { settings.resetColors(scheme: shownScheme) }
             }
         }
         .settingsAnchor("appearance.themeCustomization")
     }
 
+    private var primaryColorPicker: some View {
+        let scheme = shownScheme
+        return ColorPicker(
+            String(localized: "Primary color"),
+            selection: Binding(
+                get: { settings.selectedTheme.variant(scheme).primary.map(Color.init(hex:)) ?? Theme.accent },
+                set: { color in
+                    guard let rgb = SidebarTextStyle.rgb(of: color) else { return }
+                    settings.editColors(scheme: scheme) { $0.primary = rgb }
+                }
+            ),
+            supportsOpacity: false
+        )
+        .labelsHidden()
+        .accessibilityLabel("Primary color")
+    }
+
     private func themeColorControls(
-        _ keyPath: WritableKeyPath<ThemeCustomization, SidebarTextStyle>,
+        _ keyPath: WritableKeyPath<ThemeVariant, SidebarTextStyle>,
         label: LocalizedStringResource,
         opacityLabel: LocalizedStringResource? = nil
     ) -> some View {
-        let binding = customizationBinding(keyPath)
+        let binding = colorBinding(keyPath)
         return HStack(spacing: 8) {
             ColorPicker(String(localized: label), selection: Binding(
-                get: { binding.wrappedValue.color ?? (keyPath == \.primary ? Theme.accent : Color.primary) },
+                get: { binding.wrappedValue.color ?? Color.primary },
                 set: {
                     var style = binding.wrappedValue
                     style.setColor($0)
@@ -295,16 +324,24 @@ struct AppearanceSettings: View {
     }
 
     private func sidebarColorControls(isDeferred: Bool) -> some View {
-        let theme = settings.sidebarAppearance(scheme: windowColorScheme)
-        let style = settings.sidebarTextStyle(theme: theme, isDeferred: isDeferred)
+        let keyPath: WritableKeyPath<ThemeVariant, SidebarTextStyle> = isDeferred ? \.unloadedText : \.sidebarText
+        let style = colorBinding(keyPath)
         let label: LocalizedStringResource = isDeferred ? "Unloaded tab color" : "Loaded tab color"
         let opacityLabel: LocalizedStringResource = isDeferred ? "Unloaded tab opacity" : "Loaded tab opacity"
+        let scheme = shownScheme
         return HStack(spacing: 8) {
             ColorPicker(
                 String(localized: label),
                 selection: Binding(
-                    get: { settings.sidebarTextBaseColor(theme: theme, isDeferred: isDeferred) },
-                    set: { settings.setSidebarTextColor($0, theme: theme, isDeferred: isDeferred) }
+                    get: {
+                        style.wrappedValue.color ?? shownVariant.text.map(Color.init(hex:))
+                            ?? (scheme == .dark ? .white : .black)
+                    },
+                    set: {
+                        var updated = style.wrappedValue
+                        updated.setColor($0)
+                        style.wrappedValue = updated
+                    }
                 ),
                 supportsOpacity: false
             )
@@ -312,11 +349,11 @@ struct AppearanceSettings: View {
             .accessibilityLabel(Text(label))
             Slider(
                 value: Binding(
-                    get: { settings.sidebarTextStyle(theme: theme, isDeferred: isDeferred).opacity },
+                    get: { style.wrappedValue.opacity },
                     set: {
-                        var updated = settings.sidebarTextStyle(theme: theme, isDeferred: isDeferred)
+                        var updated = style.wrappedValue
                         updated.opacity = $0
-                        settings.setSidebarTextStyle(updated, theme: theme, isDeferred: isDeferred)
+                        style.wrappedValue = updated
                     }
                 ),
                 in: 0...1,
@@ -324,7 +361,7 @@ struct AppearanceSettings: View {
             )
             .frame(width: 110)
             .accessibilityLabel(Text(opacityLabel))
-            Text(style.opacity, format: .percent.precision(.fractionLength(0)))
+            Text(style.wrappedValue.opacity, format: .percent.precision(.fractionLength(0)))
                 .monospacedDigit()
                 .frame(width: 42, alignment: .trailing)
         }
@@ -334,31 +371,38 @@ struct AppearanceSettings: View {
 private struct WindowStyleSettingsSection: View {
     @Bindable var settings: BrowserSettings
 
+    /// A theme with solid colors paints its own ground, so the window style and the website tint have no effect.
+    private var drawsSolid: Bool {
+        settings.selectedTheme.ground == .solid
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: SettingsMetrics.headerGap) {
             SettingsCard {
-                DetailRow(title: "Window style", layout: .stacked) {
-                    LoomStylePicker(
-                        selection: settings.loomStyle,
-                        usesWebsiteTint: settings.matchesWebsiteColor,
-                        tintsSelectedTab: settings.refractsTabColor
-                    ) {
-                        settings.loomStyle = $0
+                if !drawsSolid {
+                    DetailRow(title: "Window style", layout: .stacked) {
+                        LoomStylePicker(
+                            selection: settings.loomStyle,
+                            usesWebsiteTint: settings.matchesWebsiteColor,
+                            tintsSelectedTab: settings.refractsTabColor
+                        ) {
+                            settings.loomStyle = $0
+                        }
                     }
+                    .settingsAnchor("appearance.windowStyle")
+
+                    RowSeparator()
+
+                    DetailRow(
+                        title: "Website tint",
+                        caption: "Use the current website’s color in the toolbar and sidebar."
+                    ) {
+                        SettingsToggle($settings.matchesWebsiteColor)
+                    }
+                    .settingsAnchor("appearance.websiteTint")
+
+                    RowSeparator()
                 }
-                .settingsAnchor("appearance.windowStyle")
-
-                RowSeparator()
-
-                DetailRow(
-                    title: "Website tint",
-                    caption: "Use the current website’s color in the toolbar and sidebar."
-                ) {
-                    SettingsToggle($settings.matchesWebsiteColor)
-                }
-                .settingsAnchor("appearance.websiteTint")
-
-                RowSeparator()
 
                 DetailRow(
                     title: "Tint selected tab",
@@ -368,7 +412,7 @@ private struct WindowStyleSettingsSection: View {
                 }
                 .settingsAnchor("appearance.refraction")
 
-                if settings.loomStyle == .transparent {
+                if !drawsSolid, settings.loomStyle == .transparent {
                     RowSeparator()
 
                     DetailRow(
@@ -383,11 +427,13 @@ private struct WindowStyleSettingsSection: View {
                 }
             }
 
-            Text("Choose Standard or Transparent.")
-                .font(Theme.Font.label)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 1)
+            if !drawsSolid {
+                Text("Choose Standard or Transparent.")
+                    .font(Theme.Font.label)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 1)
+            }
         }
         .animation(Theme.Motion.settle, value: settings.loomStyle)
     }

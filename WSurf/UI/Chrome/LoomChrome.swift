@@ -28,34 +28,27 @@ enum LoomChrome {
         RoundedRectangle(cornerRadius: canvasRadius, style: .continuous)
     }
 
-    /// True when a preset is on and the window is drawn in the appearance it was designed for. A window forced to
-    /// the other one, such as a private window, keeps the standard material instead.
-    static func showsPresetExactly(in scheme: ColorScheme) -> Bool {
-        BrowserSettings.application.themePreset.map { $0.isDark == (scheme == .dark) } ?? false
-    }
-
-    /// `isFloating` marks the sidebar surface, which a preset colors separately from the window.
+    /// `isFloating` marks the sidebar surface, which a solid theme colors separately from the window.
     static func sampledColor(_ color: NSColor?, scheme: ColorScheme, isFloating: Bool = false) -> NSColor {
-        let settings = BrowserSettings.application
-        if settings.themePreset != nil
-            || settings.themeCustomization(theme: settings.sidebarAppearance(scheme: scheme)).changesPalette {
-            let surface = isFloating && settings.themePreset != nil ? Theme.sidebarTint : Theme.windowBackground
-            var resolved = NSColor(surface)
-            NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
-                resolved = NSColor(surface).usingColorSpace(.sRGB) ?? resolved
-            }
-            return resolved
+        let theme = BrowserSettings.application.resolvedTheme
+        let variant = theme.variant(scheme)
+        let appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua) ?? NSApp.effectiveAppearance
+        // A solid theme and a changed palette set the color themselves; the page does not tint them.
+        if theme.ground == .solid || variant.changesPalette {
+            let surface = isFloating && theme.ground == .solid ? variant.sidebar : variant.window
+            let resolved = surface.resolved(in: appearance)
+            return resolved.usingColorSpace(.sRGB) ?? resolved
         }
         let fallbackIsLight = scheme == .light
         guard let color = color?.usingColorSpace(.sRGB), color.alphaComponent > 0.05 else {
-            return neutral(isLight: fallbackIsLight)
+            return neutral(isLight: fallbackIsLight, theme: theme)
         }
 
         // A real page chooses the chrome's tonal family too. In particular,
         // black and grey headers carry useful appearance information; treating
         // them as "no colour" leaves a light Loom around dark sites.
-        let isLight = Theme.isCalm ? fallbackIsLight : PageInk.isLight(color, scheme: scheme)
-        let neutral = neutral(isLight: isLight)
+        let isLight = theme.isSoftTinted ? fallbackIsLight : PageInk.isLight(color, scheme: scheme)
+        let neutral = neutral(isLight: isLight, theme: theme)
 
         let floor: CGFloat = isLight ? 0.55 : 0.02
         let ceiling: CGFloat = isLight ? 1 : 0.82
@@ -65,17 +58,15 @@ enum LoomChrome {
             brightness: min(max(color.brightnessComponent, floor), ceiling),
             alpha: 1
         )
-        let tintFraction: CGFloat = Theme.isCalm ? 0.18 : 0.85
+        let tintFraction: CGFloat = theme.isSoftTinted ? 0.18 : 0.85
         return neutral.blended(withFraction: tintFraction, of: tint) ?? neutral
     }
 
-    private static func neutral(isLight: Bool) -> NSColor {
-        if Theme.isCalm {
-            var themed: NSColor?
-            NSAppearance(named: isLight ? .aqua : .darkAqua)?.performAsCurrentDrawingAppearance {
-                themed = NSColor(Theme.windowBackground).usingColorSpace(.sRGB)
-            }
-            if let themed {
+    private static func neutral(isLight: Bool, theme: ResolvedTheme) -> NSColor {
+        if theme.isSoftTinted {
+            let appearance = NSAppearance(named: isLight ? .aqua : .darkAqua) ?? NSApp.effectiveAppearance
+            let themed = theme.variant(isLight ? .light : .dark).window.resolved(in: appearance)
+            if let themed = themed.usingColorSpace(.sRGB) {
                 return themed
             }
         }
@@ -200,17 +191,15 @@ struct LoomFloatingFill: View {
 }
 
 /// The window or sidebar ground in the chosen style. `fallsBack` is `GlassPolicy`'s answer for Reduce
-/// Transparency and Increase Contrast; it takes the same solid path a preset takes.
+/// Transparency and Increase Contrast; it takes the same solid path a solid theme takes.
 struct LoomBackdrop: View {
     let sampledPageColor: NSColor?
     let settings: BrowserSettings
     let isFloating: Bool
     let fallsBack: Bool
 
-    @Environment(\.colorScheme) private var scheme
-
     var body: some View {
-        if fallsBack || LoomChrome.showsPresetExactly(in: scheme) {
+        if fallsBack || settings.resolvedTheme.ground == .solid {
             LoomSolidBackdrop(sampledPageColor: websiteTint, isFloating: isFloating)
         } else {
             switch settings.loomStyle {
@@ -231,9 +220,9 @@ struct LoomBackdrop: View {
     }
 }
 
-/// An opaque ground, in either window style. A preset's color is drawn this way because translucency would
+/// An opaque ground, in either window style. A solid theme's color is drawn this way because translucency would
 /// dilute it and the website tint never overrides it; the stored window style and transparency are untouched and
-/// apply again without a preset. Reduce Transparency and Increase Contrast use it for the same reason.
+/// apply again on another theme. Reduce Transparency and Increase Contrast use it for the same reason.
 private struct LoomSolidBackdrop: View {
     let sampledPageColor: NSColor?
     let isFloating: Bool
