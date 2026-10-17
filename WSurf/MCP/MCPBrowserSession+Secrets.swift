@@ -66,17 +66,60 @@ extension MCPBrowserSession {
     }
 
     /// What a secret came to once the page had it. A form the page stored (it grouped a card number, say) is a secret too and is
-    /// hidden from the agent like the value typed. Only a value that went into a password, code or card field is also a secret
-    /// in the user's own records; a phrase the agent put in an ordinary field never is, so it cannot hide anything there.
+    /// hidden from the agent like the value typed.
+    ///
+    /// The user's own records are stricter. A value is hidden there only when it went into a password, code or card field and
+    /// the field kept exactly what was typed; what the page stored is hidden only when it is a known reformatting of the typed
+    /// value (the same characters with spaces, dashes or dots added or removed), never some other value a page chose to put
+    /// there. A phrase typed into an ordinary field is never hidden in a record. The scrubber also ignores values under
+    /// `MCPSecretScrubber.minimumAuditBytes`.
     var secretWriteSink: (PageDriver.SecretWrite) -> Void {
         { [secrets] write in
             if write.stored != write.typed {
                 secrets.register(write.stored)
             }
             guard write.isSensitiveField else { return }
-            secrets.confirm(write.typed)
-            secrets.confirm(write.stored)
+            if write.retained {
+                secrets.confirm(write.typed)
+            }
+            if Self.isReformatting(write.stored, of: write.typed) {
+                secrets.confirm(write.stored)
+            }
         }
+    }
+
+    /// Whether `stored` is `typed` with only spaces, dashes or dots added or removed, as when a page groups a card number.
+    nonisolated static func isReformatting(_ stored: String, of typed: String) -> Bool {
+        func characters(_ text: String) -> String {
+            text.filter { !" -.".contains($0) }
+        }
+        return stored != typed && !characters(typed).isEmpty && characters(stored) == characters(typed)
+    }
+
+    /// The most of a control's own label that an approval record keeps.
+    nonisolated static let approvalLabelLimit = 300
+
+    /// The record of a consequential action the Developer tier let through. What identifies the action (its category, the host,
+    /// the amount when the label states one) are fields of their own, which a long label cannot push out. The label is free
+    /// text from the page, cleaned for a record and cut to `approvalLabelLimit`, keeping its start and its end.
+    func approvalRecord(label: String, category: SensitiveAction.Category, host: String?) -> DeveloperApprovalRecord {
+        let cleaned = scrubbedForAudit(label)
+        return DeveloperApprovalRecord(
+            date: Date(), category: category, host: host, label: Self.keepingBothEnds(cleaned, limit: Self.approvalLabelLimit),
+            labelLength: cleaned.count, amount: Self.amount(in: cleaned))
+    }
+
+    /// `text` as is, or its start and its end joined by an ellipsis when it is longer than `limit` characters.
+    nonisolated static func keepingBothEnds(_ text: String, limit: Int) -> String {
+        guard text.count > limit else { return text }
+        let tail = (limit - 1) / 2
+        return String(text.prefix(limit - 1 - tail)) + "…" + String(text.suffix(tail))
+    }
+
+    /// The first amount of money the label states ("$500", "49,90 EUR"), or nil.
+    nonisolated static func amount(in label: String) -> String? {
+        let pattern = #"[$€£¥]\s?\d[\d.,]*|\d[\d.,]*\s?(?:USD|EUR|GBP|CHF|JPY)\b"#
+        return label.range(of: pattern, options: .regularExpression).map { String(label[$0]) }
     }
 
     /// After a secret went into `view`: remember which fields hold one, and make sure neither autofill nor the vault ever sees it.

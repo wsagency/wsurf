@@ -33,6 +33,9 @@ import os
 nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     /// What replaces a secret in any output.
     static let replacement = "‹secret›"
+    /// A value shorter than this is never hidden in a record the user reads, however it was typed: a short value is a word, a
+    /// number or an amount that records need to show, and hiding it would erase them.
+    static let minimumAuditBytes = 8
     /// What replaces a confirmed secret in a record the user reads: visibly a hidden value, so the record cannot be mistaken for
     /// an empty one.
     static let auditReplacement = "‹hidden secret›"
@@ -109,9 +112,10 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
 
     /// Marks an already registered secret as written into a password, code or card field. Call it after the write, and only for
     /// a field the page driver treats as sensitive: nothing else may be hidden in a record the user reads. A value that was
-    /// never registered is not confirmed.
+    /// never registered, or is shorter than `minimumAuditBytes`, is not confirmed.
     func confirm(_ secret: String) {
         let bytes = Self.fold(Array(secret.utf8))
+        guard bytes.count >= Self.minimumAuditBytes else { return }
         state.withLock { state in
             if let index = state.secrets.firstIndex(of: bytes) {
                 state.confirmed.insert(index)
@@ -148,10 +152,14 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
 
     /// For a record the user reads about what the agent did: hides only the values confirmed as written into a password, code
     /// or card field, and marks each place with `auditReplacement`. Whatever else the agent registered stays visible, so a
-    /// record cannot be blanked by registering its text.
+    /// record cannot be blanked by registering its text. A value is hidden only as a whole token: where it starts or ends with
+    /// a letter, digit or underscore, the neighbouring character may not be one, so a secret inside a longer word is left
+    /// alone.
     func scrubForAudit(_ text: String) -> String {
-        let needles = state.withLock { state in state.needles.filter { state.confirmed.contains($0.owner) }.map(\.bytes) }
-        return Self.scrub(text, needles: needles, marker: Self.auditReplacement)
+        let needles = state.withLock { state in
+            state.needles.filter { state.confirmed.contains($0.owner) && $0.bytes.count >= Self.minimumAuditBytes }.map(\.bytes)
+        }
+        return Self.scrub(text, needles: needles, marker: Self.auditReplacement, wholeTokens: true)
     }
 
     private var allNeedles: [[UInt8]] {
@@ -185,7 +193,7 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
     }
 
     /// Every run of bytes covered by any needle becomes one `marker`. Overlapping and adjacent matches merge.
-    private static func scrub(_ text: String, needles: [[UInt8]], marker: String = replacement) -> String {
+    private static func scrub(_ text: String, needles: [[UInt8]], marker: String = replacement, wholeTokens: Bool = false) -> String {
         guard let shortest = needles.last?.count, text.utf8.count >= shortest else { return text }
         let original = Array(text.utf8)
         let folded = fold(original)
@@ -194,6 +202,9 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
             let first = needle[0]
             for start in 0...(folded.count - needle.count) where folded[start] == first {
                 guard folded[start..<(start + needle.count)].elementsEqual(needle) else { continue }
+                if wholeTokens, !isToken(folded, start..<(start + needle.count)) {
+                    continue
+                }
                 if covered == nil {
                     covered = [Bool](repeating: false, count: folded.count)
                 }
@@ -218,6 +229,22 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
             }
         }
         return String(decoding: output, as: UTF8.self)
+    }
+
+    /// Letters, digits, underscore, and every byte of a non-ASCII character.
+    private static func isWordByte(_ byte: UInt8) -> Bool {
+        (byte >= 0x30 && byte <= 0x39) || (byte >= 0x41 && byte <= 0x5A) || (byte >= 0x61 && byte <= 0x7A) || byte == 0x5F || byte >= 0x80
+    }
+
+    /// Whether `range` of `bytes` is a whole token: where it begins or ends with a word byte, the byte outside it is not one.
+    private static func isToken(_ bytes: [UInt8], _ range: Range<Int>) -> Bool {
+        if isWordByte(bytes[range.lowerBound]), range.lowerBound > 0, isWordByte(bytes[range.lowerBound - 1]) {
+            return false
+        }
+        if isWordByte(bytes[range.upperBound - 1]), range.upperBound < bytes.count, isWordByte(bytes[range.upperBound]) {
+            return false
+        }
+        return true
     }
 
     /// ASCII upper case to lower case; every other byte is kept, so a multi-byte scalar is never altered.

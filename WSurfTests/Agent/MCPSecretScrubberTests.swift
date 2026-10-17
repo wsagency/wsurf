@@ -168,4 +168,36 @@ struct MCPSecretScrubberTests {
         scrubber.wipe()
         #expect(scrubber.scrubForAudit(record) == record)
     }
+
+    @Test func aValueUnderEightBytesIsNeverHiddenInARecord() {
+        let scrubber = MCPSecretScrubber()
+        scrubber.register("abc1234")  // 7 bytes: a word, a number or an amount a record has to show
+        scrubber.confirm("abc1234")
+        #expect(scrubber.scrubForAudit("Pay abc1234 now") == "Pay abc1234 now")
+        #expect(scrubber.scrub("Pay abc1234 now") == "Pay \(Self.hidden) now", "the agent still is not told it")
+
+        scrubber.register("abcd1234")  // 8 bytes
+        scrubber.confirm("abcd1234")
+        #expect(scrubber.scrubForAudit("Pay abcd1234 now") == "Pay \(MCPSecretScrubber.auditReplacement) now")
+    }
+
+    @Test func aValueIsHiddenInARecordOnlyAsAWholeToken() {
+        let scrubber = MCPSecretScrubber()
+        scrubber.register("secret99")
+        scrubber.confirm("secret99")
+        let marker = MCPSecretScrubber.auditReplacement
+
+        for kept in ["xsecret99", "secret99x", "a_secret99", "secret99_", "secret990", "mysecret99ish", "séecret99", "secret99é"] {
+            #expect(scrubber.scrubForAudit("pay \(kept) now") == "pay \(kept) now", "\(kept) is a longer word")
+        }
+        for hidden in ["secret99", "(secret99)", "\"secret99\"", "secret99.", "secret99-more", "id=secret99&x=1", "SECRET99"] {
+            #expect(scrubber.scrubForAudit(hidden).contains(marker), "\(hidden) is a whole token")
+            #expect(!scrubber.scrubForAudit(hidden).lowercased().contains("secret99"))
+        }
+
+        // A value that begins and ends with punctuation is a token wherever it sits.
+        scrubber.register("$$pa55word!!")
+        scrubber.confirm("$$pa55word!!")
+        #expect(scrubber.scrubForAudit("x$$pa55word!!y") == "x\(marker)y")
+    }
 }

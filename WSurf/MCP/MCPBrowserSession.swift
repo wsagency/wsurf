@@ -25,9 +25,19 @@ final class MCPBrowserSession: Identifiable {
     /// A consequential action the Developer tier let through without asking on a developer site.
     struct DeveloperApprovalRecord {
         let date: Date
+        /// What kind of action, host and amount it was: the app's own classification, the page's address, and the figure the
+        /// label states. They are fields of their own so that a padded label cannot push them out of the record.
         let category: SensitiveAction.Category
-        let label: String
         let host: String?
+        /// The control's own label, free text from the page: cleaned for a record, and cut to its start and end when long.
+        let label: String
+        /// How long the label was before it was cut.
+        let labelLength: Int
+        let amount: String?
+
+        var isLabelCut: Bool {
+            labelLength > label.count
+        }
     }
 
     struct PageObservation {

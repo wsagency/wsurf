@@ -510,6 +510,104 @@ struct MCPSecretTypingTests {
         #expect(rig.session.developerApprovals.count == 1, "the approval is still on record")
     }
 
+    @Test func aShortSecretNeverHidesRecordText() async throws {
+        let rig = try await makeRig()
+        defer { close(rig) }
+        _ = try await call(rig, "requestAccess", [:], tab: false)
+
+        let typed = try await type("abc1234", into: "Password", secret: true, in: rig)  // 7 bytes: hidden from the agent, not from records
+        #expect(typed.isError == false, "\(everything(typed))")
+        #expect(rig.session.secrets.count == 1)
+        #expect(await approve("Pay abc1234 now", in: rig))
+        #expect(rig.session.developerApprovals.last?.label == "Pay abc1234 now")
+        #expect(rig.session.scrubbed("Pay abc1234 now") == "Pay \(Self.hidden) now")
+    }
+
+    @Test func aValueThePageChangedIsNotConfirmedUnlessItIsAKnownReformatting() async throws {
+        // A page that replaces whatever is typed with a value of its own: not retained, and not a reformatting.
+        let replacing = """
+            <!doctype html><title>Replace</title>
+            <input id=pw type=password aria-label="Password">
+            <script>pw.addEventListener('input', () => { pw.value = 'zzzzzzzz'; });</script>
+            """
+        let replaced = try await makeRig(html: replacing)
+        defer { close(replaced) }
+        _ = try await call(replaced, "requestAccess", [:], tab: false)
+        let typed = try await type(Self.password, into: "Password", secret: true, in: replaced)
+        #expect(typed.isError == true, "the page did not keep the value")
+        let both = "Pay \(Self.password) zzzzzzzz"
+        #expect(await approve(both, in: replaced))
+        #expect(replaced.session.developerApprovals.last?.label == both, "neither the typed nor the substituted value is confirmed")
+        #expect(replaced.session.scrubbed(both) == "Pay \(Self.hidden) \(Self.hidden)", "both are still hidden from the agent")
+
+        // A page that only groups the digits: the grouped form is a known reformatting, so it is hidden in a record.
+        let grouping = """
+            <!doctype html><title>Card</title>
+            <input id=card aria-label="Card number" autocomplete="cc-number">
+            <script>
+              card.addEventListener('input', () => { card.value = card.value.replace(/\\D/g, '').replace(/(.{4})/g, '$1 ').trim(); });
+            </script>
+            """
+        let grouped = try await makeRig(html: grouping)
+        defer { close(grouped) }
+        _ = try await call(grouped, "requestAccess", [:], tab: false)
+        _ = try await type("4242424242424242", into: "Card number", secret: true, in: grouped)
+        #expect(await approve("Card 4242 4242 4242 4242 / 4242424242424242", in: grouped))
+        #expect(
+            grouped.session.developerApprovals.last?.label == "Card \(MCPSecretScrubber.auditReplacement) / 4242424242424242",
+            "only the grouped form that the page stored is confirmed")
+    }
+
+    @Test func onlySpacesDashesAndDotsMakeAReformatting() {
+        let reformatting = MCPBrowserSession.isReformatting
+        #expect(reformatting("4242 4242 4242 4242", "4242424242424242"))
+        #expect(reformatting("4242-4242-4242-4242", "4242 4242 4242 4242"))
+        #expect(reformatting("123.456.789", "123456789"))
+        #expect(!reformatting("4242424242424242", "4242424242424242"), "nothing changed")
+        #expect(!reformatting("zzzzzzzz", "Zx9-test-Pa$$word!"))
+        #expect(!reformatting("4242 4242 4242 4243", "4242424242424242"), "a different digit")
+        #expect(!reformatting("4242 4242 4242 4242 99", "4242424242424242"), "extra characters")
+        #expect(!reformatting("Pay 500", "pay 500"), "case is not spacing")
+        #expect(!reformatting("--", ".."), "nothing left to compare")
+    }
+
+    @Test func aConfirmedSecretInsideALongerWordIsNotHidden() async throws {
+        let rig = try await makeRig()
+        defer { close(rig) }
+        _ = try await call(rig, "requestAccess", [:], tab: false)
+        _ = try await type(Self.password, into: "Password", secret: true, in: rig)
+
+        let inside = "prefix\(Self.password)"
+        #expect(await approve(inside, in: rig))
+        #expect(rig.session.developerApprovals.last?.label == inside, "the secret sits inside a longer word")
+        #expect(await approve("Pay with \(Self.password) now", in: rig))
+        #expect(rig.session.developerApprovals.last?.label == "Pay with \(MCPSecretScrubber.auditReplacement) now")
+    }
+
+    @Test func aPaddedLabelStillShowsTheActionItsHostAndItsEnd() async throws {
+        let rig = try await makeRig()
+        defer { close(rig) }
+        _ = try await call(rig, "requestAccess", [:], tab: false)
+
+        let padded = String(repeating: "Harmless text. ", count: 80) + "Pay $500 to X now"
+        #expect(await approve(padded, in: rig))
+        let record = try #require(rig.session.developerApprovals.last)
+        #expect(record.category == .purchase, "the classification is a field of its own")
+        #expect(record.host == "127.0.0.1")
+        #expect(record.amount == "$500", "so is the amount the label states, whatever the padding")
+        #expect(record.label.count == MCPBrowserSession.approvalLabelLimit)
+        #expect(record.label.hasPrefix("Harmless text."), "the start is kept")
+        #expect(record.label.hasSuffix("Pay $500 to X now"), "and the end, where the action is: \(record.label.suffix(40))")
+        #expect(record.label.contains("…"))
+        #expect(record.labelLength == padded.count && record.isLabelCut)
+
+        // A label within the limit is stored as it is.
+        #expect(await approve("Complete purchase (49,90 EUR)", in: rig))
+        let short = try #require(rig.session.developerApprovals.last)
+        #expect(short.label == "Complete purchase (49,90 EUR)" && !short.isLabelCut)
+        #expect(short.amount == "49,90 EUR")
+    }
+
     // MARK: Connection end
 
     @Test func secretsAreForgottenWhenTheConnectionEnds() async throws {
