@@ -2,7 +2,7 @@
 
 Date: 2026-10-08; refreshed 2026-10-14 against `origin/main` `d3cf409` (PR #19)
 
-Status: Conversational contract approved, including WebKit/device/network limitations. The user additionally approved real hover, element-state waits, and element/region screenshots, and required checking existing MCP behavior on both engines. This revised written specification awaits user review; that review is the only open gate (section 8). Product implementation starts only after written-spec approval and review of the implementation plan written from it. The execution method is already decided (section 8). The 2026-10-14 refresh changes no product scope: it updates stale baselines and records delivery slicing and file ownership. The user has not reviewed the refresh.
+Status: Implemented, first in the integrated candidate `bc2028c`. The written-specification review gate of section 8 is not recorded as closed in this repository; the owner confirms it. Verification: the page and development tools have whole-app tests on WebKit (the candidate's native gate) and on Chromium (`MCPDevelopmentOwnershipTests` and the element-screenshot scale fixture run both engines; the Chromium viewport and device-profile cases and the native hover tests run in the foreground lane, `Tools/run-foreground-tests.sh`). A run with a real MCP client against a Stage app is a manual step (`MCP.md`, "Verify with a real client"). The 2026-10-14 refresh changes no product scope: it updates stale baselines and records delivery slicing and file ownership.
 
 ## Intent and agreed scope
 

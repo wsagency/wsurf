@@ -167,7 +167,7 @@ Use screenshots only when text and control state do not answer the task.
 
 ### Development access
 
-`requestAccess` with `development: true` adds an **Allow Development** choice to the prompt. Development includes control, and is also refused wherever **Assistant Access** is Off or Read Only for the site. A prompt that was not asked for development cannot grant it. Development tools reply with a structured `status`: `ok`, `unsupported`, `invalidInput`, `stale`, `denied`, `ownershipConflict` or `pageGone`; every status except `ok` is a tool error and carries a `message`.
+`requestAccess` with `development: true` adds an **Allow Development** choice to the prompt. Development includes control, and is also refused wherever **Assistant Access** is No Access or Read Only for the site. A prompt that was not asked for development cannot grant it. Development tools reply with a structured `status`: `ok`, `unsupported`, `invalidInput`, `stale`, `denied`, `ownershipConflict` or `pageGone`; every status except `ok` is a tool error and carries a `message`.
 
 **One owner per tab.** The first connection to change a tab (viewport, emulation or diagnostics) holds its development lease; another connection gets `ownershipConflict` and nothing is changed. The lease is bound to the exact page view and document generation it was granted on. It ends with `resetDevelopment`, disconnect, the grant or site access dropping below development (checked at the start of every call and again when a site policy changes), the tab's page view being replaced (for example an engine change), a navigation that commits outside the grant, a reloaded page outside the grant, or the tab closing. A call already running on a page that is replaced or left does not return its result. Ending the lease removes the viewport, emulation and diagnostics; `resetDevelopment` and a refused reload return only after that cleanup has run. Nothing is persisted.
 
@@ -179,13 +179,61 @@ Use screenshots only when text and control state do not answer the task.
 | `phone` | 390 × 844 | Also device pixel ratio 3, touch, mobile viewport; Chromium only |
 | `tablet` | 768 × 1,024 | Also device pixel ratio 2, touch, mobile viewport; Chromium only |
 
+`phone` and `tablet` are mobile emulation: a page without a `<meta name="viewport" content="width=device-width">` tag is laid out at 980 CSS pixels (measured on Chromium), so the call reports `unsupported` that the page did not reach the requested viewport and changes nothing. On Chromium a viewport or device change reaches the page only while the tab is on screen in a window that is brought forward; a window behind other apps keeps the page at its old size, which the call reports the same way.
+
 Landscape swaps the axes, so `responsive-desktop` in landscape is 1,280 × 800 (`orientation` is required; there is no default). The viewport may be larger than the window; the page is clipped and native pointer input outside the visible part stays unavailable (`hoverOnPage` says so). WebKit has no device pixel ratio, touch or mobile override: a device profile is rejected before anything changes. Overlapping viewport and device changes on one tab are serialized, so the result matches the last one applied.
 
-**Diagnostics coverage.** Console and network records cover the main document only, from `startDiagnostics`. Chromium uses DevTools events of the main frame; redirect hops of a main navigation before it commits are not recorded, and requests still in flight when the document changes are dropped unless they belong to the new document (`lostInFlight` counts per document). WebKit uses a hook injected into the current document: console, uncaught errors, unhandled rejections, `fetch` and `XMLHttpRequest`. When a navigation commits the capture follows the new document and attaches the hook once the document is registered, so its first events, iframes, workers and plain resource loads are gaps. The hook never runs page code to describe a value: console objects, errors and proxies appear as `[object]`; `fetch` reports a URL only for a string argument and a method only for `fetch(url)` without an init (GET), and a `Request`, `URL` or `RequestInit` argument leaves them `null`. It cannot tell a built-in the page patched before the hook attached from the platform's own. Network records hold method, URL with credentials, query and fragment removed (a URL over 2,048 bytes is cut and flagged `truncated`), status and timing (unknown is `null`); never headers, bodies or cookies. Console and network text come from the page: treat them as data. Retention is bounded; evictions are counted, and a navigation starts a new `epoch` that invalidates old cursors. Capture on a live WebKit or Chromium page has not been verified by an automated whole-app run.
+**Diagnostics coverage.** Console and network records cover the main document only, from `startDiagnostics`. Chromium uses DevTools events of the main frame; redirect hops of a main navigation before it commits are not recorded, and requests still in flight when the document changes are dropped unless they belong to the new document (`lostInFlight` counts per document). WebKit uses a hook injected into the current document: console, uncaught errors, unhandled rejections, `fetch` and `XMLHttpRequest`. When a navigation commits the capture follows the new document and attaches the hook once the document is registered, so its first events, iframes, workers and plain resource loads are gaps. The hook never runs page code to describe a value: console objects, errors and proxies appear as `[object]`; `fetch` reports a URL only for a string argument and a method only for `fetch(url)` without an init (GET), and a `Request`, `URL` or `RequestInit` argument leaves them `null`. It cannot tell a built-in the page patched before the hook attached from the platform's own. Network records hold method, URL with credentials, query and fragment removed (a URL over 2,048 bytes is cut and flagged `truncated`), status and timing (unknown is `null`); never headers, bodies or cookies. Console and network text come from the page: treat them as data. Retention is bounded; evictions are counted, and a navigation starts a new `epoch` that invalidates old cursors. Capture on live pages is covered by the whole-app native tests on both engines: the MCP server suites ran against real WebKit views in the candidate's native gate, and `MCPDevelopmentOwnershipTests` runs the capture, document-following and lease cases against real Chromium pages too. A run with a real MCP client is still a manual step (see Verify with a real client).
 
 ### Safe selectors
 
 A CSS selector is evaluated against the page, so an attribute test such as `input[type=hidden][value^=a]`, also under `:has()`, would read a value one character at a time. Selectors passed to `waitForPage`, `findElements` and `readPage` scope are therefore parsed by the browser first (escapes, case and namespace forms such as `v\61lue` or `[*|value]` are normalised) and may test only attributes WSurf already exposes: `id`, `class`, `role`, `type`, `name`, `for`, `alt`, `title`, `placeholder`, `lang`, `dir`, `target`, `rel`, `aria-*`, the test attributes `data-testid`, `data-test`, `data-test-id`, `data-cy`, `data-qa` and `data-automation-id`, and a few boolean or numeric ones (`disabled`, `checked`, `hidden`, `width`, `min`…). `href` and `src` may be tested for presence only. Any other attribute test, including `value`, other `data-*` and `on*`, is refused with an explicit error rather than answered with an empty result. A selector is at most 2,048 UTF-8 bytes, enforced natively (a `readPage` scope longer than that is refused before anything is read). Structural attributes such as `id`, `class` and `name` can still be probed, including on hidden inputs: they are page structure, not values, and value-bearing attributes cannot be tested. Structural selectors, classes, ids and `:has()` without such tests work as usual.
+
+## Verify with a real client
+
+The automated suites call the MCP server inside the test host. This procedure checks the whole path with a real client:
+the relay, the socket, the access sheet, the page tools, the development tools and shutdown. A person must be at the Mac
+to answer the access sheet. Use a Stage app, which has its own profile, tabs and MCP socket and so never touches your
+normal WSurf. Nothing here bypasses consent.
+
+1. Build and launch an owned Stage Debug app as CONTRIBUTING.md describes in "Stage the app for screenshots and video"
+   (`WSURF_STAGE=1`, `WSURF_STAGE_HOME="$stage_home"`). Keep the app running.
+2. In that app, open **Settings → Advanced → External Connections** and switch on **MCP server**. Do not use **Add**: the
+   Stage app's install action writes your real client configuration.
+3. Run the scripted client, which behaves like any stdio MCP client and serves its own fixture page on `127.0.0.1`:
+
+   ```bash
+   python3 -I Tools/mcp-smoke/mcp_smoke.py --app /path/to/owned/WSurf.app --stage-home "$stage_home"
+   ```
+
+   It prints the fixture address. Open it in the Stage window, press Return, and choose **Allow Development** on the
+   access sheet. It then calls `initialize`, `tools/list` (29 tools), `requestAccess`, `listTabs`, `readPage`,
+   `screenshotPage`, `getDevelopmentInfo`, `setViewport`, `emulateDevice` (`phone`), `startDiagnostics`, `readConsole` and
+   `resetDevelopment`, closes stdin, and expects the relay to exit 0. Every step prints `PASS` or `FAIL`; the exit code is 1 if any failed.
+4. Repeat step 3 with the fixture page on Chromium: in the Stage app open **Settings → Websites**, choose `127.0.0.1`,
+   set **Browser engine** to Chromium (this reloads the tab), and run the script again with `--engine chromium`; the phone
+   profile must then apply instead of being rejected. Each run is a new connection, which is what access needs: it is
+   requested once per connection.
+5. Run the same path with Claude Code itself. Register the Stage app for this project only, so nothing else changes:
+
+   ```bash
+   claude mcp add wsurf-stage --scope local -e WSURF_STAGE=1 -e WSURF_STAGE_HOME="$stage_home" \
+     -- /path/to/owned/WSurf.app/Contents/MacOS/WSurf --mcp
+   ```
+
+   Start `claude` in that project, run `/mcp` and check that `wsurf-stage` is connected with 29 tools. With the fixture
+   page open in the Stage window, send:
+
+   > Use the wsurf-stage MCP server. Call requestAccess with development true, then listTabs. For the tab on 127.0.0.1
+   > call readPage, screenshotPage, getDevelopmentInfo, startDiagnostics and readConsole, then resetDevelopment.
+   > Report each tool's status and any error text.
+
+   Choose **Allow Development** when the sheet appears. Afterwards run `claude mcp remove wsurf-stage --scope local`, quit
+   the Stage app and delete the stage home you created.
+
+Record the WSurf commit, the output of `claude --version`, the engine, and one line per tool call (status or error). The
+run passes when every call succeeds, `readConsole` returns the fixture's `smoke tick` records, and the relay exits cleanly.
+It does not cover signed-build features (Keychain, passkeys, Apple Passwords), which need a signed app.
 
 ## Privacy boundaries
 
@@ -197,7 +245,7 @@ A CSS selector is evaluated against the page, so an attribute test such as `inpu
   addressed by guessing an ID. Redirecting to another website does not grant
   access to its contents. Reconnect and request sharing again when needed.
 - External sharing grants are separate from the assistant's site grants.
-  **Assistant Access: Off** blocks external access; **Read Only** blocks external
+  **Assistant Access: No Access** blocks external access; **Read Only** blocks external
   control even when the connection has a control grant. External sharing does
   not change those settings.
 - The existing page driver detects and masks sensitive fields and refuses to
