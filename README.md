@@ -104,9 +104,10 @@ versions.
   then choose Continue rather than repeating completed browser actions.
 - **Preview links:** hold Shift over a link for a summary, or Shift-click to
   open a preview.
-- Use macOS Passwords-compatible password autofill, and save payment cards and
-  contact details in Settings › Autofill. Unlock saved passwords and cards with
-  Touch ID or your Mac password. Passkeys use the macOS sign-in prompt.
+- **Fill forms:** save and fill passwords, passkeys and verification codes in
+  Credential Manager, an encrypted per-profile vault you unlock with a passkey.
+  Save payment cards and contact details in Settings › Autofill; unlock cards
+  with Touch ID or your Mac password.
 - **Add WebKit extensions:** install from the Chrome Web Store or Firefox Add-ons.
 - Use profiles to keep cookies, history, tabs, permissions, and extensions
   separate. Regular windows of one profile share these services but keep their
@@ -120,21 +121,21 @@ branding. Source fixtures and extension parsing are covered, but real Apple
 Passwords PIN, fill, save, OTP, 15-minute idle, lock, and sleep behavior has
 not been verified in an own signed WSurf build.
 
-Settings › Autofill › Password provider also offers a separate, opt-in
-Credential Manager. Passwords stays the default and its data stays intact; there
-is no automatic migration or read-through. Only one built-in password writer is
-active. Installed extensions still act until you turn them off in Extensions,
-and Settings warns you. The Credential Manager keeps passwords, ES256 passkeys,
-and one-time codes in an encrypted per-profile store unlocked by a passkey. If
-any window leaves the profile, every window of that profile locks. It is
-unavailable in private browsing. WSurf makes no promise to zero memory, and
-there is no recovery key, master password, or Keychain fallback: losing every
-unlock passkey loses the store. The source also adds an exchange-only
+Credential Manager is WSurf’s only built-in password store. Passwords saved by
+earlier builds are imported once, after you review them, in Settings › Autofill
+› Credential Manager. The old list is deleted only after that import and your
+confirmation. Installed extensions still act until you turn them off in
+Extensions, and Settings warns you. Credential Manager keeps passwords, ES256
+passkeys, and one-time codes in an encrypted per-profile store unlocked by a
+passkey. If any window leaves the profile, every window of that profile locks.
+It is unavailable in private browsing. WSurf makes no promise to zero memory,
+and there is no recovery key, master password, or Keychain fallback: losing
+every unlock passkey loses the store. The source also adds an exchange-only
 credential-exchange extension. This feature is in source and not released.
 Native PRF, real user presence and verification, the six Apple Passwords
-transfers, Settings keyboard and VoiceOver behavior, and Stage are not
-verified. A WebKit iframe credential request currently fails closed as
-unsupported; Chromium requires native effective policy.
+transfers, Settings keyboard and VoiceOver behavior, and Stage are not verified.
+A WebKit iframe credential request currently fails closed as unsupported;
+Chromium requires native effective policy.
 
 ### Choose a model
 
@@ -180,6 +181,10 @@ Report vulnerabilities privately through [Security](SECURITY.md).
   guaranteed in legacy or private tabs; security-key and Chromium behavior is
   unverified. Vault-managed WebAuthn and Apple Passwords exchange use separate
   paths. See [Releasing](RELEASING.md).
+- In a normal tab every passkey request is shown to you first. Choose
+  Credential Manager, or Use Another Device or Key… to hand the same request to
+  the system’s authenticator (Apple Passwords, a phone, a security key). Private
+  tabs use the system’s authenticator directly.
 
 WSurf keeps its own data in `~/Library/Application Support/WSurf` and uses
 separate WSurf defaults, stage, native-host, MCP, logger, and `WSURF_*`

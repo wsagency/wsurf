@@ -7,6 +7,9 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+- Credential Manager is now the only password store. Passwords saved by earlier builds are imported once, after you review them; the old list is deleted only after that import and your confirmation. Sites excluded with “Never for This Site” in the old list are offered again.
+- Passkey requests in normal tabs show Credential Manager first, with Use Another Device or Key… to use Apple Passwords, a phone or a security key.
+- Transfers from Passwords now fit large libraries: up to 25,000 items and 100,000 credentials. A refused transfer names the limit it hit, and an item with more than 64 websites keeps the first 64.
 - Approving an app link such as “Open Claude?” now opens the app even when the sign-in page moves on within the same site. A link whose requesting frame can’t be confirmed now asks once instead of doing nothing.
 - Notes from Passwords are kept in the credentials store. A transfer is no longer refused because of a note or other data WSurf can’t store yet; the review lists what was left out. CSV import and export include notes.
 - The current tab is shown in inverse colors in the sidebar, and tabs opened in the background that you haven’t seen yet are marked with a dot.
