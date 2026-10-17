@@ -185,6 +185,8 @@ revoke it immediately.
 | `resetDevelopment` | Remove this connection's viewport, emulation and diagnostics and release its lease. Safe to repeat. |
 | `startDiagnostics` | Development. Start console and network capture for the tab's current document and the ones after it. Earlier activity is not available. |
 | `readConsole`, `readNetwork` | Development. Page through captured records with `cursor` and `limit` (1–100, default 50), narrow them with filters, or read one record with `seq`. Responses state `engine`, `sources`, `gaps`, `epoch`, `documentID`, `nextCursor`, `dropped`, `evicted`, `truncated`, `lostInFlight`, `lostEarly` (WebKit) and, with a filter, `skipped`. Filters: `level` and `urlContains` for `readConsole`; `minStatus`, `outcome`, `type` and `urlContains` for `readNetwork`. |
+| `readAccessibility` | Read access. A compact outline of the page's roles, names and states: landmarks, headings, lists, tables, controls, images and same-origin iframes, with a `[ref]` on each control `readPage` also lists. At most 400 nodes and about 24 KiB per call; `offset` continues and `scope` (a safe CSS selector) limits the outline to part of the page. Never shows field values; a sensitive field shows its role, its name and `sensitive`. |
+| `readPerformance` | Development. Navigation timing, paint, layout shift, long tasks and resource counts and sizes by type, with the five slowest resources and no query values. A metric the engine does not expose is `null` and named in `unsupported`. |
 | `scrollPage` | Scroll vertically or horizontally, optionally inside a referenced container. |
 | `goBack` | Go back within the shared website. |
 | `navigate` | Navigate a shared tab; another website requires approval. |
@@ -373,6 +375,26 @@ rules keep a dialog from reaching the wrong party:
 - WebKit has no beforeunload prompt in WSurf, so navigation away never produces
   one. Chromium shows it only to a page that has had user activation.
 - A connection cannot type a secret into a prompt; the user does.
+
+### Accessibility outline and performance summary
+
+`readAccessibility` computes roles and names from the DOM and ARIA attributes with one script on both engines, so WebKit and Chromium give the same outline for the same page. It is not the platform accessibility tree: text from CSS `::before` and `::after`, closed shadow roots and cross-origin frames are not part of it, and a name follows the common cases of the accessible-name rules (`aria-labelledby`, `aria-label`, labels, `alt`, `legend`, `caption`, content, `title`, `placeholder`). Plain containers and paragraphs have no line; hidden, `inert`, `aria-hidden` and `display: none` content is left out. An empty name is shown as no name, which is how an unlabelled control appears. Open shadow roots and same-origin iframes are included; an iframe that cannot be read is marked `skipped`. A page over 20,000 elements or 5,000 listed nodes is cut and says so; use `scope`. The text is untrusted page content, and a ref is accepted with the `observationID` of the same reply, like a `readPage` ref.
+
+```
+ACCESSIBILITY TREE (nodes 1-10 of 10):
+banner
+  [1] link "Home"
+main
+  heading "Checkout" level=1
+  form "Payment"
+    [2] textbox "Email" required
+    [3] textbox "Password" sensitive
+    [4] checkbox "Gift wrap" checked
+    [5] button "Pay now" disabled
+  list items=2
+```
+
+`readPerformance` reads the page's own Performance Timeline, never a trace. The reply is one JSON object of about 1 to 2 KB: `navigation` (type, `ttfbMs`, `domContentLoadedMs`, `loadMs`, `transferBytes`), `paint` (first paint, first contentful paint, largest contentful paint with its element), `layout` (cumulative shift), `longTasks` (count, total and longest), `resources` (count, transfer and decoded bytes, a count and transfer per initiator type, the five slowest with origin and path only, and `bufferFull` when the timeline's 250-entry buffer may have dropped later ones), `runtime` and `unsupported`. `sizeHidden` counts resources whose size the browser hides (cross-origin without `Timing-Allow-Origin`). Chromium adds `runtime` (heap, DOM nodes, documents, event listeners) from DevTools; WebKit has no equivalent and reports `runtime` as `null`. WebKit (as measured on macOS 26) does not expose layout shift or long tasks, so `layout` and `longTasks` are `null` and listed, and it reports no separate first paint, so `firstPaintMs` stays `null` without being listed. `null` without a listing means the engine supports the metric and has not observed it yet, for instance a first paint in a tab nobody can see.
 
 ### Safe selectors
 

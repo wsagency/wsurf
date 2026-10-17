@@ -200,6 +200,7 @@ nonisolated enum MCPToolCatalog {
         (coreEntries + developmentEntries + navigationEntries).map(selectorTargeted)
         + dialogEntries
         + inputEntries
+        + inspectionEntries
 
     static let coreEntries: [Entry] = [
         Entry(

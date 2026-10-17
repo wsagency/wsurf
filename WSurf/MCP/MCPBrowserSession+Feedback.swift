@@ -125,6 +125,7 @@ extension MCPBrowserSession {
     /// Whether a page tool's text is the success of its action, not a refusal or an error message.
     static func succeeded(_ name: String, _ output: String) -> Bool {
         let prefixes = [
+            "ACCESSIBILITY TREE", "PERFORMANCE:",
             "PAGE TEXT:", "Clicked", "Typed", "Selected", "Scrolled", "Already at", "Went back.",
             "CONTROL:", "Condition met.", "Set checked", "Checked state", "Screenshot captured.", "Hovered.", "Sent ", "ELEMENTS:", "ELEMENT:",
         ]
