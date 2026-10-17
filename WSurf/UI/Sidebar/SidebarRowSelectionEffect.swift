@@ -38,7 +38,7 @@ private struct SidebarRowSelectionEffect: ViewModifier {
             return .regular.tint(glassTint.opacity(0.32))
         }
         let base = glassTint ?? Theme.windowBackground
-        return .clear.tint(base.opacity(glassTint == nil ? 0.34 : 0.16))
+        return .regular.tint(base.opacity(glassTint == nil ? 0.34 : 0.16))
     }
 
     /// What a selected row shows while Reduce Transparency or Increase Contrast replaces its glass.

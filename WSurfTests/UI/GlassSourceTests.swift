@@ -43,4 +43,13 @@ struct GlassSourceTests {
         #expect(!loom.contains("GlassEffectView"))
         #expect(appKitGlass.isEmpty, "AppKit glass in \(appKitGlass)")
     }
+
+    /// Clear glass needs its own dimming and reads differently beside Regular, so the chrome draws Regular only.
+    @Test func noClearGlassRemains() throws {
+        let clear = try appSources()
+            .filter { $0.text.contains(".clear.tint(") || $0.text.contains("Glass.clear") || $0.text.contains("glassEffect(.clear") }
+            .map(\.path)
+
+        #expect(clear.isEmpty, "Clear glass in \(clear)")
+    }
 }

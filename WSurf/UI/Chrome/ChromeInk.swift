@@ -101,12 +101,12 @@ private struct ControlGlassSurface<S: InsettableShape>: ViewModifier {
 
     private var glass: Glass {
         if let tint {
-            return .clear.tint(tint.opacity(isActive ? 0.16 : 0.07))
+            return .regular.tint(tint.opacity(isActive ? 0.16 : 0.07))
         }
         if isLifted {
-            return .clear.tint(Theme.controlSurface.opacity(isActive ? 0.62 : 0.48))
+            return .regular.tint(Theme.controlSurface.opacity(isActive ? 0.62 : 0.48))
         }
-        return .clear.tint(Theme.windowBackground.opacity(isActive ? 0.34 : 0.26))
+        return .regular.tint(Theme.windowBackground.opacity(isActive ? 0.34 : 0.26))
     }
 
     private var surfaceWash: Color {

@@ -525,7 +525,7 @@ struct SidebarDragChip: View {
     @Environment(\.windowColorScheme) private var windowColorScheme
 
     private var glass: Glass {
-        .clear.tint(Theme.controlSurface.opacity(SidebarDragGhost.chipFillOpacity))
+        .regular.tint(Theme.controlSurface.opacity(SidebarDragGhost.chipFillOpacity))
     }
 
     var body: some View {
