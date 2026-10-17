@@ -155,9 +155,8 @@ nonisolated enum MCPToolCatalog {
 
     /// Every tool, in the order `tools/list` reports them. A tool group adds one line here and defines its entries in its own file.
     static let entries: [Entry] =
-        coreEntries
-        + developmentEntries
-        + navigationEntries
+        (coreEntries + developmentEntries + navigationEntries).map(selectorTargeted)
+        + inputEntries
 
     static let coreEntries: [Entry] = [
         Entry(

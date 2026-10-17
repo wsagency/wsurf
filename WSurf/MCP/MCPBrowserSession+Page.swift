@@ -21,7 +21,12 @@ extension MCPBrowserSession {
         let generation = tab.pageGeneration
         guard tab.isLive(view, generation: generation) else { return failure("The page is not ready. Try again.") }
         guard let url = webURL(of: tab) else { return failure("The webpage is unavailable.") }
-        let usesRef = entry.usesRef || arguments["ref"] != nil
+        var targeted = arguments
+        if let refusal = await prepareTargets(entry, arguments: &targeted, tab: tab, view: view, generation: generation, url: url) {
+            return refusal
+        }
+        let arguments = targeted
+        let usesRef = entry.usesRef || arguments["ref"] != nil || arguments["toRef"] != nil
         let observation = observations[tab.id]
         if usesRef {
             guard let observation, observation.id == arguments["observationID"]?.stringValue,
@@ -152,7 +157,9 @@ extension MCPBrowserSession {
         case "hoverOnPage":
             return await PageDriver.hover(ref: ref, in: view)
         case "pressKey":
-            return await PageDriver.pressKey(arguments["key"]?.stringValue ?? "", ref: ref, in: view)
+            return await PageDriver.pressKey(arguments["key"]?.stringValue ?? "", ref: ref, modifiers: arguments["modifiers"]?.stringValue ?? "", in: view)
+        case "dragOnPage":
+            return await dragAction(arguments: arguments, view: view)
         case "fillFields":
             let fields =
                 arguments["fields"]?.arrayValue?.compactMap { value -> PageDriver.FieldValue? in
