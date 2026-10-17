@@ -21,9 +21,10 @@ final class DevelopmentDiagnostics {
     let buffer: PageDiagnostics.Buffer
     private weak var page: BrowserPage?
     private weak var owner: DevelopmentOwner?
-    /// Query values in every URL this capture records become tags of this key. The key exists for this capture only, so equal
-    /// values correlate inside it and nowhere else.
-    private let queryValues = PageDiagnostics.QueryValues.tagged(SymmetricKey(size: .bits256))
+    /// Conceals the query of every URL this capture records (see `PageDiagnostics.QueryValues`). Its key belongs to one document:
+    /// it is replaced when the document changes and when an agent navigates, so a tag matches only inside the document it was
+    /// made in and a value an agent has the page request cannot be compared with one the previous page used.
+    private(set) var queryValues = PageDiagnostics.QueryValues.tagged(SymmetricKey(size: .bits256))
     private let mapper: ChromiumDiagnosticsMapper
     /// Unique per capture. The controller registration can be shared with sibling views and other captures, so a capture
     /// may only ever remove a registration whose name it alone owns.
@@ -69,7 +70,9 @@ final class DevelopmentDiagnostics {
     var gaps: [String] {
         var gaps = [
             "Nothing before startDiagnostics is available.",
-            "Header values, bodies, cookies and object contents are never captured. Query values are shown as ~tags (equal values share a tag within this capture only); parameter names stay.",
+            "Header values, bodies, cookies and object contents are never captured.",
+            "URL query values are concealed: a value that looks generated (a token, id or key) is a ~tag that matches only inside one document, "
+                + "any other value shows only a length class (*short, *medium, *long); only plain parameter names stay.",
         ]
         if engine == "chromium" {
             gaps.append("Subframes, workers and extension worlds are not captured.")
@@ -137,6 +140,12 @@ final class DevelopmentDiagnostics {
         webKit.configuration.userContentController.removeScriptMessageHandler(forName: handlerName, contentWorld: PageAutomationGuard.world)
     }
 
+    /// Starts a new key for the query tags. Records already in the buffer keep the tags they have.
+    func rotateQueryKey() {
+        queryValues = .tagged(SymmetricKey(size: .bits256))
+        mapper.queryValues = queryValues
+    }
+
     /// A navigation committed (called by the owning tab): follow the new document now instead of at the next read. Chromium
     /// adopts it immediately; WebKit attaches the hook as soon as the new main frame is registered.
     func documentMayHaveChanged() {
@@ -161,6 +170,7 @@ final class DevelopmentDiagnostics {
             stop()
             return false
         }
+        rotateQueryKey()
         buffer.reset(documentID: current)
         mapper.reset(keeping: current)
         lostEarly = 0

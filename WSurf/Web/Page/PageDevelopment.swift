@@ -32,7 +32,7 @@ extension BrowserPage {
                     "console": .limited(
                         "Main-frame page-world console calls and uncaught exceptions after capture starts; warnings, errors and exceptions carry location and a stack of up to 10 frames."),
                     "network": .limited(
-                        "Main-frame requests after capture starts: method, sanitized URL (parameter names, tagged values), status, resource type, media type, "
+                        "Main-frame requests after capture starts: method, sanitized URL (plain parameter names, concealed values), status, resource type, media type, "
                             + "transfer size, redirect target and timing; no headers or bodies."),
                 ])
         }
@@ -46,7 +46,8 @@ extension BrowserPage {
                         + "an Error argument or an uncaught error carries a stack, other values appear as [object]."),
                 "network": .limited(
                     "fetch and XMLHttpRequest (status, media type, timing; a URL only for a string argument, a method only for fetch(url) without an init) and resource loads "
-                        + "(type, size when exposed, timing) of the document: sanitized URLs with parameter names and tagged values, no headers or bodies; WebSockets and workers are not observed."),
+                        + "(type, size when exposed, timing) of the document: sanitized URLs with plain parameter names and concealed values, no headers or bodies; "
+                        + "WebSockets and workers are not observed."),
             ])
     }
 

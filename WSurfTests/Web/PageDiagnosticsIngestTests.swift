@@ -13,10 +13,6 @@ struct PageDiagnosticsIngestTests {
         PageDiagnosticsHook.entry(from: body, queryValues: DiagnosticsTestKey.values)
     }
 
-    private func tag(_ value: String) -> String {
-        DiagnosticsTestKey.tag(value)
-    }
-
     // MARK: WebKit hook messages
 
     @Test func acceptsAWellFormedConsoleMessage() {
@@ -25,7 +21,7 @@ struct PageDiagnosticsIngestTests {
             result
                 == .init(
                     stream: .console,
-                    fields: ["level": "error", "text": "boom", "url": .text("https://a.test/app.js?v=\(tag("secret"))"), "line": 12, "source": "webkit-hook"]))
+                    fields: ["level": "error", "text": "boom", "url": .text("https://a.test/app.js?v=*short"), "line": 12, "source": "webkit-hook"]))
     }
 
     @Test(arguments: ["log", "info", "warn", "error", "debug"])
@@ -120,7 +116,7 @@ struct PageDiagnosticsIngestTests {
             "status": 404, "ms": 12.6, "outcome": "completed",
         ])
         #expect(result == .init(stream: .network, fields: [
-            "method": "POST", "url": .text("https://api.test/v1/x?token=\(tag("hunter2"))"), "status": 404, "durationMs": 13, "outcome": "completed",
+            "method": "POST", "url": .text("https://api.test/v1/x?token=*short"), "status": 404, "durationMs": 13, "outcome": "completed",
             "source": "webkit-fetch", "type": "fetch",
         ]))
     }
@@ -198,7 +194,7 @@ struct PageDiagnosticsIngestTests {
             ],
         ])
         #expect(result?.fields["text"] == "ReferenceError: nope is not defined")
-        #expect(result?.fields["url"] == .text("https://a.test/app.js?token=\(tag("hunter2"))"))
+        #expect(result?.fields["url"] == .text("https://a.test/app.js?token=*short"))
         #expect(result?.fields["line"] == 42)  // CDP line numbers are 0-based
         #expect(result?.fields["level"] == "error")
     }
@@ -212,7 +208,7 @@ struct PageDiagnosticsIngestTests {
         #expect(mapper.entry(method: "Network.responseReceived", params: ["requestId": "1", "response": ["status": 201, "headers": ["Set-Cookie": "hunter2"]]]) == nil)
         let done = try #require(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "1", "timestamp": 100.25, "encodedDataLength": 1]))
         #expect(done == .init(stream: .network, fields: [
-            "method": "PUT", "url": .text("https://a.test/x?token=\(tag("hunter2"))"), "status": 201, "durationMs": 250, "outcome": "completed",
+            "method": "PUT", "url": .text("https://a.test/x?token=*short"), "status": 201, "durationMs": 250, "outcome": "completed",
             "source": "cdp", "transferBytes": 1,
         ]))
         #expect(!String(describing: done).contains("hunter2"))

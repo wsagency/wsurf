@@ -191,6 +191,7 @@ extension MCPBrowserSession {
                 let size = profile.dimensions(orientation)
                 return await setViewport(width: size.width, height: size.height, profile: profile, tab: tab, view: view)
             case "reloadPage":
+                rotateDiagnosticsKey(on: tab)
                 return await reload(tab: tab, view: view, generation: generation)
             case "resetDevelopment":
                 return await resetDevelopment(tab: tab)
@@ -201,6 +202,12 @@ extension MCPBrowserSession {
                     stream: name == "readConsole" ? .console : .network, arguments: arguments, tab: tab, view: view, generation: generation)
             }
         }
+    }
+
+    /// An agent is about to navigate this tab: whatever it makes the next page request must not be comparable with what the
+    /// current page requested, so the capture starts a new key for query tags.
+    func rotateDiagnosticsKey(on tab: BrowserTab) {
+        ownLease(tab)?.diagnostics?.rotateQueryKey()
     }
 
     // MARK: Ownership

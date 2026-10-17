@@ -159,8 +159,8 @@ struct PageDiagnosticsFidelityTests {
             "requestId": "1", "timestamp": 10.1, "type": "Document", "request": ["url": "https://a.test/new?session=abc", "method": "GET"],
             "redirectResponse": ["status": 302, "mimeType": "text/html; charset=utf-8", "encodedDataLength": 210.0, "url": "https://a.test/old"],
         ]))
-        #expect(hop.fields["url"] == .text("https://a.test/old?next=\(tag("/x"))"))
-        #expect(hop.fields["redirectTo"] == .text("https://a.test/new?session=\(tag("abc"))"))
+        #expect(hop.fields["url"] == .text("https://a.test/old?next=*short"))
+        #expect(hop.fields["redirectTo"] == .text("https://a.test/new?session=*short"))
         #expect(hop.fields["status"] == 302 && hop.fields["type"] == "document" && hop.fields["transferBytes"] == 210)
         #expect(hop.fields["mimeType"] == "text/html", "a media type has no parameters")
         _ = mapper.entry(method: "Network.responseReceived", params: [
@@ -170,6 +170,30 @@ struct PageDiagnosticsFidelityTests {
         #expect(final.fields["redirectTo"] == nil, "only a redirect hop has a target")
         #expect(final.fields["mimeType"] == "text/html" && final.fields["transferBytes"] == 1_532 && final.fields["type"] == "document")
         #expect(final.fields["durationMs"] == 200 && final.fields["status"] == 200)
+    }
+
+    @Test func aRequestIsConcealedWithTheKeyOfTheDocumentItsRecordBelongsTo() throws {
+        let secret = DiagnosticsTestKey.secret
+        let before = SymmetricKey(size: .bits256)
+        let after = SymmetricKey(size: .bits256)
+        let mapper = ChromiumDiagnosticsMapper(queryValues: .tagged(before))
+        // The main-document request of an agent's navigation begins before the commit is observed, while the previous
+        // document's key is still current. Its record is made after the commit, so it must carry the new document's key.
+        _ = mapper.entry(method: "Network.requestWillBeSent", params: [
+            "requestId": "nav", "timestamp": 1.0, "frameId": "main", "loaderId": "L2", "request": ["url": "https://a.test/page?sid=\(secret)", "method": "GET"],
+        ])
+        mapper.queryValues = .tagged(after)
+        mapper.reset(keeping: "L2")
+        let done = try #require(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "nav", "timestamp": 1.2]))
+        #expect(done.fields["url"] == .text("https://a.test/page?sid=\(DiagnosticsTestKey.tag(secret, key: after))"))
+        #expect(done.fields["url"] != .text("https://a.test/page?sid=\(DiagnosticsTestKey.tag(secret, key: before))"))
+        // A redirect target is concealed when its hop is recorded, with the key current then.
+        _ = mapper.entry(method: "Network.requestWillBeSent", params: ["requestId": "r", "timestamp": 2.0, "request": ["url": "https://a.test/old", "method": "GET"]])
+        let hop = try #require(mapper.entry(method: "Network.requestWillBeSent", params: [
+            "requestId": "r", "timestamp": 2.1, "request": ["url": "https://a.test/new?sid=\(secret)", "method": "GET"],
+            "redirectResponse": ["status": 302],
+        ]))
+        #expect(hop.fields["redirectTo"] == .text("https://a.test/new?sid=\(DiagnosticsTestKey.tag(secret, key: after))"))
     }
 
     @Test(arguments: [
@@ -214,12 +238,12 @@ struct PageDiagnosticsFidelityTests {
         }
         let lines = stack.split(separator: "\n")
         #expect(lines.count == PageDiagnostics.maxStackFrames)
-        #expect(lines.first == "fn0 (https://a.test/app.js?v=\(tag("build42")):1:5)", "lines and columns are 1-based")
+        #expect(lines.first == "fn0 (https://a.test/app.js?v=*short:1:5)", "lines and columns are 1-based")
         #expect(!stack.contains("build42"))
         #expect(stack.utf8.count <= PageDiagnostics.maxStackBytes)
         #expect(result.truncated, "frames were left out")
         // The top frame is also the record's own location.
-        #expect(result.fields["url"] == .text("https://a.test/app.js?v=\(tag("build42"))") && result.fields["line"] == 1 && result.fields["column"] == 5)
+        #expect(result.fields["url"] == .text("https://a.test/app.js?v=*short") && result.fields["line"] == 1 && result.fields["column"] == 5)
     }
 
     @Test func aStackOfHugeFramesStaysInItsByteBound() throws {
@@ -268,7 +292,7 @@ struct PageDiagnosticsFidelityTests {
         }
         let lines = stack.split(separator: "\n")
         #expect(lines.count == PageDiagnostics.maxStackFrames)
-        #expect(lines.first == "fn0 (https://a.test/app.js?v=\(tag("build42")):1:7)")
+        #expect(lines.first == "fn0 (https://a.test/app.js?v=*short:1:7)")
         #expect(!stack.contains("build42"))
         #expect(result.truncated)
         #expect(result.fields["column"] == 7)
@@ -296,7 +320,7 @@ struct PageDiagnosticsFidelityTests {
             "k": "net", "via": "resource", "rtype": "img", "url": "https://a.test/pic.png?cache=zz", "bytes": 2_048, "ms": 8.5, "outcome": "completed",
         ]))
         #expect(image.fields["type"] == "image" && image.fields["transferBytes"] == 2_048 && image.fields["source"] == "webkit-resource")
-        #expect(image.fields["url"] == .text("https://a.test/pic.png?cache=\(tag("zz"))"))
+        #expect(image.fields["url"] == .text("https://a.test/pic.png?cache=*short"))
         #expect(image.fields["method"] == nil, "a resource entry does not say how it was requested")
         let unexposed = try #require(entry(["k": "net", "via": "resource", "rtype": "script", "url": "https://cdn.test/a.js", "outcome": "completed"]))
         #expect(unexposed.fields["transferBytes"] == nil, "a size the page cannot see is unknown, never 0")

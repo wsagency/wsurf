@@ -295,30 +295,15 @@ nonisolated enum PageDiagnostics {
 
     // MARK: URL sanitization
 
-    /// What a sanitized URL shows of its query values. Names always stay; the rest of the URL is the same either way.
-    enum QueryValues: Sendable {
-        /// Each value becomes `~` and six hex digits of its HMAC-SHA256 under `key`. A key that lives for one capture and is
-        /// never shown means equal values correlate inside that capture (the same token on two requests, `page=2` twice)
-        /// while a value can neither be read nor guessed from its tag.
-        case tagged(SymmetricKey)
-        /// Values stay readable. Reserved for the Developer tier on developer sites; no tool selects it yet.
-        case clear
-    }
-
-    static let maxQueryParameters = 32
-    static let maxQueryNameBytes = 64
-
     private static let hierarchicalSchemes: Set<String> = ["http", "https", "ws", "wss", "ftp", "file"]
 
-    /// Keeps scheme, host, port, path and the query's parameter names. Userinfo and fragment are removed; opaque schemes
-    /// (data, blob, javascript, about, …) reveal just their scheme. A parameter without `=` is shown as a tagged value
-    /// because it may itself be the secret (`/confirm?<token>`).
+    /// Keeps scheme, host, port and path. Userinfo and fragment are removed; opaque schemes (data, blob, javascript, about, …)
+    /// reveal just their scheme. The query keeps plain parameter names and conceals everything else (`QueryValues`).
     static func sanitize(url: String, queryValues: QueryValues) -> String? {
         sanitized(url: url, queryValues: queryValues)?.text
     }
 
-    /// `sanitize`, also reporting whether the query was cut: more than `maxQueryParameters` parameters (the rest become `…`)
-    /// or a name over `maxQueryNameBytes` (cut with `…`).
+    /// `sanitize`, also reporting whether the query was cut: more than `maxQueryParameters` parameters (the rest become `…`).
     static func sanitized(url: String, queryValues: QueryValues) -> (text: String, cut: Bool)? {
         guard let colon = url.firstIndex(of: ":") else { return nil }
         let scheme = url[..<colon].lowercased()
@@ -338,41 +323,5 @@ nonisolated enum PageDiagnostics {
             query = "?" + query
         }
         return ("\(scheme)://\(host)\(port)\(components.percentEncodedPath)\(query)", cut)
-    }
-
-    private static func render(query: String, _ queryValues: QueryValues) -> (text: String, cut: Bool) {
-        let parameters = query.split(separator: "&", omittingEmptySubsequences: true)
-        var cut = parameters.count > maxQueryParameters
-        var shown = parameters.prefix(maxQueryParameters).map { parameter -> String in
-            guard let equals = parameter.firstIndex(of: "=") else { return show(parameter, queryValues) }
-            let name = clipName(String(parameter[..<equals]))
-            cut = cut || name.hasSuffix("…")
-            let value = parameter[parameter.index(after: equals)...]
-            return name + "=" + (value.isEmpty ? "" : show(value, queryValues))
-        }
-        if parameters.count > maxQueryParameters { shown.append("…") }
-        return (shown.joined(separator: "&"), cut)
-    }
-
-    private static func show(_ value: Substring, _ queryValues: QueryValues) -> String {
-        switch queryValues {
-        case .clear:
-            return String(value)
-        case .tagged(let key):
-            let code = HMAC<SHA256>.authenticationCode(for: Data(value.utf8), using: key)
-            return "~" + code.prefix(3).map { String(format: "%02x", $0) }.joined()
-        }
-    }
-
-    /// `name` cut to `maxQueryNameBytes` on a unicode scalar boundary, with `…` when something was cut.
-    private static func clipName(_ name: String) -> String {
-        var used = 0
-        var kept = String.UnicodeScalarView()
-        for scalar in name.unicodeScalars {
-            used += String(scalar).utf8.count
-            if used > maxQueryNameBytes { return String(kept) + "…" }
-            kept.append(scalar)
-        }
-        return name
     }
 }

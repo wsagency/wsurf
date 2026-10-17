@@ -573,6 +573,8 @@ nonisolated enum PageDiagnosticsHook {
 nonisolated final class ChromiumDiagnosticsMapper {
     private struct Pending {
         var method: String?
+        /// The URL as the page sent it, cut to its byte bound. It is concealed when a record is made, with the key the document
+        /// that record belongs to has by then, not the key of the document that was current when the request began.
         var url: String?
         var urlTruncated = false
         var start: Double?
@@ -586,7 +588,8 @@ nonisolated final class ChromiumDiagnosticsMapper {
     private static let maxInFlight = 256
     private static let consoleLevels = ["log": "log", "debug": "debug", "info": "info", "error": "error", "assert": "error", "warning": "warn"]
 
-    private let queryValues: PageDiagnostics.QueryValues
+    /// Replaced by the owner whenever the document changes; see `PageDiagnostics.QueryValues`.
+    var queryValues: PageDiagnostics.QueryValues
     private var pending: [String: Pending] = [:]
     private var order: [String] = []
     /// In-flight requests dropped because more than `maxInFlight` were open at once. Their outcome is unknown; the owner
@@ -732,12 +735,12 @@ nonisolated final class ChromiumDiagnosticsMapper {
     private func requestWillBeSent(_ params: [String: Any]) -> PageDiagnostics.Entry? {
         guard let id = params["requestId"] as? String, let request = params["request"] as? [String: Any] else { return nil }
         let timestamp = params["timestamp"] as? Double
-        let url = (request["url"] as? String).map { PageDiagnostics.boundedURL($0, queryValues) }
+        let url = (request["url"] as? String).map { PageDiagnostics.clip($0, bytes: PageDiagnostics.maxURLBytes) }
         var hop: PageDiagnostics.Entry?
         if let redirect = params["redirectResponse"] as? [String: Any], var previous = pending[id] {
             previous.status = PageDiagnostics.status(redirect["status"])
             previous.mimeType = PageDiagnostics.mediaType(redirect["mimeType"])
-            hop = Self.network(
+            hop = network(
                 previous, end: timestamp, outcome: "completed", bytes: PageDiagnostics.byteCount(redirect["encodedDataLength"]),
                 redirectTo: url?.text)
         }
@@ -758,23 +761,27 @@ nonisolated final class ChromiumDiagnosticsMapper {
     private func finish(_ params: [String: Any], outcome: String) -> PageDiagnostics.Entry? {
         guard let id = params["requestId"] as? String, let request = pending.removeValue(forKey: id) else { return nil }
         order.removeAll { $0 == id }
-        return Self.network(
+        return network(
             request, end: params["timestamp"] as? Double, outcome: outcome, bytes: PageDiagnostics.byteCount(params["encodedDataLength"]),
             redirectTo: nil)
     }
 
-    private static func network(_ request: Pending, end: Double?, outcome: String, bytes: Int?, redirectTo: String?) -> PageDiagnostics.Entry {
+    /// The record for a request, with its URLs concealed now. `redirectTo` is the raw bounded URL of the redirect target.
+    private func network(_ request: Pending, end: Double?, outcome: String, bytes: Int?, redirectTo: String?) -> PageDiagnostics.Entry {
         var fields: [String: PageDiagnostics.Field] = ["outcome": .text(outcome), "source": "cdp"]
+        let url = request.url.map { PageDiagnostics.boundedURL($0, queryValues) }
+        let target = redirectTo.map { PageDiagnostics.boundedURL($0, queryValues) }
         fields["method"] = request.method.map { .text($0) }
-        fields["url"] = request.url.map { .text($0) }
+        fields["url"] = url?.text.map { .text($0) }
         fields["status"] = request.status.map { .number($0) }
         fields["type"] = request.type.map { .text($0) }
         fields["mimeType"] = request.mimeType.map { .text($0) }
         fields["transferBytes"] = bytes.map { .number($0) }
-        fields["redirectTo"] = redirectTo.map { .text($0) }
+        fields["redirectTo"] = target?.text.map { .text($0) }
         if let start = request.start, let end {
             fields["durationMs"] = PageDiagnostics.duration(milliseconds: ((end - start) * 1000).rounded()).map { .number($0) }
         }
-        return .init(stream: .network, fields: fields, truncated: request.urlTruncated, frameID: request.frameID, loaderID: request.loaderID)
+        let truncated = request.urlTruncated || (url?.truncated ?? false) || (target?.truncated ?? false)
+        return .init(stream: .network, fields: fields, truncated: truncated, frameID: request.frameID, loaderID: request.loaderID)
     }
 }

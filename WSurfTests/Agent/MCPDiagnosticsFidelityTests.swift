@@ -109,24 +109,57 @@ struct MCPDiagnosticsFidelityTests {
     // MARK: Query values
 
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, BrowserEngine.chromium])
-    func queryNamesStayAndValuesAreTaggedNeverShown(engine: BrowserEngine) async throws {
+    func plainNamesStayAndEveryValueIsConcealed(engine: BrowserEngine) async throws {
         let rig = try await makeRig(engine)
         defer { close(rig) }
         try await start(rig)
+        let secret = DiagnosticsTestKey.secret
         _ = try await rig.tab.page.evaluateJavaScript(
-            "fetch('/api?token=hunter2&page=2&again=2&x=https%3A%2F%2Fevil.test%2F%3Fk%3Dhunter2#fragsecret99').catch(() => {}); 0")
+            "fetch('/api?token=hunter2&page=2&sid=\(secret)&again=\(secret)&x=https%3A%2F%2Fevil.test%2F%3Fk%3Dhunter2#fragsecret99').catch(() => {}); 0")
         let network = try await read(rig, "readNetwork") { ($0["url"]?.stringValue ?? "").contains("/api?") }
         let record = try #require(network.first { ($0["url"]?.stringValue ?? "").contains("/api?") })
         let url = try #require(text(record, "url"))
         let query = try #require(url.split(separator: "?").last).split(separator: "&").map(String.init)
-        #expect(query.map { String($0.split(separator: "=")[0]) } == ["token", "page", "again", "x"], "names stay, in order: \(url)")
-        let tags = query.map { String($0.split(separator: "=", maxSplits: 1)[1]) }
-        #expect(tags.allSatisfy { $0.count == 7 && $0.hasPrefix("~") && $0.dropFirst().allSatisfy(\.isHexDigit) }, "\(tags)")
-        #expect(tags[1] == tags[2], "equal values share a tag within the capture")
-        #expect(Set(tags).count == 3)
+        #expect(query.map { String($0.split(separator: "=")[0]) } == ["token", "page", "sid", "again", "x"], "names stay, in order: \(url)")
+        let shown = query.map { String($0.split(separator: "=", maxSplits: 1)[1]) }
+        #expect(shown[0] == "*short" && shown[1] == "*short" && shown[4] == "*medium", "guessable values show only a length class: \(shown)")
+        #expect(shown[2].count == 17 && shown[2].hasPrefix("~") && shown[2].dropFirst().allSatisfy(\.isHexDigit), "\(shown)")
+        #expect(shown[2] == shown[3], "equal generated values share a tag inside one document")
         let whole = everything(try await call(rig, "readNetwork"))
-        #expect(!whole.contains("hunter2") && !whole.contains("evil.test"), "no query value reaches the client")
+        #expect(!whole.contains("hunter2") && !whole.contains("evil.test") && !whole.contains(secret), "no query value reaches the client")
         #expect(!whole.contains("fragsecret99"))
+    }
+
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, BrowserEngine.chromium])
+    func aTagMatchesNothingInAnotherDocumentOrAfterTheKeyChanges(engine: BrowserEngine) async throws {
+        let secret = DiagnosticsTestKey.secret
+        let second = "<!doctype html><title>Second</title><script>fetch('/api?sid=\(secret)').catch(() => {});</script><p>second</p>"
+        let rig = try await makeRig(engine, routes: ["/second": .html(second)])
+        defer { close(rig) }
+        try await start(rig)
+        func tags(_ network: [[String: Value]]) -> [String] {
+            network.compactMap { record in
+                let url = record["url"]?.stringValue ?? ""
+                return url.contains("/api?sid=") ? url.split(separator: "=").last.map(String.init) : nil
+            }
+        }
+        // The page's own request, then one the agent had the page make with a value it chose.
+        _ = try await rig.tab.page.evaluateJavaScript("fetch('/api?sid=\(secret)').catch(() => {}); fetch('/api?sid=\(DiagnosticsTestKey.otherSecret)').catch(() => {}); 0")
+        _ = try await waitUntil { tags(records(try await call(rig, "readNetwork"))).count == 2 }
+        let first = tags(records(try await call(rig, "readNetwork")))
+        #expect(first.count == 2 && first[0] != first[1], "a different value has a different tag: \(first)")
+        // A key change inside the document: the same secret now has another tag, and the old tag no longer identifies it.
+        try #require(rig.tab.developmentOwner?.diagnostics).rotateQueryKey()
+        _ = try await rig.tab.page.evaluateJavaScript("fetch('/api?sid=\(secret)').catch(() => {}); 0")
+        _ = try await waitUntil { tags(records(try await call(rig, "readNetwork"))).count == 3 }
+        let rotated = tags(records(try await call(rig, "readNetwork")))
+        #expect(rotated.count == 3 && rotated[2] != rotated[0], "the key changed: \(rotated)")
+        // The next document: the same secret, supplied again, has yet another tag.
+        rig.tab.page.load(URLRequest(url: try rig.server.url("/second")))
+        try #require(await PageSettle.untilIdle(rig.tab.page))
+        _ = try await waitUntil { !tags(records(try await call(rig, "readNetwork"))).isEmpty }
+        let next = tags(records(try await call(rig, "readNetwork")))
+        #expect(next.count == 1 && !first.contains(next[0]) && !rotated.contains(next[0]), "\(next) against \(rotated)")
     }
 
     // MARK: Resource facts
@@ -276,7 +309,7 @@ struct MCPDiagnosticsFidelityTests {
         let order = [texts.firstIndex(of: "early-boot"), texts.firstIndex(of: "second-boot")].compactMap { $0 }
         #expect(order == order.sorted() && order.count == 2, "in the order the page produced them")
         let network = try await read(rig, "readNetwork") { ($0["url"]?.stringValue ?? "").contains("/api?early=") }
-        #expect(network.contains { ($0["url"]?.stringValue ?? "").contains("/api?early=~") })
+        #expect(network.contains { ($0["url"]?.stringValue ?? "").contains("/api?early=*short") })
         let result = try await call(rig, "readConsole")
         #expect(!everything(result).contains("hunter2"))
         if engine == .webKit {

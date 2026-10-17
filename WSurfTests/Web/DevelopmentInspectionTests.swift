@@ -651,11 +651,11 @@ struct PageDiagnosticsHookTests {
         // A string URL without an init: the method is GET and the relative URL resolves against the document.
         #expect(fields[0]["method"] == "GET" && fields[0]["url"] == "https://fixture.test/api/x" && fields[0]["status"] == 201)
         // An init object or a Request is never read: method and/or URL are unknown, not guessed.
-        #expect(fields[1]["method"] == nil && fields[1]["url"] == .text("https://fixture.test/api/y?token=\(DiagnosticsTestKey.tag("s"))"))
+        #expect(fields[1]["method"] == nil && fields[1]["url"] == .text("https://fixture.test/api/y?token=*short"))
         #expect(fields[2]["method"] == nil && fields[2]["url"] == nil)
         #expect(fields[3]["url"] == "https://fixture.test/reject" && fields[3]["outcome"] == "failed" && fields[3]["status"] == nil)
         #expect(
-            fields[4]["method"] == "GET" && fields[4]["url"] == .text("https://fixture.test/xhr/path?q=\(DiagnosticsTestKey.tag("1"))")
+            fields[4]["method"] == "GET" && fields[4]["url"] == .text("https://fixture.test/xhr/path?q=*short")
                 && fields[4]["outcome"] == "aborted")
 
         // The page wraps over the hook's console.log; off must not clobber that, only stop reporting through it.

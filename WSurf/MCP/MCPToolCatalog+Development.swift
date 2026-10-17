@@ -85,7 +85,7 @@ nonisolated extension MCPToolCatalog {
             description:
                 """
                 Start capturing console messages and network request metadata for the tab's current document and the ones after it: \
-                method, sanitized URL (parameter names kept, values shown as ~tags that match only within this capture), status, \
+                method, sanitized URL (plain parameter names kept; values concealed as a ~tag for a generated token that matches only within one document, otherwise a length class), status, \
                 resource type, media type, size, timing and, for warnings and errors, a stack trace. Never headers, bodies, cookies \
                 or query values. Nothing earlier is available. Needs development access and a visible tab.
                 """,
