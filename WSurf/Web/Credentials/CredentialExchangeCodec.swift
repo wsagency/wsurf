@@ -28,6 +28,9 @@ nonisolated struct CredentialImportPreview: Sendable {
     let conflicts: [CredentialImportConflict]
     /// What the transfer held that WSurf did not keep. It never refuses a transfer.
     var omitted: [CredentialImportOmission] = []
+    /// For each omission, the `id` of the candidate it belongs to; `nil` when its item was not kept. Empty for a preview that
+    /// doesn't say (a CSV file has no omissions), otherwise as long as `omitted`.
+    var omittedItems: [UUID?] = []
 
     var revision: UInt64 {
         base.revision
@@ -251,7 +254,11 @@ nonisolated enum CredentialExchangeCodec {
         var totalCollections = 0
         var candidates: [CredentialAccount] = []
         var omitted: [CredentialImportOmission] = []
+        /// For each omission, the id of the kept item it belongs to (`nil` for an item that was not kept).
+        var omittedItems: [UUID?] = []
         var itemTitle = ""
+        /// The id the item's account gets if it is kept, so an omission can be shown with its item.
+        var itemCandidateID: UUID?
         var record = CredentialExchangeError.Record.exporter
         var credentialKind: CredentialExchangeError.CredentialKind?
     }
@@ -273,7 +280,9 @@ nonisolated enum CredentialExchangeCodec {
             state.record = .payload
             try validateAccounts(state.candidates)
             let conflicts = try makeConflicts(state.candidates, against: base.accounts)
-            return CredentialImportPreview(base: base, candidates: state.candidates, conflicts: conflicts, omitted: state.omitted)
+            return CredentialImportPreview(
+                base: base, candidates: state.candidates, conflicts: conflicts, omitted: state.omitted, omittedItems: state.omittedItems
+            )
         } catch {
             var failure = error as? CredentialExchangeError ?? CredentialExchangeError(record: state.record, underlying: error)
             if case .credential = failure.record {
@@ -329,6 +338,7 @@ nonisolated enum CredentialExchangeCodec {
         state.omitted.append(CredentialImportOmission(
             record: state.record, title: state.itemTitle, kind: state.credentialKind, reason: reason
         ))
+        state.omittedItems.append(state.itemCandidateID)
     }
 
     /// Whether `account` holds anything WSurf can keep: a login, a passkey, a code or a note.
@@ -345,6 +355,8 @@ nonisolated enum CredentialExchangeCodec {
     ) throws {
         state.record = .item(account: position.account, item: position.item)
         state.itemTitle = item.title
+        let candidateID = UUID()
+        state.itemCandidateID = candidateID
         let itemIdentity = ExternalItemID(account: appleAccount.id, item: item.id)
         guard state.candidates.count < CredentialVaultLimits.accounts else { throw ImportLimitExceeded(.items) }
         guard !item.id.isEmpty, state.seenItemIDs.insert(itemIdentity).inserted else { throw CredentialVaultError.invalidData }
@@ -368,7 +380,7 @@ nonisolated enum CredentialExchangeCodec {
             collection($0, linkedTo: item.id, accountID: appleAccount.id)
         }
         var candidate = CredentialAccount(
-            id: UUID(),
+            id: candidateID,
             username: "",
             displayName: item.title.isEmpty ? nil : item.title,
             origins: [],
@@ -407,6 +419,7 @@ nonisolated enum CredentialExchangeCodec {
         state.credentialKind = nil
         state.record = .item(account: position.account, item: position.item)
         guard hasContent(candidate) else {
+            state.itemCandidateID = nil
             omit(.nothingToKeep, &state)
             return
         }

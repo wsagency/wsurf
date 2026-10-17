@@ -53,7 +53,7 @@ extension CredentialExchangeCoordinatorTests {
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.origin == .legacyPasswords)
             #expect(review.csvReport?.rowsRead == 2 && review.csvReport?.alreadySaved == 0 && review.csvReport?.issues.isEmpty == true)
-            #expect(counts(review.outcome) == [2, 0])
+            #expect(counts(planned(f)) == [2, 0])
 
             // Entry 2 is left for later: only entry 1 is saved, and it carries nothing the old list did not have.
             try decide(f, .skip, entry: 2)
@@ -69,7 +69,7 @@ extension CredentialExchangeCoordinatorTests {
             // Running it again repeats only what is left.
             try await stage(f, list)
             let second = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
-            #expect(second.csvReport?.alreadySaved == 1 && counts(second.outcome) == [1, 0])
+            #expect(second.csvReport?.alreadySaved == 1 && counts(planned(f)) == [1, 0])
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             let afterSecond = try await f.stored().accounts
             #expect(afterSecond.count == 4 && LegacyPasswordMigration.missing(list, in: afterSecond).isEmpty)
@@ -156,7 +156,7 @@ extension CredentialExchangeCoordinatorTests {
             try await stage(f, list)
             let conflict = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)?.conflicts.first)
             try f.coordinator.choose(.replace, for: conflict.incoming, owner: f.owner)
-            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [1, 1])
+            #expect(counts(planned(f)) == [1, 1])
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
 
             let after = try await f.stored().accounts
@@ -188,8 +188,7 @@ extension CredentialExchangeCoordinatorTests {
 
             // Reviewing again stages the same rows, and committing them writes exactly once.
             try await stage(f, try await vault.records(), using: fresh)
-            let review = try #require(fresh.importReview(for: f.manager, owner: f.owner))
-            #expect(counts(review.outcome) == [2, 0])
+            #expect(counts(try? fresh.plannedOutcome(for: f.manager, owner: f.owner)) == [2, 0])
             _ = try await fresh.commitImport(into: f.manager, owner: f.owner)
             let after = try await f.stored().accounts
             #expect(after.count == 4 && LegacyPasswordMigration.missing(list, in: after).isEmpty)

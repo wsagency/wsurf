@@ -810,17 +810,8 @@ final class CredentialSettingsModel {
         _ = await perform(describe: { self.importMessage(for: $0) }) { try await self.exchange.beginImport(token: token, into: $0, owner: self.owner, onEnding: self.importEnding(in: $0)) }
     }
 
-    func chooseImport(_ choice: CredentialImportChoice, for incoming: CredentialIdentity) {
-        do { try exchange.choose(choice, for: incoming, owner: owner) } catch { self.error = importMessage(for: error, origin: currentImportOrigin()) }
-    }
-
-    /// Stored accounts the credential can be merged into, each with every website it would then work on.
-    func mergeTargets(for incoming: CredentialIdentity) -> [CredentialImportReview.Target] {
-        exchange.mergeTargets(for: incoming, owner: owner)
-    }
-
     func commitImport() async {
-        let expected = importReview?.outcome
+        let expected = plannedImportOutcome()
         let epoch = manager?.authorizationEpoch
         var receipt: VaultCommitReceipt?
         let vault = manager?.vaultID
@@ -984,14 +975,15 @@ final class CredentialSettingsModel {
     }
 
     /// Where this window's open import came from, which decides what a failed one tells the user to do to retry.
-    private func currentImportOrigin() -> CredentialTransferMessage.Origin {
+    /// Internal for `CredentialSettingsModel+ImportReview`.
+    func currentImportOrigin() -> CredentialTransferMessage.Origin {
         manager.map { exchange.importOrigin(for: $0, owner: owner) } ?? .system
     }
 
     /// The system's token is used up once an import is claimed, and a review that ends takes its data with it. So
     /// a failure that leaves neither a queued token nor an open review can only be redone from the other app, or, for a
     /// CSV file, by choosing the file again.
-    private func importMessage(for error: any Error, origin: CredentialTransferMessage.Origin = .system) -> String? {
+    func importMessage(for error: any Error, origin: CredentialTransferMessage.Origin = .system) -> String? {
         let staged = manager.map { exchange.hasStagedImport(for: $0, owner: owner) } ?? false
         return Self.importMessage(for: error, tokenSpent: exchange.pendingToken == nil && !staged, origin: origin)
     }

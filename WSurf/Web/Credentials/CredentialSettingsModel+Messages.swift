@@ -109,7 +109,7 @@ extension CredentialSettingsModel {
         case CredentialExchangeCoordinatorError.unresolvedConflicts, CredentialExchangeCoordinatorError.unknownConflict:
             return String(localized: "Choose what to do with every conflict first.")
         case CredentialExchangeCoordinatorError.invalidChoice:
-            return String(localized: "That choice isn’t available for this credential.")
+            return String(localized: "That choice isn’t available, or it doesn’t fit with the other choices. Change it, or skip the credential, and try again.")
         case CredentialExchangeCoordinatorError.replaceTaken:
             return String(localized: "Another row already replaces that saved login. Change that one first.")
         case CredentialExchangeCoordinatorError.emptySelection:

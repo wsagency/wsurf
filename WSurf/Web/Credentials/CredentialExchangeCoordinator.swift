@@ -66,8 +66,8 @@ final class CredentialExchangeCoordinator {
         }
     }
 
-    /// What the review shows beyond the preview itself, read once when it is staged.
-    private struct ReviewContext {
+    /// What the review shows beyond the preview itself, read once when it is staged. Internal for `CredentialExchangeCoordinator+Review`.
+    struct ReviewContext {
         let classes: [CredentialIdentity: CredentialImportClass]
         let profileName: String
         let vaultName: String?
@@ -78,7 +78,8 @@ final class CredentialExchangeCoordinator {
         var csvLines: [CredentialIdentity: Int] = [:]
     }
 
-    private struct Session {
+    /// The staged import. Internal for `CredentialExchangeCoordinator+Review`, which keeps its choices and its review in step.
+    struct Session {
         let manager: CredentialManager
         let owner: UUID
         let ending: Ending?
@@ -86,7 +87,10 @@ final class CredentialExchangeCoordinator {
         let generation: Int
         let preview: CredentialImportPreview
         let context: ReviewContext
+        let index: ReviewIndex
         var choices: [CredentialIdentity: CredentialImportChoice]
+        /// The stored credential each `.replace` choice overwrites, mapped to the incoming one that replaces it.
+        var replaced: [CredentialIdentity: CredentialIdentity]
         var review: CredentialImportReview
     }
 
@@ -103,7 +107,8 @@ final class CredentialExchangeCoordinator {
     @ObservationIgnored private var claim: Claim?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var committing: Commit?
-    private var session: Session?
+    /// Internal for `CredentialExchangeCoordinator+Review`, which edits it in place.
+    var session: Session?
 
     /// The one sink for every ending or refusal (spec §13.5): each ending emits exactly one message. An operation one window
     /// started also throws `CredentialTransferFailure`, so that window is told without a sink routing the message to it.
@@ -285,56 +290,14 @@ final class CredentialExchangeCoordinator {
             needsChoice: needsChoice, csvLines: csvLines
         )
         generation += 1
-        let review = try Self.review(for: preview, choices: [:], context)
+        let index = ReviewIndex(preview, context)
+        let choices = index.defaultChoices()
         session = Session(
             manager: manager, owner: bound.owner, ending: bound.ending, epoch: bound.epoch, generation: generation,
-            preview: preview, context: context, choices: [:], review: review
+            preview: preview, context: context, index: index, choices: choices,
+            replaced: index.replacements(in: choices), review: index.makeReview(choices: choices)
         )
         watch(manager, generation: generation)
-    }
-
-    /// Decides one incoming credential. A refused choice leaves the review as it was.
-    func choose(_ choice: CredentialImportChoice, for incoming: CredentialIdentity, owner: UUID) throws {
-        guard var live = self.live else { throw CredentialExchangeCoordinatorError.noStagedImport }
-        guard live.owner == owner else { throw CredentialExchangeCoordinatorError.wrongTarget }
-        guard let record = live.review.candidates.lazy.flatMap(\.records).first(where: { $0.incoming == incoming }) else {
-            throw CredentialExchangeCoordinatorError.unknownConflict
-        }
-        // A passkey whose key conflicts with the stored one is only ever skipped.
-        if record.classification == .passkeyHardConflict, choice != .skip {
-            throw CredentialExchangeCoordinatorError.invalidChoice
-        }
-        switch choice {
-        case .replace:
-            // A passkey is never replaced: the vault keeps its credential ID unique, and a conflicting key is not ours to overwrite.
-            guard record.isConflict, record.kind != .passkey, let target = record.existing else {
-                throw CredentialExchangeCoordinatorError.invalidChoice
-            }
-            // One stored credential takes one replacement: a second Replace of the same one would silently overwrite the first.
-            guard !Self.isReplaced(target, besides: incoming, in: live.preview, choices: live.choices) else {
-                throw CredentialExchangeCoordinatorError.replaceTaken
-            }
-        case let .merge(target):
-            guard Self.targets(for: incoming, in: live.preview).contains(where: { $0.accountID == target }) else {
-                throw CredentialExchangeCoordinatorError.invalidChoice
-            }
-        case .addSeparately:
-            guard record.canAddSeparately else { throw CredentialExchangeCoordinatorError.invalidChoice }
-        case .skip:
-            break
-        }
-        var choices = live.choices
-        choices[incoming] = choice
-        do {
-            live.review = try Self.review(for: live.preview, choices: choices, live.context)
-        } catch CredentialVaultError.invalidData, CredentialVaultError.duplicateIdentifier {
-            throw CredentialExchangeCoordinatorError.invalidChoice
-        } catch {
-            drop(live.generation)
-            throw error
-        }
-        live.choices = choices
-        session = live
     }
 
     /// Existing accounts `incoming` can be merged into: the ones that don't already hold that kind of credential.
@@ -352,21 +315,24 @@ final class CredentialExchangeCoordinator {
     func commitImport(into manager: CredentialManager, owner: UUID) async throws -> VaultCommitReceipt {
         guard let staged = live else { throw CredentialExchangeCoordinatorError.noStagedImport }
         guard staged.manager === manager, staged.owner == owner else { throw CredentialExchangeCoordinatorError.wrongTarget }
-        guard staged.review.isResolved, let outcome = staged.review.outcome else { throw CredentialExchangeCoordinatorError.unresolvedConflicts }
+        guard staged.review.isResolved else { throw CredentialExchangeCoordinatorError.unresolvedConflicts }
         guard committing == nil else { throw CredentialExchangeCoordinatorError.busy }
 
         let plan: (touched: [CredentialAccount], outcome: CredentialImportOutcome)
         do {
             try Task.checkCancellation()
             guard manager.authorizationEpoch == staged.epoch else { throw CredentialVaultError.unauthorized }
-            plan = try Self.plan(staged.preview, choices: staged.choices, required: staged.context.needsChoice)
+            plan = try Self.planned(staged)
+        } catch CredentialVaultError.invalidData, CredentialVaultError.duplicateIdentifier {
+            // The choices don't fit together (for example two items merged into one login): the user changes one and tries again.
+            throw CredentialExchangeCoordinatorError.invalidChoice
         } catch {
             drop(staged.generation)
             throw end(Self.messageBeforeWrite(error, operation: String(localized: "Preparing the imported credentials"), staged.context.origin))
         }
         guard !plan.touched.isEmpty else { throw end(.nothingImported()) }
 
-        let write = Task { try await self.applyImport(plan.touched, outcome: outcome, staged: staged) }
+        let write = Task { try await self.applyImport(plan.touched, outcome: plan.outcome, staged: staged) }
         committing = Commit(generation: staged.generation, manager: ObjectIdentifier(manager), owner: owner, task: write)
         defer { if committing?.generation == staged.generation { committing = nil } }
         do {
@@ -705,7 +671,7 @@ final class CredentialExchangeCoordinator {
 
     // MARK: Private
 
-    private var live: Session? {
+    var live: Session? {
         guard let session, session.epoch == session.manager.authorizationEpoch else { return nil }
         return session
     }
@@ -752,133 +718,5 @@ final class CredentialExchangeCoordinator {
 
     private static func isNonEmpty(_ selection: [CredentialExportSelection]) -> Bool {
         selection.contains { $0.password || $0.totp || $0.notes || !$0.passkeyIDs.isEmpty }
-    }
-
-    private static func review(
-        for preview: CredentialImportPreview,
-        choices: [CredentialIdentity: CredentialImportChoice],
-        _ context: ReviewContext
-    ) throws -> CredentialImportReview {
-        let titles = Dictionary(
-            (preview.base.accounts + preview.candidates).map { ($0.id, CredentialSummary($0).title) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        let existingByIncoming = Dictionary(preview.conflicts.map { ($0.incoming, $0.existing) }, uniquingKeysWith: { first, _ in first })
-        func kind(_ identity: CredentialIdentity) -> CredentialImportReview.Record.Kind {
-            switch identity {
-            case .password:
-                .password
-            case .passkey:
-                .passkey
-            case .totp:
-                .totp
-            case .note:
-                .note
-            }
-        }
-        let stored = Dictionary(preview.base.accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let lookup = ReviewLookup(preview)
-        var resolved = true
-        let candidates = preview.candidates.map { candidate in
-            let linked = lookup.linkedAccountID(for: candidate)
-            // Mirrors what `CredentialExchangeCodec.apply` does with each decision: a stored account keeps its own
-            // websites, and only a new account takes the exporter's.
-            func destination(
-                _ existing: CredentialIdentity?,
-                _ choice: CredentialImportChoice?
-            ) -> CredentialImportReview.Record.Destination? {
-                func into(_ id: UUID) -> CredentialImportReview.Record.Destination? {
-                    guard let account = stored[id] else { return nil }
-                    return .existing(
-                        accountID: id,
-                        title: CredentialSummary(account).title,
-                        origins: account.origins,
-                        ignoredOrigins: candidate.origins.filter { !account.origins.contains($0) }
-                    )
-                }
-                switch choice {
-                case .skip:
-                    return .skipped
-                case .addSeparately:
-                    return .newAccount(origins: candidate.origins)
-                case let .merge(target):
-                    return into(target)
-                case .replace:
-                    return existing.flatMap { into(accountID($0)) }
-                case nil:
-                    if existing != nil {
-                        return nil
-                    }
-                    return linked.flatMap(into) ?? .newAccount(origins: candidate.origins)
-                }
-            }
-            let records = identities(in: candidate).map { incoming in
-                let existing = existingByIncoming[incoming]
-                let choice = choices[incoming]
-                // A note nobody decided goes where its item's lead credential goes (`CredentialExchangeCodec.apply`).
-                var placement = (existing: existing, choice: choice)
-                if case .note = incoming, existing == nil, choice == nil, !context.needsChoice.contains(incoming),
-                   let lead = CredentialExchangeCodec.leadIdentity(of: candidate) {
-                    placement = (existingByIncoming[lead], choices[lead])
-                }
-                if choice == nil, existing != nil || context.needsChoice.contains(incoming) {
-                    resolved = false
-                }
-                let relyingParty: String?
-                if case let .passkey(_, passkeyID) = incoming {
-                    relyingParty = candidate.passkeys.first { $0.id == passkeyID }?.rpID
-                } else {
-                    relyingParty = nil
-                }
-                return CredentialImportReview.Record(
-                    incoming: incoming,
-                    existing: existing,
-                    kind: kind(incoming),
-                    title: titles[candidate.id] ?? "",
-                    existingTitle: existing.flatMap { titles[accountID($0)] },
-                    relyingParty: relyingParty,
-                    destination: choice == nil && context.needsChoice.contains(incoming)
-                        ? nil : destination(placement.existing, placement.choice),
-                    canAddSeparately: !lookup.holdsStoredCredentialID(incoming),
-                    removesStoredPasswordOnReplace: kind(incoming) == .password
-                        && candidate.password == nil
-                        && existing.flatMap { stored[accountID($0)]?.password } != nil,
-                    classification: context.classes[incoming] ?? .ambiguous,
-                    needsChoice: existing != nil || context.needsChoice.contains(incoming),
-                    csvLine: context.csvLines[incoming],
-                    choice: choice
-                )
-            }
-            return CredentialImportReview.Candidate(
-                summary: CredentialSummary(candidate),
-                needsManualAssociation: candidate.origins.isEmpty && (hasLogin(candidate) || candidate.totp != nil),
-                records: records
-            )
-        }
-        var outcome: CredentialImportOutcome?
-        if resolved {
-            let planned = try plan(preview, choices: choices, required: context.needsChoice)
-            let changed = Set(planned.touched.map(\.id))
-            outcome = planned.outcome
-            outcome?.results = candidates.flatMap(\.records).map { record in
-                let action: CredentialImportOutcome.Result.Action
-                switch record.destination {
-                case .skipped, nil:
-                    action = .skipped
-                case .newAccount:
-                    action = .added
-                case let .existing(accountID, _, _, _):
-                    action = record.classification != .unchanged && changed.contains(accountID) ? .updated : .unchanged
-                }
-                return CredentialImportOutcome.Result(
-                    id: record.incoming, kind: record.kind, title: record.title, relyingParty: record.relyingParty, action: action
-                )
-            }
-        }
-        return CredentialImportReview(
-            profileName: context.profileName, vaultName: context.vaultName,
-            candidates: candidates, revision: preview.revision, outcome: outcome, csvReport: context.csvReport,
-            origin: context.origin, omitted: preview.omitted
-        )
     }
 }

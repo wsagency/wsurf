@@ -238,8 +238,8 @@ struct CredentialImportReviewSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 360)
-                if let outcome = review.outcome {
-                    Text(verbatim: importSummary(outcome)).foregroundStyle(.secondary)
+                if review.isResolved {
+                    Text(verbatim: importSummary(review.tally)).foregroundStyle(.secondary)
                 } else {
                     Text("Choose what to do with each credential marked “Choose…”.").foregroundStyle(.secondary)
                 }
@@ -259,7 +259,7 @@ struct CredentialImportReviewSheet: View {
                     } else {
                         Button("Import") { run { await model.commitImport() } }
                             .keyboardShortcut(.defaultAction)
-                            .disabled(!review.isResolved || (review.outcome.map { $0.added + $0.updated } ?? 0) == 0 || model.isBusy)
+                            .disabled(!review.isResolved || review.tally.writes == 0 || model.isBusy)
                     }
                 }
             }
@@ -270,7 +270,7 @@ struct CredentialImportReviewSheet: View {
 
     /// The review of the old list has been decided and saves nothing, so there is nothing to import, only the removal to decide.
     private func isFinishedWithoutSaving(_ review: CredentialImportReview) -> Bool {
-        review.origin == .legacyPasswords && review.isResolved && (review.outcome.map { $0.added + $0.updated } ?? 0) == 0
+        review.origin == .legacyPasswords && review.isResolved && review.tally.writes == 0
     }
 
     /// What the file held beyond what will be imported, before anything is saved. Counts are of the file as read; the receipt
@@ -336,15 +336,13 @@ struct CredentialImportReviewSheet: View {
             """)
     }
 
-    private func importSummary(_ outcome: CredentialImportOutcome) -> String {
-        var text = String(localized: "Adds \(outcome.added) and updates \(outcome.updated).")
-        let unchanged = outcome.results.filter { $0.action == .unchanged }.count
-        let skipped = outcome.results.filter { $0.action == .skipped }.count
-        if unchanged > 0 {
-            text += " " + String(localized: "\(unchanged) already saved.")
+    private func importSummary(_ tally: CredentialImportReview.Tally) -> String {
+        var text = String(localized: "Adds \(tally.new) and updates \(tally.updates + tally.merges).")
+        if tally.unchanged > 0 {
+            text += " " + String(localized: "\(tally.unchanged) already saved.")
         }
-        if skipped > 0 {
-            text += " " + String(localized: "\(skipped) won’t be imported.")
+        if tally.skipped > 0 {
+            text += " " + String(localized: "\(tally.skipped) won’t be imported.")
         }
         return text
     }
