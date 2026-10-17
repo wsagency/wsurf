@@ -92,15 +92,32 @@ nonisolated struct MCPKeychainTrustStorage: MCPTrustStorage {
 @Observable
 final class MCPTrustStore {
     nonisolated enum Failure: Error {
-        case unavailable, storage
+        case unavailable, storage, invalidSite, tooManySites, invalidProfile
     }
 
-    private struct Document: Codable {
+    private struct Document: Codable, Equatable {
         var version = 1
         var clients: [PairedClient] = []
-        /// Reserved for the Developer tier; preserved so a newer build does not lose them.
+        /// Extra developer sites as `host` or `host:port`, normalized by `MCPDeveloperAccess`.
         var developerSites: [String] = []
+        /// Whether localhost, 127.0.0.1 and [::1] count as developer sites on any port.
+        var includesThisMac = true
+        /// The only profile where standing grants and the Developer tier work. Nil: none chosen, so neither applies.
         var developerProfileID: UUID?
+        /// The profile WSurf created for developer work. Choosing any other profile needs the owner's confirmation.
+        var dedicatedProfileID: UUID?
+
+        init() {}
+
+        init(from decoder: any Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            version = try values.decodeIfPresent(Int.self, forKey: .version) ?? 1
+            clients = try values.decodeIfPresent([PairedClient].self, forKey: .clients) ?? []
+            developerSites = try values.decodeIfPresent([String].self, forKey: .developerSites) ?? []
+            includesThisMac = try values.decodeIfPresent(Bool.self, forKey: .includesThisMac) ?? true
+            developerProfileID = try values.decodeIfPresent(UUID.self, forKey: .developerProfileID)
+            dedicatedProfileID = try values.decodeIfPresent(UUID.self, forKey: .dedicatedProfileID)
+        }
     }
 
     static let shared: MCPTrustStore = {
@@ -113,9 +130,14 @@ final class MCPTrustStore {
 
     private(set) var clients: [PairedClient] = []
     private(set) var isAvailable = false
+    private(set) var developerSites: [String] = []
+    private(set) var includesThisMac = true
+    private(set) var developerProfileID: UUID?
+    private(set) var dedicatedProfileID: UUID?
     @ObservationIgnored private let storage: (any MCPTrustStorage)?
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var document = Document()
+    @ObservationIgnored private var changeObservers: [@MainActor () -> Void] = []
 
     /// `nil` storage is a store that is never available.
     init(storage: (any MCPTrustStorage)?, now: @escaping () -> Date = Date.init) {
@@ -146,14 +168,47 @@ final class MCPTrustStore {
                 // Unreadable, damaged or newer: stay unavailable and never overwrite it.
             }
         }
-        document = loaded
+        if publish(loaded, available: available) {
+            notifyObservers()
+        }
+    }
+
+    /// Calls `body` after every change to what is stored, so live connections can drop access that no longer holds.
+    func onChange(_ body: @escaping @MainActor () -> Void) {
+        changeObservers.append(body)
+    }
+
+    private func notifyObservers() {
+        for observer in changeObservers {
+            observer()
+        }
+    }
+
+    /// Whether anything changed.
+    @discardableResult
+    private func publish(_ stored: Document, available: Bool) -> Bool {
+        let changed = stored != document || available != isAvailable
+        document = stored
         // Observers re-render on every assignment, so only assign a change.
         if isAvailable != available {
             isAvailable = available
         }
-        if clients != loaded.clients {
-            clients = loaded.clients
+        if clients != stored.clients {
+            clients = stored.clients
         }
+        if developerSites != stored.developerSites {
+            developerSites = stored.developerSites
+        }
+        if includesThisMac != stored.includesThisMac {
+            includesThisMac = stored.includesThisMac
+        }
+        if developerProfileID != stored.developerProfileID {
+            developerProfileID = stored.developerProfileID
+        }
+        if dedicatedProfileID != stored.dedicatedProfileID {
+            dedicatedProfileID = stored.dedicatedProfileID
+        }
+        return changed
     }
 
     func client(id: UUID) -> PairedClient? {
@@ -189,8 +244,9 @@ final class MCPTrustStore {
         }
         var updated = document
         updated.clients[index].lastUsed = current
-        // Only the "last used" label depends on this write; a failure must not interrupt a working connection.
-        try? commit(updated)
+        // Only the "last used" label depends on this write; a failure must not interrupt a working connection, and no
+        // access changed, so live connections have nothing to re-check.
+        try? commit(updated, notifying: false)
     }
 
     /// Stores the hash of `token`. With `replacing`, that client gets the new token and keeps its identity and
@@ -231,15 +287,79 @@ final class MCPTrustStore {
         try commit(updated)
     }
 
-    private func commit(_ updated: Document) throws {
+    // MARK: Developer access
+
+    /// What a paired client may do without asking. Only this store changes it, and it lives in the keychain with the
+    /// pairing, so a process with a shell cannot raise it.
+    func setStanding(_ standing: PairedClient.Standing, for id: UUID) throws {
+        try edit { draft in
+            guard let index = draft.clients.firstIndex(where: { $0.id == id }) else { return }
+            draft.clients[index].standing = standing
+        }
+    }
+
+    /// A paused client keeps its record and token but gets no standing grant until it is resumed.
+    func setPaused(_ paused: Bool, for id: UUID) throws {
+        try edit { draft in
+            guard let index = draft.clients.firstIndex(where: { $0.id == id }) else { return }
+            draft.clients[index].paused = paused
+        }
+    }
+
+    /// Adds a developer site and returns its normalized form. Throws `Failure.invalidSite` for anything that is not an
+    /// exact `host` or `host:port`.
+    @discardableResult
+    func addDeveloperSite(_ text: String) throws -> String {
+        guard let site = MCPDeveloperAccess.normalizedSite(text) else { throw Failure.invalidSite }
+        try edit { draft in
+            guard !draft.developerSites.contains(site) else { return }
+            guard draft.developerSites.count < MCPDeveloperAccess.maximumSites else { throw Failure.tooManySites }
+            draft.developerSites.append(site)
+        }
+        return site
+    }
+
+    func removeDeveloperSite(_ site: String) throws {
+        try edit { $0.developerSites.removeAll { $0 == site } }
+    }
+
+    func setIncludesThisMac(_ included: Bool) throws {
+        try edit { $0.includesThisMac = included }
+    }
+
+    /// Chooses the profile where standing grants and the Developer tier work. `dedicated` marks a profile WSurf just
+    /// created for this; any other choice is one the owner confirmed in Settings. Private browsing is never a choice.
+    func setDeveloperProfile(_ id: UUID?, dedicated: Bool = false) throws {
+        guard id != Profile.privateID else { throw Failure.invalidProfile }
+        try edit { draft in
+            draft.developerProfileID = id
+            if dedicated {
+                draft.dedicatedProfileID = id
+            }
+        }
+    }
+
+    /// Applies `change` to a copy and stores it, or stores nothing.
+    private func edit(_ change: (inout Document) throws -> Void) throws {
+        loadIfNeeded()
+        guard isAvailable else { throw Failure.unavailable }
+        var updated = document
+        try change(&updated)
+        guard updated != document else { return }
+        try commit(updated)
+    }
+
+    private func commit(_ updated: Document, notifying: Bool = true) throws {
         guard let storage, isAvailable else { throw Failure.unavailable }
         do {
             try storage.write(try Self.encoder.encode(updated))
         } catch {
             throw Failure.storage
         }
-        document = updated
-        clients = updated.clients
+        publish(updated, available: true)
+        if notifying {
+            notifyObservers()
+        }
     }
 
     private static func cleaned(_ name: String) -> String {

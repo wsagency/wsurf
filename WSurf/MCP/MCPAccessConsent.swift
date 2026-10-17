@@ -12,12 +12,18 @@ enum MCPAccessConsent {
         case control
         /// Control plus DOM inspection, console and network metadata, viewport and device emulation.
         case development
+        /// Development, and no confirmation before consequential actions. Only a paired app on a developer site in the
+        /// Developer profile can hold it.
+        case developer
     }
 
     struct Page: Equatable, Sendable {
         let id: UUID
         let title: String
         let url: URL
+        /// Whether this page qualifies for Allow Developer: a paired app asked for it on a developer site in the
+        /// Developer profile. The sheet offers the choice only when at least one page qualifies.
+        var developerEligible = false
     }
 
     static func share(client: String, pages: [Page], development: Bool = false, in window: NSWindow?) async -> Access? {
@@ -51,25 +57,28 @@ enum MCPAccessConsent {
             """)
         alert.addButton(withTitle: String(localized: "Read Only"))
         alert.addButton(withTitle: String(localized: "Allow Control"))
+        var choices: [Access?] = [.readOnly, .control]
         if development {
             alert.informativeText += "\n" + String(localized: """
                 • Allow Development: also inspect page structure and styles, read console and network metadata, and change the viewport. \
                 These can disclose additional private site data, including text a page writes to its console.
                 """)
             alert.addButton(withTitle: String(localized: "Allow Development"))
+            choices.append(.development)
+            if pages.contains(where: \.developerEligible) {
+                alert.informativeText += "\n" + String(localized: """
+                    • Allow Developer: also acts without asking before purchases, sending, and deleting. \
+                    Only on developer sites in your Developer profile.
+                    """)
+                alert.addButton(withTitle: String(localized: "Allow Developer"))
+                choices.append(.developer)
+            }
         }
         alert.addButton(withTitle: String(localized: "Don’t Allow"))
         alert.buttons.last?.keyEquivalent = "\u{1b}"
-        switch await present(alert, in: window) {
-        case .alertFirstButtonReturn:
-            return .readOnly
-        case .alertSecondButtonReturn:
-            return .control
-        case .alertThirdButtonReturn where development:
-            return .development
-        default:
-            return nil
-        }
+        let response = await present(alert, in: window)
+        let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        return choices.indices.contains(index) ? choices[index] : nil
     }
 
     static func open(client: String, url: URL, in window: NSWindow?) async -> Bool {
