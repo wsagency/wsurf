@@ -65,18 +65,7 @@ extension MCPBrowserSession {
 }
 
 extension MCPAccessConsent.Access {
-    /// Exhaustive on purpose: a new access level must be ranked and named here.
-    var rank: Int {
-        switch self {
-        case .readOnly:
-            0
-        case .control:
-            1
-        case .development:
-            2
-        }
-    }
-
+    /// Exhaustive on purpose: a new access level must be named here. `rank` is in MCPDeveloperAccess.swift.
     var tierTitle: LocalizedStringResource {
         switch self {
         case .readOnly:
@@ -85,6 +74,8 @@ extension MCPAccessConsent.Access {
             "Control"
         case .development:
             "Development"
+        case .developer:
+            "Developer"
         }
     }
 }
