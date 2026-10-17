@@ -10,8 +10,23 @@ nonisolated struct CredentialImportOmission: Equatable, Sendable {
     enum Reason: Equatable, Sendable {
         /// A kind of credential WSurf has no place for yet.
         case unsupportedKind
-        /// A passkey that is not ES256, cannot be read, or belongs to a website the vault will not serve.
-        case passkeyNotKept
+        /// A passkey whose key is well formed but not ES256 (P-256).
+        case passkeyAlgorithmNotSupported
+        /// A passkey whose key is not a PKCS#8 P-256 key WSurf can read.
+        case passkeyKeyUnreadable
+        /// A passkey with no credential ID, or one over `WebsitePasskey.credentialIDLimit` bytes.
+        case passkeyCredentialIDInvalid
+        case passkeyUserHandleMissing
+        /// A user handle over `WebsitePasskey.userHandleLimit` bytes.
+        case passkeyUserHandleTooLong
+        /// A user name or display name over `WebsitePasskey.nameLimit` bytes.
+        case passkeyNameTooLong
+        /// FIDO2 extension data over the size of one stored field.
+        case passkeyExtensionsTooLarge
+        /// A website that is not a valid name or is a public suffix such as "com".
+        case passkeyWebsiteNotAllowed
+        /// The list of public suffixes could not be loaded, so no passkey website can be checked.
+        case passkeyWebsiteNotChecked
         /// A verification code whose settings WSurf cannot use.
         case codeNotKept
         /// A second login in one item: the first is kept.
@@ -49,8 +64,24 @@ nonisolated struct CredentialImportOmission: Equatable, Sendable {
         case .unsupportedKind:
             let label = kind?.label ?? String(localized: "This item")
             return String(localized: "\(label) isn’t supported yet, so it wasn’t imported.")
-        case .passkeyNotKept:
-            return String(localized: "A passkey can’t be stored, so it wasn’t imported.")
+        case .passkeyAlgorithmNotSupported:
+            return String(localized: "A passkey uses a signature type other than ES256, which WSurf doesn’t support, so it wasn’t imported.")
+        case .passkeyKeyUnreadable:
+            return String(localized: "A passkey’s private key isn’t in a format WSurf can read, so it wasn’t imported.")
+        case .passkeyCredentialIDInvalid:
+            return String(localized: "A passkey’s credential ID is empty or longer than \(WebsitePasskey.credentialIDLimit) bytes, so it wasn’t imported.")
+        case .passkeyUserHandleMissing:
+            return String(localized: "A passkey has no user handle, so it wasn’t imported.")
+        case .passkeyUserHandleTooLong:
+            return String(localized: "A passkey’s user handle is longer than \(WebsitePasskey.userHandleLimit) bytes, so it wasn’t imported.")
+        case .passkeyNameTooLong:
+            return String(localized: "A passkey’s user name or display name is longer than \(WebsitePasskey.nameLimit) bytes, so it wasn’t imported.")
+        case .passkeyExtensionsTooLarge:
+            return String(localized: "A passkey’s extension data is too large, so it wasn’t imported.")
+        case .passkeyWebsiteNotAllowed:
+            return String(localized: "A passkey’s website isn’t a valid name or is a domain suffix such as “com”, so it wasn’t imported.")
+        case .passkeyWebsiteNotChecked:
+            return String(localized: "A passkey’s website couldn’t be checked because WSurf’s list of domain suffixes isn’t available, so it wasn’t imported.")
         case .codeNotKept:
             return String(localized: "A verification code has settings WSurf can’t use, so it wasn’t imported.")
         case .extraLogin:
@@ -71,6 +102,28 @@ nonisolated struct CredentialImportOmission: Equatable, Sendable {
             return String(localized: "A field was saved as plain text without its original details.")
         case .nothingToKeep:
             return String(localized: "It has nothing WSurf can store yet, so it wasn’t imported.")
+        }
+    }
+}
+
+nonisolated extension CredentialImportOmission.Reason {
+    /// The reason for a passkey field `WebsitePasskey.validate` refuses.
+    static func passkey(_ problem: WebsitePasskey.Problem) -> Self {
+        switch problem {
+        case .credentialID:
+            .passkeyCredentialIDInvalid
+        case .userHandleMissing:
+            .passkeyUserHandleMissing
+        case .userHandleTooLong:
+            .passkeyUserHandleTooLong
+        case .relyingParty:
+            .passkeyWebsiteNotAllowed
+        case .name:
+            .passkeyNameTooLong
+        case .key:
+            .passkeyKeyUnreadable
+        case .extensions:
+            .passkeyExtensionsTooLarge
         }
     }
 }

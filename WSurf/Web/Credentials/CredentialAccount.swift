@@ -197,23 +197,47 @@ nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
     var events: CredentialEvents?
     var base: ExchangeBase?
 
-    func validate() throws {
-        guard algorithm == -7,
-              !credentialID.isEmpty, credentialID.count <= 1_024,
-              !userHandle.isEmpty, userHandle.count <= 64,
-              !rpID.isEmpty, rpID.utf8.count <= 253,
-              rpID == rpID.lowercased(),
-              !rpID.contains("/"), !rpID.contains(":"), !rpID.contains(" "),
-              userName.utf8.count <= 2_048, userDisplayName.utf8.count <= 2_048,
-              privateKeyPKCS8.count <= PasskeyKeyEncoding.maximumDERBytes,
-              backupEligible || !backupState else {
-            throw CredentialVaultError.invalidData
+    static let credentialIDLimit = 1_024
+    /// The most bytes WebAuthn allows in a user handle.
+    static let userHandleLimit = 64
+    /// The most UTF-8 bytes in a user name or a display name.
+    static let nameLimit = 2_048
+
+    /// The first field `validate` refuses. It names the field and never a value.
+    enum Problem: Equatable, Sendable {
+        case credentialID, userHandleMissing, userHandleTooLong, relyingParty, name, key, extensions
+    }
+
+    var problem: Problem? {
+        if credentialID.isEmpty || credentialID.count > Self.credentialIDLimit {
+            return .credentialID
         }
-        guard RelyingPartyPolicy.canonicalDomain(rpID) == rpID else {
-            throw CredentialVaultError.invalidData
+        if userHandle.isEmpty {
+            return .userHandleMissing
         }
-        _ = try PasskeyKeyEncoding.importPKCS8(privateKeyPKCS8)
+        if userHandle.count > Self.userHandleLimit {
+            return .userHandleTooLong
+        }
+        if rpID.isEmpty || rpID.utf8.count > 253 || rpID != rpID.lowercased()
+            || rpID.contains("/") || rpID.contains(":") || rpID.contains(" ")
+            || RelyingPartyPolicy.canonicalDomain(rpID) != rpID {
+            return .relyingParty
+        }
+        if userName.utf8.count > Self.nameLimit || userDisplayName.utf8.count > Self.nameLimit {
+            return .name
+        }
+        if privateKeyPKCS8.count > PasskeyKeyEncoding.maximumDERBytes
+            || (try? PasskeyKeyEncoding.importPKCS8(privateKeyPKCS8)) == nil {
+            return .key
+        }
         if let metadata = exchangeFIDO2Metadata, metadata.count > CredentialVaultLimits.payloadBytes {
+            return .extensions
+        }
+        return nil
+    }
+
+    func validate() throws {
+        guard algorithm == -7, backupEligible || !backupState, problem == nil else {
             throw CredentialVaultError.invalidData
         }
         try events?.validate()

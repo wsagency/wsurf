@@ -5,7 +5,7 @@ import Darwin
 import Foundation
 
 nonisolated enum RelyingPartyPolicy {
-    private enum PolicyError: Error {
+    enum PolicyError: Error {
         case invalidOrigin
         case invalidRelyingParty
         case suffixListUnavailable
