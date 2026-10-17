@@ -157,6 +157,7 @@ nonisolated enum MCPToolCatalog {
     static let entries: [Entry] =
         coreEntries
         + developmentEntries
+        + environmentEntries
         + navigationEntries
 
     static let coreEntries: [Entry] = [

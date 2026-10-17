@@ -17,7 +17,8 @@ enum DevelopmentRelation: String {
 }
 
 /// The one development lease a tab can have. Everything an MCP connection changes for development (viewport, device
-/// emulation, diagnostics capture) is recorded here so one release removes exactly that and nothing else.
+/// emulation, media and network emulation, diagnostics capture) is recorded here so one release removes exactly that and
+/// nothing else.
 @MainActor
 final class DevelopmentOwner {
     let connection: UUID
@@ -28,6 +29,8 @@ final class DevelopmentOwner {
     /// Releases this lease from native-event context (for example when a navigation leaves the grant).
     var requestRelease: ((DevelopmentReleaseReason) -> Void)?
     var viewport: DevelopmentViewportState?
+    /// Color scheme, reduced motion and offline mode this lease emulates; nil when it emulates none.
+    var media: DevelopmentMediaState?
     var diagnostics: DevelopmentDiagnostics?
     private var releases: [(DevelopmentReleaseReason) -> Void] = []
     private(set) var isReleased = false
@@ -48,8 +51,11 @@ final class DevelopmentOwner {
     fileprivate func release(_ reason: DevelopmentReleaseReason) {
         guard !isReleased else { return }
         isReleased = true
-        cleanup = viewport?.remove(from: self)
+        // Both cleanups queue on the page in this order, so the later one ending means the page is clean.
+        let viewportCleanup = viewport?.remove(from: self)
+        cleanup = media?.remove(from: self) ?? viewportCleanup
         viewport = nil
+        media = nil
         diagnostics?.stop()
         diagnostics = nil
         let callbacks = releases
