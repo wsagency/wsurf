@@ -8,7 +8,8 @@ struct SiteSettingsEntry: Identifiable, Equatable {
     let origin: String
     let host: String
     var permissions: [WebPermission: PermissionPolicy] = [:]
-    var assistantAccess: AssistantAccessPolicy = .ask
+    /// `nil` follows the default; Ask is a choice like the others.
+    var assistantAccess: AssistantAccessPolicy?
     var keepsActive = false
     var blocksAutomaticPicture = false
     var allowsTrackers = false
@@ -29,7 +30,7 @@ struct SiteSettingsEntry: Identifiable, Equatable {
 
     var isEmpty: Bool {
         permissions.isEmpty
-            && assistantAccess == .ask
+            && assistantAccess == nil
             && !keepsActive
             && !blocksAutomaticPicture
             && !allowsTrackers
@@ -58,8 +59,10 @@ struct SiteSettingsEntry: Identifiable, Equatable {
         }
 
         switch assistantAccess {
-        case .ask:
+        case nil:
             break
+        case .ask:
+            phrases.append(String(localized: "assistant asks first"))
         case .readOnly:
             phrases.append(String(localized: "assistant may read"))
         case .control:
@@ -148,7 +151,7 @@ enum SiteSettingsIndex {
 
         for origin in permissions.assistantOrigins {
             var found = entry(for: origin)
-            found.assistantAccess = permissions.assistantAccess(for: origin)
+            found.assistantAccess = permissions.assistantRecord(for: origin)
             byOrigin[origin] = found
         }
 

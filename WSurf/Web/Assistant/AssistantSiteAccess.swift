@@ -11,6 +11,13 @@ nonisolated enum AssistantPageCapability: Sendable {
     case control
 }
 
+/// What a tab does with a page request: use the page, prompt first, or refuse.
+nonisolated enum AssistantAccessDecision: Equatable, Sendable {
+    case allow
+    case ask
+    case deny
+}
+
 extension AssistantAccessPolicy {
     nonisolated func allows(_ capability: AssistantPageCapability) -> Bool {
         switch (self, capability) {
@@ -31,6 +38,19 @@ final class TabAssistantAccessCenter {
     var persistsAnswers = true
     private(set) var sessionPolicy: AssistantAccessPolicy?
 
+    /// A frame's center answers from its own record or a prompt. The default covers only the visible page.
+    private var isEmbedded = false
+
+    /// The origin whose page last showed a password or payment field to a control request. Under an Allow Control
+    /// default, that page asks first.
+    private var sensitiveOrigin: String?
+
+    /// Whether the page shows a password or payment field. No page, or a page that does not answer, counts as yes.
+    @ObservationIgnored var sensitivePageProbe: @MainActor (BrowserPage?) async -> Bool = { page in
+        guard let page else { return true }
+        return await PageSensitiveProbe.hasSensitiveField(in: page)
+    }
+
     /// Called after the effective policy may have changed (an answer, a new origin, cleared site data).
     @ObservationIgnored var onPolicyChanged: (() -> Void)?
 
@@ -38,8 +58,40 @@ final class TabAssistantAccessCenter {
         SitePermissions.displayName(for: origin)
     }
 
+    /// The website's own choice: this visit's answer in a private tab, else its saved record. `nil` follows the default.
+    var explicitPolicy: AssistantAccessPolicy? {
+        sessionPolicy ?? store.assistantRecord(for: origin)
+    }
+
+    /// What a website without a choice of its own gets. Private tabs and frames always ask.
+    var defaultPolicy: AssistantAccessPolicy {
+        persistsAnswers && !isEmbedded ? store.assistantDefault : .ask
+    }
+
     var effectivePolicy: AssistantAccessPolicy {
-        sessionPolicy ?? store.assistantAccess(for: origin)
+        explicitPolicy ?? defaultPolicy
+    }
+
+    /// True when this tab's page asks before control only because of a password or payment field.
+    var isCappedBySensitiveField: Bool {
+        !origin.isEmpty && sensitiveOrigin == origin && explicitPolicy == nil && defaultPolicy == .control
+    }
+
+    func decision(for capability: AssistantPageCapability) -> AssistantAccessDecision {
+        if let explicit = explicitPolicy {
+            if explicit.allows(capability) {
+                return .allow
+            }
+            return explicit == .ask ? .ask : .deny
+        }
+        switch (defaultPolicy, capability) {
+        case (.control, .read), (.readOnly, .read):
+            return .allow
+        case (.control, .control):
+            return isCappedBySensitiveField ? .ask : .allow
+        case (.readOnly, .control), (.ask, _), (.deny, _):
+            return .ask
+        }
     }
 
     init(store: SitePermissions) {
@@ -49,6 +101,7 @@ final class TabAssistantAccessCenter {
     func embeddedAccess(for url: URL) -> TabAssistantAccessCenter {
         let access = TabAssistantAccessCenter(store: store)
         access.persistsAnswers = persistsAnswers
+        access.isEmbedded = true
         access.pageChanged(url: url)
         return access
     }
@@ -65,9 +118,20 @@ final class TabAssistantAccessCenter {
         guard Self.isRunningTests || owner != nil,
               owner.map({ Self.owns($0, page: page, origin: pageOrigin) }) ?? true else { return false }
 
-        let current = effectivePolicy
-        if current != .ask {
-            return current.allows(capability)
+        // The page can show a login form after the last control request, so each one looks again.
+        if capability == .control, explicitPolicy == nil, defaultPolicy == .control {
+            let sensitive = await sensitivePageProbe(page)
+            guard !Task.isCancelled, origin == requestedOrigin,
+                  owner.map({ Self.owns($0, page: page, origin: pageOrigin) }) ?? true else { return false }
+            sensitiveOrigin = sensitive ? requestedOrigin : nil
+        }
+        switch decision(for: capability) {
+        case .allow:
+            return true
+        case .deny:
+            return false
+        case .ask:
+            break
         }
 
         let answer: AssistantAccessPolicy
@@ -75,7 +139,12 @@ final class TabAssistantAccessCenter {
             answer = stub.decide(capability, requestedOrigin)
         } else {
             guard let window = owner?.nativeWindow else { return false }
-            answer = await Self.ask(capability: capability, origin: requestedOrigin, in: window)
+            answer = await Self.ask(
+                capability: capability,
+                origin: requestedOrigin,
+                pageHasSensitiveField: isCappedBySensitiveField,
+                in: window
+            )
         }
 
         guard !Task.isCancelled, origin == requestedOrigin,
@@ -100,7 +169,8 @@ final class TabAssistantAccessCenter {
         return SitePermissions.origin(for: page.url) == origin
     }
 
-    func set(_ policy: AssistantAccessPolicy) {
+    /// `nil` makes the website follow the default again.
+    func set(_ policy: AssistantAccessPolicy?) {
         guard !origin.isEmpty else { return }
         if persistsAnswers {
             store.setAssistantAccess(policy, for: origin)
@@ -118,11 +188,13 @@ final class TabAssistantAccessCenter {
         guard nextOrigin != origin else { return }
         origin = nextOrigin
         sessionPolicy = nil
+        sensitiveOrigin = nil
         onPolicyChanged?()
     }
 
     func siteDataCleared() {
         sessionPolicy = nil
+        sensitiveOrigin = nil
         onPolicyChanged?()
     }
 
@@ -130,7 +202,8 @@ final class TabAssistantAccessCenter {
         guard !origin.isEmpty else {
             return String(localized: "No webpage is open yet.")
         }
-        return switch (effectivePolicy, capability) {
+        // Only the website's own choice names itself in the message. A question the person declined was not a setting.
+        return switch (explicitPolicy, capability) {
         case (.readOnly, .control):
             String(localized: "This website is Read Only for the assistant. Change Assistant Access in Site Settings to allow control.")
         case (.deny, _):
@@ -160,6 +233,7 @@ final class TabAssistantAccessCenter {
     private static func ask(
         capability: AssistantPageCapability,
         origin: String,
+        pageHasSensitiveField: Bool,
         in window: NSWindow
     ) async -> AssistantAccessPolicy {
         guard !isRunningTests || presentsNativeSheetForTesting else { return .ask }
@@ -167,7 +241,7 @@ final class TabAssistantAccessCenter {
         let site = SitePermissions.displayName(for: origin)
         let alert = NSAlert()
         alert.messageText = String(localized: "Allow Assistant on \(site)?")
-        alert.informativeText = body(capability: capability, site: site)
+        alert.informativeText = body(capability: capability, site: site, pageHasSensitiveField: pageHasSensitiveField)
 
         let choices: [(LocalizedStringResource, AssistantAccessPolicy)] = switch capability {
         case .read:
@@ -196,12 +270,14 @@ final class TabAssistantAccessCenter {
         }
     }
 
-    static func body(capability: AssistantPageCapability, site: String) -> String {
-        return switch capability {
+    static func body(capability: AssistantPageCapability, site: String, pageHasSensitiveField: Bool = false) -> String {
+        let text = switch capability {
         case .read:
             String(localized: "Read Only lets the assistant see page text on \(site). Allow Control also lets it click, type, scroll, and navigate. Password and payment fields stay blocked.")
         case .control:
             String(localized: "Allow Control lets the assistant read and use page controls on \(site). Read Only blocks this action. Password and payment fields stay blocked.")
         }
+        guard pageHasSensitiveField else { return text }
+        return String(localized: "This page has a password or payment field.") + " " + text
     }
 }

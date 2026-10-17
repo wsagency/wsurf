@@ -618,31 +618,63 @@ private struct TrackerInfoCaption: View {
 private struct AssistantAccessMenu: View {
     let tab: BrowserTab
 
+    private var access: TabAssistantAccessCenter {
+        tab.assistantAccess
+    }
+
+    /// A private tab ignores the default, so it has nothing to follow.
+    private var followsDefault: Bool {
+        access.persistsAnswers
+    }
+
+    private var currentLabel: String {
+        guard let explicit = access.explicitPolicy else {
+            return followsDefault
+                ? AssistantAccessPolicy.followsDefaultLabel(access.defaultPolicy)
+                : String(localized: AssistantAccessPolicy.ask.label)
+        }
+        return String(localized: explicit.label)
+    }
+
     var body: some View {
         Menu {
+            if followsDefault {
+                choice(nil, label: AssistantAccessPolicy.followsDefaultLabel(access.defaultPolicy))
+            }
             ForEach(AssistantAccessPolicy.allCases, id: \.self) { policy in
-                Button {
-                    tab.assistantAccess.set(policy)
-                } label: {
-                    if tab.assistantAccess.effectivePolicy == policy {
-                        Label {
-                            Text(policy.label)
-                        } icon: {
-                            Image(systemName: "checkmark")
-                        }
-                    } else {
-                        Text(policy.label)
-                    }
-                }
+                choice(policy, label: String(localized: policy.label))
             }
         } label: {
-            Text(tab.assistantAccess.effectivePolicy.label)
+            Text(currentLabel)
                 .font(Theme.Font.label)
         }
         .menuStyle(.borderlessButton)
         .foregroundStyle(.secondary)
         .controlSize(.small)
         .fixedSize()
+    }
+
+    private func choice(_ policy: AssistantAccessPolicy?, label: String) -> some View {
+        Button {
+            access.set(policy)
+        } label: {
+            if isCurrent(policy) {
+                Label {
+                    Text(verbatim: label)
+                } icon: {
+                    Image(systemName: "checkmark")
+                }
+            } else {
+                Text(verbatim: label)
+            }
+        }
+    }
+
+    private func isCurrent(_ policy: AssistantAccessPolicy?) -> Bool {
+        if let explicit = access.explicitPolicy {
+            return explicit == policy
+        }
+        return followsDefault ? policy == nil : policy == .ask
     }
 }
 

@@ -10,6 +10,7 @@ nonisolated enum SensitiveAction {
         case transfer
         case deletion
         case publication
+        case accountAccess
 
         var consequence: LocalizedStringResource {
             switch self {
@@ -21,6 +22,8 @@ nonisolated enum SensitiveAction {
                 "permanently deletes something"
             case .publication:
                 "posts or sends something in your name"
+            case .accountAccess:
+                "signs in or gives another website access to your account"
             }
         }
 
@@ -34,6 +37,8 @@ nonisolated enum SensitiveAction {
                 "permanently deletes something"
             case .publication:
                 "posts or sends something in your name"
+            case .accountAccess:
+                "signs in or gives another website access to your account"
             }
         }
 
@@ -47,6 +52,8 @@ nonisolated enum SensitiveAction {
                 "Deletions"
             case .publication:
                 "Posting and sending"
+            case .accountAccess:
+                "Signing in"
             }
         }
 
@@ -60,6 +67,8 @@ nonisolated enum SensitiveAction {
                 "deletions"
             case .publication:
                 "posting and sending"
+            case .accountAccess:
+                "signing in"
             }
         }
     }
@@ -70,7 +79,10 @@ nonisolated enum SensitiveAction {
         for (signal, category) in signalsByLength where padded.contains(" \(signal) ") {
             return category
         }
-        return nil
+        // The surrounding text of a sign-in form names these too, and a plain "Sign in" button inside it must stay
+        // clickable, so only the control's own label counts.
+        let own = " \(normalized(label)) "
+        return accountAccessSignals.contains { own.contains(" \($0) ") } ? .accountAccess : nil
     }
 
     static func isConsequentialClick(_ label: String) -> Bool {
@@ -91,6 +103,13 @@ nonisolated enum SensitiveAction {
 
     private static let signalsByLength: [(String, Category)] =
         signals.sorted { $0.0.count > $1.0.count }
+
+    private static let accountAccessSignals = [
+        "sign in with", "sign up with", "log in with", "login with",
+        "continue with google", "continue with apple", "continue with microsoft",
+        "continue with facebook", "continue with github",
+        "authorize", "allow access", "grant access", "connect account", "link account",
+    ]
 
     private static let signals: [(String, Category)] = [
         ("pay", .purchase), ("pay now", .purchase), ("buy now", .purchase),

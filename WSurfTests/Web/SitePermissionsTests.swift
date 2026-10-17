@@ -74,13 +74,85 @@ struct SitePermissionsStoreTests {
         #expect(store.assistantOrigins == ["https://example.com", "https://example.com:8443"])
     }
 
-    @Test func askingAgainForgetsAssistantAccess() {
+    @Test func useDefaultForgetsAssistantAccess() {
         let store = temporaryStore()
         store.setAssistantAccess(.deny, for: "https://example.com")
-        store.setAssistantAccess(.ask, for: "https://example.com")
+        store.setAssistantAccess(nil, for: "https://example.com")
 
+        #expect(store.assistantRecord(for: "https://example.com") == nil)
         #expect(store.assistantAccess(for: "https://example.com") == .ask)
         #expect(store.assistantOrigins.isEmpty)
+    }
+
+    /// Ask used to be the absence of a record. It is now a choice a website can hold against a more open default.
+    @Test func askIsARecordLikeTheOthers() {
+        let store = temporaryStore()
+        store.setAssistantDefault(.control)
+        store.setAssistantAccess(.ask, for: "https://example.com")
+
+        #expect(store.assistantRecord(for: "https://example.com") == .ask)
+        #expect(store.assistantAccess(for: "https://example.com") == .ask)
+        #expect(store.assistantAccess(for: "https://other.example") == .control)
+        #expect(store.assistantOrigins == ["https://example.com"])
+    }
+
+    @Test func aWebsiteWithoutARecordFollowsTheDefault() {
+        let store = temporaryStore()
+        #expect(store.assistantDefault == .ask)
+
+        store.setAssistantDefault(.readOnly)
+        #expect(store.assistantAccess(for: "https://example.com") == .readOnly)
+        #expect(store.assistantRecord(for: "https://example.com") == nil)
+        #expect(store.assistantOrigins.isEmpty)
+
+        store.setAssistantAccess(.control, for: "https://example.com")
+        #expect(store.assistantAccess(for: "https://example.com") == .control)
+        #expect(store.assistantAccess(for: "https://other.example") == .readOnly)
+    }
+
+    @Test func noAccessCannotBeTheDefault() {
+        let store = temporaryStore()
+        store.setAssistantDefault(.control)
+        store.setAssistantDefault(.deny)
+
+        #expect(store.assistantDefault == .ask)
+        #expect(!AssistantAccessPolicy.defaultChoices.contains(.deny))
+        #expect(AssistantAccessPolicy.defaultChoices == [.ask, .readOnly, .control])
+    }
+
+    @Test func changingTheDefaultTellsEveryTabOnceAndOnlyWhenItChanges() {
+        let store = temporaryStore()
+        var notified = 0
+        store.onAssistantAccessChanged = { notified += 1 }
+
+        store.setAssistantDefault(.control)
+        store.setAssistantDefault(.control)
+        store.setAssistantDefault(.deny)
+        store.setAssistantDefault(.deny)
+
+        #expect(notified == 2)
+    }
+
+    @Test func aStoreThatDoesNotPersistHasNoDefault() {
+        let store = SitePermissions(
+            storageURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("SitePermissionsPrivate-\(UUID().uuidString).json"),
+            persists: false
+        )
+        store.setAssistantDefault(.control)
+
+        #expect(store.assistantDefault == .ask)
+    }
+
+    @Test func clearingEverythingKeepsTheDefault() {
+        let store = temporaryStore()
+        store.setAssistantDefault(.readOnly)
+        store.setAssistantAccess(.control, for: "https://example.com")
+
+        store.removeEverything()
+
+        #expect(store.assistantOrigins.isEmpty)
+        #expect(store.assistantDefault == .readOnly)
     }
 
     @Test func alwaysActiveIsKeptPerOrigin() {
@@ -172,6 +244,62 @@ struct SitePermissionsStoreTests {
 
         let reader = SitePermissions(storageURL: url)
         #expect(reader.assistantAccess(for: "https://example.com") == .control)
+    }
+
+    @Test func defaultSurvivesRelaunchAndNoAccessLoadsAsAsk() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SitePermissionsDefault-\(UUID().uuidString).json")
+        let writer = SitePermissions(storageURL: url)
+        writer.setAssistantDefault(.control)
+        writer.setAssistantAccess(.ask, for: "https://example.com")
+        await writer.waitForPendingSave()
+
+        let reader = SitePermissions(storageURL: url)
+        #expect(reader.assistantDefault == .control)
+        #expect(reader.assistantRecord(for: "https://example.com") == .ask)
+        #expect(reader.assistantAccess(for: "https://other.example") == .control)
+
+        let stored = try String(contentsOf: url, encoding: .utf8)
+        try stored
+            .replacingOccurrences(of: "\"assistantDefault\":\"control\"", with: "\"assistantDefault\":\"deny\"")
+            .write(to: url, atomically: true, encoding: .utf8)
+        #expect(try String(contentsOf: url, encoding: .utf8).contains("\"assistantDefault\":\"deny\""))
+        #expect(SitePermissions(storageURL: url).assistantDefault == .ask)
+
+        try stored
+            .replacingOccurrences(of: "\"assistantDefault\":\"control\"", with: "\"assistantDefault\":\"somethingNew\"")
+            .write(to: url, atomically: true, encoding: .utf8)
+        let unknown = SitePermissions(storageURL: url)
+        #expect(unknown.assistantDefault == .ask)
+        #expect(unknown.assistantRecord(for: "https://example.com") == .ask)
+    }
+
+    /// A file nobody changed stays as it was: Ask is the absence of the key, and an older build ignores the key anyway.
+    @Test func askDefaultWritesNoKeyAndOldFilesLoadAsAsk() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SitePermissionsAskDefault-\(UUID().uuidString).json")
+        let writer = SitePermissions(storageURL: url)
+        writer.setAssistantAccess(.readOnly, for: "https://example.com")
+        await writer.waitForPendingSave()
+        #expect(!(try String(contentsOf: url, encoding: .utf8)).contains("assistantDefault"))
+
+        writer.setAssistantDefault(.readOnly)
+        await writer.waitForPendingSave()
+        #expect(try String(contentsOf: url, encoding: .utf8).contains("\"assistantDefault\":\"readOnly\""))
+
+        writer.setAssistantDefault(.ask)
+        await writer.waitForPendingSave()
+        #expect(!(try String(contentsOf: url, encoding: .utf8)).contains("assistantDefault"))
+
+        let old = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SitePermissionsOldAssistant-\(UUID().uuidString).json")
+        try """
+            {"assistantAccess":{"https://example.com":"readOnly","https://dropped.example":"ask"}}
+            """.write(to: old, atomically: true, encoding: .utf8)
+        let store = SitePermissions(storageURL: old)
+        #expect(store.assistantDefault == .ask)
+        #expect(store.assistantAccess(for: "https://example.com") == .readOnly)
+        #expect(store.assistantAccess(for: "https://unknown.example") == .ask)
     }
 
     @Test func alwaysActiveSurvivesRelaunch() async throws {

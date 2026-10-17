@@ -324,6 +324,14 @@ private struct SiteDetailPage: View {
         grants.grantsByHost.first { $0.host == host }?.categories ?? []
     }
 
+    private var assistantAccessOptions: [SettingsMenu<AssistantAccessPolicy?>.Option] {
+        var options: [SettingsMenu<AssistantAccessPolicy?>.Option] = [
+            .init(value: nil, label: AssistantAccessPolicy.followsDefaultLabel(permissions.assistantDefault)),
+        ]
+        options += AssistantAccessPolicy.allCases.map { .init(value: $0, label: String(localized: $0.label)) }
+        return options
+    }
+
     private var popupFallback: PopupPolicy {
         settings.blocksPopups ? .blockAndNotify : .allow
     }
@@ -375,11 +383,9 @@ private struct SiteDetailPage: View {
             RowSeparator()
             DetailRow(title: "Assistant access") {
                 SettingsMenu(
-                    options: AssistantAccessPolicy.allCases.map {
-                        .init(value: $0, label: String(localized: $0.label))
-                    },
+                    options: assistantAccessOptions,
                     selection: Binding(
-                        get: { permissions.assistantAccess(for: origin) },
+                        get: { permissions.assistantRecord(for: origin) },
                         set: { permissions.setAssistantAccess($0, for: origin) }
                     )
                 )
@@ -517,7 +523,7 @@ private struct SiteDetailPage: View {
         for permission in WebPermission.allCases {
             permissions.set(.ask, for: origin, permission)
         }
-        permissions.setAssistantAccess(.ask, for: origin)
+        permissions.setAssistantAccess(nil, for: origin)
         permissions.setKeepsActive(false, for: origin)
         permissions.setAllowsAutomaticPicture(true, for: origin)
         permissions.setAutoplay(nil, for: origin)

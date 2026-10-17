@@ -200,6 +200,9 @@ A CSS selector is evaluated against the page, so an attribute test such as `inpu
   **Assistant Access: Off** blocks external access; **Read Only** blocks external
   control even when the connection has a control grant. External sharing does
   not change those settings.
+- The assistant's default **Website access** (Settings › Assistant) does not
+  apply to external connections. Only a website's own Assistant Access setting
+  limits a connection.
 - The existing page driver detects and masks sensitive fields and refuses to
   fill them. Consequential actions use WSurf's native confirmation UI. External
   confirmations do not inherit the assistant's saved action approvals; any

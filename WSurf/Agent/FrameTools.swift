@@ -106,7 +106,7 @@ extension AgentToolkit {
             guard await PageFrameRegistry.shared.isLive(target, in: view), let parent = PageAutomationGuard.current,
                   parent.validate() else { return PageDriver.staleMessage }
             let guardScope = PageAutomationGuard(documentURL: target.url.absoluteString, snapshot: nil) {
-                parent.validate() && access.effectivePolicy.allows(capability) && PageFrameRegistry.shared.isCurrent(target, in: view)
+                parent.validate() && access.decision(for: capability) == .allow && PageFrameRegistry.shared.isCurrent(target, in: view)
             }
             return await PageDriver.$selectedFrame.withValue(target) {
                 await PageAutomationGuard.$current.withValue(guardScope) {

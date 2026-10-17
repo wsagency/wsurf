@@ -165,8 +165,8 @@ final class AgentToolkit {
             guard let self, let view, self.postflightDenial(for: authorization, in: view) == nil else { return false }
             guard let authorization else { return false }
             guard let tab = self.browser.tabs.first(where: { $0.id == authorization.tabID }) else { return false }
-            let policy = tab.assistantAccess.effectivePolicy
-            return policy.allows(capability) && (capability == .read || self.onScreenTab(for: view) === tab)
+            return tab.assistantAccess.decision(for: capability) == .allow
+                && (capability == .read || self.onScreenTab(for: view) === tab)
         }
         return await PageAutomationGuard.$current.withValue(scope) {
             await PageDriver.$outputBudget.withValue(outputBudget.driverBudget) { await operation() }

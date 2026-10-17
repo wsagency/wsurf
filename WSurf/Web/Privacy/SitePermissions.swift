@@ -144,6 +144,26 @@ nonisolated enum AssistantAccessPolicy: String, Codable, CaseIterable, Sendable 
             "No Access"
         }
     }
+
+    /// What the default can be set to. No Access is a choice for one website, not for all of them.
+    nonisolated static let defaultChoices: [AssistantAccessPolicy] = [.ask, .readOnly, .control]
+
+    /// The menu item that drops a website's own choice, naming what the website then follows.
+    nonisolated static func followsDefaultLabel(_ defaultPolicy: AssistantAccessPolicy) -> String {
+        String(localized: "Default (\(String(localized: defaultPolicy.label)))")
+    }
+
+    /// The Settings caption for each level of the default.
+    nonisolated var defaultCaption: LocalizedStringResource {
+        switch self {
+        case .ask, .deny:
+            "The assistant asks before it reads or uses each website."
+        case .readOnly:
+            "The assistant reads websites without asking. It asks before it clicks, types, or submits on a website."
+        case .control:
+            "The assistant reads and uses websites without asking. It still asks before purchases, payments, sending, deleting, and signing in, and on pages with password or payment fields."
+        }
+    }
 }
 
 @MainActor
@@ -155,6 +175,10 @@ final class SitePermissions {
     private(set) var defaults: [WebPermission: PermissionPolicy] = [:]
 
     private(set) var assistantRecords: [String: AssistantAccessPolicy] = [:]
+
+    /// What the assistant may do on a website that has no record of its own: Ask, Read Only or Allow Control. It is
+    /// never No Access, and the tabs of a private window never use it (`TabAssistantAccessCenter`).
+    private(set) var assistantDefault: AssistantAccessPolicy = .ask
 
     private var keptActiveOriginSet: Set<String> = []
     private(set) var keptActiveOrigins: [String] = []
@@ -216,8 +240,13 @@ final class SitePermissions {
         defaults[permission] ?? .ask
     }
 
+    /// The website's own choice, including an explicit Ask. `nil` means it follows the default.
+    func assistantRecord(for origin: String) -> AssistantAccessPolicy? {
+        assistantRecords[normalize(origin)]
+    }
+
     func assistantAccess(for origin: String) -> AssistantAccessPolicy {
-        assistantRecords[normalize(origin)] ?? .ask
+        assistantRecord(for: origin) ?? assistantDefault
     }
 
     var assistantOrigins: [String] {
@@ -335,10 +364,22 @@ final class SitePermissions {
     /// Settings > Websites), so every tab's live assistant state is re-evaluated against the store.
     var onAssistantAccessChanged: (() -> Void)?
 
-    func setAssistantAccess(_ policy: AssistantAccessPolicy, for origin: String) {
+    /// `nil` removes the record, so the website follows the default again. Ask is a record like any other.
+    func setAssistantAccess(_ policy: AssistantAccessPolicy?, for origin: String) {
         let origin = normalize(origin)
         guard !origin.isEmpty else { return }
-        assistantRecords[origin] = policy == .ask ? nil : policy
+        assistantRecords[origin] = policy
+        scheduleSave()
+        onAssistantAccessChanged?()
+    }
+
+    /// No Access is a choice for one website, never for all of them: it is stored as Ask. A store that does not
+    /// persist (a private window) has no default.
+    func setAssistantDefault(_ policy: AssistantAccessPolicy) {
+        guard persists else { return }
+        let next = policy == .deny ? AssistantAccessPolicy.ask : policy
+        guard next != assistantDefault else { return }
+        assistantDefault = next
         scheduleSave()
         onAssistantAccessChanged?()
     }
@@ -474,6 +515,8 @@ final class SitePermissions {
         var records: [String: [WebPermission: PermissionPolicy]] = [:]
         var defaults: [WebPermission: PermissionPolicy] = [:]
         var assistantAccess: [String: AssistantAccessPolicy] = [:]
+        /// Absent for Ask, so a file nobody changed stays as it was and older builds ignore the key.
+        var assistantDefault: AssistantAccessPolicy?
         var keptActive: Set<String> = []
         var noAutomaticPicture: Set<String> = []
         var autoplay: [String: AutoplayPolicy] = [:]
@@ -486,6 +529,7 @@ final class SitePermissions {
             defaults:
                 [WebPermission: PermissionPolicy],
             assistantAccess: [String: AssistantAccessPolicy],
+            assistantDefault: AssistantAccessPolicy?,
             keptActive: Set<String>,
             noAutomaticPicture: Set<String>,
             autoplay: [String: AutoplayPolicy],
@@ -496,6 +540,7 @@ final class SitePermissions {
             self.records = records
             self.defaults = defaults
             self.assistantAccess = assistantAccess
+            self.assistantDefault = assistantDefault
             self.keptActive = keptActive
             self.noAutomaticPicture = noAutomaticPicture
             self.autoplay = autoplay
@@ -518,6 +563,7 @@ final class SitePermissions {
                 [String: AssistantAccessPolicy].self,
                 forKey: .assistantAccess
             ) ?? [:]
+            assistantDefault = try? values.decodeIfPresent(AssistantAccessPolicy.self, forKey: .assistantDefault)
             keptActive = try values.decodeIfPresent(
                 Set<String>.self,
                 forKey: .keptActive
@@ -566,6 +612,7 @@ final class SitePermissions {
             defaults:
                 defaults,
             assistantAccess: assistantRecords,
+            assistantDefault: assistantDefault == .ask ? nil : assistantDefault,
             keptActive: keptActiveOriginSet,
             noAutomaticPicture: noAutomaticPictureOriginSet,
             autoplay: autoplayRecords,
@@ -593,7 +640,10 @@ final class SitePermissions {
         for (key, policy) in snapshot.assistantAccess {
             let origin = normalize(key)
             guard !origin.isEmpty, assistantRecords[origin] == nil else { continue }
-            assistantRecords[origin] = policy == .ask ? nil : policy
+            assistantRecords[origin] = policy
+        }
+        if let stored = snapshot.assistantDefault, stored != .deny {
+            assistantDefault = stored
         }
         for key in snapshot.keptActive {
             let origin = normalize(key)
