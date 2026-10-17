@@ -190,12 +190,15 @@ extension ProfileVaultStore {
         }
     }
 
-    /// Which live limit `accounts` is over: the count, else one account's bytes, else the total.
+    /// Which live limit `accounts` is over: the count, else one account's bytes (raw or encoded), else the total.
     private nonisolated static func overLimit(_ accounts: [CredentialAccount]) -> StoreLimit {
         if accounts.count > CredentialVaultLimits.accounts {
             return .accounts
         }
-        let overOne = accounts.contains { ((try? CredentialVaultCrypto.liveBytes(of: $0)) ?? .max) > CredentialVaultLimits.accountBytes }
+        let overOne = accounts.contains {
+            ((try? CredentialVaultCrypto.liveBytes(of: $0)) ?? .max) > CredentialVaultLimits.accountBytes
+                || ((try? CredentialVaultCrypto.storedBytes(of: $0)) ?? .max) > CredentialVaultLimits.encodedAccountBytes
+        }
         return overOne ? .accountBytes : .payloadBytes
     }
 

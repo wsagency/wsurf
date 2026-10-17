@@ -21,6 +21,13 @@ nonisolated enum CredentialVaultLimits {
     static let accountBytes = 4_000_000
     /// Plaintext bytes of all live accounts plus the blocked origins (the store), or of one whole transfer (an import).
     static let liveBytes = 128_000_000
+    /// The most bytes one account may take once encoded as canonical JSON (with the room `CredentialVaultCrypto.storedBytes(of:)`
+    /// keeps for what is set later), which is what the store writes. Escaping makes a string up to six times its size and base64
+    /// makes data a third larger, so this is checked on the encoding and not on `accountBytes`. A revision or a removed credential
+    /// carries part of an account as base64 text inside its row (4/3 of the encoding), and a removed account carries the encoding
+    /// itself: 4/3 of this bound plus `StoreFormat.historyBodyBytes` stays inside the 8 MB history row, so no valid account can
+    /// become one that cannot be edited, removed or purged.
+    static let encodedAccountBytes = 5_900_000
     // ponytail: cap wrappers at 32 to bound manifest hashing and rewrites; raise only if measured use needs it.
     static let wrappers = 32
 }
@@ -381,6 +388,37 @@ nonisolated enum CredentialVaultCrypto {
         return total
     }
 
+    /// The bytes the store may have to write for one account, which `encodedAccountBytes` bounds: the canonical JSON (the encoder
+    /// every live row and history row uses) of the account with everything that is set after it was checked filled in at its
+    /// largest. The store stamps three dates when it saves, the export hand-off marks the login, the code and each passkey with
+    /// dates and a hash, and an observed-base record holds a hash and a copy of the exporter's item id. Measuring the account with
+    /// those present means one at the bound can still be saved, edited and marked, and does not grow past the bound afterwards.
+    static func storedBytes(of account: CredentialAccount) throws -> Int {
+        var full = account
+        let date = Date(timeIntervalSinceReferenceDate: 812_345_678.123_456_79)
+        let events = CredentialEvents(
+            lastImportedAt: date, lastExportHandoffAt: date, remoteLastObservedAt: date, lastExportHandoffHash: Data(count: 32)
+        )
+        let base = ExchangeBase(contentHash: Data(count: 32), itemID: account.exchangeItemID)
+        full.createdAt = date
+        full.modifiedAt = date
+        full.migratedAt = date
+        full.passwordEvents = events
+        full.totpEvents = events
+        full.passwordBase = base
+        full.totpBase = base
+        for index in full.passkeys.indices {
+            full.passkeys[index].createdAt = date
+            full.passkeys[index].lastSignedAt = date
+            full.passkeys[index].events = events
+            full.passkeys[index].base = base
+        }
+        // A thousand bytes more for a date that prints longer than this one.
+        let (total, overflow) = try CredentialContent.canonicalJSON(full).count.addingReportingOverflow(1_024)
+        guard !overflow else { throw CredentialVaultError.oversized }
+        return total
+    }
+
     static func validate(_ payload: CredentialVaultPayload) throws {
         guard payload.accounts.count <= CredentialVaultLimits.accounts,
               payload.blockedPasswordOrigins.count <= 4_096 else { throw CredentialVaultError.oversized }
@@ -397,7 +435,8 @@ nonisolated enum CredentialVaultCrypto {
         for account in payload.accounts {
             guard accountIDs.insert(account.id).inserted else { throw CredentialVaultError.duplicateIdentifier }
             let bytes = try liveBytes(of: account)
-            guard bytes <= CredentialVaultLimits.accountBytes else { throw CredentialVaultError.oversized }
+            guard bytes <= CredentialVaultLimits.accountBytes,
+                  try storedBytes(of: account) <= CredentialVaultLimits.encodedAccountBytes else { throw CredentialVaultError.oversized }
             try add(bytes)
             for passkey in account.passkeys {
                 guard credentialIDs.insert(passkey.credentialID).inserted,

@@ -333,4 +333,37 @@ struct CredentialAccountValidationTests {
         try CredentialVaultCrypto.validate(payload)
         #expect(throws: CredentialVaultError.oversized) { try CredentialVaultCrypto.encodePayload(payload) }
     }
+
+    // MARK: Stored size
+
+    /// A note of `count` control characters: one byte each as text, six once the store escapes them (`\u0001`).
+    private func controlNote(_ count: Int) -> CredentialNote {
+        CredentialNote(text: String(repeating: "\u{01}", count: count), field: nil)
+    }
+
+    @Test func aHistoryRowAlwaysHoldsAnAccountAtTheEncodedCap() {
+        // A removed account holds its encoding; a revision or a removed credential holds a part of it as base64 text (4/3).
+        let encoded = CredentialVaultLimits.encodedAccountBytes
+        #expect(encoded + StoreFormat.historyBodyBytes <= StoreFormat.historyRowBytes)
+        #expect(4 * ((encoded + 2) / 3) + StoreFormat.historyBodyBytes <= StoreFormat.historyRowBytes)
+        // Every raw cap is under it, so the encoded cap is the one that decides for text that escapes.
+        #expect(CredentialVaultLimits.accountBytes < encoded)
+    }
+
+    @Test func anAccountThatGrowsWhenEncodedIsRefusedWhateverItsRawSize() throws {
+        // 1.2 MB of control characters is under every raw cap but encodes to about 7.2 MB, more than a history row can carry.
+        let account = noteOnlyAccount([controlNote(1_200_000)])
+        #expect(try CredentialVaultCrypto.liveBytes(of: account) == 1_200_000)
+        #expect(try CredentialVaultCrypto.storedBytes(of: account) > CredentialVaultLimits.encodedAccountBytes)
+
+        let payload = CredentialVaultPayload(revision: 0, accounts: [account], blockedPasswordOrigins: [])
+        #expect(throws: CredentialVaultError.oversized) { try CredentialVaultCrypto.validate(payload) }
+        #expect(throws: CredentialStoreError.limit(.accountBytes)) { try ProfileVaultStore.validate([account], blockedOrigins: []) }
+        #expect(throws: CredentialVaultError.oversized) { try CredentialExchangeCodec.validateAccounts([account]) }
+
+        // 900,000 of them encode to 5.4 MB and are kept, by the store and by the import's check alike.
+        let kept = noteOnlyAccount([controlNote(900_000)])
+        try ProfileVaultStore.validate([kept], blockedOrigins: [])
+        try CredentialExchangeCodec.validateAccounts([kept])
+    }
 }

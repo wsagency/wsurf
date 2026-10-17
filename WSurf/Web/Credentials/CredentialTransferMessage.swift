@@ -230,6 +230,8 @@ nonisolated extension CredentialExchangeError.Limit {
             String(localized: "a passkey key is larger than \(PasskeyKeyEncoding.maximumDERBytes.formatted()) bytes")
         case .itemBytes:
             String(localized: "this item holds more than \((CredentialVaultLimits.accountBytes / 1_000_000).formatted()) MB")
+        case .itemEncodedBytes:
+            String(localized: "this item would be larger than \((Double(CredentialVaultLimits.encodedAccountBytes) / 1_000_000).formatted()) MB once saved")
         case .transferBytes:
             String(localized: "the transfer holds more than \((CredentialVaultLimits.liveBytes / 1_000_000).formatted()) MB")
         }

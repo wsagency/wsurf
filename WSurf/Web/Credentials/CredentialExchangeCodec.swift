@@ -60,7 +60,7 @@ nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringC
 
     /// The size limit an `.oversized` refusal hit. A fixed vocabulary: it names a bound, never a title, a value or an amount.
     enum Limit: String, Equatable, Sendable, CaseIterable {
-        case items, credentials, collections, nesting, websites, notes, keyBytes, itemBytes, transferBytes
+        case items, credentials, collections, nesting, websites, notes, keyBytes, itemBytes, itemEncodedBytes, transferBytes
     }
 
     enum Record: CustomStringConvertible, Sendable, Equatable {
@@ -413,6 +413,9 @@ nonisolated enum CredentialExchangeCodec {
         // The store's own measure, so a kept item can never fail the store's check of one account or of the whole vault.
         let bytes = try CredentialVaultCrypto.liveBytes(of: candidate)
         guard bytes <= CredentialVaultLimits.accountBytes else { throw ImportLimitExceeded(.itemBytes) }
+        guard try CredentialVaultCrypto.storedBytes(of: candidate) <= CredentialVaultLimits.encodedAccountBytes else {
+            throw ImportLimitExceeded(.itemEncodedBytes)
+        }
         guard bytes <= CredentialVaultLimits.liveBytes - state.liveBytes else { throw ImportLimitExceeded(.transferBytes) }
         state.liveBytes += bytes
         try candidate.validate()
@@ -814,7 +817,8 @@ nonisolated enum CredentialExchangeCodec {
         var total = blockedOrigins.reduce(0) { $0 + $1.utf8.count }
         for account in accounts {
             let bytes = try CredentialVaultCrypto.liveBytes(of: account)
-            guard bytes <= CredentialVaultLimits.accountBytes, bytes <= CredentialVaultLimits.liveBytes - total else {
+            guard bytes <= CredentialVaultLimits.accountBytes, bytes <= CredentialVaultLimits.liveBytes - total,
+                  try CredentialVaultCrypto.storedBytes(of: account) <= CredentialVaultLimits.encodedAccountBytes else {
                 throw CredentialVaultError.oversized
             }
             total += bytes

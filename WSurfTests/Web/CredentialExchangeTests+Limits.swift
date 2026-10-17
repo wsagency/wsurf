@@ -135,6 +135,28 @@ extension CredentialExchangeTests {
         #expect(preview.candidates.count == 2 && preview.omitted.isEmpty)
     }
 
+    /// Control characters are six bytes each once escaped, so a note a quarter the size of the item cap can still be too big to
+    /// save: a history row, which carries the account encoded, would not hold it.
+    @Test func anItemThatGrowsWhenEncodedIsRefusedNamingTheLimit() throws {
+        let text = String(repeating: "\u{01}", count: 1_200_000)
+        let transfer = ExchangeScale.transfer([ExchangeScale.item(0, credentials: [ExchangeScale.login(0), note(text)])])
+
+        let error = try #require(refusal(of: transfer))
+
+        #expect(error.reason == .oversized && error.limit == .itemEncodedBytes)
+        #expect(error.record == .item(account: 0, item: 0))
+        let bound = (Double(CredentialVaultLimits.encodedAccountBytes) / 1_000_000).formatted()
+        #expect(CredentialTransferMessage.malformed(error).text.contains("larger than \(bound) MB once saved"))
+
+        // 900,000 of the same characters are 5.4 MB once saved: the item imports, and the store keeps what the import kept.
+        let smallerNote = note(String(repeating: "\u{01}", count: 900_000))
+        let smaller = ExchangeScale.transfer([ExchangeScale.item(0, credentials: [ExchangeScale.login(0), smallerNote])])
+        let preview = try CredentialExchangeCodec.preview(smaller, against: snapshot([]))
+        let accounts = try CredentialExchangeCodec.apply(preview, decisions: [])
+        #expect(accounts.count == 1)
+        try ProfileVaultStore.validate(accounts, blockedOrigins: [])
+    }
+
     @Test func transferOverTheTotalByteBudgetIsRefusedNamingTheLimit() throws {
         // One 3.9 MB string shared by every note: 32 items are 124.8 MB, the 33rd takes the transfer over 128 MB.
         let text = String(repeating: "x", count: 3_900_000)
@@ -180,7 +202,7 @@ extension CredentialExchangeTests {
     @Test func everyLimitHasItsOwnText() {
         let texts = CredentialExchangeError.Limit.allCases.map(\.text)
 
-        #expect(texts.count == 9 && Set(texts).count == 9)
+        #expect(texts.count == CredentialExchangeError.Limit.allCases.count && Set(texts).count == texts.count)
         #expect(texts.allSatisfy { !$0.isEmpty && !$0.contains("import limits") })
     }
 }
