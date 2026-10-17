@@ -533,6 +533,45 @@ struct ProfilePinTests {
         }
     }
 
+    @Test func aPinRemovedWhileAWindowWasClosedIsGoneWhenItComesBack() async throws {
+        try await withPins { fixture in
+            let first = fixture.window()
+            let second = fixture.window()
+            first.pinned("https://keep.example/")
+            let removed = first.pinned("https://gone.example/")
+            second.saveBlocking()
+            fixture.close(second)
+
+            first.close([.tab(removed.id)])
+            let back = fixture.reopen(second)
+
+            // The window's saved page for the removed pin is dropped, not kept as a loose tab.
+            #expect(back.tabs.map(\.urlString) == ["https://keep.example/"])
+            #expect(back.pinOutline == "https://keep.example/")
+            fixture.expectConverged()
+        }
+    }
+
+    @Test func aWindowSavedWithTwoPagesForOnePinComesBackWithOne() async throws {
+        try await withPins { fixture in
+            let first = fixture.window()
+            let pinID = try #require(first.pinned("https://one.example/").pinID)
+            // A window from before pins belonged to the profile can hold the same link twice.
+            let old = BrowserModel(context: fixture.context, windowID: UUID())
+            old.addPage("https://one.example/").pinID = pinID
+            old.addPage("https://one.example/").pinID = pinID
+            old.addPage("https://loose.example/")
+            old.saveBlocking()
+
+            let back = fixture.reopen(old)
+
+            #expect(back.tabs.filter { $0.pinID == pinID }.count == 1)
+            #expect(back.page(at: "https://loose.example/") != nil)
+            #expect(back.tabs.count == 2)
+            fixture.expectConverged()
+        }
+    }
+
     @Test(.boundedWebViews) func aRestartPreservesProfileFolderIDsAndOrder() async throws {
         let file = FileManager.default.temporaryDirectory
             .appendingPathComponent("ProfilePins-\(UUID().uuidString).sqlite")
