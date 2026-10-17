@@ -7,6 +7,7 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+- Credential Manager no longer freezes after unlocking a vault with thousands of credentials; long lists draw only the rows on screen.
 - The import review recognizes exact duplicates: an item that matches a saved login (same site, username and password, or the same passkey) is shown as already saved, or as a suggested merge that only adds what’s missing.
 - Passkeys with user handles longer than 64 bytes (for example PayPal’s) now import and sign in.
 - File › Free Memory unloads background tabs in every window.
