@@ -508,6 +508,8 @@ nonisolated enum PageRuntime {
         return ref;
       };
 
+      \#(targetScript)
+
       const elementState = selector => {
         const problem = selectorProblem(selector);
         if (problem) return { problem, error: SELECTOR_ERRORS[problem] };
@@ -722,7 +724,7 @@ nonisolated enum PageRuntime {
 
       \#(feedbackScript)
 
-      return { matchesRef, inspectableRef, isFoundOnly: ref => foundOnly.has(window.__wsurfRefs[ref - 1]), expectValue, valueState, walk, documentID, norm, collect,
+      return { resolveTarget, dragPlan, dragHolds, matchesRef, inspectableRef, isFoundOnly: ref => foundOnly.has(window.__wsurfRefs[ref - 1]), expectValue, valueState, walk, documentID, norm, collect,
         pageText, viewportText, resolve, setValue, pressEnter,
         labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe, acknowledge, elementState, findAll, inspect, selectorProblem, screenshotGeometry,
         digest, waitFor };
