@@ -179,8 +179,8 @@ revoke it immediately.
 | `hoverOnPage` | Move the real pointer to a referenced element, so CSS `:hover` and pointer/mouse handlers run. Needs WSurf to be the active app with a key window and the tab on screen; it never activates or raises WSurf. Refused with a specific message when the element is offscreen, covered, or clipped by the window (a development viewport larger than the window), or when the pointer could not be delivered; not available inside frames. |
 | `dragOnPage` | Drag from a source (`ref`, or `selector` with development access) to a destination (`toRef`, `toSelector`, or `dx` and `dy` CSS pixels from the source's centre). By default it dispatches the DOM events of a drag (`dragstart`/`dragover`/`drop`, or pointer and mouse events); they are untrusted and work with the tab in the background. `pointer: true` sends trusted pointer input instead (see Drag below). Both ends must be visible in the top document; frames, file inputs, sensitive and disabled elements are refused. |
 | `getDevelopmentInfo` | Engine, measured viewport (`innerWidth`, `innerHeight`, device pixel ratio, touch), zoom, who holds the tab's development lease (`none`, `self`, `other`) and per-engine capabilities. Works with any grant. |
-| `findElements` | Development. Elements matching a safe CSS selector in the document, same-origin frames and open shadow roots, with `offset` (0–10,000) and `limit` (1–100, default 50); skipped cross-origin frames and closed shadow roots are reported. A page is also bounded by delivered bytes (about 24 KiB of the escaped result); it ends early with `hasMore: true` and a following `offset` continues it. Returns an `observationID` whose refs work with `inspectElement` and, for a screenshot, `screenshotPage`; they are never targets for click, type, hover or any other action. |
-| `inspectElement` | Development. Bounded attributes, geometry, box model, allowlisted computed styles and ancestors of one found element. No field values and no raw HTML. The result is kept under the same delivered-bytes budget by dropping ancestors, then attributes, then styles, and says which (`ancestorsTruncated`, `attributesTruncated`, `truncated`). |
+| `findElements` | Development. Elements matching a safe CSS selector (the Developer tier may use any valid selector, including attribute tests) in the document, same-origin frames and open shadow roots, with `offset` (0–10,000) and `limit` (1–100, default 50); skipped cross-origin frames and closed shadow roots are reported. A page is also bounded by delivered bytes (about 24 KiB of the escaped result); it ends early with `hasMore: true` and a following `offset` continues it. Returns an `observationID` whose refs work with `inspectElement` and, for a screenshot, `screenshotPage`; they are never targets for click, type, hover or any other action. |
+| `inspectElement` | Development. Bounded attributes, geometry, box model, allowlisted computed styles and ancestors of one found element. No field values and no raw HTML. With `full: true` (Developer tier) it also returns all attributes (up to 128), computed properties (all, or the up to 32 named in `properties`; about 8 KiB) and an `outerHTML` excerpt of at most 8 KiB with field values blanked, under the rule in Scripts and DOM edits. The result is kept under the same delivered-bytes budget by dropping ancestors, then attributes, then styles, and says which (`ancestorsTruncated`, `attributesTruncated`, `truncated`). |
 | `setViewport` | Development. Lay the page out at an exact CSS-pixel viewport (64–4,096 per axis). The result is the size measured inside the page. Needs the tab on screen. |
 | `emulateDevice` | Development. Apply a profile and orientation (table below). Needs the tab on screen. |
 | `reloadPage` | Development. Reload the tab; the lease stays only while the new page is still inside the connection's access. |
@@ -189,6 +189,8 @@ revoke it immediately.
 | `readConsole`, `readNetwork` | Development. Page through captured records with `cursor` and `limit` (1–100, default 50), narrow them with filters, or read one record with `seq`. Responses state `engine`, `sources`, `gaps`, `epoch`, `documentID`, `nextCursor`, `dropped`, `evicted`, `truncated`, `lostInFlight`, `lostEarly` (WebKit) and, with a filter, `skipped`. Filters: `level` and `urlContains` for `readConsole`; `minStatus`, `outcome`, `type` and `urlContains` for `readNetwork`. |
 | `readAccessibility` | Read access. A compact outline of the page's roles, names and states: landmarks, headings, lists, tables, controls, images and same-origin iframes, with a `[ref]` on each control `readPage` also lists. At most 400 nodes and about 24 KiB per call; `offset` continues and `scope` (a safe CSS selector) limits the outline to part of the page. Never shows field values; a sensitive field shows its role, its name and `sensitive`. |
 | `readPerformance` | Development. Navigation timing, paint, layout shift, long tasks and resource counts and sizes by type, with the five slowest resources and no query values. A metric the engine does not expose is `null` and named in `unsupported`. |
+| `evaluateScript` | Developer tier. Run one JavaScript expression in the page and return its value, bounded and with sensitive values hidden. See Scripts and DOM edits. |
+| `editDOM` | Developer tier. Set or remove an attribute, set text or an inline style, remove an element, or insert a new one. See Scripts and DOM edits. |
 | `scrollPage` | Scroll vertically or horizontally, optionally inside a referenced container. |
 | `goBack` | Go back within the shared website. |
 | `navigate` | Navigate a shared tab; another website requires approval. |
@@ -198,8 +200,8 @@ revoke it immediately.
 | `handleDialog` | Read or answer a JavaScript dialog (alert, confirm, prompt, or Chromium's beforeunload "Leave site?") that a page opened in a shared tab. Needs control access. See Page dialogs below. |
 
 These tools cover browser page and tab actions. Assistant conversations, background
-research, the media player, arbitrary JavaScript, cookies, credential stores and
-filesystem access are not exposed.
+research, the media player, cookies, credential stores and filesystem access are not
+exposed. JavaScript runs only through `evaluateScript`, in the Developer tier.
 
 A page action reports what it changed (see Action results) and an `observationID`.
 A ref stays valid for as long as its document does and its control is unchanged, so
@@ -496,6 +498,76 @@ WSurf cannot reach, and the page under test receives the value like any other in
   a page that hashes or otherwise transforms the value shows the result as it is. A page
   can also keep what it receives (its own logs, a form sent with GET in the address bar
   and history); choose test values that mean nothing.
+
+### Scripts and DOM edits
+
+`evaluateScript` and `editDOM` give a paired app code and edit access to a page. They exist
+only in the **Developer tier**: a paired app, a page on a developer site, and a window of
+the Developer profile (the same conditions as typing test credentials). Anywhere else, in
+a private window, with a Development or lower grant, or for a Read Only site, the call is
+refused before anything runs, and the tier is checked again before the script starts, after
+the page answered and before anything is returned. The tab must be on screen (`switchTab`).
+Both tools act on the page itself, never on a frame: a frame of another origin is out of
+reach of a script, and an edit refuses any element inside a frame. Each call shows on the
+connection badge while it runs and is recorded in Agent Activity.
+
+| `evaluateScript` argument | Meaning |
+| --- | --- |
+| `source` | One JavaScript expression of at most 16 KiB. A function (`() => document.title`, `async () => { … }`) is called and a promise is awaited; anything else is the value. Statements must be wrapped in a function. |
+| `world` | `page` (default) runs with the page's own variables and prototypes. `isolated` shares the DOM and none of them; what it sets stays in its own world for that document. |
+| `timeoutMs` | 50 to 5,000, default 2,000. A script still waiting then gets `timedOut`. Chromium also stops a script that never yields; **WebKit cannot interrupt one**, so its tab stays busy until the script ends or the tab is reloaded or closed. |
+
+The result is JSON: `type`, `value`, `truncated`, `redacted`, `world`, `elapsedMs`. A value
+is serialized with a depth of 6, at most 100 items per list or object and 4,096 characters
+per string, and always in 16 KiB or less: when it does not fit, it is cut further and
+`truncated` is true. Values JSON cannot carry are named (`[undefined]`, `[Function f]`,
+`[BigInt 12]`, `[Circular]`), a node is described as `<h1#title.hero>` and never
+serialized, and a `Date`, `Map` or `Set` is spelled out. A script that throws, or a
+promise that rejects, is `scriptError` with the error's name, message and a stack of at
+most 12 lines (addresses lose their query); one that cannot be compiled says so.
+
+**What never comes back.** Before the script runs and again after it, WSurf's own page
+runtime (in a world the page cannot reach) reads what the page's sensitive fields hold: a
+password field, a field autofill marked as password, card or contact, or one whose type,
+`autocomplete`, name, id or label says password, one-time code, card number, CVC, IBAN,
+account number and the like (the test `readPage` applies), in the document, its open
+shadow roots and its same-origin frames. Every string and key of the result, and the
+text of an error, is compared with those values. A string equal to one (ignoring ASCII case
+and surrounding space) becomes `‹hidden›`. A value of 4 or more characters is hidden inside
+longer text too, as it is and whitespace-collapsed, percent-encoded, JSON-escaped and
+HTML-escaped; a shorter value would take ordinary output with it, so it is hidden only
+when it is the whole string. `redacted` counts the places hidden. This holds when the
+script reads the value straight from `input[type=password]`, from `FormData`, from markup,
+from an error message, or reads it and then clears the field. The test secrets the
+connection typed are hidden as well, as everywhere (`‹secret›`). So are the values of the
+cookies the page can read when they look like a session id or token (16 characters or
+more); shorter ones are settings and stay. A reply that cannot be checked (the page changed
+under the script) is not returned.
+
+This rule keeps a value from coming back by accident. It is **not a sandbox**: a script runs
+with the page's power and can split, encode or derive a value, send it over the network, or
+write it into the page for a later read. That is why the tool is limited to the Developer tier and developer sites,
+and why the activity log names every script.
+
+**`editDOM`** names one element by `ref` (from `findElements` or `readPage`, with the
+observation) or by `selector` (any valid CSS selector that matches exactly one element of
+the page, open shadow roots included), and one operation: `setAttribute` (`name`, `value`),
+`removeAttribute` (`name`), `setText` (`value`), `setStyle` (`name` is a CSS property,
+`value`, optional `important`), `remove`, or `insert` (`tag`, optional `value` as its text,
+`position` `beforebegin`, `afterbegin`, `beforeend` (default) or `afterend`). A change
+lasts until the page reloads. The edit runs in WSurf's own world, so a page that replaced
+`setAttribute` cannot change what happens. Refused: WSurf's own page elements and marks (a
+reserved id or class, any `data-wsurf-*` attribute), password, code and card fields
+(changing a field's type or label would otherwise unhide it), an element inside a frame,
+event-handler attributes (`on…`), script URLs, `srcdoc`, new `script`, `iframe`, `object`,
+`embed`, `link`, `meta` and `base` elements (code is `evaluateScript`'s, with its time limit and
+its record), and removing `html`, `head` or `body`. Text and values are at most 8 KiB.
+
+**The record.** Agent Activity keeps one entry per call, refused or not: for a script its
+world, its start and its end (150 characters, cut in the middle) and the first 8 hex digits
+of its SHA-256; for an edit the operation, name, value (60 characters) and selector. A value
+that went into a password, code or card field is shown as `‹hidden secret›`, as in every
+record.
 
 ### Safe selectors
 
