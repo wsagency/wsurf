@@ -492,7 +492,7 @@ extension BrowserModel {
 
         var foldersByStoredID: [UUID: TabFolder] = [:]
         for record in stored.folders {
-            let folder = TabFolder(name: record.name)
+            let folder = TabFolder(id: record.id, name: record.name)
             folder.color = record.color
             folder.isExpanded = record.isExpanded
             folder.isPinned = record.isPinned

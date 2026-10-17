@@ -147,6 +147,31 @@ struct FolderPinTests {
         #expect(restoredTab.pinnedTitle == pinnedTitle)
     }
 
+    @Test func aRestartKeepsFolderIDsAndOrder() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FolderIDs-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let browser = BrowserModel(database: AppDatabase(at: url))
+        let outer = browser.createFolder(named: "A")
+        let inner = browser.createFolder(named: "B")
+        browser.move([.folder(inner.id)], into: outer, settlingPins: false)
+        let pinned = browser.createFolder(named: "C")
+        browser.pin(pinned)
+        let order = browser.sidebarItems
+        #expect(order == [.folder(pinned.id), .folder(outer.id)])
+        browser.saveBlocking()
+
+        for _ in 0..<2 {
+            let restored = BrowserModel(database: AppDatabase(at: url))
+            restored.restoreSession()
+            #expect(Set(restored.folders.map(\.id)) == [outer.id, inner.id, pinned.id])
+            #expect(restored.sidebarItems == order)
+            #expect(restored.rows(in: restored.folder(id: outer.id)) == [.folder(inner.id)])
+            #expect(restored.folder(id: pinned.id)?.isPinned == true)
+            restored.saveBlocking()
+        }
+    }
+
     @Test func anEmptyPinnedFolderSurvivesWithoutAnyTabs() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("EmptyFolderPin-\(UUID().uuidString).sqlite")

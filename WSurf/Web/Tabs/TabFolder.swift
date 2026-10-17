@@ -24,14 +24,15 @@ nonisolated enum TabFolderColor: String, CaseIterable, Codable, Identifiable, Se
 @MainActor
 @Observable
 final class TabFolder: Identifiable {
-    let id = UUID()
+    let id: UUID
     var name: String
     var nameRevision = 0
     var color = TabFolderColor.gray
     var isExpanded = true
     var isPinned = false
 
-    init(name: String) {
+    init(id: UUID = UUID(), name: String) {
+        self.id = id
         self.name = name
     }
 }
