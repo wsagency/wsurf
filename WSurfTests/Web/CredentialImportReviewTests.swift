@@ -199,4 +199,55 @@ struct CredentialImportReviewTests {
         let taken = [try #require(login.existing): CredentialIdentity.password(accountID: UUID())]
         #expect(CredentialExchangeCoordinator.changes(for: .useIncoming, records: [login], replaced: taken) == nil)
     }
+
+    // MARK: Exact duplicates
+
+    private func duplicate(
+        _ additions: [CredentialImportReview.Duplicate.Addition], links: Bool = false, choices: [CredentialIdentity: CredentialImportChoice] = [:],
+        notAdded: [String] = []
+    ) -> CredentialImportReview.Duplicate {
+        CredentialImportReview.Duplicate(
+            target: UUID(), title: "Saved", additions: additions, linksItem: links, mergeChoices: choices, origins: [], notAdded: notAdded
+        )
+    }
+
+    @Test func aDuplicateIsOfferedItsMergeOnlyWhenMergingDoesSomething() {
+        let records = [record(.password, .unchanged)]
+        #expect(CredentialImportReview.availableActions(for: records, duplicate: duplicate([.code])) == [.mergeIntoSaved, .importNew, .skip])
+        #expect(CredentialImportReview.availableActions(for: records, duplicate: duplicate([], links: true)) == [.mergeIntoSaved, .importNew, .skip])
+        #expect(CredentialImportReview.availableActions(for: records, duplicate: duplicate([])) == [.importNew, .skip], "nothing to add or link")
+        #expect(duplicate([.notes(2)]).isMergeable && !duplicate([]).isMergeable)
+    }
+
+    @Test func aMergeThatLeavesWebsitesOutIsTheUsersDecisionOnlyWhereItWouldBeTheDefault() {
+        let other = ["https://other.test"]
+        #expect(duplicate([.code], notAdded: other).needsDecision && duplicate([], links: true, notAdded: other).needsDecision)
+        #expect(!duplicate([.code]).needsDecision && !duplicate([], notAdded: other).needsDecision, "nothing to merge, nothing to decide")
+    }
+
+    @Test func aDuplicateIsMergedOnlyWhileEveryPartIsDecidedAsItsMergeSays() {
+        let login = record(.password, .unchanged, choice: .skip)
+        let target = UUID()
+        let merge = duplicate([.code], choices: [login.incoming: .merge(into: target)])
+        #expect(!merge.isApplied(by: [login]), "the user kept the login out of the merge")
+        var merged = login
+        merged.choice = .merge(into: target)
+        #expect(merge.isApplied(by: [merged]) && merge.isApplied(by: [login.incoming: .merge(into: target)]))
+        #expect(!merge.isApplied(by: [login.incoming: .merge(into: UUID())]))
+        let nothing = duplicate([], choices: [login.incoming: .skip])
+        #expect(!nothing.isApplied(by: [login]), "a merge that does nothing is not a merge")
+    }
+
+    @Test func mergingADuplicateGivesEachPartTheChoiceItsMergeMakes() throws {
+        let login = record(.password, .unchanged)
+        let code = record(.totp, .new)
+        let target = UUID()
+        let merge = duplicate([.code], choices: [login.incoming: .merge(into: target), code.incoming: .skip])
+        let changes = try #require(CredentialExchangeCoordinator.changes(for: .mergeIntoSaved, records: [login, code], replaced: [:], duplicate: merge))
+        #expect(changes.map(\.choice) == [.merge(into: target), .skip])
+        #expect(CredentialExchangeCoordinator.changes(for: .mergeIntoSaved, records: [login, code], replaced: [:]) == nil, "no duplicate, no merge")
+        #expect(CredentialExchangeCoordinator.changes(for: .keepSaved, records: [login, code], replaced: [:], duplicate: merge) == nil)
+        let asNew = try #require(CredentialExchangeCoordinator.changes(for: .importNew, records: [login, code], replaced: [:], duplicate: merge))
+        #expect(asNew.map(\.choice) == [nil, nil], "imported as new, it goes where it goes by default")
+    }
 }

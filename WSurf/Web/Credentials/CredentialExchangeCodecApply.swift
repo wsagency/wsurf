@@ -8,7 +8,14 @@ nonisolated extension CredentialExchangeCodec {
     /// real conflict must have exactly one. A record without a decision keeps the default: merged into the
     /// account sharing its external identifiers, otherwise added under its own. Nothing is mutated: the result
     /// is a new array, and any invalid, unknown or repeated decision rejects the whole call.
-    static func apply(_ preview: CredentialImportPreview, decisions: [CredentialImportDecision]) throws -> [CredentialAccount] {
+    ///
+    /// `duplicates` names, by candidate, the saved account that holds an exact copy of the item (`ImportDuplicates`) and that the user
+    /// merges it into. The merge adds what that account lacks and replaces nothing: the item's websites that the merge names (and
+    /// no others, since a saved password is filled on its credential's websites), its name if the account has none, and the item's
+    /// identity when the account has none of its own, so the next import finds it unchanged.
+    static func apply(
+        _ preview: CredentialImportPreview, decisions: [CredentialImportDecision], duplicates: [UUID: DuplicateMerge] = [:]
+    ) throws -> [CredentialAccount] {
         try validateAccounts(preview.base.accounts)
         try validateAccounts(preview.candidates)
         let conflictByIncoming = Dictionary(uniqueKeysWithValues: preview.conflicts.map { ($0.incoming, $0) })
@@ -22,7 +29,7 @@ nonisolated extension CredentialExchangeCodec {
         var positionByID = Dictionary(result.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         for candidate in preview.candidates {
             try place(
-                candidate, decisions: decisionsByIncoming, conflicts: conflictByIncoming,
+                candidate, decisions: decisionsByIncoming, conflicts: conflictByIncoming, duplicateMerge: duplicates[candidate.id],
                 storedByItem: storedByItem, positionByID: &positionByID, into: &result
             )
         }
@@ -57,6 +64,12 @@ nonisolated extension CredentialExchangeCodec {
                 }
             }
         }
+    }
+
+    /// Where an exact duplicate is merged: the saved account, and the only websites of the item the merge may add to it.
+    struct DuplicateMerge: Sendable, Equatable {
+        let target: UUID
+        let origins: [String]
     }
 
     private static func incomingIdentity(of decision: CredentialImportDecision) -> CredentialIdentity {
@@ -123,6 +136,7 @@ nonisolated extension CredentialExchangeCodec {
         _ candidate: CredentialAccount,
         decisions decisionsByIncoming: [CredentialIdentity: CredentialImportDecision],
         conflicts conflictByIncoming: [CredentialIdentity: CredentialImportConflict],
+        duplicateMerge: DuplicateMerge?,
         storedByItem: [ExternalItemID: [Int]],
         positionByID: inout [UUID: Int],
         into result: inout [CredentialAccount]
@@ -140,6 +154,11 @@ nonisolated extension CredentialExchangeCodec {
         // other destination is given fresh identifiers and a remapped copy of the metadata.
         var claimed = linkedIndex != nil
         var carried = Set<UUID>()
+        if let duplicateMerge {
+            guard let index = positionByID[duplicateMerge.target], linkedIndex == nil else { throw CredentialVaultError.invalidData }
+            try carryDuplicate(candidate, adding: duplicateMerge.origins, into: &result[index], claimed: &claimed)
+            carried.insert(duplicateMerge.target)
+        }
 
         func addToSeparateAccount(_ identity: CredentialIdentity, forceFork: Bool) throws {
             if !unattachedPlaced {
@@ -174,7 +193,8 @@ nonisolated extension CredentialExchangeCodec {
                             id: candidateExternalID,
                             into: &result[index],
                             claimed: &claimed,
-                            carried: &carried
+                            carried: &carried,
+                            keepsIdenticalLogin: targetAccountID == duplicateMerge?.target
                         )
                     } else {
                         try addToSeparateAccount(identity, forceFork: conflictByIncoming[identity] != nil)
@@ -225,10 +245,44 @@ nonisolated extension CredentialExchangeCodec {
         id: ExternalItemID,
         into target: inout CredentialAccount,
         claimed: inout Bool,
-        carried: inout Set<UUID>
+        carried: inout Set<UUID>,
+        keepsIdenticalLogin: Bool = false
     ) throws {
         try carry(source, id: id, into: &target, claimed: &claimed, carried: &carried)
-        try merge(identity, from: source, into: &target)
+        try merge(identity, from: source, into: &target, keepsIdenticalLogin: keepsIdenticalLogin)
+    }
+
+    /// Whether the exporter's item can become the identity of the saved account `target`, which holds an exact copy of its login: the
+    /// account has no identity of its own, and its login reads as the exporter's, so the base the import records is true. A login the
+    /// account keeps without field descriptions takes the exporter's.
+    static func canLinkDuplicate(_ source: CredentialAccount, to target: CredentialAccount) -> Bool {
+        guard target.exchangeAccountID == nil, target.exchangeItemID == nil, target.exchangeMetadata == nil else { return false }
+        return !hasBasicAuthentication(source) || target.basicAuthenticationMetadata == nil
+            || target.basicAuthenticationMetadata == source.basicAuthenticationMetadata
+    }
+
+    /// The part of an exact duplicate's merge that is not one of its credentials. Adds, never replaces.
+    private static func carryDuplicate(
+        _ source: CredentialAccount, adding allowed: [String], into target: inout CredentialAccount, claimed: inout Bool
+    ) throws {
+        // Only the websites the merge names: the item's others are not the saved credential's to be filled on.
+        let origins = source.origins.filter { allowed.contains($0) && !target.origins.contains($0) }
+        target.origins += origins
+        target.loginURLs += source.loginURLs.filter { url in CredentialAccount.origin(for: url).map(origins.contains) ?? false }
+        guard target.origins.count <= CredentialAccount.websiteLimit, target.loginURLs.count <= CredentialAccount.websiteLimit else {
+            throw CredentialVaultError.invalidData
+        }
+        if target.displayName?.isEmpty ?? true, let title = source.displayName, !title.isEmpty {
+            target.displayName = title
+        }
+        guard canLinkDuplicate(source, to: target) else { return }
+        target.exchangeAccountID = source.exchangeAccountID
+        target.exchangeItemID = source.exchangeItemID
+        target.exchangeMetadata = source.exchangeMetadata
+        if target.basicAuthenticationMetadata == nil {
+            target.basicAuthenticationMetadata = source.basicAuthenticationMetadata
+        }
+        claimed = true
     }
 
     private static func sameKind(_ lhs: CredentialIdentity, _ rhs: CredentialIdentity) -> Bool {
@@ -359,9 +413,19 @@ nonisolated extension CredentialExchangeCodec {
         }
     }
 
-    private static func merge(_ identity: CredentialIdentity, from source: CredentialAccount, into target: inout CredentialAccount) throws {
+    private static func merge(
+        _ identity: CredentialIdentity, from source: CredentialAccount, into target: inout CredentialAccount, keepsIdenticalLogin: Bool
+    ) throws {
         switch identity {
         case .password:
+            if keepsIdenticalLogin, hasBasicAuthentication(target) {
+                // The saved account holds this very login (an exact duplicate): there is nothing to add, and nothing is replaced.
+                guard let password = source.password, let held = target.password,
+                      password.utf8.elementsEqual(held.utf8), source.username.utf8.elementsEqual(target.username.utf8) else {
+                    throw CredentialVaultError.invalidData
+                }
+                return
+            }
             guard !hasBasicAuthentication(target) else { throw CredentialVaultError.invalidData }
             copyBasicAuthentication(from: source, to: &target)
         case let .passkey(_, passkeyID):
