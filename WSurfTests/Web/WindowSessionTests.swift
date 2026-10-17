@@ -225,7 +225,7 @@ struct WindowSessionTests {
         let before = try old.read { try Self.rows(in: $0, columns: columns) }
         let unrelatedSchemaSQL = """
             SELECT type, name, tbl_name, sql FROM sqlite_master
-            WHERE tbl_name NOT LIKE 'session%' AND name NOT LIKE 'sqlite_%'
+            WHERE tbl_name NOT LIKE 'session%' AND tbl_name != 'profilePin' AND name NOT LIKE 'sqlite_%'
             ORDER BY type, name
             """
         let unrelatedSchema = try old.read { try Row.fetchAll($0, sql: unrelatedSchemaSQL) }
@@ -250,6 +250,7 @@ struct WindowSessionTests {
         let after = try database.writer.read { db in
             #expect(try Row.fetchAll(db, sql: unrelatedSchemaSQL) == unrelatedSchema)
             #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
+            #expect(try db.tableExists("profilePin"))
             let migrations = try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
             #expect(Set(migrations).isSuperset(of: ["v1", "v2-folder-pinning"]))
             #expect(try String.fetchAll(db, sql: """
