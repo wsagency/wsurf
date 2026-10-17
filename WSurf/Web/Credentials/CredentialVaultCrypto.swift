@@ -6,9 +6,21 @@ import Foundation
 import Synchronization
 
 nonisolated enum CredentialVaultLimits {
+    /// The v1 file format (`Credentials.vault`): its sealed payload and its plaintext. Also the cap on every single field.
     static let payloadBytes = 4_000_000
+    /// The v1 file format only: the whole file.
     static let fileBytes = 8_000_000
-    static let accounts = 1_000
+    /// The v1 file format only: accounts in one legacy payload, so a migrated vault always fits the live caps below.
+    static let legacyAccounts = 1_000
+    /// Live accounts in one vault. Also the kept items, and the collections, in one transfer.
+    static let accounts = 25_000
+    /// Credentials in one transfer, imported or exported.
+    static let credentials = 100_000
+    /// Plaintext bytes of one account (the store) or of one item (an import). It is the old whole-vault cap, so a history row,
+    /// which holds at most one account, stays inside the 8 MB bound of the spec by the same argument as before.
+    static let accountBytes = 4_000_000
+    /// Plaintext bytes of all live accounts plus the blocked origins (the store), or of one whole transfer (an import).
+    static let liveBytes = 128_000_000
     // ponytail: cap wrappers at 32 to bound manifest hashing and rewrites; raise only if measured use needs it.
     static let wrappers = 32
 }
@@ -105,7 +117,7 @@ nonisolated struct CredentialVaultPayload: Codable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         revision = try container.decode(UInt64.self, forKey: .revision)
         var accountValues = try container.nestedUnkeyedContainer(forKey: .accounts)
-        guard let accountCount = accountValues.count, accountCount <= CredentialVaultLimits.accounts else {
+        guard let accountCount = accountValues.count, accountCount <= CredentialVaultLimits.legacyAccounts else {
             throw CredentialVaultError.oversized
         }
         var decodedAccounts: [CredentialAccount] = []
@@ -319,13 +331,63 @@ nonisolated enum CredentialVaultCrypto {
         return envelope
     }
 
+    /// The plaintext bytes the store counts for one account: the size of each variable field, not of its encoding. The store and
+    /// the import codec both measure an account with this one function, so what the codec accepts the store keeps.
+    static func liveBytes(of account: CredentialAccount) throws -> Int {
+        var total = 0
+        func add(_ count: Int) throws {
+            let (sum, overflow) = total.addingReportingOverflow(count)
+            guard !overflow else { throw CredentialVaultError.oversized }
+            total = sum
+        }
+        try add(account.username.utf8.count)
+        try add(account.displayName?.utf8.count ?? 0)
+        try add(account.password?.utf8.count ?? 0)
+        for origin in account.origins {
+            try add(origin.utf8.count)
+        }
+        for url in account.loginURLs {
+            try add(url.absoluteString.utf8.count)
+        }
+        for value in [account.exchangeAccountID, account.exchangeItemID].compactMap({ $0 }) {
+            try add(value.count)
+        }
+        try add(account.exchangeMetadata?.count ?? 0)
+        if let metadata = account.basicAuthenticationMetadata {
+            for field in [metadata.username, metadata.password].compactMap({ $0 }) {
+                try add(field.id?.count ?? 0)
+                try add(field.label?.utf8.count ?? 0)
+            }
+        }
+        if let generator = account.totp {
+            try add(generator.secret.count)
+            try add(generator.issuer?.utf8.count ?? 0)
+            try add(generator.userName?.utf8.count ?? 0)
+        }
+        for note in account.notes ?? [] {
+            try add(note.text.utf8.count)
+            try add(note.field?.id?.count ?? 0)
+            try add(note.field?.label?.utf8.count ?? 0)
+        }
+        for passkey in account.passkeys {
+            try add(passkey.credentialID.count)
+            try add(passkey.rpID.utf8.count)
+            try add(passkey.userHandle.count)
+            try add(passkey.userName.utf8.count)
+            try add(passkey.userDisplayName.utf8.count)
+            try add(passkey.privateKeyPKCS8.count)
+            try add(passkey.exchangeFIDO2Metadata?.count ?? 0)
+        }
+        return total
+    }
+
     static func validate(_ payload: CredentialVaultPayload) throws {
         guard payload.accounts.count <= CredentialVaultLimits.accounts,
               payload.blockedPasswordOrigins.count <= 4_096 else { throw CredentialVaultError.oversized }
         var variableBytes = 0
         func add(_ count: Int) throws {
             let (total, overflow) = variableBytes.addingReportingOverflow(count)
-            guard !overflow, total <= CredentialVaultLimits.payloadBytes else { throw CredentialVaultError.oversized }
+            guard !overflow, total <= CredentialVaultLimits.liveBytes else { throw CredentialVaultError.oversized }
             variableBytes = total
         }
 
@@ -334,45 +396,12 @@ nonisolated enum CredentialVaultCrypto {
         var passkeyIDs = Set<UUID>()
         for account in payload.accounts {
             guard accountIDs.insert(account.id).inserted else { throw CredentialVaultError.duplicateIdentifier }
-            try add(account.username.utf8.count)
-            try add(account.displayName?.utf8.count ?? 0)
-            try add(account.password?.utf8.count ?? 0)
-            for origin in account.origins {
-                try add(origin.utf8.count)
-            }
-            for url in account.loginURLs {
-                try add(url.absoluteString.utf8.count)
-            }
-            for value in [account.exchangeAccountID, account.exchangeItemID].compactMap({ $0 }) {
-                try add(value.count)
-            }
-            try add(account.exchangeMetadata?.count ?? 0)
-            if let metadata = account.basicAuthenticationMetadata {
-                for field in [metadata.username, metadata.password].compactMap({ $0 }) {
-                    try add(field.id?.count ?? 0)
-                    try add(field.label?.utf8.count ?? 0)
-                }
-            }
-            if let generator = account.totp {
-                try add(generator.secret.count)
-                try add(generator.issuer?.utf8.count ?? 0)
-                try add(generator.userName?.utf8.count ?? 0)
-            }
-            for note in account.notes ?? [] {
-                try add(note.text.utf8.count)
-                try add(note.field?.id?.count ?? 0)
-                try add(note.field?.label?.utf8.count ?? 0)
-            }
+            let bytes = try liveBytes(of: account)
+            guard bytes <= CredentialVaultLimits.accountBytes else { throw CredentialVaultError.oversized }
+            try add(bytes)
             for passkey in account.passkeys {
                 guard credentialIDs.insert(passkey.credentialID).inserted,
                       passkeyIDs.insert(passkey.id).inserted else { throw CredentialVaultError.duplicateIdentifier }
-                try add(passkey.credentialID.count)
-                try add(passkey.rpID.utf8.count)
-                try add(passkey.userHandle.count)
-                try add(passkey.userName.utf8.count)
-                try add(passkey.userDisplayName.utf8.count)
-                try add(passkey.privateKeyPKCS8.count)
-                try add(passkey.exchangeFIDO2Metadata?.count ?? 0)
             }
             try account.validate()
         }

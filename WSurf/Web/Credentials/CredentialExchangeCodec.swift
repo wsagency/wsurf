@@ -187,15 +187,25 @@ nonisolated enum CredentialExchangeCodec {
         var tags: [String]
     }
 
+    /// The bytes one transfer asks WSurf to read. `total` is bounded for the whole transfer. `item` is the bytes of the item being
+    /// read, or `nil` outside an item, so a field of the account or of a collection counts toward the transfer only.
     private struct PayloadBudget {
-        var bytes = 0
+        var total = 0
+        var item: Int?
 
         mutating func add(_ count: Int) throws {
-            let (sum, overflow) = bytes.addingReportingOverflow(count)
-            guard count >= 0, !overflow, sum <= CredentialVaultLimits.payloadBytes else {
+            let (sum, overflow) = total.addingReportingOverflow(count)
+            guard count >= 0, !overflow, sum <= CredentialVaultLimits.liveBytes else {
                 throw CredentialVaultError.oversized
             }
-            bytes = sum
+            if let item {
+                let (itemSum, itemOverflow) = item.addingReportingOverflow(count)
+                guard !itemOverflow, itemSum <= CredentialVaultLimits.accountBytes else {
+                    throw CredentialVaultError.oversized
+                }
+                self.item = itemSum
+            }
+            total = sum
         }
 
         mutating func add(_ value: String) throws {
@@ -210,7 +220,8 @@ nonisolated enum CredentialExchangeCodec {
     /// The running state of one `preview` call. `record` names where an error is raised from.
     private struct ImportState {
         var budget = PayloadBudget()
-        var metadataBudget = PayloadBudget()
+        /// What the kept items add up to under the store's own measure (`CredentialVaultCrypto.liveBytes(of:)`).
+        var liveBytes = 0
         var seenAccountIDs = Set<Data>()
         var seenItemIDs = Set<ExternalItemID>()
         var seenPasskeyIDs = Set<ExternalPasskeyID>()
@@ -225,7 +236,7 @@ nonisolated enum CredentialExchangeCodec {
 
     static func preview(_ data: ASExportedCredentialData, against base: StoreSnapshot) throws -> CredentialImportPreview {
         guard data.formatVersion == .v1 else { throw CredentialVaultError.invalidData }
-        try validateAccounts(base.accounts)
+        try validateAccounts(base.accounts, blockedOrigins: base.blockedPasswordOrigins)
         guard base.accounts.count <= CredentialVaultLimits.accounts,
               data.accounts.count <= CredentialVaultLimits.accounts else { throw CredentialVaultError.oversized }
 
@@ -239,9 +250,6 @@ nonisolated enum CredentialExchangeCodec {
 
             state.record = .payload
             try validateAccounts(state.candidates)
-            guard try encodedSize(state.candidates) <= CredentialVaultLimits.payloadBytes else {
-                throw CredentialVaultError.oversized
-            }
             let conflicts = try makeConflicts(state.candidates, against: base.accounts)
             return CredentialImportPreview(base: base, candidates: state.candidates, conflicts: conflicts, omitted: state.omitted)
         } catch {
@@ -318,6 +326,8 @@ nonisolated enum CredentialExchangeCodec {
         let itemIdentity = ExternalItemID(account: appleAccount.id, item: item.id)
         guard state.candidates.count < CredentialVaultLimits.accounts,
               !item.id.isEmpty, state.seenItemIDs.insert(itemIdentity).inserted else { throw CredentialVaultError.invalidData }
+        state.budget.item = 0
+        defer { state.budget.item = nil }
         try state.budget.add(item.id)
         try state.budget.add(item.title)
         try state.budget.add(item.subtitle ?? "")
@@ -327,7 +337,7 @@ nonisolated enum CredentialExchangeCodec {
         if #available(macOS 26.4, *), !item.extensions.isEmpty {
             omit(.sharingNotKept, &state)
         }
-        guard item.credentials.count <= CredentialVaultLimits.accounts - state.totalCredentials else {
+        guard item.credentials.count <= CredentialVaultLimits.credentials - state.totalCredentials else {
             throw CredentialVaultError.oversized
         }
         state.totalCredentials += item.credentials.count
@@ -360,7 +370,7 @@ nonisolated enum CredentialExchangeCodec {
             tags: item.tags
         ))
         // Shared collection ancestry is re-encoded into every linked item; charge what is retained.
-        try state.metadataBudget.add(candidate.exchangeMetadata?.count ?? 0)
+        try state.budget.add(candidate.exchangeMetadata?.count ?? 0)
         try importScope(item.scope, into: &candidate, state: &state)
 
         for (credentialIndex, credential) in item.credentials.enumerated() {
@@ -378,6 +388,11 @@ nonisolated enum CredentialExchangeCodec {
             omit(.nothingToKeep, &state)
             return
         }
+        // The store's own measure, so a kept item can never fail the store's check of one account or of the whole vault.
+        let bytes = try CredentialVaultCrypto.liveBytes(of: candidate)
+        guard bytes <= CredentialVaultLimits.accountBytes,
+              bytes <= CredentialVaultLimits.liveBytes - state.liveBytes else { throw CredentialVaultError.oversized }
+        state.liveBytes += bytes
         try candidate.validate()
         state.candidates.append(candidate)
     }
@@ -747,7 +762,10 @@ nonisolated enum CredentialExchangeCodec {
         return withUnsafeBytes(of: fallback.uuid) { Data($0) }
     }
 
-    static func validateAccounts(_ accounts: [CredentialAccount]) throws {
+    /// The checks the store makes of a vault: distinct ids, each account valid, one account per exporter item, and the live byte
+    /// budgets, measured as the store measures them (one account within `accountBytes`; all accounts plus `blockedOrigins` within
+    /// `liveBytes`).
+    static func validateAccounts(_ accounts: [CredentialAccount], blockedOrigins: Set<String> = []) throws {
         guard accounts.count <= CredentialVaultLimits.accounts else { throw CredentialVaultError.oversized }
         guard Set(accounts.map({ $0.id })).count == accounts.count else { throw CredentialVaultError.duplicateIdentifier }
         for account in accounts {
@@ -755,7 +773,14 @@ nonisolated enum CredentialExchangeCodec {
         }
         // Two accounts claiming one exporter item would make every later import and export ambiguous.
         guard try Set(accounts.map(externalItemID(for:))).count == accounts.count else { throw CredentialVaultError.duplicateIdentifier }
-        guard try encodedSize(accounts) <= CredentialVaultLimits.payloadBytes else { throw CredentialVaultError.oversized }
+        var total = blockedOrigins.reduce(0) { $0 + $1.utf8.count }
+        for account in accounts {
+            let bytes = try CredentialVaultCrypto.liveBytes(of: account)
+            guard bytes <= CredentialVaultLimits.accountBytes, bytes <= CredentialVaultLimits.liveBytes - total else {
+                throw CredentialVaultError.oversized
+            }
+            total += bytes
+        }
     }
 
     static func encodedSize<T: Encodable>(_ value: T) throws -> Int {

@@ -346,21 +346,22 @@ extension CredentialExchangeTests {
         }
     }
 
-    @Test func sharedCollectionAncestryReencodedPerItemIsBudgetedBeforeItIsRetained() throws {
+    /// A chain of 32 nested collections whose `titleBytes` titles are linked from every one of `itemCount` items. Each item
+    /// re-encodes the whole chain into its own metadata, so the chain is paid for once per item.
+    private func sharedAncestryTransfer(titleBytes: Int, itemCount: Int) -> ASExportedCredentialData {
         let providerID = Data([0xA0, 0x90])
-        let itemIDs = [Data([0xB0, 0x91]), Data([0xB0, 0x92]), Data([0xB0, 0x93])]
-        // 32 nested levels of 100 KB titles: ~3.2 MB, inside the raw budget, but linked from every item.
+        let itemIDs = (0..<itemCount).map { ExchangeScale.itemID($0) }
         var chain = ASImportableCollection(
-            id: Data([0xC0, 0]), created: nil, lastModified: nil, title: String(repeating: "a", count: 100_000),
+            id: Data([0xC0, 0]), created: nil, lastModified: nil, title: String(repeating: "a", count: titleBytes),
             subtitle: nil, items: itemIDs.map { ASImportableLinkedItem(item: $0, account: providerID) }, subcollections: []
         )
         for level in 1..<32 {
             chain = ASImportableCollection(
                 id: Data([0xC0, UInt8(level)]), created: nil, lastModified: nil,
-                title: String(repeating: "a", count: 100_000), subtitle: nil, items: [], subcollections: [chain]
+                title: String(repeating: "a", count: titleBytes), subtitle: nil, items: [], subcollections: [chain]
             )
         }
-        let exported = ASExportedCredentialData(
+        return ASExportedCredentialData(
             accounts: [
                 ASImportableAccount(
                     id: providerID, userName: "ada", email: "", collections: [chain],
@@ -374,13 +375,34 @@ extension CredentialExchangeTests {
             exporterDisplayName: "Fixture",
             timestamp: Date(timeIntervalSince1970: 1_700_000_000)
         )
+    }
+
+    @Test func sharedCollectionAncestryOverTheItemBoundIsRefusedAtThatItem() throws {
+        // 32 levels of 130 KB titles: 4.16 MB of metadata in every linked item, over the 4 MB an item may hold.
+        let exported = sharedAncestryTransfer(titleBytes: 130_000, itemCount: 3)
+        do {
+            _ = try CredentialExchangeCodec.preview(exported, against: snapshot([]))
+            Issue.record("Expected the item's metadata to be rejected")
+        } catch let error as CredentialExchangeError {
+            #expect(error.reason == .oversized)
+            #expect(error.record == .item(account: 0, item: 0))
+        }
+    }
+
+    @Test func sharedCollectionAncestryReencodedPerItemIsBudgetedBeforeItIsRetained() throws {
+        // 32 levels of 120 KB titles: 3.84 MB per item, inside the item bound. The chain is re-encoded into every linked item,
+        // so the transfer reaches its 128 MB budget at about the 33rd item and is refused there, not after every item is kept.
+        let exported = sharedAncestryTransfer(titleBytes: 120_000, itemCount: 40)
         do {
             _ = try CredentialExchangeCodec.preview(exported, against: snapshot([]))
             Issue.record("Expected the multiplied metadata to be rejected")
         } catch let error as CredentialExchangeError {
-            // Rejected while the second item is built, not after every candidate has been retained.
             #expect(error.reason == .oversized)
-            #expect(error.record == .item(account: 0, item: 1))
+            guard case let .item(account, item) = error.record else {
+                Issue.record("Expected the refusal at an item, got \(error.record)")
+                return
+            }
+            #expect(account == 0 && (30...34).contains(item))
         }
     }
 

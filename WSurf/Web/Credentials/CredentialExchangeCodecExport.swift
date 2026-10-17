@@ -37,7 +37,7 @@ nonisolated extension CredentialExchangeCodec {
             let notes = chosen.notes ? account.notes ?? [] : []
             let selectedCredentialCount = chosen.passkeyIDs.count + (basic == nil ? 0 : 1) +
                 (chosen.totp && account.totp != nil ? 1 : 0) + notes.count
-            guard selectedCredentialCount <= CredentialVaultLimits.accounts - totalCredentials else {
+            guard selectedCredentialCount <= CredentialVaultLimits.credentials - totalCredentials else {
                 throw CredentialVaultError.oversized
             }
             totalCredentials += selectedCredentialCount
@@ -126,7 +126,7 @@ nonisolated extension CredentialExchangeCodec {
             exporterDisplayName: "WSurf",
             timestamp: Date()
         )
-        guard try encodedSize(data) <= CredentialVaultLimits.payloadBytes else { throw CredentialVaultError.oversized }
+        guard try encodedSize(data) <= CredentialVaultLimits.liveBytes else { throw CredentialVaultError.oversized }
         return data
     }
 

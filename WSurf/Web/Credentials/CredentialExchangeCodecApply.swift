@@ -18,7 +18,7 @@ nonisolated extension CredentialExchangeCodec {
         for candidate in preview.candidates {
             try place(candidate, decisions: decisionsByIncoming, conflicts: conflictByIncoming, into: &result)
         }
-        try validateAccounts(result)
+        try validateAccounts(result, blockedOrigins: preview.base.blockedPasswordOrigins)
         return result
     }
 

@@ -180,14 +180,23 @@ extension ProfileVaultStore {
         return try transaction.finish()
     }
 
-    /// The v1 payload rules at the boundary: distinct ids, `CredentialAccount.validate()`, the live byte budget (blocked origins
+    /// The payload rules at the boundary: distinct ids, `CredentialAccount.validate()`, the live byte budgets (blocked origins
     /// included). A live limit names itself.
     nonisolated static func validate(_ accounts: [CredentialAccount], blockedOrigins: [String]) throws {
         do {
             try CredentialVaultCrypto.validate(CredentialVaultPayload(revision: 0, accounts: accounts, blockedPasswordOrigins: Set(blockedOrigins)))
         } catch CredentialVaultError.oversized {
-            throw CredentialStoreError.limit(accounts.count > CredentialVaultLimits.accounts ? .accounts : .payloadBytes)
+            throw CredentialStoreError.limit(overLimit(accounts))
         }
+    }
+
+    /// Which live limit `accounts` is over: the count, else one account's bytes, else the total.
+    private nonisolated static func overLimit(_ accounts: [CredentialAccount]) -> StoreLimit {
+        if accounts.count > CredentialVaultLimits.accounts {
+            return .accounts
+        }
+        let overOne = accounts.contains { ((try? CredentialVaultCrypto.liveBytes(of: $0)) ?? .max) > CredentialVaultLimits.accountBytes }
+        return overOne ? .accountBytes : .payloadBytes
     }
 
     /// The accounts a delete leaves live. A credential whose removal leaves nothing valid (`A:43`) takes the whole-account path.

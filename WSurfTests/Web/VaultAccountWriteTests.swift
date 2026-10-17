@@ -260,7 +260,10 @@ struct VaultAccountWriteTests {
         }
     }
 
-    @Test func combinedAccountsAndPolicyBudgetIsEnforced() async throws {
+    /// One account is capped by its own bytes, not by what the stored policy adds beside it: with a full policy an edit of 3.3 MB
+    /// is kept (the old whole-vault budget refused it), an edit over `accountBytes` is refused by name with nothing written, and
+    /// the policy is never rewritten. That the policy counts toward the vault total is in `CredentialAccountValidationTests`.
+    @Test func anAccountEditIsCappedByItsOwnBytesAndLeavesThePolicyAlone() async throws {
         let origins = (1...4_096).map(longOrigin)
         var big = VaultFixtures.account(username: String(repeating: "x", count: 2_500_000), password: nil)
         big.displayName = nil
@@ -271,22 +274,23 @@ struct VaultAccountWriteTests {
             let bound = try await store.snapshot(vaultID: f.vaultID, using: access)
             #expect(bound.blockedPasswordOrigins.count == 4_096)
             let stamp = try #require(bound.stamps[account.id])
-            func resized(_ count: Int) -> [AccountWrite] {
+            func resized(_ count: Int, displayName: Int = 0) -> [AccountWrite] {
                 var edited = account
                 edited.username = String(repeating: "x", count: count)
+                edited.displayName = displayName == 0 ? nil : String(repeating: "d", count: displayName)
                 return [AccountWrite(accountID: account.id, expected: .stamp(stamp), replacement: edited)]
             }
             let before = try StoreImage(f)
             let policy = try probe.heads().source.blockedOrigins
 
-            // Accounts alone fit within 4,000,000 B; with the stored policy they do not.
-            #expect(3_300_000 < CredentialVaultLimits.payloadBytes)
-            await #expect(throws: CredentialStoreError.limit(.payloadBytes)) {
-                try await store.commitAccounts(vaultID: f.vaultID, resized(3_300_000), cause: nil, using: access)
+            // Each field is within its own bound; together they are over the cap of one account.
+            #expect(3_900_000 + 200_000 > CredentialVaultLimits.accountBytes)
+            await #expect(throws: CredentialStoreError.limit(.accountBytes)) {
+                try await store.commitAccounts(vaultID: f.vaultID, resized(3_900_000, displayName: 200_000), cause: nil, using: access)
             }
             #expect(try StoreImage(f) == before)
 
-            let receipt = try await store.commitAccounts(vaultID: f.vaultID, resized(2_800_000), cause: nil, using: access)
+            let receipt = try await store.commitAccounts(vaultID: f.vaultID, resized(3_300_000), cause: nil, using: access)
             #expect(receipt.revision == bound.revision + 1)
             #expect(try probe.heads().source.blockedOrigins == policy)
             #expect(try await store.snapshot(vaultID: f.vaultID, using: access).blockedPasswordOrigins == Set(origins))
