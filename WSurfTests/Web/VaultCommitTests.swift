@@ -375,6 +375,36 @@ struct VaultCommitTests {
         }
     }
 
+    // MARK: scale
+
+    /// A transfer the size of a real Passwords library, read by the real codec and written by the real commit: the checks of the
+    /// preview, `apply` and the store agree, so what the codec accepted the store keeps.
+    @Test func importOf5000ItemsCommitsToTheStore() async throws {
+        let transfer = try ExchangeScale.transfer(items: 5_000)
+        let base = StoreSnapshot(vaultID: UUID(), revision: 0, accounts: [], blockedPasswordOrigins: [], stamps: [:])
+        let preview = try CredentialExchangeCodec.preview(transfer, against: base)
+        let imported = try CredentialExchangeCodec.apply(preview, decisions: [])
+        #expect(imported.count == 5_000)
+
+        try await VaultStoreFixture.with(accounts: [VaultFixtures.account(username: "stored")]) { f in
+            let (store, access) = try await f.unlocked()
+            let before = try await store.snapshot(vaultID: f.vaultID, using: access)
+
+            let receipt = try await store.commit(
+                vaultID: f.vaultID, before.accounts + imported, expectedRevision: before.revision, cause: nil, using: access
+            )
+
+            #expect(receipt.revision == before.revision + 1)
+            #expect(try f.recordIDs(of: f.vaultID, kind: .account).count == 5_001)
+            let after = try await store.snapshot(vaultID: f.vaultID, using: access)
+            #expect(after.accounts.count == 5_001)
+            #expect(Set(after.accounts.map(\.id)) == Set((before.accounts + imported).map(\.id)))
+            #expect(after.accounts.filter { !$0.passkeys.isEmpty }.count == 500)
+            #expect(after.accounts.filter { $0.notes != nil }.count == 5_000)
+            try f.verify()
+        }
+    }
+
     // MARK: limits
 
     @Test(arguments: CommitLimit.allCases)
