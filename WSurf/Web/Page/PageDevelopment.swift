@@ -263,7 +263,8 @@ extension BrowserPage {
 }
 
 extension PageDriver {
-    static func findElements(selector: String, offset: Int, limit: Int, in view: BrowserPage) async -> String {
+    /// `unrestricted` lets the selector read any attribute; only the Developer tier sets it.
+    static func findElements(selector: String, offset: Int, limit: Int, unrestricted: Bool = false, in view: BrowserPage) async -> String {
         switch PageRuntime.validate(selector: selector) {
         case .success:
             break
@@ -273,7 +274,9 @@ extension PageDriver {
             return "The selector must be 1 to \(PageRuntime.maxSelectorBytes) UTF-8 bytes."
         }
         guard let encoded = jsonString(selector) else { return "Invalid selector." }
-        guard let object = await evaluateJSON(scripted("return JSON.stringify(R.findAll(\(encoded), \(offset), \(limit)));"), in: view) else {
+        guard let object = await evaluateJSON(
+            scripted("return JSON.stringify(R.findAll(\(encoded), \(offset), \(limit), \(unrestricted)));"), in: view)
+        else {
             return "The page did not respond. Use findElements again after it finishes loading."
         }
         if let error = object["error"] as? String { return error }
@@ -288,15 +291,19 @@ extension PageDriver {
     }
 
     /// Inspection reads a ref registered by the latest `findElements` or `readPage`. It needs only a live, current
-    /// observation; click/type/select keep their own stricter `matchesRef` check.
-    static func inspectElement(ref: Int, in view: BrowserPage) async -> String {
+    /// observation; click/type/select keep their own stricter `matchesRef` check. `full` (the Developer tier) adds all
+    /// attributes, computed properties and a markup excerpt; `properties` names the computed properties wanted, all when empty.
+    static func inspectElement(ref: Int, full: Bool = false, properties: [String] = [], in view: BrowserPage) async -> String {
         guard let prior = observation(in: view), prior.refs.contains(ref), expectedObservation == nil || expectedObservation == prior.id,
             await validateObservation(in: view)
         else { return staleMessage }
-        guard let object = await evaluateJSON(scripted("return JSON.stringify(R.inspect(\(ref)));"), in: view) else {
-            return "The page did not respond. Use findElements again."
-        }
+        let answer =
+            full
+            ? await PageScripting.inspectFully(ref: ref, properties: properties, in: view)
+            : await evaluateJSON(scripted("return JSON.stringify(R.inspect(\(ref)));"), in: view)
+        guard let object = answer else { return "The page did not respond. Use findElements again." }
         if object["stale"] as? Bool == true { return staleMessage }
+        if object["denied"] as? Bool == true { return "That element belongs to WSurf's own page tools and cannot be inspected." }
         return "ELEMENT:\n\(compactJSON(object))\nobservationID: \(prior.id)"
     }
 

@@ -481,7 +481,8 @@ nonisolated enum PageRuntime {
       };
       const ATTRIBUTE_BODY = /^\s*(?:(?:[^\s|=~^$*\\\[\]"']*|\*)\|(?!=))?([^\s|=~^$*\\\[\]"']+)\s*(?:([~|^$*]?=)[\s\S]*)?$/;
       // null when the selector may run; otherwise 'invalid' (not a selector) or 'unsafe' (reads an unexposed attribute).
-      const selectorProblem = selector => {
+      // `unrestricted` (the Developer tier) lifts the attribute rule: any valid selector may run.
+      const selectorProblem = (selector, unrestricted = false) => {
         try { document.createDocumentFragment().querySelector(selector); } catch (e) { return 'invalid'; }
         let canonical;
         try {
@@ -490,6 +491,7 @@ nonisolated enum PageRuntime {
           if (sheet.cssRules.length !== 1 || !sheet.cssRules[0].selectorText) return 'invalid';
           canonical = sheet.cssRules[0].selectorText;
         } catch (e) { return 'invalid'; }
+        if (unrestricted) return null;
         for (const body of attributeSelectors(canonical)) {
           const m = ATTRIBUTE_BODY.exec(body);
           if (!m) return 'unsafe';
@@ -551,8 +553,8 @@ nonisolated enum PageRuntime {
         return out;
       };
 
-      const findAll = (selector, offset, limit) => {
-        const problem = selectorProblem(selector);
+      const findAll = (selector, offset, limit, unrestricted = false) => {
+        const problem = selectorProblem(selector, unrestricted);
         if (problem) return { problem, error: SELECTOR_ERRORS[problem] };
         if (!Number.isInteger(offset) || offset < 0 || offset > 10000 || !Number.isInteger(limit) || limit < 1 || limit > 100) {
           return { problem: 'range', error: 'offset must be 0 to 10000 and limit 1 to 100.' };
