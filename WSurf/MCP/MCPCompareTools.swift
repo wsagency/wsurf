@@ -135,6 +135,7 @@ nonisolated enum MCPCompareTools {
 
     /// Warnings and errors only: engines differ in what they log at lower levels, and nobody acts on it. Text is cut to its
     /// first line, with runs of four or more digits (ids, ports, times) replaced, so that the same message matches itself.
+    /// This changes the text, so a secret must already be hidden when it gets here.
     static func normalized(_ text: String) -> String {
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
         let collapsed = line.split(whereSeparator: \.isWhitespace).joined(separator: " ")
@@ -148,7 +149,11 @@ nonisolated enum MCPCompareTools {
         return host + (parts.port.map { ":\($0)" } ?? "") + (parts.path.isEmpty ? "/" : parts.path)
     }
 
-    static func observed(console: [PageDiagnostics.Record], network: [PageDiagnostics.Record]) -> Observed {
+    /// `scrub` hides the secrets a connection typed. It runs on every console text and request key before anything else, because
+    /// `normalized` alters digits and cuts the text, after which a secret no longer matches and would show in part.
+    static func observed(
+        console: [PageDiagnostics.Record], network: [PageDiagnostics.Record], scrub: (String) -> String = { $0 }
+    ) -> Observed {
         func text(_ record: PageDiagnostics.Record, _ key: String) -> String? {
             guard case .text(let value)? = record.fields[key] else { return nil }
             return value
@@ -156,10 +161,10 @@ nonisolated enum MCPCompareTools {
         var seen = Observed()
         for record in console {
             guard let level = text(record, "level"), level == "error" || level == "warn", let message = text(record, "text") else { continue }
-            seen.messages[.init(level: level, text: normalized(message)), default: 0] += 1
+            seen.messages[.init(level: level, text: normalized(scrub(message))), default: 0] += 1
         }
         for record in network {
-            guard let key = text(record, "url").flatMap(requestKey) else { continue }
+            guard let key = text(record, "url").flatMap(requestKey).map(scrub) else { continue }
             var status: Int?
             if case .number(let value)? = record.fields["status"] { status = value }
             let outcome = text(record, "outcome") ?? "unknown"

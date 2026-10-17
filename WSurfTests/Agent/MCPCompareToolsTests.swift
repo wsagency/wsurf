@@ -150,6 +150,25 @@ struct MCPCompareToolsTests {
         #expect(skipped.requests.isEmpty)
     }
 
+    @Test func aSecretWithDigitsIsHiddenBeforeTheTextIsNormalized() throws {
+        let scrubber = MCPSecretScrubber()
+        #expect(scrubber.register("tk-482916-zzz") == .registered)
+        let text = "token tk-482916-zzz rejected for user 55501234"
+        // The premise: once digits are masked, the secret no longer matches and a scrubber run afterwards leaves a piece of it.
+        #expect(scrubber.scrub(Tools.normalized(text)).contains("tk-#-zzz"))
+        let seen = Tools.observed(
+            console: [console("error", text)], network: [request("https://x.test/reset/tk-482916-zzz", status: 404)],
+            scrub: { scrubber.scrub($0) })
+        let report = try JSONEncoder().encode(Value.object(try report(seen, Tools.Observed())))
+        let shown = String(decoding: report, as: UTF8.self)
+        for hidden in ["482916", "tk-", "zzz"] {
+            #expect(!shown.contains(hidden), "\(hidden) shows in \(shown)")
+        }
+        #expect(shown.contains(MCPSecretScrubber.replacement))
+        // The rest of the line is still there, with its own digits masked.
+        #expect(shown.contains("rejected for user #"))
+    }
+
     @Test func theReportCarriesTheUntrustedNoteAndStaysSmall() throws {
         let busy = (0..<Tools.maxItems).map { console("error", "failure \($0) " + String(repeating: "x", count: 80), seq: UInt64($0)) }
         let fields = try report(Tools.observed(console: busy, network: []), Tools.Observed())

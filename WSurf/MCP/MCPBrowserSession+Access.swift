@@ -195,11 +195,14 @@ extension MCPBrowserSession {
         return comparisonOpened(webKit, chromium, reused: false)
     }
 
-    /// A tab of the pair this connection opened, while it is still open and still holds the grant for this website. A page that
-    /// has not loaded yet counts: it is the pair, whatever its address says for now.
-    private func comparisonTab(_ id: UUID, for grant: Grant) -> BrowserTab? {
-        guard grants[id]?.origin == grant.origin else { return nil }
-        return browser.tabs.first { $0.id == id && !$0.isClosed && !$0.isPrivate }
+    /// A tab of the pair this connection opened, only while it is still shared under the rules that apply now: the grant for this
+    /// website still holds (a standing grant needs its paired client, developer site and profile), the connection may still use
+    /// development tools on it, and no other connection holds its lease. Anything else is not reused: the pair is replaced.
+    private func comparisonTab(_ tabID: UUID, for grant: Grant) -> BrowserTab? {
+        guard let tab = sharedTab(tabID), grants[tabID]?.origin == grant.origin, permits(tab, capability: .development),
+            tab.developmentRelation(of: id) != .other
+        else { return nil }
+        return tab
     }
 
     private func comparisonOpened(_ webKit: BrowserTab, _ chromium: BrowserTab, reused: Bool) -> CallTool.Result {

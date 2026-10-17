@@ -28,7 +28,9 @@ struct MCPCompareTabsTests {
         "/same": .html(page(box: "#222")), "/dark": .html(page(box: "#222")), "/light": .html(page(box: "#ddd")),
         "/quiet": .html(page(box: "#222")),
         "/noisy": .html(
-            page(box: "#222", script: "console.error('noisy-error 7'); console.error('login failed for s3cret-value-xyz'); fetch('/missing');")),
+            page(box: "#222", script:
+                    "console.error('noisy-error 7'); console.error('login failed for s3cret-value-xyz'); "
+                    + "console.error('token tk-482916-zzz rejected'); fetch('/missing');")),
         "/other": .html(page(box: "#222")),
         "/engine": .html(
             page(
@@ -278,20 +280,24 @@ struct MCPCompareTabsTests {
         }
     }
 
-    @Test func aSecretTheConnectionTypedNeverAppearsInTheReport() async throws {
+    @Test func aSecretTheConnectionTypedNeverAppearsInTheReportEvenWithDigitsInIt() async throws {
         try await withRig([("/quiet", .webKit), ("/noisy", .webKit)]) { rig in
             try await share(rig)
             #expect(rig.session.secrets.register("s3cret-value-xyz") == .registered)
+            // Runs of digits are masked when messages are matched; the secret has to be gone before that.
+            #expect(rig.session.secrets.register("tk-482916-zzz") == .registered)
             try await capture(rig)
             var last: CallTool.Result?
             _ = await waitUntil {
                 last = try? await compare(rig)
-                return last.map { text($0).contains("login failed") } ?? false
+                return last.map { text($0).contains("login failed") && text($0).contains("rejected") } ?? false
             }
             let result = try #require(last)
-            #expect(text(result).contains("login failed"), "\(text(result))")
-            #expect(!text(result).contains("s3cret-value-xyz"))
-            #expect(!(result.structuredContent.map { "\($0)" } ?? "").contains("s3cret-value-xyz"))
+            #expect(text(result).contains("login failed") && text(result).contains("rejected"), "\(text(result))")
+            let everything = text(result) + (result.structuredContent.map { "\($0)" } ?? "")
+            for hidden in ["s3cret-value-xyz", "tk-482916-zzz", "482916", "tk-", "zzz"] {
+                #expect(!everything.contains(hidden), "\(hidden) shows in \(everything)")
+            }
         }
     }
 
@@ -384,8 +390,16 @@ struct MCPCompareTabsTests {
         window.close()
     }
 
-    /// A browser with a paired client whose standing grant is `standing`, on the loopback address the fixture serves.
-    private func withDeveloperSession(_ body: (HTTPFixtureServer, BrowserModel, MCPBrowserSession) async throws -> Void) async throws {
+    private struct Developer {
+        let server: HTTPFixtureServer
+        let browser: BrowserModel
+        let session: MCPBrowserSession
+        let trust: MCPTrustStore
+        let client: PairedClient
+    }
+
+    /// A browser with a paired client whose standing grant is Development, on the loopback address the fixture serves.
+    private func withDeveloperSession(_ body: (Developer) async throws -> Void) async throws {
         let server = try await HTTPFixtureServer.start(routes: Self.routes)
         try ChromiumRuntime.shared.ensureInitialized()
         let trust = MCPTrustStore(storage: MemoryTrustStorage())
@@ -401,7 +415,7 @@ struct MCPCompareTabsTests {
         session.pairedClient = trust.client(id: client.id)
         session.feedback.sleep = { _ in }
         do {
-            try await body(server, browser, session)
+            try await body(Developer(server: server, browser: browser, session: session, trust: trust, client: client))
         } catch {
             browser.closeAllTabs(saving: false)
             throw error
@@ -414,7 +428,8 @@ struct MCPCompareTabsTests {
     }
 
     @Test func openComparisonSharesBothEnginesWithoutASheetAndReusesOrReplacesThePair() async throws {
-        try await withDeveloperSession { server, browser, session in
+        try await withDeveloperSession { developer in
+            let (server, browser, session) = (developer.server, developer.browser, developer.session)
             let url = try server.url("/same")
             let user = browser.newTab(url: try server.url("/other"))
             let before = browser.closedTabs.count
@@ -468,8 +483,90 @@ struct MCPCompareTabsTests {
         }
     }
 
+    /// A pair `openComparison` opened and the windows that host it, so that the tabs are loaded and shared.
+    private struct Pair {
+        let webKit: BrowserTab
+        let chromium: BrowserTab
+        let windows: [NSWindow]
+
+        func close() {
+            for window in windows {
+                window.contentView = nil
+                window.close()
+            }
+        }
+    }
+
+    private func openPair(_ developer: Developer, _ path: String) async throws -> Pair {
+        let opened = try await developer.session.call(name: "openComparison", arguments: ["url": .string(try developer.server.url(path).absoluteString)])
+        #expect(opened.isError == false, "\(text(opened))")
+        let report = object(opened)
+        let webKit = try #require(developer.browser.tabs.first { $0.id.uuidString == report["webkit"]?.stringValue })
+        let chromium = try #require(developer.browser.tabs.first { $0.id.uuidString == report["chromium"]?.stringValue })
+        return Pair(webKit: webKit, chromium: chromium, windows: [await host(webKit), await host(chromium)])
+    }
+
+    private func isOpen(_ tab: BrowserTab, in browser: BrowserModel) -> Bool {
+        browser.tabs.contains { $0 === tab }
+    }
+
+    @Test func aPairIsReplacedAndNeverReloadedWhenTheConnectionMayNoLongerUseIt() async throws {
+        try await withDeveloperSession { developer in
+            let browser = developer.browser
+            let other = try developer.server.url("/other").absoluteString
+            let origin = SitePermissions.origin(for: try developer.server.url())
+            // The website's own setting caps the connection at Read Only: it may not use development tools on the old pair.
+            let first = try await openPair(developer, "/same")
+            defer { first.close() }
+            browser.sitePermissions.setAssistantAccess(.readOnly, for: origin)
+            let capped = try await developer.session.call(name: "openComparison", arguments: ["url": .string(other)])
+            #expect(capped.isError == false, "\(text(capped))")
+            #expect(object(capped)["reused"]?.boolValue == false)
+            #expect(!isOpen(first.webKit, in: browser) && !isOpen(first.chromium, in: browser), "the old pair was closed")
+            #expect(first.webKit.urlString.hasSuffix("/same") && first.chromium.urlString.hasSuffix("/same"), "and was not loaded again")
+            browser.sitePermissions.setAssistantAccess(.ask, for: origin)
+
+            // Another connection holds the lease on one of the tabs.
+            let second = try await openPair(developer, "/same")
+            defer { second.close() }
+            let rival = MCPBrowserSession(browser: browser, trust: developer.trust, available: { true }, consent: { _, _, _ in .development })
+            rival.pairedClient = developer.trust.client(id: developer.client.id)
+            _ = try await rival.call(name: "requestAccess", arguments: ["development": true])
+            let leased = try await rival.call(name: "startDiagnostics", arguments: ["tabID": .string(second.webKit.id.uuidString)])
+            #expect(leased.isError == false, "\(text(leased))")
+            let replaced = try await developer.session.call(name: "openComparison", arguments: ["url": .string(other)])
+            #expect(replaced.isError == false, "\(text(replaced))")
+            #expect(object(replaced)["reused"]?.boolValue == false)
+            #expect(!isOpen(second.webKit, in: browser) && !isOpen(second.chromium, in: browser))
+            #expect(second.webKit.urlString.hasSuffix("/same") && second.chromium.urlString.hasSuffix("/same"))
+            #expect(object(replaced)["webkit"]?.stringValue != second.webKit.id.uuidString)
+        }
+    }
+
+    @Test func aPairIsNotReloadedOnceTheStandingGrantIsRevoked() async throws {
+        try await withDeveloperSession { developer in
+            let other = try developer.server.url("/other").absoluteString
+            let pair = try await openPair(developer, "/same")
+            defer { pair.close() }
+            try developer.trust.setStanding(.off, for: developer.client.id)
+            developer.session.refreshStanding()
+            let refused = try await developer.session.call(name: "openComparison", arguments: ["url": .string(other)])
+            #expect(refused.isError == true && text(refused).contains("development access"), "\(text(refused))")
+            #expect(isOpen(pair.webKit, in: developer.browser) && isOpen(pair.chromium, in: developer.browser), "nothing was closed or opened")
+            #expect(pair.webKit.urlString.hasSuffix("/same") && pair.chromium.urlString.hasSuffix("/same"), "and neither tab was loaded again")
+            // With the grant back, the old tabs have lost theirs and are not taken up again: a new pair opens.
+            try developer.trust.setStanding(.development, for: developer.client.id)
+            let again = try await developer.session.call(name: "openComparison", arguments: ["url": .string(other)])
+            #expect(again.isError == false, "\(text(again))")
+            #expect(object(again)["reused"]?.boolValue == false)
+            #expect(pair.webKit.urlString.hasSuffix("/same"))
+            #expect(!isOpen(pair.webKit, in: developer.browser))
+        }
+    }
+
     @Test func newTabOpensInTheChosenEngineOnADeveloperSite() async throws {
-        try await withDeveloperSession { server, browser, session in
+        try await withDeveloperSession { developer in
+            let (server, browser, session) = (developer.server, developer.browser, developer.session)
             let opened = try await session.call(name: "newTab", arguments: ["url": .string(try server.url("/same").absoluteString), "engine": "chromium"])
             #expect(opened.isError == false, "\(text(opened))")
             #expect(text(opened).contains("Chromium"))

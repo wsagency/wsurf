@@ -182,7 +182,8 @@ extension MCPBrowserSession {
             guard await diagnostics.sync() else { return Self.notCompared("A capture stopped because its page left this connection's access.") }
             seen.append(
                 MCPCompareTools.observed(
-                    console: diagnostics.buffer.records(of: .console, after: nil), network: diagnostics.buffer.records(of: .network, after: nil)))
+                    console: diagnostics.buffer.records(of: .console, after: nil), network: diagnostics.buffer.records(of: .network, after: nil),
+                    scrub: scrubbed))
         }
         return MCPCompareTools.differences(seen[0], seen[1])
     }
