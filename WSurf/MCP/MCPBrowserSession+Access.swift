@@ -110,6 +110,7 @@ extension MCPBrowserSession {
                 return failure("Assistant access is off for this website.")
             }
             let tab = browser.newTab(url: url, transition: .agent)
+            openedTabs.insert(tab.id)
             grants[tab.id] = Grant(origin: SitePermissions.origin(for: url), access: access, source: .standing)
             return success("Opened tab \(tab.id.uuidString). Use readPage after it loads.")
         }
@@ -123,6 +124,7 @@ extension MCPBrowserSession {
             return failure("Assistant access is off for this website.")
         }
         let tab = browser.newTab(url: url, transition: .agent)
+        openedTabs.insert(tab.id)
         grants[tab.id] = Grant(origin: SitePermissions.origin(for: url), access: .control)
         return success("Opened tab \(tab.id.uuidString). Use readPage after it loads.")
     }

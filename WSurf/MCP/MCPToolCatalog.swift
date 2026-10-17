@@ -359,6 +359,9 @@ nonisolated enum MCPToolCatalog {
             parameters: [tab, url], scope: .control),
         Entry(name: "newTab", description: "Ask the user in WSurf to open and share a new webpage. Requires an existing control grant.", parameters: [url], scope: nil),
         Entry(name: "switchTab", description: "Make a shared tab visible and active. Does not expand this connection’s access.", parameters: [tab], scope: .control),
-        Entry(name: "closeTab", description: "Close a shared, unpinned tab. Requires control access.", parameters: [tab], scope: .control),
+        Entry(
+            name: "closeTab",
+            description: "Close a shared, unpinned tab. Requires control access. WSurf can ask the user first; tabs this connection opened close without asking.",
+            parameters: [tab], scope: .control),
     ]
 }

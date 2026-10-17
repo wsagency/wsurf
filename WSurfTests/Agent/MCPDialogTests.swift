@@ -594,7 +594,9 @@ struct MCPDialogTests {
         let rig = try await makeRig(.webKit)
         defer { rig.close() }
         _ = try await openDialog(rig, ref: 1, type: "alert")
-        let closed = try await call(rig, "closeTab", rig.tab)
+        let closed = try await AgentTabClosing.$decisionForTesting.withValue(.init { _ in .close }) {
+            try await call(rig, "closeTab", rig.tab)
+        }
         #expect(closed.isError == false)
         #expect(!rig.tab.dialogs.hasOpenDialog)
         #expect(rig.window.attachedSheet == nil)

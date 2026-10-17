@@ -196,7 +196,7 @@ revoke it immediately.
 | `navigate` | Navigate a shared tab; another website requires approval. |
 | `newTab` | Ask to open and share a new webpage. Requires existing control access, except for a paired app's standing grant on a developer site, which needs neither a grant nor a sheet. |
 | `switchTab` | Activate an already shared tab before controlling it. |
-| `closeTab` | Close an already shared, unpinned tab. |
+| `closeTab` | Close an already shared, unpinned tab. WSurf asks the user first, except for tabs this connection opened and, in the Developer tier, tabs it holds Developer access to. See Closing tabs below. |
 | `handleDialog` | Read or answer a JavaScript dialog (alert, confirm, prompt, or Chromium's beforeunload "Leave site?") that a page opened in a shared tab. Needs control access. See Page dialogs below. |
 
 These tools cover browser page and tab actions. Assistant conversations, background
@@ -569,6 +569,27 @@ Never sent: Control in any combination; Command with Option; Command with anythi
 ### Drag
 
 `dragOnPage` has two modes. The default dispatches the DOM events of a drag at the pointer positions along a straight path (five points): `dragstart`, `drag`, `dragenter`, `dragover`, `drop`, `dragend` for a `draggable` source, pointer and mouse events otherwise. They are untrusted (`isTrusted` is false), work with the window in the background on both engines, and are refused when the path crosses a frame, a file input, a disabled control or a sensitive field. `pointer: true` sends trusted pointer input (`isTrusted` is true): on Chromium through DevTools mouse events, with the button held while it moves; on WebKit as native mouse events through the window, which reach it with WSurf in the background (unlike `hoverOnPage`) but do not mark the button as held during the moves. Both need the tab on screen. A source that starts a browser drag session (a `draggable` element, an image, a link, selected text) is refused in pointer mode, because synthetic input cannot complete that session; use the default mode for it. Refs need the observation of the latest read; selector and offset ends need none, but selectors need development access. A consequential label on either end (for example a drop target named Delete) asks for approval, as a click would. Like the other actions, it returns what the drag changed (see Action results); `result: "full"`, `budget` and `screenshotOnFailure` work as they do there.
+
+### Closing tabs
+
+Closing a tab cannot always be undone, so `closeTab` follows its own rule, the same for every connection:
+
+- **Pinned tabs are never closed.** That covers bookmarked tabs and pages in a pinned folder, under every setting. The call
+  fails with "Pinned tabs must be closed by the user." and no question is shown.
+- **A tab this connection opened** with `newTab` closes without asking.
+- **Any other shared tab** brings up a sheet in WSurf: "Close “*title*”?" with **Close Tab** and **Keep Open**. The checkbox
+  "Don't ask again for this connection" stops the question for the rest of this connection only; a new connection asks
+  again. If the user keeps the tab open, the call fails and says so; the client should not ask again unprompted.
+- **Stop, a disconnect, or a closed window** while the sheet is open dismisses it and keeps the tab. Pinning the tab while
+  the sheet is open also keeps it.
+- **Developer tier.** A connection that holds Developer access on the tab (a paired app, a developer site and the Developer
+  profile) closes it without asking, like the other confirmations the tier skips, so unattended runs do not wait for a click.
+
+Settings › Assistant › Acting on websites has a **Closing tabs** row (Ask to close tabs, the default, or Allow closing tabs)
+under the Allow Control default. It sets the same rule for the in-app assistant only. Connected apps never read it, because it
+is stored in the profile's own file, which a process with a shell can edit; the only setting that lets an app skip the question
+is the Developer tier, which is kept in the keychain with the pairing. The in-app assistant asks the same way and, like an app,
+never closes pinned tabs or asks about tabs it opened in the same task.
 
 ## Verify with a real client
 

@@ -79,6 +79,10 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored var destinations: Set<String> = []
     @ObservationIgnored var hasReadContent = false
     @ObservationIgnored var accessWasRequested = false
+    /// The tabs this connection opened itself with `newTab`. It closes those without asking.
+    @ObservationIgnored var openedTabs: Set<UUID> = []
+    /// The person chose "Don't ask again" when asked to close a tab on this connection.
+    @ObservationIgnored var closingWasConfirmed = false
     /// The latest consequential actions let through without asking (see `Grant.Source`), newest last, bounded.
     @ObservationIgnored var developerApprovals: [DeveloperApprovalRecord] = []
     @ObservationIgnored private var busy = false
@@ -195,7 +199,7 @@ final class MCPBrowserSession: Identifiable {
             return failure("This action is blocked by the connection’s access or the website’s Assistant Access setting.")
         }
         if name == "switchTab" { return switchTab(tab) }
-        if name == "closeTab" { return closeTab(tab) }
+        if name == "closeTab" { return await closeTab(tab) }
         if capability == .control, !onScreen(tab) {
             return failure("Use switchTab before controlling this shared tab.")
         }
