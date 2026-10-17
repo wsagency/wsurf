@@ -56,17 +56,18 @@ struct AskPageChip: View {
         }
         .padding(.horizontal, (fontSize * 0.55).rounded())
         .padding(.vertical, (fontSize * 0.24).rounded())
-        .background(rasterisedFill, in: Capsule())
+        .background(fill, in: Capsule())
         .overlay {
             if isRasterised {
                 Capsule().strokeBorder(Theme.Wash.strong, lineWidth: 0.5)
             }
         }
-        .glassSurface(isEnabled: !isRasterised, in: Capsule())
+        .contentShape(Capsule())
     }
 
-    private var rasterisedFill: AnyShapeStyle {
-        guard isRasterised else { return AnyShapeStyle(.clear) }
+    /// A page chip sits inside the Ask surface, which is glass already, and glass cannot sample glass.
+    private var fill: AnyShapeStyle {
+        guard isRasterised else { return AnyShapeStyle(Theme.Wash.hover) }
         return AnyShapeStyle(ink.opacity(scheme == .dark ? 0.16 : 0.10))
     }
 }

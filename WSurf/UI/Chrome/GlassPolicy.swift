@@ -68,6 +68,12 @@ private struct ChromeGlass<S: InsettableShape>: ViewModifier {
 }
 
 extension View {
+    /// Draws the glass of everything inside in one sampling pass instead of one per element. `spacing` is how
+    /// close two shapes may come before they merge; 0 keeps neighbors apart.
+    func glassGroup(spacing: CGFloat = 0) -> some View {
+        GlassEffectContainer(spacing: spacing) { self }
+    }
+
     /// Draws `glass` in `shape`, or an opaque `fill` with a 1 pt border while Reduce Transparency or Increase
     /// Contrast is on. Every glass surface in the chrome goes through here, so the policy lives in one place.
     func chromeGlass<S: InsettableShape>(

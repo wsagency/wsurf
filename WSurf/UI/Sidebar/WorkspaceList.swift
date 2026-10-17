@@ -137,6 +137,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
                     .contextMenu { emptySpaceMenu }
                     .animation(Theme.Motion.drift, value: bottomClearance)
             }
+            .glassGroup()
             .padding(.leading, contentInsets.leading)
             .padding(.trailing, contentInsets.trailing)
         }

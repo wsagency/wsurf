@@ -52,4 +52,21 @@ struct GlassSourceTests {
 
         #expect(clear.isEmpty, "Clear glass in \(clear)")
     }
+
+    /// Neighboring glass shares one sampling pass. These are the places where several glass elements sit side by
+    /// side: marked sidebar rows, the cards pinned above the sidebar footer and the Settings navigation.
+    @Test func neighboringGlassSharesOneContainer() throws {
+        let groups = [
+            "WSurf/UI/Sidebar/WorkspaceList.swift": 1,
+            "WSurf/UI/Sidebar/Sidebar.swift": 1,
+            "WSurf/Settings/SettingsNavigation.swift": 2,
+        ]
+        for (path, expected) in groups {
+            let uses = try source(path).components(separatedBy: ".glassGroup(").count - 1
+            #expect(uses == expected, "\(path) groups \(uses) places, expected \(expected)")
+        }
+        let containers = try appSources().filter { $0.text.contains("GlassEffectContainer(") }.map(\.path)
+
+        #expect(containers == ["WSurf/UI/Chrome/GlassPolicy.swift"], "containers in \(containers)")
+    }
 }

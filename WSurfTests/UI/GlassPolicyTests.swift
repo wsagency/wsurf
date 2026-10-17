@@ -222,4 +222,28 @@ struct GlassPolicyTests {
 
         #expect(middle.alphaComponent == 0)
     }
+
+    // MARK: - Grouping
+
+    private func fittingSize(_ view: some View) -> CGSize {
+        NSHostingView(rootView: view).fittingSize
+    }
+
+    private func glassRows() -> some View {
+        VStack(spacing: 2) {
+            ForEach(0..<6) { index in
+                Text(verbatim: "Row \(index)")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: 24 + CGFloat(index))
+                    .chromeGlass(index.isMultiple(of: 2) ? .regular : .identity, in: Rectangle())
+            }
+        }
+    }
+
+    /// A container only changes how glass is sampled. Sidebar rows and cards must keep the size they had.
+    @Test func groupingGlassLeavesLayoutAlone() {
+        #expect(fittingSize(glassRows().frame(width: 200)) == fittingSize(glassRows().glassGroup().frame(width: 200)))
+        #expect(fittingSize(glassRows()) == fittingSize(glassRows().glassGroup()))
+        #expect(fittingSize(glassRows().fixedSize()) == fittingSize(glassRows().glassGroup().fixedSize()))
+    }
 }
