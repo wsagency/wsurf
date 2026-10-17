@@ -64,6 +64,8 @@ final class BrowserPage: NSView {
     var onHistoryChanged: (() -> Void)?
     var onLinkHovered: ((URL?) -> Void)?
     var onZoomChanged: (() -> Void)?
+    /// The tab's dialog queue, which the engine's dialog handler asks before it shows a sheet.
+    weak var dialogs: PageDialogQueue?
     private(set) var credentialGeneration: UInt64 = 0
     private var credentialInvalidationObservers: [UUID: @MainActor @Sendable (BrowserPage, String?) -> Void] = [:]
 

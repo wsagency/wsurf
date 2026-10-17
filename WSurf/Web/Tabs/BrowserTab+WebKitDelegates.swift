@@ -251,7 +251,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         runJavaScriptAlertPanelWithMessage message: String,
         initiatedByFrame frame: WKFrameInfo
     ) async {
-        await PageDialogs.alert(message, from: frame, in: webView.window)
+        await PageDialogs.alert(message, from: frame, in: webView.window, queue: tab?.dialogs)
     }
 
     func webView(
@@ -259,7 +259,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         runJavaScriptConfirmPanelWithMessage message: String,
         initiatedByFrame frame: WKFrameInfo
     ) async -> Bool {
-        await PageDialogs.confirm(message, from: frame, in: webView.window)
+        await PageDialogs.confirm(message, from: frame, in: webView.window, queue: tab?.dialogs)
     }
 
     func webView(
@@ -269,7 +269,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             String?,
         initiatedByFrame frame: WKFrameInfo
     ) async -> String? {
-        await PageDialogs.prompt(prompt, defaultText: defaultText, from: frame, in: webView.window)
+        await PageDialogs.prompt(prompt, defaultText: defaultText, from: frame, in: webView.window, queue: tab?.dialogs)
     }
 
     func webView(
