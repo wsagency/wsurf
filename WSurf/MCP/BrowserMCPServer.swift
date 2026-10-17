@@ -14,7 +14,8 @@ final class BrowserMCPServer {
     private struct Connection {
         let server: MCP.Server
         let transport: LocalMCPTransport
-        let session: MCPBrowserSession
+        /// Replaced once, when a paired client's hello moves it to the Developer window. The identity (`id`) stays.
+        var session: MCPBrowserSession
         let task: Task<Void, Never>
     }
 
@@ -27,6 +28,8 @@ final class BrowserMCPServer {
     @ObservationIgnored let trustStore: MCPTrustStore
     @ObservationIgnored private let target: () -> BrowserModel?
     @ObservationIgnored private let available: (BrowserModel) -> Bool
+    /// The window of the Developer profile with this ID, opened behind other windows if none exists. Never activates WSurf.
+    @ObservationIgnored private let developerTarget: ((UUID) -> BrowserModel?)?
     @ObservationIgnored private let defaults: UserDefaults?
     @ObservationIgnored private let endpoint: String
     @ObservationIgnored private var listener: LocalMCPListener?
@@ -47,14 +50,20 @@ final class BrowserMCPServer {
         defaults: UserDefaults? = nil,
         trustStore: MCPTrustStore = .shared,
         target: @escaping () -> BrowserModel?,
-        available: @escaping (BrowserModel) -> Bool
+        available: @escaping (BrowserModel) -> Bool,
+        developerTarget: ((UUID) -> BrowserModel?)? = nil
     ) {
         self.endpoint = endpoint
         self.defaults = defaults
         self.trustStore = trustStore
         self.target = target
         self.available = available
+        self.developerTarget = developerTarget
         isEnabled = defaults?.bool(forKey: "mcp.enabled") ?? false
+        // Pausing a client, lowering its level, or changing the developer sites or profile takes effect on live connections.
+        trustStore.onChange { [weak self] in
+            self?.sessions.forEach { $0.refreshStanding() }
+        }
     }
 
     func disconnect(browser: BrowserModel) {
@@ -151,11 +160,16 @@ final class BrowserMCPServer {
         activeCall?.task.cancel()
     }
 
+    /// - Parameters:
+    ///   - browser: The window to bind to; the focused window when nil.
+    ///   - id: The identity of the connection when this replaces a session of the same connection.
     func makeSessionForConnection(
         consent: @escaping (String, [MCPAccessConsent.Page], Bool, NSWindow?) async -> MCPAccessConsent.Access? = MCPAccessConsent.share,
-        openConsent: @escaping (String, URL, NSWindow?) async -> Bool = MCPAccessConsent.open
+        openConsent: @escaping (String, URL, NSWindow?) async -> Bool = MCPAccessConsent.open,
+        browser requested: BrowserModel? = nil,
+        id: UUID = UUID()
     ) -> MCPBrowserSession? {
-        guard let browser = target(), !browser.opensPrivately, !browser.context.profile.isPrivate,
+        guard let browser = requested ?? target(), !browser.opensPrivately, !browser.context.profile.isPrivate,
               available(browser) else { return nil }
         let context = browser.context
         let adapter = context.extensions.adapter(for: browser)
@@ -163,6 +177,8 @@ final class BrowserMCPServer {
         let available = available
         return MCPBrowserSession(
             browser: browser,
+            id: id,
+            trust: trustStore,
             available: { [weak browser, weak context, weak adapter] in
                 guard let browser, let context, let adapter, browser.context === context,
                       context.extensions.adapter(for: browser) === adapter,
@@ -208,8 +224,9 @@ final class BrowserMCPServer {
             connection.cancel()
             return
         }
-        let transport = LocalMCPTransport(connection: connection, onHello: { [weak self, weak session] token in
-            await self?.pair(session, token: token)
+        let id = session.id
+        let transport = LocalMCPTransport(connection: connection, onHello: { [weak self] token in
+            await self?.pair(id, token: token)
         })
         let server = MCP.Server(
             name: "WSurf", version: "1.0.0",
@@ -222,31 +239,52 @@ final class BrowserMCPServer {
             }
             await server.withMethodHandler(CallTool.self) { [weak self] params in
                 guard let self else { throw MCPError.connectionClosed }
-                return try await self.call(params, session: session)
+                return try await self.call(params, connectionID: id)
             }
             do {
-                try await server.start(transport: transport) { info, _ in
+                try await server.start(transport: transport) { [weak self] info, _ in
                     await MainActor.run {
-                        session.clientName = String(info.name.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.prefix(100))
+                        self?.connections[id]?.session.clientName = String(
+                            info.name.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.prefix(100))
                     }
                 }
                 await server.waitUntilCompleted()
             } catch {
             }
-            self?.disconnect(session.id)
+            self?.disconnect(id)
         }
-        connections[session.id] = Connection(server: server, transport: transport, session: session, task: task)
+        connections[id] = Connection(server: server, transport: transport, session: session, task: task)
         sessions.append(session)
     }
 
     /// Binds the connection to the paired client that owns `token`; a missing, wrong or revoked token leaves it unpaired.
-    private func pair(_ session: MCPBrowserSession?, token: String?) {
-        guard let session, connections[session.id] != nil, let token else { return }
-        session.pairedClient = trustStore.authenticate(token: token)
+    /// The hello arrives before any MCP message, so a client with a standing grant moves to the Developer window while
+    /// nothing has been shared yet.
+    private func pair(_ id: UUID, token: String?) {
+        guard let session = connections[id]?.session, let token, let client = trustStore.authenticate(token: token) else { return }
+        session.pairedClient = client
+        bindToDeveloperWindow(id, client: client)
     }
 
-    private func call(_ params: CallTool.Parameters, session: MCPBrowserSession) async throws -> CallTool.Result {
-        guard isEnabled, connections[session.id] != nil else { throw MCPError.connectionClosed }
+    /// A paired client that may work without asking lives in a window of the Developer profile, so it never touches the
+    /// everyday profile's sign-ins. Unpaired clients and clients at Off keep the window they connected to.
+    private func bindToDeveloperWindow(_ id: UUID, client: PairedClient) {
+        guard let current = connections[id]?.session, current.completedCalls == 0, current.grants.isEmpty,
+              MCPDeveloperAccess.standingAccess(for: client, trust: trustStore) != nil,
+              let profileID = trustStore.developerProfileID,
+              let browser = developerTarget?(profileID), !current.isBound(to: browser),
+              let replacement = makeSessionForConnection(browser: browser, id: id)
+        else { return }
+        replacement.pairedClient = client
+        connections[id]?.session = replacement
+        if let index = sessions.firstIndex(where: { $0 === current }) {
+            sessions[index] = replacement
+        }
+        current.revoke()
+    }
+
+    private func call(_ params: CallTool.Parameters, connectionID: UUID) async throws -> CallTool.Result {
+        guard isEnabled, let session = connections[connectionID]?.session else { throw MCPError.connectionClosed }
         if let client = session.pairedClient {
             trustStore.touch(client.id)
         }

@@ -11,8 +11,23 @@ import WebKit
 @Observable
 final class MCPBrowserSession: Identifiable {
     struct Grant {
+        /// Where the grant came from. A standing grant is the user's setting for a paired client, so it holds only while
+        /// that setting, the developer site and the Developer profile still do.
+        enum Source {
+            case sheet, standing
+        }
+
         let origin: String
         let access: MCPAccessConsent.Access
+        var source = Source.sheet
+    }
+
+    /// A consequential action the Developer tier let through without asking on a developer site.
+    struct DeveloperApprovalRecord {
+        let date: Date
+        let category: SensitiveAction.Category
+        let label: String
+        let host: String?
     }
 
     struct PageObservation {
@@ -26,9 +41,11 @@ final class MCPBrowserSession: Identifiable {
         case read, control
         /// Control plus DOM inspection, diagnostics, and viewport/device emulation.
         case development
+        /// Development plus what only the Developer tier may do: a paired client, a developer site, the Developer profile.
+        case developer
     }
 
-    let id = UUID()
+    let id: UUID
     var clientName = String(localized: "External Connection")
     /// The user-paired client behind this connection, set by the server once its hello is verified. An unpaired
     /// connection is nil and keeps asking for consent.
@@ -38,6 +55,8 @@ final class MCPBrowserSession: Identifiable {
     private(set) var completedCalls = 0
     var grants: [UUID: Grant] = [:]
     @ObservationIgnored let browser: BrowserModel
+    /// The keychain-backed source of standing grants, developer sites and the Developer profile.
+    @ObservationIgnored let trust: MCPTrustStore
     @ObservationIgnored let available: () -> Bool
     @ObservationIgnored let consent: (String, [MCPAccessConsent.Page], Bool) async -> MCPAccessConsent.Access?
     @ObservationIgnored let openConsent: (String, URL) async -> Bool
@@ -49,6 +68,8 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored var destinations: Set<String> = []
     @ObservationIgnored var hasReadContent = false
     @ObservationIgnored var accessWasRequested = false
+    /// The latest consequential actions let through without asking (see `Grant.Source`), newest last, bounded.
+    @ObservationIgnored var developerApprovals: [DeveloperApprovalRecord] = []
     @ObservationIgnored private var busy = false
 
     var lastActionTitle: String? {
@@ -65,6 +86,8 @@ final class MCPBrowserSession: Identifiable {
 
     init(
         browser: BrowserModel,
+        id: UUID = UUID(),
+        trust: MCPTrustStore = .shared,
         available: @escaping () -> Bool,
         consent: @escaping (String, [MCPAccessConsent.Page], Bool) async -> MCPAccessConsent.Access? = { client, pages, development in
             await MCPAccessConsent.share(client: client, pages: pages, development: development, in: nil)
@@ -74,6 +97,8 @@ final class MCPBrowserSession: Identifiable {
         }
     ) {
         self.browser = browser
+        self.id = id
+        self.trust = trust
         self.available = available
         self.consent = consent
         self.openConsent = openConsent
@@ -125,7 +150,8 @@ final class MCPBrowserSession: Identifiable {
         let name = entry.name
         switch name {
         case "requestAccess":
-            return await requestAccess(development: arguments["development"]?.boolValue ?? false)
+            return await requestAccess(
+                development: arguments["development"]?.boolValue ?? false, developer: arguments["developer"]?.boolValue ?? false)
         case "listTabs":
             return tabList()
         case "newTab":
@@ -152,20 +178,26 @@ final class MCPBrowserSession: Identifiable {
         if Self.developmentCalls.contains(name) {
             return await developmentCall(name: name, arguments: arguments, tab: tab)
         }
-        return await usePage(entry, arguments: arguments, tab: tab, capability: capability)
+        return await AgentActionConsent.$developerApproval.withValue(developerApproval(for: tab)) {
+            await usePage(entry, arguments: arguments, tab: tab, capability: capability)
+        }
     }
 
     /// Whether this connection's grant and the site's policy allow `capability` now. Persistent: never depends on the calling task.
     func permits(_ tab: BrowserTab, capability: Scope) -> Bool {
-        guard sharedTab(tab.id) === tab, let grant = grants[tab.id] else { return false }
+        guard sharedTab(tab.id) === tab, let grant = grants[tab.id], let url = webURL(of: tab),
+            let access = effectiveAccess(of: grant, at: url)
+        else { return false }
         let writable = tab.assistantAccess.effectivePolicy != .readOnly
         switch capability {
         case .read:
             return true
         case .control:
-            return (grant.access == .control || grant.access == .development) && writable
+            return access.rank >= MCPAccessConsent.Access.control.rank && writable
         case .development:
-            return grant.access == .development && writable
+            return access.rank >= MCPAccessConsent.Access.development.rank && writable
+        case .developer:
+            return access == .developer && writable
         }
     }
 
