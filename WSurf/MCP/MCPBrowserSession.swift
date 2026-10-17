@@ -71,6 +71,11 @@ final class MCPBrowserSession: Identifiable {
     /// The latest consequential actions let through without asking (see `Grant.Source`), newest last, bounded.
     @ObservationIgnored var developerApprovals: [DeveloperApprovalRecord] = []
     @ObservationIgnored private var busy = false
+    /// The test secrets this connection typed. Every result it gets passes through here (see `finished`); memory only, and
+    /// wiped when the connection ends.
+    @ObservationIgnored let secrets = MCPSecretScrubber()
+    /// The fields of each tab's current document that this connection typed a secret into, so a screenshot covers them too.
+    @ObservationIgnored var secretFields: [UUID: SecretFields] = [:]
 
     var lastActionTitle: String? {
         lastTool.isEmpty ? nil : Self.actionTitle(forTool: lastTool)
@@ -119,6 +124,8 @@ final class MCPBrowserSession: Identifiable {
         observations = [:]
         destinations = []
         actionPolicy.revokeAll()
+        secrets.wipe()
+        secretFields = [:]
     }
 
     func call(name: String, arguments: [String: Value]) async throws -> CallTool.Result {
@@ -136,13 +143,14 @@ final class MCPBrowserSession: Identifiable {
             busy = false
             completedCalls += 1
         }
-        return await AgentActionConsent.$scopedPolicy.withValue(actionPolicy) {
+        let result = await AgentActionConsent.$scopedPolicy.withValue(actionPolicy) {
             await AgentActionConsent.$externalClientName.withValue(clientName) {
                 await AgentActionConsent.$scopedWindow.withValue(consentWindow) {
                     await execute(entry, arguments: arguments)
                 }
             }
         }
+        return finished(result)
     }
 
     private func execute(_ entry: MCPToolCatalog.Entry, arguments: [String: Value]) async -> CallTool.Result {

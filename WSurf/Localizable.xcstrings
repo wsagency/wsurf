@@ -40,7 +40,7 @@
 
     },
     "Allow Developer" : {
-      "comment" : "Button in the sheet where the user chooses what a paired app may do in a tab. It grants the Developer tier: development access, and no confirmation before purchases, sending, or deleting on developer sites. Title Case. Offered only for a paired app on a developer site."
+      "comment" : "Button in the sheet where the user chooses what a paired app may do in a tab. It grants the Developer tier: development access, typing test passwords the app supplies itself, and no confirmation before purchases, sending, or deleting on developer sites. Title Case. Offered only for a paired app on a developer site."
     },
     "Allow Developer Access in “%@”?" : {
       "comment" : "Heading of the confirmation shown when the Developer profile is set to a profile WSurf did not create for this. The inserted text is the profile’s name."
@@ -6226,7 +6226,7 @@
     "This tab cannot be unloaded right now." : {
       "comment" : "Fallback notice when a tab cannot safely be unloaded."
     },
-    "• Allow Developer: also acts without asking before purchases, sending, and deleting. Only on developer sites in your Developer profile." : {
+    "• Allow Developer: also types test passwords it gives itself, and acts without asking before purchases, sending, and deleting. Only on developer sites in your Developer profile." : {
       "comment" : "Line in the access sheet that explains the Allow Developer button. It follows the lines for the other buttons."
     }
   },

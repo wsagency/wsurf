@@ -13,6 +13,12 @@ extension MCPBrowserSession {
         _ entry: MCPToolCatalog.Entry, arguments: [String: Value], tab: BrowserTab, capability: Scope
     ) async -> CallTool.Result {
         let name = entry.name
+        // A secret is typed only in the Developer tier. Refused before the page is touched, and registered before it is typed.
+        let secretEntry = Self.secretEntry(tool: name, arguments: arguments)
+        if let secretEntry, let refusal = secretEntryRefusal(secretEntry, tab: tab) {
+            return refusal
+        }
+        let typesSecret = secretEntry != nil
         tab.setExternalAutomationWorking(true)
         defer { tab.setExternalAutomationWorking(false) }
         tab.realizeDeferredSession()
@@ -33,6 +39,7 @@ extension MCPBrowserSession {
             validate: { [weak self, weak tab, weak view] in
                 guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
                 return self.mayProceed(tab, capability: capability)
+                    && (!typesSecret || self.mayProceed(tab, capability: .developer))
                     && (capability != .control || self.onScreen(tab))
             }
         )
@@ -52,8 +59,11 @@ extension MCPBrowserSession {
                             guard let self, let tab else { return false }
                             return self.mayProceed(tab, capability: .development)
                         }
+                        // The Developer tier types its own test secrets, so its screenshots cover filled sensitive fields; anywhere
+                        // else a filled sensitive field still prevents the capture.
                         let outcome = await PageDriver.screenshot(
-                            request.target, developmentAllowed: developmentAllowed, maximumBytes: Self.screenshotBytes, in: view)
+                            request.target, developmentAllowed: developmentAllowed, maximumBytes: Self.screenshotBytes,
+                            masking: screenshotMasking(for: tab), in: view)
                         switch outcome {
                         case .success(let capture):
                             let box = capture.bounds
@@ -74,7 +84,10 @@ extension MCPBrowserSession {
                         }
                     }
                 } else {
-                    output = await pageAction(name: name, arguments: arguments, view: view)
+                    output = await pageAction(name: name, arguments: arguments, view: view, secret: secretEntry)
+                    if let secretEntry {
+                        finishSecretEntry(secretEntry, tab: tab, view: view)
+                    }
                 }
                 guard scope.validate(), !Task.isCancelled else {
                     observations[tab.id] = nil
@@ -132,7 +145,7 @@ extension MCPBrowserSession {
         return (ref.map { .element(ref: $0) } ?? .viewport, nil)
     }
 
-    private func pageAction(name: String, arguments: [String: Value], view: BrowserPage) async -> String {
+    private func pageAction(name: String, arguments: [String: Value], view: BrowserPage, secret: SecretEntry?) async -> String {
         let ref = arguments["ref"]?.intValue ?? 0
         switch name {
         case "readPage":
@@ -144,7 +157,8 @@ extension MCPBrowserSession {
             return await PageDriver.click(ref: ref, label: "", in: view, announced: true)
         case "typeOnPage":
             return await PageDriver.type(
-                text: arguments["text"]?.stringValue ?? "", intoField: "", ref: ref, submit: arguments["submit"]?.boolValue ?? false, in: view, announced: true)
+                text: arguments["text"]?.stringValue ?? "", intoField: "", ref: ref, submit: arguments["submit"]?.boolValue ?? false,
+                allowSensitive: secret != nil, storedSecret: storedSecretSink, in: view, announced: true)
         case "selectOption":
             return await PageDriver.selectOption(arguments["option"]?.stringValue ?? "", ref: ref, field: "", in: view, announced: true)
         case "scrollPage":
@@ -161,7 +175,8 @@ extension MCPBrowserSession {
                     else { return nil }
                     return .init(ref: ref, value: value, select: select)
                 } ?? []
-            return await PageDriver.fillFields(fields, in: view, announced: true)
+            return await PageDriver.fillFields(
+                fields, secretRefs: secret?.refs ?? [], storedSecret: storedSecretSink, in: view, announced: true)
         case "inspectControl":
             return await PageDriver.inspectControl(ref: ref, offset: arguments["offset"]?.intValue ?? 0, in: view)
         case "setChecked":
