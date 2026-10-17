@@ -45,12 +45,14 @@ struct CredentialSettings: View {
         }
         .settingsAnchor("autofill.credentials")
         .task(id: model.authorizationEpoch) { await model.load() }
+        .task { await model.legacy.refresh() }
         .onDisappear {
             work?.cancel()
             showsCreateWarning = false
             exportContext = nil
             model.cancelImport()
             model.close()
+            model.legacy.endSession()
         }
         .sheet(isPresented: Binding(get: { model.draft != nil }, set: { if !$0 { model.cancelEditing() } })) {
             CredentialEditorSheet(model: model)
@@ -82,7 +84,9 @@ struct CredentialSettings: View {
         .onChange(of: model.authorizationEpoch) {
             exportContext = nil
             showsTrash = false
+            model.legacy.endSession()
         }
+        .legacyRemovalDialog(model: model, run: run)
         .confirmationDialog(
             "Remove Credential?",
             isPresented: Binding(get: { model.pendingRemoval != nil }, set: { if !$0 { model.cancelRemoval() } }),
@@ -165,6 +169,7 @@ struct CredentialSettings: View {
                     Text(lockedCaption)
                         .font(Theme.Font.label)
                         .fixedSize(horizontal: false, vertical: true)
+                    legacyLockedHint
                     if let token = model.pendingImportToken {
                         Text("""
                             Unlock the profile “\(model.profile.name)” to review the credentials another app is \
@@ -317,6 +322,7 @@ struct CredentialSettings: View {
                 Passkeys and verification codes can only be moved with Export… and the system’s credential exchange.
                 """
         ) {
+            legacyImportRows
             if let token = model.pendingImportToken {
                 DetailRow(
                     verbatimTitle: String(localized: "Credentials from another app"),

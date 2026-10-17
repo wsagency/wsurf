@@ -17,6 +17,7 @@ struct AutofillSettings: View {
     let coordinator: AppCoordinator
     var highlight: String?
     @State private var destination: AutofillDestination?
+    @State private var legacyState: LegacyPasswordMigration.State?
 
     private var passwordProvider: Binding<PasswordProvider> {
         Binding(
@@ -41,6 +42,7 @@ struct AutofillSettings: View {
                 }
             } else {
                 SettingsPageHeader(title: "Autofill", caption: "WSurf stores saved details on this Mac.")
+                LegacyPasswordCard(state: legacyState) { destination = .credentials }
                 SettingsCard {
                     DrillInRow(title: "Passwords", symbol: "key", tint: .orange, caption: "Save and fill website logins.") { destination = .passwords }
                     RowSeparator()
@@ -80,6 +82,8 @@ struct AutofillSettings: View {
         }
         .environment(\.settingsDescriptionLineLimit, 1)
         .id(coordinator.context.contextID)
+        // Read again whenever a page is left, so the card goes away once the old list is removed.
+        .task(id: destination) { legacyState = await LegacyPasswordMigration(profile: coordinator.context.profile).state() }
         .onChange(of: highlight, initial: true) { _, anchor in
             if let target = AutofillDestination(anchor: anchor) {
                 destination = target

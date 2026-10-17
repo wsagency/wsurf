@@ -50,6 +50,8 @@ final class CredentialSettingsModel {
     /// Identifies this model to the exchange coordinator. One profile has one shared manager but every settings page
     /// builds its own model, so the import this model began is the only one it may see, decide, commit or cancel.
     @ObservationIgnored let owner = UUID()
+    /// The one-time move of the passwords saved before Credential Manager (`CredentialSettingsModel+LegacyPasswords`).
+    @ObservationIgnored let legacy: LegacyPasswordImport
     /// The finished import's per-credential results, bound to the authorization they were produced under.
     private var importResult: (outcome: CredentialImportOutcome, epoch: UInt64)?
     /// What the last import did to each credential (titles and sites, never secret values). Dropped when the vault locks
@@ -75,6 +77,7 @@ final class CredentialSettingsModel {
         self.exchange = exchange
         self.pasteboard = pasteboard
         self.native = native
+        legacy = LegacyPasswordImport(profile: profile)
         if profile.isPrivate {
             self.manager = nil
             store = nil
@@ -829,8 +832,9 @@ final class CredentialSettingsModel {
         if let epoch, epoch == manager?.authorizationEpoch {
             importResult = (expected, epoch)
         }
-        ownMessage = (.succeeded(expected, receipt: receipt), vault)
+        ownMessage = (.succeeded(expected, receipt: receipt, origin: origin), vault)
         await load()
+        await legacyImportCommitted(origin)
     }
 
     /// Ends the review. The system's token for it was used up when the import began, so the message says the import was

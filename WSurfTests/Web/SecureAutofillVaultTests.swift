@@ -18,6 +18,7 @@ nonisolated final class MemoryAutofillStorage: AutofillSecureStorage {
         var erases = 0
         var existenceChecks = 0
         var failingExistence = false
+        var readFailure: OSStatus?
     }
     private let state = Mutex(State())
 
@@ -43,9 +44,17 @@ nonisolated final class MemoryAutofillStorage: AutofillSecureStorage {
         state.withLock { $0.failingExistence = true }
     }
 
+    /// Makes every read fail with `status`, as a canceled or failed authentication does.
+    func failReads(with status: OSStatus?) {
+        state.withLock { $0.readFailure = status }
+    }
+
     func read(service: String, context: LAContext) throws -> Data? {
-        state.withLock {
+        try state.withLock {
             $0.reads += 1
+            if let status = $0.readFailure {
+                throw AutofillVaultError.keychain(status)
+            }
             return $0.data[service]
         }
     }
