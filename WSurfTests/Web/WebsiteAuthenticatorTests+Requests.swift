@@ -10,7 +10,7 @@ import Testing
 extension WebsiteAuthenticatorTests {
     @Test func challengeAndUserHandleLimitsAreExact() throws {
         let maximumChallenge = Data(repeating: 0xC1, count: 1_024)
-        let maximumUserID = Data(repeating: 0xD1, count: 64)
+        let maximumUserID = Data(repeating: 0xD1, count: WebsitePasskey.userHandleLimit)
         let maximumRequest = registrationRequest(challenge: maximumChallenge, userID: maximumUserID)
         let maximumRegistration = try WebsiteAuthenticator.makeRegistration(
             maximumRequest,
@@ -30,7 +30,7 @@ extension WebsiteAuthenticatorTests {
         )
         #expect(minimumRegistration.account.passkeys.first?.userHandle == minimumUserID)
 
-        for invalidUserID in [Data(), Data(repeating: 0xD2, count: 65)] {
+        for invalidUserID in [Data(), Data(repeating: 0xD2, count: WebsitePasskey.userHandleLimit + 1)] {
             let request = registrationRequest(userID: invalidUserID)
             #expect(throws: (any Error).self) {
                 try WebsiteAuthenticator.makeRegistration(
@@ -72,7 +72,7 @@ extension WebsiteAuthenticatorTests {
         )
         #expect(minimalAssertion.userHandle == minimumUserID)
 
-        for invalidUserHandle in [Data(), Data(repeating: 0xD3, count: 65)] {
+        for invalidUserHandle in [Data(), Data(repeating: 0xD3, count: WebsitePasskey.userHandleLimit + 1)] {
             let invalidPasskey = passkey(userHandle: invalidUserHandle)
             let request = assertionRequest(allowCredentials: [invalidPasskey.credentialID])
             #expect(throws: (any Error).self) {
@@ -84,6 +84,47 @@ extension WebsiteAuthenticatorTests {
                 )
             }
         }
+    }
+
+    /// A relying party may send a `user.id` longer than the 64 bytes WebAuthn recommends. It registers, is stored whole, and comes
+    /// back byte for byte in the assertion, in the native result and in the page-facing JSON.
+    @Test(arguments: [96, 512, WebsitePasskey.userHandleLimit])
+    func longUserIDsRegisterAndComeBackUnchangedInTheAssertion(length: Int) throws {
+        let userID = Data((0..<length).map { UInt8(truncatingIfNeeded: $0 &* 13 &+ 7) })
+        let create = registrationRequest(userID: userID)
+        let registered = try WebsiteAuthenticator.makeRegistration(
+            create, client: client(), account: account(), consent: consent(for: create)
+        )
+        let stored = try #require(registered.account.passkeys.first)
+        #expect(stored.userHandle == userID)
+        #expect(registered.result.userHandle == nil)
+
+        let verified = try WebAuthnVerifier.registration(
+            attestationObject: try #require(registered.result.attestationObject),
+            clientDataJSON: registered.result.clientDataJSON,
+            challenge: Data("registration challenge".utf8),
+            origin: origin,
+            topOrigin: nil,
+            crossOrigin: false,
+            rpID: rpID
+        )
+        let get = assertionRequest(allowCredentials: [stored.credentialID])
+        let asserted = try WebsiteAuthenticator.makeAssertion(get, client: client(), passkey: stored, consent: consent(for: get))
+        #expect(asserted.userHandle == userID)
+        _ = try WebAuthnVerifier.assertion(
+            authenticatorData: try #require(asserted.authenticatorData),
+            clientDataJSON: asserted.clientDataJSON,
+            signature: try #require(asserted.signature),
+            publicKey: verified.publicKey,
+            challenge: Data("assertion challenge".utf8),
+            origin: .init(origin: origin),
+            rpID: rpID,
+            userHandle: asserted.userHandle
+        )
+
+        let page = try WebAuthnWire.resultJSON(asserted, operation: .get)
+        let response = try #require(page["response"] as? [String: Any])
+        #expect(try WebAuthnWire.base64URLDecode(response["userHandle"], maximum: WebsitePasskey.userHandleLimit) == userID)
     }
 
     @Test func credentialDescriptorCountAndIdentifierLimitsAreExact() throws {

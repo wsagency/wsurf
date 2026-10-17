@@ -198,8 +198,11 @@ nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
     var base: ExchangeBase?
 
     static let credentialIDLimit = 1_024
-    /// The most bytes WebAuthn allows in a user handle.
-    static let userHandleLimit = 64
+    /// The most bytes WSurf keeps in a user handle, the same bound as a credential ID. WebAuthn tells a relying party to keep
+    /// the handle to 64 bytes or fewer, and CTAP2 only requires an authenticator to hold that many. Real relying parties send
+    /// more (PayPal's passkey in Apple Passwords has one), so WSurf accepts up to this bound on import, on registration and
+    /// on the way back out in an assertion or an export. A handle is stored and hashed length-prefixed, so no format depends on it.
+    static let userHandleLimit = 1_024
     /// The most UTF-8 bytes in a user name or a display name.
     static let nameLimit = 2_048
 

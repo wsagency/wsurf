@@ -125,7 +125,6 @@ nonisolated enum WebsiteAuthenticatorError: Error, Sendable {
 nonisolated enum WebsiteAuthenticator {
     private static let maximumRequestBytes = 256 * 1_024
     private static let maximumChallengeBytes = 1_024
-    private static let maximumUserHandleBytes = 64
     private static let maximumDescriptors = 1_000
     private static let maximumCredentialIDBytes = 1_024
     private static let maximumUserNameBytes = 2_048
@@ -333,8 +332,10 @@ nonisolated enum WebsiteAuthenticator {
         return canonicalURL
     }
     private static func validateCreation(_ options: WebAuthnCreationOptions) throws {
+        // `user.id` may be up to `WebsitePasskey.userHandleLimit` bytes, not the 64 that WebAuthn and CTAP2 recommend: a relying
+        // party that sends more must still get a passkey, and the assertion returns the handle exactly as it was registered.
         guard options.challenge.count <= maximumChallengeBytes,
-              (1...maximumUserHandleBytes).contains(options.userID.count),
+              (1...WebsitePasskey.userHandleLimit).contains(options.userID.count),
               options.userName.utf8.count <= maximumUserNameBytes,
               options.userDisplayName.utf8.count <= maximumUserNameBytes,
               options.publicKeyAlgorithms.count <= maximumRequestBytes / MemoryLayout<Int>.size,
