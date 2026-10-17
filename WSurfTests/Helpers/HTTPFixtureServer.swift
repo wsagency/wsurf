@@ -72,19 +72,23 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "WSurf.tests.http-fixture")
     private let routes: [String: Response]
+    private let waitsForBody: Bool
 
-    private init(listener: NWListener, routes: [String: Response]) {
+    private init(listener: NWListener, routes: [String: Response], waitsForBody: Bool) {
         self.listener = listener
         self.routes = routes
+        self.waitsForBody = waitsForBody
     }
 
     deinit {
         listener.cancel()
     }
 
-    static func start(routes: [String: Response]) async throws -> HTTPFixtureServer {
+    /// `waitsForBody` answers a request that has a body only after the body arrived, so closing the connection never cuts a POST off.
+    /// Off by default: the other tests send no bodies, and their timing is left as it was.
+    static func start(routes: [String: Response], waitsForBody: Bool = false) async throws -> HTTPFixtureServer {
         let listener = try NWListener(using: .tcp, on: .any)
-        let server = HTTPFixtureServer(listener: listener, routes: routes)
+        let server = HTTPFixtureServer(listener: listener, routes: routes, waitsForBody: waitsForBody)
         listener.newConnectionHandler = { [weak server] connection in
             server?.accept(connection)
         }
@@ -135,9 +139,8 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
                 request.append(data)
             }
             let separator = request.range(of: Data("\r\n\r\n".utf8))
-            // A request with a body is answered after the body arrived, so closing the connection never cuts it off.
-            let missing = separator.map { Self.bodyLength(ofHead: request[..<$0.lowerBound]) - (request.count - $0.upperBound) } ?? 0
-            guard (separator != nil && missing <= 0) || complete || error != nil else {
+            let bodyPending = waitsForBody && separator.map { Self.bodyLength(ofHead: request[..<$0.lowerBound]) > request.count - $0.upperBound } == true
+            guard (separator != nil && !bodyPending) || complete || error != nil else {
                 receiveRequest(from: connection, accumulated: request)
                 return
             }

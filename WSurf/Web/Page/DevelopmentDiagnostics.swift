@@ -90,8 +90,10 @@ final class DevelopmentDiagnostics {
     }
 
     /// Ends the detail capture and removes what it recorded (headers, bodies, previews, clear query values and the full console's
-    /// extra stacks) from the buffer.
-    private func endDetail() {
+    /// extra stacks) from the buffer. Synchronous, and safe to repeat; a read without Developer access calls it before it matches
+    /// anything, so a filter, a count or a page size is only ever worked out from records that no longer hold the detail.
+    func endDetail() {
+        guard !detailEnded else { return }
         detailEnded = true
         buffer.rewrite(withoutDetail)
     }

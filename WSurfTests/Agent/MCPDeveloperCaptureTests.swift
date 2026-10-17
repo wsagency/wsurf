@@ -53,7 +53,7 @@ struct MCPDeveloperCaptureTests {
     ) async throws -> Rig {
         let other = try await HTTPFixtureServer.start(routes: [
             "/data": .init(status: "200 OK", headers: Self.cors.merging(["Content-Type": "application/json"]) { $1 }, body: Data("{\"third\":\"party-body\"}".utf8)),
-        ])
+        ], waitsForBody: true)
         let echo = HTTPFixtureServer.Response(
             status: "200 OK",
             headers: ["Content-Type": "application/json", "Set-Cookie": "sid=cookie-value-0123456789; HttpOnly", "X-Server": "demo"],
@@ -63,7 +63,7 @@ struct MCPDeveloperCaptureTests {
             "/big": .bytes(Data(String(repeating: "x", count: 100_000).utf8), contentType: "text/plain"),
             "/go": .redirect(to: try other.url("/data")),
         ]
-        let app = try await HTTPFixtureServer.start(routes: routes.merging(extra) { $1 })
+        let app = try await HTTPFixtureServer.start(routes: routes.merging(extra) { $1 }, waitsForBody: true)
         let url = try app.url()
         let trust = MCPTrustStore(storage: MemoryTrustStorage())
         trust.loadIfNeeded()
@@ -255,11 +255,13 @@ struct MCPDeveloperCaptureTests {
         let hello = try #require(console.first { $0["text"]?.stringValue?.hasPrefix("hello") == true })
         #expect(echo["requestHeaders"] != nil && text(echo, "url").contains("x=hello") && hello["preview"] != nil, "the tier was held when they were made")
 
-        // The capture does not find out that the tier is gone (nothing asks it), so what the reader gets is stripped on the way out.
+        // The capture does not find out that the tier is gone (nothing asks it): the first read without Developer access ends the
+        // detail and purges the buffer before it matches anything.
         let diagnostics = try #require(rig.tab.developmentOwner?.diagnostics)
         diagnostics.policyProvider = nil
         rig.session.pairedClient = nil
         try #require(!rig.session.permits(rig.tab, capability: .developer) && rig.session.permits(rig.tab, capability: .development))
+        try #require(!diagnostics.detailEnded)
 
         let seq = try #require(echo["seq"]?.intValue)
         let one = try await call(rig, "readNetwork", ["seq": .int(seq)])
@@ -279,9 +281,38 @@ struct MCPDeveloperCaptureTests {
         let console2 = records(try await call(rig, "readConsole"))
         let bare = try #require(console2.first { $0["text"]?.stringValue?.hasPrefix("hello") == true })
         #expect(bare["preview"] == nil && bare["stack"] == nil, "a log keeps neither a preview nor a stack without the full console")
-        // The buffer still holds them: it is the read that withholds, which is what protects a capture that was not told.
+        // The reads purged the buffer; they did not merely leave the detail out of the reply.
+        #expect(diagnostics.detailEnded)
         let stored = try diagnostics.buffer.read(stream: .network, cursor: nil, limit: 100)
-        #expect(stored.records.contains { $0.fields["requestHeaders"] != nil })
+        #expect(!stored.records.isEmpty && stored.records.allSatisfy { Set($0.fields.keys).isDisjoint(with: PageDiagnostics.detailKeys) })
+    }
+
+    @Test(.timeLimit(.minutes(3)), arguments: [BrowserEngine.webKit, BrowserEngine.chromium])
+    func aFilterOnAWithheldValueMatchesNothingAndCountsDoNotMove(engine: BrowserEngine) async throws {
+        let rig = try await makeRig(engine, standing: .off, answer: .developer)
+        defer { close(rig) }
+        try await start(rig, ["headers": true, "bodies": true, "clearQueries": true])
+        try await run(rig, "fetch('/api?needle=haystack-value&n=5').catch(() => {}); fetch('/echo?other=1').catch(() => {})")
+        let before = try await read(rig) { text($0, "url").contains("needle=haystack-value") }
+        #expect(before.contains { text($0, "url").hasSuffix("/api?needle=haystack-value&n=5") }, "the tier was held when it was made, so its query is clear")
+
+        // The capture is not told that the tier is gone; the first read is the one that finds out.
+        try #require(rig.tab.developmentOwner?.diagnostics).policyProvider = nil
+        rig.session.pairedClient = nil
+        try #require(!rig.session.permits(rig.tab, capability: .developer))
+
+        func probe(_ needle: String) async throws -> (records: Int, counts: [String: Value]) {
+            let result = try await call(rig, "readNetwork", ["urlContains": .string(needle)])
+            let object = try #require(result.structuredContent?.objectValue)
+            let counts = object.filter { ["skipped", "nextCursor", "dropped", "evicted", "truncated"].contains($0.key) }
+            return (records(result).count, counts)
+        }
+        let withheld = try await probe("needle=haystack-value")
+        let absent = try await probe("needle=nothing-like-it")
+        #expect(withheld.records == 0 && absent.records == 0, "a withheld value cannot be matched")
+        #expect(withheld.counts == absent.counts, "\(withheld.counts) against \(absent.counts): the counts tell nothing about it")
+        let concealed = try await probe("needle=*")
+        #expect(concealed.records == 1, "what the client may see can be matched")
     }
 
     // MARK: What is hidden

@@ -488,12 +488,14 @@ extension MCPBrowserSession {
         }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        // Nothing suspends from here to the reply. Records made with the Developer tier are read with it: a read without Developer
-        // access gets them as the metadata they would have been (headers, bodies, previews and clear query values removed), even
-        // if the capture has not yet found out that the tier is gone.
-        let strip = diagnostics.options.isEnabled && !permits(tab, capability: .developer)
+        // Nothing suspends from here to the reply. A read without Developer access first ends the capture's detail and purges the
+        // buffer, even if the capture has not found out that the tier is gone, so the filter, the skipped count and the size of the
+        // page are all worked out from records without the detail: matching a withheld value would otherwise tell a client what it is.
+        if diagnostics.options.isEnabled, !permits(tab, capability: .developer) {
+            diagnostics.endDetail()
+        }
         func shown(_ record: PageDiagnostics.Record) -> Value {
-            MCPDevelopmentTools.value(strip ? diagnostics.withoutDetail(record) : record, formatter: formatter)
+            MCPDevelopmentTools.value(record, formatter: formatter)
         }
         var fields = diagnosticsInfo(diagnostics, tab: tab)
         fields["lostInFlight"] = .int(diagnostics.lostInFlight)
