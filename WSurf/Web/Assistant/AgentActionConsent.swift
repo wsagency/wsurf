@@ -59,6 +59,50 @@ enum AgentActionConsent {
         }
     }
 
+    /// Asks the user whether an external connection may answer a page's prompt with `reply`. The reply goes into the page
+    /// under the user's name, and a prompt can ask for anything, so the connection never answers one unasked.
+    static func permitPromptReply(_ reply: String, to prompt: String, host: String?) async -> Bool {
+        guard !Task.isCancelled, hasCurrentWindow else { return false }
+        let window = scopedWindow?.nativeWindow
+        let decision: Decision
+        if let stub = decisionForTesting {
+            decision = await stub.decide("“\(prompt)” → “\(reply)”", .publication, host, window)
+        } else {
+            guard let window else { return false }
+            decision = await askPromptReply(reply, to: prompt, host: host, in: window)
+        }
+        guard !Task.isCancelled, hasCurrentWindow, scopedWindow?.nativeWindow === window else { return false }
+        return decision == .allowOnce
+    }
+
+    private static func askPromptReply(_ reply: String, to prompt: String, host: String?, in window: NSWindow) async -> Decision {
+        guard !isRunningTests, !Task.isCancelled else { return .decline }
+        let client = externalClientName ?? String(localized: "An external connection")
+        let site = AgentActionPolicy.normalizedHost(host)
+        let alert = NSAlert()
+        alert.messageText = site.map { String(localized: "Let “\(client)” answer a prompt on \($0)?") }
+            ?? String(localized: "Let “\(client)” answer a prompt?")
+        alert.informativeText = String(localized: """
+            The page asks: “\(String(prompt.prefix(300)))”
+
+            The answer would be: “\(String(reply.prefix(300)))”
+
+            Webpages can carry hidden instructions aimed at connected apps. Allow this only if it’s what you asked for.
+            """)
+        alert.addButton(withTitle: String(localized: "Allow Once"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        alert.buttons.last?.keyEquivalent = "\u{1b}"
+        let response = await withTaskCancellationHandler {
+            guard !Task.isCancelled else { return NSApplication.ModalResponse.abort }
+            return await withCheckedContinuation { continuation in
+                alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
+            }
+        } onCancel: {
+            Task { @MainActor in window.endSheet(alert.window, returnCode: .abort) }
+        }
+        return !Task.isCancelled && response == .alertFirstButtonReturn ? .allowOnce : .decline
+    }
+
     private static var hasCurrentWindow: Bool {
         guard let scopedWindow else { return true }
         guard let browser = scopedWindow.browser, browser.sessionClosedAt == nil,

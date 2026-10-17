@@ -14,7 +14,8 @@ import WebKit
 @MainActor
 @Suite(.boundedWebViews)
 struct MCPDialogTests {
-    /// Controls in document order: 1 alert, 2 confirm, 3 prompt, 4 secret prompt, 5 consequential confirm. The script keeps the
+    /// Controls in document order: 1 alert, 2 confirm, 3 prompt, 4 secret prompt, 5 consequential confirm, 6 and 7 prompts
+    /// that carry a decision. The script keeps the
     /// consequential words out of the button, so clicking it needs no approval; only accepting the confirm does.
     private static let page = """
         <!doctype html><title>Dialogs</title>
@@ -22,8 +23,14 @@ struct MCPDialogTests {
         <button onclick="document.body.dataset.answer = String(confirm('Keep going?'))">Confirm</button>
         <button onclick="document.body.dataset.answer = String(prompt('Your name?', 'Anon'))">Prompt</button>
         <button onclick="document.body.dataset.answer = String(prompt('Enter your password', ''))">Secret</button>
-        <script>function danger() { document.body.dataset.answer = String(confirm('Delete account now?')) }</script>
+        <script>
+        function danger() { document.body.dataset.answer = String(confirm('Delete account now?')) }
+        function typeDelete() { document.body.dataset.answer = String(prompt('Type DELETE to confirm', '')) }
+        function amount() { document.body.dataset.answer = String(prompt('Enter amount to transfer', '')) }
+        </script>
         <button onclick="danger()">Danger</button>
+        <button onclick="typeDelete()">Typed</button>
+        <button onclick="amount()">Sum</button>
         <a href="/next">Next</a>
         """
 
@@ -41,7 +48,7 @@ struct MCPDialogTests {
     }
 
     private func makeRig(
-        _ engine: BrowserEngine, html: String = MCPDialogTests.page, access: MCPAccessConsent.Access = .control
+        _ engine: BrowserEngine, html: String = MCPDialogTests.page, development: Bool = false
     ) async throws -> Rig {
         let server = try await HTTPFixtureServer.start(routes: ["/": .html(html), "/next": .html("<title>Next</title><p>Next page</p>")])
         let browser = BrowserModel(
@@ -69,9 +76,9 @@ struct MCPDialogTests {
                 guard tab.page.superview === container else { return false }
                 return ((try? await tab.page.evaluateJavaScript("window.innerWidth")) as? Int ?? 0) > 0
             }, "the page is laid out in the window")
-        let session = MCPBrowserSession(browser: browser, available: { true }, consent: { _, _, _ in access })
+        let session = MCPBrowserSession(browser: browser, available: { true }, consent: { _, _, _ in development ? .development : .control })
         let made = Rig(server: server, browser: browser, tab: tab, window: window, session: session)
-        _ = try await call(made, "requestAccess", nil)
+        _ = try await call(made, "requestAccess", nil, development ? ["development": true] : [:])
         return made
     }
 
@@ -98,12 +105,20 @@ struct MCPDialogTests {
         return try await call(rig, "clickOnPage", rig.tab, ["observationID": .string(id), "ref": .int(ref)])
     }
 
+    /// Answers `dialog`. `consent` stands for the user's choice in the sheet WSurf would show; `asked` sees each question.
     private func answer(
-        _ rig: Rig, _ dialog: [String: Value], _ action: String, text: String? = nil
+        _ rig: Rig, _ dialog: [String: Value], _ action: String, text: String? = nil,
+        consent: AgentActionConsent.Decision? = nil, asked: ((String, SensitiveAction.Category) -> Void)? = nil
     ) async throws -> CallTool.Result {
         var arguments: [String: Value] = ["dialogID": dialog["dialogID"] ?? .null, "action": .string(action)]
         if let text { arguments["text"] = .string(text) }
-        return try await call(rig, "handleDialog", rig.tab, arguments)
+        guard let consent else { return try await call(rig, "handleDialog", rig.tab, arguments) }
+        return try await AgentActionConsent.$decisionForTesting.withValue(.init { label, category, _, _ in
+            asked?(label, category)
+            return consent
+        }) {
+            try await call(rig, "handleDialog", rig.tab, arguments)
+        }
     }
 
     private func pageValue(_ rig: Rig, _ key: String) async throws -> String? {
@@ -163,19 +178,81 @@ struct MCPDialogTests {
     }
 
     @Test(.timeLimit(.minutes(2)), arguments: BrowserEngine.allCases)
-    func promptReturnsTheAgentsText(engine: BrowserEngine) async throws {
+    func aConsentedPromptAnswerReachesThePage(engine: BrowserEngine) async throws {
         let rig = try await makeRig(engine)
         defer { rig.close() }
+        var questions: [(String, SensitiveAction.Category)] = []
         let first = try await openDialog(rig, ref: 3, type: "prompt")
         #expect(first["defaultText"]?.stringValue?.contains("Anon") == true)
-        #expect(status(try await answer(rig, first, "accept", text: "Alice")) == "ok")
+        #expect(first["userMustAnswer"]?.boolValue == false)
+        let answered = try await answer(rig, first, "accept", text: "Alice", consent: .allowOnce, asked: { questions.append(($0, $1)) })
+        #expect(status(answered) == "ok")
         #expect(try await pageValue(rig, "answer") == "Alice")
+        #expect(questions.count == 1 && questions[0].0.contains("Your name?") && questions[0].0.contains("Alice"), "the user is shown the reply")
         let second = try await openDialog(rig, ref: 3, type: "prompt")
-        #expect(status(try await answer(rig, second, "accept")) == "ok")
+        #expect(status(try await answer(rig, second, "accept", consent: .allowOnce)) == "ok")
         #expect(try await pageValue(rig, "answer") == "Anon", "no text accepts the page's default, like pressing OK")
         let third = try await openDialog(rig, ref: 3, type: "prompt")
-        #expect(status(try await answer(rig, third, "dismiss")) == "ok")
+        #expect(status(try await answer(rig, third, "dismiss")) == "ok", "Cancel needs no approval")
         #expect(try await pageValue(rig, "answer") == "null")
+    }
+
+    @Test(.timeLimit(.minutes(2)), arguments: BrowserEngine.allCases)
+    func aGeneralConnectionCannotAnswerAPromptWithoutConsent(engine: BrowserEngine) async throws {
+        let rig = try await makeRig(engine)
+        defer { rig.close() }
+        let dialog = try await openDialog(rig, ref: 3, type: "prompt")
+        let unasked = try await answer(rig, dialog, "accept", text: "Alice")
+        #expect(status(unasked) == "denied", "nobody approved it")
+        let declined = try await answer(rig, dialog, "accept", text: "Alice", consent: .decline)
+        #expect(status(declined) == "denied")
+        #expect(rig.tab.dialogs.hasOpenDialog, "the prompt is still waiting")
+        #expect(status(try await answer(rig, dialog, "dismiss")) == "ok")
+        #expect(try await pageValue(rig, "answer") == "null", "nothing the connection typed reached the page")
+    }
+
+    @Test func aPromptThatCarriesADecisionNamesItsConsequenceToTheUser() async throws {
+        let rig = try await makeRig(.webKit)
+        defer { rig.close() }
+        for (ref, reply, category) in [(6, "DELETE", SensitiveAction.Category.deletion), (7, "500", .transfer)] {
+            let dialog = try await openDialog(rig, ref: ref, type: "prompt")
+            var asked: [SensitiveAction.Category] = []
+            let declined = try await answer(rig, dialog, "accept", text: reply, consent: .decline, asked: { asked.append($1) })
+            #expect(status(declined) == "denied" && asked == [category])
+            #expect(rig.tab.dialogs.hasOpenDialog)
+            let allowed = try await answer(rig, dialog, "accept", text: reply, consent: .allowOnce, asked: { asked.append($1) })
+            #expect(status(allowed) == "ok" && asked == [category, category], "one question per attempt, naming the consequence")
+            #expect(try await pageValue(rig, "answer") == reply)
+        }
+    }
+
+    @Test func theDevelopmentGateLetsALoopbackConnectionAnswerAPromptUnasked() async throws {
+        let rig = try await makeRig(.webKit, development: true)
+        defer { rig.close() }
+        let dialog = try await openDialog(rig, ref: 3, type: "prompt")
+        var asked = 0
+        let answered = try await answer(rig, dialog, "accept", text: "Alice", consent: .decline, asked: { _, _ in asked += 1 })
+        #expect(status(answered) == "ok" && asked == 0, "development access on this Mac needs no approval for an ordinary prompt")
+        #expect(try await pageValue(rig, "answer") == "Alice")
+        // Even there, a decision is the user's to approve, and a secret stays theirs.
+        let danger = try await openDialog(rig, ref: 6, type: "prompt")
+        let refused = try await answer(rig, danger, "accept", text: "DELETE", consent: .decline, asked: { _, _ in asked += 1 })
+        #expect(status(refused) == "denied" && asked == 1)
+        #expect(status(try await answer(rig, danger, "dismiss")) == "ok")
+        let secret = try await openDialog(rig, ref: 4, type: "prompt", userOwned: true)
+        #expect(status(try await answer(rig, secret, "accept", text: "hunter2", consent: .allowOnce)) == "denied")
+        let sheet = try #require(rig.window.attachedSheet)
+        rig.window.endSheet(sheet, returnCode: .alertSecondButtonReturn)
+        #expect(await waitUntil { (try? await self.pageValue(rig, "answer")) == "null" })
+    }
+
+    @Test func aConnectionWithOnlyControlAccessGetsNoDevelopmentGate() async throws {
+        let rig = try await makeRig(.webKit)
+        defer { rig.close() }
+        let dialog = try await openDialog(rig, ref: 3, type: "prompt")
+        var asked = 0
+        let answered = try await answer(rig, dialog, "accept", text: "Alice", consent: .allowOnce, asked: { _, _ in asked += 1 })
+        #expect(status(answered) == "ok" && asked == 1)
     }
 
     // MARK: Tools while a dialog is open
@@ -320,6 +397,79 @@ struct MCPDialogTests {
         #expect(await waitUntil { (try? await self.pageValue(rig, "stage")) == "after" })
     }
 
+    /// Leaves the page by `navigate`, whose claim outlives its call (on a clock that never advances), and waits for the new page.
+    private func navigateAway(_ rig: Rig) async throws -> URL {
+        rig.tab.dialogs.clock = TestClock()
+        _ = try await observation(rig)
+        let next = try rig.server.url("/next")
+        let leaving = try await call(rig, "navigate", rig.tab, ["url": .string(next.absoluteString)])
+        #expect(leaving.isError == false)
+        #expect(await waitUntil { rig.tab.page.url == next })
+        return next
+    }
+
+    /// A page dialog the page opens on its own, a moment after this returns.
+    private func openDialogLater(_ rig: Rig) async throws {
+        _ = try await rig.tab.page.evaluateJavaScript("setTimeout(() => { document.body.dataset.later = 'before'; alert('Later'); document.body.dataset.later = 'after' }, 0); true")
+    }
+
+    @Test func aUserClickAfterAnAgentCallShowsTheDialogToTheUserAtOnce() async throws {
+        let rig = try await makeRig(.webKit)
+        defer { rig.close() }
+        _ = try await navigateAway(rig)
+        #expect(rig.tab.dialogs.isIntercepting, "the navigation's claim is still held")
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try #require(
+                NSEvent.mouseEvent(
+                    with: type, location: NSPoint(x: 250, y: 200), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: rig.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            if type == .leftMouseDown {
+                #expect(PageUserGesture.page(receiving: event) === rig.tab.page, "the click is found to be in this tab's page")
+            }
+            NSApp.sendEvent(event)
+        }
+        #expect(!rig.tab.dialogs.isIntercepting, "the user's click ended the claim")
+        try await openDialogLater(rig)
+        #expect(await waitUntil { rig.window.attachedSheet != nil }, "the dialog is the user's, shown at once")
+        #expect(!rig.tab.dialogs.hasOpenDialog)
+        let sheet = try #require(rig.window.attachedSheet)
+        rig.window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        #expect(await waitUntil { (try? await self.pageValue(rig, "later")) == "after" })
+    }
+
+    @Test func aDialogOnATabWhoseCallReturnedIsTheUsers() async throws {
+        let rig = try await makeRig(.webKit)
+        defer { rig.close() }
+        // Any call but a navigation lets go of the tab when it returns.
+        let dialog = try await openDialog(rig, ref: 1, type: "alert")
+        #expect(status(try await answer(rig, dialog, "accept")) == "ok")
+        #expect(!rig.tab.dialogs.isIntercepting)
+        try await openDialogLater(rig)
+        #expect(await waitUntil { rig.window.attachedSheet != nil }, "the user, not the connection, is shown a dialog after its call")
+        let sheet = try #require(rig.window.attachedSheet)
+        rig.window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        #expect(await waitUntil { (try? await self.pageValue(rig, "later")) == "after" })
+        #expect(!rig.tab.dialogs.hasOpenDialog)
+    }
+
+    @Test func connectionBsDialogNeverRoutesToConnectionAsClaim() async throws {
+        let rig = try await makeRig(.webKit)
+        defer { rig.close() }
+        let other = MCPBrowserSession(browser: rig.browser, available: { true }, consent: { _, _, _ in .development })
+        let tabID: Value = .string(rig.tab.id.uuidString)
+        _ = try await other.call(name: "requestAccess", arguments: ["development": true])
+        #expect(try await other.call(name: "startDiagnostics", arguments: ["tabID": tabID]).isError == false)
+        _ = try await navigateAway(rig)
+        #expect(rig.tab.developmentRelation(of: other.id) == .own, "B still holds the lease")
+        #expect(!rig.tab.dialogs.isIntercepting, "A's claim and B's lease are two connections: nobody can say whose action it is")
+        try await openDialogLater(rig)
+        #expect(await waitUntil { rig.window.attachedSheet != nil }, "the user is shown it")
+        #expect(rig.tab.dialogs.pending(for: rig.session.id).isEmpty && rig.tab.dialogs.pending(for: other.id).isEmpty)
+        let sheet = try #require(rig.window.attachedSheet)
+        rig.window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        #expect(await waitUntil { (try? await self.pageValue(rig, "later")) == "after" })
+    }
+
     @Test func aDevelopmentLeaseReceivesDialogsBetweenCalls() async throws {
         let rig = try await makeRig(.webKit)
         defer { rig.close() }
@@ -327,7 +477,7 @@ struct MCPDialogTests {
         _ = try await developer.call(name: "requestAccess", arguments: ["development": true])
         let lease = try await developer.call(name: "startDiagnostics", arguments: ["tabID": .string(rig.tab.id.uuidString)])
         #expect(lease.isError == false)
-        _ = try await rig.tab.page.evaluateJavaScript("setTimeout(() => { document.body.dataset.stage = 'before'; alert('Later'); document.body.dataset.stage = 'after' }, 0); true")
+        _ = try await rig.tab.page.evaluateJavaScript("setTimeout(() => { document.body.dataset.later = 'before'; alert('Later'); document.body.dataset.later = 'after' }, 0); true")
         #expect(await waitUntil { rig.tab.dialogs.hasOpenDialog })
         #expect(rig.window.attachedSheet == nil)
         let report = try await developer.call(name: "handleDialog", arguments: ["tabID": .string(rig.tab.id.uuidString)])
@@ -337,7 +487,7 @@ struct MCPDialogTests {
             name: "handleDialog",
             arguments: ["tabID": .string(rig.tab.id.uuidString), "dialogID": dialog["dialogID"] ?? .null, "action": "accept"])
         #expect(status(done) == "ok")
-        #expect(try await pageValue(rig, "stage") == "after")
+        #expect(try await pageValue(rig, "later") == "after")
     }
 
     @Test func closingTheTabEndsAPendingDialogWithoutASheet() async throws {

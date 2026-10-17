@@ -9,6 +9,8 @@ import MCP
 @MainActor
 extension MCPBrowserSession {
     nonisolated static let maxDialogReplyBytes = 4_096
+    /// Calls after which Chromium asks about a beforeunload dialog a moment later than the call.
+    nonisolated static let navigationTools: Set<String> = ["navigate", "goBack", "reloadPage"]
 
     // MARK: Control
 
@@ -97,18 +99,24 @@ extension MCPBrowserSession {
                 return result(.invalidInput, "text is only for accepting a prompt, and at most \(Self.maxDialogReplyBytes) bytes.")
             }
         }
-        if accepted, dialog.kind == .confirm || dialog.kind == .beforeUnload,
-            let category = SensitiveAction.category(of: queue.fullMessage(of: dialogID) ?? dialog.message) {
-            let permitted = await AgentActionConsent.permit(
-                label: String(dialog.message.prefix(80)), category: category, host: webURL(of: tab)?.host(), policy: nil)
-            guard permitted, mayProceed(tab, capability: .control) else {
-                return result(.denied, "The user did not approve accepting this dialog. It \(category.consequenceForModel), so it is theirs to do.")
+        var authorization: PageDialogQueue.Authorization?
+        if accepted, let request = queue.request(of: dialogID) {
+            switch await approval(for: request, reply: reply, tab: tab) {
+            case .notNeeded:
+                break
+            case .granted(let granted):
+                authorization = granted
+            case .refused(let reason):
+                return result(.denied, reason)
+            }
+            guard mayProceed(tab, capability: .control) else {
+                return result(.denied, "Page access changed while the user was asked. Nothing was answered.")
             }
         }
         // Dialogs that the freed page opens next come back in this reply.
         let claim = controlDialogs(of: tab, capability: .control)
-        defer { claim?.endSoon() }
-        guard queue.answer(dialogID, connection: id, with: .init(accepted: accepted, text: reply)) else {
+        defer { claim?.end() }
+        guard queue.answer(dialogID, connection: id, with: .init(accepted: accepted, text: reply), authorization: authorization) else {
             return result(.stale, "That dialog is no longer waiting for an answer. Call handleDialog without a dialogID to see what is open.")
         }
         observations[tab.id] = nil
@@ -119,6 +127,57 @@ extension MCPBrowserSession {
         return result(
             .ok, "The dialog was answered. Read the page again before acting on it.",
             ["answered": answered, "dialogs": .array(queue.pending(for: id).map(\.value))])
+    }
+}
+
+/// Who has to agree before a connection's answer reaches the page.
+private enum DialogApproval {
+    case notNeeded
+    case granted(PageDialogQueue.Authorization)
+    case refused(String)
+}
+
+extension MCPBrowserSession {
+    /// Accepting an alert needs nothing. Accepting a confirm, a beforeunload or a prompt can carry a decision, so the user is
+    /// asked when the page's wording or the reply names a purchase, transfer, deletion or posting. A prompt is also
+    /// the user's words in the page, so any accepted reply needs the user's approval, except from a connection with
+    /// development access on a page on this Mac.
+    fileprivate func approval(for request: PageDialogQueue.Request, reply: String?, tab: BrowserTab) async -> DialogApproval {
+        let host = webURL(of: tab)?.host()
+        func declined(_ what: String) -> DialogApproval {
+            .refused("The user did not approve answering this dialog. \(what) Say what is waiting for them and stop.")
+        }
+        switch request.kind {
+        case .alert:
+            return .notNeeded
+        case .confirm, .beforeUnload:
+            guard let category = PageDialogText.consequence(of: request.message) else { return .notNeeded }
+            let permitted = await AgentActionConsent.permit(
+                label: String(request.message.prefix(80)), category: category, host: host, policy: nil)
+            return permitted ? .granted(.consent) : declined("It \(category.consequenceForModel), so it is theirs to do.")
+        case .prompt:
+            let answer = reply ?? request.defaultText ?? ""
+            if let category = PageDialogText.consequence(of: request.message, reply: answer) {
+                let permitted = await AgentActionConsent.permit(
+                    label: String("“\(request.message)” → “\(answer)”".prefix(120)), category: category, host: host, policy: nil)
+                return permitted ? .granted(.consent) : declined("It \(category.consequenceForModel), so it is theirs to do.")
+            }
+            if developerMayAnswerPrompts(on: tab, origin: request.origin) {
+                return .granted(.developer)
+            }
+            let permitted = await AgentActionConsent.permitPromptReply(answer, to: request.message, host: host)
+            return permitted ? .granted(.consent) : declined("A prompt asks for the user's words.")
+        }
+    }
+
+    /// The development gate for prompts: this connection has development access and the page and the dialog are on this Mac.
+    /// P4 hook: this is the one place to switch to the Developer tier (paired client, Developer profile, developer site,
+    /// Developer access) when that exists.
+    fileprivate func developerMayAnswerPrompts(on tab: BrowserTab, origin: String) -> Bool {
+        guard grants[tab.id]?.access == .development, permits(tab, capability: .development), let url = webURL(of: tab) else {
+            return false
+        }
+        return PageDialogText.isLoopbackOrigin(origin) && PageDialogText.isLoopbackOrigin(PageDialogText.origin(ofURL: url.absoluteString))
     }
 }
 

@@ -188,17 +188,27 @@ Landscape swaps the axes, so `responsive-desktop` in landscape is 1,280 × 800 (
 
 A page's `alert`, `confirm`, `prompt` or beforeunload dialog blocks the page, and
 with it every script a tool would run. While a connection controls the tab, WSurf
-holds the dialog for that connection instead of showing a sheet. A connection
-controls a tab while one of its control or development calls is running on it and
-for two seconds after (a navigation asks about its beforeunload dialog a moment
-after the call returns), and, for alert, confirm and prompt, while it holds the
-tab's development lease.
-Otherwise nothing changes: the user gets the native sheet, as in a normal tab.
+holds the dialog for that connection instead of showing a sheet. Otherwise nothing
+changes: the user gets the native sheet, as in a normal tab.
+
+A connection controls a tab only while one of its control or development calls is
+running on it, and for two seconds after `navigate`, `goBack` or `reloadPage` (a
+navigation asks about its beforeunload dialog a moment after the call returns).
+Every other call lets go of the tab when it returns. A connection that holds the
+development lease also receives an alert, confirm or prompt between calls. These
+rules keep a dialog from reaching the wrong party:
+
+- The user's own click or key press in the page ends every claim on the tab and, for
+  three seconds, keeps the lease from taking a dialog: what follows is the user's,
+  shown at once.
+- When two connections are acting on one tab (two calls, or one call and another
+  connection's lease), nobody can say whose action opened the dialog, so the user
+  gets it.
 
 - The call that caused the dialog (a click, `navigate`, `reloadPage`) returns at
   once with `status: "dialogOpened"` and the dialog. A dialog that opens just after
-  the call returned shows up as `dialogPending` on the next call. The action is not cancelled: it
-  is blocked behind the dialog and finishes after the answer. Read the page again
+  the call returned shows up as `dialogPending` on the next call. The action is not
+  cancelled: it is blocked behind the dialog and finishes after the answer. Read the page again
   before acting on it, because the earlier observation is no longer current.
 - Every other page or development call on that tab returns at once with
   `status: "dialogPending"` and `isError: true`, naming the dialog. `listTabs`,
@@ -213,6 +223,9 @@ Otherwise nothing changes: the user gets the native sheet, as in a normal tab.
   (1,000 characters, `truncated` says so), control characters become spaces, link
   queries, fragments and credentials are removed, and the text is wrapped as
   untrusted. `origin` is scheme, host and port only.
+- WSurf reads dialog wording after normalizing it (compatibility forms, case,
+  accents, zero-width and other invisible characters, look-alike letters, and digits
+  used as letters), so hiding a word that way does not change what it matches.
 - The user keeps what a connection must not decide. The connection can see these
   dialogs (`userMustAnswer: true`) but gets `denied` if it tries to answer:
   a prompt whose message asks for a password, PIN, code, card or secret; a
@@ -222,9 +235,14 @@ Otherwise nothing changes: the user gets the native sheet, as in a normal tab.
   the tab, never for a lease alone, so a connection cannot hold the user on a
   page. Disconnecting hands every dialog it held to the user. WSurf never
   answers a dialog for the user and never accepts or dismisses one on a timeout.
-- Accepting a `confirm` or beforeunload whose message names a purchase, payment,
-  transfer, deletion or posting (the same signals as consequential clicks) asks the
-  user in WSurf first. Dismissing never asks.
+- Accepting a dialog can carry a decision, so the user approves in WSurf first. A
+  `confirm`, beforeunload or `prompt` whose message (or a prompt's reply) names a
+  purchase, payment, transfer, deletion or posting asks, naming what it does. A
+  `prompt` is also the user's own words in the page, so every accepted reply asks
+  (the question shows the reply), except from a connection with development access
+  on a page on this Mac (`localhost`, `127.0.0.1`, `[::1]`), which is asked only for
+  the decisions above. Dismissing never asks. This development gate is a stand-in
+  for the Developer tier and has one place to change when that arrives.
 - Dialogs on tabs no connection controls, in the in-browser assistant's tabs and in
   private windows are never routed.
 - WebKit has no beforeunload prompt in WSurf, so navigation away never produces

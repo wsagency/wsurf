@@ -150,7 +150,13 @@ final class MCPBrowserSession: Identifiable {
         }
         // Dialogs the page opens while this call runs come to this connection, and a dialog ends the wait for the call.
         let dialogClaim = controlDialogs(of: tab, capability: capability)
-        defer { dialogClaim?.endSoon() }
+        defer {
+            if Self.navigationTools.contains(name) {
+                dialogClaim?.endAfterNavigation()
+            } else {
+                dialogClaim?.end()
+            }
+        }
         if name == "navigate" {
             let url = arguments["url"]?.stringValue ?? ""
             return await interrupting(tab) { await self.navigate(url, tab: tab, grant: grant) } ?? interruptedResult(tab)

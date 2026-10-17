@@ -42,6 +42,16 @@ final class PageDialogQueue {
         let userMustAnswer: Bool
     }
 
+    /// What lets a connection apply an accepted prompt reply. A prompt carries the user's words into the page, so without one
+    /// of these the queue refuses the reply.
+    nonisolated enum Authorization: Sendable {
+        /// The user approved this reply in WSurf.
+        case consent
+        /// The connection has development access and the page is on this Mac. A later release replaces this gate with
+        /// the Developer tier (paired client, Developer profile, developer site).
+        case developer
+    }
+
     /// Held while a call that can act on the tab runs. Dialogs that call opens come to its connection.
     final class Claim {
         let connection: UUID
@@ -54,13 +64,14 @@ final class PageDialogQueue {
             self.queue = queue
         }
 
+        /// The call returned: dialogs no longer come to this connection.
         func end() {
             queue?.claims.removeAll { $0 === self }
         }
 
-        /// Ends the claim after `PageDialogQueue.claimLinger`. A navigation raises its beforeunload dialog a moment after
-        /// the call that started it has returned.
-        func endSoon() {
+        /// Ends the claim after `PageDialogQueue.claimLinger`. Only a navigation call uses this: Chromium asks about its
+        /// beforeunload dialog a moment after the call that started it has returned.
+        func endAfterNavigation() {
             queue?.linger(self)
         }
     }
@@ -110,8 +121,10 @@ final class PageDialogQueue {
     var clock: any Clock<Duration> = ContinuousClock()
     /// How long a connection has to answer before the user is shown the dialog.
     var timeout: Duration = .seconds(60)
-    /// How long a claim outlives its call.
+    /// How long a navigation call's claim outlives the call.
     var claimLinger: Duration = .seconds(2)
+    /// After the user's own click or key press in the page, a dialog is the user's for this long, whoever holds the tab.
+    var gestureWindow: Duration = .seconds(3)
     /// How long answering waits for the work the dialog was blocking.
     var settleCeiling: Duration = .seconds(5)
     /// The connection holding an authorized development lease on this tab, if any.
@@ -122,6 +135,11 @@ final class PageDialogQueue {
     private var arrivalWaiters: [UUID: () -> Void] = [:]
     private var parked: [UUID: Task<Void, Never>] = [:]
     private var agentStays = 0
+    private var lastGesture: ContinuousClock.Instant?
+
+    init() {
+        PageUserGesture.installIfNeeded()
+    }
 
     // MARK: Routing
 
@@ -144,16 +162,31 @@ final class PageDialogQueue {
         controller != nil
     }
 
+    /// The one connection acting on the tab now: it holds an authorized claim, or the development lease. With two
+    /// connections in play nobody can say whose action opened the dialog, so there is none and the user answers. So does
+    /// the user's own input: it ends every claim and keeps the lease from taking a dialog that follows it.
     private var controller: (connection: UUID, viaClaim: Bool)? {
-        if let claim = claims.first(where: { $0.isAuthorized() }) {
-            return (claim.connection, true)
-        }
-        return leaseHolder?().map { ($0, false) }
+        let claimants = Set(claims.filter { $0.isAuthorized() }.map(\.connection))
+        let lease = recentlyTouchedByUser ? nil : leaseHolder?()
+        let acting = claimants.union(lease.map { [$0] } ?? [])
+        guard acting.count == 1, let connection = acting.first else { return nil }
+        return (connection, claimants.contains(connection))
+    }
+
+    private var recentlyTouchedByUser: Bool {
+        lastGesture.map { ContinuousClock.now - $0 < gestureWindow } ?? false
+    }
+
+    /// The user clicked or typed in the page. Whatever dialog follows is theirs: every claim ends.
+    func userInteracted() {
+        claims.removeAll()
+        lastGesture = ContinuousClock.now
     }
 
     private func agentMayAnswer(_ request: Request, viaClaim: Bool) -> Bool {
         switch request.kind {
         case .prompt:
+            // A secret is never the connection's to answer. Any other prompt can be, but only with an authorization.
             return !PageDialogText.looksSecret(request.message)
         case .beforeUnload:
             // A lease alone never takes a beforeunload: only a call that is acting on the tab can have caused it.
@@ -240,16 +273,20 @@ final class PageDialogQueue {
         }
     }
 
-    /// The page's whole message, for checks that must see more than `Summary.message` keeps.
-    func fullMessage(of id: String) -> String? {
-        entries.first { $0.id == id }?.request.message
+    /// What the page asked, whole, for checks that must see more than `Summary` keeps.
+    func request(of id: String) -> Request? {
+        entries.first { $0.id == id }?.request
     }
 
-    /// Answers a dialog held for `connection`. False when it is gone, belongs to another connection, or is the user's.
-    func answer(_ id: String, connection: UUID, with answer: Answer) -> Bool {
+    /// Answers a dialog held for `connection`. False when it is gone, belongs to another connection, is the user's, or is a
+    /// prompt being accepted without an `authorization`.
+    func answer(_ id: String, connection: UUID, with answer: Answer, authorization: Authorization? = nil) -> Bool {
         guard let entry = entries.first(where: { $0.id == id && $0.connection == connection }),
             entry.state == .agent, entry.continuation != nil
         else { return false }
+        if entry.request.kind == .prompt, answer.accepted, authorization == nil {
+            return false
+        }
         var answer = answer
         if entry.request.kind == .prompt, answer.accepted, answer.text == nil {
             answer.text = entry.request.defaultText ?? ""
@@ -323,44 +360,5 @@ final class PageDialogQueue {
                 gate.finish(true)
             }
         }
-    }
-}
-
-/// How a page's dialog text reaches a connection.
-nonisolated enum PageDialogText {
-    static let maxScalars = 1_000
-
-    /// Control characters flattened, link queries, fragments and credentials removed, and the length bounded. The text is
-    /// still the page's: callers wrap it as untrusted.
-    static func forAgent(_ text: String) -> (text: String, truncated: Bool) {
-        let cleaned = text.replacing(/[A-Za-z][A-Za-z0-9+.\-]*:\/\/[^\s<>"'`]+/) { match in
-            let link = String(match.output)
-            let trimmed = link.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?)]}"))
-            return (PageDiagnostics.sanitize(url: trimmed) ?? "[link]") + link.dropFirst(trimmed.count)
-        }
-        var scalars = String.UnicodeScalarView()
-        for scalar in cleaned.unicodeScalars.prefix(maxScalars) {
-            scalars.append(scalar.properties.generalCategory == .control && scalar != "\n" ? " " : scalar)
-        }
-        return (String(scalars), cleaned.unicodeScalars.count > maxScalars)
-    }
-
-    static func origin(scheme: String, host: String, port: Int) -> String {
-        guard !scheme.isEmpty, !host.isEmpty else { return "" }
-        let name = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
-        return "\(scheme.lowercased())://\(name.lowercased())" + (port > 0 ? ":\(port)" : "")
-    }
-
-    static func origin(ofURL string: String) -> String {
-        guard let url = URL(string: string), let scheme = url.scheme, let host = url.host(percentEncoded: true) else { return "" }
-        return origin(scheme: scheme, host: host, port: url.port ?? 0)
-    }
-
-    /// A prompt that asks for a password, code, PIN or card number. Only the user answers it.
-    static func looksSecret(_ message: String) -> Bool {
-        let signals =
-            #"\b(pass(word|code|phrase)|pin|otp|one[- ]time|(verification|security|authentication|auth|confirmation|login|sign[- ]?in) code"#
-            + #"|cvv|cvc|card number|credit card|secret|token|ssn|social security|2fa|two[- ]factor)\b"#
-        return message.range(of: signals, options: [.regularExpression, .caseInsensitive]) != nil
     }
 }

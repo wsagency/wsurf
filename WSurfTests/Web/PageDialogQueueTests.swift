@@ -77,7 +77,7 @@ struct PageDialogQueueTests {
         #expect(summary.origin == "http://127.0.0.1:8080" && !summary.userMustAnswer)
         #expect(queue.pending(for: other).isEmpty, "another connection does not see it")
         #expect(!queue.answer(summary.id, connection: other, with: Answer(accepted: true)))
-        #expect(queue.answer(summary.id, connection: connection, with: Answer(accepted: true, text: "Alice")))
+        #expect(queue.answer(summary.id, connection: connection, with: Answer(accepted: true, text: "Alice"), authorization: .consent))
         #expect(await running.value == Answer(accepted: true, text: "Alice"))
         #expect(sheet.shown == 0, "the user never saw a sheet")
         #expect(!queue.hasOpenDialog)
@@ -90,7 +90,10 @@ struct PageDialogQueueTests {
         let sheet = Sheet()
         let prompt = held(queue, request(.prompt, "Name?", defaultText: "Anon"), sheet: sheet)
         #expect(await waitUntil { queue.pending(for: connection).count == 1 })
-        #expect(queue.answer(try #require(queue.pending(for: connection).first).id, connection: connection, with: Answer(accepted: true)))
+        #expect(
+            queue.answer(
+                try #require(queue.pending(for: connection).first).id, connection: connection, with: Answer(accepted: true),
+                authorization: .consent))
         #expect(await prompt.value == Answer(accepted: true, text: "Anon"))
         let confirm = held(queue, request(), sheet: sheet)
         #expect(await waitUntil { queue.pending(for: connection).count == 1 })
@@ -206,7 +209,7 @@ struct PageDialogQueueTests {
         let (queue, claim) = claimed()
         let clock = TestClock()
         queue.clock = clock
-        claim.endSoon()
+        claim.endAfterNavigation()
         #expect(queue.isIntercepting, "a navigation's beforeunload comes after the call that started it")
         #expect(await waitUntil { clock.pendingCount == 1 })
         clock.advance(by: .seconds(1))
@@ -214,6 +217,78 @@ struct PageDialogQueueTests {
         #expect(queue.isIntercepting)
         clock.advance(by: .seconds(2))
         #expect(await waitUntil { !queue.isIntercepting })
+    }
+
+    @Test func aClaimEndsWhenItsCallReturns() {
+        let (queue, claim) = claimed()
+        #expect(queue.isIntercepting)
+        claim.end()
+        #expect(!queue.isIntercepting, "a dialog after the call is nobody's but the user's")
+    }
+
+    @Test func twoConnectionsActingAtOnceLeaveTheDialogToTheUser() async {
+        let (queue, claim) = claimed()
+        defer { claim.end() }
+        let second = queue.claim(connection: other) { true }
+        defer { second.end() }
+        #expect(!queue.isIntercepting, "nobody can say whose action opened it")
+        let sheet = Sheet()
+        sheet.close()
+        _ = await queue.run(request()) { await sheet.show() }
+        #expect(sheet.shown == 1)
+        #expect(queue.pending(for: connection).isEmpty && queue.pending(for: other).isEmpty)
+    }
+
+    @Test func aClaimNeverTakesADialogThatAnotherConnectionsLeaseOpened() async {
+        let queue = PageDialogQueue()
+        queue.leaseHolder = { other }
+        let mine = queue.claim(connection: connection) { true }
+        defer { mine.end() }
+        #expect(!queue.isIntercepting)
+        let sheet = Sheet()
+        sheet.close()
+        _ = await queue.run(request(.alert, "From the other connection's page")) { await sheet.show() }
+        #expect(sheet.shown == 1)
+        #expect(queue.pending(for: connection).isEmpty)
+        mine.end()
+        #expect(queue.isIntercepting, "alone, the lease holder is the connection in control")
+    }
+
+    @Test func theUsersOwnInputEndsEveryClaimAndHoldsBackTheLease() async {
+        let queue = PageDialogQueue()
+        queue.leaseHolder = { connection }
+        let claim = queue.claim(connection: connection) { true }
+        defer { claim.end() }
+        #expect(queue.isIntercepting)
+        queue.userInteracted()
+        #expect(!queue.isIntercepting, "the claim is gone and the lease holds nothing right after the user's click")
+        let sheet = Sheet()
+        sheet.close()
+        _ = await queue.run(request()) { await sheet.show() }
+        #expect(sheet.shown == 1, "the dialog that follows the click is the user's, at once")
+        queue.gestureWindow = .zero
+        #expect(queue.isIntercepting, "once the window passes the lease holds the tab again")
+        let later = queue.claim(connection: connection) { true }
+        defer { later.end() }
+        queue.gestureWindow = .seconds(60)
+        #expect(queue.isIntercepting, "a call that starts after the click is acting on the tab")
+    }
+
+    @Test func aPromptReplyNeedsAnAuthorization() async throws {
+        let (queue, claim) = claimed()
+        defer { claim.end() }
+        let sheet = Sheet()
+        let running = held(queue, request(.prompt, "Your name?", defaultText: "Anon"), sheet: sheet)
+        #expect(await waitUntil { queue.pending(for: connection).count == 1 })
+        let id = try #require(queue.pending(for: connection).first).id
+        #expect(!queue.answer(id, connection: connection, with: Answer(accepted: true, text: "Alice")), "no authorization, no reply")
+        #expect(queue.pending(for: connection).count == 1, "the prompt is still waiting")
+        #expect(queue.answer(id, connection: connection, with: Answer(accepted: false)), "Cancel needs none")
+        #expect(await running.value == Answer(accepted: false))
+        let second = held(queue, request(.prompt, "Your name?"), sheet: sheet)
+        #expect(await waitUntil { queue.pending(for: connection).count == 1 })
+        #expect(queue.answer(try #require(queue.pending(for: connection).first).id, connection: connection, with: Answer(accepted: true, text: "Bob"), authorization: .developer))
+        #expect(await second.value == Answer(accepted: true, text: "Bob"))
     }
 
     // MARK: Falling back to the user
@@ -342,5 +417,70 @@ struct PageDialogQueueTests {
         #expect(PageDialogText.origin(scheme: "https", host: "::1", port: 8443) == "https://[::1]:8443")
         #expect(PageDialogText.origin(scheme: "https", host: "", port: 0) == "")
         #expect(PageDialogText.origin(ofURL: "not a url") == "")
+    }
+
+    // MARK: Hidden characters and look-alikes
+
+    @Test(arguments: [
+        "Enter your pa\u{200B}ssword", "Enter your pass\u{00AD}word", "Your P\u{2060}I\u{FEFF}N", "One-time pass\u{200D}code", "O\u{200C}TP",
+        "Ｅｎｔｅｒ ｙｏｕｒ ｐａｓｓｗｏｒｄ", "Your 𝐩𝐢𝐧", "Enter your pásswörd", "Enter your p\u{0301}assword",
+        "Enter your раssword", "Your pіn", "Εnter your ρassword", "Your 0tp", "Enter p4ssw0rd", "Verification\u{3164}code", "Your\u{0007}password", "Security code\u{FE0F}", "Enter your Ｐ\u{200B}IN",
+    ])
+    func hiddenCharactersAndLookAlikesDoNotHideASecretPrompt(message: String) {
+        #expect(PageDialogText.looksSecret(message), "\(message.unicodeScalars.map(\.value))")
+    }
+
+    @Test(arguments: ["What is your name?", "Shipping address?", "Compass direction?", "Pinterest board name"])
+    func ordinaryTextIsNotASecret(message: String) {
+        #expect(!PageDialogText.looksSecret(message))
+    }
+
+    @Test func aHiddenCharacterSecretPromptGoesToTheUserAtOnce() async throws {
+        let (queue, claim) = claimed()
+        defer { claim.end() }
+        let sheet = Sheet()
+        let running = held(queue, request(.prompt, "Enter your pa\u{200B}ss\u{00AD}word", defaultText: "hunter2"), sheet: sheet)
+        #expect(await waitUntil { sheet.shown == 1 })
+        let summary = try #require(queue.pending(for: connection).first)
+        #expect(summary.userMustAnswer && summary.defaultText == nil)
+        sheet.close(accepted: false)
+        _ = await running.value
+    }
+
+    @Test func normalizedTextIsLowerCaseAsciiWithoutInvisibleCharacters() {
+        #expect(PageDialogText.normalized("Ｐa\u{200B}ss\u{00AD}wörd\u{0007}") == "password")
+        #expect(PageDialogText.normalized("Line one\nLine two") == "line one\nline two", "separators stay")
+    }
+
+    // MARK: What a decision names
+
+    @Test(arguments: [
+        ("Type DELETE to confirm", nil, SensitiveAction.Category.deletion),
+        ("Enter the amount to transfer", nil, .transfer),
+        ("Confirm", "delete my account", .deletion),
+        ("Type the amount", "500", .transfer),
+        ("Pay now?", nil, .purchase),
+        ("Remove this card from your wallet?", nil, .deletion),
+        ("Type DEL\u{200B}ETE to confirm", nil, .deletion),
+        ("Type DЕLETE to confirm", nil, .deletion),
+        ("D3LETE everything", nil, .deletion),
+        ("Ｔransfer funds", nil, .transfer),
+    ] as [(String, String?, SensitiveAction.Category)])
+    func aDecisionNamesItsConsequenceInTheMessageOrTheReply(message: String, reply: String?, category: SensitiveAction.Category) {
+        #expect(PageDialogText.consequence(of: message, reply: reply) == category)
+    }
+
+    @Test(arguments: ["Your name?", "Search for", "Leave a note", "Choose a colour"])
+    func anOrdinaryDialogNamesNoConsequence(message: String) {
+        #expect(PageDialogText.consequence(of: message, reply: "Alice") == nil)
+    }
+
+    @Test func onlyThisMacCountsAsLoopback() {
+        for origin in ["http://localhost:3000", "http://127.0.0.1:8080", "https://localhost", "http://[::1]:5173", "HTTP://LOCALHOST"] {
+            #expect(PageDialogText.isLoopbackOrigin(origin), "\(origin)")
+        }
+        for origin in ["https://example.com", "http://localhost.evil.com", "http://127.0.0.2", "http://0.0.0.0:80", "ftp://localhost", "", "localhost", "http://user@localhost"] {
+            #expect(!PageDialogText.isLoopbackOrigin(origin), "\(origin)")
+        }
     }
 }
