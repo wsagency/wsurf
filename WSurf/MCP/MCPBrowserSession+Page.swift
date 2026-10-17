@@ -33,6 +33,11 @@ extension MCPBrowserSession {
             return refusal
         }
         let typesSecret = secretEntry != nil
+        if let refusal = fullInspectionRefusal(name, arguments: arguments, tab: tab) {
+            return refusal
+        }
+        // What only the Developer tier may read: a full inspection, a selector that reads attribute values.
+        let readsAsDeveloper = (name == "inspectElement" && arguments["full"]?.boolValue == true) || (name == "findElements" && permits(tab, capability: .developer))
         let usesRef = entry.usesRef || arguments["ref"] != nil || arguments["toRef"] != nil
         let observation = observations[tab.id]
         if usesRef {
@@ -47,7 +52,7 @@ extension MCPBrowserSession {
             validate: { [weak self, weak tab, weak view] in
                 guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
                 return self.mayProceed(tab, capability: capability)
-                    && (!typesSecret || self.mayProceed(tab, capability: .developer))
+                    && (!(typesSecret || readsAsDeveloper) || self.mayProceed(tab, capability: .developer))
                     && (capability != .control || self.onScreen(tab))
             }
         )
@@ -206,14 +211,14 @@ extension MCPBrowserSession {
 
     /// `pageAction`, and after a secret entry what must follow it: the fields remembered, and autofill and the vault kept away.
     func performAction(name: String, arguments: [String: Value], tab: BrowserTab, view: BrowserPage, secret: SecretEntry?) async -> String {
-        let output = await pageAction(name: name, arguments: arguments, view: view, secret: secret)
+        let output = await pageAction(name: name, arguments: arguments, view: view, secret: secret, developer: permits(tab, capability: .developer))
         if let secret {
             finishSecretEntry(secret, tab: tab, view: view)
         }
         return output
     }
 
-    private func pageAction(name: String, arguments: [String: Value], view: BrowserPage, secret: SecretEntry?) async -> String {
+    private func pageAction(name: String, arguments: [String: Value], view: BrowserPage, secret: SecretEntry?, developer: Bool) async -> String {
         let ref = arguments["ref"]?.intValue ?? 0
         switch name {
         case "readPage":
@@ -258,9 +263,11 @@ extension MCPBrowserSession {
         case "findElements":
             return await PageDriver.findElements(
                 selector: arguments["selector"]?.stringValue ?? "", offset: arguments["offset"]?.intValue ?? 0,
-                limit: arguments["limit"]?.intValue ?? MCPDevelopmentTools.defaultLimit, in: view)
+                limit: arguments["limit"]?.intValue ?? MCPDevelopmentTools.defaultLimit, unrestricted: developer, in: view)
         case "inspectElement":
-            return await PageDriver.inspectElement(ref: ref, in: view)
+            return await PageDriver.inspectElement(
+                ref: ref, full: developer && arguments["full"]?.boolValue == true,
+                properties: Self.computedPropertyNames(arguments["properties"]?.stringValue) ?? [], in: view)
         case "readAccessibility":
             return await PageDriver.readAccessibility(offset: arguments["offset"]?.intValue ?? 0, scope: arguments["scope"]?.stringValue ?? "", in: view)
         case "readPerformance":
@@ -270,5 +277,34 @@ extension MCPBrowserSession {
         default:
             return "Unknown page action."
         }
+    }
+
+    /// The refusal for a full inspection outside the Developer tier, or for a malformed `properties`; nil when the call may go on.
+    private func fullInspectionRefusal(_ name: String, arguments: [String: Value], tab: BrowserTab) -> CallTool.Result? {
+        guard name == "inspectElement" else { return nil }
+        let full = arguments["full"]?.boolValue == true
+        if full, !permits(tab, capability: .developer) {
+            return failure("A full inspection needs Developer access: a paired app, a developer site, and a window of the Developer profile. Nothing was read.")
+        }
+        if arguments["properties"] != nil {
+            guard full else { return failure("properties belongs to a full inspection. Set full to true.") }
+            guard Self.computedPropertyNames(arguments["properties"]?.stringValue) != nil else {
+                return failure("properties is up to \(Self.maximumComputedProperties) comma-separated CSS property names of letters, digits and dashes.")
+            }
+        }
+        return nil
+    }
+
+    nonisolated static let maximumComputedProperties = 32
+
+    /// The computed property names in a comma-separated list, or nil when the list is not a valid one. Empty text names none, which
+    /// means all.
+    nonisolated static func computedPropertyNames(_ list: String?) -> [String]? {
+        guard let list, !list.allSatisfy(\.isWhitespace) else { return [] }
+        let names = list.split(separator: ",", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+        guard names.count <= maximumComputedProperties,
+            names.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 64 && $0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") } })
+        else { return nil }
+        return names
     }
 }

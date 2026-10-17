@@ -28,7 +28,8 @@ nonisolated extension MCPToolCatalog {
             description:
                 """
                 Find elements by CSS selector in the document, same-origin frames and open shadow roots; \
-                cross-origin frames and closed shadow roots are reported as skipped. Needs development access. \
+                cross-origin frames and closed shadow roots are reported as skipped. Needs development access; the Developer tier \
+                may also use selectors that read attribute values. \
                 Returns an observationID and refs usable only with inspectElement; use readPage for refs you can act on.
                 """,
             parameters: [
@@ -44,10 +45,19 @@ nonisolated extension MCPToolCatalog {
                 """
                 Inspect one found or read element: bounded attributes, geometry, box model, allowlisted computed styles and ancestors. \
                 Never returns field values or raw HTML. Needs development access. \
+                With full true (Developer tier) it also returns all attributes, computed properties (all, or those named in properties) \
+                and an outerHTML excerpt of up to 8 KiB with field values blanked; what password, code and card fields hold is hidden \
+                wherever it appears. \
                 Inspection refs are not action targets: click, type, hover and the other actions accept only refs from readPage; \
                 screenshotPage can capture them with development access.
                 """,
-            parameters: [tab, snapshot, ref], scope: .development, readOnly: true, usesRef: true, title: "Inspect Element"),
+            parameters: [
+                tab, snapshot, ref,
+                Parameter(name: "full", type: "boolean", description: "Developer tier: all attributes, computed properties and an outerHTML excerpt.", required: false),
+                Parameter(
+                    name: "properties", type: "string",
+                    description: "With full: comma-separated computed property names, at most 32 (default: all).", required: false, maxLength: 1_024),
+            ], scope: .development, readOnly: true, usesRef: true, title: "Inspect Element"),
         Entry(
             name: "setViewport",
             description:

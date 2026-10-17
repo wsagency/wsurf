@@ -192,7 +192,7 @@ final class MCPBrowserSession: Identifiable {
         else { return failure("This tab is not shared with this connection.") }
         guard let capability = entry.scope else { return failure("This tool does not act on a tab.") }
         guard mayProceed(tab, capability: capability) else {
-            return failure("This action is blocked by the connection’s access or the website’s Assistant Access setting.")
+            return failure(capability == .developer ? Self.developerRefusal : "This action is blocked by the connection’s access or the website’s Assistant Access setting.")
         }
         if name == "switchTab" { return switchTab(tab) }
         if name == "closeTab" { return closeTab(tab) }
@@ -221,6 +221,9 @@ final class MCPBrowserSession: Identifiable {
         if name == "goBack" { rotateDiagnosticsKey(on: tab) }
         if Self.developmentCalls.contains(name) {
             return await interrupting(tab) { await self.developmentCall(name: name, arguments: arguments, tab: tab) } ?? interruptedResult(tab)
+        }
+        if Self.scriptingCalls.contains(name) {
+            return await interrupting(tab) { await self.scriptingCall(name: name, arguments: arguments, tab: tab) } ?? interruptedResult(tab)
         }
         return await AgentActionConsent.$developerApproval.withValue(developerApproval(for: tab)) {
             await usePage(entry, arguments: arguments, tab: tab, capability: capability)

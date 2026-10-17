@@ -46,7 +46,9 @@ extension MCPBrowserSession {
         }
         // The host says where the connection went; the path and query can carry data and are not kept.
         let host = ["navigate", "newTab"].contains(tool) ? arguments["url"]?.stringValue.flatMap { URL(string: $0)?.host() } : nil
-        return LogSubject(tab: tab, target: arguments["ref"]?.intValue.map { String(localized: "element \($0)") }, detail: host)
+        return LogSubject(
+            tab: tab, target: arguments["ref"]?.intValue.map { String(localized: "element \($0)") },
+            detail: host ?? scriptingDetail(for: tool, arguments: arguments))
     }
 
     func logCall(_ tool: String, subject: LogSubject, result: CallTool.Result, since start: ContinuousClock.Instant) {
