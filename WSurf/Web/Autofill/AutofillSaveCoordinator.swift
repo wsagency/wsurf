@@ -17,9 +17,7 @@ final class AutofillSaveSession: NSObject {
         let isUpdate: Bool
         let fingerprint: String
         let documentID: String
-        /// Password offers carry the store they were made for; a switch of provider retires them.
-        var provider: PasswordProvider = .legacy
-        /// Manager offers: what saving does, to which exact account, against which unlocked vault state.
+        /// Password offers: what saving does, to which exact account, against which unlocked vault state.
         var plan: CredentialSavePlan?
         var managerEpoch: UInt64?
         var managerRevision: UInt64?
@@ -77,11 +75,7 @@ final class AutofillSaveSession: NSObject {
             isPopoverPresented = false
             return
         }
-        let provider = context.settings.passwordProvider
-        offers.removeAll {
-            !AutofillSaveCoordinator.shared.isEnabled($0.candidate.kind, context: context)
-                || ($0.candidate.kind == .password && $0.provider != provider)
-        }
+        offers.removeAll { !AutofillSaveCoordinator.shared.isEnabled($0.candidate.kind, context: context) }
         if offers.isEmpty {
             isPopoverPresented = false
         }
@@ -173,8 +167,7 @@ final class AutofillSaveSession: NSObject {
 
     /// The one manager that owns `epoch`: epochs are process-unique, so another vault's epoch never selects it.
     private func manager(epoch: UInt64?) -> CredentialManager? {
-        guard let epoch, let context, !context.profile.isPrivate, context.settings.passwordProvider == .credentialManager,
-              page?.context === context else { return nil }
+        guard let epoch, let context, !context.profile.isPrivate, page?.context === context else { return nil }
         return CredentialManager.unlockedManagers(for: context.profile).first { $0.authorizationEpoch == epoch }
     }
 
@@ -185,7 +178,7 @@ final class AutofillSaveSession: NSObject {
     private func managedPlan(
         for login: SavedPassword, origin: String, documentID: String, revision: Int, target: CredentialManager? = nil
     ) async -> ManagedSave? {
-        guard let context, !context.profile.isPrivate, context.settings.passwordProvider == .credentialManager,
+        guard let context, !context.profile.isPrivate,
               let page, page.context === context, let origin = managerOrigin(origin),
               documentID.isEmpty ? true : await liveness(page, documentID, origin)
         else { return nil }
@@ -221,10 +214,9 @@ final class AutofillSaveSession: NSObject {
         let fingerprint = Data(HMAC<SHA256>.authenticationCode(for: bytes, using: fingerprintKey)).base64EncodedString()
         guard dismissed[candidate.kind]?.contains(fingerprint) != true, !offers.contains(where: { $0.fingerprint == fingerprint }) else { return }
         let revision = revision, profileID = context.profile.id
-        let provider: PasswordProvider = candidate.kind == .password ? context.settings.passwordProvider : .legacy
         var managed: ManagedSave?
         let decision: AutofillSaveIndex.Decision
-        if provider == .credentialManager, case .password(let login) = candidate {
+        if case .password(let login) = candidate {
             guard let found = await managedPlan(for: login, origin: origin, documentID: documentID, revision: revision, target: target) else { return }
             managed = found
             decision = found.plan == .create ? .new : .update
@@ -233,7 +225,6 @@ final class AutofillSaveSession: NSObject {
         }
         guard revision == self.revision, self.context === context, let page, page.context === context, !context.profile.isPrivate,
               page.url.flatMap(SavedPassword.origin(for:)) != nil,
-              candidate.kind != .password || context.settings.passwordProvider == provider,
               documentID.isEmpty ? true : await liveness(page, documentID, origin),
               AutofillSaveCoordinator.shared.isEnabled(candidate.kind, context: context),
               dismissed[candidate.kind]?.contains(fingerprint) != true, !offers.contains(where: { $0.fingerprint == fingerprint }),
@@ -243,8 +234,7 @@ final class AutofillSaveSession: NSObject {
         offers.removeAll { $0.candidate.kind == candidate.kind }
         offers.append(Offer(
             candidate: candidate, origin: origin, isUpdate: decision == .update, fingerprint: fingerprint, documentID: documentID,
-            provider: provider, plan: managed?.plan, managerEpoch: managed?.epoch, managerRevision: managed?.revision,
-            loginURL: managed?.loginURL
+            plan: managed?.plan, managerEpoch: managed?.epoch, managerRevision: managed?.revision, loginURL: managed?.loginURL
         ))
         if current?.id != previous {
             isPopoverPresented = true
@@ -267,7 +257,7 @@ final class AutofillSaveSession: NSObject {
         guard !isBusy, current?.id == offer.id, let context else { return }
         isBusy = true; let profileID = context.profile.id; defer { isBusy = false }
         do {
-            if offer.provider == .credentialManager {
+            if offer.candidate.kind == .password {
                 try await blockManaged(offer)
             } else {
                 try await Task.detached { try AutofillSaveIndex.block(kind: offer.candidate.kind, origin: offer.origin, profileID: profileID) }.value
@@ -316,8 +306,7 @@ final class AutofillSaveSession: NSObject {
         // user locked (or whose profile was left) while choosing is never unlocked by that old answer.
         func authorized(_ chosen: CredentialManager) -> Bool {
             generation == accessGeneration && self.context === context && page.context === context && page.window === window
-                && current?.id == offer.id && !context.profile.isPrivate && context.settings.passwordProvider == .credentialManager
-                && chosen.profileID == context.profile.id
+                && current?.id == offer.id && !context.profile.isPrivate && chosen.profileID == context.profile.id
         }
         guard let chosen = selected, authorized(chosen),
               await liveness(page, offer.documentID, offer.origin),
@@ -361,11 +350,9 @@ final class AutofillSaveSession: NSObject {
     func save(_ offer: Offer, replacement: AutofillSaveCandidate? = nil) async {
         guard !isBusy, current?.id == offer.id, let context,
               AutofillSaveCoordinator.shared.isEnabled(offer.candidate.kind, context: context),
-              offer.candidate.kind != .password || offer.provider == context.settings.passwordProvider,
               let page, page.context === context, page.window != nil,
               await liveness(page, offer.documentID, offer.origin),
-              self.context === context, current?.id == offer.id,
-              offer.candidate.kind != .password || offer.provider == context.settings.passwordProvider else { return }
+              self.context === context, current?.id == offer.id else { return }
         let candidate = replacement ?? offer.candidate
         guard candidate.kind == offer.candidate.kind else { return }
         if case .password(let password) = candidate, password.origin != offer.origin {
@@ -375,18 +362,14 @@ final class AutofillSaveSession: NSObject {
         do {
             switch candidate {
             case .password(let login):
-                if offer.provider == .credentialManager {
-                    let manager = try await target(for: offer, username: login.username)
-                    if try await saveManaged(login, offer: offer, manager: manager) == .needsReview {
-                        // The save would land somewhere other than what this offer showed: nothing was written. Show the
-                        // new target through the normal offer so the user confirms that exact account.
-                        guard self.context === context, current?.id == offer.id else { return }
-                        dismiss(offer, rememberingChoice: false)
-                        await self.offer(candidate, origin: offer.origin, documentID: offer.documentID, target: manager)
-                        return
-                    }
-                } else {
-                    _ = try await AutofillVaults.passwords(for: profileID).update { SavedPassword.merging(login, into: $0) }
+                let manager = try await target(for: offer, username: login.username)
+                if try await saveManaged(login, offer: offer, manager: manager) == .needsReview {
+                    // The save would land somewhere other than what this offer showed: nothing was written. Show the
+                    // new target through the normal offer so the user confirms that exact account.
+                    guard self.context === context, current?.id == offer.id else { return }
+                    dismiss(offer, rememberingChoice: false)
+                    await self.offer(candidate, origin: offer.origin, documentID: offer.documentID, target: manager)
+                    return
                 }
             case .card(let card):
                 _ = try await AutofillVaults.cards(for: profileID).importCards([card], preservingMissingSecurityCodes: replacement == nil)
@@ -511,14 +494,7 @@ final class AutofillSaveCoordinator {
 
     func refreshPolicy() {
         AutofillSuggestions.shared.reset()
-        refreshSessions { _ in true }
-    }
-    /// A profile switched password provider: only that profile's tabs drop provider-bound offers and account picks.
-    func providerChanged(in context: BrowserProfileContext) {
-        refreshSessions { $0 === context }
-    }
-    private func refreshSessions(where matches: (BrowserProfileContext) -> Bool) {
-        for page in sessions.keyEnumerator().allObjects.compactMap({ $0 as? BrowserPage }) where matches(page.context) {
+        for page in sessions.keyEnumerator().allObjects.compactMap({ $0 as? BrowserPage }) {
             sessions.object(forKey: page)?.refreshPolicy()
             for frame in frames[ObjectIdentifier(page)].map({ Array($0.values.values) }) ?? [] {
                 applyPolicy(in: page, frame: frame)

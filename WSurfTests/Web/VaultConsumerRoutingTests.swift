@@ -27,7 +27,7 @@ struct VaultConsumerRoutingTests {
         .password(try SavedPassword(website: Self.origin, username: username, password: "new"))
     }
 
-    /// A session attached to a page, shown in a window, of a credential-manager context on a profile with `vaults`. The page's
+    /// A session attached to a page, shown in a window, of a context on a profile with `vaults`. The page's
     /// document proof is replaced (no document is loaded); everything else is real.
     private func withSession(
         passkeys: VaultPasskeys = VaultPasskeys(),
@@ -36,7 +36,6 @@ struct VaultConsumerRoutingTests {
     ) async throws {
         try await VaultManagerFixture.with(passkeys: passkeys, vaults: vaults) { profile, _, vaults in
             let context = BrowserProfileContext(profile: profile)
-            context.settings.passwordProvider = .credentialManager
             let configuration = WebViewPool.makeConfiguration()
             configuration.websiteDataStore = .nonPersistent()
             let page = BrowserPage(webKit: WKWebView(frame: .zero, configuration: configuration), context: context)

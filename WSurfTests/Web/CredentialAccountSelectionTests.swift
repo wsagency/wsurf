@@ -542,48 +542,4 @@ struct CredentialAccountSelectionTests {
         #expect(CredentialAccountSelection.totpCode(for: associated, origin: Self.origin, at: Date(timeIntervalSince1970: 59)) == "94287082")
         #expect(CredentialAccountSelection.totpCode(for: associated, origin: Self.origin, at: Date(timeIntervalSince1970: 1_111_111_109)) == "07081804")
     }
-
-    // MARK: - Provider switch
-
-    /// A profile's provider switch retires that profile's account picks and offers, and nothing of any other profile.
-    @Test func aProviderSwitchForgetsOnlyThatProfilesPick() async {
-        let owned = Owned()
-        let a = owned.context(), b = owned.context()
-        let pageA = owned.page(in: a), pageB = owned.page(in: b)
-        let sessionA = AutofillSaveSession(), sessionB = AutofillSaveSession()
-        AutofillSaveCoordinator.shared.install(in: pageA, session: sessionA)
-        AutofillSaveCoordinator.shared.install(in: pageB, session: sessionB)
-        let id = UUID(), t0 = ContinuousClock.now, ada = "ada@example.test"
-        sessionA.selectAccount(id, username: ada, in: pageA, origin: Self.origin, now: t0, epoch: 7)
-        sessionB.selectAccount(id, username: ada, in: pageB, origin: Self.origin, now: t0, epoch: 7)
-
-        a.settings.passwordProvider = .credentialManager
-
-        #expect(sessionA.selectedAccount(in: pageA, origin: Self.origin, enteredUsername: ada, now: t0, epoch: 7) == nil)
-        #expect(sessionB.selectedAccount(in: pageB, origin: Self.origin, enteredUsername: ada, now: t0, epoch: 7) == id)
-        #expect(b.settings.passwordProvider == .legacy)
-        await owned.release()
-    }
-
-    /// Leaving the credential manager locks that profile's vault before anything can suspend; entering it, or switching
-    /// another profile, leaves an unlocked vault alone.
-    @Test func leavingTheManagerLocksOnlyThatProfilesVault() async throws {
-        let vault = try await Vault(), other = try await Vault()
-        let context = BrowserProfileContext(profile: vault.profile), otherContext = BrowserProfileContext(profile: other.profile)
-        do {
-            try await vault.seed([account("ada")]); try await other.seed([account("grace")])
-            #expect(vault.manager.isUnlocked && other.manager.isUnlocked)
-
-            context.settings.passwordProvider = .credentialManager
-            #expect(vault.manager.isUnlocked, "entering the manager is not a reason to lock it")
-            otherContext.settings.passwordProvider = .credentialManager
-            context.settings.passwordProvider = .legacy
-            #expect(!vault.manager.isUnlocked)
-            #expect(other.manager.isUnlocked, "another profile's vault must stay unlocked")
-        } catch {
-            await vault.cleanup(); await other.cleanup()
-            throw error
-        }
-        await vault.cleanup(); await other.cleanup()
-    }
 }

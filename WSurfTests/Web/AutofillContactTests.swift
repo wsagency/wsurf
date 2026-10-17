@@ -101,6 +101,26 @@ struct AutofillContactTests {
         #expect(!settings.fillsContacts)
     }
 
+    @Test func passwordSettingsOfTheRemovedProviderAreDroppedOnLoad() throws {
+        let names = (0..<2).map { "PasswordProviderTests.\(UUID().uuidString).\($0)" }
+        defer { names.forEach { UserDefaults.standard.removePersistentDomain(forName: $0) } }
+        let app = try #require(UserDefaults(suiteName: names[0]))
+        let profile = try #require(UserDefaults(suiteName: names[1]))
+        profile.set("credentialManager", forKey: "autofill.passwordProvider")
+        profile.set("some.extension", forKey: "autofill.passwordExtension")
+        profile.set(false, forKey: "autofill.passwords")
+        app.set("legacy", forKey: "autofill.passwordProvider")
+
+        let settings = BrowserSettings(defaults: app, sessionDefaults: profile)
+
+        // The two removed values are gone from the profile; the setting that stays is untouched.
+        #expect(profile.object(forKey: "autofill.passwordProvider") == nil)
+        #expect(profile.object(forKey: "autofill.passwordExtension") == nil)
+        #expect(!settings.fillsPasswords && profile.object(forKey: "autofill.passwords") as? Bool == false)
+        // Another profile's values are not this profile's to remove.
+        #expect(app.string(forKey: "autofill.passwordProvider") == "legacy")
+    }
+
     @Test func allAutofillControlsAreSearchableOnOnePage() {
         for id in ["autofill.contacts", "autofill.cards", "autofill.passwords", "autofill.applePay"] {
             #expect(SettingsIndex.all.first { $0.id == id }?.category == .autofill)

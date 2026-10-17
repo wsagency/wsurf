@@ -943,9 +943,6 @@
     "Add or change the selected provider’s API key." : {
 
     },
-    "Add Password" : {
-
-    },
     "Add Payment Card" : {
 
     },
@@ -2245,9 +2242,6 @@
     "Enter a unique server name, an HTTPS MCP URL or connector ID, and valid tool names." : {
 
     },
-    "Enter a valid HTTPS website and a password." : {
-
-    },
     "Enter a valid payment card number." : {
 
     },
@@ -2914,9 +2908,6 @@
     "WSurf encrypts saved contacts. Imported copies don’t sync." : {
 
     },
-    "WSurf encrypts saved passwords. macOS manages passkeys." : {
-
-    },
     "WSurf is using %@ instead." : {
       "comment" : "Settings → Assistant. %@ is the provider name of the stand-in, e.g. \"Apple Intelligence\". Caption shown when the chosen provider is not ready and another one serves replies. WSurf is the application name and is never translated."
     },
@@ -2977,9 +2968,6 @@
     "Location" : {
       "comment" : "Name of the location permission: a row on the Websites settings page and a label in the permission badge in the toolbar. Means the Mac's geographic location."
     },
-    "Login details" : {
-
-    },
     "Long" : {
 
     },
@@ -3033,9 +3021,6 @@
     },
     "Manage your other extensions" : {
       "comment" : "One line in the bulleted list of what an extension will be able to do, in the install confirmation sheet. It completes “It will also be able to:”."
-    },
-    "Managed by %@" : {
-
     },
     "Manually" : {
 
@@ -3357,9 +3342,6 @@
     "No pages visited yet." : {
       "comment" : "Empty state in the History view when there is no history at all. Full sentence with a period, sentence case."
     },
-    "No passwords match your search." : {
-
-    },
     "No preference — the assistant chose" : {
 
     },
@@ -3382,9 +3364,6 @@
 
     },
     "No saved cards" : {
-
-    },
-    "No saved passwords" : {
 
     },
     "No saved permissions" : {
@@ -3693,16 +3672,7 @@
     "Password" : {
       "comment" : "Placeholder text inside the password field of the dialog a website shows when it asks for HTTP authentication."
     },
-    "Password filling" : {
-
-    },
-    "Password provider" : {
-
-    },
     "Passwords" : {
-
-    },
-    "Passwords are locked" : {
 
     },
     "Paste" : {
@@ -4128,12 +4098,6 @@
     "Remove key" : {
 
     },
-    "Remove Password" : {
-
-    },
-    "Remove Password?" : {
-
-    },
     "Remove Task" : {
       "comment" : "Tooltip on the close button of a card in Recent Tasks on the start page; it forgets that one turn the agent ran. Title Case."
     },
@@ -4148,9 +4112,6 @@
     },
     "Remove the data stored by every website?" : {
       "comment" : "Title of the confirmation for clearing the stored data of every website in the list."
-    },
-    "Remove the saved login for %@?" : {
-
     },
     "Remove This Page" : {
       "comment" : "Context-menu command on one page of several shown at once. That page leaves the arrangement and goes back to being an ordinary sidebar row; the others keep the window. Title Case."
@@ -4343,9 +4304,6 @@
     "Save a card to use at checkout." : {
 
     },
-    "Save a login to see it here." : {
-
-    },
     "Save address?" : {
 
     },
@@ -4368,9 +4326,6 @@
 
     },
     "Save and fill payment cards." : {
-
-    },
-    "Save and fill website logins." : {
 
     },
     "Save Card" : {
@@ -4424,9 +4379,6 @@
     "Saved in your Keychain." : {
       "comment" : "Caption under the API key row when a key is stored but cannot be shown in masked form. The implied subject is the key. Keychain is Apple’s password store — use Apple’s own name for it."
     },
-    "Saved passwords" : {
-
-    },
     "Saved passwords are unavailable in Private Browsing." : {
 
     },
@@ -4468,9 +4420,6 @@
     },
     "Search or ask" : {
       "comment" : "Accessibility label for the combined search and assistant field on the start page. Keep it short and name both functions."
-    },
-    "Search passwords" : {
-
     },
     "Search settings" : {
       "comment" : "Placeholder inside the search field at the top of the Settings sidebar. Search is the verb and settings its object, meaning the settings of this app. Narrow field, so keep it short."
@@ -5500,12 +5449,6 @@
     "Unlock Cards" : {
 
     },
-    "Unlock Passwords" : {
-
-    },
-    "Unlock to view and edit passwords." : {
-
-    },
     "Unmute" : {
       "comment" : "Tooltip on the same speaker button in the media dock once sound is off; it lets the sound back. Verb, one word; pairs with “Mute”."
     },
@@ -5861,9 +5804,6 @@
 
     },
     "You’re talking to AI. " : {
-
-    },
-    "Your extension handles password autofill." : {
 
     },
     "Your microphone pauses while WSurf speaks." : {

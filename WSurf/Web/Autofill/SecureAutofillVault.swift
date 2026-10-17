@@ -232,7 +232,7 @@ enum AutofillVaults {
     }
 
     private static var contacts: [UUID: SecureAutofillVault<AutofillContact>] = [:]
-    private static var passwords: [UUID: SecureAutofillVault<SavedPassword>] = [:]
+    private static var legacyPasswords: [UUID: SecureAutofillVault<SavedPassword>] = [:]
 
     static func contacts(for id: UUID) -> SecureAutofillVault<AutofillContact> {
         if let vault = contacts[id] {
@@ -247,15 +247,17 @@ enum AutofillVaults {
         return vault
     }
 
-    static func passwords(for id: UUID) -> SecureAutofillVault<SavedPassword> {
-        if let vault = passwords[id] {
+    /// The passwords saved before Credential Manager. Read and erased only (by `LegacyPasswordMigration` and by erasing a
+    /// profile): nothing writes this list any more.
+    static func legacyPasswords(for id: UUID) -> SecureAutofillVault<SavedPassword> {
+        if let vault = legacyPasswords[id] {
             return vault
         }
         let vault = SecureAutofillVault<SavedPassword>(
             profileID: id, kind: "passwords", reason: String(localized: "Access your saved passwords in WSurf."),
             saveKind: .password, saveCandidates: { $0.map(AutofillSaveCandidate.password) }
         )
-        passwords[id] = vault
+        legacyPasswords[id] = vault
         return vault
     }
 }

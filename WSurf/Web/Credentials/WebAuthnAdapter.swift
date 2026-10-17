@@ -31,8 +31,6 @@ enum WebAuthnAdapter {
         weak var page: BrowserPage?
         let frame: BrowserFrame
         let profileID: UUID
-        /// The profile context that owned the page when the request arrived; a provider change reaches only this one.
-        let contextID: UUID
         /// The page's document generation when the relay's message arrived: the request belongs to exactly that document.
         let generation: UInt64
         let parsed: WebAuthnWire.Parsed
@@ -48,7 +46,6 @@ enum WebAuthnAdapter {
             self.page = page
             self.frame = frame
             profileID = page.profileID
-            contextID = page.context.contextID
             generation = page.credentialGeneration
             self.parsed = parsed
         }
@@ -64,10 +61,8 @@ enum WebAuthnAdapter {
             injectionTime: .atDocumentStart, forMainFrameOnly: false
         )
         // Document-start order is the contract: the frame registry, then the relay, then the route script, then the page
-        // script. `replaceScript` swaps the route script in its own position, so that order is preserved.
-        let route = routeScript(for: page)
-        routes.setObject(Route(source: route, mode: routeMode(for: page)), forKey: page)
-        page.installScript(route, in: world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        // script. A page's profile never changes, so neither does its route, and the script is installed once.
+        page.installScript(routeScript(for: page), in: world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.installScript(WebAuthnScript.page, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.addScriptMessageHandler(name: WebAuthnScript.handlerName, in: world) { message in
             handle(message)
@@ -106,72 +101,15 @@ enum WebAuthnAdapter {
         }
     }
 
-    /// This context's password provider changed: none of its pending ceremonies may continue under the other authority, and
-    /// every live document of its pages learns the provider that now owns its passkey calls. Other contexts are untouched.
-    static func providerChanged(in context: BrowserProfileContext) {
-        routeSequence += 1
-        for entry in Array(entries.values) where entry.contextID == context.contextID {
-            refuse(entry)
-        }
-        for page in installedPages.allObjects where !page.isClosed && page.context === context {
-            reconcileRoute(of: page)
-        }
-    }
-
-    /// The provider announcement the page script obeys synchronously. Native decides it; the page can forge the hint but
-    /// native refuses any manager request it does not itself serve, and never passes a manager request to the engine.
-    private static var routeSequence = 0
+    /// The route announcement the page script obeys synchronously. Native decides it; the page can forge the hint, but native
+    /// refuses any request it does not itself serve and never passes one that it serves to the engine. A page is private or
+    /// it is not for its whole life, so the announcement never changes and its sequence is constant.
+    private static let routeSequence = 0
 
     private static func routeMode(for page: BrowserPage) -> String { isHandled(by: page) ? "manager" : "legacy" }
 
     private static func routeScript(for page: BrowserPage) -> String {
         WebAuthnScript.route(routeMode(for: page), sequence: routeSequence)
-    }
-
-    /// The one route script this page owns: its installed source and mode, replaced in place (never appended) when the mode
-    /// changes. Changes made while a replacement is running are folded into the next pass of the same loop, so when every
-    /// replacement succeeds the final state matches the latest provider. A failed replacement ends the loop with the old
-    /// source and mode still recorded (see `reconcileRoute`).
-    @MainActor
-    private final class Route {
-        var source: String
-        var mode: String
-        var dirty = false
-        var running = false
-        init(source: String, mode: String) {
-            self.source = source
-            self.mode = mode
-        }
-    }
-
-    private static let routes = NSMapTable<BrowserPage, Route>.weakToStrongObjects()
-
-    /// Documents created from now on get the replaced script at document start; documents already live are told directly
-    /// after it landed (a cached document asks for itself when it is restored, see `handle`).
-    private static func reconcileRoute(of page: BrowserPage) {
-        guard let route = routes.object(forKey: page) else { return }
-        route.dirty = true
-        guard !route.running else { return }
-        route.running = true
-        Task {
-            while route.dirty, !page.isClosed {
-                route.dirty = false
-                let mode = routeMode(for: page)
-                guard mode != route.mode else { continue }
-                let source = routeScript(for: page)
-                // A failed replacement (page closed, old script no longer installed, a DevTools command refused) keeps the
-                // recorded source and mode as they were, and nothing is pushed to live documents: the page stays on its
-                // previous announcement until the next provider change tries again. Not retried here.
-                do { try await page.replaceScript(route.source, with: source, in: world) } catch { break }
-                route.source = source
-                route.mode = mode
-                _ = try? await page.callAsyncJavaScript(source, in: nil, contentWorld: world)
-                for target in await PageFrameRegistry.shared.targets(in: page) {
-                    _ = try? await page.callAsyncJavaScript(source, in: target.frame, contentWorld: world)
-                }
-            }
-            route.running = false
-        }
     }
 
     private static func refuse(_ entry: Entry) {
@@ -215,7 +153,7 @@ enum WebAuthnAdapter {
               let document = body["document"] as? String, document.count <= 64,
               let id = body["id"] as? String, (1...80).contains(id.count) else { return }
         // An empty document is the relay saying its native handshake gave this document no identity. Never a frame to
-        // authorize against: the legacy provider still passes the call through, the encrypted one refuses it.
+        // authorize against: the engine's own WebAuthn (private pages) still passes the call through, the vault refuses it.
         guard !document.isEmpty || action == "request" || action == "route" else { return }
         let key = Key(page: ObjectIdentifier(page), document: document, request: id)
         switch action {
@@ -228,14 +166,14 @@ enum WebAuthnAdapter {
                 start(entry)
             }
         case "route":
-            // A document restored from the back/forward cache asks once for the provider that owns it now. Only the answer
+            // A document restored from the back/forward cache asks once for the route that owns it. Only the answer
             // (`legacy` or `manager`) goes back, to the frame that asked; it is a hint, never an authority.
             Task { _ = try? await page.callAsyncJavaScript(routeScript(for: page), in: message.frameInfo, contentWorld: world) }
         case "request":
-            // Only the encrypted provider needs a verified document. WebKit: the request is served for the main frame whose
+            // Only the vault needs a verified document. WebKit: the request is served for the main frame whose
             // native-issued nonce it carries; a message from an older or replaced document, a subframe or an unknown frame
             // never reaches a prompt and gets one error aimed only at the document that asked. Chromium's frame comes from
-            // its CDP-attributed message and is verified by the context. The legacy provider passes every call through.
+            // its CDP-attributed message and is verified by the context. A private page passes every call through.
             var frame = message.frameInfo
             if document.isEmpty {
                 guard !isHandled(by: page) else {
@@ -271,16 +209,16 @@ enum WebAuthnAdapter {
         }
     }
 
-    /// Whether the encrypted provider handles passkeys for this page. When it does not, the page script hands the call to
-    /// the engine, so selecting the legacy provider changes nothing.
+    /// Whether the vault handles passkeys for this page. A private page has no vault, so the page script hands its calls to
+    /// the engine's own WebAuthn.
     private static func isHandled(by page: BrowserPage) -> Bool {
-        page.context.settings.passwordProvider == .credentialManager && !page.isPrivate
+        !page.isPrivate
     }
 
-    /// The provider decision the page script obeys. `legacy` is only ever said for a page the encrypted provider does not
-    /// serve at all (legacy provider selected, or a private page); that alone lets the engine's own WebAuthn run. A page
-    /// the manager serves is `manager`, and it is enabled only when the manager's profile is this page's profile: a
-    /// stale or foreign page is `manager` with `enabled: false`, which is a refusal, never legacy.
+    /// The route decision the page script obeys. `legacy` is only ever said for a page the vault does not serve at all (a
+    /// private page); that alone lets the engine's own WebAuthn run. A page the vault serves is `manager`, and it is
+    /// enabled only when the vault's profile is this page's profile: a stale or foreign page is `manager` with
+    /// `enabled: false`, which is a refusal, never legacy.
     private static func answerCapabilities(key: Key, page: BrowserPage, frame: BrowserFrame) {
         let handled = isHandled(by: page)
         let enabled = handled
@@ -295,9 +233,9 @@ enum WebAuthnAdapter {
 
     private static func register(_ body: [String: Any], key: Key, page: BrowserPage, frame: BrowserFrame) {
         guard entries[key] == nil else { return }
-        // The page script asks for the provider first and only sends a request to the manager when told so. A request that
-        // still arrives for a page the manager does not serve (the provider changed in between) is refused, never handed
-        // to the engine.
+        // The page script asks for the route first and only sends a request to the vault when told so. A request that
+        // still arrives for a page the vault does not serve (a forged hint on a private page) is refused, never handed to
+        // the engine.
         guard isHandled(by: page) else {
             reject(key, page, frame, WebAuthnWire.PageError(
                 name: "NotAllowedError", message: "The request is not allowed by the user agent or the platform."
@@ -399,8 +337,7 @@ enum WebAuthnAdapter {
             guard native.credentialGeneration == entry.generation, page.credentialGeneration == entry.generation else {
                 throw WebAuthnContextError.staleFrame
             }
-            guard !page.isPrivate, native.profileID == page.profileID, page.context.settings.passwordProvider == .credentialManager,
-                  let anchor = startWindow, page.window === anchor else {
+            guard !page.isPrivate, native.profileID == page.profileID, let anchor = startWindow, page.window === anchor else {
                 throw WebsiteAuthenticatorError.notAllowed
             }
             // Claimed in the same synchronous step that proved the window, before the first await that can launch a ceremony.
@@ -436,8 +373,7 @@ enum WebAuthnAdapter {
             try await requireLiveRequest(entry, page: page)
             try ensureCurrent(entry)
             guard native.credentialGeneration == entry.generation, page.credentialGeneration == entry.generation,
-                  !page.isPrivate, page.context.settings.passwordProvider == .credentialManager, page.window === anchor,
-                  let manager = chosen else { throw WebsiteAuthenticatorError.notAllowed }
+                  !page.isPrivate, page.window === anchor, let manager = chosen else { throw WebsiteAuthenticatorError.notAllowed }
             guard manager.profileID == native.profileID else { throw WebsiteAuthenticatorError.notAllowed }
             entry.boundManager = manager
 
@@ -513,9 +449,8 @@ enum WebAuthnAdapter {
 
     /// Hands one outcome to the relay in the captured frame. The relay accepts it once, for its own live document only.
     /// Everything that must still hold is checked by the engine's final-send check, after its last suspension: the request
-    /// is still live, the sealed native context still matches its document, and — for a signed result — the provider is
-    /// still the encrypted manager for the same profile and the vault authorization and content the signature was made
-    /// under are still current.
+    /// is still live, the sealed native context still matches its document, and — for a signed result — the page is still
+    /// the vault's for the same profile and the vault authorization and content the signature was made under are still current.
     @discardableResult
     private static func deliver(
         _ value: [String: Any],
@@ -548,8 +483,7 @@ enum WebAuthnAdapter {
                         if let deadline = entry?.parsed.request.deadline, ContinuousClock.now >= deadline {
                             throw WebsiteAuthenticatorError.expired
                         }
-                        guard page.context.settings.passwordProvider == .credentialManager,
-                              page.profileID == authority.manager.profileID,
+                        guard !page.isPrivate, page.profileID == authority.manager.profileID,
                               authority.manager.authorizationEpoch == authority.outcome.epoch else {
                             throw WebsiteAuthenticatorError.notAllowed
                         }

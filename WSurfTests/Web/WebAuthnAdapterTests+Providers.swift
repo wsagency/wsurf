@@ -8,7 +8,7 @@ import WebKit
 @testable import WSurf
 
 extension WebAuthnAdapterTests {
-    // MARK: Per-context provider
+    // MARK: Route by page
 
     private struct RealmError: Error { let reason: String }
 
@@ -43,10 +43,10 @@ extension WebAuthnAdapterTests {
             return try #require(components.url)
         }
 
-        /// A fresh regular profile with its own context and the provider chosen before any page exists, holding `vaults` (real
-        /// managers in the registry, made with `passkeys`). It holds the registry gate (shared) until `close`: a ceremony here can
-        /// register a store, which a session-wide lock elsewhere would reach.
-        func context(_ provider: PasswordProvider, passkeys: VaultPasskeys = VaultPasskeys(), vaults: [VaultState] = []) async throws -> BrowserProfileContext {
+        /// A fresh regular profile with its own context, holding `vaults` (real managers in the registry, made with `passkeys`). It
+        /// holds the registry gate (shared) until `close`: a ceremony here can register a store, which a session-wide lock
+        /// elsewhere would reach.
+        func context(passkeys: VaultPasskeys = VaultPasskeys(), vaults: [VaultState] = []) async throws -> BrowserProfileContext {
             let profile: Profile
             if vaults.isEmpty {
                 profile = try await VaultManagerFixture.newProfile("Provider \(profiles.count)")
@@ -54,16 +54,13 @@ extension WebAuthnAdapterTests {
                 profile = try await VaultManagerFixture.make(passkeys: passkeys, vaults: vaults).profile
             }
             profiles.append(profile)
-            let context = BrowserProfileContext(profile: profile)
-            context.settings.passwordProvider = provider
-            return context
+            return BrowserProfileContext(profile: profile)
         }
 
         /// A private context's settings are in memory only; nothing of it is persisted.
-        func privateContext(_ provider: PasswordProvider) -> BrowserProfileContext {
+        func privateContext() -> BrowserProfileContext {
             let context = BrowserProfileContext(profile: .privateBrowsing())
             privateContexts.append(context)
-            context.settings.passwordProvider = provider
             return context
         }
 
@@ -242,134 +239,47 @@ extension WebAuthnAdapterTests {
         (answer["result"] as? [String: Any])?["provider"] as? String
     }
 
-    /// A provider change on one context refuses that context's pending ceremonies (every page of it) and nobody else's.
+    /// A page's route follows only whether it is private: a normal page is always the vault's and a private page is always the
+    /// engine's, in a fresh document as well as in the live one, and a request the page forges for the other route is refused.
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
-    func changingOneContextsProviderCancelsOnlyItsOwnPendingCeremonies(engine: BrowserEngine) async throws {
+    func aNormalPageIsAlwaysTheVaultsAndAPrivatePageAlwaysTheEngines(engine: BrowserEngine) async throws {
         try await withRealm(engine) { realm in
-            let contextA = try await realm.context(.credentialManager), contextB = try await realm.context(.credentialManager)
-            let a1 = try await realm.open(contextA), a2 = try await realm.open(contextA), b = try await realm.open(contextB)
-            // Each request is past the fence, so native has registered it (a rejection would already be an outcome).
-            for page in [a1, a2, b] {
-                try await requestConditionalGet(in: page)
-            }
-            for page in [a1, a2, b] {
-                #expect(try await outcomes(of: page).isEmpty, "a conditional discovery is pending, not failed")
-            }
-
-            contextA.settings.passwordProvider = .legacy
-            for page in [a1, a2] {
-                #expect(try await waitUntil { try await outcomes(of: page) == ["NotAllowedError"] }, "A's pending ceremony is refused by native")
-            }
-            #expect(try await waitUntil { try await route(of: a1) == "legacy" })
-            // A native answer to B after A's change proves nothing was sent to B ahead of it.
-            #expect(provider(of: try await fence(b)) == "manager")
-            #expect(try await outcomes(of: b).isEmpty, "B's ceremony is untouched by A's change")
-            #expect(try await route(of: b) == "manager")
-            for page in [a1, a2] {
-                #expect(provider(of: try await fence(page)) == "legacy", "native now answers A's pages with A's own provider")
-                #expect(try await outcomes(of: page) == ["NotAllowedError"], "exactly one refusal, no later outcome")
-            }
-
-            // Back to the manager: A takes ceremonies again and is not wedged by the earlier refusal.
-            contextA.settings.passwordProvider = .credentialManager
-            #expect(try await waitUntil { try await route(of: a1) == "manager" })
-            try await requestConditionalGet(in: a1)
-            #expect(try await outcomes(of: a1).isEmpty)
-
-            // B's request was registered with the adapter the whole time: only a registered entry is refused by its profile.
-            WebAuthnAdapter.cancel(profileID: contextB.profile.id)
-            #expect(try await waitUntil { try await outcomes(of: b) == ["NotAllowedError"] })
-            try await fence(a1)
-            #expect(try await outcomes(of: a1).isEmpty, "B's profile never refuses A's new ceremony")
-            WebAuthnAdapter.cancel(profileID: contextA.profile.id)
-            #expect(try await waitUntil { try await outcomes(of: a1) == ["NotAllowedError"] })
-        }
-    }
-
-    /// The route a live page obeys follows its own context's setting, in both directions, for documents already live and for
-    /// documents loaded afterwards, while every other context's pages keep the route their own setting gave them.
-    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
-    func aProviderChangeFlipsOnlyItsOwnContextsLivePagesAndNewDocuments(engine: BrowserEngine) async throws {
-        try await withRealm(engine) { realm in
-            let contextA = try await realm.context(.legacy), contextB = try await realm.context(.credentialManager)
-            let contextC = try await realm.context(.legacy)
-            let a1 = try await realm.open(contextA), a2 = try await realm.open(contextA)
-            let b = try await realm.open(contextB), c = try await realm.open(contextC)
-            #expect(try await routes(a1, a2, b, c) == ["legacy", "legacy", "manager", "legacy"])
-
-            contextA.settings.passwordProvider = .credentialManager
-            for page in [a1, a2] {
-                #expect(try await waitUntil { try await route(of: page) == "manager" }, "legacy to manager on A's live pages")
-            }
-            // Native's own answers: A's pages are now the manager's, B and C are exactly where their own settings put them.
-            #expect([provider(of: try await fence(a1)), provider(of: try await fence(b)), provider(of: try await fence(c))] == ["manager", "manager", "legacy"])
-            #expect(try await routes(b, c) == ["manager", "legacy"], "other contexts keep their own provider")
-
-            // A document loaded after the change starts on the new route, from the replaced document-start script.
-            try await realm.navigate(a1, to: realm.url("/next"))
-            #expect(try await route(of: a1) == "manager")
-
-            contextA.settings.passwordProvider = .legacy
-            for page in [a1, a2] {
-                #expect(try await waitUntil { try await route(of: page) == "legacy" }, "manager to legacy on A's live pages")
-            }
-            try await realm.navigate(a2, to: realm.url("/next"))
-            #expect(try await route(of: a2) == "legacy")
-            #expect([provider(of: try await fence(b)), provider(of: try await fence(c))] == ["manager", "legacy"])
-            #expect(try await routes(b, c) == ["manager", "legacy"])
-
-            // And the other way round: B's change leaves A and C where they are.
-            contextB.settings.passwordProvider = .legacy
-            #expect(try await waitUntil { try await route(of: b) == "legacy" })
-            #expect([provider(of: try await fence(a1)), provider(of: try await fence(a2)), provider(of: try await fence(c))] == ["legacy", "legacy", "legacy"])
-            #expect(try await routes(a1, a2, c) == ["legacy", "legacy", "legacy"])
-        }
-    }
-
-    /// A private page is never the manager's, whatever its context's settings say: its route is the engine's own, and a
-    /// manager request the page forges through the relay is refused by the adapter. A regular manager page is the control.
-    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
-    func aPrivateContextNeverServesManagerRequestsEvenWhenItsSettingsSayCredentialManager(engine: BrowserEngine) async throws {
-        try await withRealm(engine) { realm in
-            let regular = try await realm.context(.credentialManager)
-            let privateContext = realm.privateContext(.credentialManager)
-            let control = try await realm.open(regular)
+            let regularContext = try await realm.context(), otherRegularContext = try await realm.context()
+            let privateContext = realm.privateContext()
+            let regular = try await realm.open(regularContext), other = try await realm.open(otherRegularContext)
             let page = try await realm.open(privateContext)
-            #expect(privateContext.settings.passwordProvider == .credentialManager && page.isPrivate && !control.isPrivate)
-            #expect(try await route(of: page) == "legacy", "a private page is never announced as the manager's")
-            #expect(try await route(of: control) == "manager")
+            #expect(page.isPrivate && !regular.isPrivate && !other.isPrivate)
+            #expect(try await routes(regular, other, page) == ["manager", "manager", "legacy"])
 
-            for target in [page, control] {
+            // Native's own answers agree with what the pages were told.
+            #expect([provider(of: try await fence(regular)), provider(of: try await fence(other)), provider(of: try await fence(page))]
+                == ["manager", "manager", "legacy"])
+            let capabilities = try #require(try await fence(page)["result"] as? [String: Any])
+            #expect(capabilities["provider"] as? String == "legacy" && capabilities["enabled"] as? Bool == false)
+
+            // A fresh document starts on the same route, from the script installed once with the page.
+            try await realm.navigate(regular, to: realm.url("/next"))
+            try await realm.navigate(page, to: realm.url("/next"))
+            #expect(try await routes(regular, page) == ["manager", "legacy"])
+
+            // A manager request forged on the private page through the relay is refused, never served or handed to the engine.
+            for target in [page, regular] {
                 try await recordResults(in: target)
             }
             try await sendRawConditionalGet("raw-private-1", in: page)
-            try await sendRawConditionalGet("raw-control", in: control)
+            try await sendRawConditionalGet("raw-control", in: regular)
             #expect(try await waitUntil { try await results(of: page).count == 1 })
             let refusal = try #require(try await results(of: page).first)
             #expect(refusal["id"] as? String == "raw-private-1" && errorName(refusal) == "NotAllowedError")
             // Native answered the control after its raw request: that request is registered and pending, not refused.
-            #expect(provider(of: try await fence(control)) == "manager")
-            #expect(try await results(of: control).isEmpty, "the same request is a pending discovery on a regular manager page")
+            #expect(provider(of: try await fence(regular)) == "manager")
+            #expect(try await results(of: regular).isEmpty, "the same request is a pending discovery on a normal page")
 
-            // Toggling the private context's setting changes nothing: still the engine's route, still refused.
-            privateContext.settings.passwordProvider = .legacy
-            privateContext.settings.passwordProvider = .credentialManager
-            #expect(provider(of: try await fence(page)) == "legacy", "asked which provider owns it, a private page is told the engine")
-            #expect(try await route(of: page) == "legacy")
-            try await sendRawConditionalGet("raw-private-2", in: page)
-            #expect(try await waitUntil { try await results(of: page).count == 2 })
-            let second = try #require(try await results(of: page).last)
-            #expect(second["id"] as? String == "raw-private-2" && errorName(second) == "NotAllowedError")
-
-            // The raw capabilities answer for a private page is the engine's, never an enabled manager.
-            let capabilities = try #require(try await fence(page)["result"] as? [String: Any])
-            #expect(capabilities["provider"] as? String == "legacy" && capabilities["enabled"] as? Bool == false)
-
-            // The control request was a registered entry the whole time: a profile cancel refuses it.
-            WebAuthnAdapter.cancel(profileID: regular.profile.id)
-            #expect(try await waitUntil { try await results(of: control).count == 1 })
-            let released = try #require(try await results(of: control).first)
-            #expect(errorName(released) == "NotAllowedError")
+            // The control request was a registered entry the whole time: a profile cancel refuses it, and only it.
+            WebAuthnAdapter.cancel(profileID: regularContext.profile.id)
+            #expect(try await waitUntil { try await results(of: regular).count == 1 })
+            #expect(errorName(try #require(try await results(of: regular).first)) == "NotAllowedError")
+            #expect(provider(of: try await fence(other)) == "manager")
         }
     }
 
@@ -378,7 +288,7 @@ extension WebAuthnAdapterTests {
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
     func cancellingByProfileIDRefusesOnlyThatProfilesPendingCeremonies(engine: BrowserEngine) async throws {
         try await withRealm(engine) { realm in
-            let contextA = try await realm.context(.credentialManager), contextB = try await realm.context(.credentialManager)
+            let contextA = try await realm.context(), contextB = try await realm.context()
             let a1 = try await realm.open(contextA), a2 = try await realm.open(contextA), b = try await realm.open(contextB)
             for page in [a1, a2, b] {
                 try await requestConditionalGet(in: page)
@@ -396,8 +306,7 @@ extension WebAuthnAdapterTests {
             }
             try await fence(b)
             #expect(try await outcomes(of: b).isEmpty, "B's ceremony is untouched by a cancel of A's profile")
-            #expect(contextA.settings.passwordProvider == .credentialManager && contextB.settings.passwordProvider == .credentialManager)
-            #expect(try await route(of: a1) == "manager", "a cancel is not a provider change")
+            #expect(try await route(of: a1) == "manager", "a cancel does not change a page's route")
 
             WebAuthnAdapter.cancel(profileID: contextB.profile.id)
             #expect(try await waitUntil { try await outcomes(of: b) == ["NotAllowedError"] })
@@ -440,7 +349,7 @@ extension WebAuthnAdapterTests {
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
     func aModalRequestWithNoUsableVaultIsRefusedAndNeverFallsBackToTheEngine(engine: BrowserEngine) async throws {
         try await withRealm(engine) { realm in
-            let context = try await realm.context(.credentialManager)
+            let context = try await realm.context()
             let page = try await realm.open(context)
             try await requestModalGet(in: page)
             #expect(try await waitUntil { try await outcomes(of: page) == ["NotAllowedError"] }, "the unavailable route refuses")
@@ -452,7 +361,7 @@ extension WebAuthnAdapterTests {
 
     /// What happens to the page while the "which vault?" prompt is open.
     enum WhileChoosing: CaseIterable {
-        case theViewMovesToAnotherWindow, theProviderChanges, theProfileLocks
+        case theViewMovesToAnotherWindow, theProfileLocks
     }
 
     /// The route is `needsChoice` (two locked vaults) and the prompt suspends the run before any manager is bound. Whatever then
@@ -462,7 +371,7 @@ extension WebAuthnAdapterTests {
     func aVaultChoiceAnsweredAfterTheRequestWasInvalidatedBindsNothing(engine: BrowserEngine, change: WhileChoosing) async throws {
         try await withRealm(engine) { realm in
             let passkeys = VaultPasskeys()
-            let context = try await realm.context(.credentialManager, passkeys: passkeys, vaults: [.locked, .locked])
+            let context = try await realm.context(passkeys: passkeys, vaults: [.locked, .locked])
             let profileID = context.profile.id
             let page = try await realm.open(context)
             let choice = OpenChoice()
@@ -480,8 +389,6 @@ extension WebAuthnAdapterTests {
             switch change {
             case .theViewMovesToAnotherWindow:
                 realm.moveToNewWindow(page)
-            case .theProviderChanges:
-                context.settings.passwordProvider = .legacy
             case .theProfileLocks:
                 CredentialManager.lock(profileID: profileID, reason: .profileSwitch)
             }
@@ -501,7 +408,7 @@ extension WebAuthnAdapterTests {
     func aVaultCancelLeavesARequestStillChoosingItsVaultAndAProfileCancelStopsIt(engine: BrowserEngine) async throws {
         try await withRealm(engine) { realm in
             let passkeys = VaultPasskeys()
-            let context = try await realm.context(.credentialManager, passkeys: passkeys, vaults: [.locked, .locked])
+            let context = try await realm.context(passkeys: passkeys, vaults: [.locked, .locked])
             let profileID = context.profile.id
             let page = try await realm.open(context)
             let choice = OpenChoice()

@@ -55,7 +55,7 @@ struct LegacyPasswordMigration {
 
     init(profile: Profile, vault: SecureAutofillVault<SavedPassword>? = nil, defaults: UserDefaults? = nil) {
         self.profile = profile
-        self.vault = vault ?? AutofillVaults.passwords(for: profile.id)
+        self.vault = vault ?? AutofillVaults.legacyPasswords(for: profile.id)
         injectedDefaults = defaults
     }
 

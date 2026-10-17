@@ -5,8 +5,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Account, passkey and verification-code management for one profile's vault. Reached from `AutofillSettings`
-/// as its own entry, separate from the legacy Passwords page.
+/// Account, passkey and verification-code management for one profile's vault. Reached from `AutofillSettings`.
 struct CredentialSettings: View {
     @State var model: CredentialSettingsModel
     @State private var anchor = CredentialWindowAnchor()
