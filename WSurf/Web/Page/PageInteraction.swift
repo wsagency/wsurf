@@ -200,13 +200,11 @@ extension PageDriver {
         _ target: ScreenshotTarget = .viewport, developmentAllowed: () -> Bool = { false }, maximumBytes: Int? = nil,
         maxWidth: Int? = nil, masking: ScreenshotMasking? = nil, in view: BrowserPage
     ) async -> Result<ScreenshotCapture, ScreenshotFailure> {
-        guard PageAutomationGuard.allowsExecution else { return .failure(.stale) }
+        if let refusal = screenshotRefusal(target, developmentAllowed: developmentAllowed, in: view) {
+            return .failure(refusal)
+        }
         var masking = masking
         masking?.documentSpace = target == .fullPage
-        guard target != .fullPage || view.chromium != nil else { return .failure(.fullPageUnsupported) }
-        // Asked before the first await as well as after each one: a caller may have waited (for its turn to capture) since it
-        // checked.
-        guard target != .fullPage || developmentAllowed() else { return .failure(.needsDevelopment) }
         let ref: Int
         switch await screenshotRef(for: target, in: view) {
         case .success(let probed):
@@ -235,11 +233,7 @@ extension PageDriver {
         let foundOnly = before["foundOnly"] as? Bool == true
         let needsDevelopment = foundOnly || target == .fullPage
         guard !(needsDevelopment && !developmentAllowed()) else { return .failure(.needsDevelopment) }
-        // Without masking a filled sensitive field refuses the capture; with it, only a field that was not measured does.
-        func isPrivate(_ probe: [String: Any]) -> Bool {
-            masking == nil ? probe["safe"] as? Bool == true : ScreenshotMasking.isMeasured(probe)
-        }
-        guard isPrivate(before) else { return .failure(.privacy) }
+        guard screenshotIsPrivate(before, masking: masking) else { return .failure(.privacy) }
         func number(_ object: [String: Any]?, _ key: String) -> CGFloat? {
             (object?[key] as? NSNumber).map { CGFloat($0.doubleValue) }
         }
@@ -277,15 +271,14 @@ extension PageDriver {
         // Development access is checked again right before pixels leave, after the last await.
         let requiresDevelopment = needsDevelopment || after["foundOnly"] as? Bool == true
         guard !(requiresDevelopment && !developmentAllowed()) else { return .failure(.needsDevelopment) }
-        guard isPrivate(after) else { return .failure(.privacy) }
+        guard screenshotIsPrivate(after, masking: masking) else { return .failure(.privacy) }
         guard placementHeld(placed, in: after) else { return .failure(.stale) }
-        // The boxes painted over the pixels are the ones measured after the capture, and they must be where they were before it.
-        var picture = bitmap
-        if masking != nil {
-            let masks = ScreenshotMasking.masks(in: after)
-            guard ScreenshotMasking.held(ScreenshotMasking.masks(in: before), masks) else { return .failure(.stale) }
-            guard let painted = ScreenshotMasking.apply(masks, over: css, to: bitmap) else { return .failure(.captureFailed) }
-            picture = painted
+        let picture: NSBitmapImageRep
+        switch masked(bitmap, with: masking, before: before, after: after, over: css) {
+        case .success(let drawn):
+            picture = drawn
+        case .failure(let failure):
+            return .failure(failure)
         }
         // The limit may have shrunk the pixels, so the scale comes from the image that is returned.
         guard let encoded = PageScreenshotEncoding.jpeg(picture, fitting: maximumBytes, maxPixelWidth: pixelLimit) else { return .failure(.captureFailed) }
@@ -293,6 +286,35 @@ extension PageDriver {
             ScreenshotCapture(
                 jpeg: encoded.data, bounds: css, scale: CGFloat(encoded.pixelsWide) / css.width,
                 requiresDevelopment: requiresDevelopment))
+    }
+
+    /// Why a capture cannot start: stale automation, a full page on an engine that cannot take one, or a full page without
+    /// development access. The last is asked before the first await as well as after each one: a caller may have waited (for its
+    /// turn to capture) since it checked.
+    private static func screenshotRefusal(
+        _ target: ScreenshotTarget, developmentAllowed: () -> Bool, in view: BrowserPage
+    ) -> ScreenshotFailure? {
+        guard PageAutomationGuard.allowsExecution else { return .stale }
+        guard target != .fullPage || view.chromium != nil else { return .fullPageUnsupported }
+        guard target != .fullPage || developmentAllowed() else { return .needsDevelopment }
+        return nil
+    }
+
+    /// Without masking a filled sensitive field refuses the capture; with it, only a field that was not measured does.
+    private static func screenshotIsPrivate(_ probe: [String: Any], masking: ScreenshotMasking?) -> Bool {
+        masking == nil ? probe["safe"] as? Bool == true : ScreenshotMasking.isMeasured(probe)
+    }
+
+    /// `bitmap` with the filled sensitive fields painted over when `masking` applies. The boxes painted over the pixels are the
+    /// ones measured after the capture, and they must be where they were before it.
+    private static func masked(
+        _ bitmap: NSBitmapImageRep, with masking: ScreenshotMasking?, before: [String: Any], after: [String: Any], over css: CGRect
+    ) -> Result<NSBitmapImageRep, ScreenshotFailure> {
+        guard masking != nil else { return .success(bitmap) }
+        let masks = ScreenshotMasking.masks(in: after)
+        guard ScreenshotMasking.held(ScreenshotMasking.masks(in: before), masks) else { return .failure(.stale) }
+        guard let painted = ScreenshotMasking.apply(masks, over: css, to: bitmap) else { return .failure(.captureFailed) }
+        return .success(painted)
     }
 
     /// The element ref a screenshot probes (0 for none), or the reason the target cannot be captured at all.

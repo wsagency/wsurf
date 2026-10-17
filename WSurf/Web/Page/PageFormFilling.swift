@@ -108,19 +108,20 @@ extension PageDriver {
         if !verified.isEmpty {
             details.insert("Verified refs: " + verified.map { "[\($0)]" }.joined(separator: ", ") + ".", at: 0)
         }
-        let snapshot: String
-        if feedbackMode == .delta {
-            snapshot = ""
-        } else if await canContinueBatch(fields.first?.ref ?? 0, in: webView) {
-            let observationBeforeSnapshot = observation(in: webView)?.documentID
-            let refreshed = await Self.snapshot(webView)
-            snapshot = observation(in: webView)?.documentID == observationBeforeSnapshot
-                ? refreshed
-                : "The page changed or access ended; read the current page before continuing."
-        } else {
-            snapshot = "The page changed or access ended; read the current page before continuing."
-        }
+        let snapshot = await batchSnapshot(firstRef: fields.first?.ref ?? 0, in: webView)
         return "Filled \(verified.count) of \(fields.count) fields. " + details.joined(separator: "\n") + "\n" + snapshot
+    }
+
+    /// The page after a batch, unless the connection gets a change report instead or the page or access changed meanwhile.
+    private static func batchSnapshot(firstRef: Int, in webView: BrowserPage) async -> String {
+        if feedbackMode == .delta {
+            return ""
+        }
+        let changed = "The page changed or access ended; read the current page before continuing."
+        guard await canContinueBatch(firstRef, in: webView) else { return changed }
+        let observationBeforeSnapshot = observation(in: webView)?.documentID
+        let refreshed = await Self.snapshot(webView)
+        return observation(in: webView)?.documentID == observationBeforeSnapshot ? refreshed : changed
     }
 
     private static func fillRejection(for control: [String: Any], secret: Bool) -> String? {

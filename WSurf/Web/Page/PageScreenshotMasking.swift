@@ -10,9 +10,10 @@ import Foundation
 ///
 /// The boxes are measured in the page, in viewport CSS pixels, and painted over the bitmap that is returned, so the page is
 /// never touched. A full-page image starts at the document's origin, so for it each box is also taken shifted by the page's
-/// scroll (a fixed box lands where it is in the viewport, any other where it is in the document): both places are covered. A filled field inside a frame is covered by the whole frame, and a box that cannot be measured refuses the
-/// capture. The pixels of page text that merely echo a secret are not covered: read the page, where the registered value is
-/// hidden by `MCPSecretScrubber`.
+/// scroll (a fixed box lands where it is in the viewport, any other where it is in the document), and both are covered. A
+/// filled field inside a frame is covered by the whole frame, and a box that cannot be measured refuses the capture. The
+/// pixels of page text that merely echo a secret are not covered: read the page, where the registered value is hidden by
+/// `MCPSecretScrubber`.
 struct ScreenshotMasking: Sendable {
     /// Refs of fields the connection typed a secret into, covered even when they do not look sensitive. They count only while
     /// the page still shows `documentID`, the document those refs were issued for.
