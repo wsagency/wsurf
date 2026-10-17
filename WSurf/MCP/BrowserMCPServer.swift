@@ -93,7 +93,11 @@ final class BrowserMCPServer {
     @discardableResult
     func stop(window browser: BrowserModel) -> Int {
         let ending = sessions(in: browser)
-        for id in Set(ending.compactMap { $0.pairedClient?.id }) where trustStore.client(id: id).map({ $0.standing != .off }) == true {
+        // An app that works without asking, or opens websites under the Website access default, is paused: either would
+        // otherwise come back the moment it reconnects.
+        let followsDefault = MCPDefaultAccess.level(in: browser, trust: trustStore) == .control
+        for id in Set(ending.compactMap { $0.pairedClient?.id })
+        where trustStore.client(id: id).map({ $0.standing != .off || followsDefault }) == true {
             // Best effort: if the keychain write fails the app keeps its standing level, which Connected apps still shows.
             try? trustStore.setPaused(true, for: id)
         }
@@ -212,6 +216,7 @@ final class BrowserMCPServer {
     func makeSessionForConnection(
         consent: @escaping (String, [MCPAccessConsent.Page], Bool, NSWindow?) async -> MCPAccessConsent.Access? = MCPAccessConsent.share,
         openConsent: @escaping (String, URL, NSWindow?) async -> Bool = MCPAccessConsent.open,
+        sensitiveConsent: @escaping (String, URL, NSWindow?) async -> Bool = MCPAccessConsent.useSensitivePage,
         browser requested: BrowserModel? = nil,
         id: UUID = UUID()
     ) -> MCPBrowserSession? {
@@ -254,6 +259,21 @@ final class BrowserMCPServer {
                       available(browser)
                 else { return false }
                 let approved = await openConsent(client, url, nativeWindow)
+                guard browser.context === context,
+                      context.extensions.adapter(for: browser) === adapter,
+                      adapter.nativeWindow === nativeWindow,
+                      available(browser)
+                else { return false }
+                return approved
+            },
+            sensitiveConsent: { [weak browser, weak context, weak adapter] client, url in
+                guard let browser, let context, let adapter, let nativeWindow,
+                      browser.context === context,
+                      context.extensions.adapter(for: browser) === adapter,
+                      adapter.nativeWindow === nativeWindow,
+                      available(browser)
+                else { return false }
+                let approved = await sensitiveConsent(client, url, nativeWindow)
                 guard browser.context === context,
                       context.extensions.adapter(for: browser) === adapter,
                       adapter.nativeWindow === nativeWindow,

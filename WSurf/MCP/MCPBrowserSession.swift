@@ -12,9 +12,10 @@ import WebKit
 final class MCPBrowserSession: Identifiable {
     struct Grant {
         /// Where the grant came from. A standing grant is the user's setting for a paired client, so it holds only while
-        /// that setting, the developer site and the Developer profile still do.
+        /// that setting, the developer site and the Developer profile still do. A default grant came from the Website access
+        /// default instead of a sheet, so it holds only while the default still gives it, and Control is all it ever carries.
         enum Source {
-            case sheet, standing
+            case sheet, standing, appDefault
         }
 
         let origin: String
@@ -70,6 +71,10 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored let available: () -> Bool
     @ObservationIgnored let consent: (String, [MCPAccessConsent.Page], Bool) async -> MCPAccessConsent.Access?
     @ObservationIgnored let openConsent: (String, URL) async -> Bool
+    /// Asks before a page that shows a password or payment field is used under a default grant.
+    @ObservationIgnored let sensitiveConsent: (String, URL) async -> Bool
+    /// Whether the page shows a password or payment field. A page that does not answer counts as yes.
+    @ObservationIgnored var sensitivePageProbe: @MainActor (BrowserPage) async -> Bool = { await PageSensitiveProbe.hasSensitiveField(in: $0) }
     @ObservationIgnored private let actionPolicy = AgentActionPolicy(storage: MCPActionGrantStorage())
     @ObservationIgnored private let consentWindow: ExtensionWindowAdapter?
     @ObservationIgnored var observations: [UUID: PageObservation] = [:]
@@ -112,6 +117,9 @@ final class MCPBrowserSession: Identifiable {
         },
         openConsent: @escaping (String, URL) async -> Bool = { client, url in
             await MCPAccessConsent.open(client: client, url: url, in: nil)
+        },
+        sensitiveConsent: @escaping (String, URL) async -> Bool = { client, url in
+            await MCPAccessConsent.useSensitivePage(client: client, url: url, in: nil)
         }
     ) {
         self.browser = browser
@@ -120,6 +128,7 @@ final class MCPBrowserSession: Identifiable {
         self.available = available
         self.consent = consent
         self.openConsent = openConsent
+        self.sensitiveConsent = sensitiveConsent
         consentWindow = browser.context.extensions.adapter(for: browser)
     }
     func isBound(to browser: BrowserModel) -> Bool {

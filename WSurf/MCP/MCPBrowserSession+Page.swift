@@ -21,6 +21,9 @@ extension MCPBrowserSession {
         let generation = tab.pageGeneration
         guard tab.isLive(view, generation: generation) else { return failure("The page is not ready. Try again.") }
         guard let url = webURL(of: tab) else { return failure("The webpage is unavailable.") }
+        if capability == .control, let refusal = await sensitivePageRefusal(tab, view: view, url: url) {
+            return refusal
+        }
         var targeted = arguments
         if let refusal = await prepareTargets(entry, arguments: &targeted, tab: tab, view: view, generation: generation, url: url) {
             return refusal
