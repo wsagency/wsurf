@@ -42,11 +42,25 @@ nonisolated struct CredentialExportSelection: Sendable {
     var notes = false
 }
 
+/// An import size limit was exceeded. Only `CredentialExchangeError` reads it, to name the limit in the refusal.
+private nonisolated struct ImportLimitExceeded: Error {
+    let limit: CredentialExchangeError.Limit
+
+    init(_ limit: CredentialExchangeError.Limit) {
+        self.limit = limit
+    }
+}
+
 nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringConvertible, Sendable, Equatable {
     enum Reason: String, Equatable, Sendable {
         case invalidData
         case duplicateIdentifier
         case oversized
+    }
+
+    /// The size limit an `.oversized` refusal hit. A fixed vocabulary: it names a bound, never a title, a value or an amount.
+    enum Limit: String, Equatable, Sendable, CaseIterable {
+        case items, credentials, collections, nesting, websites, notes, keyBytes, itemBytes, transferBytes
     }
 
     enum Record: CustomStringConvertible, Sendable, Equatable {
@@ -124,12 +138,14 @@ nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringC
 
     let record: Record
     let reason: Reason
+    /// Set only for an `.oversized` refusal that knows which limit it hit.
+    var limit: Limit?
     /// Set only when `record` is a credential.
     var credentialKind: CredentialKind?
 
     var description: String {
-        credentialKind.map { "\(reason.rawValue) at \(record.description) (\($0.rawValue))" }
-            ?? "\(reason.rawValue) at \(record.description)"
+        let name = limit.map { "\(reason.rawValue)(\($0.rawValue))" } ?? reason.rawValue
+        return credentialKind.map { "\(name) at \(record.description) (\($0.rawValue))" } ?? "\(name) at \(record.description)"
     }
     var errorDescription: String? {
         description
@@ -142,6 +158,9 @@ nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringC
             reason = .duplicateIdentifier
         case CredentialVaultError.oversized:
             reason = .oversized
+        case let exceeded as ImportLimitExceeded:
+            reason = .oversized
+            limit = exceeded.limit
         default:
             reason = .invalidData
         }
@@ -154,6 +173,11 @@ nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringC
 }
 
 nonisolated enum CredentialExchangeCodec {
+    /// Deepest nesting of collections an import accepts.
+    static let maximumCollectionDepth = 32
+    /// Most websites one item may list in a transfer.
+    static let maximumWebsites = 64
+
     struct ExternalItemID: Hashable {
         let account: Data
         let item: Data
@@ -195,16 +219,13 @@ nonisolated enum CredentialExchangeCodec {
 
         mutating func add(_ count: Int) throws {
             let (sum, overflow) = total.addingReportingOverflow(count)
-            guard count >= 0, !overflow, sum <= CredentialVaultLimits.liveBytes else {
-                throw CredentialVaultError.oversized
-            }
+            guard count >= 0, !overflow else { throw ImportLimitExceeded(.transferBytes) }
             if let item {
                 let (itemSum, itemOverflow) = item.addingReportingOverflow(count)
-                guard !itemOverflow, itemSum <= CredentialVaultLimits.accountBytes else {
-                    throw CredentialVaultError.oversized
-                }
+                guard !itemOverflow, itemSum <= CredentialVaultLimits.accountBytes else { throw ImportLimitExceeded(.itemBytes) }
                 self.item = itemSum
             }
+            guard sum <= CredentialVaultLimits.liveBytes else { throw ImportLimitExceeded(.transferBytes) }
             total = sum
         }
 
@@ -324,8 +345,8 @@ nonisolated enum CredentialExchangeCodec {
         state.record = .item(account: position.account, item: position.item)
         state.itemTitle = item.title
         let itemIdentity = ExternalItemID(account: appleAccount.id, item: item.id)
-        guard state.candidates.count < CredentialVaultLimits.accounts,
-              !item.id.isEmpty, state.seenItemIDs.insert(itemIdentity).inserted else { throw CredentialVaultError.invalidData }
+        guard state.candidates.count < CredentialVaultLimits.accounts else { throw ImportLimitExceeded(.items) }
+        guard !item.id.isEmpty, state.seenItemIDs.insert(itemIdentity).inserted else { throw CredentialVaultError.invalidData }
         state.budget.item = 0
         defer { state.budget.item = nil }
         try state.budget.add(item.id)
@@ -338,7 +359,7 @@ nonisolated enum CredentialExchangeCodec {
             omit(.sharingNotKept, &state)
         }
         guard item.credentials.count <= CredentialVaultLimits.credentials - state.totalCredentials else {
-            throw CredentialVaultError.oversized
+            throw ImportLimitExceeded(.credentials)
         }
         state.totalCredentials += item.credentials.count
 
@@ -390,8 +411,8 @@ nonisolated enum CredentialExchangeCodec {
         }
         // The store's own measure, so a kept item can never fail the store's check of one account or of the whole vault.
         let bytes = try CredentialVaultCrypto.liveBytes(of: candidate)
-        guard bytes <= CredentialVaultLimits.accountBytes,
-              bytes <= CredentialVaultLimits.liveBytes - state.liveBytes else { throw CredentialVaultError.oversized }
+        guard bytes <= CredentialVaultLimits.accountBytes else { throw ImportLimitExceeded(.itemBytes) }
+        guard bytes <= CredentialVaultLimits.liveBytes - state.liveBytes else { throw ImportLimitExceeded(.transferBytes) }
         state.liveBytes += bytes
         try candidate.validate()
         state.candidates.append(candidate)
@@ -455,7 +476,7 @@ nonisolated enum CredentialExchangeCodec {
         try state.budget.add(value.userName)
         try state.budget.add(value.userDisplayName)
         try state.budget.add(value.userHandle)
-        guard value.key.count <= PasskeyKeyEncoding.maximumDERBytes else { throw CredentialVaultError.oversized }
+        guard value.key.count <= PasskeyKeyEncoding.maximumDERBytes else { throw ImportLimitExceeded(.keyBytes) }
         try state.budget.add(value.key)
         // A key that is not ES256, cannot be read, or belongs to a website the vault will not serve cannot be kept.
         guard let key = try? PasskeyKeyEncoding.importPKCS8(value.key),
@@ -520,7 +541,7 @@ nonisolated enum CredentialExchangeCodec {
         let field = try importField(value.content, state: &state)
         guard !field.value.isEmpty else { return }
         var notes = candidate.notes ?? []
-        guard notes.count < CredentialAccount.noteLimit else { throw CredentialVaultError.oversized }
+        guard notes.count < CredentialAccount.noteLimit else { throw ImportLimitExceeded(.notes) }
         let isPlain = field.metadata.id == nil && field.metadata.label == nil && field.metadata.fieldType == .string
         notes.append(CredentialNote(text: field.value, field: isPlain ? nil : field.metadata))
         candidate.notes = notes
@@ -555,7 +576,8 @@ nonisolated enum CredentialExchangeCodec {
         count: inout Int,
         depth: Int
     ) throws -> ExchangeCollection {
-        guard depth <= 32, count < CredentialVaultLimits.accounts else { throw CredentialVaultError.oversized }
+        guard depth <= maximumCollectionDepth else { throw ImportLimitExceeded(.nesting) }
+        guard count < CredentialVaultLimits.accounts else { throw ImportLimitExceeded(.collections) }
         count += 1
         try budget.add(collection.id)
         try budget.add(collection.title)
@@ -621,7 +643,7 @@ nonisolated enum CredentialExchangeCodec {
         state: inout ImportState
     ) throws {
         guard let scope else { return }
-        guard scope.urls.count <= 64 else { throw CredentialVaultError.oversized }
+        guard scope.urls.count <= maximumWebsites else { throw ImportLimitExceeded(.websites) }
         var origins = Set<String>()
         var loginURLs = Set<URL>()
         var dropped = false

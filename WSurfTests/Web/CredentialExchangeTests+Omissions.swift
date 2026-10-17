@@ -273,6 +273,7 @@ extension CredentialExchangeTests {
         against base: StoreSnapshot,
         _ reason: CredentialExchangeError.Reason,
         at record: CredentialExchangeError.Record,
+        limit: CredentialExchangeError.Limit? = nil,
         sourceLocation: SourceLocation = #_sourceLocation
     ) {
         do {
@@ -281,6 +282,8 @@ extension CredentialExchangeTests {
         } catch let error as CredentialExchangeError {
             #expect(error.reason == reason, sourceLocation: sourceLocation)
             #expect(error.record == record, sourceLocation: sourceLocation)
+            // Only a size refusal names a limit; every structural refusal stays as it was.
+            #expect(error.limit == limit, sourceLocation: sourceLocation)
         } catch {
             Issue.record("Expected a positioned refusal, got \(error)", sourceLocation: sourceLocation)
         }
@@ -308,7 +311,10 @@ extension CredentialExchangeTests {
             #expect(!String(describing: error).contains(secret))
         }
 
-        expectRefused(data(credentials: [totp(secret: Data(repeating: 0xA5, count: 4_000_001))]), against: base, .oversized, at: .credential(account: 0, item: 0, credential: 0))
+        expectRefused(
+            data(credentials: [totp(secret: Data(repeating: 0xA5, count: 4_000_001))]), against: base, .oversized,
+            at: .credential(account: 0, item: 0, credential: 0), limit: .itemBytes
+        )
 
         let duplicateAccount = ASExportedCredentialData(
             accounts: [
@@ -333,14 +339,14 @@ extension CredentialExchangeTests {
 
         // Size budgets: more than 64 websites for one item, and collections nested deeper than 32 levels.
         let manyWebsites = ASImportableCredentialScope(urls: (0...64).map { URL(string: "https://site\($0).example.test/")! }, androidApps: [])
-        expectRefused(data(scope: manyWebsites, credentials: [login]), against: base, .oversized, at: .item(account: 0, item: 0))
+        expectRefused(data(scope: manyWebsites, credentials: [login]), against: base, .oversized, at: .item(account: 0, item: 0), limit: .websites)
         var chain = ASImportableCollection(id: Data([0xC0, 0]), created: nil, lastModified: nil, title: "leaf", subtitle: nil, items: [], subcollections: [])
         for level in 1...33 {
             chain = ASImportableCollection(
                 id: Data([0xC0, UInt8(level)]), created: nil, lastModified: nil, title: "level", subtitle: nil, items: [], subcollections: [chain]
             )
         }
-        expectRefused(transfer([first], collections: [chain]), against: base, .oversized, at: .collection(account: 0, path: [0]))
+        expectRefused(transfer([first], collections: [chain]), against: base, .oversized, at: .collection(account: 0, path: [0]), limit: .nesting)
 
         // A stored vault that already fails its own checks is never imported into: two stored accounts claiming one exporter item.
         let twin = account(id: UUID(), externalID: accountExternalID, itemID: itemExternalID, username: "twin")

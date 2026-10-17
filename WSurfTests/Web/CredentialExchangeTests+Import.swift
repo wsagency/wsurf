@@ -343,6 +343,7 @@ extension CredentialExchangeTests {
             let diagnostic = try #require(error as? CredentialExchangeError)
             #expect(diagnostic.record == .credential(account: 0, item: 0, credential: 0))
             #expect(diagnostic.reason == .oversized)
+            #expect(diagnostic.limit == .itemBytes)
         }
     }
 
@@ -385,6 +386,7 @@ extension CredentialExchangeTests {
             Issue.record("Expected the item's metadata to be rejected")
         } catch let error as CredentialExchangeError {
             #expect(error.reason == .oversized)
+            #expect(error.limit == .itemBytes)
             #expect(error.record == .item(account: 0, item: 0))
         }
     }
@@ -398,6 +400,7 @@ extension CredentialExchangeTests {
             Issue.record("Expected the multiplied metadata to be rejected")
         } catch let error as CredentialExchangeError {
             #expect(error.reason == .oversized)
+            #expect(error.limit == .transferBytes)
             guard case let .item(account, item) = error.record else {
                 Issue.record("Expected the refusal at an item, got \(error.record)")
                 return

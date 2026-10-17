@@ -82,6 +82,7 @@ extension CredentialExchangeTests {
             Issue.record("Expected the note limit to refuse the item")
         } catch {
             #expect((error as? CredentialExchangeError)?.reason == .oversized)
+            #expect((error as? CredentialExchangeError)?.limit == .notes)
         }
     }
 
