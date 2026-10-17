@@ -82,6 +82,11 @@ versions.
   Right-click › Unload Tab retains the link, pin, and folder membership.
   Middle-click and ⌘W also unload. A folder's curved-down arrow unloads all
   descendant tabs; X is reserved for removal. Existing unload protections remain.
+- **Free memory:** File › Free Memory unloads every background tab in every
+  window, in WebKit and Chromium. They reload when you open them, and pins and
+  folders keep their links. Each window's current tab, favorites, private tabs,
+  and tabs that play audio, use the camera or microphone, download, or hold
+  unsaved form input stay loaded.
 - **Keep favorites:** Right-click a tab › Add to Favorites promotes its existing
   link into the icon-only strip above the sidebar without a duplicate row.
   Favorites belong to the current profile and never sleep automatically.
@@ -172,15 +177,21 @@ Report vulnerabilities privately through [Security](SECURITY.md).
   an HTML export in Settings › General; history is not imported.
 - Website notifications require WSurf to be running. There is no background web
   push.
-- Chromium is loaded only when needed, but its runtime remains initialized
-  until quit. Adding it does not guarantee lower RAM, CPU, or faster websites.
-  Unloaded Chromium tabs restore their URL, not a WebKit history stack.
+- Chromium starts only when a website needs it. Closing or unloading its last
+  tab ends its page processes, but Chromium's graphics, network and storage
+  helper processes and its runtime stay until you quit WSurf, because the
+  embedded Chromium cannot be restarted inside a running app. Quit and reopen
+  WSurf to release them fully. Adding Chromium does not guarantee lower RAM,
+  CPU, or faster websites. Unloaded Chromium tabs restore their address, not
+  their Back/Forward history.
 - Extension integration and native WebKit Picture in Picture remain WebKit-only.
 - WSurf intentionally does not request Apple's managed browser passkey
-  entitlement. Native WebKit passkeys for arbitrary relying parties are not
-  guaranteed in legacy or private tabs; security-key and Chromium behavior is
-  unverified. Vault-managed WebAuthn and Apple Passwords exchange use separate
-  paths. See [Releasing](RELEASING.md).
+  entitlement. Passkeys kept by the system (Apple Passwords, a phone, a
+  security key) are not guaranteed to work for arbitrary websites in WebKit,
+  which is where a normal tab's Use Another Device or Key… and every private
+  tab send the request. Security-key and Chromium behavior is unverified.
+  Vault-managed WebAuthn and Apple Passwords exchange use separate paths. See
+  [Releasing](RELEASING.md).
 - In a normal tab every passkey request is shown to you first. Choose
   Credential Manager, or Use Another Device or Key… to hand the same request to
   the system’s authenticator (Apple Passwords, a phone, a security key). Private

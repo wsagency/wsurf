@@ -106,11 +106,12 @@ on both the app and exchange extension; each needs its own authorized profile.
 WSurf deliberately does not declare Apple's managed
 `com.apple.developer.web-browser.public-key-credential` entitlement. This does
 not change routing: native system passkeys for arbitrary relying parties via
-WebKit are not guaranteed in legacy/default or private tabs. Vault-managed
-WebAuthn and Apple Passwords exchange use separate paths. A Developer ID
-signature needs a profile authorizing the restricted entitlements it declares.
-Gatekeeper refuses to launch an app that declares a restricted entitlement
-without the profile.
+WebKit are not guaranteed: a normal tab reaches them only through its "Use
+Another Device or Key…" hand-off, and a private tab uses them directly.
+Vault-managed WebAuthn and Apple Passwords exchange use separate paths. A
+Developer ID signature needs a profile authorizing the restricted entitlements
+it declares. Gatekeeper refuses to launch an app that declares a restricted
+entitlement without the profile.
 
 The managed browser capability is not needed for WSurf's vault-managed WebAuthn,
 `wsurf.app` PRF unlock, or Apple Passwords exchange. Signing still requires
