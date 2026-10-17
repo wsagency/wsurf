@@ -8,7 +8,8 @@ import WebKit
 extension PageDriver {
     /// AppKit's local mouse events do not set WebKit's held-button state. Use an explicit
     /// DOM event sequence for application drag handlers; these events are not trusted input.
-    static func dispatchDrag(path: [CGPoint], modifiers: NSEvent.ModifierFlags, in view: BrowserPage) async throws {
+    /// `pinned` also requires the elements `R.dragPlan` chose to still be under the first and last points.
+    static func dispatchDrag(path: [CGPoint], modifiers: NSEvent.ModifierFlags, pinned: Bool = false, in view: BrowserPage) async throws {
         let points = path.map { [Double($0.x / view.pageZoom), Double($0.y / view.pageZoom)] }
         let encoded = String(decoding: try JSONEncoder().encode(points), as: UTF8.self)
         let result = await evaluateJSON(scripted("""
@@ -26,6 +27,7 @@ extension PageDriver {
               !R.isSensitiveField(el) && !R.disabled(el) && !(el.tagName === 'INPUT' && el.type === 'file');
             if (!path.every(p => eligible(hit(p)))) return JSON.stringify({ ok: false });
             const source = hit(path[0]), end = path[path.length-1];
+            if (\(pinned) && !R.dragHolds(path[0], end)) return JSON.stringify({ ok: false });
             const options = (p,buttons) => ({ bubbles:true, composed:true, cancelable:true, view:window,
               clientX:p[0], clientY:p[1], button:0, buttons,
               shiftKey:\(modifiers.contains(.shift)), ctrlKey:\(modifiers.contains(.control)),
