@@ -30,20 +30,25 @@ struct AppearanceSettings: View {
 
         SettingsCard {
             DetailRow(title: "Appearance") {
-                SettingsMenu(
-                    options: AppearanceMode.allCases.map { .init(value: $0, label: String(localized: $0.label)) },
-                    selection: $settings.colorMode
+                SegmentedControl(
+                    items: AppearanceMode.allCases.map { .init(value: $0, label: $0.label) },
+                    selection: settings.colorMode,
+                    onSelect: { settings.colorMode = $0 }
                 )
             }
             .settingsAnchor("appearance.mode")
 
             RowSeparator()
 
-            DetailRow(title: "Theme") {
-                SettingsMenu(
-                    options: settings.allThemes.map { .init(value: $0.id, label: $0.name) },
-                    selection: Binding(get: { settings.selectedTheme.id }, set: { settings.themeID = $0 })
-                )
+            DetailRow(title: "Theme", layout: .stacked) {
+                ThemeGallery(
+                    themes: settings.allThemes,
+                    selection: settings.selectedTheme.id,
+                    mode: settings.colorMode,
+                    adjustments: settings.themeAdjustments
+                ) {
+                    settings.themeID = $0
+                }
             }
             .settingsAnchor("appearance.theme")
 

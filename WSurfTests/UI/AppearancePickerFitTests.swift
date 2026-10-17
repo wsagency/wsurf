@@ -28,4 +28,34 @@ struct AppearancePickerFitTests {
 
         #expect(widthTaken(picker, proposing: narrow) <= narrow)
     }
+
+    private func sizeTaken(_ view: some View, proposing width: CGFloat) -> CGSize {
+        let renderer = ImageRenderer(content: view)
+        renderer.proposedSize = ProposedViewSize(width: width, height: 2000)
+        renderer.scale = 1
+        return renderer.nsImage?.size ?? .zero
+    }
+
+    private func gallery(mode: AppearanceMode = .system) -> ThemeGallery {
+        ThemeGallery(
+            themes: ThemeCatalog.builtIn + [ThemeDefinition(id: "mine", name: "Mine", basedOn: "nord", ground: .solid)],
+            selection: "standard", mode: mode, adjustments: [:], onSelect: { _ in }
+        )
+    }
+
+    @Test(arguments: [AppearanceMode.system, .light, .dark])
+    func theThemeCardsWrapIntoANarrowPage(mode: AppearanceMode) {
+        let narrow = AppearanceThumbnailMetrics.width + 20
+
+        #expect(sizeTaken(gallery(mode: mode), proposing: narrow).width <= narrow)
+    }
+
+    @Test func theThemeCardsShareRowsWhenThereIsRoom() {
+        let narrow = AppearanceThumbnailMetrics.width + 20
+        let roomy = AppearanceThumbnailMetrics.width * 4 + AppearanceThumbnailMetrics.spacing * 3
+
+        let wide = sizeTaken(gallery(), proposing: roomy)
+        #expect(wide.width <= roomy)
+        #expect(wide.height < sizeTaken(gallery(), proposing: narrow).height / 2)
+    }
 }

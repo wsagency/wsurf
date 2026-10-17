@@ -95,6 +95,15 @@ struct SettingsSearchTests {
             == "appearance.windowStyle")
     }
 
+    @Test func appearanceModeAndThemesAreSearchable() {
+        #expect(SettingsIndex.search("dark mode").contains { $0.id == "appearance.mode" })
+        #expect(SettingsIndex.search("system").contains { $0.id == "appearance.mode" })
+        for query in ["theme", "catppuccin", "nord", "dracula", "gruvbox", "rose pine", "calm"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "appearance.theme" }, "\(query)")
+        }
+        #expect(!SettingsIndex.all.contains { $0.id == "appearance.themePreset" })
+    }
+
     @Test func openAISettingsBehindProviderNavigationAreSearchable() {
         let expected: [(String, String)] = [
             ("reply length", "openai.replyLength"),
