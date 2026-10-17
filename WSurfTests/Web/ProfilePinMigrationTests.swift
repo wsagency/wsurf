@@ -115,7 +115,7 @@ struct ProfilePinMigrationTests {
         ProfilePin.depthFirst(try database.writer.read { try ProfilePin.fetchAll($0) })
     }
 
-    /// `★` marks a Favorite and `Name{...}` a folder; a link shows as its host's first label.
+    /// A star marks a Favorite and `Name{...}` a folder; a link shows as its host's first label.
     private func outline(_ pins: [ProfilePin], under parent: UUID? = nil) -> String {
         pins.filter { $0.parentID == parent }.sorted { $0.orderKey < $1.orderKey }.map { pin -> String in
             switch pin.kind {
