@@ -29,8 +29,11 @@ extension BrowserPage {
                 engine: "chromium", viewport: .supported,
                 deviceAxes: Dictionary(uniqueKeysWithValues: axes.map { ($0, verified) }),
                 diagnostics: [
-                    "console": .limited("Main-frame page-world console calls and uncaught exceptions after capture starts."),
-                    "network": .limited("Main-frame requests after capture starts: method, sanitized URL, status and timing only."),
+                    "console": .limited(
+                        "Main-frame page-world console calls and uncaught exceptions after capture starts; warnings, errors and exceptions carry location and a stack of up to 10 frames."),
+                    "network": .limited(
+                        "Main-frame requests after capture starts: method, sanitized URL (parameter names, tagged values), status, resource type, media type, "
+                            + "transfer size, redirect target and timing; no headers or bodies."),
                 ])
         }
         let none = DevelopmentCapabilities.Support.unsupported("WebKit exposes no public override for this axis.")
@@ -38,10 +41,12 @@ extension BrowserPage {
             engine: "webkit", viewport: .supported,
             deviceAxes: Dictionary(uniqueKeysWithValues: axes.map { ($0, none) }),
             diagnostics: [
-                "console": .limited("console.log/info/warn/error/debug, uncaught errors and unhandled rejections of the current document, from a hook installed when capture starts."),
+                "console": .limited(
+                    "console.log/info/warn/error/debug, uncaught errors and unhandled rejections of the document, from a hook installed at document start for every document after capture starts; "
+                        + "an Error argument or an uncaught error carries a stack, other values appear as [object]."),
                 "network": .limited(
-                    "fetch and XMLHttpRequest of the current document only; fetch reports a URL only for a string argument and a method only for fetch(url) without an init; "
-                        + "resource loads, WebSockets and workers are not observed."),
+                    "fetch and XMLHttpRequest (status, media type, timing; a URL only for a string argument, a method only for fetch(url) without an init) and resource loads "
+                        + "(type, size when exposed, timing) of the document: sanitized URLs with parameter names and tagged values, no headers or bodies; WebSockets and workers are not observed."),
             ])
     }
 

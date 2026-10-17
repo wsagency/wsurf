@@ -693,6 +693,21 @@ final class BrowserPage: NSView {
         }
     }
 
+    /// Removes a script `installScript` added to this page's own WebKit content controller; later documents no longer run it.
+    /// Documents that already ran it keep what it did. Uses the retained-array mutation `replaceScript` does, so the scripts
+    /// that stay are re-added from the same objects.
+    func removeScript(_ source: String, in world: WKContentWorld) {
+        guard let controller = webKit?.configuration.userContentController else { return }
+        let source = Self.bridgeSource + "\n" + source
+        var scripts = controller.userScripts
+        guard let index = scripts.firstIndex(where: { $0.source == source && Self.scriptWorlds.object(forKey: $0) === world }) else { return }
+        scripts.remove(at: index)
+        controller.removeAllUserScripts()
+        for script in scripts {
+            controller.addUserScript(script)
+        }
+    }
+
     /// `bridge: false` registers the handler without installing the page-callable `__wsurfSend` relay for that world.
     func addScriptMessageHandler(name: String, in world: WKContentWorld, bridge: Bool = true, handler: @escaping (BrowserScriptMessage) -> Void) {
         handlers[Self.handlerKey(name: name, world: world)] = handler

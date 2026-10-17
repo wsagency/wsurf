@@ -2,10 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import CryptoKit
 import Foundation
 import Testing
 
 @testable import WSurf
+
+/// One fixed key, so tags in expectations are computed here by an independent HMAC, not read back from the code under test.
+nonisolated enum DiagnosticsTestKey {
+    static let key = SymmetricKey(data: Data(repeating: 0x5A, count: 32))
+    static let values = PageDiagnostics.QueryValues.tagged(key)
+
+    static func tag(_ value: String, key: SymmetricKey = DiagnosticsTestKey.key) -> String {
+        "~" + HMAC<SHA256>.authenticationCode(for: Data(value.utf8), using: key).prefix(3).map { String(format: "%02x", $0) }.joined()
+    }
+}
 
 @MainActor
 struct PageDiagnosticsTests {
@@ -267,19 +278,26 @@ struct PageDiagnosticsTests {
 }
 
 struct PageDiagnosticsSanitizeTests {
+    private nonisolated static func tag(_ value: String) -> String {
+        DiagnosticsTestKey.tag(value)
+    }
+    private func sanitize(_ url: String, _ queryValues: PageDiagnostics.QueryValues = DiagnosticsTestKey.values) -> String? {
+        PageDiagnostics.sanitize(url: url, queryValues: queryValues)
+    }
+
     @Test(arguments: [
-        ("https://user:pw@example.com/a/b?token=secret#frag", "https://example.com/a/b"),
-        ("http://example.com:8080/p?x=1", "http://example.com:8080/p"),
+        ("https://user:pw@example.com/a/b?token=secret#frag", "https://example.com/a/b?token=\(tag("secret"))"),
+        ("http://example.com:8080/p?x=1", "http://example.com:8080/p?x=\(tag("1"))"),
         ("https://example.com", "https://example.com"),
-        ("https://example.com/?a=b", "https://example.com/"),
-        ("https://example.com/a%20b?q", "https://example.com/a%20b"),
-        ("wss://h.example/socket?key=1#x", "wss://h.example/socket"),
-        ("https://[::1]:3000/x?y", "https://[::1]:3000/x"),
+        ("https://example.com/?a=b", "https://example.com/?a=\(tag("b"))"),
+        ("https://example.com/a%20b?q", "https://example.com/a%20b?\(tag("q"))"),
+        ("wss://h.example/socket?key=1#x", "wss://h.example/socket?key=\(tag("1"))"),
+        ("https://[::1]:3000/x?y", "https://[::1]:3000/x?\(tag("y"))"),
         ("https://u%40x:p%3A@example.com/", "https://example.com/"),
-        ("file:///Users/me/page.html?x#y", "file:///Users/me/page.html"),
+        ("file:///Users/me/page.html?x#y", "file:///Users/me/page.html?\(tag("x"))"),
     ])
-    func stripsUserinfoQueryAndFragment(input: String, expected: String) {
-        #expect(PageDiagnostics.sanitize(url: input) == expected)
+    func stripsUserinfoAndFragmentAndTagsQueryValues(input: String, expected: String) {
+        #expect(sanitize(input) == expected)
     }
 
     @Test(arguments: [
@@ -290,20 +308,12 @@ struct PageDiagnosticsSanitizeTests {
     ])
     func opaqueSchemesRevealOnlyTheScheme(input: String) {
         let scheme = String(input.prefix { $0 != ":" })
-        #expect(PageDiagnostics.sanitize(url: input) == "\(scheme):")
+        #expect(sanitize(input) == "\(scheme):")
     }
 
     @Test(arguments: ["", "   ", "not a url", "https:///nohost", "/relative?token=1", "://x"])
     func unparsableOrHostlessInputIsNil(input: String) {
-        #expect(PageDiagnostics.sanitize(url: input) == nil)
-    }
-
-    @Test(arguments: [
-        "https://user:pw@example.com/a/b?token=secret#frag", "https://example.com", "data:text/plain,secret", "https://[::1]:3000/x?y",
-    ])
-    func isIdempotentSoOutputValidationCanReapplyIt(input: String) throws {
-        let once = try #require(PageDiagnostics.sanitize(url: input))
-        #expect(PageDiagnostics.sanitize(url: once) == once)
+        #expect(sanitize(input) == nil)
     }
 
     @Test func neverEmitsASecretFromAnyPartOfTheURL() throws {
@@ -312,10 +322,66 @@ struct PageDiagnosticsSanitizeTests {
             "https://example.com/a?next=https://evil.example/?hunter2",
             "https://hunter2@example.com/",
             "https://example.com/#hunter2",
+            "https://example.com/confirm?hunter2",
+            "https://example.com/a?x=1&hunter2&y=hunter2",
         ]
         for url in hostile {
-            let sanitized = PageDiagnostics.sanitize(url: url) ?? ""
+            let sanitized = sanitize(url) ?? ""
             #expect(!sanitized.contains("hunter2"), "\(sanitized)")
         }
+    }
+
+    // MARK: Query values
+
+    @Test func queryNamesStayAndValuesAreTaggedPerCapture() {
+        let result = sanitize("https://api.test/search?q=swift&page=2&sort=")
+        #expect(result == "https://api.test/search?q=\(Self.tag("swift"))&page=\(Self.tag("2"))&sort=")
+        #expect(result?.contains("swift") == false)
+        for part in (result ?? "").split(separator: "?").last?.split(separator: "&") ?? [] where part.hasSuffix("=") == false {
+            let value = part.split(separator: "=", maxSplits: 1).last.map(String.init) ?? ""
+            #expect(value.count == 7 && value.hasPrefix("~") && value.dropFirst().allSatisfy { $0.isHexDigit }, "\(part)")
+        }
+    }
+
+    @Test func equalValuesShareATagWithinOneCaptureOnly() throws {
+        let first = DiagnosticsTestKey.values
+        let second = PageDiagnostics.QueryValues.tagged(SymmetricKey(size: .bits256))
+        let one = try #require(PageDiagnostics.sanitize(url: "https://a.test/x?token=abc&again=abc&other=abd", queryValues: first))
+        let tags = one.split(separator: "?").last?.split(separator: "&").compactMap { $0.split(separator: "=").last } ?? []
+        #expect(tags.count == 3)
+        #expect(tags[0] == tags[1], "the same value correlates inside one capture")
+        #expect(tags[0] != tags[2])
+        // A request in another capture tags the same value differently, so tags cannot be compared across captures.
+        let other = try #require(PageDiagnostics.sanitize(url: "https://a.test/x?token=abc", queryValues: second))
+        #expect(other.split(separator: "=").last.map(String.init) != String(tags[0]))
+    }
+
+    @Test func aBareParameterMayBeTheSecretItselfSoItIsTagged() {
+        #expect(sanitize("https://a.test/confirm?hunter2&mode=x") == "https://a.test/confirm?\(Self.tag("hunter2"))&mode=\(Self.tag("x"))")
+    }
+
+    @Test func fragmentsUserinfoAndOpaqueSchemesStayRemoved() {
+        #expect(sanitize("https://u:p@a.test/p?a=1#frag=2") == "https://a.test/p?a=\(Self.tag("1"))")
+        #expect(sanitize("blob:https://a.test/uuid?x=1") == "blob:")
+        #expect(sanitize("data:text/plain,a?b=c") == "data:")
+    }
+
+    @Test func aHugeQueryIsBoundedAndFlagged() throws {
+        let many = (0..<100).map { "p\($0)=v\($0)" }.joined(separator: "&")
+        let cut = try #require(PageDiagnostics.sanitized(url: "https://a.test/?\(many)", queryValues: DiagnosticsTestKey.values))
+        let parameters = cut.text.split(separator: "?").last?.split(separator: "&") ?? []
+        #expect(parameters.count == PageDiagnostics.maxQueryParameters + 1)
+        #expect(parameters.last == "…")
+        #expect(cut.cut)
+        let longName = String(repeating: "n", count: 500)
+        let named = try #require(PageDiagnostics.sanitized(url: "https://a.test/?\(longName)=1", queryValues: DiagnosticsTestKey.values))
+        #expect(named.text == "https://a.test/?\(String(repeating: "n", count: PageDiagnostics.maxQueryNameBytes))…=\(Self.tag("1"))")
+        #expect(named.cut)
+        let fits = try #require(PageDiagnostics.sanitized(url: "https://a.test/?a=1&b=2", queryValues: DiagnosticsTestKey.values))
+        #expect(!fits.cut)
+    }
+
+    @Test func clearModeKeepsValuesForTheDeveloperTier() {
+        #expect(sanitize("https://u:p@a.test/p?a=1&b#f", .clear) == "https://a.test/p?a=1&b")
     }
 }
