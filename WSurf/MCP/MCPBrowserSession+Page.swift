@@ -81,6 +81,7 @@ extension MCPBrowserSession {
                     return failure("Page access changed before the operation finished. Its contents were not returned.")
                 }
                 let prefixes = [
+                    "ACCESSIBILITY TREE", "PERFORMANCE:",
                     "PAGE TEXT:", "Clicked", "Typed", "Selected", "Scrolled", "Already at", "Went back.",
                     "CONTROL:", "Condition met.", "Set checked", "Checked state", "Screenshot captured.", "Hovered.", "Sent ", "ELEMENTS:", "ELEMENT:",
                 ]
@@ -176,6 +177,10 @@ extension MCPBrowserSession {
                 limit: arguments["limit"]?.intValue ?? MCPDevelopmentTools.defaultLimit, in: view)
         case "inspectElement":
             return await PageDriver.inspectElement(ref: ref, in: view)
+        case "readAccessibility":
+            return await PageDriver.readAccessibility(offset: arguments["offset"]?.intValue ?? 0, scope: arguments["scope"]?.stringValue ?? "", in: view)
+        case "readPerformance":
+            return await PageDriver.readPerformance(in: view)
         case "goBack":
             return await PageDriver.goBack(in: view)
         default:
