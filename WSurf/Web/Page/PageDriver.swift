@@ -409,7 +409,7 @@ enum PageDriver {
                   if (\(submit ? "true" : "false") && retained) { R.pressEnter(el); }
                   return JSON.stringify({ ok: true, retained, \(allowSensitive ? "stored, sensitive," : "") submitted: \(submit ? "true" : "false") && retained });
                 """)
-            guard let object = await evaluateAction(script, fallback: ["ok": true, "submitted": submit], in: webView) else {
+            guard let object = await evaluateAction(script, fallback: typeFallback(submit: submit), in: webView) else {
                 return "The page didn't respond to typing."
             }
             if let error = object["error"] as? String { return error }
@@ -440,6 +440,12 @@ enum PageDriver {
                 status: status, ref: found.ref, documentID: observation(in: webView)?.documentID,
                 submissionRequested: submitted, knownRetained: allowSensitive, refreshControls: refreshControls, in: webView)
         }
+    }
+
+    /// What stands for the script's answer when typing (with `submit`) left the page before the answer came back. The field kept
+    /// the value, since Enter was pressed only for a retained one, so a secret entry must not be reported as not retained.
+    static func typeFallback(submit: Bool) -> [String: Any] {
+        ["ok": true, "retained": true, "submitted": submit]
     }
 
     /// What a secret entry came to once the page had it.

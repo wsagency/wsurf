@@ -74,6 +74,31 @@ struct PageSecretEntryTests {
         try await view.evaluateJavaScript("document.getElementById('\(id)').value") as? String ?? "<none>"
     }
 
+    @Test func aTypedSecretIsRetainedWhenTheSubmitLeavesThePage() {
+        let fallback = PageDriver.typeFallback(submit: true)
+        #expect(fallback["retained"] as? Bool == true, "the page was left after Enter, which is pressed only for a retained value")
+        #expect(fallback["ok"] as? Bool == true && fallback["submitted"] as? Bool == true)
+        #expect(PageDriver.typeFallback(submit: false)["submitted"] as? Bool == false)
+    }
+
+    @Test(arguments: BrowserEngine.allCases)
+    func aSecretSubmitThatNavigatesAwayIsReportedAsSubmitted(engine: BrowserEngine) async throws {
+        let page = """
+            <!doctype html><title>Login</title>
+            <form onsubmit="event.preventDefault(); location.replace('/?signed-in')">
+              <input id=pw type=password aria-label="Password">
+            </form>
+            """
+        try await withPage(engine: engine, html: page) { view in
+            let password = try #require(try await refs(in: view).first)
+            let typed = await PageDriver.type(
+                text: Self.password, intoField: "", ref: password, submit: true, allowSensitive: true, in: view)
+            #expect(typed.hasPrefix("Typed a secret into"), "engine \(engine): \(typed)")
+            #expect(typed.contains("requested submission") && !typed.contains("did not retain"), "engine \(engine): \(typed)")
+            #expect(!typed.contains(Self.password))
+        }
+    }
+
     @Test(arguments: BrowserEngine.allCases)
     func aSecretIsTypedWithoutFocusingTheFieldAndTheReplyNeverRepeatsIt(engine: BrowserEngine) async throws {
         try await withPage(engine: engine, html: Self.loginPage) { view in
