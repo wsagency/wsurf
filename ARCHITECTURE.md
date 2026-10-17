@@ -110,7 +110,10 @@ model describes it as an instruction.
 
 - `AgentToolkit` exposes the supported browser actions.
 - `TabAssistantAccessCenter` authorizes visible-page reads and controls by
-  origin before `AgentToolkit` reaches the page driver.
+  origin before `AgentToolkit` reaches the page driver. A website's own record
+  wins. Without one, the profile's default applies, except in private tabs and
+  embedded frames, which always ask. Under an Allow Control default, a visible
+  password or payment field makes control ask first (`PageSensitiveProbe`).
 - `PageDriver` resolves actual page elements and enforces sensitive-field and
   consequential-action rules.
 - `AgentActionConsent` asks from trusted app UI. The model cannot suppress it.

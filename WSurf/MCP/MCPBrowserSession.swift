@@ -452,7 +452,8 @@ final class MCPBrowserSession: Identifiable {
     /// Whether this connection's grant and the site's policy allow `capability` now. Persistent: never depends on the calling task.
     func permits(_ tab: BrowserTab, capability: Scope) -> Bool {
         guard sharedTab(tab.id) === tab, let grant = grants[tab.id] else { return false }
-        let writable = tab.assistantAccess.effectivePolicy != .readOnly
+        // The default never limits a connection: it only answers for the in-app assistant. Only the website's own choice does.
+        let writable = tab.assistantAccess.explicitPolicy != .readOnly
         switch capability {
         case .read:
             return true
