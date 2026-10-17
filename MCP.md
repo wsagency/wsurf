@@ -221,8 +221,8 @@ Use screenshots only when text and control state do not answer the task.
 
 ### Action results
 
-`clickOnPage`, `typeOnPage`, `selectOption`, `setChecked`, `fillFields`, `scrollPage`, `pressKey` and
-`hoverOnPage` return what the action changed instead of the whole page. The page is digested before and after
+`clickOnPage`, `typeOnPage`, `selectOption`, `setChecked`, `fillFields`, `scrollPage`, `pressKey`, `hoverOnPage` and
+`dragOnPage` return what the action changed instead of the whole page. The page is digested before and after
 (controls, text, focus, scroll position); only the difference is sent: 0.3 to 1 KB for a click, a
 field change or a selection on a typical page, where the same action returned 3.3 KB of text before. The reply keeps the earlier keys (`tabID`, `content`,
 `observationID`, `url` after a navigation) and adds `status` (`ok` or `failed`), `action`, `navigation` and `cost`.
@@ -400,7 +400,7 @@ Never sent: Control in any combination; Command with Option; Command with anythi
 
 ### Drag
 
-`dragOnPage` has two modes. The default dispatches the DOM events of a drag at the pointer positions along a straight path (five points): `dragstart`, `drag`, `dragenter`, `dragover`, `drop`, `dragend` for a `draggable` source, pointer and mouse events otherwise. They are untrusted (`isTrusted` is false), work with the window in the background on both engines, and are refused when the path crosses a frame, a file input, a disabled control or a sensitive field. `pointer: true` sends trusted pointer input (`isTrusted` is true): on Chromium through DevTools mouse events, with the button held while it moves; on WebKit as native mouse events through the window, which reach it with WSurf in the background (unlike `hoverOnPage`) but do not mark the button as held during the moves. Both need the tab on screen. A source that starts a browser drag session (a `draggable` element, an image, a link, selected text) is refused in pointer mode, because synthetic input cannot complete that session; use the default mode for it. Refs need the observation of the latest read; selector and offset ends need none, but selectors need development access. A consequential label on either end (for example a drop target named Delete) asks for approval, as a click would.
+`dragOnPage` has two modes. The default dispatches the DOM events of a drag at the pointer positions along a straight path (five points): `dragstart`, `drag`, `dragenter`, `dragover`, `drop`, `dragend` for a `draggable` source, pointer and mouse events otherwise. They are untrusted (`isTrusted` is false), work with the window in the background on both engines, and are refused when the path crosses a frame, a file input, a disabled control or a sensitive field. `pointer: true` sends trusted pointer input (`isTrusted` is true): on Chromium through DevTools mouse events, with the button held while it moves; on WebKit as native mouse events through the window, which reach it with WSurf in the background (unlike `hoverOnPage`) but do not mark the button as held during the moves. Both need the tab on screen. A source that starts a browser drag session (a `draggable` element, an image, a link, selected text) is refused in pointer mode, because synthetic input cannot complete that session; use the default mode for it. Refs need the observation of the latest read; selector and offset ends need none, but selectors need development access. A consequential label on either end (for example a drop target named Delete) asks for approval, as a click would. Like the other actions, it returns what the drag changed (see Action results); `result: "full"`, `budget` and `screenshotOnFailure` work as they do there.
 
 ## Verify with a real client
 

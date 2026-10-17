@@ -71,7 +71,7 @@ nonisolated extension MCPToolCatalog {
                 With pointer true it sends trusted pointer input instead (DevTools mouse events on Chromium, native mouse events on WebKit); \
                 the tab must be visible, WSurf need not be active. The source is a readPage ref or a selector; the destination is toRef, toSelector, or dx and dy CSS \
                 pixels from the source's centre. A selector end needs development access. Both ends must be visible in the viewport; \
-                frames, file inputs, disabled and sensitive elements are refused. Verify the returned page.
+                frames, file inputs, disabled and sensitive elements are refused. Returns what the drag changed; verify it.
                 """,
             parameters: [
                 tab,
@@ -95,7 +95,7 @@ nonisolated extension MCPToolCatalog {
                     minimum: -dragOffsetLimit, maximum: dragOffsetLimit),
                 Parameter(
                     name: "pointer", type: "boolean", description: "Send trusted pointer input instead of DOM events. Default false.", required: false),
-            ], scope: .control, title: "Drag on Page"),
+            ] + feedback, scope: .control, title: "Drag on Page"),
     ]
 
     static let dragOffsetLimit = 5_000

@@ -119,7 +119,7 @@ extension PageDiagnostics.Buffer {
 @MainActor
 extension MCPBrowserSession {
     static let feedbackActions: Set<String> = [
-        "clickOnPage", "typeOnPage", "selectOption", "setChecked", "fillFields", "scrollPage", "pressKey", "hoverOnPage",
+        "clickOnPage", "typeOnPage", "selectOption", "setChecked", "fillFields", "scrollPage", "pressKey", "hoverOnPage", "dragOnPage",
     ]
 
     /// Whether a page tool's text is the success of its action, not a refusal or an error message.

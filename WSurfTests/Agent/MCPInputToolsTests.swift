@@ -31,9 +31,13 @@ struct MCPInputToolsTests {
         <div id="note" data-testid="note">Just text</div>
         <div id="card" class="box" style="left: 20px" draggable="true" role="button" aria-label="Card" data-testid="card">Card</div>
         <div id="zone" class="box" style="left: 220px" role="button" aria-label="Zone" data-testid="zone">Zone</div>
+        <div id="status" role="status"></div>
         <script>window.drops = [];
         document.getElementById('zone').addEventListener('dragover', e => e.preventDefault());
-        document.getElementById('zone').addEventListener('drop', e => window.drops.push('zone'));</script>
+        document.getElementById('zone').addEventListener('drop', e => {
+          window.drops.push('zone');
+          document.getElementById('status').textContent = 'Dropped on zone';
+        });</script>
         """
 
     /// The fixture server and the window that hosts the tab.
@@ -344,6 +348,30 @@ struct MCPInputToolsTests {
         // A ref needs the observation of the latest read; one from before it is stale.
         let stale = try await call(subject, "dragOnPage", tab, ["observationID": .string(observation), "ref": .int(try ref(of: "Card", in: read)), "toRef": .int(try ref(of: "Zone", in: read))])
         #expect(stale.isError == true, "the dragged page produced a newer observation")
+    }
+
+    @Test(arguments: BrowserEngine.allCases)
+    func aDragReportsWhatItChangedAndFullRestoresTheSnapshot(engine: BrowserEngine) async throws {
+        let (server, browser, tab) = try await fixture(engine: engine)
+        defer { server.close() }
+        let subject = session(browser, access: .control)
+        _ = try await call(subject, "requestAccess")
+        let read = try await call(subject, "readPage", tab)
+        let card = try ref(of: "Card", in: read), zone = try ref(of: "Zone", in: read)
+        let delta = try await call(subject, "dragOnPage", tab, ["ref": .int(card), "toRef": .int(zone)])
+        #expect(delta.isError == false, "\(text(delta))")
+        let reply = try #require(delta.structuredContent?.objectValue, "\(text(delta))")
+        let content = try #require(reply["content"]?.stringValue)
+        #expect(reply["status"]?.stringValue == "ok" && reply["action"]?.stringValue == "dragOnPage", "\(text(delta))")
+        #expect(content.contains("Sent drag from") && content.contains("Dropped on zone"), "\(content)")
+        #expect(!content.contains("PAGE TEXT:"), "a drag reports its changes, not the page: \(content)")
+        #expect(reply["cost"]?.objectValue?["bytes"]?.intValue != nil, "\(text(delta))")
+
+        let full = try await call(subject, "dragOnPage", tab, ["ref": .int(card), "toRef": .int(zone), "result": "full"])
+        #expect(full.isError == false, "\(text(full))")
+        let snapshot = try #require(full.structuredContent?.objectValue?["content"]?.stringValue, "\(text(full))")
+        #expect(snapshot.contains("Sent drag from") && snapshot.contains("PAGE TEXT:"), "\(snapshot)")
+        #expect(try await tab.page.evaluateJavaScript("window.drops.length") as? Int == 2)
     }
 
     @Test(arguments: BrowserEngine.allCases)
