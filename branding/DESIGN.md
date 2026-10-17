@@ -2,6 +2,8 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # WSurf brand system: Flux
 
+> **Superseded on 2026-10-16.** The owner chose the **Tandem** mark instead of the Flux switch: see [`tandem/README.md`](tandem/README.md). This document stays as the record of the Flux review. What carries over: the Flux default colour pair (`#3B1FD1` / `#6D55FF`, `#14C79A` / `#2FE0B2`) as Tandem's lead and follower, the other palettes as colour pairs for a possible Dock icon choice, the words and claims rules in section 2, and the Dock icon contract in section 9 as a starting point if that feature is picked up. What does not: the switch geometry, the Figtree wordmark, the gradients and the textured finish.
+
 Status: **DRAFT for written-spec review. Design and candidate art only: nothing here is wired into the app, website, README, DMG or release tooling, and no app code was written.**
 Branch `feature/flux-brand-system-20261016`, base `origin/main` 7b99516.
 Labels: **EXISTING** = read in the repo or in a rendered file this session; **DESIGN** = proposed; **UNVERIFIED** = not run or not provable from static sources.
