@@ -134,13 +134,22 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
             if let data {
                 request.append(data)
             }
-            let hasHeaders = request.range(of: Data("\r\n\r\n".utf8)) != nil
-            guard hasHeaders || complete || error != nil else {
+            let separator = request.range(of: Data("\r\n\r\n".utf8))
+            // A request with a body is answered after the body arrived, so closing the connection never cuts it off.
+            let missing = separator.map { Self.bodyLength(ofHead: request[..<$0.lowerBound]) - (request.count - $0.upperBound) } ?? 0
+            guard (separator != nil && missing <= 0) || complete || error != nil else {
                 receiveRequest(from: connection, accumulated: request)
                 return
             }
             sendResponse(for: request, over: connection)
         }
+    }
+
+    /// The `Content-Length` of a request head, or 0 (a chunked body is not waited for).
+    private static func bodyLength(ofHead head: Data) -> Int {
+        let lines = String(decoding: head, as: UTF8.self).lowercased().split(separator: "\r\n")
+        guard let line = lines.first(where: { $0.hasPrefix("content-length:") }) else { return 0 }
+        return Int(line.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)) ?? 0
     }
 
     private func sendResponse(for request: Data, over connection: NWConnection) {
