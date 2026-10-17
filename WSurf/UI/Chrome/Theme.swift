@@ -268,26 +268,3 @@ struct VisualEffectView: NSViewRepresentable {
         nsView.alphaValue = materialOpacity
     }
 }
-
-struct AppKitGlassEffectView: NSViewRepresentable {
-    var style: NSGlassEffectView.Style = .clear
-    var cornerRadius: CGFloat = 0
-    var tintColor: NSColor?
-
-    func makeNSView(context: Context) -> NSGlassEffectView {
-        let view = NSGlassEffectView()
-        view.contentView = NSView()
-        configure(view)
-        return view
-    }
-
-    func updateNSView(_ nsView: NSGlassEffectView, context: Context) {
-        configure(nsView)
-    }
-
-    private func configure(_ view: NSGlassEffectView) {
-        view.style = style
-        view.cornerRadius = cornerRadius
-        view.tintColor = tintColor
-    }
-}

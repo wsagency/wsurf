@@ -284,6 +284,8 @@ private struct LoomTintedBackdrop: View {
     }
 }
 
+/// The desktop blurred through the window, under a tint. This is a window backdrop, not a floating control, and
+/// glass cannot sample glass, so it carries no glass layer of its own: one effect samples the desktop once.
 private struct LoomTransparentBackdrop: View {
     let sampledPageColor: NSColor?
     let opacity: Double
@@ -312,12 +314,6 @@ private struct LoomTransparentBackdrop: View {
         0.12 + 0.82 * intensity
     }
 
-    private var glassTintOpacity: CGFloat {
-        let resting = isFloating ? (isLight ? 0.025 : 0.035) : (isLight ? 0.02 : 0.03)
-        let maximum: CGFloat = isLight ? 0.32 : 0.38
-        return resting + (maximum - resting) * intensity
-    }
-
     private var tintWashOpacity: CGFloat {
         (isLight ? 0.34 : 0.42) * intensity
     }
@@ -328,11 +324,6 @@ private struct LoomTransparentBackdrop: View {
                 material: .underWindowBackground,
                 blending: .behindWindow,
                 materialOpacity: substrateOpacity
-            )
-
-            AppKitGlassEffectView(
-                style: .clear,
-                tintColor: sampled.withAlphaComponent(glassTintOpacity)
             )
 
             Color(nsColor: sampled).opacity(tintWashOpacity)

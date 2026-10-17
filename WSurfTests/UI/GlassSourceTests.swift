@@ -32,4 +32,15 @@ struct GlassSourceTests {
 
         #expect(raw == ["WSurf/UI/Chrome/GlassPolicy.swift"], "raw glass in \(raw)")
     }
+
+    /// Glass cannot sample glass, and a window backdrop is not a floating control. The transparent style is one
+    /// blurred backdrop under a tint, so it asks the system for a single effect instead of two.
+    @Test func theTransparentBackdropHasNoGlassLayer() throws {
+        let loom = try source("WSurf/UI/Chrome/LoomChrome.swift")
+        let appKitGlass = try appSources().filter { $0.text.contains("NSGlassEffectView") }.map(\.path)
+
+        #expect(loom.contains("VisualEffectView("))
+        #expect(!loom.contains("GlassEffectView"))
+        #expect(appKitGlass.isEmpty, "AppKit glass in \(appKitGlass)")
+    }
 }
