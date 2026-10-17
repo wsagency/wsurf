@@ -26,12 +26,16 @@ struct AssistantSettings: View {
                 AgentToolsPage(model: model)
             case .grants:
                 AssistantGrantsPage(policy: model.actionPolicy, onBack: { model.showOverview() })
+            case .connectedApps:
+                ConnectedAppsPage(server: coordinator.mcpServer, onBack: { model.showOverview() })
             }
         }
         .task { await model.onAppear() }
         .onChange(of: highlight, initial: true) { _, anchor in
             guard let anchor else { return }
-            if anchor == "provider.connected" || anchor == "privacy.assistant"
+            if anchor == "assistant.connectedApps" {
+                model.showConnectedApps()
+            } else if anchor == "provider.connected" || anchor == "privacy.assistant"
                 || anchor.hasPrefix("voice.") || anchor.hasPrefix("assistant.") {
                 model.showOverview()
             } else if anchor.hasPrefix("provider.") {
@@ -92,7 +96,27 @@ private struct AssistantOverview: View {
             .settingsAnchor("privacy.assistant")
         }
 
+        ConnectedAppsSection(model: model, trustStore: coordinator.mcpServer.trustStore)
+
         Footnote(AIDisclosure.settingsCaption)
+    }
+}
+
+private struct ConnectedAppsSection: View {
+    let model: IntelligenceViewModel
+    let trustStore: MCPTrustStore
+
+    var body: some View {
+        SettingsSection(title: "Connected apps", symbol: "app.connected.to.app.below.fill") {
+            DrillInRow(
+                title: "Connected apps",
+                detail: trustStore.clients.isEmpty ? "None" : "\(trustStore.clients.count) paired"
+            ) {
+                model.showConnectedApps()
+            }
+            .settingsAnchor("assistant.connectedApps")
+        }
+        .task { trustStore.loadIfNeeded() }
     }
 }
 

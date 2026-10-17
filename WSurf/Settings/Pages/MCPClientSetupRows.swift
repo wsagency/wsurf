@@ -6,6 +6,7 @@ import AppKit
 import SwiftUI
 
 struct MCPClientSetupRows: View {
+    let trustStore: MCPTrustStore
     @State private var targets: [MCPClientTarget] = []
     @State private var installer = MCPClientInstaller()
 
@@ -15,34 +16,49 @@ struct MCPClientSetupRows: View {
                 if target.id != targets.first?.id {
                     RowSeparator()
                 }
-                MCPClientSetupRow(target: target, installer: installer)
+                MCPClientSetupRow(target: target, installer: installer, trustStore: trustStore)
             }
         }
-        .task { targets = MCPClientDiscovery.targets() }
+        .task {
+            trustStore.loadIfNeeded()
+            targets = MCPClientDiscovery.targets()
+        }
     }
 }
 
 private struct MCPClientSetupRow: View {
     let target: MCPClientTarget
     let installer: MCPClientInstaller
+    let trustStore: MCPTrustStore
     @State private var selectedURL: URL?
     @State private var message: String?
     @State private var backupURL: URL?
     @State private var isAdding = false
-    @State private var isAdded = false
+    @State private var installation = MCPClientInstallation.absent
     @State private var isChecking = true
     @State private var refreshID = UUID()
 
     var body: some View {
         DetailRow(verbatimTitle: target.kind.name, verbatimCaption: caption) {
             HStack(spacing: 8) {
-                SettingsButton(title: isAdded ? "Added" : "Add", symbol: isAdded ? "checkmark" : "plus") {
-                    add()
+                if canPair {
+                    SettingsButton(title: "Pair", symbol: "link") {
+                        add()
+                    }
+                    .disabled(isChecking || isAdding)
+                    .accessibilityLabel(Text("Pair \(target.kind.name) with WSurf"))
+                } else {
+                    SettingsButton(title: isAdded ? "Added" : "Add", symbol: isAdded ? "checkmark" : "plus") {
+                        add()
+                    }
+                    .disabled(isChecking || isAdding || isAdded || (!target.isDetected && selectedURL == nil))
+                    .accessibilityLabel(Text("Add WSurf to \(target.kind.name)"))
                 }
-                .disabled(isChecking || isAdding || isAdded || (!target.isDetected && selectedURL == nil))
-                .accessibilityLabel(Text("Add WSurf to \(target.kind.name)"))
 
                 SettingsMoreMenu {
+                    if paired != nil {
+                        Button("Re-pair") { add() }
+                    }
                     Button("Choose Configuration…") { chooseConfiguration() }
                     Button("Show Configuration") {
                         NSWorkspace.shared.activateFileViewerSelecting([configurationURL])
@@ -65,6 +81,20 @@ private struct MCPClientSetupRow: View {
         selectedURL ?? target.configurationURL
     }
 
+    private var isAdded: Bool {
+        installation != .absent
+    }
+
+    /// The paired client whose token this entry passes. A missing, revoked or unknown token is not paired.
+    private var paired: PairedClient? {
+        guard case .installed(let token?) = installation else { return nil }
+        return trustStore.client(forToken: token)
+    }
+
+    private var canPair: Bool {
+        isAdded && paired == nil && trustStore.isAvailable
+    }
+
     private var caption: String? {
         if isAdding {
             return String(localized: "Adding WSurf…")
@@ -72,6 +102,10 @@ private struct MCPClientSetupRow: View {
             return message
         } else if !isAdded && !target.isDetected && selectedURL == nil {
             return String(localized: "Not detected. Install the client or choose its configuration file.")
+        } else if canPair {
+            return String(localized: "Not paired. It asks for approval each time it connects.")
+        } else if let paired {
+            return String(localized: "Paired as \(paired.name)")
         }
         return nil
     }
@@ -83,13 +117,20 @@ private struct MCPClientSetupRow: View {
         isAdding = true
         message = nil
         Task {
-            defer { isAdding = false }
+            var failure: String?
             do {
-                let result = try await installer.install(destination, command: MCPClientConfiguration.command)
-                backupURL = result.backupURL
-                isAdded = true
+                if trustStore.isAvailable {
+                    backupURL = try await installer.pair(destination, command: MCPClientConfiguration.command, trustStore: trustStore).backupURL
+                } else {
+                    backupURL = try await installer.install(destination, command: MCPClientConfiguration.command).backupURL
+                }
             } catch {
-                message = error.localizedDescription
+                failure = error.localizedDescription
+            }
+            isAdding = false
+            await refreshStatus()
+            if let failure {
+                message = failure
             }
         }
     }
@@ -107,13 +148,13 @@ private struct MCPClientSetupRow: View {
             }
         }
         do {
-            let installed = try await installer.isInstalled(destination, command: MCPClientConfiguration.command)
+            let found = try await installer.installation(destination, command: MCPClientConfiguration.command)
             guard !Task.isCancelled, refreshID == id, !isAdding else { return }
-            isAdded = installed
+            installation = found
             message = nil
         } catch {
             guard !Task.isCancelled, refreshID == id, !isAdding else { return }
-            isAdded = false
+            installation = .absent
             message = error.localizedDescription
         }
     }
@@ -129,7 +170,7 @@ private struct MCPClientSetupRow: View {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             selectedURL = url
-            isAdded = false
+            installation = .absent
             message = nil
             backupURL = nil
         }

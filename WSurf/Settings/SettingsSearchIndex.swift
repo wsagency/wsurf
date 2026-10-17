@@ -220,6 +220,11 @@ enum SettingsIndex {
                        "payment", "delete", "post", "revoke", "grant", "confirm", "ask",
                        ]),
 
+        SettingsEntry("assistant.connectedApps", .provider, "Connected apps", "Apps you paired with WSurf.",
+                      ["mcp", "pair", "paired", "token", "claude", "codex", "cursor", "omp", "client", "external",
+                       "revoke", "connection",
+                       ]),
+
         SettingsEntry("websites.javascript", .websites, "JavaScript", "Turn scripts off for every website.",
                       ["javascript", "js", "scripts", "disable"]),
         SettingsEntry("websites.popups", .websites, "Block pop-ups", "Stop windows a website opens on its own.",

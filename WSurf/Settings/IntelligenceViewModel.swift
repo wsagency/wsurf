@@ -15,6 +15,7 @@ final class IntelligenceViewModel {
         case editor
         case tools
         case grants
+        case connectedApps
     }
 
     private let settings: LLMSettings
@@ -228,6 +229,12 @@ final class IntelligenceViewModel {
         customDraft = nil
         customError = nil
         destination = .grants
+    }
+
+    func showConnectedApps() {
+        customDraft = nil
+        customError = nil
+        destination = .connectedApps
     }
 
     func leaveTools() {
