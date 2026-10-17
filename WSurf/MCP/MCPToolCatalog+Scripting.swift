@@ -22,8 +22,9 @@ nonisolated extension MCPToolCatalog {
             description:
                 """
                 Run JavaScript in a shared page and return its value. \(developerOnly) \
-                source is one expression of at most \(PageScripting.maximumSourceBytes / 1_024) KiB: a function such as \
+                source is one expression of at most \(PageScripting.maximumSourceBytes / 1_024) KiB, compiled on its own: a function such as \
                 () => document.title or async () => { … } is called and a promise is awaited; anything else is the value. \
+                On WebKit, a page whose Content-Security-Policy forbids eval can be scripted in the isolated world only. \
                 world page (default) runs with the page's own variables; isolated shares the DOM and none of them. The script stops \
                 after timeoutMs (\(PageScripting.timeoutMilliseconds.lowerBound) to \(PageScripting.timeoutMilliseconds.upperBound), \
                 default \(PageScripting.defaultTimeoutMilliseconds)); WebKit cannot interrupt code that never yields, Chromium can. \
@@ -50,12 +51,14 @@ nonisolated extension MCPToolCatalog {
             description:
                 """
                 Change the page's DOM. \(developerOnly) Name one element with ref (from findElements or readPage) or selector, any \
-                CSS selector that matches exactly one element of the page, open shadow roots included. op: setAttribute (name, value), \
+                CSS selector that matches exactly one element of the page, open shadow roots included (any attribute may be tested except \
+                value). op: setAttribute (name, value), \
                 removeAttribute (name), setText (value), setStyle (name is a CSS property, value, optionally important), remove, or \
                 insert (tag; value is its text; position beforebegin, afterbegin, beforeend (default) or afterend). Refused: WSurf's own \
-                page elements and marks, password, code and card fields, elements inside frames, event handler attributes and script URLs \
-                (use evaluateScript), script, iframe and other elements that load code, and removing html, head or body. A change lasts \
-                until the page reloads.
+                page elements and marks; password, code and card fields, and every element that holds one (text, removal, insertion); where a form \
+                that takes such a field posts (action, method, target and the like, also on its buttons); elements inside frames; event \
+                handler attributes and script URLs (use evaluateScript); new script, iframe and other elements that load code, and the \
+                address of existing ones; and removing html, head or body. A change lasts until the page reloads.
                 """,
             parameters: [
                 tab, currentSnapshot,

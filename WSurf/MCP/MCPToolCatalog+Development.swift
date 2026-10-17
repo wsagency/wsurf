@@ -29,7 +29,7 @@ nonisolated extension MCPToolCatalog {
                 """
                 Find elements by CSS selector in the document, same-origin frames and open shadow roots; \
                 cross-origin frames and closed shadow roots are reported as skipped. Needs development access; the Developer tier \
-                may also use selectors that read attribute values. \
+                may also test any attribute except value. \
                 Returns an observationID and refs usable only with inspectElement; use readPage for refs you can act on.
                 """,
             parameters: [

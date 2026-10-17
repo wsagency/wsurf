@@ -205,6 +205,85 @@ struct MCPScriptingTests {
     }
 
     @Test(.timeLimit(.minutes(3)), arguments: BrowserEngine.allCases)
+    func aScriptCannotLeaveTheExpressionItRunsIn(engine: BrowserEngine) async throws {
+        try await ScriptingRig.with(engine: engine, html: Self.page) { rig in
+            try await fillSensitiveFields(rig)
+            // Closing the parenthesis to carry on only ends the expression: what follows `return` is never run.
+            let breakout = try await rig.run("0); document.title = 'pwned'; window.__stolen = document.getElementById('pw').value; (0")
+            #expect(breakout.status == "ok", "\(breakout.allText)")
+            #expect(breakout.fields["value"]?.intValue == 0)
+            #expect(try await rig.page("document.title") as? String == "Scripting", "no side effect outside the expression")
+            #expect(try await rig.page("window.__stolen === undefined") as? Bool == true)
+
+            // The harness is out of reach: the script runs in a function of its own with the page's global scope only, so it can
+            // neither answer for itself nor reach the time limit, the checks or its own text.
+            for name in ["resolve", "finish", "describe", "source", "outcome", "failure", "later", "make"] {
+                let reach = try await rig.run("0), \(name), (0")
+                #expect(reach.status == "scriptError", "\(name): \(reach.allText)")
+                #expect(reach.fields["error"]?.objectValue?["name"]?.stringValue == "ReferenceError", "\(name): \(reach.allText)")
+            }
+            let forged = try await rig.run("0), resolve({ ok: true, type: 'string', value: 'forged', truncated: false }), (0")
+            #expect(forged.status == "scriptError", "\(forged.allText)")
+            #expect(!forged.allText.contains("forged"))
+
+            // What a script like that does return is checked like any other result.
+            let value = try await rig.run("[document.getElementById('pw').value, document.getElementById('card').value][0]")
+            #expect(value.fields["value"]?.stringValue == "‹hidden›")
+            #expect(!value.allText.contains(Self.password))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(3)), arguments: BrowserEngine.allCases)
+    func aFailureOfTheHarnessIsHiddenToo(engine: BrowserEngine) async throws {
+        try await ScriptingRig.with(engine: engine, html: Self.page) { rig in
+            try await fillSensitiveFields(rig)
+            // A page that makes the harness itself fail with a field's value: what the engine says is a reply like any other.
+            _ = try await rig.page("window.setTimeout = () => { throw new Error('boom ' + document.getElementById('pw').value) }; 1")
+            let failed = try await rig.run("1")
+            #expect(failed.status == "scriptError", "\(failed.allText)")
+            #expect(!failed.allText.contains(Self.password), "\(failed.allText)")
+            #expect(failed.allText.contains("boom ‹hidden›"), "\(failed.allText)")
+            // The isolated world has its own timers, so it still answers.
+            #expect(try await rig.run("1 + 1", world: "isolated").fields["value"]?.intValue == 2)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(3)), arguments: BrowserEngine.allCases)
+    func aPageThatForgesTheReplyIsHeldToTheBound(engine: BrowserEngine) async throws {
+        try await ScriptingRig.with(engine: engine, html: Self.page) { rig in
+            // A page that replaced JSON.stringify can hand back any text; what WSurf returns does not rest on the page's word.
+            _ = try await rig.page(#"JSON.stringify = () => '{"ok":true,"type":"string","value":"' + 'x'.repeat(40000) + '"}'; 1"#)
+            let oversized = try await rig.run("1")
+            #expect(oversized.status == "ok", "\(oversized.allText)")
+            #expect(oversized.fields["value"]?.stringValue == "[larger than 16 KiB]")
+            #expect(oversized.fields["truncated"]?.boolValue == true)
+            _ = try await rig.page(#"JSON.stringify = () => '{"ok":true,"type":"string","value":"' + 'x'.repeat(60000) + '"}'; 1"#)
+            let huge = try await rig.run("1")
+            #expect(huge.status == "scriptError", "\(huge.allText)")
+            #expect(huge.allText.contains("more than the 48 KiB"), "\(huge.allText)")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(3)), arguments: BrowserEngine.allCases)
+    func aStrictContentSecurityPolicyIsToldAndTheIsolatedWorldStillWorks(engine: BrowserEngine) async throws {
+        let strict = HTTPFixtureServer.Response.html(Self.page, headers: ["Content-Security-Policy": "script-src 'unsafe-inline'"])
+        try await ScriptingRig.with(engine: engine, html: Self.page, routes: ["/": strict]) { rig in
+            let page = try await rig.run("document.title")
+            if engine == .webKit {
+                // WebKit holds the compiled text to the page's policy in the page's world, and says how to go on.
+                #expect(page.status == "scriptError", "\(page.allText)")
+                #expect(page.fields["error"]?.objectValue?["compile"]?.boolValue == true, "\(page.allText)")
+                #expect(page.allText.contains("Use world isolated"), "\(page.allText)")
+            } else {
+                // Chromium compiles through DevTools, which the page's policy does not bind.
+                #expect(page.fields["value"]?.stringValue == "Scripting", "\(page.allText)")
+            }
+            let isolated = try await rig.run("document.title", world: "isolated")
+            #expect(isolated.fields["value"]?.stringValue == "Scripting", "\(isolated.allText)")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(3)), arguments: BrowserEngine.allCases)
     func errorsComeBackWithAMessageAndABoundedStack(engine: BrowserEngine) async throws {
         try await ScriptingRig.with(engine: engine, html: Self.page) { rig in
             let thrown = try await rig.run("() => { throw new TypeError('boom ' + 'z'.repeat(5000)) }")

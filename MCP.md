@@ -179,7 +179,7 @@ revoke it immediately.
 | `hoverOnPage` | Move the real pointer to a referenced element, so CSS `:hover` and pointer/mouse handlers run. Needs WSurf to be the active app with a key window and the tab on screen; it never activates or raises WSurf. Refused with a specific message when the element is offscreen, covered, or clipped by the window (a development viewport larger than the window), or when the pointer could not be delivered; not available inside frames. |
 | `dragOnPage` | Drag from a source (`ref`, or `selector` with development access) to a destination (`toRef`, `toSelector`, or `dx` and `dy` CSS pixels from the source's centre). By default it dispatches the DOM events of a drag (`dragstart`/`dragover`/`drop`, or pointer and mouse events); they are untrusted and work with the tab in the background. `pointer: true` sends trusted pointer input instead (see Drag below). Both ends must be visible in the top document; frames, file inputs, sensitive and disabled elements are refused. |
 | `getDevelopmentInfo` | Engine, measured viewport (`innerWidth`, `innerHeight`, device pixel ratio, touch), zoom, who holds the tab's development lease (`none`, `self`, `other`) and per-engine capabilities. Works with any grant. |
-| `findElements` | Development. Elements matching a safe CSS selector (the Developer tier may use any valid selector, including attribute tests) in the document, same-origin frames and open shadow roots, with `offset` (0–10,000) and `limit` (1–100, default 50); skipped cross-origin frames and closed shadow roots are reported. A page is also bounded by delivered bytes (about 24 KiB of the escaped result); it ends early with `hasMore: true` and a following `offset` continues it. Returns an `observationID` whose refs work with `inspectElement` and, for a screenshot, `screenshotPage`; they are never targets for click, type, hover or any other action. |
+| `findElements` | Development. Elements matching a safe CSS selector (the Developer tier may test any attribute except `value`) in the document, same-origin frames and open shadow roots, with `offset` (0–10,000) and `limit` (1–100, default 50); skipped cross-origin frames and closed shadow roots are reported. A page is also bounded by delivered bytes (about 24 KiB of the escaped result); it ends early with `hasMore: true` and a following `offset` continues it. Returns an `observationID` whose refs work with `inspectElement` and, for a screenshot, `screenshotPage`; they are never targets for click, type, hover or any other action. |
 | `inspectElement` | Development. Bounded attributes, geometry, box model, allowlisted computed styles and ancestors of one found element. No field values and no raw HTML. With `full: true` (Developer tier) it also returns all attributes (up to 128), computed properties (all, or the up to 32 named in `properties`; about 8 KiB) and an `outerHTML` excerpt of at most 8 KiB with field values blanked, under the rule in Scripts and DOM edits. The result is kept under the same delivered-bytes budget by dropping ancestors, then attributes, then styles, and says which (`ancestorsTruncated`, `attributesTruncated`, `truncated`). |
 | `setViewport` | Development. Lay the page out at an exact CSS-pixel viewport (64–4,096 per axis). The result is the size measured inside the page. Needs the tab on screen. |
 | `emulateDevice` | Development. Apply a profile and orientation (table below). Needs the tab on screen. |
@@ -513,7 +513,7 @@ connection badge while it runs and is recorded in Agent Activity.
 
 | `evaluateScript` argument | Meaning |
 | --- | --- |
-| `source` | One JavaScript expression of at most 16 KiB. A function (`() => document.title`, `async () => { … }`) is called and a promise is awaited; anything else is the value. Statements must be wrapped in a function. |
+| `source` | One JavaScript expression of at most 16 KiB. A function (`() => document.title`, `async () => { … }`) is called and a promise is awaited; anything else is the value. Statements must be wrapped in a function. It is compiled on its own, as `return ( source )` in a function that has the page's global scope and nothing of WSurf's, so text that tries to close the parenthesis and carry on never runs and cannot reach the time limit, the checks or the reply. On WebKit, a page whose Content-Security-Policy forbids `eval` cannot compile it in the `page` world (`EvalError`); use `isolated` (Chromium compiles through DevTools, which the policy does not bind). |
 | `world` | `page` (default) runs with the page's own variables and prototypes. `isolated` shares the DOM and none of them; what it sets stays in its own world for that document. |
 | `timeoutMs` | 50 to 5,000, default 2,000. A script still waiting then gets `timedOut`. Chromium also stops a script that never yields; **WebKit cannot interrupt one**, so its tab stays busy until the script ends or the tab is reloaded or closed. |
 
@@ -558,10 +558,17 @@ the page, open shadow roots included), and one operation: `setAttribute` (`name`
 lasts until the page reloads. The edit runs in WSurf's own world, so a page that replaced
 `setAttribute` cannot change what happens. Refused: WSurf's own page elements and marks (a
 reserved id or class, any `data-wsurf-*` attribute), password, code and card fields
-(changing a field's type or label would otherwise unhide it), an element inside a frame,
-event-handler attributes (`on…`), script URLs, `srcdoc`, new `script`, `iframe`, `object`,
-`embed`, `link`, `meta` and `base` elements (code is `evaluateScript`'s, with its time limit and
-its record), and removing `html`, `head` or `body`. Text and values are at most 8 KiB.
+(changing a field's type or label would otherwise unhide it) and every element that holds one
+(its text, its removal and anything inserted in it: that includes the form, a wrapper and `body`),
+where a form that takes such a field posts (`action`, `method`, `target`, `enctype`, a button's
+`formaction` and the like, and joining it with the `form` attribute), an element inside a frame,
+event-handler attributes (`on…`), script URLs, `srcdoc`, new `script`, `iframe`, `object`, `embed`,
+`link`, `meta` and `base` elements and the address or settings of existing ones (code is
+`evaluateScript`'s, with its time limit and its record), and removing `html`, `head` or `body`.
+A selector may test any attribute **except `value`**: `input[type=password][value^="a"]`, also
+under `:has()` or `:is()`, would read a prefilled password a character at a time, so it is
+refused in every tier, with the same answer whether or not anything matches. Text and values are
+at most 8 KiB.
 
 **The record.** Agent Activity keeps one entry per call, refused or not: for a script its
 world, its start and its end (150 characters, cut in the middle) and the first 8 hex digits

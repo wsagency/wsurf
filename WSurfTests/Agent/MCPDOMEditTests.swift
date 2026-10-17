@@ -20,12 +20,21 @@ struct MCPDOMEditTests {
           <ul id=list><li>one</li></ul>
           <a id=link href="/next">Next</a>
         </div>
-        <form id=login>
-          <input id=user name=username value=alice>
-          <input id=pw name=pw type=password aria-label="Password">
-          <input id=card name=card autocomplete=cc-number aria-label="Card number" value="4242 4242 4242 4242">
-        </form>
+        <div id=wrapper>
+          <form id=login action="/login" method=post>
+            <input id=user name=username value=alice>
+            <input id=pw name=pw type=password aria-label="Password">
+            <input id=card name=card autocomplete=cc-number aria-label="Card number" value="4242 4242 4242 4242">
+            <button id=submit type=submit>Sign in</button>
+          </form>
+        </div>
+        <button id=outside form=login type=submit>Outside</button>
+        <button id=loose type=button>Loose</button>
+        <form id=search action="/search" method=get><input name=q aria-label=Query><button id=go type=submit>Go</button></form>
         <input type=hidden id=token value="tok-abc-123">
+        <script id=inline>window.__inline = 1</script>
+        <link id=sheet rel=stylesheet href="/style.css">
+        <meta id=viewport name=viewport content="width=device-width">
         <div id=ring class="__wsurf-ring">ring</div>
         <input id=marked data-wsurf-password aria-label="Marked">
         <iframe id=frame srcdoc="<!doctype html><p id=inner>Inner</p>"></iframe>
@@ -73,9 +82,9 @@ struct MCPDOMEditTests {
             #expect(try await rig.edit("remove", ["selector": "#list"]).status == "ok")
             #expect(try await rig.page("document.getElementById('list') === null") as? Bool == true)
 
-            // The Developer tier lifts the attribute rule of selectors; a hidden field is found by its value.
-            let hidden = try await rig.edit("setAttribute", ["selector": "input[type=hidden][value^=tok-]", "name": "data-seen", "value": "1"])
-            #expect(hidden.status == "ok", "\(hidden.allText)")
+            // The Developer tier lifts the attribute allowlist of selectors: a link is found by where it goes.
+            let linked = try await rig.edit("setAttribute", ["selector": #"a[href^="/ne"]"#, "name": "data-seen", "value": "1"])
+            #expect(linked.status == "ok", "\(linked.allText)")
 
             // Each call is in Agent Activity with what it did, and the values the edits carried are the user's to read.
             let entries = rig.session.activity.entries.filter { $0.event == .tool("editDOM") }
@@ -165,18 +174,87 @@ struct MCPDOMEditTests {
         }
     }
 
+    @Test(.timeLimit(.minutes(3)), arguments: BrowserEngine.allCases)
+    func aFormThatTakesASensitiveFieldKeepsWhereItPosts(engine: BrowserEngine) async throws {
+        try await ScriptingRig.with(engine: engine, html: Self.page) { rig in
+            let before = try await markup(rig)
+            // The form, its button, a button that joins it from outside, and a button that tries to join it.
+            let attempts: [(String, String, String)] = [
+                ("#login", "action", "https://evil.invalid/"), ("#login", "method", "get"), ("#login", "target", "_blank"),
+                ("#login", "enctype", "text/plain"), ("#submit", "formaction", "https://evil.invalid/"), ("#submit", "formmethod", "get"),
+                ("#submit", "formtarget", "_blank"), ("#outside", "formaction", "https://evil.invalid/"), ("#loose", "form", "login"),
+            ]
+            for (selector, name, value) in attempts {
+                let result = try await rig.edit("setAttribute", ["selector": .string(selector), "name": .string(name), "value": .string(value)])
+                #expect(result.status == "denied", "\(selector) \(name): \(result.allText)")
+                #expect(result.allText.contains("password, code or payment field"), "\(selector) \(name): \(result.allText)")
+            }
+            #expect(try await rig.edit("removeAttribute", ["selector": "#login", "name": "action"]).status == "denied")
+            #expect(try await rig.edit("removeAttribute", ["selector": "#outside", "name": "form"]).status == "denied")
+            #expect(try await markup(rig) == before, "none of it was done")
+
+            // A form that takes no such field, and a button that belongs to none, are the page's to point wherever.
+            #expect(try await rig.edit("setAttribute", ["selector": "#search", "name": "action", "value": "/other"]).status == "ok")
+            #expect(try await rig.edit("setAttribute", ["selector": "#go", "name": "formaction", "value": "/other"]).status == "ok")
+            #expect(try await rig.edit("setAttribute", ["selector": "#loose", "name": "formaction", "value": "/other"]).status == "ok")
+            #expect(try await rig.edit("setAttribute", ["selector": "#login", "name": "class", "value": "wide"]).status == "ok", "other attributes are not routing")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(3)), arguments: BrowserEngine.allCases)
+    func anElementThatHoldsASensitiveFieldKeepsItsContent(engine: BrowserEngine) async throws {
+        try await ScriptingRig.with(engine: engine, html: Self.page) { rig in
+            let before = try await markup(rig)
+            for selector in ["#login", "#wrapper", "body"] {
+                let target: Value = .string(selector)
+                for (op, arguments) in [
+                    ("setText", ["selector": target, "value": "x"]), ("remove", ["selector": target]),
+                    ("insert", ["selector": target, "tag": "div"]), ("insert", ["selector": target, "tag": "div", "position": "afterend"]),
+                ] as [(String, [String: Value])] {
+                    let result = try await rig.edit(op, arguments)
+                    #expect(result.status == "denied", "\(op) \(selector): \(result.allText)")
+                    #expect(result.allText.contains("holds a password"), "\(op) \(selector): \(result.allText)")
+                }
+            }
+            #expect(try await markup(rig) == before)
+            // What does not hold one is still editable, and an attribute of a container is not its content.
+            #expect(try await rig.edit("setText", ["selector": "#search", "value": "x"]).status == "ok")
+            #expect(try await rig.edit("setAttribute", ["selector": "#wrapper", "name": "class", "value": "wide"]).status == "ok")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(3)), arguments: BrowserEngine.allCases)
+    func elementsThatLoadCodeKeepTheirAddresses(engine: BrowserEngine) async throws {
+        try await ScriptingRig.with(engine: engine, html: Self.page) { rig in
+            let before = try await markup(rig)
+            let attempts: [(String, String, String)] = [
+                ("#inline", "src", "https://evil.invalid/x.js"), ("#sheet", "href", "https://evil.invalid/x.css"), ("#sheet", "rel", "preload"),
+                ("#viewport", "content", "0;url=https://evil.invalid/"), ("#frame", "src", "https://evil.invalid/"),
+            ]
+            for (selector, name, value) in attempts {
+                let result = try await rig.edit("setAttribute", ["selector": .string(selector), "name": .string(name), "value": .string(value)])
+                #expect(result.status == "denied", "\(selector) \(name): \(result.allText)")
+                #expect(result.allText.contains("loads code"), "\(selector) \(name): \(result.allText)")
+            }
+            #expect(try await rig.edit("removeAttribute", ["selector": "#sheet", "name": "href"]).status == "denied")
+            #expect(try await markup(rig) == before)
+            // Its other attributes are the page's to describe.
+            #expect(try await rig.edit("setAttribute", ["selector": "#inline", "name": "title", "value": "x"]).status == "ok")
+        }
+    }
+
     // MARK: Selectors
 
     @Test(.timeLimit(.minutes(3)))
     func unrestrictedSelectorsOnlyOnDeveloperSites() async throws {
-        let selector: Value = "input[type=hidden][value^=tok-]"
+        let selector: Value = #"a[href^="/ne"]"#
         try await ScriptingRig.with(html: Self.page) { rig in
             let developer = try await rig.call("findElements", ["selector": selector])
             #expect(developer.isError == false, "\(developer.allText)")
             let matches = try Self.items(developer)
             #expect(matches.count == 1)
 
-            // Development reads only what the runtime exposes: a selector on a hidden field's value would recover it.
+            // Development reads only what the runtime exposes: a selector on where a link goes would recover its address.
             try rig.trust.setStanding(.development, for: rig.client.id)
             let development = try await rig.call("findElements", ["selector": selector])
             #expect(development.allText.contains("not exposed"), "\(development.allText)")
@@ -185,6 +263,46 @@ struct MCPDOMEditTests {
             // And once the page is off the developer sites there is no access to either.
             try rig.trust.setIncludesThisMac(false)
             #expect(try await rig.call("findElements", ["selector": selector]).isError == true)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(3)), arguments: BrowserEngine.allCases)
+    func aSelectorCannotProbeWhatAFieldHolds(engine: BrowserEngine) async throws {
+        try await ScriptingRig.with(engine: engine, html: Self.page) { rig in
+            // A page that prefilled a password into the markup: matching its value attribute a character at a time would read it.
+            _ = try await rig.page("document.getElementById('pw').setAttribute('value', 'Hunter2-prefilled'); 1")
+            let before = try await markup(rig)
+            let pairs: [(match: String, miss: String)] = [
+                (#"input[type=password][value^="H"]"#, #"input[type=password][value^="Z"]"#),
+                (#"form:has(input[type=password][value^="H"])"#, #"form:has(input[type=password][value^="Z"])"#),
+                (#":is(input, textarea)[value$="d"]"#, #":is(input, textarea)[value$="q"]"#),
+                (#"input[v\61lue^=H]"#, #"input[v\61lue^=Z]"#),
+                (#"[*|value|=Hunter2-prefilled]"#, #"[*|value|=Nope]"#),
+                (#"input[VALUE="Hunter2-prefilled" i]"#, #"input[VALUE="Nope" i]"#),
+                (#":not([value^="Q"])"#, #":not([value^="H"])"#),
+                ("input[value]", "textarea[value]"),
+            ]
+            for (match, miss) in pairs {
+                let matching = try await rig.call("findElements", ["selector": .string(match)])
+                let missing = try await rig.call("findElements", ["selector": .string(miss)])
+                #expect(matching.allText.contains("reads the value attribute"), "\(match): \(matching.allText)")
+                #expect(matching.fields["content"] == missing.fields["content"], "\(match) and \(miss) are refused alike")
+                #expect(!matching.allText.contains("Hunter2"))
+                // The same goes for the selector of an edit: a match and a miss are refused alike, and nothing is touched.
+                let editedMatch = try await rig.edit("setAttribute", ["selector": .string(match), "name": "data-x", "value": "1"])
+                let editedMiss = try await rig.edit("setAttribute", ["selector": .string(miss), "name": "data-x", "value": "1"])
+                #expect(editedMatch.status == "denied", "\(match): \(editedMatch.allText)")
+                #expect(editedMatch.allText == editedMiss.allText, "\(match) and \(miss) are refused alike")
+            }
+            #expect(try await markup(rig) == before)
+            // Development never had them either, and other attributes still work in the Developer tier.
+            let ordinary = try await rig.call("findElements", ["selector": #"input[type=password][aria-label^="Pass"]"#])
+            #expect(ordinary.isError == false, "\(ordinary.allText)")
+            let items = try Self.items(ordinary)
+            #expect(items.count == 1)
+            try rig.trust.setStanding(.development, for: rig.client.id)
+            let restricted = try await rig.call("findElements", ["selector": #"input[value^="H"]"#])
+            #expect(restricted.allText.contains("not exposed"), "\(restricted.allText)")
         }
     }
 

@@ -18,7 +18,8 @@ import WebKit
 /// the test `readPage` already applies: a password field, a field autofill marked as password, card or contact, or one whose
 /// autocomplete, name, id or label says password, code, card number, CVC, IBAN, account number and the like.
 ///
-/// Every string in the result, every key, and the text of a thrown error is then compared with those values. A string equal to
+/// Every string in the result, every key, the text of a thrown error and whatever the engine says when the script cannot run is
+/// then compared with those values. A string equal to
 /// one of them (ignoring ASCII case and surrounding space) becomes `‹hidden›`; a value of at least 4 characters is also hidden
 /// inside longer text, as it is, whitespace-collapsed, percent-encoded, JSON-escaped and HTML-escaped. The reply states how many
 /// places were hidden. Values the connection typed itself as test secrets are hidden by `MCPSecretScrubber` on top of this.
@@ -33,6 +34,8 @@ enum PageScripting {
     nonisolated static let maximumSourceBytes = 16 * 1_024
     /// The serialized value a script may return; anything beyond it is cut and flagged.
     nonisolated static let maximumValueBytes = 16 * 1_024
+    /// How far hiding sensitive values may lengthen a result past `maximumValueBytes` (a hidden value becomes `‹hidden›`).
+    nonisolated static let hidingSlack = 4 * 1_024
     /// What the page may hand back for one call (value, error and envelope), checked before WSurf reads any of it.
     nonisolated static let maximumReplyBytes = 48 * 1_024
     nonisolated static let timeoutMilliseconds = 50...5_000
@@ -81,13 +84,13 @@ enum PageScripting {
         guard PageAutomationGuard.allowsExecution, PageDriver.selectedFrame == nil, authorized() else { return .stale }
         // Before the script: what the page holds now. A script may clear a field or leave the document after reading it.
         guard let armed = await trusted(armScript, in: view), let object = json(armed), let document = object["document"] as? String else {
-            return .stale
+            return authorized() && !Task.isCancelled ? .failed("The page did not answer, so the script was not run") : .stale
         }
-        guard authorized(), let wrapper = wrapper(source: source, address: PageAutomationGuard.current?.documentURL ?? "", timeout: timeout) else {
+        guard authorized(), let wrapper = wrapper(address: PageAutomationGuard.current?.documentURL ?? "", timeout: timeout) else {
             return .stale
         }
         let ceiling = Duration.milliseconds(timeout) + grace
-        let run = await run(wrapper, in: world.contentWorld, ceiling: ceiling, on: view, authorized: authorized)
+        let run = await run(wrapper, source: source, in: world.contentWorld, ceiling: ceiling, on: view, authorized: authorized)
         // No answer means the time is up or the request was cancelled (Stop): either way the script is stopped where it can be.
         let interrupted = run == nil ? await interrupt(view) : false
         guard authorized(), !Task.isCancelled else { return .stale }
@@ -95,15 +98,17 @@ enum PageScripting {
         let reply: String
         switch run {
         case .failed(let message):
-            return .failed(message)
+            // What the engine says about a failure can carry page text (a page that replaced `setTimeout` with a function that
+            // throws a field's value, say), so it is a reply like any other and is checked like one.
+            reply = failureReply(message)
         case .reply(let text):
             reply = text
+            guard reply.utf8.count <= maximumReplyBytes, let answer = json(reply) else {
+                return .failed("The script returned more than the \(maximumReplyBytes / 1_024) KiB WSurf accepts for one call.")
+            }
+            if answer["stale"] as? Bool == true { return .stale }
+            if answer["timedOut"] as? Bool == true { return .timedOut(interrupted: false) }
         }
-        guard reply.utf8.count <= maximumReplyBytes, let answer = json(reply) else {
-            return .failed("The script returned more than the \(maximumReplyBytes / 1_024) KiB WSurf accepts for one call.")
-        }
-        if answer["stale"] as? Bool == true { return .stale }
-        if answer["timedOut"] as? Bool == true { return .timedOut(interrupted: false) }
         // After the script: the page's own world checks the reply against the sensitive values, the ones armed before and the
         // ones there are now. A reply that cannot be checked is not returned.
         let checked = await PageAutomationGuard.rescoped(in: view) { () -> String? in
@@ -123,15 +128,23 @@ enum PageScripting {
         return await Task { @MainActor in (try? await chromium.command("Runtime.terminateExecution")) != nil }.value
     }
 
+    /// `message` as the reply of a script that could not run, in the shape a script's own error has.
+    private static func failureReply(_ message: String) -> String {
+        let error: [String: Any] = ["name": "ScriptNotRun", "message": message, "stack": ""]
+        let reply: [String: Any] = ["ok": false, "error": error]
+        return (try? JSONSerialization.data(withJSONObject: reply)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+    }
+
     private static func run(
-        _ body: String, in world: WKContentWorld, ceiling: Duration, on view: BrowserPage,
+        _ body: String, source: String, in world: WKContentWorld, ceiling: Duration, on view: BrowserPage,
         authorized: @escaping @MainActor @Sendable () -> Bool
     ) async -> Run? {
         await PageReply<Run>.awaiting(within: ceiling) { gate in
             Task { @MainActor in
                 do {
+                    // The script travels as an argument, never inside the body, so nothing in it can change the body's structure.
                     let value = try await view.callAsyncJavaScript(
-                        body, in: nil, contentWorld: world, prepareArguments: { [:] },
+                        body, in: nil, contentWorld: world, prepareArguments: { ["source": source] },
                         dispatchCheck: {
                             if !authorized() {
                                 throw ChromiumError.staleFrame
@@ -204,11 +217,15 @@ enum PageScripting {
                 """#)
     }
 
-    /// The function body that runs in the page. The script is one parenthesised expression: a function is called, a promise is
-    /// awaited, anything else is the value. Its own error, or running past `timeout`, ends the wait with an answer, so a script
-    /// that fails or never settles still gets a reply. Anything the page's timers cannot interrupt (a loop that never yields) is
-    /// stopped by the ceiling in `evaluate`.
-    nonisolated static func wrapper(source: String, address: String, timeout: Int) -> String? {
+    /// The function body that runs in the page; the script itself comes in as the argument `source`. The harness compiles it as
+    /// the body of its own function, `return ( source )`, so it can only be one expression: text that tries to close the
+    /// parenthesis and carry on ends in a `return` and never runs, and the function has the page's global scope only, so it
+    /// reaches none of the harness. A function the expression yields is called, a promise is awaited, anything else is the value.
+    /// Its own error, or running past `timeout`, ends the wait with an answer, so a script that fails or never settles still gets
+    /// a reply. Anything the page's timers cannot interrupt (a loop that never yields) is stopped by the ceiling in `evaluate`.
+    /// A page whose Content-Security-Policy forbids eval cannot compile it in the page world (`EvalError`); the isolated world
+    /// is not bound by it.
+    nonisolated static func wrapper(address: String, timeout: Int) -> String? {
         guard let address = try? String(data: JSONEncoder().encode(address), encoding: .utf8) else { return nil }
         return #"""
             if (location.href !== \#(address)) return JSON.stringify({ stale: true });
@@ -305,11 +322,17 @@ enum PageScripting {
               const timer = later(() => resolve({ timedOut: true }), \#(timeout));
               const finish = result => { cancel(timer); resolve(result); };
               (async () => {
+                let make;
                 try {
-                  const candidate = (
-            \#(source)
-                  );
-                  const value = typeof candidate === 'function' ? await candidate() : await candidate;
+                  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+                  make = new AsyncFunction('return (\n' + source + '\n)');
+                } catch (error) {
+                  finish({ ok: false, error: { ...failure(error), compile: true } });
+                  return;
+                }
+                try {
+                  const candidate = await make();
+                  const value = typeof candidate === 'function' ? await candidate() : candidate;
                   finish({ ok: true, ...describe(value) });
                 } catch (error) {
                   finish({ ok: false, error: failure(error) });
@@ -443,7 +466,15 @@ enum PageScripting {
             if (el.shadowRoot) yield* topLevel(el.shadowRoot);
           }
         }
+        const SELECTOR_REFUSALS = {
+          invalid: 'Invalid selector.',
+          secret: 'That selector reads the value attribute, which can reveal what a password or payment field holds. Select by another attribute.',
+        };
         const SCRIPTABLE = new Set(['href', 'src', 'action', 'formaction', 'xlink:href', 'data', 'poster', 'background', 'srcset']);
+        // Where a form posts and how: changing it on a form that takes a password would send the password somewhere else.
+        const ROUTING = new Set(['action', 'formaction', 'method', 'target', 'enctype', 'formmethod', 'formtarget', 'formenctype', 'form']);
+        // What an element that loads or runs code may not be pointed at.
+        const LOADING = new Set([...SCRIPTABLE, 'content', 'http-equiv', 'rel']);
         // Why this attribute may not be set, or null. Event handlers and script URLs run code, and a script is `evaluateScript`'s
         // to run, with its time limit and its audit entry.
         const attributeProblem = (name, value) => {
@@ -466,7 +497,10 @@ enum PageScripting {
             if (!R.inspectableRef(request.ref)) return { error: 'That element is gone or changed. Use findElements or readPage again.', kind: 'stale' };
             return { el: window.__wsurfRefs[request.ref - 1] };
           }
-          try { document.createDocumentFragment().querySelector(request.selector); } catch (e) { return { error: 'Invalid selector.', kind: 'invalid' }; }
+          // Any attribute may be tested except `value` (see selectorProblem); the refusal is the same whether or not it would match.
+          const problem = R.selectorProblem(request.selector, true);
+          if (problem === 'secret') return { error: SELECTOR_REFUSALS.secret, kind: 'denied' };
+          if (problem) return { error: SELECTOR_REFUSALS.invalid, kind: 'invalid' };
           const matches = [];
           for (const el of topLevel(document)) {
             if (el.matches(request.selector) && matches.push(el) > 1) break;
@@ -474,6 +508,30 @@ enum PageScripting {
           if (!matches.length) return { error: 'No element matches that selector.', kind: 'invalid' };
           if (matches.length > 1) return { error: 'The selector matches more than one element. Make it match exactly one.', kind: 'invalid' };
           return { el: matches[0] };
+        };
+
+        // Whether `el` is, or holds, a password, code or payment field (in its subtree, shadow roots and same-origin frames).
+        const holdsSensitive = el => {
+          if (isHolder(el) && R.isSensitiveField(el)) return true;
+          for (const node of R.walk(el)) if (isHolder(node) && R.isSensitiveField(node)) return true;
+          return false;
+        };
+        // Whether `form` takes a sensitive field, counting the controls that join it by their `form` attribute. The list comes from
+        // the prototype, because a control named `elements` would stand in for it on the form itself.
+        const formControls = Object.getOwnPropertyDescriptor(HTMLFormElement.prototype, 'elements').get;
+        const takesSensitive = form => form instanceof HTMLFormElement && Array.from(formControls.call(form)).some(control => isHolder(control) && R.isSensitiveField(control));
+        // The form an element submits, or belongs to: itself when it is one, else its form owner.
+        const formOf = el => el.localName === 'form' ? el : (el.form || null);
+        // Where a form posts is not changed on one that takes a sensitive field, nor are its buttons pointed elsewhere, nor a button
+        // joined to it. `value` is what the attribute is being set to; null for a removal.
+        const routingProblem = (el, name, value) => {
+          const lower = name.toLowerCase();
+          if (!ROUTING.has(lower)) return null;
+          if (takesSensitive(formOf(el))) return 'This form takes a password, code or payment field, so where it posts cannot be changed.';
+          if (lower === 'form' && value != null && takesSensitive(document.getElementById(String(value)))) {
+            return 'That form takes a password, code or payment field, so nothing can be attached to it.';
+          }
+          return null;
         };
 
         const edit = request => {
@@ -486,15 +544,22 @@ enum PageScripting {
           if (R.isSensitiveField(el)) return { error: 'A password, code or payment field cannot be edited by an app. The user fills it.', kind: 'denied' };
           const tag = el.localName;
           const refuse = (error, kind = 'invalid') => ({ error, kind });
+          // An element that holds such a field keeps its content: its text, its children and what is inserted in it stay as they are.
+          if (['setText', 'remove', 'insert'].includes(request.op) && holdsSensitive(el)) {
+            return refuse('This element holds a password, code or payment field, so its content cannot be changed by an app.', 'denied');
+          }
+          // The attributes of an element that loads code do not change where it loads from.
+          const loadingProblem = name => FORBIDDEN_TAGS.has(tag) && LOADING.has(name.toLowerCase())
+            ? 'A ' + tag + ' element loads code or a document, so its address and settings are not changed. Use evaluateScript.' : null;
           switch (request.op) {
             case 'setAttribute': {
-              const problem = attributeProblem(request.name, request.value);
+              const problem = attributeProblem(request.name, request.value) || loadingProblem(request.name) || routingProblem(el, request.name, request.value);
               if (problem) return refuse(problem, 'denied');
               el.setAttribute(request.name, request.value);
               return { ok: true, target: summary(el) };
             }
             case 'removeAttribute': {
-              const problem = attributeProblem(request.name, null);
+              const problem = attributeProblem(request.name, null) || loadingProblem(request.name) || routingProblem(el, request.name, null);
               if (problem) return refuse(problem, 'denied');
               const had = el.hasAttribute(request.name);
               el.removeAttribute(request.name);
