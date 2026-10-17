@@ -190,16 +190,9 @@ final class BrowserTab: Identifiable {
 
     var pinnedURL: URL?
     var pinnedTitle = ""
+    /// The profile pin this tab is the window's page for. Nil when the tab is not part of the profile's pins.
+    var pinID: UUID?
 
-    var isAwayFromPin: Bool {
-        guard let pinnedURL else { return false }
-        return !urlString.isEmpty && urlString != pinnedURL.absoluteString
-    }
-
-    var isShowingPin: Bool {
-        guard let pinnedURL else { return false }
-        return urlString == pinnedURL.absoluteString
-    }
     @ObservationIgnored var liveView: BrowserPage? {
         didSet {
             loadedEngine = liveView?.engine

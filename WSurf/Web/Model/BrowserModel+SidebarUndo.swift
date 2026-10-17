@@ -25,6 +25,7 @@ extension BrowserModel {
         tab.pinnedURL = record.pinnedURL
         tab.pinnedTitle = record.pinnedTitle
         tab.isFavorite = record.isFavorite
+        tab.pinID = record.pinID
         tab.deferRestore(state: record.state, url: URL(string: record.url))
         tabs.insert(tab, at: min(record.index, tabs.count))
         let parent = record.folderID.flatMap { folder(id: $0) }

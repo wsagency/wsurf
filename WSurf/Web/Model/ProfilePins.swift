@@ -100,6 +100,8 @@ final class ProfilePinStore {
     private static var registry: [ObjectIdentifier: Entry] = [:]
 
     private let database: AppDatabase
+    private let subscribers = NSHashTable<BrowserModel>.weakObjects()
+    private var isPublishing = false
     private(set) var pins: [ProfilePin]
     /// False when the stored pins could not be read. Nothing may replace them then.
     let isAvailable: Bool
@@ -127,10 +129,20 @@ final class ProfilePinStore {
         return store
     }
 
+    func subscribe(_ model: BrowserModel) {
+        subscribers.add(model)
+    }
+
+    func unsubscribe(_ model: BrowserModel) {
+        subscribers.remove(model)
+    }
+
     // ponytail: whole-set rewrite per change (a few hundred rows); write only changed rows if it shows up.
-    /// Replaces the stored set with `next`, which must be depth first, in one transaction.
-    func publish(_ next: [ProfilePin]) {
-        guard isAvailable, next != pins else { return }
+    /// Replaces the stored set with `next`, which must be depth first, in one transaction. Every other window
+    /// attached to the store shows it before this returns, so no window ever holds a change the others lack.
+    func publish(_ next: [ProfilePin], from source: BrowserModel? = nil) {
+        // A window that applies a set re-publishes what it now shows, which is the same set.
+        guard isAvailable, next != pins, !isPublishing else { return }
         do {
             try database.writer.write { db in
                 try ProfilePin.deleteAll(db)
@@ -142,5 +154,11 @@ final class ProfilePinStore {
             Pipeline.log.error("pins: write failed")
         }
         pins = next
+        isPublishing = true
+        defer { isPublishing = false }
+        for model in subscribers.allObjects where model !== source && model.attachedPinStore === self {
+            model.applyProfilePins(next)
+            model.scheduleSave()
+        }
     }
 }

@@ -309,8 +309,11 @@ struct WindowSessionTests {
         #expect(model.activeSplit?.root.children.map(\.share) == [0.3, 0.7])
         let additional = BrowserModel(windowID: UUID(), database: database)
         additional.restoreSession()
-        #expect(additional.tabs.isEmpty)
-        #expect(additional.folders.isEmpty)
+        // A new window has no tabs of its own. It shows the pins and pinned folders of the profile, which the
+        // upgrade took from the old window.
+        #expect(additional.tabs.count == 2 && additional.tabs.allSatisfy { $0.pinID != nil })
+        #expect(Set(additional.tabs.compactMap(\.pinID)) == Set(model.tabs.compactMap(\.pinID)))
+        #expect(Set(additional.folders.map(\.name)) == ["Outer", "Inner", "Empty"])
         #expect(additional.splits.isEmpty)
         #expect(try Data(contentsOf: downloadsFile) == downloadsJSON)
         #expect(try Data(contentsOf: downloadFile) == downloadBytes)

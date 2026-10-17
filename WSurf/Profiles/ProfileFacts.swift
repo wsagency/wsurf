@@ -81,7 +81,7 @@ extension ProfileFacts {
             let earliest = try? Double.fetchOne(db, sql: "SELECT MIN(visitedAt) FROM historyVisit")
             return Counts(
                 tabs: count(db, table: "sessionTab"),
-                folders: count(db, table: "sessionFolder"),
+                folders: count(db, table: "sessionFolder") + profileFolders(db),
                 pages: count(db, table: "historyPage"),
                 firstVisit: earliest.map { Date(timeIntervalSinceReferenceDate: $0) }
             )
@@ -90,6 +90,11 @@ extension ProfileFacts {
 
     nonisolated private static func count(_ db: Database, table: String) -> Int {
         (try? Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \(table)")) ?? 0
+    }
+
+    /// Pinned folders belong to the profile, not to a window, and a database from before they did has no such table.
+    nonisolated private static func profileFolders(_ db: Database) -> Int {
+        (try? Int.fetchOne(db, sql: "SELECT COUNT(*) FROM profilePin WHERE kind = 'folder'")) ?? 0
     }
 
     nonisolated private static func size(of root: URL, skippingProfiles: Bool) -> Int64 {

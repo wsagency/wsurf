@@ -450,6 +450,12 @@ final class BrowserModel {
 
     @ObservationIgnored var saveWaitingSince: ContinuousClock.Instant?
 
+    /// Set while this window shows and publishes the profile's pins, from restore until it closes or leaves the profile.
+    @ObservationIgnored var attachedPinStore: ProfilePinStore?
+    /// Folders of this window that are profile pins. They are saved with the profile, not with the window.
+    @ObservationIgnored var profileFolderIDs: Set<UUID> = []
+    @ObservationIgnored var isApplyingProfilePins = false
+
     @ObservationIgnored var saveDebounce: Duration = .seconds(2)
 
     @ObservationIgnored var saveDeadline: Duration = .seconds(8)
