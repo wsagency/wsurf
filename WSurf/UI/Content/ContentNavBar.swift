@@ -42,7 +42,12 @@ struct ContentNavBar: View {
     private var extensionBudget: CGFloat? {
         guard barWidth > 0 else { return nil }
         let sideRoom = (barWidth - Self.addressBarMinWidth) / 2
-        return max(0, sideRoom - Self.barInset - Self.clusterGap - Self.buttonSlot)
+        return max(0, sideRoom - Self.barInset - Self.clusterGap - Self.buttonSlot - externalBadgeReserve)
+    }
+
+    /// Room the external-connection badge takes from the extension icons while it shows.
+    private var externalBadgeReserve: CGFloat {
+        coordinator.mcpServer.controllers(in: browser).isEmpty ? 0 : ExternalConnectionChip.maximumWidth + 6
     }
 
     private var toolbarLeadingPadding: CGFloat {
@@ -171,6 +176,7 @@ struct ContentNavBar: View {
 
     private var trailingControls: some View {
         HStack(spacing: 6) {
+            ExternalConnectionBadge(server: coordinator.mcpServer, browser: browser)
             if !coordinator.isShowingSettings {
                 StoreInstallButton(manager: coordinator.extensions, browser: browser)
             }

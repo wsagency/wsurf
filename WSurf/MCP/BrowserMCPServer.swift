@@ -23,6 +23,9 @@ final class BrowserMCPServer {
     private(set) var isPaused = false
     private(set) var status: String?
     private(set) var sessions: [MCPBrowserSession] = []
+    /// Logs of connections that ended, newest last, so Agent Activity still shows what they did. Memory only.
+    private(set) var endedLogs: [ExternalActivityLog] = []
+    static let endedLogLimit = 8
     @ObservationIgnored private let target: () -> BrowserModel?
     @ObservationIgnored private let available: (BrowserModel) -> Bool
     @ObservationIgnored private let defaults: UserDefaults?
@@ -57,6 +60,34 @@ final class BrowserMCPServer {
         for session in sessions where session.isBound(to: browser) {
             disconnect(session.id)
         }
+    }
+
+    /// The connections bound to `browser`'s window, granted or not.
+    func sessions(in browser: BrowserModel) -> [MCPBrowserSession] {
+        sessions.filter { $0.isBound(to: browser) }
+    }
+
+    /// The connections bound to `browser`'s window that can act in it. The window's badge shows exactly these.
+    func controllers(in browser: BrowserModel) -> [MCPBrowserSession] {
+        sessions(in: browser).filter(\.isControlling)
+    }
+
+    /// The kill switch. Ends every connection bound to `browser`'s window: each loses its grants, development leases and
+    /// remembered approvals, its running call is cancelled, and its socket closes. A client that reconnects starts with no
+    /// access and has to ask the user again. Other windows' connections are untouched. Returns how many were ended.
+    @discardableResult
+    func stop(window browser: BrowserModel) -> Int {
+        let ending = sessions(in: browser)
+        for session in ending {
+            session.recordStop()
+            disconnect(session.id)
+        }
+        return ending.count
+    }
+
+    /// Logs that show activity on `tabID`, live connections first.
+    func activityLogs(forTab tabID: UUID) -> [ExternalActivityLog] {
+        (endedLogs + sessions.map(\.activity)).filter { !$0.entries(forTab: tabID).isEmpty }
     }
 
     var configuration: String {
@@ -113,6 +144,7 @@ final class BrowserMCPServer {
 
     func disconnect(_ id: UUID) {
         guard let connection = connections.removeValue(forKey: id) else { return }
+        retire(connection.session.activity)
         connection.session.revoke()
         connection.task.cancel()
         sessions.removeAll { $0.id == id }
@@ -127,6 +159,14 @@ final class BrowserMCPServer {
 
     func cancelActiveCall() {
         activeCall?.task.cancel()
+    }
+
+    private func retire(_ log: ExternalActivityLog) {
+        endedLogs.removeAll { $0.entries.isEmpty }
+        endedLogs.append(log)
+        if endedLogs.count > Self.endedLogLimit {
+            endedLogs.removeFirst(endedLogs.count - Self.endedLogLimit)
+        }
     }
 
     func makeSessionForConnection(

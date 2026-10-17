@@ -47,6 +47,8 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored var hasReadContent = false
     @ObservationIgnored var accessWasRequested = false
     @ObservationIgnored private var busy = false
+    /// Every call this connection ran, for Agent Activity. Never holds arguments or results.
+    @ObservationIgnored let activity = ExternalActivityLog()
 
     var lastActionTitle: String? {
         lastTool.isEmpty ? nil : Self.actionTitle(forTool: lastTool)
@@ -107,13 +109,17 @@ final class MCPBrowserSession: Identifiable {
             busy = false
             completedCalls += 1
         }
-        return await AgentActionConsent.$scopedPolicy.withValue(actionPolicy) {
+        let started = ContinuousClock.now
+        let subject = logSubject(for: name, arguments: arguments)
+        let result = await AgentActionConsent.$scopedPolicy.withValue(actionPolicy) {
             await AgentActionConsent.$externalClientName.withValue(clientName) {
                 await AgentActionConsent.$scopedWindow.withValue(consentWindow) {
                     await execute(entry, arguments: arguments)
                 }
             }
         }
+        logCall(name, subject: subject, result: result, since: started)
+        return result
     }
 
     private func execute(_ entry: MCPToolCatalog.Entry, arguments: [String: Value]) async -> CallTool.Result {
