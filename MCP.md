@@ -579,6 +579,8 @@ command palette. It ends every connection bound to that window at once:
 - the running call is cancelled and returns nothing;
 - development leases are released, so viewport, emulation and diagnostics are removed;
 - the connection's grants and remembered action approvals are revoked and its socket is closed;
+- a paired app that has a standing grant (Settings › Assistant › Connected apps) is paused, so reconnecting does not
+  bring the grant back until you choose **Resume** there;
 - other windows' connections are not touched.
 
 The client can reconnect on its next call, but it starts with no access and the user has to approve it again.

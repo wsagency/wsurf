@@ -87,10 +87,16 @@ final class BrowserMCPServer {
 
     /// The kill switch. Ends every connection bound to `browser`'s window: each loses its grants, development leases and
     /// remembered approvals, its running call is cancelled, and its socket closes. A client that reconnects starts with no
-    /// access and has to ask the user again. Other windows' connections are untouched. Returns how many were ended.
+    /// access and has to ask the user again; a paired app that had a standing grant is also paused, so its next call does
+    /// not get the grant back until the user resumes it in Connected apps. Other windows' connections are untouched.
+    /// Returns how many were ended.
     @discardableResult
     func stop(window browser: BrowserModel) -> Int {
         let ending = sessions(in: browser)
+        for id in Set(ending.compactMap { $0.pairedClient?.id }) where trustStore.client(id: id).map({ $0.standing != .off }) == true {
+            // Best effort: if the keychain write fails the app keeps its standing level, which Connected apps still shows.
+            try? trustStore.setPaused(true, for: id)
+        }
         for session in ending {
             session.recordStop()
             disconnect(session.id)
