@@ -17,6 +17,9 @@ nonisolated struct PageDigest: Equatable, Sendable {
         var inViewport: Bool
         /// The control as `readPage` prints it, so a client reads one format and the observed-link rule sees the same lines.
         var line: String
+        /// Hash of the control's signature when the digest was taken (0 when it was not asked for): what a reply that lists the
+        /// control acknowledges the client has seen.
+        var signature = 0
     }
 
     var documentID: String

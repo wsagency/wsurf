@@ -214,7 +214,9 @@ changing costs the `settleMs` ceiling.
 
 **Refs.** `observationID` is optional for a ref. A ref is accepted while the client was given it for the current
 document and its control is unchanged (kind, label, id, name, type, link target and form target). A ref from another
-document, or of a control that changed under the client, is refused. An `observationID` that is sent must still be the
+document, or of a control that changed under the client, is refused: a ref keeps the state its control had when the client
+last saw it listed (in a read or in a report), so a control that changed and was not listed again stays refused until the
+page is read. An `observationID` that is sent must still be the
 latest. A failed action leaves the client's observation as it is.
 
 ### Development access

@@ -190,6 +190,15 @@ extension MCPBrowserSession {
             observations[tab.id] = nil
             return failure("Page access changed before the operation finished. Its contents were not returned.")
         }
+        let seen = reply.refs.compactMap { ref -> (ref: Int, hash: Int)? in
+            guard let control = after.controls.first(where: { $0.ref == ref }), control.signature != 0 else { return nil }
+            return (ref, control.signature)
+        }
+        await PageDriver.acknowledge(seen, in: view, validate: reading.validate)
+        guard reading.validate(), !Task.isCancelled else {
+            observations[tab.id] = nil
+            return failure("Page access changed before the operation finished. Its contents were not returned.")
+        }
         PageDriver.adopt(after, listed: reply.refs, in: view)
         observations[tab.id] = PageObservation(id: after.snapshot, snapshot: after.snapshot, documentURL: after.url)
         hasReadContent = true

@@ -42,6 +42,20 @@ extension PageDriver {
         return await PageSettle.pageWasLeft(view, document: document, url: url) ? fallback : nil
     }
 
+    /// Tells the runtime that the client has now seen the controls `pairs` name (ref and signature hash), so those refs follow
+    /// the control's current state. A ref the client was not shown again keeps the signature it last saw, and is refused once
+    /// its control changed.
+    static func acknowledge(
+        _ pairs: [(ref: Int, hash: Int)], in view: BrowserPage, validate: (@MainActor @Sendable () -> Bool)? = nil
+    ) async {
+        guard !pairs.isEmpty else { return }
+        let list = pairs.map { "[\($0.ref),\($0.hash)]" }.joined(separator: ",")
+        // The observation that listed these controls rotated the snapshot the guard may still name.
+        _ = await PageAutomationGuard.rescoped(in: view, validate: validate) {
+            await evaluateJSON(scripted("return JSON.stringify({ ok: R.acknowledge([\(list)]) });"), in: view)
+        }
+    }
+
     /// Records `digest` as the page's observation so its refs work on the next call. The refs earlier observations of the same
     /// document delivered stay valid; `listed` are the ones the reply gave the client now.
     static func adopt(_ digest: PageDigest, listed: Set<Int>, in view: BrowserPage) {
@@ -83,6 +97,7 @@ extension PageDriver {
         if let pressed = control["pr"] as? Int { state["pressed"] = pressed == 1 ? "true" : "false" }
         if let selected = control["se"] as? Int { state["selected"] = selected == 1 ? "true" : "false" }
         return PageDigest.Control(
-            ref: ref, kind: kind, label: label, state: state, inViewport: control["vp"] as? Bool ?? false, line: renderControl(control))
+            ref: ref, kind: kind, label: label, state: state, inViewport: control["vp"] as? Bool ?? false, line: renderControl(control),
+            signature: control["sg"] as? Int ?? 0)
     }
 }

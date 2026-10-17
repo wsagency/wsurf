@@ -72,8 +72,10 @@ enum PageDriver {
             }
         }
         guard let query = jsonString(lookingFor), let selector = jsonString(scope) else { return "Invalid page query." }
+        // The in-app assistant is shown what the page lists. A connection keeps refs of earlier observations, so it
+        // acknowledges only the controls that fit the reply.
         let script = scripted(
-            "return JSON.stringify(R.observe(\(query), \(textLength), \(count), \(max(0, textOffset)), \(max(0, controlOffset)), \(selector), \(viewportOnly)));"
+            "return JSON.stringify(R.observe(\(query), \(textLength), \(count), \(max(0, textOffset)), \(max(0, controlOffset)), \(selector), \(viewportOnly), \(!accumulatesRefs)));"
         )
         guard let object = await evaluateJSON(script, in: webView) else {
             return "The page did not respond. Use readPage after it finishes loading."
@@ -87,6 +89,7 @@ enum PageDriver {
         let text = PageOutputBudget.prefix(object["text"] as? String ?? "", fitting: min(textLength, available / 2))
         var result = "PAGE TEXT:\n\(text)\n\nCONTROLS:\n"
         var refs = Set<Int>()
+        var seen: [(ref: Int, hash: Int)] = []
         for control in controls {
             var row = renderControl(control)
             guard !row.isEmpty, let ref = control["r"] as? Int else { continue }
@@ -99,7 +102,11 @@ enum PageDriver {
             guard PageOutputBudget.cost(result + row + "\n") <= available else { break }
             result += row + "\n"
             refs.insert(ref)
+            if let hash = control["sg"] as? Int {
+                seen.append((ref, hash))
+            }
         }
+        await acknowledge(seen, in: webView)
         let totalText = object["textTotal"] as? Int ?? 0
         let start = object["textStart"] as? Int ?? 0
         let nextText = start + text.utf16.count

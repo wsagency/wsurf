@@ -43,9 +43,16 @@ nonisolated extension PageRuntime {
         return { r: refIDs.get(el) || 0, k: kind || el.tagName.toLowerCase(), l: kind ? labelOf(el, kind) : '' };
       };
 
+      // A committed digest also carries each control's signature hash (`sg`), for the controls a reply lists to be acknowledged.
       const digest = (viewportOnly, commit) => {
         const all = collect(commit);
         const controls = (viewportOnly ? all.filter(c => c.vp) : all).slice(0, 400);
+        if (commit) {
+          for (const c of controls) {
+            const el = c.r ? window.__wsurfRefs[c.r - 1] : null;
+            if (el) c.sg = sigHash(signature(el));
+          }
+        }
         const root = document.scrollingElement || document.documentElement;
         return { document: documentID, url: location.href, title: clip(document.title, 120), snapshot: window.__wsurfSnapshot,
           controls, controlTotal: all.length, texts: document.body ? textBlocks(600, viewportOnly) : [], focus: focusOf(),
