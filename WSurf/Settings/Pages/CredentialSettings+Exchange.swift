@@ -102,7 +102,8 @@ struct CredentialExportSheet: View {
                 reviewNotice(review)
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                // Lazy: the sheet lists every credential, and a vault holds thousands.
+                LazyVStack(alignment: .leading, spacing: 14) {
                     ForEach(csv ? model.summaries.filter(CredentialCSVExport.isExportable) : model.summaries) { summary in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(verbatim: summary.title).font(Theme.Font.rowTitle)

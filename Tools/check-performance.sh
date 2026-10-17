@@ -139,3 +139,15 @@ check_average \
   '8192' \
   'Crowded sidebar layout memory growth' \
   'kB'
+check_average \
+  'CredentialListPerformanceTests/testLayingOutThreeThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.300' \
+  '3,000-credential Credential Manager page layout' \
+  's'
+check_average \
+  'CredentialListPerformanceTests/testLayingOutThreeThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Credential Manager page layout memory growth' \
+  'kB'
