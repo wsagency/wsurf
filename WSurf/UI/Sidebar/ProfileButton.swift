@@ -69,7 +69,7 @@ struct ProfileSwitcher: View {
         }
         .padding(Self.inset)
         .frame(width: 244)
-        .glassEffect(.regular, in: .rect(cornerRadius: Theme.Radius.panel, style: .continuous))
+        .chromeGlass(in: .rect(cornerRadius: Theme.Radius.panel, style: .continuous))
         .shadow(color: .black.opacity(0.3), radius: 22, y: 8)
     }
 

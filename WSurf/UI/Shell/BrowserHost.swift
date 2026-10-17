@@ -145,8 +145,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         created.toolbar = frameToolbar
         created.toolbarStyle = .unified
         created.titlebarSeparatorStyle = .none
-        created.isOpaque = false
-        created.backgroundColor = .clear
+        applyTransparencyPreference(to: created)
         created.minSize = NSSize(width: BrowserWindowMetrics.minWidth, height: 580)
         created.preservesContentDuringLiveResize = true
         created.collectionBehavior = [.fullScreenPrimary]
@@ -181,10 +180,28 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         Self.hideTitlebarDecoration(of: created)
 
         window = created
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(accessibilityDisplayOptionsDidChange),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil
+        )
         if let coordinator {
             coordinator.extensions.register(browser: coordinator.browser, window: created)
         }
         return created
+    }
+
+    /// The window shows the desktop through its backdrop unless Reduce Transparency or Increase Contrast is on.
+    /// An opaque window also spares WindowServer from compositing it against what is behind it on every frame.
+    func applyTransparencyPreference(to window: NSWindow, isOpaque: Bool = WindowOpacity.isOpaqueNow) {
+        window.isOpaque = isOpaque
+        window.backgroundColor = isOpaque ? NSColor(Theme.windowBackground) : .clear
+    }
+
+    @objc private func accessibilityDisplayOptionsDidChange(_ notification: Notification) {
+        guard let window else { return }
+        applyTransparencyPreference(to: window)
     }
 
     /// Answers false when it hid nothing: the decoration is matched by private
@@ -333,7 +350,7 @@ enum SystemWindowShape {
         return radius
     }
 
-    private static func radius(of window: NSWindow) -> CGFloat? {
+    static func radius(of window: NSWindow) -> CGFloat? {
         guard let frameView = window.contentView?.superview else { return nil }
         for key in ["cornerRadius", "_cornerRadius"] {
             guard frameView.responds(to: NSSelectorFromString(key)),

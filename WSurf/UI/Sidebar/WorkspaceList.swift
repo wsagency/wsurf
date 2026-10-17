@@ -533,7 +533,7 @@ struct SidebarDragChip: View {
         content
             .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .glassEffect(glass, in: shape)
+            .chromeGlass(glass, fill: Theme.controlSurface, in: shape)
             .overlay {
                 shape.strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5)
             }

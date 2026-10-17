@@ -169,27 +169,16 @@ struct LoomAmbientBackdrop: View {
     let sampledPageColor: NSColor?
     let settings: BrowserSettings
 
-    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        if LoomChrome.showsPresetExactly(in: scheme) {
-            LoomPresetBackdrop(isFloating: false)
-        } else {
-            switch settings.loomStyle {
-            case .standard:
-                LoomTintedBackdrop(sampledPageColor: websiteTint, isFloating: false)
-            case .transparent:
-                LoomTransparentBackdrop(
-                    sampledPageColor: websiteTint,
-                    opacity: settings.transparency,
-                    isFloating: false
-                )
-            }
-        }
-    }
-
-    private var websiteTint: NSColor? {
-        settings.matchesWebsiteColor ? sampledPageColor : nil
+        LoomBackdrop(
+            sampledPageColor: sampledPageColor,
+            settings: settings,
+            isFloating: false,
+            fallsBack: GlassPolicy.fallsBack(reduceTransparency: reduceTransparency, contrast: contrast)
+        )
     }
 }
 
@@ -197,20 +186,41 @@ struct LoomFloatingFill: View {
     let sampledPageColor: NSColor?
     let settings: BrowserSettings
 
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        LoomBackdrop(
+            sampledPageColor: sampledPageColor,
+            settings: settings,
+            isFloating: true,
+            fallsBack: GlassPolicy.fallsBack(reduceTransparency: reduceTransparency, contrast: contrast)
+        )
+    }
+}
+
+/// The window or sidebar ground in the chosen style. `fallsBack` is `GlassPolicy`'s answer for Reduce
+/// Transparency and Increase Contrast; it takes the same solid path a preset takes.
+struct LoomBackdrop: View {
+    let sampledPageColor: NSColor?
+    let settings: BrowserSettings
+    let isFloating: Bool
+    let fallsBack: Bool
+
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        if LoomChrome.showsPresetExactly(in: scheme) {
-            LoomPresetBackdrop(isFloating: true)
+        if fallsBack || LoomChrome.showsPresetExactly(in: scheme) {
+            LoomSolidBackdrop(sampledPageColor: websiteTint, isFloating: isFloating)
         } else {
             switch settings.loomStyle {
             case .standard:
-                LoomTintedBackdrop(sampledPageColor: websiteTint, isFloating: true)
+                LoomTintedBackdrop(sampledPageColor: websiteTint, isFloating: isFloating)
             case .transparent:
                 LoomTransparentBackdrop(
                     sampledPageColor: websiteTint,
                     opacity: settings.transparency,
-                    isFloating: true
+                    isFloating: isFloating
                 )
             }
         }
@@ -221,15 +231,17 @@ struct LoomFloatingFill: View {
     }
 }
 
-/// A preset's own color, solid, in either window style: translucency would dilute it, and the website tint never
-/// overrides it. The stored window style and transparency are untouched and apply again without a preset.
-private struct LoomPresetBackdrop: View {
+/// An opaque ground, in either window style. A preset's color is drawn this way because translucency would
+/// dilute it and the website tint never overrides it; the stored window style and transparency are untouched and
+/// apply again without a preset. Reduce Transparency and Increase Contrast use it for the same reason.
+private struct LoomSolidBackdrop: View {
+    let sampledPageColor: NSColor?
     let isFloating: Bool
 
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        Color(nsColor: LoomChrome.sampledColor(nil, scheme: scheme, isFloating: isFloating))
+        Color(nsColor: LoomChrome.sampledColor(sampledPageColor, scheme: scheme, isFloating: isFloating))
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }
@@ -331,7 +343,7 @@ private struct LoomTransparentBackdrop: View {
 }
 
 /// Shared panel fill for the side panel, internal pages, and Settings.
-struct LoomPanelFill<S: Shape>: View {
+struct LoomPanelFill<S: InsettableShape>: View {
     let shape: S
     var isVisible = true
     var emphasis: Double = 1
@@ -351,7 +363,7 @@ struct LoomPanelFill<S: Shape>: View {
 
     var body: some View {
         Color.clear
-            .glassEffect(glass, in: shape)
+            .chromeGlass(glass, fill: tint ?? Theme.windowBackground, in: shape)
     }
 }
 
