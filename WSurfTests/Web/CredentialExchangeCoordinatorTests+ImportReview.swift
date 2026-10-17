@@ -282,9 +282,9 @@ extension CredentialExchangeCoordinatorTests {
         }
     }
 
-    /// Nothing is dropped by default. A note of an item that no saved credential holds has nowhere to go but with its login: when
-    /// that login is already saved elsewhere, the user decides, instead of the note quietly following a skip.
-    @Test func aNoteOfAnItemNoSavedCredentialHoldsIsNotDroppedByADefault() async throws {
+    /// Nothing is dropped by default. The note of an item whose passkey a saved credential already holds has somewhere to go: that
+    /// credential, which the item is a duplicate of. The review suggests the merge and imports the note with it.
+    @Test func aNoteOfAnItemWhoseSavedPasskeyIsHeldGoesToTheCredentialThatHoldsIt() async throws {
         try await withFixture { f in
             let key = P256.Signing.PrivateKey()
             let pkcs8 = try PasskeyKeyEncoding.exportPKCS8(key)
@@ -293,7 +293,8 @@ extension CredentialExchangeCoordinatorTests {
                 userDisplayName: "Ada", algorithm: -7, privateKeyPKCS8: pkcs8, backupEligible: true, backupState: false,
                 exchangeFIDO2Metadata: nil
             )
-            try await f.seed([account(username: "", password: nil, passkeys: [saved])] + neighbours(1))
+            let holder = account(username: "", password: nil, passkeys: [saved])
+            try await f.seed([holder] + neighbours(1))
             let incoming = ASImportableCredential.passkey(.init(
                 credentialID: Data([0xC0, 0x01]), relyingPartyIdentifier: "example.test", userName: "ada", userDisplayName: "Ada",
                 userHandle: Data([0x31]), key: pkcs8
@@ -304,7 +305,11 @@ extension CredentialExchangeCoordinatorTests {
             let item = try #require(staged.candidates.first)
             #expect(item.linkedAccountID == nil && item.records.map(\.kind) == [.passkey, .note])
             #expect(item.records.first { $0.kind == .passkey }?.classification == .unchanged)
-            #expect(!staged.isResolved && item.group == .decide, "the user decides what happens to the note")
+            #expect(staged.isResolved && item.group == .merge && item.duplicate?.target == holder.id)
+            #expect(item.records.first { $0.kind == .note }?.choice == .merge(into: holder.id), "the note is not dropped")
+            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            let stored = try #require(try await f.stored().accounts.first { $0.id == holder.id })
+            #expect(stored.notes?.map(\.text) == ["only in the other app"] && stored.passkeys.count == 1)
         }
     }
 

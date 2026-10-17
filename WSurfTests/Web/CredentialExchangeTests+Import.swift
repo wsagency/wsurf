@@ -561,4 +561,61 @@ extension CredentialExchangeTests {
         let added = try CredentialExchangeCodec.apply(changed, decisions: [.add(incoming: login.incoming, targetAccountID: nil), keepCode])
         #expect(added.count == 2 && added.first == imported && added.last?.passwordBase == nil)
     }
+
+    // MARK: - Exact duplicates
+
+    /// A saved account that holds an exact copy of the incoming login takes what it lacks, keeps its own name and websites first, and
+    /// becomes the exporter's item, with the login's field descriptions the exporter sent so the recorded base is true.
+    @Test func applyingADuplicateMergeAddsOnlyWhatTheSavedAccountLacks() throws {
+        var saved = account(password: "same-password")
+        saved.displayName = "My name"
+        saved.origins = ["https://www.example.test"]
+        saved.notes = [CredentialNote(text: "mine", field: nil)]
+        let incoming = data(
+            title: "Their name", credentials: [basicAuthentication(username: "ada", password: "same-password"), totp()]
+        )
+        let preview = try CredentialExchangeCodec.preview(incoming, against: snapshot([saved]))
+        let candidate = try #require(preview.candidates.first)
+        let login = CredentialIdentity.password(accountID: candidate.id)
+        let code = CredentialIdentity.totp(accountID: candidate.id)
+        let decisions = [
+            CredentialImportDecision.add(incoming: login, targetAccountID: saved.id),
+            .add(incoming: code, targetAccountID: saved.id),
+        ]
+        // Without the duplicate named, the explicit merge of an identical login, or into a differently named account, is refused.
+        #expect(throws: (any Error).self) { try CredentialExchangeCodec.apply(preview, decisions: decisions) }
+
+        let merged = try #require(CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: [candidate.id: saved.id]).first)
+        #expect(merged.id == saved.id && merged.displayName == "My name" && merged.password == "same-password")
+        #expect(merged.origins == ["https://www.example.test", origin] && merged.notes?.map(\.text) == ["mine"])
+        #expect(merged.totp == candidate.totp)
+        #expect(merged.exchangeAccountID == accountExternalID && merged.exchangeItemID == itemExternalID)
+        #expect(merged.basicAuthenticationMetadata == candidate.basicAuthenticationMetadata)
+        #expect(merged.passwordBase?.itemID == itemExternalID && merged.totpBase?.itemID == itemExternalID)
+    }
+
+    /// An account that is the exporter's item already, or another item's, is not renamed or relinked by a duplicate merge.
+    @Test func aDuplicateMergeKeepsTheIdentityOfAnAccountThatHasOne() throws {
+        var saved = account(externalID: Data([0x01]), itemID: Data([0x02]), password: "same-password")
+        saved.displayName = "Mine"
+        let incoming = data(credentials: [basicAuthentication(username: "ada", password: "same-password")])
+        let preview = try CredentialExchangeCodec.preview(incoming, against: snapshot([saved]))
+        let candidate = try #require(preview.candidates.first)
+        #expect(!CredentialExchangeCodec.canLinkDuplicate(candidate, to: saved))
+        let decisions = [CredentialImportDecision.add(incoming: .password(accountID: candidate.id), targetAccountID: saved.id)]
+        let merged = try #require(CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: [candidate.id: saved.id]).first)
+        #expect(merged == saved, "an identical login adds nothing to an account that is another item's")
+    }
+
+    /// A merge never replaces: a login that is not the saved one is refused, even for a named duplicate.
+    @Test func aDuplicateMergeRefusesALoginThatIsNotTheSavedOne() throws {
+        let saved = account(password: "saved-password")
+        let incoming = data(credentials: [basicAuthentication(username: "ada", password: "another-password")])
+        let preview = try CredentialExchangeCodec.preview(incoming, against: snapshot([saved]))
+        let candidate = try #require(preview.candidates.first)
+        let decisions = [CredentialImportDecision.add(incoming: .password(accountID: candidate.id), targetAccountID: saved.id)]
+        #expect(throws: (any Error).self) {
+            try CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: [candidate.id: saved.id])
+        }
+    }
 }

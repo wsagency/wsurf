@@ -151,7 +151,8 @@ nonisolated struct CredentialImportReview: Sendable {
     enum Group: Int, CaseIterable, Sendable, Comparable {
         /// A part that only the user can settle: both sides changed, no common base, or an unmatched link.
         case decide
-        /// Looks like a credential that is already saved under another item. Filled by duplicate detection; empty until then.
+        /// A saved credential already holds this item's login, or its passkey, and the item adds something to it: a note, a passkey, a
+        /// verification code or a website (`Duplicate`).
         case merge
         /// Nothing is saved for it yet.
         case new
@@ -170,6 +171,9 @@ nonisolated struct CredentialImportReview: Sendable {
     /// What an item will do under the choices made so far. One item has one effect, the most active of its parts.
     enum Effect: Sendable {
         case undecided, new, update, merge, unchanged, skipped
+        /// Already saved, and Import records that the other app's item is that credential, so the next import finds it unchanged. The
+        /// credential's own content does not change.
+        case linked
     }
 
     /// The whole item decided in one step (`CredentialExchangeCoordinator.chooseItem`). Each maps to a choice for every part it applies to.
@@ -184,6 +188,9 @@ nonisolated struct CredentialImportReview: Sendable {
         case keepBoth
         /// Imports nothing of this item.
         case skip
+        /// Adds what the item brings (a note, a passkey, a code, websites) to the saved credential that already holds its login, and
+        /// links the two. Only for an item with a `Duplicate`.
+        case mergeIntoSaved
     }
 
     /// How many items fall under each effect: the review's footer, without a pass over the review.
@@ -194,10 +201,11 @@ nonisolated struct CredentialImportReview: Sendable {
         var merges = 0
         var unchanged = 0
         var skipped = 0
+        var linked = 0
 
-        /// Items that write to the vault.
+        /// Items that write to the vault. A linked item writes the link, nothing else.
         var writes: Int {
-            new + updates + merges
+            new + updates + merges + linked
         }
 
         mutating func add(_ effect: Effect, _ count: Int = 1) {
@@ -214,6 +222,8 @@ nonisolated struct CredentialImportReview: Sendable {
                 unchanged += count
             case .skipped:
                 skipped += count
+            case .linked:
+                linked += count
             }
         }
     }
@@ -235,6 +245,8 @@ nonisolated struct CredentialImportReview: Sendable {
         var effect: Effect
         /// The last choice made for the whole item; `nil` after a choice for one of its parts, and before any.
         var action: ItemAction?
+        /// The saved credential that already holds this item's login or passkey, if there is one. Fixed when the review is staged.
+        var duplicate: Duplicate?
         var id: UUID {
             summary.id
         }
@@ -246,14 +258,18 @@ nonisolated struct CredentialImportReview: Sendable {
 
         /// What can be done with the item as a whole, as `CredentialExchangeCoordinator.chooseItem` accepts it.
         var availableActions: [ItemAction] {
-            CredentialImportReview.availableActions(for: records)
+            CredentialImportReview.availableActions(for: records, duplicate: duplicate)
         }
     }
 
     /// The actions that apply to an item with these records. An action that would replace a saved password with a login that has
     /// none, that has no saved version to keep, replace or keep alongside, or that would add an identical copy of what is saved, is
     /// not offered. Import is offered for an item with no conflict, and Add Separately for a part that needs a choice.
-    static func availableActions(for records: [Record]) -> [ItemAction] {
+    static func availableActions(for records: [Record], duplicate: Duplicate? = nil) -> [ItemAction] {
+        if let duplicate {
+            // The saved credential is what the item is compared with, so there is nothing to keep, replace or keep alongside.
+            return (duplicate.isMergeable ? [.mergeIntoSaved] : []) + [.importNew, .skip]
+        }
         let conflicts = records.filter(\.isConflict)
         var actions: [ItemAction] = []
         if conflicts.isEmpty {

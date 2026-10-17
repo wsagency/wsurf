@@ -20,16 +20,33 @@ extension CredentialExchangeCoordinator {
         private let storedTitles: [UUID: String]
         private let stored: [UUID: CredentialAccount]
         private let lookup: ReviewLookup
+        /// The items a saved credential already holds an exact copy of (system imports only), by candidate.
+        let duplicates: [UUID: CredentialImportReview.Duplicate]
+        /// How each part relates to the vault: what classification says, except that a part of a duplicate that equals what is saved
+        /// is unchanged.
+        private let classes: [CredentialIdentity: CredentialImportClass]
 
         init(_ preview: CredentialImportPreview, _ context: ReviewContext) {
             self.preview = preview
             self.context = context
-            existingByIncoming = Dictionary(preview.conflicts.map { ($0.incoming, $0.existing) }, uniquingKeysWith: { first, _ in first })
+            let existing = Dictionary(preview.conflicts.map { ($0.incoming, $0.existing) }, uniquingKeysWith: { first, _ in first })
+            existingByIncoming = existing
             position = Dictionary(preview.candidates.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
             summaries = preview.candidates.map { CredentialSummary($0) }
-            stored = Dictionary(preview.base.accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            storedTitles = stored.mapValues { CredentialSummary($0).title }
-            lookup = ReviewLookup(preview)
+            let accounts = Dictionary(preview.base.accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            stored = accounts
+            let titles = accounts.mapValues { CredentialSummary($0).title }
+            storedTitles = titles
+            let linked = ReviewLookup(preview)
+            lookup = linked
+            // A file or the old list has its own rule for what is already saved; only a system import is compared here.
+            let found = context.origin == .system
+                ? ImportDuplicates.find(
+                    candidates: preview.candidates, accounts: preview.base.accounts, classes: context.classes, existing: existing,
+                    isLinked: { linked.linkedAccountID(for: $0) != nil }, title: { titles[$0] ?? "" }
+                ) : ImportDuplicates.Found()
+            duplicates = found.duplicates
+            classes = context.classes.merging(found.unchanged.map { ($0, CredentialImportClass.unchanged) }, uniquingKeysWith: { _, new in new })
         }
 
         // MARK: Defaults
@@ -39,10 +56,15 @@ extension CredentialExchangeCoordinator {
             var choices: [CredentialIdentity: CredentialImportChoice] = [:]
             for candidate in preview.candidates {
                 let identities = CredentialExchangeCoordinator.identities(in: candidate)
+                if let duplicate = duplicates[candidate.id] {
+                    // Merged into the saved credential that holds it: what that credential lacks is added, everything else is kept.
+                    choices.merge(duplicate.mergeChoices) { _, new in new }
+                    continue
+                }
                 for incoming in identities {
                     let existing = existingByIncoming[incoming]
                     let choice = CredentialImportDefaults.choice(
-                        for: context.classes[incoming] ?? .ambiguous,
+                        for: classes[incoming] ?? .ambiguous,
                         isConflict: existing != nil,
                         removesStoredPasswordOnReplace: removesStoredPassword(incoming, of: candidate, existing: existing)
                     )
@@ -53,7 +75,7 @@ extension CredentialExchangeCoordinator {
                 if let note = identities.first(where: { if case .note = $0 { true } else { false } }),
                    let lead = CredentialExchangeCodec.leadIdentity(of: candidate), choices[lead] == .skip,
                    choices[note] == nil, existingByIncoming[note] == nil, !context.needsChoice.contains(note),
-                   CredentialImportDefaults.isAdditive(context.classes[note]) {
+                   CredentialImportDefaults.isAdditive(classes[note]) {
                     if let linked = lookup.linkedAccountID(for: candidate) {
                         choices[note] = .merge(into: linked)
                     } else {
@@ -100,8 +122,12 @@ extension CredentialExchangeCoordinator {
                 let candidate = preview.candidates[at]
                 let itemRecords = records(at: at, choices: choices)
                 let linked = lookup.linkedAccountID(for: candidate)
-                let effect = CredentialImportDefaults.effect(of: itemRecords, linkedTo: linked)
-                let group = CredentialImportDefaults.group(of: itemRecords)
+                let effect = self.effect(of: itemRecords, at: at)
+                var group = CredentialImportDefaults.group(of: itemRecords)
+                if let duplicate = duplicates[candidate.id], !duplicate.additions.isEmpty, group > .merge {
+                    // What it adds to the saved credential is a decision worth a look, even though no part of it conflicts.
+                    group = .merge
+                }
                 tally.add(effect)
                 sections[group, default: []].append(at)
                 return CredentialImportReview.Candidate(
@@ -114,7 +140,8 @@ extension CredentialExchangeCoordinator {
                     linkedAccountID: linked,
                     omissions: omissions[candidate.id] ?? [],
                     effect: effect,
-                    action: nil
+                    action: nil,
+                    duplicate: duplicates[candidate.id]
                 )
             }
             var review = CredentialImportReview(
@@ -124,6 +151,16 @@ extension CredentialExchangeCoordinator {
             )
             review.unattachedOmissions = unattached
             return review
+        }
+
+        /// What the item does under `records`: its most active part. A duplicate decided as its merge adds what the saved credential
+        /// lacks, or, when that is nothing, only links the two.
+        func effect(of records: [CredentialImportReview.Record], at itemPosition: Int) -> CredentialImportReview.Effect {
+            let candidate = preview.candidates[itemPosition]
+            if let duplicate = duplicates[candidate.id], duplicate.isApplied(by: records) {
+                return duplicate.additions.isEmpty ? .linked : .merge
+            }
+            return CredentialImportDefaults.effect(of: records, linkedTo: lookup.linkedAccountID(for: candidate))
         }
 
         /// Title, username (unless concealed) and websites, folded so a search ignores case and accents. No password, seed or note.
@@ -151,13 +188,17 @@ extension CredentialExchangeCoordinator {
         func records(at itemPosition: Int, choices: [CredentialIdentity: CredentialImportChoice]) -> [CredentialImportReview.Record] {
             let candidate = preview.candidates[itemPosition]
             let linked = lookup.linkedAccountID(for: candidate)
+            // A duplicate decided as its merge takes the item's websites too (the saved credential's own stay first).
+            let merging = duplicates[candidate.id]?.isApplied(by: choices) == true
             func into(_ id: UUID) -> CredentialImportReview.Record.Destination? {
                 guard let account = stored[id] else { return nil }
+                let added = candidate.origins.filter { !account.origins.contains($0) }
+                let takesWebsites = merging && id == duplicates[candidate.id]?.target
                 return .existing(
                     accountID: id,
                     title: storedTitles[id] ?? "",
-                    origins: account.origins,
-                    ignoredOrigins: candidate.origins.filter { !account.origins.contains($0) }
+                    origins: takesWebsites ? account.origins + added : account.origins,
+                    ignoredOrigins: takesWebsites ? [] : added
                 )
             }
             func destination(_ existing: CredentialIdentity?, _ choice: CredentialImportChoice?) -> CredentialImportReview.Record.Destination? {
@@ -204,7 +245,7 @@ extension CredentialExchangeCoordinator {
                         ? nil : destination(placement.existing, placement.choice),
                     canAddSeparately: !lookup.holdsStoredCredentialID(incoming),
                     removesStoredPasswordOnReplace: removesStoredPassword(incoming, of: candidate, existing: existing),
-                    classification: context.classes[incoming] ?? .ambiguous,
+                    classification: classes[incoming] ?? .ambiguous,
                     needsChoice: needsChoice,
                     csvLine: context.csvLines[incoming],
                     choice: choice
@@ -293,7 +334,9 @@ extension CredentialExchangeCoordinator {
         var taken = live.replaced
         for at in live.review.sections[group] ?? [] {
             let item = live.review.candidates[at]
-            guard let itemChanges = Self.changes(for: action, records: item.records, replaced: taken, linkedTo: item.linkedAccountID) else { continue }
+            guard let itemChanges = Self.changes(
+                for: action, records: item.records, replaced: taken, linkedTo: item.linkedAccountID, duplicate: item.duplicate
+            ) else { continue }
             for (incoming, choice) in itemChanges {
                 guard let target = live.index.existingByIncoming[incoming] else { continue }
                 if choice == .replace {
@@ -313,7 +356,9 @@ extension CredentialExchangeCoordinator {
         guard live.owner == owner else { throw CredentialExchangeCoordinatorError.wrongTarget }
         guard let at = live.index.position[candidateID] else { throw CredentialExchangeCoordinatorError.unknownConflict }
         let item = live.review.candidates[at]
-        guard let changes = Self.changes(for: action, records: item.records, replaced: live.replaced, linkedTo: item.linkedAccountID) else {
+        guard let changes = Self.changes(
+            for: action, records: item.records, replaced: live.replaced, linkedTo: item.linkedAccountID, duplicate: item.duplicate
+        ) else {
             throw CredentialExchangeCoordinatorError.invalidChoice
         }
         return changes
@@ -359,7 +404,7 @@ extension CredentialExchangeCoordinator {
         var trial = live.choices
         trial[incoming] = choice
         do {
-            _ = try Self.plan(live.preview, choices: trial, required: live.context.needsChoice)
+            _ = try Self.plan(live.preview, choices: trial, required: live.context.needsChoice, duplicates: live.index.duplicates)
         } catch CredentialVaultError.invalidData, CredentialVaultError.duplicateIdentifier {
             throw CredentialExchangeCoordinatorError.invalidChoice
         } catch CredentialExchangeCoordinatorError.unresolvedConflicts {
@@ -373,14 +418,19 @@ extension CredentialExchangeCoordinator {
         for action: CredentialImportReview.ItemAction,
         records: [CredentialImportReview.Record],
         replaced: [CredentialIdentity: CredentialIdentity],
-        linkedTo linked: UUID? = nil
+        linkedTo linked: UUID? = nil,
+        duplicate: CredentialImportReview.Duplicate? = nil
     ) -> [Change]? {
-        guard CredentialImportReview.availableActions(for: records).contains(action) else { return nil }
+        guard CredentialImportReview.availableActions(for: records, duplicate: duplicate).contains(action) else { return nil }
         let conflicts = records.filter(\.isConflict)
         func all(_ choice: CredentialImportChoice, of records: [CredentialImportReview.Record]) -> [Change] {
             records.map { ($0.incoming, choice) }
         }
         switch action {
+        case .mergeIntoSaved:
+            // Offered only for an item with a duplicate: what the saved credential lacks goes into it, the rest is kept.
+            guard let duplicate else { return nil }
+            return records.map { ($0.incoming, duplicate.mergeChoices[$0.incoming]) }
         case .skip:
             return all(.skip, of: records)
         case .keepSaved:
@@ -439,7 +489,7 @@ extension CredentialExchangeCoordinator.Session {
         }
         for at in touched {
             let records = index.records(at: at, choices: choices)
-            let effect = CredentialImportDefaults.effect(of: records, linkedTo: review.candidates[at].linkedAccountID)
+            let effect = index.effect(of: records, at: at)
             review.tally.add(review.candidates[at].effect, -1)
             review.tally.add(effect)
             review.candidates[at].records = records

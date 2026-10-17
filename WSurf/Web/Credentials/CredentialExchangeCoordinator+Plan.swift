@@ -105,10 +105,22 @@ extension CredentialExchangeCoordinator {
         return result
     }
 
+    /// The items that are decided exactly as their merge into the saved credential they duplicate (`ImportDuplicates`), by candidate.
+    static func duplicateMerges(
+        _ choices: [CredentialIdentity: CredentialImportChoice], _ duplicates: [UUID: CredentialImportReview.Duplicate]
+    ) -> [UUID: UUID] {
+        var merges: [UUID: UUID] = [:]
+        for (candidate, duplicate) in duplicates where duplicate.isApplied(by: choices) {
+            merges[candidate] = duplicate.target
+        }
+        return merges
+    }
+
     static func plan(
         _ preview: CredentialImportPreview,
         choices: [CredentialIdentity: CredentialImportChoice],
-        required: Set<CredentialIdentity>
+        required: Set<CredentialIdentity>,
+        duplicates: [UUID: CredentialImportReview.Duplicate] = [:]
     ) throws -> (touched: [CredentialAccount], outcome: CredentialImportOutcome) {
         guard let decisions = decisions(preview, choices, required: required) else {
             throw CredentialExchangeCoordinatorError.unresolvedConflicts
@@ -117,7 +129,9 @@ extension CredentialExchangeCoordinator {
         for case let .replace(_, target) in decisions where !replaced.insert(target).inserted {
             throw CredentialVaultError.invalidData
         }
-        let accounts = try CredentialExchangeCodec.apply(preview, decisions: decisions)
+        let merges = duplicateMerges(choices, duplicates)
+        let accounts = try CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: merges)
+        let duplicated = Set(merges.values)
         let before = Dictionary(preview.base.accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var touched: [CredentialAccount] = []
         var added = 0
@@ -132,8 +146,21 @@ extension CredentialExchangeCoordinator {
                 withoutBases.passwordBase = old.passwordBase
                 withoutBases.totpBase = old.totpBase
                 if withoutBases != old {
-                    updated += 1
                     touched.append(account)
+                    // A saved credential that only became the other app's item (its identity, its name if it had none, and the field
+                    // descriptions of a login that reads the same) is written so the next import knows it, but its content is as it
+                    // was: not an update.
+                    var withoutLink = withoutBases
+                    if duplicated.contains(account.id) {
+                        withoutLink.exchangeAccountID = old.exchangeAccountID
+                        withoutLink.exchangeItemID = old.exchangeItemID
+                        withoutLink.exchangeMetadata = old.exchangeMetadata
+                        withoutLink.basicAuthenticationMetadata = old.basicAuthenticationMetadata
+                        withoutLink.displayName = old.displayName
+                    }
+                    if withoutLink != old {
+                        updated += 1
+                    }
                 }
             } else {
                 added += 1
@@ -146,7 +173,9 @@ extension CredentialExchangeCoordinator {
     /// The plan the codec makes of the session's choices, with what became of every incoming credential. The one place a staged
     /// import is turned into writes, for the success message and for the commit alike.
     static func planned(_ session: Session) throws -> (touched: [CredentialAccount], outcome: CredentialImportOutcome) {
-        var planned = try plan(session.preview, choices: session.choices, required: session.context.needsChoice)
+        var planned = try plan(
+            session.preview, choices: session.choices, required: session.context.needsChoice, duplicates: session.index.duplicates
+        )
         let changed = Set(planned.touched.map(\.id))
         planned.outcome.results = session.review.candidates.flatMap(\.records).map { record in
             let action: CredentialImportOutcome.Result.Action

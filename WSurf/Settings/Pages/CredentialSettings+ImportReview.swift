@@ -34,8 +34,35 @@ extension CredentialImportReview.Group {
             [(.useIncoming, "Use All Incoming"), (.keepSaved, "Keep All Saved")]
         case .saved:
             [(.keepSaved, "Keep All Unchanged")]
-        case .merge, .skipped:
+        case .merge:
+            [(.mergeIntoSaved, "Merge All Suggested"), (.importNew, "Import All as New"), (.skip, "Skip All")]
+        case .skipped:
             []
+        }
+    }
+}
+
+extension CredentialImportReview.Duplicate.Addition {
+    /// What a merge adds, as one phrase of the row's sentence.
+    var text: String {
+        switch self {
+        case let .websites(count):
+            if count == 1 {
+                return String(localized: "a website")
+            }
+            return String(localized: "\(count) websites")
+        case let .passkeys(count):
+            if count == 1 {
+                return String(localized: "a passkey")
+            }
+            return String(localized: "\(count) passkeys")
+        case .code:
+            return String(localized: "a verification code")
+        case let .notes(count):
+            if count == 1 {
+                return String(localized: "a note")
+            }
+            return String(localized: "\(count) notes")
         }
     }
 }
@@ -44,6 +71,10 @@ extension CredentialImportReview.Candidate {
     /// What the action is called on this item's menu.
     func title(of action: CredentialImportReview.ItemAction) -> LocalizedStringResource {
         switch action {
+        case .mergeIntoSaved:
+            "Merge into “\(duplicate?.title ?? "")”"
+        case .importNew where duplicate != nil:
+            "Import as New"
         case .importNew:
             switch group {
             case .decide:
@@ -75,7 +106,7 @@ extension CredentialImportReview.Candidate {
             "Use Incoming"
         case .merge:
             "Merge"
-        case .unchanged:
+        case .unchanged, .linked:
             "Keep Saved"
         case .skipped:
             "Skip"
@@ -140,11 +171,24 @@ extension CredentialImportReview.Candidate {
             if group == .skipped {
                 return String(localized: "Will be imported anyway.")
             }
+            if let duplicate {
+                return String(localized: "Saved as a separate credential, although “\(duplicate.title)” already holds it.")
+            }
             return linkedAccountID == nil
                 ? String(localized: "Not saved yet.") : String(localized: "Adds to a credential that is already saved.")
         case .merge:
-            return String(localized: "Merged into a saved credential.")
+            guard let duplicate, duplicate.isApplied(by: records) else { return String(localized: "Merged into a saved credential.") }
+            let added = duplicate.additions.map(\.text).formatted(.list(type: .and))
+            let same = records.contains { $0.kind == .password }
+                ? String(localized: "Same website, username and password as “\(duplicate.title)”.")
+                : String(localized: "Same passkey as “\(duplicate.title)”.")
+            return same + " " + String(localized: "Adds \(added).")
+        case .linked:
+            return String(localized: "Already saved as “\(duplicate?.title ?? "")”. Import links the two, so the next import finds it unchanged.")
         case .unchanged:
+            if let duplicate {
+                return String(localized: "Already saved as “\(duplicate.title)”. Nothing changes.")
+            }
             if records.contains(where: { $0.classification == .localChanged }) {
                 return String(localized: "Changed here since the last import. Your version stays.")
             }
@@ -379,7 +423,7 @@ struct CredentialImportReviewSheet: View {
     // MARK: Footer and buttons
 
     private func footer(_ tally: CredentialImportReview.Tally) -> String {
-        var text = String(localized: "Imports \(tally.new) new, updates \(tally.updates + tally.merges), leaves \(tally.unchanged) unchanged, skips \(tally.skipped).")
+        var text = String(localized: "Imports \(tally.new) new, updates \(tally.updates + tally.merges), leaves \(tally.unchanged + tally.linked) unchanged, skips \(tally.skipped).")
         if tally.undecided > 0 {
             text += " " + String(localized: "Needs your decision: \(tally.undecided).")
         }
