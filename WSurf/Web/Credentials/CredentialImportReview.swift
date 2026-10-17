@@ -164,6 +164,8 @@ nonisolated struct CredentialImportReview: Sendable {
     let outcome: CredentialImportOutcome?
     /// What a CSV file held beyond what will be imported; `nil` for a system import. Counts the file as read (staged), not what is saved.
     var csvReport: CredentialCSVReport?
+    /// Where the credentials came from, which decides the wording of the review.
+    var origin = CredentialTransferMessage.Origin.system
     /// What the transfer held that WSurf will not import, shown before Import. Empty for a CSV file.
     var omitted: [CredentialImportOmission] = []
 

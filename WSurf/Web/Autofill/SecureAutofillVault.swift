@@ -10,6 +10,8 @@ nonisolated protocol AutofillSecureStorage: Sendable {
     func read(service: String, context: LAContext) throws -> Data?
     func write(_ data: Data, service: String, context: LAContext) throws
     func erase(service: String) throws
+    /// Whether an item exists, without reading its secret and without any authentication prompt.
+    func exists(service: String) throws -> Bool
 }
 
 nonisolated struct AutofillKeychainStorage: AutofillSecureStorage {
@@ -65,6 +67,26 @@ nonisolated struct AutofillKeychainStorage: AutofillSecureStorage {
     func erase(service: String) throws {
         let status = SecItemDelete(Self.query(service: service, account: account) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw AutofillVaultError.keychain(status) }
+    }
+
+    /// Asks for the item's attributes only. An item that needs user presence still answers, and `interactionNotAllowed`
+    /// makes the system refuse to prompt: a protected item then reports `errSecInteractionNotAllowed`, which also means it exists.
+    func exists(service: String) throws -> Bool {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        var query = Self.query(service: service, account: account)
+        query[kSecUseAuthenticationContext as String] = context
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        switch status {
+        case errSecSuccess, errSecInteractionNotAllowed:
+            return true
+        case errSecItemNotFound:
+            return false
+        default:
+            throw AutofillVaultError.keychain(status)
+        }
     }
 }
 
@@ -156,6 +178,12 @@ actor SecureAutofillVault<Record: Codable & Identifiable & Sendable> where Recor
         guard profileID != Profile.privateID else { throw AutofillVaultError.privateBrowsing }
         try storage.erase(service: service)
         updateSaveIndex([])
+    }
+
+    /// Whether anything is stored, answered without reading it or prompting. Private browsing never stores anything.
+    func hasStoredRecords() throws -> Bool {
+        guard profileID != Profile.privateID else { return false }
+        return try storage.exists(service: service)
     }
 
     private func context(using session: AutofillAuthenticationSession?) throws -> LAContext {

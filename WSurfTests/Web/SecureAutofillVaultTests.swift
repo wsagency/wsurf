@@ -13,23 +13,65 @@ import WebKit
 nonisolated final class MemoryAutofillStorage: AutofillSecureStorage {
     private struct State {
         var data: [String: Data] = [:]
+        var reads = 0
+        var writes = 0
+        var erases = 0
+        var existenceChecks = 0
+        var failingExistence = false
     }
     private let state = Mutex(State())
 
     var itemCount: Int {
         state.withLock { $0.data.count }
     }
+    /// How many times a secret was read: a presence check is not one.
+    var readCount: Int {
+        state.withLock { $0.reads }
+    }
+    var writeCount: Int {
+        state.withLock { $0.writes }
+    }
+    var eraseCount: Int {
+        state.withLock { $0.erases }
+    }
+    var existenceCheckCount: Int {
+        state.withLock { $0.existenceChecks }
+    }
+
+    /// Makes `exists` fail the way a Keychain query error does.
+    func failExistenceChecks() {
+        state.withLock { $0.failingExistence = true }
+    }
 
     func read(service: String, context: LAContext) throws -> Data? {
-        state.withLock { $0.data[service] }
+        state.withLock {
+            $0.reads += 1
+            return $0.data[service]
+        }
     }
 
     func write(_ data: Data, service: String, context: LAContext) throws {
-        state.withLock { $0.data[service] = data }
+        state.withLock {
+            $0.writes += 1
+            $0.data[service] = data
+        }
     }
 
     func erase(service: String) throws {
-        state.withLock { _ = $0.data.removeValue(forKey: service) }
+        state.withLock {
+            $0.erases += 1
+            _ = $0.data.removeValue(forKey: service)
+        }
+    }
+
+    func exists(service: String) throws -> Bool {
+        try state.withLock {
+            $0.existenceChecks += 1
+            if $0.failingExistence {
+                throw AutofillVaultError.keychain(errSecNotAvailable)
+            }
+            return $0.data[service] != nil
+        }
     }
 }
 

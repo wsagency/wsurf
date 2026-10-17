@@ -28,6 +28,18 @@ nonisolated struct CredentialCSVReport: Sendable, Equatable {
             }
         }
 
+        /// The wording for an entry of the passwords saved before Credential Manager, which have entry numbers, not file lines.
+        var entryText: String {
+            switch self {
+            case let .duplicateInFile(first):
+                String(localized: "not imported: same as entry \(first).")
+            case let .conflictsWithEarlierRow(entry):
+                String(localized: "same website and username as entry \(entry) with another password. Choose what to do with each of them.")
+            default:
+                text
+            }
+        }
+
         /// Fixed wording: never a field of the file.
         var text: String {
             switch self {
@@ -153,7 +165,21 @@ nonisolated enum CredentialCSVImport {
     }
 
     static func stage(_ data: Data, against base: StoreSnapshot) throws -> Staged {
-        let rows = try CredentialCSV.parse(data)
+        try stage(rows: CredentialCSV.parse(data), against: base)
+    }
+
+    /// The passwords saved before Credential Manager, staged by the same rules as a CSV of them: each entry is one row, numbered
+    /// from 1 in list order, so the review can tell two entries of one website apart. Nothing about the list is kept in the report
+    /// beyond counts and these numbers.
+    static func stage(legacy records: [SavedPassword], against base: StoreSnapshot) throws -> Staged {
+        let header = CredentialCSV.Row(line: 0, fields: ["URL", "Username", "Password"])
+        let entries = records.enumerated().map {
+            CredentialCSV.Row(line: $0.offset + 1, fields: [$0.element.origin, $0.element.username, $0.element.password])
+        }
+        return try stage(rows: [header] + entries, against: base)
+    }
+
+    static func stage(rows: [CredentialCSV.Row], against base: StoreSnapshot) throws -> Staged {
         guard let header = rows.first else { throw CredentialCSVError.missingColumns }
         let names = header.fields.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
         let columns = try Columns(names: names)
