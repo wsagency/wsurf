@@ -13,86 +13,85 @@ import WebKit
 nonisolated final class MemoryAutofillStorage: AutofillSecureStorage {
     private struct State {
         var data: [String: Data] = [:]
+        var reads = 0
+        var writes = 0
+        var erases = 0
+        var existenceChecks = 0
+        var failingExistence = false
+        var readFailure: OSStatus?
     }
     private let state = Mutex(State())
 
     var itemCount: Int {
         state.withLock { $0.data.count }
     }
+    /// How many times a secret was read: a presence check is not one.
+    var readCount: Int {
+        state.withLock { $0.reads }
+    }
+    var writeCount: Int {
+        state.withLock { $0.writes }
+    }
+    var eraseCount: Int {
+        state.withLock { $0.erases }
+    }
+    var existenceCheckCount: Int {
+        state.withLock { $0.existenceChecks }
+    }
+
+    /// Makes `exists` fail the way a Keychain query error does.
+    func failExistenceChecks() {
+        state.withLock { $0.failingExistence = true }
+    }
+
+    /// Makes every read fail with `status`, as a canceled or failed authentication does.
+    func failReads(with status: OSStatus?) {
+        state.withLock { $0.readFailure = status }
+    }
 
     func read(service: String, context: LAContext) throws -> Data? {
-        state.withLock { $0.data[service] }
+        try state.withLock {
+            $0.reads += 1
+            if let status = $0.readFailure {
+                throw AutofillVaultError.keychain(status)
+            }
+            return $0.data[service]
+        }
     }
 
     func write(_ data: Data, service: String, context: LAContext) throws {
-        state.withLock { $0.data[service] = data }
+        state.withLock {
+            $0.writes += 1
+            $0.data[service] = data
+        }
     }
 
     func erase(service: String) throws {
-        state.withLock { _ = $0.data.removeValue(forKey: service) }
+        state.withLock {
+            $0.erases += 1
+            _ = $0.data.removeValue(forKey: service)
+        }
+    }
+
+    func exists(service: String) throws -> Bool {
+        try state.withLock {
+            $0.existenceChecks += 1
+            if $0.failingExistence {
+                throw AutofillVaultError.keychain(errSecNotAvailable)
+            }
+            return $0.data[service] != nil
+        }
     }
 }
 
 @MainActor
 struct SecureAutofillVaultTests {
-    @Test(.boundedWebViews) func passwordFillAuthenticationReusesOnlyTheSamePageAndOriginForFiveMinutes() async throws {
-        let cache = PasswordFillAuthenticationCache()
-        let context = BrowserProfileContext(profile: .privateBrowsing())
-        let otherContext = BrowserProfileContext(profile: .privateBrowsing())
-        let configuration = WebViewPool.makeConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
-        let otherConfiguration = WebViewPool.makeConfiguration()
-        otherConfiguration.websiteDataStore = .nonPersistent()
-        let view = BrowserPage(webKit: WKWebView(frame: .zero, configuration: configuration), context: context)
-        let otherView = BrowserPage(webKit: WKWebView(frame: .zero, configuration: otherConfiguration), context: otherContext)
-        let start = Date(timeIntervalSince1970: 1_000)
-        var created = 0
-        func session(_ page: BrowserPage, _ documentID: String, _ origin: String, _ now: Date) async throws -> AutofillAuthenticationSession {
-            try await cache.session(for: page, contextID: page.context.contextID, documentID: documentID, origin: origin, now: now) {
-                created += 1
-                return AutofillAuthenticationSession(service: "test", reason: "Test")
-            }
-        }
-
-        do {
-            let first = try await session(view, "page-1", "https://example.test", start)
-            let authenticated = try await session(view, "page-1", "https://example.test", start)
-            #expect(authenticated !== first)
-            cache.markAuthenticated(authenticated, in: view, now: start)
-            #expect(try await session(view, "page-1", "https://example.test", start.addingTimeInterval(299)) === authenticated)
-            cache.markAuthenticated(authenticated, in: view, now: start.addingTimeInterval(299))
-            let timedOut = try await session(view, "page-1", "https://example.test", start.addingTimeInterval(300))
-            #expect(timedOut !== authenticated)
-            let otherOrigin = try await session(view, "page-1", "https://other.test", start)
-            #expect(otherOrigin !== timedOut)
-            cache.markAuthenticated(otherOrigin, in: view, now: start)
-            let otherPage = try await session(otherView, "page-2", "https://other.test", start)
-            #expect(otherPage !== otherOrigin)
-            cache.markAuthenticated(otherPage, in: otherView, now: start)
-            let otherContextSession = try await session(otherView, "page-2", "https://other.test", start)
-            #expect(otherContextSession === otherPage)
-            cache.markAuthenticated(otherPage, in: otherView, now: start)
-            let expired = try await session(otherView, "page-2", "https://other.test", start.addingTimeInterval(300))
-            #expect(expired !== otherContextSession)
-            cache.markAuthenticated(expired, in: otherView, now: start)
-            cache.clear()
-            #expect(try await session(otherView, "page-2", "https://other.test", start) !== expired)
-            #expect(created == 7)
-        } catch {
-            await view.close()
-            await otherView.close()
-            throw error
-        }
-        await view.close()
-        await otherView.close()
-    }
-
     @Test func passwordsStayInSecureStorageAndAreIsolatedByProfile() async throws {
         let storage = MemoryAutofillStorage()
         let first = SecureAutofillVault<SavedPassword>(profileID: UUID(), kind: "passwords", reason: "Test", storage: storage)
         let second = SecureAutofillVault<SavedPassword>(profileID: UUID(), kind: "passwords", reason: "Test", storage: storage)
         let record = try SavedPassword(website: "https://example.test", username: "ada", password: "test-secret")
-        _ = try await first.update { SavedPassword.merging(record, into: $0) }
+        _ = try await first.update { _ in [record] }
         #expect(try await first.records() == [record])
         #expect(try await second.records().isEmpty)
         #expect(storage.itemCount == 1)
@@ -109,18 +108,15 @@ struct SecureAutofillVaultTests {
         #expect(storage.itemCount == 0)
     }
 
-    @Test func credentialMatchingUsesExactHTTPSOriginsAndUpdatesTheSameAccount() throws {
+    @Test func credentialMatchingUsesExactHTTPSOrigins() throws {
         let record = try SavedPassword(website: "https://EXAMPLE.test:443/login", username: "ada", password: "old")
         #expect(record.origin == "https://example.test")
         #expect(SavedPassword.origin(for: URL(string: "http://example.test")!) == nil)
         #expect(SavedPassword.origin(for: URL(string: "https://user@example.test")!) == nil)
         #expect(SavedPassword.origin(for: URL(string: "https://sub.example.test")!) != record.origin)
         #expect(SavedPassword.origin(for: URL(string: "https://example.test:8443")!) != record.origin)
-        let updated = try SavedPassword(website: "example.test/account", username: "ada", password: "new")
-        let result = SavedPassword.merging(updated, into: [record])
-        #expect(result.count == 1)
-        #expect(result[0].id == record.id)
-        #expect(result[0].password == "new")
+        let sameLogin = try SavedPassword(website: "example.test/account", username: "ada", password: "new")
+        #expect(sameLogin.origin == record.origin)
         #expect(throws: AutofillVaultError.self) { try SavedPassword(website: "example.test", username: "ada", password: "") }
     }
 
@@ -130,41 +126,16 @@ struct SecureAutofillVaultTests {
         #expect(generated.allSatisfy { $0.count == 24 })
     }
 
-    @Test func enabledPasswordExtensionsTakeOverButDisabledAndUnrelatedExtensionsDoNot() {
+    @Test func enabledPasswordExtensionsAreRecognizedButDisabledAndUnrelatedOnesAreNot() {
         var password = InstalledExtension(id: "nngceckbapebfimnlniiiahkandclblb", displayName: "Bitwarden", version: "1", enabled: true, installedAt: .now)
         let other = InstalledExtension(id: "other", displayName: "Reader", version: "1", enabled: true, installedAt: .now)
         #expect(PasswordExtensionPolicy.provider(in: [other, password])?.id == password.id)
         password.enabled = false
         #expect(PasswordExtensionPolicy.provider(in: [other, password]) == nil)
-        #expect(PasswordExtensionPolicy.provider(in: [other, password], selectedID: other.id) == nil)
         let apple = InstalledExtension(id: "system", displayName: "Passwords", version: "1", enabled: true, installedAt: .now)
         #expect(PasswordExtensionPolicy.provider(in: [apple])?.id == apple.id)
         #expect(PasswordExtensionPolicy.availableProviders(in: [other, password, apple]).map(\.id) == [apple.id])
         password.enabled = true
-        #expect(PasswordExtensionPolicy.provider(in: [password, apple], selectedID: apple.id)?.id == apple.id)
-    }
-
-    @Test func anExplicitCredentialManagerChoiceIsNotSilencedByAnExtensionWhileLegacyKeepsItsPrecedence() {
-        let bitwarden = InstalledExtension(id: "nngceckbapebfimnlniiiahkandclblb", displayName: "Bitwarden", version: "1", enabled: true, installedAt: .now)
-        var disabled = bitwarden
-        disabled.enabled = false
-        let reader = InstalledExtension(id: "other", displayName: "Reader", version: "1", enabled: true, installedAt: .now)
-        let apple = InstalledExtension(id: "system", displayName: "Passwords", version: "1", enabled: true, installedAt: .now)
-
-        // Legacy: exactly the old rule - any enabled recognized extension (chosen or automatic) takes over.
-        #expect(PasswordExtensionPolicy.suppressesNativeFill(provider: .legacy, in: [reader, bitwarden]))
-        #expect(PasswordExtensionPolicy.suppressesNativeFill(provider: .legacy, in: [bitwarden, apple], selectedID: apple.id))
-        #expect(PasswordExtensionPolicy.suppressesNativeFill(provider: .legacy, in: [apple]))
-        #expect(!PasswordExtensionPolicy.suppressesNativeFill(provider: .legacy, in: [reader, disabled]))
-        #expect(!PasswordExtensionPolicy.suppressesNativeFill(provider: .legacy, in: []))
-
-        // Explicit manager choice: the same extensions never switch WSurf's own filling off.
-        #expect(!PasswordExtensionPolicy.suppressesNativeFill(provider: .credentialManager, in: [reader, bitwarden]))
-        #expect(!PasswordExtensionPolicy.suppressesNativeFill(provider: .credentialManager, in: [bitwarden, apple], selectedID: apple.id))
-        #expect(!PasswordExtensionPolicy.suppressesNativeFill(provider: .credentialManager, in: [apple]))
-        #expect(!PasswordExtensionPolicy.suppressesNativeFill(provider: .credentialManager, in: [reader, disabled]))
-
-        // The extension is still recognized for display and for the legacy page; only the suppression differs.
-        #expect(PasswordExtensionPolicy.provider(in: [reader, bitwarden], selectedID: "")?.id == bitwarden.id)
+        #expect(PasswordExtensionPolicy.provider(in: [password, apple])?.id == password.id)
     }
 }

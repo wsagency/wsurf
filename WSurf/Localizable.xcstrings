@@ -27,10 +27,16 @@
         }
       }
     },
+    "All %lld passwords from the old list are in Credential Manager." : {
+
+    },
     "Allow for this private tab" : {
 
     },
     "Always allow for this website" : {
+
+    },
+    "and %lld more entries with notes." : {
 
     },
     "Ask before opening %@" : {
@@ -39,13 +45,43 @@
     "Ask next time" : {
 
     },
+    "Create a vault to import the passwords saved before Credential Manager." : {
+
+    },
+    "Credential Manager changed. Review the old list again." : {
+
+    },
     "Developer" : {
+
+    },
+    "Entry" : {
+
+    },
+    "Entry %lld of the old list" : {
 
     },
     "Fill form controls together without submitting." : {
 
     },
+    "Import the passwords saved before Credential Manager. WSurf doesn’t fill them until you do." : {
+
+    },
+    "Imported into WSurf: %lld added, %lld updated. The old Passwords list is still on this Mac until you remove it." : {
+
+    },
+    "Import…" : {
+
+    },
+    "Keep for Now" : {
+
+    },
+    "Later" : {
+
+    },
     "Move Tab to Window" : {
+
+    },
+    "Move Your Saved Passwords" : {
 
     },
     "New Page" : {
@@ -60,10 +96,28 @@
     "No app installed on this Mac handles %@ links." : {
 
     },
+    "No passkey for this website in WSurf." : {
+
+    },
+    "No sites are excluded." : {
+
+    },
+    "not imported: same as entry %lld." : {
+
+    },
+    "Nothing is saved until you review and confirm. The old list stays until you remove it." : {
+
+    },
+    "Old Passwords list removed" : {
+
+    },
     "Open %@" : {
 
     },
     "Open %@?" : {
+
+    },
+    "Open Credential Manager" : {
 
     },
     "Open downloads" : {
@@ -81,6 +135,9 @@
     "opens %@ without asking" : {
 
     },
+    "Passwords saved before Credential Manager" : {
+
+    },
     "Paused because the provider is rate limited. Your progress is saved; wait, then choose Continue." : {
 
     },
@@ -90,16 +147,46 @@
     "Remove %@ search" : {
       "comment" : "Accessibility label and tooltip for removing the active site search chip. %@ is the website's name and should not be translated."
     },
+    "Remove Old List" : {
+
+    },
+    "Remove Old List…" : {
+
+    },
+    "Remove the Old Passwords List?" : {
+
+    },
     "Reopen Last Closed Window" : {
 
     },
     "Restart Page" : {
 
     },
+    "Restore prompts on %lld excluded sites." : {
+
+    },
+    "Restore prompts on 1 excluded site." : {
+
+    },
+    "Review the old list before removing it." : {
+
+    },
+    "Review…" : {
+
+    },
+    "same website and username as entry %lld with another password. Choose what to do with each of them." : {
+
+    },
+    "Save passwords in Credential Manager?" : {
+
+    },
     "Search %@" : {
       "comment" : "Command palette site search hint, placeholder, and result detail. %@ is the website's name and should not be translated. Search is a verb."
     },
     "Search in current tab" : {
+
+    },
+    "Set Up Vault…" : {
 
     },
     "Tabs cannot move between profiles or private sessions." : {
@@ -111,7 +198,22 @@
     "The browser window is no longer available." : {
 
     },
+    "The import ended because %@, and nothing was saved. Your saved passwords are still in the old list. To import them, choose Review again." : {
+
+    },
     "The model is rate limited. Retrying shortly without repeating browser actions." : {
+
+    },
+    "The old list has no passwords. Remove it to finish the move to Credential Manager." : {
+
+    },
+    "The old Passwords list has %lld passwords. %lld already saved here, %lld can’t be imported." : {
+
+    },
+    "The passkey is saved in Credential Manager." : {
+
+    },
+    "This import was discarded. No data was written. Your saved passwords are still in the old list. To import them, choose Review again." : {
 
     },
     "This page wants to open %@." : {
@@ -201,6 +303,18 @@
     "Hold ⌘" : {
       "comment" : "Choice requiring the Command modifier to remove an unloaded tab."
     },
+    "Unlock the vault to import the passwords saved before Credential Manager." : {
+
+    },
+    "Use Another Device or Key…" : {
+
+    },
+    "WSurf can’t save a passkey here: Credential Manager has no vault yet." : {
+
+    },
+    "WSurf now keeps passwords only in Credential Manager, an encrypted vault you unlock with a passkey. Passwords saved in the profile “%@” aren’t filled until you import them. Nothing is deleted without your confirmation." : {
+
+    },
     "X next to Play" : {
       "comment" : "Choice showing a separate remove X immediately left of the unloaded-tab Play button."
     },
@@ -257,6 +371,12 @@
     },
     "" : {
       "comment" : "Not shown to anyone: the empty branch of a conditional tooltip on the sidebar's New Tab and Settings rows, used when the sidebar is wide enough to show the row's own title. Leave the translation empty."
+    },
+    "Your passwords are imported. Remove the old list in Credential Manager when you’re ready." : {
+
+    },
+    "Your saved passwords are now only in Credential Manager." : {
+
     },
     "“%@” is playing" : {
       "comment" : "Tooltip on the speaker glyph of a collapsed folder in the sidebar, saying which tab inside it is making sound. %@ is the tab's title, written by the website — never translated. Keep the curly quotation marks around it."
@@ -941,9 +1061,6 @@
       "comment" : "MCP client setup accessibility label. The placeholder is the client app name."
     },
     "Add or change the selected provider’s API key." : {
-
-    },
-    "Add Password" : {
 
     },
     "Add Payment Card" : {
@@ -2245,9 +2362,6 @@
     "Enter a unique server name, an HTTPS MCP URL or connector ID, and valid tool names." : {
 
     },
-    "Enter a valid HTTPS website and a password." : {
-
-    },
     "Enter a valid payment card number." : {
 
     },
@@ -2914,9 +3028,6 @@
     "WSurf encrypts saved contacts. Imported copies don’t sync." : {
 
     },
-    "WSurf encrypts saved passwords. macOS manages passkeys." : {
-
-    },
     "WSurf is using %@ instead." : {
       "comment" : "Settings → Assistant. %@ is the provider name of the stand-in, e.g. \"Apple Intelligence\". Caption shown when the chosen provider is not ready and another one serves replies. WSurf is the application name and is never translated."
     },
@@ -2977,9 +3088,6 @@
     "Location" : {
       "comment" : "Name of the location permission: a row on the Websites settings page and a label in the permission badge in the toolbar. Means the Mac's geographic location."
     },
-    "Login details" : {
-
-    },
     "Long" : {
 
     },
@@ -3033,9 +3141,6 @@
     },
     "Manage your other extensions" : {
       "comment" : "One line in the bulleted list of what an extension will be able to do, in the install confirmation sheet. It completes “It will also be able to:”."
-    },
-    "Managed by %@" : {
-
     },
     "Manually" : {
 
@@ -3357,9 +3462,6 @@
     "No pages visited yet." : {
       "comment" : "Empty state in the History view when there is no history at all. Full sentence with a period, sentence case."
     },
-    "No passwords match your search." : {
-
-    },
     "No preference — the assistant chose" : {
 
     },
@@ -3382,9 +3484,6 @@
 
     },
     "No saved cards" : {
-
-    },
-    "No saved passwords" : {
 
     },
     "No saved permissions" : {
@@ -3693,16 +3792,7 @@
     "Password" : {
       "comment" : "Placeholder text inside the password field of the dialog a website shows when it asks for HTTP authentication."
     },
-    "Password filling" : {
-
-    },
-    "Password provider" : {
-
-    },
     "Passwords" : {
-
-    },
-    "Passwords are locked" : {
 
     },
     "Paste" : {
@@ -4128,12 +4218,6 @@
     "Remove key" : {
 
     },
-    "Remove Password" : {
-
-    },
-    "Remove Password?" : {
-
-    },
     "Remove Task" : {
       "comment" : "Tooltip on the close button of a card in Recent Tasks on the start page; it forgets that one turn the agent ran. Title Case."
     },
@@ -4148,9 +4232,6 @@
     },
     "Remove the data stored by every website?" : {
       "comment" : "Title of the confirmation for clearing the stored data of every website in the list."
-    },
-    "Remove the saved login for %@?" : {
-
     },
     "Remove This Page" : {
       "comment" : "Context-menu command on one page of several shown at once. That page leaves the arrangement and goes back to being an ordinary sidebar row; the others keep the window. Title Case."
@@ -4343,9 +4424,6 @@
     "Save a card to use at checkout." : {
 
     },
-    "Save a login to see it here." : {
-
-    },
     "Save address?" : {
 
     },
@@ -4368,9 +4446,6 @@
 
     },
     "Save and fill payment cards." : {
-
-    },
-    "Save and fill website logins." : {
 
     },
     "Save Card" : {
@@ -4424,9 +4499,6 @@
     "Saved in your Keychain." : {
       "comment" : "Caption under the API key row when a key is stored but cannot be shown in masked form. The implied subject is the key. Keychain is Apple’s password store — use Apple’s own name for it."
     },
-    "Saved passwords" : {
-
-    },
     "Saved passwords are unavailable in Private Browsing." : {
 
     },
@@ -4468,9 +4540,6 @@
     },
     "Search or ask" : {
       "comment" : "Accessibility label for the combined search and assistant field on the start page. Keep it short and name both functions."
-    },
-    "Search passwords" : {
-
     },
     "Search settings" : {
       "comment" : "Placeholder inside the search field at the top of the Settings sidebar. Search is the verb and settings its object, meaning the settings of this app. Narrow field, so keep it short."
@@ -5500,12 +5569,6 @@
     "Unlock Cards" : {
 
     },
-    "Unlock Passwords" : {
-
-    },
-    "Unlock to view and edit passwords." : {
-
-    },
     "Unmute" : {
       "comment" : "Tooltip on the same speaker button in the media dock once sound is off; it lets the sound back. Verb, one word; pairs with “Mute”."
     },
@@ -5861,9 +5924,6 @@
 
     },
     "You’re talking to AI. " : {
-
-    },
-    "Your extension handles password autofill." : {
 
     },
     "Your microphone pauses while WSurf speaks." : {

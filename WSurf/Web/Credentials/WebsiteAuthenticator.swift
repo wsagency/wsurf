@@ -117,6 +117,9 @@ nonisolated enum WebsiteAuthenticatorError: Error, Sendable {
     /// The registration is durably saved but could not be delivered to the page (cancelled, navigated, locked or expired
     /// after the commit). The vault revision is the receipt; the page must still see a failure.
     case savedNotDelivered(revision: UInt64)
+    /// The request is not this authenticator's to answer: the user chose another device or key, or the vault holds nothing for it.
+    /// The page's request then goes to the system's own authenticator. Nothing was written, signed or unlocked for it.
+    case handOff
 }
 
 nonisolated enum WebsiteAuthenticator {

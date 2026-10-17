@@ -670,7 +670,6 @@ struct WebAuthnContextTests {
             let webView = try #require(page.webKit)
             let delegate = try #require(webView.navigationDelegate as? TabNavigationDelegate)
             #expect(delegate === tab.navigationDelegate)
-            page.context.settings.passwordProvider = .credentialManager
             let routeScript = """
             (() => { let route = null; const note = event => { route = event.detail; };
               document.addEventListener('wsurf-webauthn-route', note);

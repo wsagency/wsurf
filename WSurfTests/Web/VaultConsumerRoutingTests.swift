@@ -27,7 +27,7 @@ struct VaultConsumerRoutingTests {
         .password(try SavedPassword(website: Self.origin, username: username, password: "new"))
     }
 
-    /// A session attached to a page, shown in a window, of a credential-manager context on a profile with `vaults`. The page's
+    /// A session attached to a page, shown in a window, of a context on a profile with `vaults`. The page's
     /// document proof is replaced (no document is loaded); everything else is real.
     private func withSession(
         passkeys: VaultPasskeys = VaultPasskeys(),
@@ -36,7 +36,6 @@ struct VaultConsumerRoutingTests {
     ) async throws {
         try await VaultManagerFixture.with(passkeys: passkeys, vaults: vaults) { profile, _, vaults in
             let context = BrowserProfileContext(profile: profile)
-            context.settings.passwordProvider = .credentialManager
             let configuration = WebViewPool.makeConfiguration()
             configuration.websiteDataStore = .nonPersistent()
             let page = BrowserPage(webKit: WKWebView(frame: .zero, configuration: configuration), context: context)
@@ -110,10 +109,61 @@ struct VaultConsumerRoutingTests {
         }
     }
 
-    @Test func aProfileWithoutAVaultMakesNoOffer() async throws {
+    @Test func aProfileWithoutAVaultOffersSetupOncePerRunAndSavesNothing() async throws {
         try await withSession(vaults: []) { session, _ in
+            let profile = try #require(session.context?.profile)
+            await session.offer(try login("ada"), origin: Self.origin)
+            let offer = try #require(session.current)
+            #expect(offer.needsVault && !offer.isUpdate && offer.managerEpoch == nil && offer.managerRevision == nil)
+
+            // The offer saves nothing and excludes nothing, whatever asks it to: no vault is made for it.
+            await session.save(offer)
+            await session.never(offer)
+            #expect(session.current?.id == offer.id && session.error == nil)
+            #expect(await CredentialRouting.profileNeedsFirstVault(profile))
+
+            // Once for the profile in this run: after "Not Now", no other login brings it back.
+            session.dismiss(offer)
+            await session.offer(try login("grace"), origin: Self.origin)
+            #expect(session.current == nil)
+        }
+    }
+
+    @Test func aProfileWithAVaultIsNeverOfferedTheSetup() async throws {
+        try await withSession(vaults: [.unlocked]) { session, _ in
+            await session.offer(try login("ada"), origin: Self.origin)
+            #expect(session.current?.needsVault == false && session.current?.plan == .create)
+        }
+    }
+
+    @Test func resetSaveSuggestionsEmptiesOnlyTheSelectedVaultsBlockedSites() async throws {
+        try await withSession(vaults: [.unlocked, .unlocked]) { session, vaults in
+            let profile = try #require(session.context?.profile)
+            let ada = account("ada")
+            try await VaultManagerFixture.save([ada], in: vaults[0])
+            try await VaultManagerFixture.save([account("bob")], in: vaults[1])
+            for vault in vaults {
+                let snapshot = try await vault.manager.snapshot()
+                _ = try await vault.manager.updatePasswordSavePolicy(
+                    [Self.origin], expectedRevision: snapshot.revision, authorizedEpoch: try #require(vault.manager.authorizationEpoch)
+                )
+            }
+            // A site the user excluded gets no offer, and "Not Now" is remembered by the page as well.
             await session.offer(try login("ada"), origin: Self.origin)
             #expect(session.current == nil)
+
+            let model = CredentialSettingsModel(profile: profile, manager: vaults[0].manager)
+            await model.load()
+            #expect(model.blockedSiteCount == 1)
+            await model.resetSaveSuggestions()
+
+            #expect(model.error == nil && model.blockedSiteCount == 0)
+            #expect(try await vaults[0].manager.snapshot().blockedPasswordOrigins.isEmpty)
+            #expect(try await vaults[1].manager.snapshot().blockedPasswordOrigins == [Self.origin], "another vault keeps its own list")
+            // The saved login is untouched, and the site is offered again.
+            #expect(try await vaults[0].manager.snapshot().accounts.map(\.id) == [ada.id])
+            await session.offer(try login("ada"), origin: Self.origin)
+            #expect(session.current?.plan == .update(ada.id))
         }
     }
 

@@ -10,8 +10,10 @@ import Foundation
 ///   conditional requests. The page cannot make it authorize anything; native derives origin, frame, policy and profile.
 /// - `page` runs in the page world. It only marshals options and results into browser-facing objects.
 ///
-/// Native decides the provider before the page script touches a call: `legacy` hands the untouched call to the engine,
-/// `manager` is handled here and never falls back to the engine, and no answer is a refusal, never implicit legacy.
+/// Native decides the route before the page script touches a call: `legacy` (a private page) hands the untouched call to the
+/// engine, `manager` is handled here, and no answer is a refusal, never implicit legacy. A call handled here reaches the
+/// engine only when native says so afterwards (`handoff`), and native says so only when the user chose another device or key
+/// on one of its sheets: never because of what the vault does or does not hold.
 nonisolated enum WebAuthnScript {
     static let handlerName = "wsurfWebAuthn"
     static let requestEvent = "wsurf-webauthn-request"
@@ -25,7 +27,7 @@ nonisolated enum WebAuthnScript {
     /// handshake (a non-writable global in this isolated world, never in the page world and never in any event or message
     /// to the page), so native can tell the live document from an older same-origin one. The relay waits on the
     /// handshake's own promise: no polling, no timer. A document with no handshake, or a failed one, is sent as
-    /// unidentified: native passes it through under the legacy provider and refuses it under the encrypted one, and never
+    /// unidentified: native passes it through on a private page and refuses it on any other, and never
     /// builds a frame or ceremony for it. Chromium identifies documents natively over CDP, so its relay keeps a random
     /// per-document fence.
     static func relay(nativeNonce: Bool) -> String { "const NATIVE = \(nativeNonce);\n" + relaySource }
@@ -361,8 +363,32 @@ nonisolated enum WebAuthnScript {
         if (!value || typeof value.id !== 'string') return;
         const query = queryHandlers.get(value.id);
         if (query) { queryHandlers.delete(value.id); query(value.result ?? null); return; }
+        if (value.handoff !== undefined) {
+          if (value.handoff === 'modal') handOff(value.id);
+          return;
+        }
         settle(value.id, value.error, value.result);
       });
+
+      // Native says the user chose another device or key on one of its sheets: this request goes to the engine's own
+      // authenticator, in place of the vault's answer. The caller's own values are passed on once, as a modal request (a
+      // discovery the user turned into an explicit choice is no longer a background one). The request stays registered until the
+      // engine settles it, so a second foreground request is refused exactly as while the vault was answering, and the engine's
+      // own timeout and the caller's abort signal take over from ours.
+      function handOff(id) {
+        const pending = requests.get(id);
+        if (!pending || pending.handedOff) return;
+        pending.handedOff = true;
+        clearTimeout(pending.timer);
+        pending.signal?.removeEventListener('abort', pending.abort);
+        const options = {publicKey: pending.publicKey, signal: pending.signal};
+        if (pending.mediation !== undefined) options.mediation = pending.mediation;
+        if (pending.conditional) options.mediation = 'optional';
+        const done = settleWith => value => { requests.delete(id); settleWith(value); };
+        let call;
+        try { call = originals[pending.operation](options); } catch (error) { done(pending.reject)(error); return; }
+        Promise.resolve(call).then(done(pending.resolve), done(pending.reject));
+      }
       // The provider routing for this document is native's: delivered as an event by the isolated relay, which holds the
       // announcement of the document-start script native installed (and of every later change). It is a hint, not an
       // authority: the page can forge it, and native refuses any manager request it does not itself serve. `pending` is a
@@ -448,7 +474,7 @@ nonisolated enum WebAuthnScript {
             emit({action: 'cancel', id});
             settle(id, signal.reason ?? fail('AbortError', 'The request was aborted.'));
           };
-          requests.set(id, {resolve, reject, timer, signal, abort, conditional, operation});
+          requests.set(id, {resolve, reject, timer, signal, abort, conditional, operation, publicKey, mediation});
           signal?.addEventListener('abort', abort, {once: true});
           const body = {action: 'request', id, operation, options: marshalled, mediation: mediation || 'optional'};
           try {
@@ -494,15 +520,15 @@ nonisolated enum WebAuthnScript {
       }), {});
       // Signal APIs ask the authenticator to update or hide credentials it holds. This authenticator does not implement
       // them, and forwarding them to the engine would address the system store, not the encrypted manager (a credential
-      // ID imported from another provider could be altered at its source). So in manager mode they reject honestly; with
-      // the legacy provider the engine's own behaviour is untouched. An engine that lacks a signal method keeps lacking it.
+      // ID imported from another provider could be altered at its source). So in manager mode they reject honestly; on a
+      // private page the engine's own behaviour is untouched. An engine that lacks a signal method keeps lacking it.
       for (const name of ['signalUnknownCredential', 'signalAllAcceptedCredentials', 'signalCurrentUserDetails']) {
         if (typeof PublicKeyCredential[name] !== 'function') continue;
         const original = PublicKeyCredential[name].bind(PublicKeyCredential);
         const wrapper = {[name]: async function (...args) {
           const state = await queryCapabilities();
           // Only an explicit native "legacy" decision reaches the engine. No answer, a stale or unknown page and the
-          // manager itself all reject: an unavailable bridge is never taken to mean the legacy provider.
+          // manager itself all reject: an unavailable bridge is never taken to mean a private page.
           if (!state || state.provider !== 'legacy') throw fail('NotSupportedError', 'This authenticator does not support credential signals.');
           return original(...args);
         }}[name];

@@ -37,7 +37,11 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
 
     /// Where an import came from, so a message tells the one retry that is true: send it again from the other app, or
     /// choose the same file again. Only the endings of an import (a discard, a failed apply, an uncertain write) differ.
-    enum Origin: Equatable, Sendable { case system, csvFile }
+    enum Origin: Equatable, Sendable {
+        case system, csvFile
+        /// The passwords saved before Credential Manager. The list stays where it is until the user removes it, so a retry is Review again.
+        case legacyPasswords
+    }
 
     let kind: Kind
     let action: Action
@@ -77,6 +81,11 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
                 This import was discarded. WSurf dropped its copy of the file’s data. No data was written and the file was not \
                 changed. To import it, choose the file again.
                 """))
+        case .legacyPasswords:
+            Self(.discarded, .none, String(localized: """
+                This import was discarded. No data was written. Your saved passwords are still in the old list. To import them, \
+                choose Review again.
+                """))
         }
     }
 
@@ -92,12 +101,23 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
                 \(operation) failed and nothing was written. This import was discarded and the file was not changed. \
                 To import it, choose the file again.
                 """))
+        case .legacyPasswords:
+            Self(.applyFailed(operation: operation), .none, String(localized: """
+                \(operation) failed and nothing was written. This import was discarded and the old list was not changed. \
+                To import it, choose Review again.
+                """))
         }
     }
 
-    static func succeeded(_ outcome: CredentialImportOutcome, receipt: VaultCommitReceipt) -> Self {
-        Self(.succeeded, .none, receipt: receipt, String(localized: """
-            Imported into WSurf: \(outcome.added) added, \(outcome.updated) updated. Nothing was changed in the other app.
+    static func succeeded(_ outcome: CredentialImportOutcome, receipt: VaultCommitReceipt, origin: Origin = .system) -> Self {
+        guard origin == .legacyPasswords else {
+            return Self(.succeeded, .none, receipt: receipt, String(localized: """
+                Imported into WSurf: \(outcome.added) added, \(outcome.updated) updated. Nothing was changed in the other app.
+                """))
+        }
+        return Self(.succeeded, .none, receipt: receipt, String(localized: """
+            Imported into WSurf: \(outcome.added) added, \(outcome.updated) updated. The old Passwords list is still on this Mac \
+            until you remove it.
             """))
     }
 
@@ -114,6 +134,11 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
             Self(.mayHaveLanded, .checkSavedCredentials, String(localized: """
                 WSurf could not confirm the result of this import. It may have been saved. \
                 Check Saved Credentials before choosing the file again.
+                """))
+        case .legacyPasswords:
+            Self(.mayHaveLanded, .checkSavedCredentials, String(localized: """
+                WSurf could not confirm the result of this import. It may have been saved. \
+                Check Saved Credentials before choosing Review again. The old list was not changed.
                 """))
         }
     }

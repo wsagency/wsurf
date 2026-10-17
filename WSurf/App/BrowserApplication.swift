@@ -103,6 +103,9 @@ final class BrowserApplication {
             showCredentialExchange()
         }
         mcpServer.resume()
+        if let coordinator = activeCoordinator {
+            Task { await coordinator.offerLegacyPasswordImport() }
+        }
     }
 
     @discardableResult

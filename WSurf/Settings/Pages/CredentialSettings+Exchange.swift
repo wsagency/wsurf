@@ -225,7 +225,7 @@ struct CredentialImportReviewSheet: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let report = review.csvReport {
-                    csvReportView(report)
+                    csvReportView(report, entries: review.origin == .legacyPasswords)
                 }
                 if !review.omitted.isEmpty {
                     omittedView(review.omitted)
@@ -233,7 +233,7 @@ struct CredentialImportReviewSheet: View {
                 ScrollView {
                     // Lazy: a real library is thousands of rows, and only the few on screen are built.
                     LazyVStack(alignment: .leading, spacing: 16) {
-                        ForEach(review.candidates) { candidate in candidateView(candidate) }
+                        ForEach(review.candidates) { candidate in candidateView(candidate, origin: review.origin) }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -250,9 +250,17 @@ struct CredentialImportReviewSheet: View {
                     Spacer()
                     Button("Cancel", role: .cancel) { model.error = nil; model.cancelImport() }
                         .keyboardShortcut(.cancelAction)
-                    Button("Import") { run { await model.commitImport() } }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(!review.isResolved || (review.outcome.map { $0.added + $0.updated } ?? 0) == 0 || model.isBusy)
+                    if isFinishedWithoutSaving(review) {
+                        // Every password of the old list was skipped or is already saved. Continuing is a decision about the
+                        // removal that follows, not an import.
+                        Button("Continue") { run { await model.continueLegacyImport() } }
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(model.isBusy)
+                    } else {
+                        Button("Import") { run { await model.commitImport() } }
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(!review.isResolved || (review.outcome.map { $0.added + $0.updated } ?? 0) == 0 || model.isBusy)
+                    }
                 }
             }
             .padding(24)
@@ -260,17 +268,34 @@ struct CredentialImportReviewSheet: View {
         }
     }
 
+    /// The review of the old list has been decided and saves nothing, so there is nothing to import, only the removal to decide.
+    private func isFinishedWithoutSaving(_ review: CredentialImportReview) -> Bool {
+        review.origin == .legacyPasswords && review.isResolved && (review.outcome.map { $0.added + $0.updated } ?? 0) == 0
+    }
+
     /// What the file held beyond what will be imported, before anything is saved. Counts are of the file as read; the receipt
     /// after Import reports what was actually saved. Line numbers and fixed wording only: nothing from the file itself.
-    private func csvReportView(_ report: CredentialCSVReport) -> some View {
+    private func csvReportView(_ report: CredentialCSVReport, entries: Bool) -> some View {
         let shown = report.issues.prefix(20)
         return VStack(alignment: .leading, spacing: 4) {
-            Text("The file has \(report.rowsRead) rows. \(report.alreadySaved) already saved here, \(report.omittedRows) can’t be imported.")
+            if entries {
+                Text("The old Passwords list has \(report.rowsRead) passwords. \(report.alreadySaved) already saved here, \(report.omittedRows) can’t be imported.")
+            } else {
+                Text("The file has \(report.rowsRead) rows. \(report.alreadySaved) already saved here, \(report.omittedRows) can’t be imported.")
+            }
             ForEach(Array(shown.enumerated()), id: \.offset) { _, issue in
-                Text(verbatim: "\(String(localized: "Line")) \(issue.line): \(issue.reason.text)")
+                if entries {
+                    Text(verbatim: "\(String(localized: "Entry")) \(issue.line): \(issue.reason.entryText)")
+                } else {
+                    Text(verbatim: "\(String(localized: "Line")) \(issue.line): \(issue.reason.text)")
+                }
             }
             if report.issues.count > shown.count {
-                Text("and \(report.issues.count - shown.count) more lines with notes.")
+                if entries {
+                    Text("and \(report.issues.count - shown.count) more entries with notes.")
+                } else {
+                    Text("and \(report.issues.count - shown.count) more lines with notes.")
+                }
             }
             if !report.ignoredColumns.isEmpty {
                 Text("Columns \(report.ignoredColumns.map(String.init).joined(separator: ", ")) hold data WSurf doesn’t import.")
@@ -325,7 +350,7 @@ struct CredentialImportReviewSheet: View {
     }
 
     @ViewBuilder
-    private func candidateView(_ candidate: CredentialImportReview.Candidate) -> some View {
+    private func candidateView(_ candidate: CredentialImportReview.Candidate, origin: CredentialTransferMessage.Origin) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(verbatim: candidate.summary.title).font(Theme.Font.rowTitle)
             if !candidate.summary.origins.isEmpty {
@@ -339,11 +364,11 @@ struct CredentialImportReviewSheet: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            ForEach(candidate.records) { record in recordView(record) }
+            ForEach(candidate.records) { record in recordView(record, origin: origin) }
         }
     }
 
-    private func recordView(_ record: CredentialImportReview.Record) -> some View {
+    private func recordView(_ record: CredentialImportReview.Record, origin: CredentialTransferMessage.Origin) -> some View {
         let targets = model.mergeTargets(for: record.incoming)
         return VStack(alignment: .leading, spacing: 2) {
             HStack {
@@ -365,7 +390,11 @@ struct CredentialImportReviewSheet: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if record.needsChoice, let line = record.csvLine {
-                        Text("Line \(line) of the file").font(Theme.Font.label).foregroundStyle(.secondary)
+                        if origin == .legacyPasswords {
+                            Text("Entry \(line) of the old list").font(Theme.Font.label).foregroundStyle(.secondary)
+                        } else {
+                            Text("Line \(line) of the file").font(Theme.Font.label).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 Spacer(minLength: 8)

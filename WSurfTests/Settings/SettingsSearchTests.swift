@@ -118,4 +118,14 @@ struct SettingsSearchTests {
         #expect(SettingsIndex.search("safari extensions").contains { $0.id == "extensions.installed" })
         #expect(SettingsIndex.search("save suggestions").contains { $0.id == "autofill.passwords" })
     }
+
+    @Test func passwordProviderIsNoLongerSearchable() {
+        #expect(!SettingsIndex.all.contains { $0.id == "autofill.passwordProvider" })
+        for query in ["password provider", "provider"] {
+            #expect(!SettingsIndex.search(query).contains { $0.id == "autofill.passwordProvider" })
+        }
+        // What the page still offers is found where it now lives.
+        #expect(SettingsIndex.search("save and fill passwords").first?.id == "autofill.passwords")
+        #expect(SettingsIndex.search("reset prompts").contains { $0.id == "autofill.credentials" })
+    }
 }

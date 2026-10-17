@@ -37,6 +37,8 @@ nonisolated enum WebAuthnDecision: Sendable, Equatable {
     case declined
     case expired
     case cancelled
+    /// "Use Another Device or Key…": the request goes to the system's own authenticator. Nothing was written or signed.
+    case handOff
 }
 
 /// Everything a ceremony needs from the user. The native implementation is the only production one; tests may script
@@ -48,7 +50,8 @@ protocol WebAuthnCeremonyInteraction {
     func decide(_ prompt: WebAuthnPrompt, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision
     /// Explicit origin-bearing native step before any unlock, verification or signing: always for a conditional
     /// (page-gesture) request, and for a modal request whenever the vault is locked, so the system unlock sheet is never
-    /// the first thing a page can put in front of the user.
+    /// the first thing a page can put in front of the user. Every step of the vault's own UI also offers the way out to the
+    /// system's authenticator, so the user is never stuck with the vault's answer.
     func offerStart(operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision
     /// Fresh system user verification. Returns only on success; every other outcome throws.
     func verifyUser(reason: String, until deadline: ContinuousClock.Instant?) async throws
@@ -70,17 +73,20 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         // A window already showing a sheet is refused, never queued behind it by AppKit.
         guard anchor.isVisible, !anchor.isMiniaturized, anchor.attachedSheet == nil else { return .declined }
 
-        let noMatch = Self.hasNothingToApprove(prompt)
+        let nothing = Self.hasNothingToApprove(prompt)
         let alert = NSAlert()
         alert.messageText = Self.title(for: prompt)
         alert.informativeText = Self.body(for: prompt)
-        if noMatch {
-            // Information only: there is nothing here to approve, and dismissing it is the only way forward.
-            alert.addButton(withTitle: String(localized: "OK"))
+        if nothing {
+            // Nothing of ours to approve, but the step is the same one with the same origin: the way on is the system's
+            // authenticator, and Cancel is Cancel.
+            alert.addButton(withTitle: Self.handOffTitle)
+            alert.addButton(withTitle: String(localized: "Cancel"))
         } else {
             alert.addButton(withTitle: prompt.operation == .create
                 ? String(localized: "Create Passkey") : String(localized: "Use Passkey"))
             alert.addButton(withTitle: String(localized: "Cancel"))
+            alert.addButton(withTitle: Self.handOffTitle)
         }
 
         let popup = Self.makeChooser(for: prompt)
@@ -92,11 +98,21 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         case .cancelled:
             return .cancelled
         case let .response(response):
-            guard !noMatch, response == .alertFirstButtonReturn else { return .declined }
+            if nothing {
+                return response == .alertFirstButtonReturn ? .handOff : .declined
+            }
+            if response == .alertThirdButtonReturn {
+                return .handOff
+            }
+            guard response == .alertFirstButtonReturn else { return .declined }
             guard let popup else { return .approved(choice: prompt.offersNewAccount ? nil : prompt.choices.first?.id) }
             return Self.decision(from: popup)
         }
     }
+
+    /// The same words on every sheet that offers it: choosing it hands the request to the system's own authenticator, which is
+    /// where passkeys kept in Apple Passwords, on a phone or on a security key live.
+    static let handOffTitle = String(localized: "Use Another Device or Key…")
 
     /// Declining leaves a conditional page request pending and fails a modal one; nothing is unlocked either way.
     func offerStart(operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision {
@@ -111,13 +127,21 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
                 : String(localized: "You will choose an account next."))
         alert.addButton(withTitle: locked ? String(localized: "Unlock and Choose…") : String(localized: "Choose…"))
         alert.addButton(withTitle: String(localized: "Cancel"))
+        alert.addButton(withTitle: Self.handOffTitle)
         switch await NativeSheet.present(alert, in: anchor, until: deadline) {
         case .expired:
             return .expired
         case .cancelled:
             return .cancelled
         case let .response(response):
-            return response == .alertFirstButtonReturn ? .approved(choice: nil) : .declined
+            switch response {
+            case .alertFirstButtonReturn:
+                return .approved(choice: nil)
+            case .alertThirdButtonReturn:
+                return .handOff
+            default:
+                return .declined
+            }
         }
     }
 
@@ -212,13 +236,13 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         return .approved(choice: entry.id)
     }
 
-    /// An assertion with no matching passkey: the user is told, and nothing can be approved.
+    /// Neither an account to use nor a new one to create: a vault that holds no passkey for the request, or a profile that has no
+    /// vault. The user is still asked, with the website named, so a page learns nothing from which of these it met.
     static func hasNothingToApprove(_ prompt: WebAuthnPrompt) -> Bool {
-        prompt.operation == .get && prompt.choices.isEmpty
+        prompt.choices.isEmpty && !prompt.offersNewAccount
     }
 
     private static func title(for prompt: WebAuthnPrompt) -> String {
-        if hasNothingToApprove(prompt) { return String(localized: "No saved passkey for \(prompt.rpID)") }
         switch prompt.operation {
         case .create:
             return String(localized: "Create a passkey for \(prompt.rpID)?")
@@ -233,7 +257,9 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         lines.append(String(localized: "Relying party: \(prompt.rpID)"))
         if hasNothingToApprove(prompt) {
             lines.append("")
-            lines.append(String(localized: "Credential Manager has no passkey for this site that this request allows."))
+            lines.append(prompt.operation == .get
+                ? String(localized: "No passkey for this website in WSurf.")
+                : String(localized: "WSurf can’t save a passkey here: Credential Manager has no vault yet."))
             return lines.joined(separator: "\n")
         }
         if prompt.operation == .get, prompt.choices.count == 1, let only = prompt.choices.first {
@@ -243,6 +269,9 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
             lines.append(String(localized: "Account: \(only.title) — \(only.detail)"))
         }
         lines.append("")
+        if prompt.operation == .create {
+            lines.append(String(localized: "The passkey is saved in Credential Manager."))
+        }
         lines.append(prompt.willVerifyUser
             ? String(localized: "You will be asked to verify with your Mac next.")
             : String(localized: "Your Mac will not ask for further verification."))

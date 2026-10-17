@@ -2,7 +2,7 @@
 
 Date: 2026-10-05
 
-Status: Approved architectural design; this workstream's binding 2026-10-09 direction supersedes the historical PRF-first and legacy-cutover decisions below. Existing Keychain `SavedPassword`/`SecureAutofillVault`, password settings/autofill, and data remain unchanged and active by default. The new encrypted manager is developed alongside them, with no automatic migration/deletion/cutover. No native/provider success is implied.
+Status: Approved architectural design; this workstream's binding 2026-10-09 direction supersedes the historical PRF-first and legacy-cutover decisions below. Superseded in part on 2026-10-17: the legacy Passwords provider is removed and Credential Manager is the only password store; passwords saved by earlier builds move through a reviewed, user-confirmed import, and the old Keychain list is erased only after it. Statements below that the legacy store stays active, unchanged or selectable describe the earlier state. No native/provider success is implied.
 
 ## Intent and agreed scope
 

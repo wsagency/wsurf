@@ -23,6 +23,13 @@ enum VaultRoute {
 
 /// Which one vault a write or a lookup belongs to. Locked vaults are never read; ambiguity is an explicit choice, never a guess.
 enum CredentialRouting {
+    /// Whether the profile has never made a vault, which is the only state a page may suggest setting one up in. A vault from an
+    /// older format that still has to be upgraded, an unreadable store and a private context are not: those are fixed in Settings.
+    static func profileNeedsFirstVault(_ profile: Profile) async -> Bool {
+        guard let store = try? CredentialManager.store(for: profile) else { return false }
+        return await store.openState() == .firstRun
+    }
+
     static func route(profile: Profile, origin: String, username: String?) async -> VaultRoute {
         guard let store = try? CredentialManager.store(for: profile),
               case .provisional = await store.openState(),

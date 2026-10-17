@@ -83,6 +83,7 @@ extension AppCoordinator {
         timing.log(isPrivate: profile.isPrivate)
 
         await extensions.start()
+        Task { [weak self] in await self?.offerLegacyPasswordImport() }
     }
 
     func enterPrivateBrowsing() {

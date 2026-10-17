@@ -12,6 +12,9 @@ struct CredentialVaultSession {
     var stamps: [UUID: AccountStamp]
     var stampsRevision: UInt64
     var summaries: [CredentialSummary]
+    /// How many websites the user excluded from save suggestions ("Never for This Site"), as of `revision`. Only the count: the
+    /// sites themselves are not shown.
+    var blockedSiteCount: Int
     var revealedPassword: RevealedPassword?
     var revealedUsername: RevealedUsername?
     var shownTOTP: (accountID: UUID, generator: TOTPGenerator)?
@@ -35,6 +38,7 @@ struct CredentialVaultSession {
         stamps = snapshot.stamps
         stampsRevision = snapshot.revision
         summaries = snapshot.accounts.map(CredentialSummary.init)
+        blockedSiteCount = snapshot.blockedPasswordOrigins.count
     }
 
     /// The stamps only while they describe the revision shown; after this page's own write they are unknown, not stale.
@@ -56,6 +60,7 @@ struct CredentialVaultSession {
         stamps = snapshot.stamps
         stampsRevision = snapshot.revision
         summaries = snapshot.accounts.map(CredentialSummary.init)
+        blockedSiteCount = snapshot.blockedPasswordOrigins.count
     }
 
     /// After a write this page made: the accounts as written, and no secret still shown. The stamps stay as they were read.

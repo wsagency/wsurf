@@ -34,6 +34,8 @@ extension CredentialSettingsModel {
             return String(localized: "The import ended because \(reason), and nothing was saved. To import these credentials, send them again from the other app.")
         case .csvFile:
             return String(localized: "The import ended because \(reason), and nothing was saved. To import the file, choose it again.")
+        case .legacyPasswords:
+            return String(localized: "The import ended because \(reason), and nothing was saved. Your saved passwords are still in the old list. To import them, choose Review again.")
         }
     }
 
