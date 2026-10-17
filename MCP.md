@@ -368,10 +368,10 @@ rules keep a dialog from reaching the wrong party:
   `confirm`, beforeunload or `prompt` whose message (or a prompt's reply) names a
   purchase, payment, transfer, deletion or posting asks, naming what it does. A
   `prompt` is also the user's own words in the page, so every accepted reply asks
-  (the question shows the reply), except from a connection with development access
-  on a page on this Mac (`localhost`, `127.0.0.1`, `[::1]`), which is asked only for
-  the decisions above. Dismissing never asks. This development gate is a stand-in
-  for the Developer tier and has one place to change when that arrives.
+  (the question shows the reply), except from a connection in the Developer tier
+  (Allow Developer, see Developer work) on a developer site, whose dialog also comes
+  from a developer site; it is asked only for the decisions above. Development
+  access alone does not skip the question. Dismissing never asks.
 - Dialogs on tabs no connection controls, in the in-browser assistant's tabs and in
   private windows are never routed.
 - WebKit has no beforeunload prompt in WSurf, so navigation away never produces

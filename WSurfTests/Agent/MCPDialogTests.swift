@@ -49,8 +49,10 @@ struct MCPDialogTests {
         }
     }
 
+    /// `development` shares the tab with Allow Development. `developer` makes the connection a paired app with Allow Developer on
+    /// a developer site in the Developer profile: the page is on this Mac, and the trust store is in memory.
     private func makeRig(
-        _ engine: BrowserEngine, html: String = MCPDialogTests.page, development: Bool = false
+        _ engine: BrowserEngine, html: String = MCPDialogTests.page, development: Bool = false, developer: Bool = false
     ) async throws -> Rig {
         let server = try await HTTPFixtureServer.start(routes: ["/": .html(html), "/next": .html("<title>Next</title><p>Next page</p>")])
         let browser = BrowserModel(
@@ -78,9 +80,21 @@ struct MCPDialogTests {
                 guard tab.page.superview === container else { return false }
                 return ((try? await tab.page.evaluateJavaScript("window.innerWidth")) as? Int ?? 0) > 0
             }, "the page is laid out in the window")
-        let session = MCPBrowserSession(browser: browser, available: { true }, consent: { _, _, _ in development ? .development : .control })
+        let trust = MCPTrustStore(storage: MemoryTrustStorage())
+        trust.loadIfNeeded()
+        let access: MCPAccessConsent.Access = developer ? .developer : development ? .development : .control
+        let session = MCPBrowserSession(browser: browser, trust: trust, available: { true }, consent: { _, _, _ in access })
+        if developer {
+            let paired = try trust.pair(token: SyntheticToken.first, name: "Claude Code", kind: .claudeCode)
+            try trust.setDeveloperProfile(Profile.originalID)
+            session.pairedClient = trust.client(id: paired.id)
+        }
         let made = Rig(server: server, browser: browser, tab: tab, window: window, session: session)
-        _ = try await call(made, "requestAccess", nil, development ? ["development": true] : [:])
+        let request: [String: Value] = developer ? ["development": true, "developer": true] : development ? ["development": true] : [:]
+        _ = try await call(made, "requestAccess", nil, request)
+        if developer {
+            try #require(session.permits(tab, capability: .developer), "the connection holds the Developer tier")
+        }
         return made
     }
 
@@ -228,13 +242,13 @@ struct MCPDialogTests {
         }
     }
 
-    @Test func theDevelopmentGateLetsALoopbackConnectionAnswerAPromptUnasked() async throws {
-        let rig = try await makeRig(.webKit, development: true)
+    @Test func theDeveloperTierLetsAPairedAppAnswerAnOrdinaryPromptUnasked() async throws {
+        let rig = try await makeRig(.webKit, developer: true)
         defer { rig.close() }
         let dialog = try await openDialog(rig, ref: 3, type: "prompt")
         var asked = 0
         let answered = try await answer(rig, dialog, "accept", text: "Alice", consent: .decline, asked: { _, _ in asked += 1 })
-        #expect(status(answered) == "ok" && asked == 0, "development access on this Mac needs no approval for an ordinary prompt")
+        #expect(status(answered) == "ok" && asked == 0, "the Developer tier needs no approval for an ordinary prompt")
         #expect(try await pageValue(rig, "answer") == "Alice")
         // Even there, a decision is the user's to approve, and a secret stays theirs.
         let danger = try await openDialog(rig, ref: 6, type: "prompt")
@@ -246,6 +260,31 @@ struct MCPDialogTests {
         let sheet = try #require(rig.window.attachedSheet)
         rig.window.endSheet(sheet, returnCode: .alertSecondButtonReturn)
         #expect(await waitUntil { (try? await self.pageValue(rig, "answer")) == "null" })
+    }
+
+    @Test func developmentAccessAloneStillAsksBeforeAnsweringAPrompt() async throws {
+        let rig = try await makeRig(.webKit, development: true)
+        defer { rig.close() }
+        let dialog = try await openDialog(rig, ref: 3, type: "prompt")
+        var asked = 0
+        let declined = try await answer(rig, dialog, "accept", text: "Alice", consent: .decline, asked: { _, _ in asked += 1 })
+        #expect(status(declined) == "denied" && asked == 1, "Allow Development on this Mac is not the Developer tier")
+        #expect(rig.tab.dialogs.hasOpenDialog)
+        #expect(status(try await answer(rig, dialog, "dismiss")) == "ok")
+    }
+
+    @Test func thePromptGateNeedsTheDialogsOwnOriginToBeADeveloperSite() async throws {
+        let rig = try await makeRig(.webKit, developer: true)
+        defer { rig.close() }
+        let own = PageDialogText.origin(ofURL: try rig.server.url().absoluteString)
+        #expect(rig.session.developerMayAnswerPrompts(on: rig.tab, origin: own))
+        #expect(rig.session.developerMayAnswerPrompts(on: rig.tab, origin: "http://localhost:5173"))
+        for origin in ["https://elsewhere.invalid", "http://localhost.evil.invalid", "http://127.0.0.2", "", "localhost"] {
+            #expect(!rig.session.developerMayAnswerPrompts(on: rig.tab, origin: origin), "\(origin)")
+        }
+        // The Developer profile is part of the tier: choosing another one takes it away at once.
+        try rig.session.trust.setDeveloperProfile(UUID())
+        #expect(!rig.session.developerMayAnswerPrompts(on: rig.tab, origin: own))
     }
 
     @Test func aStoredAlwaysAllowDoesNotAnswerAPromptReply() async throws {

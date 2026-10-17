@@ -474,13 +474,4 @@ struct PageDialogQueueTests {
     func anOrdinaryDialogNamesNoConsequence(message: String) {
         #expect(PageDialogText.consequence(of: message, reply: "Alice") == nil)
     }
-
-    @Test func onlyThisMacCountsAsLoopback() {
-        for origin in ["http://localhost:3000", "http://127.0.0.1:8080", "https://localhost", "http://[::1]:5173", "HTTP://LOCALHOST"] {
-            #expect(PageDialogText.isLoopbackOrigin(origin), "\(origin)")
-        }
-        for origin in ["https://example.com", "http://localhost.evil.com", "http://127.0.0.2", "http://0.0.0.0:80", "ftp://localhost", "", "localhost", "http://user@localhost"] {
-            #expect(!PageDialogText.isLoopbackOrigin(origin), "\(origin)")
-        }
-    }
 }

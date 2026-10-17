@@ -151,8 +151,8 @@ private enum DialogApproval {
 extension MCPBrowserSession {
     /// Accepting an alert needs nothing. Accepting a confirm, a beforeunload or a prompt can carry a decision, so the user is
     /// asked when the page's wording or the reply names a purchase, transfer, deletion or posting. A prompt is also
-    /// the user's words in the page, so any accepted reply needs the user's approval, except from a connection with
-    /// development access on a page on this Mac.
+    /// the user's words in the page, so any accepted reply needs the user's approval, except an ordinary one from a connection
+    /// in the Developer tier on a developer site.
     fileprivate func approval(for request: PageDialogQueue.Request, reply: String?, tab: BrowserTab) async -> DialogApproval {
         let host = webURL(of: tab)?.host()
         func declined(_ what: String) -> DialogApproval {
@@ -182,14 +182,12 @@ extension MCPBrowserSession {
         }
     }
 
-    /// The development gate for prompts: this connection has development access and the page and the dialog are on this Mac.
-    /// P4 hook: this is the one place to switch to the Developer tier (paired client, Developer profile, developer site,
-    /// Developer access) when that exists.
-    fileprivate func developerMayAnswerPrompts(on tab: BrowserTab, origin: String) -> Bool {
-        guard grants[tab.id]?.access == .development, permits(tab, capability: .development), let url = webURL(of: tab) else {
-            return false
-        }
-        return PageDialogText.isLoopbackOrigin(origin) && PageDialogText.isLoopbackOrigin(PageDialogText.origin(ofURL: url.absoluteString))
+    /// The Developer-tier gate for prompts: this connection holds Allow Developer on the tab now (a paired app, a developer site
+    /// and a window of the Developer profile) and the dialog's own origin is a developer site too, so a dialog raised by a
+    /// frame from elsewhere stays the user's to answer.
+    func developerMayAnswerPrompts(on tab: BrowserTab, origin: String) -> Bool {
+        guard permits(tab, capability: .developer), let source = URL(string: origin) else { return false }
+        return MCPDeveloperAccess.isDeveloperSite(source, trust: trust)
     }
 }
 

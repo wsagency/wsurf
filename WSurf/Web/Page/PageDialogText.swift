@@ -35,14 +35,6 @@ nonisolated enum PageDialogText {
         return origin(scheme: scheme, host: host, port: url.port ?? 0)
     }
 
-    /// An http(s) origin on this Mac: `localhost`, `127.0.0.1` or `[::1]`, any port. Exact hosts only.
-    static func isLoopbackOrigin(_ origin: String) -> Bool {
-        guard let url = URL(string: origin), ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-            url.user == nil, url.password == nil, let host = url.host(percentEncoded: false)?.lowercased()
-        else { return false }
-        return ["localhost", "127.0.0.1", "::1"].contains(host)
-    }
-
     // MARK: How WSurf reads it
 
     /// The text as a matcher should see it. A page chooses its characters, so matching on the raw text is evaded by a
