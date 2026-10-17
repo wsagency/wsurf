@@ -30,6 +30,9 @@ final class MCPBrowserSession: Identifiable {
 
     let id = UUID()
     var clientName = String(localized: "External Connection")
+    /// The user-paired client behind this connection, set by the server once its hello is verified. An unpaired
+    /// connection is nil and keeps asking for consent.
+    var pairedClient: PairedClient?
     private(set) var isConnected = true
     private(set) var lastTool = ""
     private(set) var completedCalls = 0
@@ -82,6 +85,7 @@ final class MCPBrowserSession: Identifiable {
 
     func revoke() {
         isConnected = false
+        pairedClient = nil
         for (tab, owner) in Array(developmentTabs.values) {
             tab.releaseDevelopment(owner, reason: .disconnect)
         }

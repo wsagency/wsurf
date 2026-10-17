@@ -6,8 +6,9 @@ external MCP client. WSurf must be running. Its built-in assistant does not need
 an API key, a model, or an open conversation.
 
 1. In Settings, open **Advanced → External Connections** and enable **MCP server**.
-2. Click **Add** beside your MCP client. Restart the client or reload its MCP
-   connections. Other clients can use **Copy Configuration**.
+2. Click **Add** beside your MCP client. This also pairs the client (see
+   Pair a client below). Restart the client or reload its MCP connections.
+   Other clients can use **Copy Configuration**.
 3. Open the webpages you want to share in WSurf. A split view can share several
    pages together.
 4. Have the client call `requestAccess`. WSurf comes to the foreground and opens
@@ -32,6 +33,56 @@ in Applications, a client accepting the common JSON configuration format uses:
   }
 }
 ```
+
+## Pair a client
+
+**Add** creates a random 256-bit token for the client and writes it into the
+client's `wsurf` entry as the environment variable `WSURF_MCP_TOKEN` (for
+Codex, the `[mcp_servers.wsurf.env]` table). WSurf keeps only the SHA-256 hash of
+the token, with the client's name and when it was paired and last used, in a
+data-protection keychain item. The token never goes into a command-line
+argument, UserDefaults, a log or the MCP messages themselves. **Copy
+Configuration…** asks for a name, pairs an app under that name and copies a
+configuration that holds its token. The copy carries the concealed-item marker
+that clipboard managers honor; keep it private anyway.
+
+The `WSurf --mcp` relay reads the variable and writes one hello line on the
+socket before any MCP traffic: `{"wsurf":"hello","v":1,"token":"…"}`. The line
+is at most 512 bytes and must arrive within 2 seconds. WSurf compares hashes in
+constant time and binds the connection to the paired client. A first line that
+is not a hello reaches MCP unchanged, so an old relay or a direct socket client
+connects as an unpaired app. A wrong, malformed or revoked token does the same.
+
+Settings › Assistant › **Connected apps** lists each paired app with when it was
+last used. **Revoke…** ends the app's live connections and invalidates its
+token at once. The entry stays in the client's configuration and connects as an
+unpaired app until you choose **Pair** again. **… → Re-pair** replaces the token;
+the old one stops working immediately.
+
+Pairing does not skip any prompt. Every connection still starts with no grants,
+and a paired app asks for access like any other. Pairing lets WSurf recognize an
+app you configured, so later features can give a known, revocable app access that
+an unknown process cannot get.
+
+Apps you added before pairing keep working with no change. They have no token,
+show **Not paired** with a **Pair** button, and ask for approval each time they
+connect. **Pair** changes only `env.WSURF_MCP_TOKEN` of the existing entry
+(Codex: the `WSURF_MCP_TOKEN` line of its `env` table), under the same backup,
+unchanged-file and conflict rules as setup; other settings of the entry stay.
+Codex setup writes the token into the staged copy of its configuration and
+checks the result with the Codex CLI, so the token is never on a command line.
+
+A token identifies an app you configured. It does not protect against malware
+that runs as your user: that can read the client's configuration file, as it can
+read your browser's data on disk. Tokens do not expire. WSurf does not use OAuth
+(MCP's authorization flow is defined for HTTP transports, and a stdio server takes
+its credentials from its environment) and opens no network listener.
+
+Pairing needs the data-protection keychain of a signed WSurf build. If WSurf
+cannot read that item, for example in an unsigned development build, or if it is
+damaged or from a newer version, pairing is unavailable and says so. Setup then
+works as before, nothing authenticates, and WSurf never overwrites an item it
+could not read. Every app asks for approval each time it connects.
 
 ## Automatic client setup
 
@@ -239,7 +290,8 @@ It does not cover signed-build features (Keychain, passkeys, Apple Passwords), w
 
 - Connecting and discovering tools disclose no tabs or page content. Every
   connection starts with no grants. The displayed client name is supplied by
-  the client; it is not a verified app identity.
+  the client; it is not a verified app identity. A pairing token identifies an app
+  you configured, not its code signature.
 - Access is restricted to the captured tab IDs and their website origins. Other
   tabs, private browsing, internal pages, and denied sites cannot be listed or
   addressed by guessing an ID. Redirecting to another website does not grant
@@ -283,7 +335,9 @@ the tools, or once when upgrading from the old relay that exited on browser shut
 The socket lives in a directory owned by the current OS user with mode `0700`;
 the socket has mode `0600`. Directory and lock-file symlinks are rejected, and a
 file lock prevents another WSurf process from replacing the live endpoint.
-Message sizes, buffered messages, and concurrent connections are bounded.
+Message sizes, buffered messages, and concurrent connections are bounded. The
+first line of a connection may be a pairing hello (see Pair a client); `MCPPairing`
+and `MCPTrustStore` own the token format and the keychain record.
 Stdio reads are event-driven rather than polled. The transport owns duplicated
 descriptors and fails on bounded-buffer overflow instead of dropping requests.
 At inbound SDK boundaries, an object-valued `initialize` experimental-capability

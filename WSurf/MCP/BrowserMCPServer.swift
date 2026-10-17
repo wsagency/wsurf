@@ -23,6 +23,8 @@ final class BrowserMCPServer {
     private(set) var isPaused = false
     private(set) var status: String?
     private(set) var sessions: [MCPBrowserSession] = []
+    /// The clients the user paired. Only this store can make a connection a paired one.
+    @ObservationIgnored let trustStore: MCPTrustStore
     @ObservationIgnored private let target: () -> BrowserModel?
     @ObservationIgnored private let available: (BrowserModel) -> Bool
     @ObservationIgnored private let defaults: UserDefaults?
@@ -43,11 +45,13 @@ final class BrowserMCPServer {
     init(
         endpoint: String = LocalMCPEndpoint.path,
         defaults: UserDefaults? = nil,
+        trustStore: MCPTrustStore = .shared,
         target: @escaping () -> BrowserModel?,
         available: @escaping (BrowserModel) -> Bool
     ) {
         self.endpoint = endpoint
         self.defaults = defaults
+        self.trustStore = trustStore
         self.target = target
         self.available = available
         isEnabled = defaults?.bool(forKey: "mcp.enabled") ?? false
@@ -60,8 +64,18 @@ final class BrowserMCPServer {
     }
 
     var configuration: String {
-        let command = MCPClientConfiguration.command
-        let value: [String: Any] = ["mcpServers": ["wsurf": ["command": command, "args": MCPClientConfiguration.arguments]]]
+        render(token: nil)
+    }
+
+    /// The JSON configuration to paste into a client, which also sets the pairing token of an app WSurf just paired.
+    func configuration(pairedWith token: String) -> String {
+        render(token: token)
+    }
+
+    private func render(token: String?) -> String {
+        var entry: [String: Any] = ["command": MCPClientConfiguration.command, "args": MCPClientConfiguration.arguments]
+        if let token { entry["env"] = [MCPPairing.environmentName: token] }
+        let value: [String: Any] = ["mcpServers": ["wsurf": entry]]
         guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) else { return "" }
         return String(decoding: data, as: UTF8.self)
     }
@@ -122,6 +136,14 @@ final class BrowserMCPServer {
         Task {
             await connection.server.stop()
             await connection.transport.disconnect()
+        }
+    }
+
+    /// Forgets a paired client and disconnects its live connections, so its token and any access it held end now.
+    func revoke(_ client: PairedClient) throws {
+        try trustStore.revoke(client.id)
+        for session in sessions where session.pairedClient?.id == client.id {
+            disconnect(session.id)
         }
     }
 
@@ -186,7 +208,9 @@ final class BrowserMCPServer {
             connection.cancel()
             return
         }
-        let transport = LocalMCPTransport(connection: connection)
+        let transport = LocalMCPTransport(connection: connection, onHello: { [weak self, weak session] token in
+            await self?.pair(session, token: token)
+        })
         let server = MCP.Server(
             name: "WSurf", version: "1.0.0",
             instructions: MCPToolCatalog.instructions,
@@ -215,8 +239,17 @@ final class BrowserMCPServer {
         sessions.append(session)
     }
 
+    /// Binds the connection to the paired client that owns `token`; a missing, wrong or revoked token leaves it unpaired.
+    private func pair(_ session: MCPBrowserSession?, token: String?) {
+        guard let session, connections[session.id] != nil, let token else { return }
+        session.pairedClient = trustStore.authenticate(token: token)
+    }
+
     private func call(_ params: CallTool.Parameters, session: MCPBrowserSession) async throws -> CallTool.Result {
         guard isEnabled, connections[session.id] != nil else { throw MCPError.connectionClosed }
+        if let client = session.pairedClient {
+            trustStore.touch(client.id)
+        }
         guard activeCall == nil else {
             return CallTool.Result(content: [.text(text: "Another external operation is running. Wait for its result.", annotations: nil, _meta: nil)], isError: true)
         }

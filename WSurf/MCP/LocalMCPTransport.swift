@@ -16,14 +16,32 @@ actor LocalMCPTransport: Transport {
     private var reader: Task<Void, Never>?
     private var connected = false
     private let onDisconnect: (@Sendable () async -> Void)?
+    private let hello: Data?
+    private let onHello: (@Sendable (String?) async -> Void)?
+    private let helloTimeout: Duration
 
     var isConnected: Bool {
         connected
     }
 
-    init(connection: NWConnection, onDisconnect: (@Sendable () async -> Void)? = nil) {
+    /// - Parameters:
+    ///   - hello: A pairing hello to write right after connecting (the relay side).
+    ///   - onHello: Called once, before any later message is delivered, when the connection starts with a hello
+    ///     (the server side). Its token is nil when the hello carries no valid one. A connection that does not start
+    ///     with a hello is not reported and reaches MCP unchanged.
+    ///   - helloTimeout: How long a hello may take to arrive in full.
+    init(
+        connection: NWConnection,
+        onDisconnect: (@Sendable () async -> Void)? = nil,
+        hello: Data? = nil,
+        onHello: (@Sendable (String?) async -> Void)? = nil,
+        helloTimeout: Duration = .seconds(2)
+    ) {
         self.connection = connection
         self.onDisconnect = onDisconnect
+        self.hello = hello
+        self.onHello = onHello
+        self.helloTimeout = helloTimeout
         (messages, continuation) = AsyncThrowingStream.makeStream(bufferingPolicy: .bufferingOldest(64))
     }
 
@@ -48,6 +66,9 @@ actor LocalMCPTransport: Transport {
                 }
             }
             connection.start(queue: queue)
+        }
+        if let hello {
+            try await send(hello)
         }
         reader = Task { await readMessages() }
     }
@@ -85,10 +106,36 @@ actor LocalMCPTransport: Transport {
 
     private func readMessages() async {
         var frames = MCPMessageFramer()
+        var gate = onHello == nil ? nil : MCPHelloGate()
+        var deadline: Task<Void, Never>?
+        defer { deadline?.cancel() }
         do {
             while connected, !Task.isCancelled {
-                let data = try await readChunk()
-                guard let data else { break }
+                guard var data = try await readChunk() else { break }
+                guard !data.isEmpty else { continue }
+                if let onHello, var pending = gate {
+                    let outcome = pending.append(data)
+                    gate = pending
+                    switch outcome {
+                    case .undecided:
+                        deadline = deadline ?? Task { [helloTimeout] in
+                            try? await Task.sleep(for: helloTimeout)
+                            if !Task.isCancelled {
+                                disconnect()
+                            }
+                        }
+                        continue
+                    case .rejected:
+                        throw MCPError.invalidRequest("The pairing message is invalid.")
+                    case .passthrough(let bytes):
+                        data = bytes
+                    case .hello(let token, let rest):
+                        await onHello(token)
+                        data = rest
+                    }
+                    gate = nil
+                    deadline?.cancel()
+                }
                 for message in try frames.append(data) {
                     if case .dropped = continuation.yield(MCPInitializationCompatibility.normalize(message)) {
                         throw MCPError.invalidRequest("Too many pending messages.")

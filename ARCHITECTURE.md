@@ -142,6 +142,9 @@ without opening another browser session. See [MCP.md](MCP.md) for its boundaries
 standard JSON configs and uses the installed Codex CLI on a staged TOML copy.
 `MCPConfigurationFile` owns private backups and checked atomic replacement.
 These services have no browser, profile, assistant, or sharing-grant dependency.
+`MCPTrustStore` keeps the hashes of per-client pairing tokens in the keychain;
+`LocalMCPTransport` verifies an optional hello line and `BrowserMCPServer`
+attaches the paired client to the connection's session.
 
 ## Assistant execution and context
 

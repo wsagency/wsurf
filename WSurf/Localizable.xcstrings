@@ -27,6 +27,9 @@
         }
       }
     },
+    "%lld paired" : {
+      "comment" : "Detail on the Connected apps row in Assistant settings. The number is how many apps are paired."
+    },
     "All %lld passwords from the old list are in Credential Manager." : {
 
     },
@@ -39,11 +42,29 @@
     "and %lld more entries with notes." : {
 
     },
+    "Apps you paired with WSurf." : {
+      "comment" : "Search result description for the Connected apps page."
+    },
+    "Apps you paired with WSurf. Unpaired apps ask each time they connect." : {
+      "comment" : "Caption under the title of the Connected apps page."
+    },
     "Ask before opening %@" : {
 
     },
     "Ask next time" : {
 
+    },
+    "Connected apps" : {
+      "comment" : "Name of the Settings page and section that list apps paired with WSurf over MCP. Sentence case; it is also the text of a link in the External connections page."
+    },
+    "Connected now" : {
+      "comment" : "Caption of a paired app row while the app has a live connection."
+    },
+    "Copy Configuration" : {
+      "comment" : "Button above the client list when pairing is unavailable and the configuration is copied at once. Title Case."
+    },
+    "Copy Configuration…" : {
+      "comment" : "Button above the client list. The ellipsis promises a dialog that asks for a name before the configuration is copied."
     },
     "Create a vault to import the passwords saved before Credential Manager." : {
 
@@ -60,6 +81,9 @@
     "Entry %lld of the old list" : {
 
     },
+    "External app" : {
+      "comment" : "Name given to a paired app when none was typed."
+    },
     "Fill form controls together without submitting." : {
 
     },
@@ -71,6 +95,9 @@
     },
     "Import…" : {
 
+    },
+    "It will need your approval each time it connects until you pair it again." : {
+      "comment" : "Body of the dialog that confirms withdrawing a paired app."
     },
     "Keep for Now" : {
 
@@ -84,6 +111,9 @@
     "Move Your Saved Passwords" : {
 
     },
+    "Name This App" : {
+      "comment" : "Title of the alert that asks for a name before WSurf pairs an app and copies its configuration. Title Case."
+    },
     "New Page" : {
       "comment" : "Fallback title for a browser tab whose website has no title, including while a new website is loading. Title Case."
     },
@@ -96,6 +126,9 @@
     "No app installed on this Mac handles %@ links." : {
 
     },
+    "No paired apps" : {
+      "comment" : "Title of the empty state on the Connected apps page."
+    },
     "No passkey for this website in WSurf." : {
 
     },
@@ -104,6 +137,12 @@
     },
     "not imported: same as entry %lld." : {
 
+    },
+    "Not paired. It asks for approval each time it connects." : {
+      "comment" : "Caption of a client row whose WSurf entry has no valid pairing token. Sentence case."
+    },
+    "Not used yet" : {
+      "comment" : "Caption of a paired app row that has never connected."
     },
     "Nothing is saved until you review and confirm. The old list stays until you remove it." : {
 
@@ -135,6 +174,33 @@
     "opens %@ without asking" : {
 
     },
+    "Pair" : {
+      "comment" : "Button in the External connections client list that pairs an app already added to a client, so WSurf can recognize it. A verb (a command)."
+    },
+    "Pair %@ with WSurf" : {
+      "comment" : "VoiceOver label of the Pair button on a client row. The inserted text is the client’s name."
+    },
+    "Pair an app under Advanced › External connections." : {
+      "comment" : "Caption of the empty state on the Connected apps page. The names are the Settings page and row where an app is paired."
+    },
+    "Paired apps" : {
+      "comment" : "Row title in the External connections client list; the caption links to Connected apps."
+    },
+    "Paired as %@" : {
+      "comment" : "Caption of a client row whose pairing token WSurf recognizes. The inserted text is the paired app’s name."
+    },
+    "Pairing isn’t available because WSurf can’t reach its secure storage." : {
+      "comment" : "Caption of the empty Connected apps list when the keychain item cannot be read."
+    },
+    "Pairing isn’t available because WSurf can’t reach its secure storage. Apps ask for approval each time they connect." : {
+      "comment" : "Caption of the Paired apps row when the keychain item cannot be read, for example in a development build."
+    },
+    "Pairing isn’t available because WSurf can’t reach its secure storage. The app asks for approval each time it connects." : {
+      "comment" : "Error shown when setting up a client cannot pair it because the keychain item cannot be read."
+    },
+    "Pairing lets WSurf recognize an app. Review paired apps in Connected apps." : {
+      "comment" : "Caption of the Paired apps row. “Connected apps” is a link to that Settings page and must stay a substring."
+    },
     "Passwords saved before Credential Manager" : {
 
     },
@@ -143,6 +209,9 @@
     },
     "Press Tab to search this site" : {
       "comment" : "Accessibility hint for the command palette's site search suggestion. Tab is the keyboard key."
+    },
+    "Re-pair" : {
+      "comment" : "Menu command on a client row that replaces the app’s pairing token with a new one. A verb."
     },
     "Remove %@ search" : {
       "comment" : "Accessibility label and tooltip for removing the active site search chip. %@ is the website's name and should not be translated."
@@ -173,6 +242,9 @@
     },
     "Review…" : {
 
+    },
+    "Revoke “%@”?" : {
+      "comment" : "Heading of the dialog that confirms withdrawing a paired app. The inserted text is the app’s name."
     },
     "same website and username as entry %lld with another password. Choose what to do with each of them." : {
 
@@ -309,8 +381,20 @@
     "Use Another Device or Key…" : {
 
     },
+    "WSurf added the app but couldn’t save its pairing. Choose Pair to try again." : {
+      "comment" : "Error shown when the client’s configuration was written but the pairing record could not be saved."
+    },
     "WSurf can’t save a passkey here: Credential Manager has no vault yet." : {
 
+    },
+    "WSurf copies a configuration that pairs the app you paste it into. Keep it private." : {
+      "comment" : "Message of the alert that asks for an app name before copying a configuration that contains a pairing token."
+    },
+    "WSurf couldn’t pair this app. Try again." : {
+      "comment" : "Error under the client list when Copy Configuration could not save the new pairing."
+    },
+    "WSurf couldn’t revoke this app. Try again." : {
+      "comment" : "Error on the Connected apps page when the pairing could not be removed."
     },
     "WSurf now keeps passwords only in Credential Manager, an encrypted vault you unlock with a passkey. Passwords saved in the profile “%@” aren’t filled until you import them. Nothing is deleted without your confirmation." : {
 
