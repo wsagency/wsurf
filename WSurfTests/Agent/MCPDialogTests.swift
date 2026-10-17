@@ -15,7 +15,7 @@ import WebKit
 @Suite(.boundedWebViews)
 struct MCPDialogTests {
     /// Controls in document order: 1 alert, 2 confirm, 3 prompt, 4 secret prompt, 5 consequential confirm, 6 and 7 prompts
-    /// that carry a decision. The script keeps the
+    /// that carry a decision, 8 a prompt whose default is too long to approve. The script keeps the
     /// consequential words out of the button, so clicking it needs no approval; only accepting the confirm does.
     private static let page = """
         <!doctype html><title>Dialogs</title>
@@ -27,10 +27,12 @@ struct MCPDialogTests {
         function danger() { document.body.dataset.answer = String(confirm('Delete account now?')) }
         function typeDelete() { document.body.dataset.answer = String(prompt('Type DELETE to confirm', '')) }
         function amount() { document.body.dataset.answer = String(prompt('Enter amount to transfer', '')) }
+        function longDefault() { document.body.dataset.answer = String(prompt('Long default', 'x'.repeat(400))) }
         </script>
         <button onclick="danger()">Danger</button>
         <button onclick="typeDelete()">Typed</button>
         <button onclick="amount()">Sum</button>
+        <button onclick="longDefault()">Long</button>
         <a href="/next">Next</a>
         """
 
@@ -188,7 +190,7 @@ struct MCPDialogTests {
         let answered = try await answer(rig, first, "accept", text: "Alice", consent: .allowOnce, asked: { questions.append(($0, $1)) })
         #expect(status(answered) == "ok")
         #expect(try await pageValue(rig, "answer") == "Alice")
-        #expect(questions.count == 1 && questions[0].0.contains("Your name?") && questions[0].0.contains("Alice"), "the user is shown the reply")
+        #expect(questions.count == 1 && questions[0].0.contains("Your·name?") && questions[0].0.contains("Alice"), "the user is shown the reply")
         let second = try await openDialog(rig, ref: 3, type: "prompt")
         #expect(status(try await answer(rig, second, "accept", consent: .allowOnce)) == "ok")
         #expect(try await pageValue(rig, "answer") == "Anon", "no text accepts the page's default, like pressing OK")
@@ -244,6 +246,65 @@ struct MCPDialogTests {
         let sheet = try #require(rig.window.attachedSheet)
         rig.window.endSheet(sheet, returnCode: .alertSecondButtonReturn)
         #expect(await waitUntil { (try? await self.pageValue(rig, "answer")) == "null" })
+    }
+
+    @Test func aStoredAlwaysAllowDoesNotAnswerAPromptReply() async throws {
+        let rig = try await makeRig(.webKit)
+        defer { rig.close() }
+        // The user once chose "always allow" for deletions on this site, for this connection.
+        let confirm = try await openDialog(rig, ref: 5, type: "confirm")
+        #expect(status(try await answer(rig, confirm, "accept", consent: .allowAlways)) == "ok")
+        let again = try await openDialog(rig, ref: 5, type: "confirm")
+        var confirmQuestions = 0
+        let remembered = try await answer(rig, again, "accept", consent: .decline, asked: { _, _ in confirmQuestions += 1 })
+        #expect(status(remembered) == "ok" && confirmQuestions == 0, "the grant is stored: a confirm is no longer asked")
+        // A prompt reply that names the same consequence is still asked, and the question says what it does.
+        let prompt = try await openDialog(rig, ref: 6, type: "prompt")
+        var asked: [(String, SensitiveAction.Category)] = []
+        let declined = try await answer(rig, prompt, "accept", text: "DELETE", consent: .decline, asked: { asked.append(($0, $1)) })
+        #expect(status(declined) == "denied", "the stored grant did not let the reply through")
+        #expect(asked.count == 1 && asked[0].1 == .deletion && asked[0].0.contains("DELETE"))
+        #expect(rig.tab.dialogs.hasOpenDialog)
+        let allowed = try await answer(rig, prompt, "accept", text: "DELETE", consent: .allowOnce)
+        #expect(status(allowed) == "ok")
+        #expect(try await pageValue(rig, "answer") == "DELETE")
+    }
+
+    @Test func aReplyOverTheBoundIsRefusedAndOneAtTheBoundIsShownWhole() async throws {
+        let rig = try await makeRig(.webKit)
+        defer { rig.close() }
+        let dialog = try await openDialog(rig, ref: 3, type: "prompt")
+        var labels: [String] = []
+        let tooLong = String(repeating: "a", count: PageDialogText.maxReplyScalars + 1)
+        let refused = try await answer(rig, dialog, "accept", text: tooLong, consent: .allowOnce, asked: { label, _ in labels.append(label) })
+        #expect(status(refused) == "invalidInput" && labels.isEmpty, "nothing is asked or sent for a reply the user cannot read whole")
+        #expect(rig.tab.dialogs.hasOpenDialog)
+        let atTheBound = String(repeating: "b", count: PageDialogText.maxReplyScalars)
+        let allowed = try await answer(rig, dialog, "accept", text: atTheBound, consent: .allowOnce, asked: { label, _ in labels.append(label) })
+        #expect(status(allowed) == "ok")
+        #expect(labels.count == 1 && labels[0].contains(atTheBound), "the user is shown all of it")
+        #expect(try await pageValue(rig, "answer") == atTheBound)
+    }
+
+    @Test func aDefaultTooLongToApproveIsRefusedUntilTheConnectionSendsItsOwnText() async throws {
+        let rig = try await makeRig(.webKit)
+        defer { rig.close() }
+        let dialog = try await openDialog(rig, ref: 8, type: "prompt")
+        let refused = try await answer(rig, dialog, "accept", consent: .allowOnce)
+        #expect(status(refused) == "invalidInput" && rig.tab.dialogs.hasOpenDialog)
+        #expect(status(try await answer(rig, dialog, "accept", text: "short", consent: .allowOnce)) == "ok")
+        #expect(try await pageValue(rig, "answer") == "short")
+    }
+
+    @Test func paddingAndLineBreaksInAReplyAreDrawnInTheQuestion() async throws {
+        let rig = try await makeRig(.webKit)
+        defer { rig.close() }
+        let dialog = try await openDialog(rig, ref: 3, type: "prompt")
+        var labels: [String] = []
+        let reply = "Alice   \n\u{200B}"
+        _ = try await answer(rig, dialog, "accept", text: reply, consent: .decline, asked: { label, _ in labels.append(label) })
+        #expect(labels.count == 1 && labels[0].contains("Alice···⏎‹U+200B›"), "\(labels)")
+        _ = try await answer(rig, dialog, "dismiss")
     }
 
     @Test func aConnectionWithOnlyControlAccessGetsNoDevelopmentGate() async throws {

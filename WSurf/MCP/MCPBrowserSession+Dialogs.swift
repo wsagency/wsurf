@@ -100,6 +100,17 @@ extension MCPBrowserSession {
             }
         }
         var authorization: PageDialogQueue.Authorization?
+        if accepted, dialog.kind == .prompt {
+            // The user reads the whole reply before approving it, so it has to fit the question.
+            let answer = reply ?? queue.request(of: dialogID)?.defaultText ?? ""
+            guard answer.unicodeScalars.count <= PageDialogText.maxReplyScalars else {
+                return result(
+                    .invalidInput,
+                    reply == nil
+                        ? "The prompt's default text is longer than \(PageDialogText.maxReplyScalars) characters, which the user cannot read whole. Send your own text."
+                        : "A prompt reply is at most \(PageDialogText.maxReplyScalars) characters, so the user can read all of it before approving. Nothing was sent.")
+            }
+        }
         if accepted, let request = queue.request(of: dialogID) {
             switch await approval(for: request, reply: reply, tab: tab) {
             case .notNeeded:
@@ -157,16 +168,17 @@ extension MCPBrowserSession {
             return permitted ? .granted(.consent) : declined("It \(category.consequenceForModel), so it is theirs to do.")
         case .prompt:
             let answer = reply ?? request.defaultText ?? ""
-            if let category = PageDialogText.consequence(of: request.message, reply: answer) {
-                let permitted = await AgentActionConsent.permit(
-                    label: String("“\(request.message)” → “\(answer)”".prefix(120)), category: category, host: host, policy: nil)
-                return permitted ? .granted(.consent) : declined("It \(category.consequenceForModel), so it is theirs to do.")
-            }
-            if developerMayAnswerPrompts(on: tab, origin: request.origin) {
+            let consequence = PageDialogText.consequence(of: request.message, reply: answer)
+            if consequence == nil, developerMayAnswerPrompts(on: tab, origin: request.origin) {
                 return .granted(.developer)
             }
-            let permitted = await AgentActionConsent.permitPromptReply(answer, to: request.message, host: host)
-            return permitted ? .granted(.consent) : declined("A prompt asks for the user's words.")
+            // Always asked here. A stored "always allow" for a consequence category and site (what `permit` honours) does not
+            // answer for a prompt's reply, and a consequence is shown in this question, not asked in place of it.
+            let permitted = await AgentActionConsent.permitPromptReply(answer, to: request.message, host: host, consequence: consequence)
+            if permitted {
+                return .granted(.consent)
+            }
+            return declined(consequence.map { "It \($0.consequenceForModel), so it is theirs to do." } ?? "A prompt asks for the user's words.")
         }
     }
 

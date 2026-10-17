@@ -64,6 +64,42 @@ nonisolated enum PageDialogText {
         String(text.map { substitutions[$0] ?? $0 })
     }
 
+    /// The longest reply a connection may give a prompt. The user reads all of it before approving it, so it has to fit the
+    /// sheet.
+    static let maxReplyScalars = 300
+
+    /// What a sheet shows of `text` so nothing in it is hidden: each space is drawn as "·", each line break as "⏎", each tab as
+    /// "⇥", and each invisible character (zero-width, format, control) as its code point. Padding and breaks are visible, and
+    /// they take room on the line instead of pushing the rest out of sight.
+    static func visible(_ text: String) -> String {
+        var drawn = ""
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case "\n", "\r", "\u{2028}", "\u{2029}", "\u{85}":
+                drawn += "⏎"
+            case "\t":
+                drawn += "⇥"
+            default:
+                if scalar.properties.isWhitespace {
+                    drawn += "·"
+                } else if isInvisible(scalar) {
+                    drawn += String(format: "‹U+%04X›", scalar.value)
+                } else {
+                    drawn.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        return drawn
+    }
+
+    /// The page's text for a sheet: drawn as `visible` does and cut at `limit` characters with "…" so the cut shows. The
+    /// page's message is shortened before a reply ever is.
+    static func excerpt(_ text: String, limit: Int = 300) -> String {
+        let drawn = visible(text)
+        guard drawn.unicodeScalars.count > limit else { return drawn }
+        return String(String.UnicodeScalarView(drawn.unicodeScalars.prefix(limit))) + "…"
+    }
+
     private static func isInvisible(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar.properties.generalCategory {
         case .format:
