@@ -200,6 +200,9 @@ extension PageDriver {
     ) async -> Result<ScreenshotCapture, ScreenshotFailure> {
         guard PageAutomationGuard.allowsExecution else { return .failure(.stale) }
         guard target != .fullPage || view.chromium != nil else { return .failure(.fullPageUnsupported) }
+        // Asked before the first await as well as after each one: a caller may have waited (for its turn to capture) since it
+        // checked.
+        guard target != .fullPage || developmentAllowed() else { return .failure(.needsDevelopment) }
         let ref: Int
         switch await screenshotRef(for: target, in: view) {
         case .success(let probed):
@@ -222,9 +225,11 @@ extension PageDriver {
             return JSON.stringify(out);
             """)
         guard let before = await evaluateJSON(probe, in: view), before["stale"] == nil else { return .failure(.stale) }
-        // An element only `findElements` registered is capturable under development access alone; that is decided first.
+        // An element only `findElements` registered, and the full page, are capturable under development access alone; that
+        // is decided first and asked again after every await.
         let foundOnly = before["foundOnly"] as? Bool == true
-        guard !(foundOnly && !developmentAllowed()) else { return .failure(.needsDevelopment) }
+        let needsDevelopment = foundOnly || target == .fullPage
+        guard !(needsDevelopment && !developmentAllowed()) else { return .failure(.needsDevelopment) }
         guard before["safe"] as? Bool == true else { return .failure(.privacy) }
         func number(_ object: [String: Any]?, _ key: String) -> CGFloat? {
             (object?[key] as? NSNumber).map { CGFloat($0.doubleValue) }
@@ -255,12 +260,13 @@ extension PageDriver {
             PageAutomationGuard.allowsExecution, view.url == document,
             let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), bitmap.pixelsWide > 0
         else { return .failure(.captureFailed) }
-        guard !(foundOnly && !developmentAllowed()) else { return .failure(.needsDevelopment) }
+        guard !(needsDevelopment && !developmentAllowed()) else { return .failure(.needsDevelopment) }
         guard let after = await evaluateJSON(probe, in: view), after["stale"] == nil, after["document"] as? String == before["document"] as? String else {
             return .failure(.stale)
         }
         // Development access is checked again right before pixels leave, after the last await.
-        guard !((foundOnly || after["foundOnly"] as? Bool == true) && !developmentAllowed()) else { return .failure(.needsDevelopment) }
+        let requiresDevelopment = needsDevelopment || after["foundOnly"] as? Bool == true
+        guard !(requiresDevelopment && !developmentAllowed()) else { return .failure(.needsDevelopment) }
         guard after["safe"] as? Bool == true else { return .failure(.privacy) }
         guard placementHeld(placed, in: after) else { return .failure(.stale) }
         // The limit may have shrunk the pixels, so the scale comes from the image that is returned.
@@ -268,7 +274,7 @@ extension PageDriver {
         return .success(
             ScreenshotCapture(
                 jpeg: encoded.data, bounds: css, scale: CGFloat(encoded.pixelsWide) / css.width,
-                requiresDevelopment: foundOnly || after["foundOnly"] as? Bool == true))
+                requiresDevelopment: requiresDevelopment))
     }
 
     /// The element ref a screenshot probes (0 for none), or the reason the target cannot be captured at all.

@@ -26,7 +26,8 @@ nonisolated enum ScreenshotFailure: Error, Equatable {
                 + "(a selected frame, a frame or clipping container under a 3D transform or perspective, or SVG content). "
                 + "Screenshot the viewport instead."
         case .needsDevelopment:
-            "Screenshots of elements found with findElements need development access. Use a control ref from readPage, or a viewport or region screenshot."
+            "A full-page screenshot and a screenshot of an element found with findElements need development access. "
+                + "Use a control ref from readPage, or a viewport or region screenshot."
         case .fullPageUnsupported:
             "A full-page screenshot needs a Chromium page. Capture the viewport, scroll with scrollPage and capture again."
         }
