@@ -18,7 +18,9 @@ nonisolated enum PasskeyKeyEncoding {
             try document.requireEnd()
 
             var privateKeyInfo = DERReader(sequence)
-            guard try privateKeyInfo.read(0x02) == Data([0]) else { throw CredentialVaultError.invalidData }
+            // RFC 5958 version 0 (PKCS#8) or 1 (OneAsymmetricKey).
+            let version = try privateKeyInfo.read(0x02)
+            guard version == Data([0]) || version == Data([1]) else { throw CredentialVaultError.invalidData }
             let algorithmBytes = try privateKeyInfo.read(0x30)
             var algorithm = DERReader(algorithmBytes)
             guard try algorithm.read(0x06) == ecPublicKeyOID,
@@ -26,14 +28,23 @@ nonisolated enum PasskeyKeyEncoding {
             try algorithm.requireEnd()
 
             let ecPrivateKeyBytes = try privateKeyInfo.read(0x04)
-            try privateKeyInfo.requireEnd()
+            // RFC 5958 allows attributes [0] and a public key [1] after the key. The scalar decides the key, so both are skipped.
+            var nextTrailingNumber: UInt8 = 0
+            while !privateKeyInfo.isAtEnd {
+                let (tag, _) = try privateKeyInfo.readAny()
+                let number = tag & 0x1F
+                guard tag == 0xA0 || tag == 0x81, number >= nextTrailingNumber else { throw CredentialVaultError.invalidData }
+                nextTrailingNumber = number + 1
+            }
             var ecDocument = DERReader(ecPrivateKeyBytes)
             let ecSequence = try ecDocument.read(0x30)
             try ecDocument.requireEnd()
             var ecPrivateKey = DERReader(ecSequence)
             guard try ecPrivateKey.read(0x02) == Data([1]) else { throw CredentialVaultError.invalidData }
-            let scalar = try ecPrivateKey.read(0x04)
-            guard scalar.count == 32 else { throw CredentialVaultError.invalidData }
+            // RFC 5915 fixes the length at 32 bytes, but some encoders drop leading zero bytes, so a shorter value is zero-padded.
+            let encodedScalar = try ecPrivateKey.read(0x04)
+            guard (1...32).contains(encodedScalar.count) else { throw CredentialVaultError.invalidData }
+            let scalar = Data(repeating: 0, count: 32 - encodedScalar.count) + encodedScalar
 
             var embeddedPublicKey: Data?
             var embeddedCurve: Data?
@@ -71,6 +82,21 @@ nonisolated enum PasskeyKeyEncoding {
         } catch {
             throw CredentialVaultError.invalidData
         }
+    }
+
+    /// Whether `data` is a well-formed PKCS#8 key of another algorithm or curve (RSA, Ed25519, P-384, ...) rather than one that cannot
+    /// be read. It names the kind of refusal only; nothing of the key is returned.
+    static func isAnotherAlgorithm(_ data: Data) -> Bool {
+        var document = DERReader(data)
+        guard let sequence = try? document.read(0x30), document.isAtEnd else { return false }
+        var privateKeyInfo = DERReader(sequence)
+        guard (try? privateKeyInfo.read(0x02)) != nil,
+              let algorithmBytes = try? privateKeyInfo.read(0x30),
+              (try? privateKeyInfo.read(0x04)) != nil else { return false }
+        var algorithm = DERReader(algorithmBytes)
+        guard let identifier = try? algorithm.read(0x06) else { return false }
+        guard identifier == ecPublicKeyOID else { return true }
+        return (try? algorithm.read(0x06)).map { $0 != p256OID } ?? false
     }
 
     static func exportPKCS8(_ key: P256.Signing.PrivateKey) throws -> Data {

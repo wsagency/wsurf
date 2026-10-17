@@ -541,7 +541,7 @@ struct CredentialExchangeTests {
         let input = data(scope: nil, credentials: [passkey(rpID: "com", key: key)])
         let preview = try CredentialExchangeCodec.preview(input, against: snapshot([]))
         #expect(preview.candidates.isEmpty)
-        #expect(preview.omitted.map(\.reason) == [.passkeyNotKept, .nothingToKeep])
+        #expect(preview.omitted.map(\.reason) == [.passkeyWebsiteNotAllowed, .nothingToKeep])
     }
 
     @Test func absentUsernameFieldStaysAbsentAcrossExchange() throws {

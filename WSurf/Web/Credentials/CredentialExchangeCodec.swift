@@ -482,9 +482,12 @@ nonisolated enum CredentialExchangeCodec {
         try state.budget.add(value.userHandle)
         guard value.key.count <= PasskeyKeyEncoding.maximumDERBytes else { throw ImportLimitExceeded(.keyBytes) }
         try state.budget.add(value.key)
-        // A key that is not ES256, cannot be read, or belongs to a website the vault will not serve cannot be kept.
+        // A passkey is left out, with the reason named, when its key is not an ES256 key WSurf can read, a field is out of bounds, or
+        // its website is one the vault will not serve.
         guard let key = try? PasskeyKeyEncoding.importPKCS8(value.key),
-              let privateKey = try? PasskeyKeyEncoding.exportPKCS8(key) else { throw Skip(reason: .passkeyNotKept) }
+              let privateKey = try? PasskeyKeyEncoding.exportPKCS8(key) else {
+            throw Skip(reason: PasskeyKeyEncoding.isAnotherAlgorithm(value.key) ? .passkeyAlgorithmNotSupported : .passkeyKeyUnreadable)
+        }
         let passkey = WebsitePasskey(
             id: UUID(),
             credentialID: value.credentialID,
@@ -499,10 +502,18 @@ nonisolated enum CredentialExchangeCodec {
             exchangeFIDO2Metadata: try importFIDO2Metadata(value, budget: &state.budget),
             source: .imported
         )
-        guard (try? passkey.validate()) != nil,
-              let origin = URL(string: "https://\(passkey.rpID)"),
-              (try? RelyingPartyPolicy.validate(rpID: passkey.rpID, origin: origin)) == passkey.rpID else {
-            throw Skip(reason: .passkeyNotKept)
+        if let problem = passkey.problem {
+            throw Skip(reason: .passkey(problem))
+        }
+        do {
+            guard let origin = URL(string: "https://\(passkey.rpID)"),
+                  try RelyingPartyPolicy.validate(rpID: passkey.rpID, origin: origin) == passkey.rpID else {
+                throw RelyingPartyPolicy.PolicyError.invalidRelyingParty
+            }
+        } catch RelyingPartyPolicy.PolicyError.suffixListUnavailable {
+            throw Skip(reason: .passkeyWebsiteNotChecked)
+        } catch {
+            throw Skip(reason: .passkeyWebsiteNotAllowed)
         }
         guard !candidate.passkeys.contains(where: {
             $0.credentialID == passkey.credentialID && $0.rpID == passkey.rpID

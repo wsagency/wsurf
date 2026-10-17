@@ -170,9 +170,9 @@ extension CredentialExchangeTests {
                 basicAuthentication(username: "two", password: "two", usernameID: Data([0x21]), passwordID: Data([0x22])),
                 .basicAuthentication, .extraLogin
             ),
-            part("unreadable key", after: [login, totp()], passkey(key: Data([0x30, 0x82, 0x01])), .passkey, .passkeyNotKept),
-            part("key that is not ES256", after: [login, totp()], passkey(key: try rsaPKCS8()), .passkey, .passkeyNotKept),
-            part("website the vault will not serve", after: [login, totp()], passkey(rpID: "com", key: key), .passkey, .passkeyNotKept),
+            part("unreadable key", after: [login, totp()], passkey(key: Data([0x30, 0x82, 0x01])), .passkey, .passkeyKeyUnreadable),
+            part("key that is not ES256", after: [login, totp()], passkey(key: try rsaPKCS8()), .passkey, .passkeyAlgorithmNotSupported),
+            part("website the vault will not serve", after: [login, totp()], passkey(rpID: "com", key: key), .passkey, .passkeyWebsiteNotAllowed),
         ]
         for unkept in cases {
             let name = unkept.name
@@ -202,7 +202,7 @@ extension CredentialExchangeTests {
         let preview = try imported([basicAuthentication(username: "ada", password: "pw"), passkey(key: Data([1])), passkey(key: Data([1]))])
 
         #expect(preview.candidates.first?.passkeys.isEmpty == true)
-        #expect(preview.omitted.map(\.reason) == [.passkeyNotKept, .passkeyNotKept])
+        #expect(preview.omitted.map(\.reason) == [.passkeyKeyUnreadable, .passkeyKeyUnreadable])
     }
 
     @Test func anUnusualFieldTypeIsKeptAsPlainText() throws {
