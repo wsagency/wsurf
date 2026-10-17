@@ -429,6 +429,7 @@ struct CredentialSettings: View {
                 }
             )
         }
+        saveSuggestionsCard
         SettingsSection(
             title: "Unlock passkeys",
             symbol: "person.badge.key",

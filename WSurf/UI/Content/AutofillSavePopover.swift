@@ -11,7 +11,7 @@ struct AutofillSaveBadge: View {
 
     var body: some View {
         if !coordinator.isShowingSettings, let tab = browser.activeTab, tab.internalPage == nil {
-            TabAutofillSaveBadge(session: tab.autofillSave)
+            TabAutofillSaveBadge(session: tab.autofillSave, setUpVault: { coordinator.openSettings(.autofill) })
                 .id(tab.id)
         }
     }
@@ -19,6 +19,7 @@ struct AutofillSaveBadge: View {
 
 private struct TabAutofillSaveBadge: View {
     let session: AutofillSaveSession
+    let setUpVault: () -> Void
     @State private var pendingReview: AutofillSaveSession.Offer?
     @State private var reviewing: AutofillSaveSession.Offer?
 
@@ -35,7 +36,7 @@ private struct TabAutofillSaveBadge: View {
         }
         .popover(isPresented: $session.isPopoverPresented, arrowEdge: .bottom) {
             if let offer = session.current {
-                AutofillSavePopover(session: session, offer: offer) {
+                AutofillSavePopover(session: session, offer: offer, setUpVault: setUpVault) {
                     pendingReview = offer
                     session.isPopoverPresented = false
                 }
@@ -70,7 +71,8 @@ private struct TabAutofillSaveBadge: View {
 
 private extension AutofillSaveSession.Offer {
     var title: LocalizedStringResource {
-        switch candidate.kind {
+        guard !needsVault else { return "Save passwords in Credential Manager?" }
+        return switch candidate.kind {
         case .password:
             isUpdate ? "Update password?" : "Save password?"
         case .card:
@@ -96,6 +98,7 @@ private extension AutofillSaveSession.Offer {
 private struct AutofillSavePopover: View {
     let session: AutofillSaveSession
     let offer: AutofillSaveSession.Offer
+    let setUpVault: () -> Void
     let review: () -> Void
 
     var body: some View {
@@ -107,7 +110,11 @@ private struct AutofillSavePopover: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            AutofillSaveActions(session: session, offer: offer, review: review)
+            if offer.needsVault {
+                AutofillVaultSetupActions(session: session, offer: offer, setUpVault: setUpVault)
+            } else {
+                AutofillSaveActions(session: session, offer: offer, review: review)
+            }
         }
         .padding(16)
         .frame(width: 360)
@@ -132,10 +139,20 @@ private struct AutofillSaveDescription: View {
                 Text(offer.title).font(.headline)
                 Text(verbatim: offer.origin).font(Theme.Font.label).foregroundStyle(.secondary)
                     .lineLimit(2).truncationMode(.middle)
-                Text(verbatim: offer.candidate.summary).font(Theme.Font.label)
-                    .lineLimit(offer.candidate.kind == .contact ? 4 : 2)
-                    .truncationMode(.middle)
-                    .help(offer.candidate.summary)
+                if offer.needsVault {
+                    Text("""
+                        WSurf saves passwords in an encrypted vault that you unlock with a passkey. There is no recovery: if you lose \
+                        every passkey that unlocks the vault, its passwords can’t be recovered. This password isn’t saved now. After you \
+                        set up the vault, sign in again to save it.
+                        """)
+                        .font(Theme.Font.label)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(verbatim: offer.candidate.summary).font(Theme.Font.label)
+                        .lineLimit(offer.candidate.kind == .contact ? 4 : 2)
+                        .truncationMode(.middle)
+                        .help(offer.candidate.summary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -169,5 +186,26 @@ private struct AutofillSaveActions: View {
             .controlSize(.regular)
         }
         .disabled(session.isBusy)
+    }
+}
+
+/// What the offer to set up the first vault allows. It saves nothing, so there is nothing to review, save or exclude: only the
+/// way to the setup, which asks nothing of the page.
+private struct AutofillVaultSetupActions: View {
+    let session: AutofillSaveSession
+    let offer: AutofillSaveSession.Offer
+    let setUpVault: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 0)
+            Button("Not Now") { session.dismiss(offer) }
+            Button("Set Up Vault…") {
+                session.dismiss(offer, rememberingChoice: false)
+                setUpVault()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .controlSize(.regular)
     }
 }

@@ -22,6 +22,8 @@ final class AutofillSaveSession: NSObject {
         var managerEpoch: UInt64?
         var managerRevision: UInt64?
         var loginURL: URL?
+        /// The profile has no vault yet: this offer saves nothing and only suggests setting one up (`save` and `never` refuse it).
+        var needsVault = false
     }
     private(set) var offers: [Offer] = []
     private(set) var isBusy = false
@@ -159,6 +161,7 @@ final class AutofillSaveSession: NSObject {
         let epoch: UInt64?
         let revision: UInt64?
         let loginURL: URL?
+        var needsVault = false
     }
 
     private func managerOrigin(_ origin: String) -> String? {
@@ -193,7 +196,12 @@ final class AutofillSaveSession: NSObject {
         let manager: CredentialManager
         switch route {
         case .unavailable:
-            return nil
+            // A profile that has never had a vault is offered the setup, once in each run of the app. Every other reason a vault
+            // is unavailable (an older format to upgrade, an unreadable store) is Settings' to explain, not a page's.
+            guard AutofillSaveCoordinator.shared.shouldOfferVaultSetup(for: context.profile.id),
+                  await CredentialRouting.profileNeedsFirstVault(context.profile) else { return nil }
+            guard revision == self.revision, self.page === page else { return nil }
+            return ManagedSave(plan: .create, epoch: nil, revision: nil, loginURL: nil, needsVault: true)
         case .needsChoice, .needsUnlock:
             return ManagedSave(plan: .create, epoch: nil, revision: nil, loginURL: loginURL)
         case .manager(let routed):
@@ -234,8 +242,12 @@ final class AutofillSaveSession: NSObject {
         offers.removeAll { $0.candidate.kind == candidate.kind }
         offers.append(Offer(
             candidate: candidate, origin: origin, isUpdate: decision == .update, fingerprint: fingerprint, documentID: documentID,
-            plan: managed?.plan, managerEpoch: managed?.epoch, managerRevision: managed?.revision, loginURL: managed?.loginURL
+            plan: managed?.plan, managerEpoch: managed?.epoch, managerRevision: managed?.revision, loginURL: managed?.loginURL,
+            needsVault: managed?.needsVault ?? false
         ))
+        if managed?.needsVault == true {
+            AutofillSaveCoordinator.shared.vaultSetupWasOffered(for: profileID)
+        }
         if current?.id != previous {
             isPopoverPresented = true
         }
@@ -254,7 +266,7 @@ final class AutofillSaveSession: NSObject {
         offers.removeAll { $0.id == offer.id }; isPopoverPresented = !offers.isEmpty; error = nil
     }
     func never(_ offer: Offer) async {
-        guard !isBusy, current?.id == offer.id, let context else { return }
+        guard !offer.needsVault, !isBusy, current?.id == offer.id, let context else { return }
         isBusy = true; let profileID = context.profile.id; defer { isBusy = false }
         do {
             if offer.candidate.kind == .password {
@@ -348,7 +360,7 @@ final class AutofillSaveSession: NSObject {
     }
 
     func save(_ offer: Offer, replacement: AutofillSaveCandidate? = nil) async {
-        guard !isBusy, current?.id == offer.id, let context,
+        guard !offer.needsVault, !isBusy, current?.id == offer.id, let context,
               AutofillSaveCoordinator.shared.isEnabled(offer.candidate.kind, context: context),
               let page, page.context === context, page.window != nil,
               await liveness(page, offer.documentID, offer.origin),
@@ -458,6 +470,22 @@ final class AutofillSaveCoordinator {
         where session.context === context {
             session.resetDismissals(kind: kind)
         }
+    }
+    func resetDismissals(kind: AutofillSaveKind, profileID: UUID) {
+        for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? []
+        where session.context?.profile.id == profileID {
+            session.resetDismissals(kind: kind)
+        }
+    }
+
+    /// Profiles that were offered the setup of their first vault in this run of the app. The offer is made once, so a page cannot
+    /// nag; the next run (or a vault) starts over.
+    private var vaultSetupOffered: Set<UUID> = []
+    func shouldOfferVaultSetup(for profileID: UUID) -> Bool {
+        !vaultSetupOffered.contains(profileID)
+    }
+    func vaultSetupWasOffered(for profileID: UUID) {
+        vaultSetupOffered.insert(profileID)
     }
     func session(for page: BrowserPage) -> AutofillSaveSession? {
         sessions.object(forKey: page).flatMap { $0.context === page.context ? $0 : nil }
