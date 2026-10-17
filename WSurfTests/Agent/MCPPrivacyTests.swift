@@ -19,6 +19,7 @@ struct MCPPrivacyTests {
         <button onclick="document.body.dataset.clicked='yes'">Ordinary action</button>
         <button onclick="document.body.dataset.published='yes'">Publish post</button>
         <a href="/next">Next page</a>
+        <button onclick="document.body.dataset.signedIn='yes'">Continue with Google</button>
         """
 
     private func fixture() async throws -> (HTTPFixtureServer, BrowserModel, BrowserTab) {
@@ -332,6 +333,32 @@ struct MCPPrivacyTests {
         #expect(asked)
         #expect(result.isError == true)
         #expect(try await tab.page.evaluateJavaScript("document.body.dataset.published || ''") as? String == "")
+    }
+
+    /// The sign-in question is the page driver's, so an external connection gets it exactly like the assistant does.
+    @Test func signingInAsksForAnExternalConnectionToo() async throws {
+        let (server, browser, tab) = try await fixture()
+        defer { _ = server }
+        let subject = session(browser)
+        _ = try await call(subject, "requestAccess")
+        let id = try await observation(subject, tab: tab)
+        var asked: [SensitiveAction.Category] = []
+        let declined = try await AgentActionConsent.$decisionForTesting.withValue(.init { _, category, _, _ in
+            asked.append(category)
+            return .decline
+        }) {
+            try await call(subject, "clickOnPage", tab: tab, arguments: ["observationID": .string(id), "ref": 6])
+        }
+        #expect(asked == [.accountAccess])
+        #expect(declined.isError == true)
+        #expect(try await tab.page.evaluateJavaScript("document.body.dataset.signedIn || ''") as? String == "")
+
+        let fresh = try await observation(subject, tab: tab)
+        let allowed = try await AgentActionConsent.$decisionForTesting.withValue(.init { _, _, _, _ in .allowOnce }) {
+            try await call(subject, "clickOnPage", tab: tab, arguments: ["observationID": .string(fresh), "ref": 6])
+        }
+        #expect(allowed.isError == false, "\(text(allowed))")
+        #expect(try await tab.page.evaluateJavaScript("document.body.dataset.signedIn") as? String == "yes")
     }
 
     @Test func pageContentCannotSupplyAnUnobservedOutboundAddress() async throws {

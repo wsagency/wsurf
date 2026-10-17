@@ -616,6 +616,35 @@ struct MCPDeveloperSessionTests {
         #expect(developer.session.developerApprovals.count == 1)
     }
 
+    /// Signing in or handing a site the account is not one of the actions the tier lets through: it asks like it does for the assistant.
+    @Test func theDeveloperTierStillAsksBeforeSigningIn() async throws {
+        var asked: [SensitiveAction.Category] = []
+        let policy = AgentActionPolicy(storage: MCPActionGrantStorage())
+        let developer = try makeRig(standing: .developer)
+        let tab = await parkTab(developer.browser, at: try url("http://localhost:5173/"))
+        _ = try await call(developer, "requestAccess")
+        func attempt(_ category: SensitiveAction.Category) async -> Bool {
+            await AgentActionConsent.$decisionForTesting.withValue(.init { _, category, _, _ in
+                asked.append(category)
+                return .decline
+            }) {
+                await AgentActionConsent.$developerApproval.withValue(developer.session.developerApproval(for: tab)) {
+                    await AgentActionConsent.permit(label: "Continue with Google", category: category, host: "localhost", policy: policy)
+                }
+            }
+        }
+
+        #expect(await attempt(.accountAccess) == false)
+        #expect(asked == [.accountAccess])
+        #expect(developer.session.developerApprovals.isEmpty)
+
+        for category in SensitiveAction.Category.allCases where category != .accountAccess {
+            #expect(await attempt(category), "\(category)")
+        }
+        #expect(asked == [.accountAccess])
+        #expect(developer.session.developerApprovals.count == SensitiveAction.Category.allCases.count - 1)
+    }
+
     // MARK: Catalog
 
     @Test func requestAccessAcceptsTheDeveloperFlag() throws {

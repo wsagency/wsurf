@@ -16,7 +16,7 @@ extension MCPBrowserSession {
     func requestAccess(development: Bool, developer: Bool = false) async -> CallTool.Result {
         let tabs = browser.splitPanes ?? browser.activeTab.map { [$0] } ?? []
         let candidates = tabs.compactMap { tab -> (page: MCPAccessConsent.Page, standing: MCPAccessConsent.Access?)? in
-            guard !tab.isPrivate, let url = webURL(of: tab), tab.assistantAccess.effectivePolicy != .deny else { return nil }
+            guard !tab.isPrivate, let url = webURL(of: tab), tab.assistantAccess.explicitPolicy != .deny else { return nil }
             var page = MCPAccessConsent.Page(id: tab.id, title: tab.title, url: url)
             page.developerEligible = developer && developerTierHolds(at: url)
             return (page, standingAccess(at: url))
@@ -47,7 +47,7 @@ extension MCPBrowserSession {
         for page in pages {
             guard let tab = browser.tabs.first(where: { $0.id == page.id }),
                 !tab.isPrivate, webURL(of: tab) == page.url,
-                tab.assistantAccess.effectivePolicy != .deny
+                tab.assistantAccess.explicitPolicy != .deny
             else { continue }
             // Only a request that asked for more can be given more, and Developer only where the sheet offered it.
             var access = answer
@@ -92,7 +92,7 @@ extension MCPBrowserSession {
         guard mayProceed(tab, capability: .control), onScreen(tab), webURL(of: tab) == previousURL else {
             return failure("Page access changed before navigation.")
         }
-        guard browser.sitePermissions.assistantAccess(for: origin) != .deny else { return failure("Assistant access is off for this website.") }
+        guard browser.sitePermissions.assistantRecord(for: origin) != .deny else { return failure("Assistant access is off for this website.") }
         observations[tab.id] = nil
         grants[tab.id] = followsDeveloperSites(grant, to: url) ? Grant(origin: origin, access: grant.access, source: grant.source) : moved(grant, to: origin)
         let immediate = tab.load(url, transition: .agent)
@@ -106,7 +106,7 @@ extension MCPBrowserSession {
     func openNewTab(_ raw: String) async -> CallTool.Result {
         if let url = webDestination(raw), let access = standingAccess(at: url) {
             guard isConnected, available(), !Task.isCancelled else { return failure("Opening the page was not approved.") }
-            guard browser.sitePermissions.assistantAccess(for: SitePermissions.origin(for: url)) != .deny else {
+            guard browser.sitePermissions.assistantRecord(for: SitePermissions.origin(for: url)) != .deny else {
                 return failure("Assistant access is off for this website.")
             }
             let tab = browser.newTab(url: url, transition: .agent)
@@ -119,7 +119,7 @@ extension MCPBrowserSession {
         guard await openConsent(clientName, url), isConnected, available(), !Task.isCancelled else {
             return failure("Opening the page was not approved.")
         }
-        guard browser.sitePermissions.assistantAccess(for: SitePermissions.origin(for: url)) != .deny else {
+        guard browser.sitePermissions.assistantRecord(for: SitePermissions.origin(for: url)) != .deny else {
             return failure("Assistant access is off for this website.")
         }
         let tab = browser.newTab(url: url, transition: .agent)
@@ -171,7 +171,7 @@ extension MCPBrowserSession {
             return nil
         }
         tab.assistantAccess.pageChanged(url: url)
-        return tab.assistantAccess.effectivePolicy == .deny ? nil : tab
+        return tab.assistantAccess.explicitPolicy == .deny ? nil : tab
     }
 
     // MARK: Standing grants and the Developer tier
@@ -242,10 +242,11 @@ extension MCPBrowserSession {
     }
 
     /// The Developer tier's answer to a consequential-action confirmation: let it through on a developer site while this
-    /// connection holds Developer on the tab, and note it. Everywhere else the confirmation stays.
+    /// connection holds Developer on the tab, and note it. Everywhere else the confirmation stays. Signing in or giving
+    /// another website access to the account always asks: the tier covers purchases, transfers, deletions, and posting.
     func developerApproval(for tab: BrowserTab) -> AgentActionConsent.DeveloperApproval {
         .init { [weak self, weak tab] label, category, host in
-            guard let self, let tab, self.permits(tab, capability: .developer) else { return false }
+            guard category != .accountAccess, let self, let tab, self.permits(tab, capability: .developer) else { return false }
             self.developerApprovals.append(self.approvalRecord(label: label, category: category, host: host))
             self.developerApprovals.removeFirst(max(0, self.developerApprovals.count - 100))
             Pipeline.log.notice("mcp: developer access let a \(category.rawValue, privacy: .public) action through without asking")

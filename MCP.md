@@ -440,8 +440,10 @@ sites change so that it no longer applies, a Developer grant from the sheet fall
 to Development (a standing grant is dropped); a page that leaves the developer sites
 ends the grant. Today the tier lets consequential actions on developer sites (purchases,
 transfers, deletions, posting and sending) go through without the confirmation sheet;
-each one is logged and kept in the connection's recent list. Everywhere else, and for
-the in-app assistant, those confirmations stay. Later features that need an explicit
+each one is logged and kept in the connection's recent list. Signing in and giving
+another website access to the account (such as Continue with Google) are not on that
+list: they ask in the Developer tier too. Everywhere else, and for the in-app
+assistant, those confirmations stay. Later features that need an explicit
 tier build on it.
 
 **Unattended runs.** Use a signed WSurf build (the keychain item needs its access
