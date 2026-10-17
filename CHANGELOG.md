@@ -7,6 +7,14 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+- WSurf has a new app icon, the Tandem mark: a violet disc with a smaller mint disc riding in its wake. It follows the system’s light, dark and tinted looks.
+- Pins, pinned folders and Favorites now belong to the profile and appear in every window of it. Pins that existing windows already had are merged into the profile once.
+- Closing the last window and then quitting brings that window back at the next launch.
+- The review of an import from Passwords shows one row per item, with the decisions that need you first, a search field, filters and actions that decide a whole group. Re-importing items that haven’t changed no longer asks about them.
+- A passkey that isn’t imported now says exactly why.
+- Tab and folder rows in the sidebar are vertically centered on their icons.
+- Glass becomes solid when Reduce Transparency or Increase Contrast is on.
+- The assistant has a default website access level, Ask, Read Only or Allow Control, for websites without a setting of their own. It now asks before clicking “Continue with Google”-style sign-in buttons.
 - Credential Manager is now the only password store. Passwords saved by earlier builds are imported once, after you review them; the old list is deleted only after that import and your confirmation. Sites excluded with “Never for This Site” in the old list are offered again.
 - Passkey requests in normal tabs show Credential Manager first, with Use Another Device or Key… to use Apple Passwords, a phone or a security key.
 - Transfers from Passwords now fit large libraries: up to 25,000 items and 100,000 credentials. A refused transfer names the limit it hit, and an item with more than 64 websites keeps the first 64.

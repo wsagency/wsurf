@@ -10,7 +10,8 @@ are retained. WSurf is not endorsed by Kavoye or Apple.
 Modified for WSurf by wsagency in 2026:
 - Product, module, project, repository, application identifiers, storage,
   localizations, build/release tooling, and documentation use WSurf branding.
-- The application and repository use a new WSurf wave mark and icon.
+- The application and repository use the new WSurf Tandem mark and icon, two
+  discs drawn for WSurf and not derived from Linen's artwork.
 - Extension tab metadata no longer creates dormant web views; popup actions
   follow WebKit's readiness lifecycle without reloading the whole extension.
 - Native ports are owned and closed by extension context identity.
