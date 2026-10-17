@@ -183,6 +183,12 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(command("Reload Page", #selector(reload), key: "r"))
         menu.addItem(command("Reload Page from Origin", #selector(hardReload), key: "r", modifiers: [.command, .shift]))
         menu.addItem(command("Stop", #selector(stopLoading), key: "."))
+        menu.addItem(command(
+            "Stop External Connections",
+            #selector(stopExternalConnections),
+            key: ".",
+            modifiers: [.command, .option]
+        ))
         menu.addItem(.separator())
         menu.addItem(command("Actual Size", #selector(actualSize), key: "0"))
         menu.addItem(command("Zoom In", #selector(zoomIn), key: "+"))
@@ -381,6 +387,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func swapPanes() {
         coordinator.swapSplitPanes()
     }
+    @objc private func stopExternalConnections() {
+        coordinator.stopExternalConnections()
+    }
+
     @objc private func toggleSplitAxis() {
         coordinator.toggleSplitAxis()
     }
@@ -472,6 +482,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             return coordinator.browser.activeTab != nil
         case #selector(stopLoading):
             return coordinator.pageCommandTab?.isLoading ?? false
+        case #selector(stopExternalConnections):
+            return coordinator.hasExternalConnections
         case #selector(splitRight), #selector(splitDown):
             guard coordinator.browser.activeTab != nil else { return false }
             return !(coordinator.browser.activeSplit?.isFull ?? false)

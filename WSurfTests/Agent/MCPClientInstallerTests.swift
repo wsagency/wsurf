@@ -271,6 +271,257 @@ struct MCPClientInstallerTests {
         #expect(try String(contentsOf: url, encoding: .utf8) == installed)
     }
 
+    // MARK: Pairing
+
+    @Test(arguments: [MCPClientKind.claudeDesktop, .claudeCode, .cursor, .omp])
+    func installerWritesTheTokenIntoEachJSONClientFormat(kind: MCPClientKind) throws {
+        let merged = try #require(try MCPClientConfiguration.addingJSON(
+            to: Data(#"{"mcpServers":{"other":{"command":"/bin/test"}}}"#.utf8), kind: kind, command: command, token: SyntheticToken.first
+        ))
+        let servers = try #require(try object(merged)["mcpServers"] as? [String: Any])
+        let entry = try #require(servers["wsurf"] as? [String: Any])
+        #expect(entry["env"] as? [String: String] == [MCPPairing.environmentName: SyntheticToken.first])
+        #expect(entry["args"] as? [String] == ["--mcp"])
+        #expect(entry["type"] as? String == (kind == .claudeCode ? "stdio" : nil))
+        #expect(servers["other"] != nil)
+        #expect(try MCPClientConfiguration.installation(in: merged, command: command) == .installed(token: SyntheticToken.first))
+    }
+
+    @Test func anEntryWithoutATokenIsInstalledButUnpaired() throws {
+        let unpaired = try #require(try MCPClientConfiguration.addingJSON(to: nil, kind: .cursor, command: command))
+        #expect(try MCPClientConfiguration.installation(in: unpaired, command: command) == .installed(token: nil))
+        #expect(try MCPClientConfiguration.installation(in: nil, command: command) == .absent)
+        #expect(try MCPClientConfiguration.installation(in: Data("{}".utf8), command: command) == .absent)
+    }
+
+    @Test func existingUnpairedEntriesAreRecognizedAndNotOverwrittenWithoutPair() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: directory.path) }
+        let url = directory.appending(path: "config.json")
+        let source = Data(#"{"mcpServers":{"wsurf":{"command":"\#(command)","args":["--mcp"],"disabled":true}}}"#.utf8)
+        try source.write(to: url)
+        let installer = MCPClientInstaller()
+        #expect(try await installer.installation(target(url), command: command) == .installed(token: nil))
+        let result = try await installer.install(target(url), command: command)
+        #expect(result.alreadyPresent)
+        #expect(try Data(contentsOf: url) == source)
+    }
+
+    @Test func pairingAnExistingEntryAddsOnlyTheTokenAndKeepsABackup() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: directory.path) }
+        let url = directory.appending(path: "config.json")
+        let source = Data(#"""
+            {"theme":"dark","mcpServers":{"other":{"command":"/bin/test"},
+             "wsurf":{"command":"\#(command)","args":["--mcp"],"disabled":true,"autoApprove":[],"env":{"A":"B"}}}}
+            """#.utf8)
+        try source.write(to: url)
+        let trust = MCPTrustStore(storage: MemoryTrustStorage())
+        let installer = MCPClientInstaller()
+
+        let paired = try await installer.pair(target(url), command: command, trustStore: trust)
+
+        #expect(try Data(contentsOf: #require(paired.backupURL)) == source)
+        guard case .installed(let token?) = try await installer.installation(target(url), command: command) else {
+            Issue.record("The entry should carry a token.")
+            return
+        }
+        #expect(trust.client(forToken: token)?.id == paired.client.id)
+        var expected = try object(source)
+        var servers = try #require(expected["mcpServers"] as? [String: Any])
+        var entry = try #require(servers["wsurf"] as? [String: Any])
+        entry["env"] = ["A": "B", MCPPairing.environmentName: token]
+        servers["wsurf"] = entry
+        expected["mcpServers"] = servers
+        #expect(NSDictionary(dictionary: try object(Data(contentsOf: url))).isEqual(to: expected))
+        #expect(paired.client.name == "Claude Desktop")
+    }
+
+    @Test func rePairRotatesTheTokenInTheConfigurationAndTheStore() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: directory.path) }
+        let url = directory.appending(path: "config.json")
+        let trust = MCPTrustStore(storage: MemoryTrustStorage())
+        let installer = MCPClientInstaller()
+        let first = try await installer.pair(target(url), command: command, trustStore: trust)
+        guard case .installed(let oldToken?) = try await installer.installation(target(url), command: command) else {
+            Issue.record("The first pairing should write a token.")
+            return
+        }
+        #expect(first.backupURL == nil)
+
+        let second = try await installer.pair(target(url), command: command, trustStore: trust)
+
+        guard case .installed(let newToken?) = try await installer.installation(target(url), command: command) else {
+            Issue.record("The second pairing should write a token.")
+            return
+        }
+        #expect(newToken != oldToken)
+        #expect(second.client.id == first.client.id)
+        #expect(trust.clients.count == 1)
+        #expect(trust.client(forToken: oldToken) == nil)
+        #expect(trust.client(forToken: newToken)?.id == first.client.id)
+        #expect(try Data(contentsOf: url).range(of: Data(oldToken.utf8)) == nil)
+    }
+
+    @Test func aRevokedOrUnknownTokenInAnEntryPairsAsANewClient() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: directory.path) }
+        let url = directory.appending(path: "config.json")
+        let trust = MCPTrustStore(storage: MemoryTrustStorage())
+        let installer = MCPClientInstaller()
+        let first = try await installer.pair(target(url), command: command, trustStore: trust)
+        try trust.revoke(first.client.id)
+        let second = try await installer.pair(target(url), command: command, trustStore: trust)
+        #expect(second.client.id != first.client.id)
+        #expect(trust.clients.map(\.id) == [second.client.id])
+    }
+
+    @Test func trustStoreUnavailableDisablesPairingAndSaysSo() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: directory.path) }
+        let url = directory.appending(path: "config.json")
+        let source = Data("{ \"theme\": \"dark\" }\n".utf8)
+        try source.write(to: url)
+        let trust = MCPTrustStore(storage: nil)
+        await #expect(throws: MCPClientSetupError.pairingUnavailable) {
+            try await MCPClientInstaller().pair(target(url), command: command, trustStore: trust)
+        }
+        #expect(try Data(contentsOf: url) == source)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path) == ["config.json"])
+        let message = try #require(MCPClientSetupError.pairingUnavailable.errorDescription)
+        #expect(message.contains("Pairing isn’t available"))
+        // Setup without pairing still works, as it did before.
+        let result = try await MCPClientInstaller().install(target(url), command: command)
+        #expect(!result.alreadyPresent)
+        #expect(try MCPClientConfiguration.installation(in: Data(contentsOf: url), command: command) == .installed(token: nil))
+    }
+
+    @Test func aFailedPairingSaveIsReportedAfterTheConfigurationWasWritten() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: directory.path) }
+        let url = directory.appending(path: "config.json")
+        let storage = MemoryTrustStorage()
+        let trust = MCPTrustStore(storage: storage)
+        trust.loadIfNeeded()
+        storage.refuseWrites()
+        await #expect(throws: MCPClientSetupError.pairingFailed) {
+            try await MCPClientInstaller().pair(target(url), command: command, trustStore: trust)
+        }
+        #expect(trust.clients.isEmpty)
+        // The entry exists with a token no record knows, which is the same as unpaired.
+        guard case .installed(let token?) = try await MCPClientInstaller().installation(target(url), command: command) else {
+            Issue.record("The entry should exist.")
+            return
+        }
+        #expect(trust.client(forToken: token) == nil)
+    }
+
+    @Test(arguments: [#"{"mcpServers":{"wsurf":{"command":"/other","args":["--mcp"]}}}"#,
+                      #"{"mcpServers":{"wsurf":{"url":"https://example.test"}}}"#,
+                      #"{"mcpServers":{"wsurf":null}}"#, ])
+    func pairingNeverReplacesAConflictingEntry(source: String) {
+        #expect(throws: MCPClientSetupError.conflictingServer) {
+            try MCPClientConfiguration.addingJSON(to: Data(source.utf8), kind: .claudeDesktop, command: command, token: SyntheticToken.first)
+        }
+    }
+
+    @Test func pairingNeverReplacesAnEnvironmentThatIsNotAnObject() throws {
+        let source = Data(#"{"mcpServers":{"wsurf":{"command":"\#(command)","args":["--mcp"],"env":["A"]}}}"#.utf8)
+        #expect(throws: MCPClientSetupError.conflictingServer) {
+            try MCPClientConfiguration.addingJSON(to: source, kind: .cursor, command: command, token: SyntheticToken.first)
+        }
+    }
+
+    @Test func settingTheCodexTokenChangesOnlyThatLine() {
+        let token = MCPPairing.environmentName
+        let assignment = "\(token) = \"\(SyntheticToken.first)\""
+        let bare = "# keep\nmodel = \"x\"\n[mcp_servers.wsurf]\ncommand = \"c\"\n"
+        #expect(MCPCodexConfiguration.settingToken(SyntheticToken.first, in: bare)
+            == bare + "\n[mcp_servers.wsurf.env]\n\(assignment)\n")
+        #expect(MCPCodexConfiguration.settingToken(SyntheticToken.first, in: "model = \"x\"")
+            == "model = \"x\"\n\n[mcp_servers.wsurf.env]\n\(assignment)\n")
+        let existing = "[mcp_servers.wsurf.env]\nOTHER = \"1\"\n\(token) = \"old\"\n[mcp_servers.next]\ncommand = \"n\"\n"
+        #expect(MCPCodexConfiguration.settingToken(SyntheticToken.first, in: existing)
+            == "[mcp_servers.wsurf.env]\nOTHER = \"1\"\n\(assignment)\n[mcp_servers.next]\ncommand = \"n\"\n")
+        let withoutKey = "[mcp_servers.wsurf.env]\nOTHER = \"1\"\n"
+        #expect(MCPCodexConfiguration.settingToken(SyntheticToken.first, in: withoutKey)
+            == "[mcp_servers.wsurf.env]\n\(assignment)\nOTHER = \"1\"\n")
+        let lookalike = "[mcp_servers.wsurf.env]\n\(token)_OTHER = \"1\"\n"
+        #expect(MCPCodexConfiguration.settingToken(SyntheticToken.first, in: lookalike)
+            == "[mcp_servers.wsurf.env]\n\(assignment)\n\(token)_OTHER = \"1\"\n")
+    }
+
+    @Test(.enabled(if: installedCodex != nil))
+    func installerWritesTheTokenIntoTheCodexConfiguration() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: directory.path) }
+        let url = directory.appending(path: "config.toml")
+        let original = Data("# Keep this comment\nmodel = \"test\"\n[mcp_servers.\"other.server\"]\ncommand = \"/bin/true\"\nenabled = false\n".utf8)
+        try original.write(to: url)
+        let destination = MCPClientTarget(kind: .codex, configurationURL: url, codexExecutable: Self.installedCodex, isDetected: true)
+        let installer = MCPClientInstaller()
+
+        let result = try await installer.install(destination, command: command, token: SyntheticToken.first)
+
+        let installed = try String(contentsOf: url, encoding: .utf8)
+        #expect(installed.contains("# Keep this comment"))
+        #expect(installed.contains("[mcp_servers.wsurf.env]"))
+        #expect(installed.contains(#"WSURF_MCP_TOKEN = "\#(SyntheticToken.first)""#))
+        #expect(try await installer.installation(destination, command: command) == .installed(token: SyntheticToken.first))
+        #expect(try Data(contentsOf: #require(result.backupURL)) == original)
+    }
+
+    @Test(.enabled(if: installedCodex != nil))
+    func pairingAnExistingCodexEntryKeepsItsOtherSettingsAndRotatesOnRePair() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(atPath: directory.path) }
+        let url = directory.appending(path: "config.toml")
+        let original = Data("""
+            # Keep this comment
+            model = "test"
+
+            [mcp_servers.wsurf]
+            command = "\(command)"
+            args = ["--mcp"]
+            enabled = false
+            tool_timeout_sec = 77
+
+            [mcp_servers.wsurf.env]
+            OTHER = "1"
+            """.utf8)
+        try original.write(to: url)
+        let destination = MCPClientTarget(kind: .codex, configurationURL: url, codexExecutable: Self.installedCodex, isDetected: true)
+        let installer = MCPClientInstaller()
+        let trust = MCPTrustStore(storage: MemoryTrustStorage())
+        #expect(try await installer.installation(destination, command: command) == .installed(token: nil))
+        #expect(try await installer.install(destination, command: command).alreadyPresent)
+        #expect(try Data(contentsOf: url) == original)
+
+        let first = try await installer.pair(destination, command: command, trustStore: trust)
+
+        var text = try String(contentsOf: url, encoding: .utf8)
+        #expect(text.contains("# Keep this comment"))
+        #expect(text.contains("enabled = false"))
+        #expect(text.contains("tool_timeout_sec = 77"))
+        #expect(text.contains(#"OTHER = "1""#))
+        #expect(try Data(contentsOf: #require(first.backupURL)) == original)
+        guard case .installed(let oldToken?) = try await installer.installation(destination, command: command) else {
+            Issue.record("The entry should carry a token.")
+            return
+        }
+        #expect(trust.client(forToken: oldToken)?.id == first.client.id)
+
+        let second = try await installer.pair(destination, command: command, trustStore: trust)
+
+        text = try String(contentsOf: url, encoding: .utf8)
+        #expect(!text.contains(oldToken))
+        #expect(text.contains("enabled = false"))
+        #expect(text.contains(#"OTHER = "1""#))
+        #expect(second.client.id == first.client.id)
+        #expect(trust.client(forToken: oldToken) == nil)
+    }
+
     private func object(_ data: Data) throws -> [String: Any] {
         let decoded = try JSONSerialization.jsonObject(with: data)
         return try #require(decoded as? [String: Any])

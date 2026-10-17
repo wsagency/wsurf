@@ -10,6 +10,15 @@ enum PageDriver {
     // MARK: - The page-side runtime
 
     static func scripted(_ body: String) -> String {
+        "(() => {\n" + prelude + body + "\n})()"
+    }
+
+    /// `scripted` for `callAsyncJavaScript`, whose body is already a function body that may `await`.
+    static func scriptedAsync(_ body: String) -> String {
+        prelude + body
+    }
+
+    private static var prelude: String {
         let frameCheck: String
         if let frame = selectedFrame {
             if frame.frame.webKit != nil, let id = jsonString(frame.frame.documentID) {
@@ -22,7 +31,7 @@ enum PageDriver {
         } else {
             frameCheck = ""
         }
-        return "(() => {\n" + PageAutomationGuard.scriptCheck + PageRuntime.script + "\n" + frameCheck + body + "\n})()"
+        return PageAutomationGuard.scriptCheck + PageRuntime.script + "\n" + frameCheck
     }
 
     // MARK: - Reading
@@ -63,8 +72,10 @@ enum PageDriver {
             }
         }
         guard let query = jsonString(lookingFor), let selector = jsonString(scope) else { return "Invalid page query." }
+        // The in-app assistant is shown what the page lists. A connection keeps refs of earlier observations, so it
+        // acknowledges only the controls that fit the reply.
         let script = scripted(
-            "return JSON.stringify(R.observe(\(query), \(textLength), \(count), \(max(0, textOffset)), \(max(0, controlOffset)), \(selector), \(viewportOnly)));"
+            "return JSON.stringify(R.observe(\(query), \(textLength), \(count), \(max(0, textOffset)), \(max(0, controlOffset)), \(selector), \(viewportOnly), \(!accumulatesRefs)));"
         )
         guard let object = await evaluateJSON(script, in: webView) else {
             return "The page did not respond. Use readPage after it finishes loading."
@@ -78,6 +89,7 @@ enum PageDriver {
         let text = PageOutputBudget.prefix(object["text"] as? String ?? "", fitting: min(textLength, available / 2))
         var result = "PAGE TEXT:\n\(text)\n\nCONTROLS:\n"
         var refs = Set<Int>()
+        var seen: [(ref: Int, hash: Int)] = []
         for control in controls {
             var row = renderControl(control)
             guard !row.isEmpty, let ref = control["r"] as? Int else { continue }
@@ -90,7 +102,11 @@ enum PageDriver {
             guard PageOutputBudget.cost(result + row + "\n") <= available else { break }
             result += row + "\n"
             refs.insert(ref)
+            if let hash = control["sg"] as? Int {
+                seen.append((ref, hash))
+            }
         }
+        await acknowledge(seen, in: webView)
         let totalText = object["textTotal"] as? Int ?? 0
         let start = object["textStart"] as? Int ?? 0
         let nextText = start + text.utf16.count
@@ -111,8 +127,14 @@ enum PageDriver {
         if nextControl < totalControls {
             result += "\nMore controls: readPage controlOffset=\(nextControl) (\(totalControls) total); keep the same query and scope."
         }
-        observations.setObject(PageObservation(id: id, documentID: documentID, url: url, refs: refs), forKey: webView)
+        observations.setObject(PageObservation(id: id, documentID: documentID, url: url, refs: delivered(refs, in: documentID, of: webView)), forKey: webView)
         return result
+    }
+
+    /// `refs` plus, for a connection that keeps refs across observations, those already delivered for the same document.
+    static func delivered(_ refs: Set<Int>, in documentID: String, of webView: BrowserPage) -> Set<Int> {
+        guard accumulatesRefs, let prior = observation(in: webView), prior.documentID == documentID else { return refs }
+        return prior.refs.union(refs)
     }
 
     nonisolated struct ListedLink: Equatable, Sendable {
@@ -152,7 +174,7 @@ enum PageDriver {
         return "CONTROLS:\n" + lines.joined(separator: "\n")
     }
 
-    private static func renderControl(_ control: [String: Any]) -> String {
+    static func renderControl(_ control: [String: Any]) -> String {
         guard let ref = control["r"] as? Int, let kind = control["k"] as? String else { return "" }
         let label = control["l"] as? String ?? ""
         var line = "[\(ref)] \(kind) \"\(label)\""
@@ -295,23 +317,34 @@ enum PageDriver {
                   el.click();
                   return JSON.stringify({ ok: true });
                 """)
-            guard let object = await evaluateJSON(script, in: webView) else { return staleMessage }
+            guard let object = await evaluateAction(script, fallback: ["ok": true], in: webView) else { return staleMessage }
             if let error = object["error"] as? String { return error }
             guard object["ok"] as? Bool == true else { return staleMessage }
             return "Clicked “\(found.label)”. " + (refreshControls ? await settleAndSnippet(webView) : "")
         }
     }
 
+    /// - Parameters:
+    ///   - allowSensitive: Types into a password, code or card field instead of refusing it. Only the Developer tier of an MCP
+    ///     connection sets it, for a test secret that connection registered with its `MCPSecretScrubber`. The page is not
+    ///     focused (so autofill never offers the vault), the field's frame must be the page itself, the value is not kept in
+    ///     the page-side runtime, and the reply says a secret was typed without repeating it.
+    ///   - secretWritten: Told what the secret came to once it was written: what the field holds now (a page may reformat a card
+    ///     number), and whether the field is a password, code or card field. The caller hides the stored form too, and only
+    ///     treats the value as a secret in the user's own records when the field really is one.
     static func type(
         text: String,
         intoField fieldLabel: String,
         ref: Int,
         submit: Bool,
+        allowSensitive: Bool = false,
+        secretWritten: ((SecretWrite) -> Void)? = nil,
         in webView: BrowserPage,
         announced: Bool = false,
         refreshControls: Bool = true
     ) async -> String {
         guard let encodedText = jsonString(text) else { return "Could not encode the input." }
+        guard !allowSensitive || selectedFrame == nil else { return Self.secretInFrameMessage }
         let resolved = await resolve(ref: ref, label: fieldLabel, kinds: #"["field"]"#, in: webView)
         switch resolved {
         case .failure(let message):
@@ -337,9 +370,7 @@ enum PageDriver {
                 """
                   const el = window.__wsurfRefs[\(found.ref) - 1];
                   if (!el || !el.isConnected) { return JSON.stringify({ stale: true }); }
-                  if (R.isSensitiveField(el)) {
-                    return JSON.stringify({ refused: true });
-                  }
+                  \(allowSensitive ? Self.secretFieldGuard : "if (R.isSensitiveField(el)) { return JSON.stringify({ refused: true }); }")
                   if (R.disabled(el) || el.readOnly || el.getAttribute('aria-readonly') === 'true') { return JSON.stringify({ unavailable: true }); }
                   if (!['INPUT','TEXTAREA'].includes(el.tagName) && !el.isContentEditable) return JSON.stringify({ error: 'This control is not directly editable. Use click or keyboard controls.' });
                   if (el.tagName === 'INPUT' && ['file','hidden','checkbox','radio','button','submit'].includes(el.type)) {
@@ -370,14 +401,15 @@ enum PageDriver {
                   const error = R.actionable(el);
                   if (error) return JSON.stringify({ error });
                   el.scrollIntoView({ block: 'center' });
-                  if (\(refreshControls)) el.focus();
-                  R.expectValue(el, value);
+                  if (\(refreshControls && !allowSensitive)) el.focus();
+                  \(allowSensitive ? "" : "R.expectValue(el, value);")
                   R.setValue(el, value);
-                  const retained = R.valueState(\(found.ref)) === 'matched';
+                  \(allowSensitive ? "const stored = el.isContentEditable ? el.textContent : el.value;" : "")
+                  const retained = \(allowSensitive ? "stored === value" : "R.valueState(\(found.ref)) === 'matched'");
                   if (\(submit ? "true" : "false") && retained) { R.pressEnter(el); }
-                  return JSON.stringify({ ok: true, submitted: \(submit ? "true" : "false") && retained });
+                  return JSON.stringify({ ok: true, retained, \(allowSensitive ? "stored, sensitive," : "") submitted: \(submit ? "true" : "false") && retained });
                 """)
-            guard let object = await evaluateJSON(script, in: webView) else {
+            guard let object = await evaluateAction(script, fallback: typeFallback(submit: submit), in: webView) else {
                 return "The page didn't respond to typing."
             }
             if let error = object["error"] as? String { return error }
@@ -393,12 +425,49 @@ enum PageDriver {
             let submitted = object["submitted"] as? Bool == true
             let status = submit && !submitted
                 ? "The field did not retain the requested value; submission was not attempted. Inspect the current page before retrying."
-                : "Typed into “\(found.label)”\(submitted ? " and requested submission" : "")."
+                : "Typed \(allowSensitive ? "a secret " : "")into “\(found.label)”\(submitted ? " and requested submission" : "")."
+            // A sensitive field cannot be read back through the runtime, so a secret was checked by the script that typed it.
+            if allowSensitive, let stored = object["stored"] as? String {
+                secretWritten?(
+                    SecretWrite(
+                        typed: text, stored: stored, isSensitiveField: object["sensitive"] as? Bool == true,
+                        retained: object["retained"] as? Bool == true))
+            }
+            if allowSensitive, object["retained"] as? Bool != true {
+                return "The page did not retain the requested value. Inspect validation messages before retrying."
+            }
             return await finishValueAction(
                 status: status, ref: found.ref, documentID: observation(in: webView)?.documentID,
-                submissionRequested: submitted, refreshControls: refreshControls, in: webView)
+                submissionRequested: submitted, knownRetained: allowSensitive, refreshControls: refreshControls, in: webView)
         }
     }
+
+    /// What stands for the script's answer when typing (with `submit`) left the page before the answer came back. The field kept
+    /// the value, since Enter was pressed only for a retained one, so a secret entry must not be reported as not retained.
+    static func typeFallback(submit: Bool) -> [String: Any] {
+        ["ok": true, "retained": true, "submitted": submit]
+    }
+
+    /// What a secret entry came to once the page had it.
+    struct SecretWrite {
+        let typed: String
+        /// What the field holds now. It differs from `typed` when the page reformatted it.
+        let stored: String
+        /// Whether the page driver treats the field as sensitive (password, one-time code, card, account number).
+        let isSensitiveField: Bool
+        /// Whether the field kept exactly what was typed.
+        let retained: Bool
+    }
+
+    /// A secret goes into the page's own document only: a frame (or a selected frame) could belong to another origin than the
+    /// developer site the grant covers.
+    private static let secretInFrameMessage = "A secret can only be typed into the page itself, not into a frame."
+    private static let secretFieldGuard = """
+        if (el.ownerDocument !== document) {
+          return JSON.stringify({ error: '\(secretInFrameMessage)' });
+        }
+        const sensitive = R.isSensitiveField(el);
+        """
 
     static func selectOption(
         _ option: String,
@@ -490,8 +559,11 @@ enum PageDriver {
             """)
         guard let result = await evaluateJSON(script, in: webView) else { return staleMessage }
         if let error = result["error"] as? String { return error }
-        await PageSettle.untilQuiet(webView, ceiling: .milliseconds(900))
+        await PageSettle.untilQuiet(webView, ceiling: min(.milliseconds(900), PageSettle.limits.quietCeiling))
         let status = result["moved"] as? Bool == true ? "Scrolled \(direction)." : "Already at the \(direction) scroll boundary."
+        if feedbackMode == .delta {
+            return status
+        }
         return status + "\n" + (await PageAutomationGuard.withCurrentDocument(in: webView) {
             await snapshot(webView, viewportOnly: ref == 0)
         })
@@ -619,6 +691,7 @@ enum PageDriver {
 
     static func settleAndSnippet(_ webView: BrowserPage, refreshControls: Bool = true) async -> String {
         await PageSettle.afterInteraction(webView)
+        if feedbackMode == .delta { return "" }
         guard refreshControls else { return "The page now shows: \(await snippet(of: webView))" }
         return await PageAutomationGuard.withCurrentDocument(in: webView) {
             await snapshot(webView)

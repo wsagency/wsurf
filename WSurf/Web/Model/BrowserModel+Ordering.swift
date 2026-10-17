@@ -292,6 +292,7 @@ extension BrowserModel {
         storedTree = reconciledTree().removing([.tab(tab.id)])
         sidebarDidChange()
         lastVisitID[tab.id] = nil
+        openerByTab[tab.id] = nil
         recentlyActive.removeAll { $0 == tab.id }
         onTabClosed?(tab)
         scheduleSave()

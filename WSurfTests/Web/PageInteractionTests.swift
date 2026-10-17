@@ -761,6 +761,110 @@ extension PageInteractionTests {
         }
     }
 
+    /// Holds the startup-entry reset open from a test: Chromium has answered it, the page has not yet applied the answer.
+    @MainActor
+    private final class StartupResetGate {
+        private(set) var reached = false
+        private let stream: AsyncStream<Void>
+        private let release: AsyncStream<Void>.Continuation
+
+        init() {
+            (stream, release) = AsyncStream.makeStream(of: Void.self)
+        }
+
+        func wait() async {
+            reached = true
+            for await _ in stream {}
+        }
+
+        func open() {
+            release.finish()
+        }
+    }
+
+    private func freshChromiumTab(
+        resetCommand: @escaping @MainActor (ChromiumPage) async throws -> Void,
+        body: (BrowserPage, URL, URL) async throws -> Void
+    ) async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/a": .html("<h1>Page A</h1>"), "/b": .html("<h1>Page B</h1>")])
+        defer { withExtendedLifetime(server) {} }
+        let first = try server.url("/a")
+        let second = try server.url("/b")
+        try await withPage(
+            engine: .chromium, url: first,
+            configure: { view in
+                view.chromium?.startupResetCommand = { [weak chromium = view.chromium] in
+                    if let chromium {
+                        try await resetCommand(chromium)
+                    }
+                }
+            }
+        ) { view in
+            try await body(view, first, second)
+        }
+    }
+
+    /// The window the report describes: Chromium counts the startup page until its history reset has been applied, and may
+    /// report that on any loading change meanwhile.
+    @Test func goBackOnAFreshChromiumTabNeverReachesTheStartupPage() async throws {
+        let gate = StartupResetGate()
+        defer { gate.open() }
+        try await freshChromiumTab(resetCommand: { chromium in
+            _ = try await chromium.command("Page.resetNavigationHistory")
+            await gate.wait()
+        }) { view, first, second in
+            let chromium = try #require(view.chromium)
+            try #require(await waitUntil { gate.reached })
+            chromium.didChangeLoading(false, canGoBack: true, canGoForward: false)
+            #expect(!view.canGoBack, "Back must not see the startup page while the reset is pending")
+            let none = await PageDriver.goBack(in: view)
+            #expect(none == "There is no page to go back to.", "\(none)")
+            #expect(view.url == first, "url \(String(describing: view.url))")
+            gate.open()
+            #expect(await waitUntil {
+                let list = view.backForwardList
+                return list.currentItem?.url == first && list.backList.isEmpty
+            }, "\(view.backForwardList.backList.map(\.url))")
+            #expect(!view.canGoBack)
+            // Once the reset has landed, Back is driven by real history again.
+            view.load(URLRequest(url: second))
+            try #require(await waitUntil { view.url == second && !view.isLoading && view.canGoBack })
+            let back = await PageDriver.goBack(in: view)
+            #expect(back.hasPrefix("Went back."), "\(back)")
+            #expect(view.url == first, "url \(String(describing: view.url))")
+        }
+    }
+
+    /// Chromium refuses the reset ("Not attached to an active page") when it arrives while the first commit is still swapping
+    /// renderers. The page asks again, and Back stays closed until a reset has landed.
+    @Test func aRefusedStartupResetIsRetriedUntilTheStartupPageIsGone() async throws {
+        let gate = StartupResetGate()
+        defer { gate.open() }
+        var attempts = 0
+        try await freshChromiumTab(resetCommand: { chromium in
+            attempts += 1
+            if attempts < 3 {
+                throw ChromiumError.protocolFailure("Not attached to an active page")
+            }
+            _ = try await chromium.command("Page.resetNavigationHistory")
+            await gate.wait()
+        }) { view, first, second in
+            let chromium = try #require(view.chromium)
+            try #require(await waitUntil { gate.reached })
+            #expect(attempts == 3)
+            chromium.didChangeLoading(false, canGoBack: true, canGoForward: false)
+            #expect(!view.canGoBack, "Back stays closed while the reset is being retried")
+            gate.open()
+            #expect(await waitUntil {
+                let list = view.backForwardList
+                return list.currentItem?.url == first && list.backList.isEmpty
+            }, "\(view.backForwardList.backList.map(\.url))")
+            #expect(!view.canGoBack)
+            view.load(URLRequest(url: second))
+            try #require(await waitUntil { view.url == second && !view.isLoading && view.canGoBack })
+        }
+    }
+
     @Test(arguments: BrowserEngine.allCases)
     func goBackHandlesSameDocumentHistory(engine: BrowserEngine) async throws {
         let server = try await HTTPFixtureServer.start(routes: ["/": .html("<h1>Same doc</h1>")])

@@ -49,16 +49,17 @@ extension PageDriver {
         return "Hovered. Verify the returned page.\n" + (await settleAndSnippet(view))
     }
 
-    static func pressKey(_ key: String, ref: Int, in view: BrowserPage) async -> String {
-        let keys: [String: (UInt16, String)] = [
-            "Enter": (36, "\r"), "Tab": (48, "\t"), "Escape": (53, "\u{1b}"), "Space": (49, " "),
-            "ArrowLeft": (123, "\u{f702}"), "ArrowRight": (124, "\u{f703}"),
-            "ArrowDown": (125, "\u{f701}"), "ArrowUp": (126, "\u{f700}"),
-            "Home": (115, "\u{f729}"), "End": (119, "\u{f72b}"),
-            "Backspace": (51, "\u{7f}"), "Delete": (117, "\u{f728}"),
-        ]
-        guard let (code, characters) = keys[key] else {
-            return "Use Enter, Tab, Escape, Space, ArrowLeft, ArrowRight, ArrowDown, ArrowUp, Home, End, Backspace, or Delete."
+    /// Sends a key, or with `modifiers` a chord, to a control of a visible tab. It goes to the page's own responder through
+    /// `BrowserPage.sendKeyEvent`, never through the application, a window or a menu, and only in the shapes `PageKeyChord`
+    /// builds. A nil `modifiers` keeps the assistant's original contract of twelve named keys without modifiers.
+    static func pressKey(_ key: String, ref: Int, modifiers: String? = nil, in view: BrowserPage) async -> String {
+        let extended = modifiers != nil
+        let chord: PageKeyChord
+        switch PageKeyChord.parse(key: key, modifiers: modifiers ?? "", extended: extended) {
+        case .success(let parsed):
+            chord = parsed
+        case .failure(let refusal):
+            return refusal.message
         }
         guard view.window != nil else { return "Keyboard input requires a visible tab. Switch to the page first." }
         let resolved = await resolve(ref: ref, label: "", kinds: #"["field","button","link","checkbox","radio","combobox","select","scrollarea"]"#, in: view)
@@ -69,7 +70,7 @@ extension PageDriver {
         case .failure(let message):
             return message
         }
-        if key == "Enter" || key == "Space", let category = SensitiveAction.category(of: found.label, context: found.context) {
+        if chord.activates, let category = SensitiveAction.category(of: found.label, context: found.context) {
             guard
                 await AgentActionConsent.permit(
                     label: found.label, category: category, host: (selectedFrame?.url ?? view.url)?.host(),
@@ -86,6 +87,9 @@ extension PageDriver {
                 if (R.isSensitiveField(el)) return JSON.stringify({ error: 'The user must interact with sensitive fields.' });
                 const error = R.actionable(el);
                 if (error) return JSON.stringify({ error });
+                const textField = el.isContentEditable || el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT'
+                  && !['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes((el.type || 'text').toLowerCase()));
+                if (\(chord.needsTextField) && !textField) return JSON.stringify({ error: '\(chord.name) is sent only to a text field.' });
                 el.focus();
                 return JSON.stringify({ focused: el.ownerDocument.activeElement === el || el.getRootNode().activeElement === el });
                 """), in: view)
@@ -93,17 +97,37 @@ extension PageDriver {
         guard ready?["focused"] as? Bool == true, window.makeFirstResponder(view),
             await validateObservation(in: view, ref: ref)
         else { return "The control could not receive keyboard focus." }
-        for type in [NSEvent.EventType.keyDown, .keyUp] {
-            guard PageAutomationGuard.allowsExecution else { return staleMessage }
-            guard
-                let event = NSEvent.keyEvent(
-                    with: type, location: .zero, modifierFlags: [],
-                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                    context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
-            else { return "Could not create keyboard input." }
-            guard view.sendKeyEvent(event) else { return "The key was not delivered to the page." }
+        let documentURL = view.url
+        do {
+            // The page's own trusted keydown is the receipt: it proves what arrived, not only that a responder was called.
+            if extended {
+                try await installComputerReceipt("keydown", in: view)
+            }
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                guard PageAutomationGuard.allowsExecution else { return staleMessage }
+                guard
+                    let event = NSEvent.keyEvent(
+                        with: type, location: .zero, modifierFlags: chord.eventFlags,
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                        context: nil, characters: chord.characters, charactersIgnoringModifiers: chord.characters, isARepeat: false,
+                        keyCode: chord.keyCode)
+                else { return "Could not create keyboard input." }
+                guard view.sendKeyEvent(event) else { return "The key was not delivered to the page." }
+            }
+            if chord.selectsAll {
+                try await computerSelectAll(frame: nil, in: view, window: window)
+            }
+            if extended {
+                try await awaitComputerReceipt(in: view, documentURL: documentURL)
+            }
+        } catch PageComputerFailure.unverified {
+            return "Sent \(chord.name), but the page did not confirm receiving it. Check the resulting page.\n" + (await settleAndSnippet(view))
+        } catch PageComputerFailure.sensitive {
+            return "The page moved keyboard focus to a sensitive field, so Select All was not applied."
+        } catch {
+            _ = await evaluateJSON(scripted("window.__wsurfComputerAck?.dispose(); return JSON.stringify({ ok: true });"), in: view)
+            return PageAutomationGuard.allowsExecution ? "The key could not be delivered to the page." : staleMessage
         }
-        return "Sent \(key). Check the resulting page.\n" + (await settleAndSnippet(view))
+        return "Sent \(chord.name). Check the resulting page.\n" + (await settleAndSnippet(view))
     }
-
 }

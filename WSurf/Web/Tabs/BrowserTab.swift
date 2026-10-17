@@ -197,6 +197,7 @@ final class BrowserTab: Identifiable {
         didSet {
             loadedEngine = liveView?.engine
             releaseInvalidDevelopment()
+            dialogs.cancelAll()
         }
     }
     private(set) var loadedEngine: BrowserEngine?
@@ -274,6 +275,7 @@ final class BrowserTab: Identifiable {
     let permissions: TabPermissionCenter
     let assistantAccess: TabAssistantAccessCenter
     let find = FindSession()
+    let dialogs = PageDialogQueue()
 
     let isPrivate: Bool
 
@@ -983,11 +985,5 @@ extension BrowserTab {
             guard let self, !isClosed, let icon, liveView === view, view.url?.host()?.lowercased() == host else { return }
             favicon = icon
         }
-    }
-}
-
-extension BrowserTab: Equatable {
-    nonisolated static func == (lhs: BrowserTab, rhs: BrowserTab) -> Bool {
-        lhs === rhs
     }
 }

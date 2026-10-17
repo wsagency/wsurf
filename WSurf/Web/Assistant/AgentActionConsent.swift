@@ -17,6 +17,13 @@ enum AgentActionConsent {
     @TaskLocal static var scopedPolicy: AgentActionPolicy?
     @TaskLocal static var scopedWindow: ExtensionWindowAdapter?
     @TaskLocal static var externalClientName: String?
+    /// Set only while an MCP connection runs a call in the Developer tier. It decides whether a consequential action on the
+    /// tab being driven goes through without asking.
+    @TaskLocal static var developerApproval: DeveloperApproval?
+
+    struct DeveloperApproval: @unchecked Sendable {
+        let approves: @MainActor (String, SensitiveAction.Category, String?) -> Bool
+    }
 
     struct Stub: @unchecked Sendable {
         let decide: @MainActor (String, SensitiveAction.Category, String?, NSWindow?) async -> Decision
@@ -35,6 +42,10 @@ enum AgentActionConsent {
     ) async -> Bool {
         guard !Task.isCancelled, hasCurrentWindow, let policy = scopedPolicy ?? policy else { return false }
         if policy.isAlwaysAllowed(category, host: host) {
+            return true
+        }
+        // Developer tier: the session checks its own grant, the developer site and the Developer profile, and records it.
+        if let developerApproval, developerApproval.approves(label, category, host) {
             return true
         }
 
@@ -57,6 +68,67 @@ enum AgentActionConsent {
         case .decline:
             return false
         }
+    }
+
+    /// Asks the user whether an external connection may answer a page's prompt with `reply`. The reply goes into the page
+    /// under the user's name, and a prompt can ask for anything, so the connection never answers one unasked. This is its own
+    /// question: a stored "always allow" for a category and site never answers it, and a `consequence` the wording names is
+    /// shown here in addition, never in place of it. Only "Allow Once" is offered.
+    static func permitPromptReply(
+        _ reply: String, to prompt: String, host: String?, consequence: SensitiveAction.Category? = nil
+    ) async -> Bool {
+        guard !Task.isCancelled, hasCurrentWindow else { return false }
+        let window = scopedWindow?.nativeWindow
+        let decision: Decision
+        if let stub = decisionForTesting {
+            let label = "“\(PageDialogText.excerpt(prompt, limit: 120))” → “\(PageDialogText.visible(reply))”"
+            decision = await stub.decide(label, consequence ?? .publication, host, window)
+        } else {
+            guard let window else { return false }
+            decision = await askPromptReply(reply, to: prompt, host: host, consequence: consequence, in: window)
+        }
+        guard !Task.isCancelled, hasCurrentWindow, scopedWindow?.nativeWindow === window else { return false }
+        return decision == .allowOnce
+    }
+
+    /// What the sheet says. The page's message is cut first and the cut is marked; the reply is shown whole, with spaces, line
+    /// breaks and invisible characters drawn, so it cannot be padded out of sight. A reply over `maxReplyScalars` never gets here.
+    static func promptReplyText(reply: String, to prompt: String, consequence: SensitiveAction.Category?) -> String {
+        let question = PageDialogText.excerpt(prompt)
+        let answer = PageDialogText.visible(reply)
+        var text = String(localized: """
+            The page asks: “\(question)”
+
+            The answer would be: “\(answer)”
+            """)
+        if let consequence {
+            text += "\n\n" + String(localized: "This answer \(String(localized: consequence.consequence)) and usually can’t be undone.")
+        }
+        return text + "\n\n" + String(localized: "Webpages can carry hidden instructions aimed at connected apps. Allow this only if it’s what you asked for.")
+    }
+
+    private static func askPromptReply(
+        _ reply: String, to prompt: String, host: String?, consequence: SensitiveAction.Category?, in window: NSWindow
+    ) async -> Decision {
+        guard !isRunningTests, !Task.isCancelled else { return .decline }
+        let client = externalClientName ?? String(localized: "An external connection")
+        let site = AgentActionPolicy.normalizedHost(host)
+        let alert = NSAlert()
+        alert.messageText = site.map { String(localized: "Let “\(client)” answer a prompt on \($0)?") }
+            ?? String(localized: "Let “\(client)” answer a prompt?")
+        alert.informativeText = promptReplyText(reply: reply, to: prompt, consequence: consequence)
+        alert.addButton(withTitle: String(localized: "Allow Once"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        alert.buttons.last?.keyEquivalent = "\u{1b}"
+        let response = await withTaskCancellationHandler {
+            guard !Task.isCancelled else { return NSApplication.ModalResponse.abort }
+            return await withCheckedContinuation { continuation in
+                alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
+            }
+        } onCancel: {
+            Task { @MainActor in window.endSheet(alert.window, returnCode: .abort) }
+        }
+        return !Task.isCancelled && response == .alertFirstButtonReturn ? .allowOnce : .decline
     }
 
     private static var hasCurrentWindow: Bool {

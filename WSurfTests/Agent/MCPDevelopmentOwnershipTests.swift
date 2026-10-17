@@ -13,13 +13,27 @@ import WebKit
 @MainActor
 @Suite(.boundedWebViews)
 struct MCPDevelopmentOwnershipTests {
-    private static let page = "<!doctype html><title>Dev</title><p id=a class=x>Hello</p><button class=x>Go</button>"
+    static let page = "<!doctype html><title>Dev</title><p id=a class=x>Hello</p><button class=x>Go</button>"
+
+    /// Chromium applies a resize (a development viewport, a device profile) to the page only while its window is on screen
+    /// and brought forward: in a window ordered to the back of an app that is not active the native view resizes and the page
+    /// keeps its size. Those cases run in the foreground lane (`Tools/run-foreground-tests.sh`), where this is true.
+    nonisolated static let foreground = ProcessInfo.processInfo.environment["WSURF_COMPUTER_FOREGROUND_TEST"] == "1"
+    nonisolated static let viewportEngines: [BrowserEngine] = foreground ? BrowserEngine.allCases : [.webKit]
+
+    /// Windows that host a tab's page, so a tab shown by the fixture is the same window a test's `show` returns.
+    @MainActor
+    final class Hosting {
+        var windows: [UUID: NSWindow] = [:]
+    }
+    let hosting = Hosting()
 
     /// `profileWide` builds the browser on a profile context that owns its site permissions, the wiring the Settings > Websites
-    /// page reaches; the default uses a standalone store, which no settings change can reach.
-    private func fixture(
+    /// page reaches; the default uses a standalone store, which no settings change can reach. A Chromium tab is hosted in a
+    /// window before it is awaited: Chromium does not load a page nobody has attached to a window.
+    func fixture(
         html: String = MCPDevelopmentOwnershipTests.page, routes extra: [String: HTTPFixtureServer.Response] = [:],
-        profileWide: Bool = false
+        profileWide: Bool = false, engine: BrowserEngine = .webKit, host: String? = nil
     ) async throws -> (HTTPFixtureServer, BrowserModel, BrowserTab) {
         let server = try await HTTPFixtureServer.start(routes: ["/": .html(html)].merging(extra) { $1 })
         let browser =
@@ -31,8 +45,20 @@ struct MCPDevelopmentOwnershipTests {
                 database: .temporary(),
                 sitePermissions: SitePermissions(
                     storageURL: AppDatabase.supportDirectory.appendingPathComponent("MCPDev-\(UUID().uuidString).json")))
-        let url = try server.url()
+        var url = try server.url()
+        if let host, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.host = host
+            url = components.url ?? url
+        }
+        if engine == .chromium {
+            try ChromiumRuntime.shared.ensureInitialized()
+            browser.sitePermissions.setEngine(.chromium, for: SitePermissions.origin(for: url))
+        }
         let tab = browser.newTab(url: url)
+        if engine == .chromium {
+            _ = await show(tab)
+        }
+        #expect(tab.page.engine == engine)
         #expect(await PageSettle.untilIdle(tab.page))
         // The document identity arrives from the page after it loads; diagnostics cannot start before it does.
         #expect(await waitUntil { tab.page.mainDocumentID != nil }, "the page registered its main document")
@@ -43,7 +69,7 @@ struct MCPDevelopmentOwnershipTests {
         return (server, browser, tab)
     }
 
-    private func session(
+    func session(
         _ browser: BrowserModel, answer: MCPAccessConsent.Access = .development, asked: ((Bool) -> Void)? = nil
     ) -> MCPBrowserSession {
         MCPBrowserSession(browser: browser, available: { true }, consent: { _, _, development in
@@ -52,7 +78,7 @@ struct MCPDevelopmentOwnershipTests {
         })
     }
 
-    private func call(
+    func call(
         _ session: MCPBrowserSession, _ name: String, _ tab: BrowserTab? = nil, _ arguments: [String: Value] = [:]
     ) async throws -> CallTool.Result {
         var arguments = arguments
@@ -60,9 +86,9 @@ struct MCPDevelopmentOwnershipTests {
         return try await session.call(name: name, arguments: arguments)
     }
 
-    private func status(_ result: CallTool.Result) -> String? { result.structuredContent?.objectValue?["status"]?.stringValue }
+    func status(_ result: CallTool.Result) -> String? { result.structuredContent?.objectValue?["status"]?.stringValue }
 
-    private let phone: [String: Value] = ["width": 400, "height": 700]
+    let phone: [String: Value] = ["width": 400, "height": 700]
 
     @Test func developmentIsOnlyGrantedWhenRequested() async throws {
         let (server, browser, tab) = try await fixture()
@@ -186,71 +212,69 @@ struct MCPDevelopmentOwnershipTests {
         #expect(inspected.isError == false)
     }
 
-    @Test func viewportIsMeasuredInThePageAndResetRestoresIt() async throws {
-        let (server, browser, tab) = try await fixture()
-        defer { _ = server }
-        let window = await show(tab)
-        defer { hide(window) }
-        let subject = session(browser)
-        _ = try await call(subject, "requestAccess", nil, ["development": true])
-        let applied = try await call(subject, "setViewport", tab, phone)
-        #expect(status(applied) == "ok")
-        let measured = try #require(applied.structuredContent?.objectValue?["viewport"]?.objectValue)
-        #expect(measured["innerWidth"]?.intValue == 400)
-        #expect(measured["innerHeight"]?.intValue == 700)
-        #expect(try await tab.page.evaluateJavaScript("window.innerWidth") as? Int == 400)
-        _ = try await call(subject, "resetDevelopment", tab)
-        #expect(try await tab.page.evaluateJavaScript("window.innerWidth") as? Int != 400)
-    }
-
-    @Test func diagnosticsCaptureOnlyAfterStartAndStopOnReset() async throws {
-        let (server, browser, tab) = try await fixture()
-        defer { _ = server }
-        let subject = session(browser)
-        _ = try await call(subject, "requestAccess", nil, ["development": true])
-        _ = try await tab.page.evaluateJavaScript("console.log('before-start'); 0")
-        #expect(status(try await call(subject, "readConsole", tab)) == "invalidInput", "reading needs a running capture")
-        #expect(status(try await call(subject, "startDiagnostics", tab)) == "ok")
-        _ = try await tab.page.evaluateJavaScript("console.log('after-start'); 0")
-        var records: [Value] = []
-        for _ in 0..<50 where records.isEmpty {
-            let read = try await call(subject, "readConsole", tab)
-            records = read.structuredContent?.objectValue?["records"]?.arrayValue ?? []
-            if records.isEmpty {
-                try await Task.sleep(for: .milliseconds(100))
-            }
+    @Test(arguments: MCPDevelopmentOwnershipTests.viewportEngines)
+    func viewportIsMeasuredInThePageAndResetRestoresIt(engine: BrowserEngine) async throws {
+        try await withFixture(engine: engine) { _, browser, tab in
+            let window = await show(tab)
+            defer { hide(window) }
+            let subject = session(browser)
+            _ = try await call(subject, "requestAccess", nil, ["development": true])
+            let applied = try await call(subject, "setViewport", tab, phone)
+            #expect(status(applied) == "ok")
+            let measured = try #require(applied.structuredContent?.objectValue?["viewport"]?.objectValue)
+            #expect(measured["innerWidth"]?.intValue == 400)
+            #expect(measured["innerHeight"]?.intValue == 700)
+            #expect(try await tab.page.evaluateJavaScript("window.innerWidth") as? Int == 400)
+            _ = try await call(subject, "resetDevelopment", tab)
+            #expect(try await tab.page.evaluateJavaScript("window.innerWidth") as? Int != 400)
         }
-        let text = records.compactMap { $0.objectValue?["text"]?.stringValue }.joined(separator: "\n")
-        #expect(text.contains("after-start"))
-        #expect(!text.contains("before-start"))
-        let bad = try await call(subject, "readConsole", tab, ["cursor": "not-a-cursor"])
-        #expect(status(bad) == "invalidInput")
-        _ = try await call(subject, "resetDevelopment", tab)
-        #expect(tab.developmentOwner == nil)
-        #expect(status(try await call(subject, "readConsole", tab)) == "invalidInput")
     }
-
+    @Test(arguments: BrowserEngine.allCases)
+    func diagnosticsCaptureOnlyAfterStartAndStopOnReset(engine: BrowserEngine) async throws {
+        try await withFixture(engine: engine) { _, browser, tab in
+            let subject = session(browser)
+            _ = try await call(subject, "requestAccess", nil, ["development": true])
+            _ = try await tab.page.evaluateJavaScript("console.log('before-start'); 0")
+            #expect(status(try await call(subject, "readConsole", tab)) == "invalidInput", "reading needs a running capture")
+            #expect(status(try await call(subject, "startDiagnostics", tab)) == "ok")
+            _ = try await tab.page.evaluateJavaScript("console.log('after-start'); 0")
+            var records: [Value] = []
+            #expect(try await waitUntil {
+                let read = try await self.call(subject, "readConsole", tab)
+                records = read.structuredContent?.objectValue?["records"]?.arrayValue ?? []
+                return !records.isEmpty
+            })
+            let text = records.compactMap { $0.objectValue?["text"]?.stringValue }.joined(separator: "\n")
+            #expect(text.contains("after-start"))
+            #expect(!text.contains("before-start"))
+            let bad = try await call(subject, "readConsole", tab, ["cursor": "not-a-cursor"])
+            #expect(status(bad) == "invalidInput")
+            _ = try await call(subject, "resetDevelopment", tab)
+            #expect(tab.developmentOwner == nil)
+            #expect(status(try await call(subject, "readConsole", tab)) == "invalidInput")
+        }
+    }
     // MARK: Lease lifecycle against the tab
 
-    @Test func aLeaseEndsWhenItsPageIsReplacedAndNoLeaseIsGrantedOnAReplacedPage() async throws {
-        let (server, _, tab) = try await fixture()
-        defer { _ = server }
-        let outgoing = tab.page
-        guard case .acquired(let owner) = tab.acquireDevelopment(connection: UUID(), page: outgoing, isAuthorized: { true }) else {
-            Issue.record("the first acquisition must succeed")
-            return
-        }
-        var reason: DevelopmentReleaseReason?
-        owner.onRelease { reason = $0 }
-        tab.liveView = nil
-        #expect(reason == .engineReplaced)
-        #expect(tab.developmentOwner == nil)
-        guard case .pageGone = tab.acquireDevelopment(connection: UUID(), page: outgoing, isAuthorized: { true }) else {
-            Issue.record("a replaced page must not be leased")
-            return
+    @Test(arguments: BrowserEngine.allCases)
+    func aLeaseEndsWhenItsPageIsReplacedAndNoLeaseIsGrantedOnAReplacedPage(engine: BrowserEngine) async throws {
+        try await withFixture(engine: engine) { _, _, tab in
+            let outgoing = tab.page
+            guard case .acquired(let owner) = tab.acquireDevelopment(connection: UUID(), page: outgoing, isAuthorized: { true }) else {
+                Issue.record("the first acquisition must succeed")
+                return
+            }
+            var reason: DevelopmentReleaseReason?
+            owner.onRelease { reason = $0 }
+            tab.liveView = nil
+            #expect(reason == .engineReplaced)
+            #expect(tab.developmentOwner == nil)
+            guard case .pageGone = tab.acquireDevelopment(connection: UUID(), page: outgoing, isAuthorized: { true }) else {
+                Issue.record("a replaced page must not be leased")
+                return
+            }
         }
     }
-
     @Test func anIdleLeaseEndsWhenItsConnectionLosesAccess() async throws {
         let (server, _, tab) = try await fixture()
         defer { _ = server }
@@ -317,111 +341,32 @@ struct MCPDevelopmentOwnershipTests {
         #expect(throws: (any Error).self) { try entry("setViewport").validate(["tabID": tab, "width": 63, "height": 700]) }
     }
 
-    // MARK: Consumer helpers
-
-    private func text(_ result: CallTool.Result) -> String {
-        result.content.compactMap {
-            if case .text(let text, _, _) = $0 {
-                return text
-            }
-            return nil
-        }.joined(separator: "\n")
-    }
-
-    private func images(_ result: CallTool.Result) -> [Data] {
-        result.content.compactMap {
-            if case .image(let data, _, _, _) = $0 {
-                return Data(base64Encoded: data)
-            }
-            return nil
-        }
-    }
-
-    /// The `content` string a client receives for a page tool: the tool's own text inside the untrusted-content wrapper.
-    private func content(_ result: CallTool.Result) throws -> String {
-        try #require(result.structuredContent?.objectValue?["content"]?.stringValue)
-    }
-
-    /// The JSON a findElements / inspectElement result carries (`prefix` is `ELEMENTS:` or `ELEMENT:`), read back out of the
-    /// wrapper the way a client does.
-    private func payload(_ result: CallTool.Result, prefix: String) throws -> [String: Any] {
-        let unwrapped = try content(result)
-            .replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
-            .replacingOccurrences(of: "&amp;", with: "&")
-        let start = try #require(unwrapped.range(of: prefix + "\n"))
-        let end = try #require(unwrapped.range(of: "\nobservationID: ", options: .backwards))
-        let json = Data(unwrapped[start.upperBound..<end.lowerBound].utf8)
-        return try #require(try JSONSerialization.jsonObject(with: json) as? [String: Any])
-    }
-
-    private func requestDevelopment(_ subject: MCPBrowserSession) async throws {
-        _ = try await call(subject, "requestAccess", nil, ["development": true])
-    }
-
-    /// findElements on `selector`: the observation to pass back and the first match's ref.
-    private func find(_ subject: MCPBrowserSession, _ tab: BrowserTab, _ selector: String) async throws -> (observation: String, ref: Int) {
-        let found = try await call(subject, "findElements", tab, ["selector": .string(selector)])
-        #expect(found.isError == false, "\(text(found))")
-        let items = try #require(try payload(found, prefix: "ELEMENTS:")["items"] as? [[String: Any]])
-        return (
-            try #require(found.structuredContent?.objectValue?["observationID"]?.stringValue),
-            try #require(items.first?["r"] as? Int)
-        )
-    }
-
-    private func screenshot(_ subject: MCPBrowserSession, _ tab: BrowserTab, _ target: (observation: String, ref: Int)) async throws -> CallTool.Result {
-        try await call(subject, "screenshotPage", tab, ["observationID": .string(target.observation), "ref": .int(target.ref)])
-    }
-
-    /// Hosts the tab's page in a window the way the app does, inside a `WebViewContainer`. Element screenshots need a laid-out,
-    /// attached view, and the container is what lays out a development viewport: a page outside one cannot be resized.
-    /// Returns once the page has the container's width, not the 800-point default of a page nobody hosts.
-    private func show(_ tab: BrowserTab) async -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        let container = WebViewContainer(page: tab.page)
-        window.contentView = container
-        window.orderBack(nil)
-        let width = Int(container.bounds.width)
-        #expect(
-            await waitUntil {
-                guard tab.page.superview === container else { return false }
-                return (try? await tab.page.evaluateJavaScript("window.innerWidth")) as? Int == width
-            }, "the page is laid out at the container's width \(width)")
-        return window
-    }
-
-    private func hide(_ window: NSWindow) {
-        window.contentView = nil
-        window.close()
-    }
-
     private static let shotPage =
         "<!doctype html><title>Shot</title><div id=box style='width:120px;height:60px;background:#c00'>Box</div>"
         + "<button id=go style='width:80px;height:30px' onclick=\"document.body.dataset.clicked='yes'\">Go</button>"
 
     // MARK: Screenshots of found elements through the MCP tool
 
-    @Test func aFoundElementIsCapturedWithDevelopmentAccessAndRefusedOnceTheGrantDrops() async throws {
-        let (server, browser, tab) = try await fixture(html: Self.shotPage)
-        defer { _ = server }
-        let window = await show(tab)
-        defer { hide(window) }
-        let subject = session(browser)
-        try await requestDevelopment(subject)
-        let captured = try await screenshot(subject, tab, try await find(subject, tab, "#box"))
-        #expect(captured.isError == false, "\(text(captured))")
-        let image = try #require(images(captured).first)
-        #expect(image.starts(with: [0xFF, 0xD8]), "the client gets a JPEG")
-        // The grant drops between findElements and screenshotPage: the element is still on screen, the image must not be.
-        let target = try await find(subject, tab, "#box")
-        tab.assistantAccess.set(.readOnly)
-        let refused = try await screenshot(subject, tab, target)
-        #expect(refused.isError == true)
-        #expect(images(refused).isEmpty)
-        #expect(text(refused).contains(ScreenshotFailure.needsDevelopment.message), "\(text(refused))")
+    @Test(arguments: BrowserEngine.allCases)
+    func aFoundElementIsCapturedWithDevelopmentAccessAndRefusedOnceTheGrantDrops(engine: BrowserEngine) async throws {
+        try await withFixture(engine: engine, html: Self.shotPage) { _, browser, tab in
+            let window = await show(tab)
+            defer { hide(window) }
+            let subject = session(browser)
+            try await requestDevelopment(subject)
+            let captured = try await screenshot(subject, tab, try await find(subject, tab, "#box"))
+            #expect(captured.isError == false, "\(text(captured))")
+            let image = try #require(images(captured).first)
+            #expect(image.starts(with: [0xFF, 0xD8]), "the client gets a JPEG")
+            // The grant drops between findElements and screenshotPage: the element is still on screen, the image must not be.
+            let target = try await find(subject, tab, "#box")
+            tab.assistantAccess.set(.readOnly)
+            let refused = try await screenshot(subject, tab, target)
+            #expect(refused.isError == true)
+            #expect(images(refused).isEmpty)
+            #expect(text(refused).contains(ScreenshotFailure.needsDevelopment.message), "\(text(refused))")
+        }
     }
-
     @Test func aConnectionWithoutDevelopmentAccessCannotCaptureAFoundElement() async throws {
         let (server, browser, tab) = try await fixture(html: Self.shotPage)
         defer { _ = server }
@@ -717,68 +662,70 @@ struct MCPDevelopmentOwnershipTests {
 
     // MARK: Diagnostics follow the document
 
-    @Test func diagnosticsFollowANavigationCommitWithoutAnyRead() async throws {
-        let (server, browser, tab) = try await fixture(routes: [
+    @Test(arguments: BrowserEngine.allCases)
+    func diagnosticsFollowANavigationCommitWithoutAnyRead(engine: BrowserEngine) async throws {
+        try await withFixture(engine: engine, routes: [
             "/two": .html("<!doctype html><title>Two</title><p>second</p>"),
             "/old-fetch": .bytes(Data("old".utf8), contentType: "text/plain"),
             "/new-fetch": .bytes(Data("new".utf8), contentType: "text/plain"),
-        ])
-        defer { _ = server }
-        let subject = session(browser)
-        try await requestDevelopment(subject)
-        let started = try await call(subject, "startDiagnostics", tab)
-        #expect(status(started) == "ok")
-        let firstEpoch = try #require(started.structuredContent?.objectValue?["epoch"]?.intValue)
-        let firstDocument = try #require(started.structuredContent?.objectValue?["documentID"]?.stringValue)
-        _ = try await tab.page.evaluateJavaScript("console.log('old-doc'); fetch('/old-fetch').catch(() => {}); 0")
-        let diagnostics = try #require(tab.developmentOwner?.diagnostics)
-        tab.page.load(URLRequest(url: try server.url("/two")))
-        #expect(await PageSettle.untilIdle(tab.page))
-        // The commit itself re-attaches the capture: nothing has read it yet.
-        #expect(await waitUntil {
-            diagnostics.reattachments == 1 && !diagnostics.gaps.contains { $0.hasPrefix("The hook is not attached") }
-        })
-        _ = try await tab.page.evaluateJavaScript("console.log('new-doc'); fetch('/new-fetch').catch(() => {}); 0")
-        func lines(_ result: CallTool.Result, _ key: String) -> [String] {
-            (result.structuredContent?.objectValue?["records"]?.arrayValue ?? []).compactMap { $0.objectValue?[key]?.stringValue }
+        ]) { server, browser, tab in
+            let subject = session(browser)
+            try await requestDevelopment(subject)
+            let started = try await call(subject, "startDiagnostics", tab)
+            #expect(status(started) == "ok")
+            let firstEpoch = try #require(started.structuredContent?.objectValue?["epoch"]?.intValue)
+            let firstDocument = try #require(started.structuredContent?.objectValue?["documentID"]?.stringValue)
+            _ = try await tab.page.evaluateJavaScript("console.log('old-doc'); fetch('/old-fetch').catch(() => {}); 0")
+            let diagnostics = try #require(tab.developmentOwner?.diagnostics)
+            tab.page.load(URLRequest(url: try server.url("/two")))
+            #expect(await PageSettle.untilIdle(tab.page))
+            // The commit itself re-attaches the capture: nothing has read it yet.
+            #expect(await waitUntil {
+                diagnostics.reattachments == 1 && !diagnostics.gaps.contains { $0.hasPrefix("The hook is not attached") }
+            })
+            _ = try await tab.page.evaluateJavaScript("console.log('new-doc'); fetch('/new-fetch').catch(() => {}); 0")
+            func lines(_ result: CallTool.Result, _ key: String) -> [String] {
+                (result.structuredContent?.objectValue?["records"]?.arrayValue ?? []).compactMap { $0.objectValue?[key]?.stringValue }
+            }
+            var console = try await call(subject, "readConsole", tab)
+            #expect(try await waitUntil {
+                console = try await self.call(subject, "readConsole", tab)
+                return lines(console, "text").contains { $0.contains("new-doc") }
+            })
+            #expect(!lines(console, "text").contains { $0.contains("old-doc") })
+            let epoch = try #require(console.structuredContent?.objectValue?["epoch"]?.intValue)
+            let document = try #require(console.structuredContent?.objectValue?["documentID"]?.stringValue)
+            #expect(epoch != firstEpoch)
+            #expect(document != firstDocument)
+            #expect(Set(lines(console, "documentID")) == [document])
+            var network = try await call(subject, "readNetwork", tab)
+            #expect(try await waitUntil {
+                network = try await self.call(subject, "readNetwork", tab)
+                return lines(network, "url").contains { $0.contains("new-fetch") }
+            })
+            #expect(!lines(network, "url").contains { $0.contains("old-fetch") })
+            #expect(Set(lines(network, "documentID")) == [document])
         }
-        var console = try await call(subject, "readConsole", tab)
-        #expect(try await waitUntil {
-            console = try await self.call(subject, "readConsole", tab)
-            return lines(console, "text").contains { $0.contains("new-doc") }
-        })
-        #expect(!lines(console, "text").contains { $0.contains("old-doc") })
-        let epoch = try #require(console.structuredContent?.objectValue?["epoch"]?.intValue)
-        let document = try #require(console.structuredContent?.objectValue?["documentID"]?.stringValue)
-        #expect(epoch != firstEpoch)
-        #expect(document != firstDocument)
-        #expect(Set(lines(console, "documentID")) == [document])
-        var network = try await call(subject, "readNetwork", tab)
-        #expect(try await waitUntil {
-            network = try await self.call(subject, "readNetwork", tab)
-            return lines(network, "url").contains { $0.contains("new-fetch") }
-        })
-        #expect(!lines(network, "url").contains { $0.contains("old-fetch") })
-        #expect(Set(lines(network, "documentID")) == [document])
     }
-
-    @Test func navigatingOutsideTheGrantStopsCaptureAndEndsTheLeaseAtCommit() async throws {
-        let (server, browser, tab) = try await fixture()
-        defer { _ = server }
-        let other = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><title>Other</title><p>other</p>")])
-        defer { _ = other }
-        let subject = session(browser)
-        try await requestDevelopment(subject)
-        #expect(status(try await call(subject, "startDiagnostics", tab)) == "ok")
-        let diagnostics = try #require(tab.developmentOwner?.diagnostics)
-        tab.page.load(URLRequest(url: try other.url()))
-        #expect(await PageSettle.untilIdle(tab.page))
-        // Ended by the commit, with no call from the connection.
-        #expect(await waitUntil { tab.developmentOwner == nil })
-        #expect(await diagnostics.sync() == false, "the capture is stopped, not just detached")
-        #expect(try await call(subject, "readConsole", tab).isError == true)
+    @Test(arguments: BrowserEngine.allCases)
+    func navigatingOutsideTheGrantStopsCaptureAndEndsTheLeaseAtCommit(engine: BrowserEngine) async throws {
+        try await withFixture(engine: engine) { _, browser, tab in
+            let other = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><title>Other</title><p>other</p>")])
+            defer { _ = other }
+            // Each website has its own engine: without this the tab would move to WebKit at the commit and replace the page.
+            browser.sitePermissions.setEngine(engine, for: SitePermissions.origin(for: try other.url()))
+            let subject = session(browser)
+            try await requestDevelopment(subject)
+            #expect(status(try await call(subject, "startDiagnostics", tab)) == "ok")
+            let diagnostics = try #require(tab.developmentOwner?.diagnostics)
+            tab.page.load(URLRequest(url: try other.url()))
+            #expect(await PageSettle.untilIdle(tab.page))
+            // Ended by the commit, with no call from the connection.
+            #expect(await waitUntil { tab.developmentOwner == nil })
+            #expect(await diagnostics.sync() == false, "the capture is stopped, not just detached")
+            #expect(try await call(subject, "readConsole", tab).isError == true)
+        }
     }
-
     // MARK: The bytes a client receives
 
     /// Every character class that grows when escaped (quote, backslash, `&<>`, `/`, a control character) plus multibyte text.

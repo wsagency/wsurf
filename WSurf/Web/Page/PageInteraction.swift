@@ -103,6 +103,47 @@ extension PageDriver {
                 return "The selector must be 1 to \(PageRuntime.maxSelectorBytes) UTF-8 bytes."
             }
         }
+        // An element wait belongs to the document it started on: a navigation ends it instead of answering for the new page.
+        var startDocument: String?
+        let startMain = view.mainDocumentID
+        let clock = ContinuousClock()
+        let deadline = clock.now + .seconds(min(15, max(1, timeout)))
+        let started = clock.now
+        defer { PageSettle.meter?.add(started.duration(to: clock.now)) }
+        repeat {
+            guard PageAutomationGuard.allowsExecution else { return staleMessage }
+            // One call per chunk: the page watches for the condition itself and answers when it holds, the document is left or
+            // the chunk ends. A chunk stays under the Chromium command timeout; a longer wait takes another call.
+            let chunk = min(deadline - clock.now, .seconds(8))
+            let script = waitScript(condition: condition, encoded: encoded, isElement: isElement, chunk: chunk)
+            let answer = await PageAutomationGuard.rescoped(in: view) { await waitAnswer(script, chunk: chunk, in: view) }
+            if let error = answer?["error"] as? String {
+                return error
+            }
+            if isElement, let document = answer?["document"] as? String {
+                guard document == (startDocument ?? document) else { return staleMessage }
+                startDocument = document
+            }
+            if answer?["matches"] as? Bool == true {
+                return "Condition met.\n" + (await PageAutomationGuard.withCurrentDocument(in: view) { await snapshot(view, lookingFor: isElement ? "" : value) })
+            }
+            if answer == nil || answer?["unloading"] as? Bool == true {
+                // The document is going away. An element wait ends here; any other wait continues on the page that arrives.
+                if isElement, startDocument != nil || view.isLoading || view.mainDocumentID != startMain {
+                    return staleMessage
+                }
+                if view.isLoading {
+                    await PageSettle.untilIdle(view, timeout: max(.zero, min(PageSettle.loadCeiling, deadline - clock.now)))
+                } else {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+        } while clock.now < deadline && !Task.isCancelled
+        return "Timed out waiting for \(condition).\n" + (await PageAutomationGuard.withCurrentDocument(in: view) { await snapshot(view, lookingFor: isElement ? "" : value) })
+    }
+
+    /// The page-side wait for `condition`: it answers `{matches}`, `{error}`, `{unloading}` or `{timedOut}` after `chunk` at most.
+    private static func waitScript(condition: String, encoded: String, isElement: Bool, chunk: Duration) -> String {
         let expression: String
         switch condition {
         case "ready":
@@ -123,38 +164,28 @@ extension PageDriver {
         let elementState = isElement
             ? """
             const state = R.elementState(value);
-            if (state.error) return JSON.stringify({ error: state.error });
-            if (state.count > 1) return JSON.stringify({ error: 'The selector matches more than one element.' });
+            if (state.error) return { error: state.error };
+            if (state.count > 1) return { error: 'The selector matches more than one element.' };
             """
             : ""
-        // An element wait belongs to the document it started on: a navigation ends it instead of answering for the new page.
-        var startDocument: String?
-        let deadline = ContinuousClock.now + .seconds(min(15, max(1, timeout)))
-        repeat {
-            guard PageAutomationGuard.allowsExecution else { return staleMessage }
-            let output = await PageAutomationGuard.withCurrentDocument(in: view) {
-                let script = scripted(
-                    """
-                    const value = \(encoded);
-                    \(elementState)
-                    const matches = \(expression);
-                    return JSON.stringify({ matches, document: R.documentID });
-                    """)
-                guard let result = await evaluateJSON(script, in: view), result["stale"] == nil else { return staleMessage }
-                if let error = result["error"] as? String { return error }
-                if isElement {
-                    guard let document = result["document"] as? String, document == (startDocument ?? document) else { return staleMessage }
-                    startDocument = document
-                }
-                return result["matches"] as? Bool == true ? "matched" : "pending"
-            }
-            if output == "matched" {
-                return "Condition met.\n" + (await PageAutomationGuard.withCurrentDocument(in: view) { await snapshot(view, lookingFor: isElement ? "" : value) })
-            }
-            if output != "pending" { return output }
-            try? await Task.sleep(for: .milliseconds(150))
-        } while ContinuousClock.now < deadline
-        return "Timed out waiting for \(condition).\n" + (await PageAutomationGuard.withCurrentDocument(in: view) { await snapshot(view, lookingFor: isElement ? "" : value) })
+        return scriptedAsync(
+            """
+            const value = \(encoded);
+            const check = () => {
+              \(elementState)
+              return { matches: \(expression) };
+            };
+            return await R.waitFor(check, \(PageSettle.milliseconds(chunk)));
+            """)
+    }
+
+    /// What the page answered, or nil when the call failed, the page was left before it answered, or the guard went stale.
+    private static func waitAnswer(_ script: String, chunk: Duration, in view: BrowserPage) async -> [String: Any]? {
+        guard let raw = await view.callAsyncJavaScript(script, within: chunk + .seconds(1), in: selectedFrame?.frame),
+            PageAutomationGuard.allowsExecution,
+            let answer = (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String: Any], answer["stale"] == nil
+        else { return nil }
+        return answer
     }
 
     /// One capture path for the viewport, an element or a CSS-pixel region. Sensitive filled fields anywhere on the page
@@ -162,12 +193,18 @@ extension PageDriver {
     /// `developmentAllowed` is asked before any work, after each await and just before pixels are returned: an element
     /// registered only by `findElements` is captured while it answers true, never otherwise. Ordinary control refs, the
     /// viewport and regions never ask for it. `maximumBytes` bounds the returned JPEG and may shrink its pixels; the
-    /// returned `scale` always describes the image that is returned.
+    /// returned `scale` always describes the image that is returned. With `masking` (the Developer tier) filled sensitive
+    /// fields are painted black in the returned image instead of refusing the capture; a field that cannot be measured
+    /// still refuses it.
     static func screenshot(
         _ target: ScreenshotTarget = .viewport, developmentAllowed: () -> Bool = { false }, maximumBytes: Int? = nil,
-        in view: BrowserPage
+        maxWidth: Int? = nil, masking: ScreenshotMasking? = nil, in view: BrowserPage
     ) async -> Result<ScreenshotCapture, ScreenshotFailure> {
-        guard PageAutomationGuard.allowsExecution else { return .failure(.stale) }
+        if let refusal = screenshotRefusal(target, developmentAllowed: developmentAllowed, in: view) {
+            return .failure(refusal)
+        }
+        var masking = masking
+        masking?.documentSpace = target == .fullPage
         let ref: Int
         switch await screenshotRef(for: target, in: view) {
         case .success(let probed):
@@ -178,8 +215,10 @@ extension PageDriver {
         let document = view.url
         let probe = scripted(
             """
-            const out = { document: R.documentID, vw: window.innerWidth, vh: window.innerHeight,
+            const root = document.documentElement;
+            const out = { document: R.documentID, vw: window.innerWidth, vh: window.innerHeight, dw: root.scrollWidth, dh: root.scrollHeight,
               safe: !Array.from(R.walk(document.body)).some(el => R.isSensitiveField(el) && (el.value || el.isContentEditable && el.textContent)) };
+            \(masking?.probeScript ?? "")
             const ref = \(ref);
             if (ref) {
               const geometry = R.screenshotGeometry(ref);
@@ -189,10 +228,12 @@ extension PageDriver {
             return JSON.stringify(out);
             """)
         guard let before = await evaluateJSON(probe, in: view), before["stale"] == nil else { return .failure(.stale) }
-        // An element only `findElements` registered is capturable under development access alone; that is decided first.
+        // An element only `findElements` registered, and the full page, are capturable under development access alone; that
+        // is decided first and asked again after every await.
         let foundOnly = before["foundOnly"] as? Bool == true
-        guard !(foundOnly && !developmentAllowed()) else { return .failure(.needsDevelopment) }
-        guard before["safe"] as? Bool == true else { return .failure(.privacy) }
+        let needsDevelopment = foundOnly || target == .fullPage
+        guard !(needsDevelopment && !developmentAllowed()) else { return .failure(.needsDevelopment) }
+        guard screenshotIsPrivate(before, masking: masking) else { return .failure(.privacy) }
         func number(_ object: [String: Any]?, _ key: String) -> CGFloat? {
             (object?[key] as? NSNumber).map { CGFloat($0.doubleValue) }
         }
@@ -208,26 +249,72 @@ extension PageDriver {
         let placed = area.placed
         let zoom = view.pageZoom
         guard css.width * zoom >= 1, css.height * zoom >= 1 else { return .failure(.invalidGeometry) }
+        // One image pixel per CSS pixel unless the caller asks for a width: the pixels a screen adds only cost bytes.
+        let requested = maxWidth ?? max(64, Int(css.width.rounded(.up)))
+        let pixelLimit = target == .fullPage ? min(requested, ScreenshotTarget.fullPagePixelWidth) : requested
         let crop: CGRect? = target == .viewport ? nil : CGRect(x: css.minX * zoom, y: css.minY * zoom, width: css.width * zoom, height: css.height * zoom)
         let pointWidth = crop?.width ?? view.bounds.width
-        guard let image = try? await view.capture(rect: crop, width: min(1280, max(1, pointWidth))),
+        let captured: NSImage?
+        if target == .fullPage, let chromium = view.chromium {
+            captured = try? await chromium.captureFullPage(css, scale: min(1, Double(pixelLimit) / Double(css.width)))
+        } else {
+            captured = try? await view.capture(rect: crop, width: min(1280, max(1, pointWidth)))
+        }
+        guard let image = captured,
             PageAutomationGuard.allowsExecution, view.url == document,
             let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), bitmap.pixelsWide > 0
         else { return .failure(.captureFailed) }
-        guard !(foundOnly && !developmentAllowed()) else { return .failure(.needsDevelopment) }
+        guard !(needsDevelopment && !developmentAllowed()) else { return .failure(.needsDevelopment) }
         guard let after = await evaluateJSON(probe, in: view), after["stale"] == nil, after["document"] as? String == before["document"] as? String else {
             return .failure(.stale)
         }
         // Development access is checked again right before pixels leave, after the last await.
-        guard !((foundOnly || after["foundOnly"] as? Bool == true) && !developmentAllowed()) else { return .failure(.needsDevelopment) }
-        guard after["safe"] as? Bool == true else { return .failure(.privacy) }
+        let requiresDevelopment = needsDevelopment || after["foundOnly"] as? Bool == true
+        guard !(requiresDevelopment && !developmentAllowed()) else { return .failure(.needsDevelopment) }
+        guard screenshotIsPrivate(after, masking: masking) else { return .failure(.privacy) }
         guard placementHeld(placed, in: after) else { return .failure(.stale) }
+        let picture: NSBitmapImageRep
+        switch masked(bitmap, with: masking, before: before, after: after, over: css) {
+        case .success(let drawn):
+            picture = drawn
+        case .failure(let failure):
+            return .failure(failure)
+        }
         // The limit may have shrunk the pixels, so the scale comes from the image that is returned.
-        guard let encoded = PageScreenshotEncoding.jpeg(bitmap, fitting: maximumBytes) else { return .failure(.captureFailed) }
+        guard let encoded = PageScreenshotEncoding.jpeg(picture, fitting: maximumBytes, maxPixelWidth: pixelLimit) else { return .failure(.captureFailed) }
         return .success(
             ScreenshotCapture(
                 jpeg: encoded.data, bounds: css, scale: CGFloat(encoded.pixelsWide) / css.width,
-                requiresDevelopment: foundOnly || after["foundOnly"] as? Bool == true))
+                requiresDevelopment: requiresDevelopment))
+    }
+
+    /// Why a capture cannot start: stale automation, a full page on an engine that cannot take one, or a full page without
+    /// development access. The last is asked before the first await as well as after each one: a caller may have waited (for its
+    /// turn to capture) since it checked.
+    private static func screenshotRefusal(
+        _ target: ScreenshotTarget, developmentAllowed: () -> Bool, in view: BrowserPage
+    ) -> ScreenshotFailure? {
+        guard PageAutomationGuard.allowsExecution else { return .stale }
+        guard target != .fullPage || view.chromium != nil else { return .fullPageUnsupported }
+        guard target != .fullPage || developmentAllowed() else { return .needsDevelopment }
+        return nil
+    }
+
+    /// Without masking a filled sensitive field refuses the capture; with it, only a field that was not measured does.
+    private static func screenshotIsPrivate(_ probe: [String: Any], masking: ScreenshotMasking?) -> Bool {
+        masking == nil ? probe["safe"] as? Bool == true : ScreenshotMasking.isMeasured(probe)
+    }
+
+    /// `bitmap` with the filled sensitive fields painted over when `masking` applies. The boxes painted over the pixels are the
+    /// ones measured after the capture, and they must be where they were before it.
+    private static func masked(
+        _ bitmap: NSBitmapImageRep, with masking: ScreenshotMasking?, before: [String: Any], after: [String: Any], over css: CGRect
+    ) -> Result<NSBitmapImageRep, ScreenshotFailure> {
+        guard masking != nil else { return .success(bitmap) }
+        let masks = ScreenshotMasking.masks(in: after)
+        guard ScreenshotMasking.held(ScreenshotMasking.masks(in: before), masks) else { return .failure(.stale) }
+        guard let painted = ScreenshotMasking.apply(masks, over: css, to: bitmap) else { return .failure(.captureFailed) }
+        return .success(painted)
     }
 
     /// The element ref a screenshot probes (0 for none), or the reason the target cannot be captured at all.
@@ -235,6 +322,8 @@ extension PageDriver {
         switch target {
         case .viewport:
             return .success(0)
+        case .fullPage:
+            return selectedFrame == nil ? .success(0) : .failure(.unmappableFrame)
         case .element(let requested):
             // A selected frame measures in its own viewport, which the page's geometry cannot be mapped back from.
             guard selectedFrame == nil else { return .failure(.unmappableFrame) }
@@ -263,6 +352,12 @@ extension PageDriver {
         case .viewport:
             guard viewport.width > 0, viewport.height > 0 else { return .failure(.invalidGeometry) }
             return .success((css: CGRect(origin: .zero, size: viewport), placed: nil))
+        case .fullPage:
+            let width = (before["dw"] as? NSNumber).map { CGFloat($0.doubleValue) } ?? viewport.width
+            let height = (before["dh"] as? NSNumber).map { CGFloat($0.doubleValue) } ?? viewport.height
+            guard width.isFinite, height.isFinite, width > 0, height > 0 else { return .failure(.invalidGeometry) }
+            let size = CGSize(width: min(width, ScreenshotTarget.fullPageWidth), height: min(height, ScreenshotTarget.fullPageHeight))
+            return .success((css: CGRect(origin: .zero, size: size), placed: nil))
         case .region(let requested):
             switch ScreenshotGeometry.region(requested, inViewportCSS: viewport) {
             case .success(let clipped):

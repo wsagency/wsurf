@@ -630,7 +630,8 @@ final class CommandPaletteModel {
             isLyricsVisible: coordinator.sidePanel.isShowing(.lyrics),
             canShowLyrics: BrowserSettings.application.showsLyrics,
             isFullScreen: window?.styleMask.contains(.fullScreen) ?? false,
-            canCheckForUpdates: coordinator.updates.canCheck
+            canCheckForUpdates: coordinator.updates.canCheck,
+            hasExternalConnections: coordinator.hasExternalConnections
         )
     }
 
@@ -755,6 +756,16 @@ final class CommandPaletteModel {
             coordinator.exitSplit()
         case .closeOtherPanes:
             coordinator.closeOtherPanes()
+        case .toggleSidebar, .toggleActivity, .toggleLyrics, .toggleFullScreen, .closeWindow, .minimizeWindow,
+            .toggleSpeech, .toggleListening, .stopExternalConnections, .showHistory, .showDownloads, .clearHistory,
+            .settings, .extensions, .checkForUpdates, .releaseNotes, .aboutWSurf, .quitWSurf:
+            performApplicationAction(action)
+        }
+    }
+
+    /// The window, panel and app commands. `perform` forwards exactly these, so a new action still has to be placed there.
+    private func performApplicationAction(_ action: CommandPaletteAction) {
+        switch action {
         case .toggleSidebar:
             coordinator.toggleSidebar()
         case .toggleActivity:
@@ -771,6 +782,8 @@ final class CommandPaletteModel {
             coordinator.toggleSpeechMute()
         case .toggleListening:
             coordinator.toggleMicListening()
+        case .stopExternalConnections:
+            coordinator.stopExternalConnections()
         case .showHistory:
             coordinator.showHistory()
         case .showDownloads:
@@ -789,6 +802,8 @@ final class CommandPaletteModel {
             NSApp.orderFrontStandardAboutPanel(nil)
         case .quitWSurf:
             NSApp.terminate(nil)
+        default:
+            break
         }
     }
 }

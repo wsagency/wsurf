@@ -9,19 +9,29 @@ import WebKit
 enum PageDialogs {
     // MARK: - JavaScript dialogs
 
-    static func alert(_ message: String, from frame: WKFrameInfo, in window: NSWindow?) async {
+    /// While an external connection controls the tab, `queue` holds each dialog for that connection first. Without one,
+    /// or once the connection lets it go, the sheet below is the only path.
+    static func alert(_ message: String, from frame: WKFrameInfo, in window: NSWindow?, queue: PageDialogQueue? = nil) async {
         guard let window else { return }
-        let alert = makeAlert(message, from: frame)
-        alert.addButton(withTitle: String(localized: "OK"))
-        _ = await present(alert, in: window)
+        let request = PageDialogQueue.Request(kind: .alert, message: message, origin: origin(of: frame))
+        _ = await routed(request, via: queue) {
+            let alert = makeAlert(message, from: frame)
+            alert.addButton(withTitle: String(localized: "OK"))
+            _ = await present(alert, in: window)
+            return .init(accepted: true)
+        }
     }
 
-    static func confirm(_ message: String, from frame: WKFrameInfo, in window: NSWindow?) async -> Bool {
+    static func confirm(_ message: String, from frame: WKFrameInfo, in window: NSWindow?, queue: PageDialogQueue? = nil) async -> Bool {
         guard let window else { return false }
-        let alert = makeAlert(message, from: frame)
-        alert.addButton(withTitle: String(localized: "OK"))
-        alert.addButton(withTitle: String(localized: "Cancel"))
-        return await present(alert, in: window) == .alertFirstButtonReturn
+        let request = PageDialogQueue.Request(kind: .confirm, message: message, origin: origin(of: frame))
+        let answer = await routed(request, via: queue) {
+            let alert = makeAlert(message, from: frame)
+            alert.addButton(withTitle: String(localized: "OK"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
+            return .init(accepted: await present(alert, in: window) == .alertFirstButtonReturn)
+        }
+        return answer?.accepted ?? false
     }
 
     static func prompt(
@@ -29,20 +39,41 @@ enum PageDialogs {
         defaultText:
             String?,
         from frame: WKFrameInfo,
-        in window: NSWindow?
+        in window: NSWindow?,
+        queue: PageDialogQueue? = nil
     ) async -> String? {
         guard let window else { return nil }
-        let alert = makeAlert(message, from: frame)
-        alert.addButton(withTitle: String(localized: "OK"))
-        alert.addButton(withTitle: String(localized: "Cancel"))
+        let request = PageDialogQueue.Request(kind: .prompt, message: message, origin: origin(of: frame), defaultText: defaultText)
+        let answer = await routed(request, via: queue) {
+            let alert = makeAlert(message, from: frame)
+            alert.addButton(withTitle: String(localized: "OK"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
 
-        let field = NSTextField(string: defaultText ?? "")
-        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
+            let field = NSTextField(string: defaultText ?? "")
+            field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+            alert.accessoryView = field
+            alert.window.initialFirstResponder = field
 
-        guard await present(alert, in: window) == .alertFirstButtonReturn else { return nil }
-        return field.stringValue
+            guard await present(alert, in: window) == .alertFirstButtonReturn else { return .init(accepted: false) }
+            return .init(accepted: true, text: field.stringValue)
+        }
+        guard let answer, answer.accepted else { return nil }
+        return answer.text ?? ""
+    }
+
+    /// Asks `queue` to hold `request` for a controlling connection, else runs `native` at once.
+    static func routed(
+        _ request: PageDialogQueue.Request,
+        via queue: PageDialogQueue?,
+        native: @MainActor () async -> PageDialogQueue.Answer
+    ) async -> PageDialogQueue.Answer? {
+        guard let queue, queue.isIntercepting else { return await native() }
+        return await queue.run(request, native: native)
+    }
+
+    private static func origin(of frame: WKFrameInfo) -> String {
+        let origin = frame.securityOrigin
+        return PageDialogText.origin(scheme: origin.protocol, host: origin.host, port: origin.port)
     }
 
     // MARK: - File upload
@@ -94,7 +125,7 @@ enum PageDialogs {
         text.count > limit ? String(text.prefix(limit)) + "…" : text
     }
 
-    private static func present(_ alert: NSAlert, in window: NSWindow) async -> NSApplication.ModalResponse {
+    static func present(_ alert: NSAlert, in window: NSWindow) async -> NSApplication.ModalResponse {
         await withCheckedContinuation { continuation in
             alert.beginSheetModal(for: window) { response in
                 continuation.resume(returning: response)

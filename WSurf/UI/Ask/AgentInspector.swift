@@ -132,6 +132,7 @@ struct AgentInspector: View {
                                     || coordinator.agentReply.isCompacting && coordinator.agentReply.spaceID == activeSpaceID,
                                 compactionMessage: coordinator.agentTurns.compactionMessageSpaceID == activeSpaceID
                                     ? coordinator.agentTurns.compactionMessage : nil,
+                                external: coordinator.mcpServer.activityLogs(forTab: activeTabID),
                                 onRetry: { trace in
                                     let resumes = trace.canContinue && trace.id == traces.last?.id
                                     if resumes {

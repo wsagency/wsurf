@@ -64,6 +64,8 @@ final class BrowserPage: NSView {
     var onHistoryChanged: (() -> Void)?
     var onLinkHovered: ((URL?) -> Void)?
     var onZoomChanged: (() -> Void)?
+    /// The tab's dialog queue, which the engine's dialog handler asks before it shows a sheet.
+    weak var dialogs: PageDialogQueue?
     private(set) var credentialGeneration: UInt64 = 0
     private var credentialInvalidationObservers: [UUID: @MainActor @Sendable (BrowserPage, String?) -> Void] = [:]
 
@@ -339,7 +341,12 @@ final class BrowserPage: NSView {
         try await evaluateJavaScript(script, in: nil, contentWorld: .page)
     }
 
+    /// Script round trips made through this page, counted so a test can show that a wait asks the page once instead of polling.
+    private(set) var evaluations = 0
+    private(set) var asyncCalls = 0
+
     func evaluateJavaScript(_ script: String, in frame: BrowserFrame?, contentWorld: WKContentWorld) async throws -> Any {
+        evaluations += 1
         guard !closed else { throw ChromiumError.closed }
         if let webKit {
             if let frame, frame.webKit == nil {
@@ -373,6 +380,7 @@ final class BrowserPage: NSView {
     }
 
     func callAsyncJavaScript(_ body: String, arguments: [String: Any] = [:], in frame: BrowserFrame?, contentWorld: WKContentWorld) async throws -> Any {
+        asyncCalls += 1
         guard !closed else { throw ChromiumError.closed }
         if let webKit {
             if let frame, frame.webKit == nil {
@@ -690,6 +698,21 @@ final class BrowserPage: NSView {
             try await chromium.devTools.replaceScript(old, with: new, in: world)
         } else {
             throw ChromiumError.closed
+        }
+    }
+
+    /// Removes a script `installScript` added to this page's own WebKit content controller; later documents no longer run it.
+    /// Documents that already ran it keep what it did. Uses the retained-array mutation `replaceScript` does, so the scripts
+    /// that stay are re-added from the same objects.
+    func removeScript(_ source: String, in world: WKContentWorld) {
+        guard let controller = webKit?.configuration.userContentController else { return }
+        let source = Self.bridgeSource + "\n" + source
+        var scripts = controller.userScripts
+        guard let index = scripts.firstIndex(where: { $0.source == source && Self.scriptWorlds.object(forKey: $0) === world }) else { return }
+        scripts.remove(at: index)
+        controller.removeAllUserScripts()
+        for script in scripts {
+            controller.addUserScript(script)
         }
     }
 

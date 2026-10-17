@@ -132,6 +132,28 @@ identify a real format, service, import source, or compatibility contract.
 - Do not hide a persistent failure with `withKnownIssue`. Either make the test
   deterministic or keep the unsupported check out of the automated suite.
 
+Some checks need more than the default run:
+
+- **Both engines.** A test that takes `(engine:)` runs once on WebKit and once on the
+  embedded Chromium. The CEF framework is part of the normal test host, so
+  `-only-testing:WSurfTests/MCPDevelopmentOwnershipTests` covers both. A Chromium
+  page loads only after it is attached to a window, so host it before you wait for it.
+- **Repeated runs.** Prove a fix for a timing race by running its test many times:
+  add `-test-iterations 20 -run-tests-until-failure` to the `test-without-building`
+  command. Also make the race deterministic: hold the slow step open from the test, as
+  `goBackOnAFreshChromiumTabNeverReachesTheStartupPage` does, so the test fails
+  without the fix on every run.
+- **Foreground input.** `Tools/run-foreground-tests.sh` runs the three native hover tests in
+  `PageComputerInputTests` and the Chromium cases that resize a page (the development viewport and
+  the phone profile in `MCPDevelopmentOwnershipTests`). Hover moves the real pointer, and a
+  Chromium page in a window behind another app keeps its old size, so the suites skip these
+  unless `WSURF_COMPUTER_FOREGROUND_TEST=1` reaches the test host (the script sets it as
+  `TEST_RUNNER_WSURF_COMPUTER_FOREGROUND_TEST`). Run it from a logged-in, unlocked desktop
+  session with the display awake and nothing else in front; the test windows take focus. The
+  script needs the `build-for-testing` output and the `WSURF_BUNDLE_ID_SUFFIX` of that build.
+- **A real MCP client.** MCP.md, "Verify with a real client", lists the steps a person
+  runs against a Stage app. No automated gate covers that path.
+
 Run the full suite before opening a pull request. CI also measures app-target
 line coverage and rejects regressions below the repository floor. CI runs
 `Tools/check-format.sh`, which fails on SwiftLint violations. CI pins SwiftLint

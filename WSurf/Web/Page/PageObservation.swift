@@ -42,6 +42,14 @@ final class PageObservation {
 }
 
 extension PageDriver {
+    /// What an action returns once the page has settled. The in-app assistant gets a fresh snapshot of the page. An MCP
+    /// connection gets the status line only: it builds a compact report of what changed from digests taken around the action.
+    enum FeedbackMode: Sendable { case snapshot, delta }
+
+    @TaskLocal static var feedbackMode = FeedbackMode.snapshot
+    /// A ref stays valid for as long as its document does: each observation keeps the refs earlier ones listed for the same
+    /// document. Set for MCP calls; the in-app assistant keeps the refs of its latest observation only.
+    @TaskLocal static var accumulatesRefs = false
     @TaskLocal static var outputBudget = PageOutputBudget()
     @TaskLocal static var expectedObservation: String?
     static let observations = NSMapTable<BrowserPage, PageObservation>(keyOptions: .weakMemory, valueOptions: .strongMemory)

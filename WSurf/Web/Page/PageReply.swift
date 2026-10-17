@@ -30,6 +30,19 @@ extension BrowserPage {
     }
 }
 
+extension BrowserPage {
+    /// The string an async function `body` returns in the automation world, or nil when the call fails, the caller is
+    /// cancelled or `ceiling` passes first. A body that waits in the page ends with the page's own timer long before
+    /// the ceiling, which only guards a page that never answers.
+    func callAsyncJavaScript(_ body: String, within ceiling: Duration, in frame: BrowserFrame?) async -> String? {
+        await PageReply<String>.awaiting(within: ceiling) { gate in
+            Task {
+                gate.finish((try? await self.callAsyncJavaScript(body, in: frame, contentWorld: PageAutomationGuard.world)) as? String)
+            }
+        }
+    }
+}
+
 /// Resumes its caller once, with the first of the answer, the caller's cancellation or the ceiling.
 @MainActor
 final class PageReply<Value: Sendable> {

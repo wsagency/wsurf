@@ -123,8 +123,11 @@ nonisolated enum PageRuntime {
         return actual === expected.value ? 'matched' : 'mismatch';
       };
 
-      const collect = () => {
-        window.__wsurfSnapshot = Date.now().toString(36) + Math.random().toString(36);
+      // `commit` makes the walk an observation: it rotates the snapshot id and gives every new control a ref. A ref keeps the
+      // signature its control had when a client last saw it (`acknowledge`, or `observe` for what it lists), so a control that
+      // changed since is refused, whatever later walks did. Without `commit` the walk only reads.
+      const collect = (commit = true) => {
+        if (commit) window.__wsurfSnapshot = Date.now().toString(36) + Math.random().toString(36);
         const out = [];
         if (!document.body) return out;
         for (const el of walk(document.body)) {
@@ -139,11 +142,12 @@ nonisolated enum PageRuntime {
           if (dup) continue;
 
           let ref = refIDs.get(el);
-          if (!ref) { ref = window.__wsurfRefs.push(el); refIDs.set(el, ref); }
-          foundOnly.delete(el);
-          el.__wsurfRef = ref;
-          refSignatures.set(ref, signature(el));
-          const entry = { r: ref, k: kind, l: label };
+          if (!ref && commit) { ref = window.__wsurfRefs.push(el); refIDs.set(el, ref); refSignatures.set(ref, signature(el)); }
+          if (commit) {
+            foundOnly.delete(el);
+            el.__wsurfRef = ref;
+          }
+          const entry = { r: ref || 0, k: kind, l: label };
           if (kind === 'link' && el.href.length <= 2048) entry.h = el.href;
           if (kind === 'field') {
             if (el.readOnly || el.getAttribute('aria-readonly') === 'true') entry.ro = 1;
@@ -172,7 +176,10 @@ nonisolated enum PageRuntime {
           entry.vp = inViewport(el);
           const frame = el.ownerDocument.defaultView?.frameElement;
           if (frame) entry.frame = frame.title || frame.name || 'embedded frame';
-          if (el.getAttribute('aria-expanded')) entry.expanded = el.getAttribute('aria-expanded');
+          if (el.tagName === 'SUMMARY' && el.parentElement?.tagName === 'DETAILS') entry.expanded = el.parentElement.open ? 'true' : 'false';
+          else if (el.getAttribute('aria-expanded')) entry.expanded = el.getAttribute('aria-expanded');
+          if (el.getAttribute('aria-pressed')) entry.pr = el.getAttribute('aria-pressed') === 'true' ? 1 : 0;
+          if (el.getAttribute('aria-selected')) entry.se = el.getAttribute('aria-selected') === 'true' ? 1 : 0;
           out.push(entry);
         }
         return out;
@@ -344,7 +351,25 @@ nonisolated enum PageRuntime {
         return frame ? actionable(frame) : '';
       };
 
-      const observe = (query, textLimit, controlLimit, textOffset, controlOffset, scope, viewportOnly) => {
+      const sigHash = text => {
+        let hash = 2166136261;
+        for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619) >>> 0;
+        return hash || 1;
+      };
+      // Records that a client has now seen the controls `pairs` ([ref, hash of the signature it was shown]) list, but only
+      // where the control still has that signature: one that changed in between stays refused.
+      const acknowledge = pairs => {
+        for (const [ref, hash] of pairs) {
+          const el = window.__wsurfRefs[ref - 1];
+          if (!el?.isConnected || foundOnly.has(el)) continue;
+          const current = signature(el);
+          if (sigHash(current) === hash) refSignatures.set(ref, current);
+        }
+        return true;
+      };
+
+      // `acknowledge` false returns each listed control's signature hash instead, for the caller to acknowledge what it shows.
+      const observe = (query, textLimit, controlLimit, textOffset, controlOffset, scope, viewportOnly, ack = true) => {
         // A rejected scope must not rotate the snapshot or walk the page.
         if (scope && selectorProblem(scope)) return { error: 'The scope selector is invalid or reads an attribute value that is not exposed.' };
         const all = collect();
@@ -378,8 +403,15 @@ nonisolated enum PageRuntime {
           offset = 0; controlReset = 'out_of_range';
         }
         lastControlQuery = controlQuery;
+        const listed = candidates.slice(offset, offset + controlLimit);
+        for (const c of listed) {
+          const el = window.__wsurfRefs[c.r - 1];
+          if (!el) continue;
+          if (ack) refSignatures.set(c.r, signature(el));
+          else c.sg = sigHash(signature(el));
+        }
         return { text: text.slice(start, end), textTotal: text.length, textStart: start,
-          controls: candidates.slice(offset, offset + controlLimit), controlTotal: candidates.length, controlStart: offset,
+          controls: listed, controlTotal: candidates.length, controlStart: offset,
           controlReset,
           snapshot: window.__wsurfSnapshot, document: documentID, url: location.href };
       };
@@ -475,6 +507,8 @@ nonisolated enum PageRuntime {
         refSignatures.set(ref, signature(el));
         return ref;
       };
+
+      \#(targetScript)
 
       const elementState = selector => {
         const problem = selectorProblem(selector);
@@ -688,9 +722,12 @@ nonisolated enum PageRuntime {
         return out;
       };
 
-      return { matchesRef, inspectableRef, isFoundOnly: ref => foundOnly.has(window.__wsurfRefs[ref - 1]), expectValue, valueState, walk, documentID, norm, collect,
+      \#(feedbackScript)
+
+      return { resolveTarget, dragPlan, dragHolds, matchesRef, inspectableRef, isFoundOnly: ref => foundOnly.has(window.__wsurfRefs[ref - 1]), expectValue, valueState, walk, documentID, norm, collect,
         pageText, viewportText, resolve, setValue, pressEnter,
-        labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe, elementState, findAll, inspect, selectorProblem, screenshotGeometry };
+        labelOf, kindOf, visible, highlight, isSensitiveField, disabled, actionable, observe, acknowledge, elementState, findAll, inspect, selectorProblem, screenshotGeometry,
+        digest, waitFor };
     })());
     """#
 

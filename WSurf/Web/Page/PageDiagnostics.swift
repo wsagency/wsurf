@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import CryptoKit
 import Foundation
 
 /// Bounded, in-memory console/network records for one development-owned tab, plus URL sanitization.
@@ -85,8 +86,46 @@ nonisolated enum PageDiagnostics {
         let evicted: Int
         /// Records in this page that were cut down to the per-record limit.
         let truncated: Int
+        /// Records the read passed over because they did not match its filter (always 0 without one).
+        let skipped: Int
         let epoch: Int
         let documentID: String
+    }
+
+    /// Which records of a stream a read returns. Every set member must match. Console records have a `level`; network
+    /// records have `status`, `outcome` and `type`; both have a `url` (a console record's is its source file).
+    struct Filter: Equatable {
+        var level: String?
+        var minStatus: Int?
+        var urlContains: String?
+        var outcome: String?
+        var type: String?
+
+        var isEmpty: Bool {
+            self == Filter()
+        }
+
+        func matches(_ record: Record) -> Bool {
+            if let level, record.fields["level"] != .text(level) { return false }
+            if let outcome, record.fields["outcome"] != .text(outcome) { return false }
+            if let type, record.fields["type"] != .text(type) { return false }
+            if let minStatus {
+                guard case .number(let status)? = record.fields["status"], status >= minStatus else { return false }
+            }
+            if let urlContains {
+                guard case .text(let url)? = record.fields["url"], url.contains(urlContains) else { return false }
+            }
+            return true
+        }
+    }
+
+    /// The answer to asking for one record by its sequence number.
+    enum Lookup: Equatable {
+        case found(Record)
+        /// It was captured and has since been pushed out of the bounded buffer.
+        case evicted
+        /// The stream has not produced that many records yet.
+        case notCaptured
     }
 
     /// One buffer per owned tab. Retention (records and bytes) is shared by both streams and evicts the globally oldest
@@ -165,7 +204,18 @@ nonisolated enum PageDiagnostics {
             }
         }
 
-        func read(stream: Stream, cursor: String?, limit: Int) throws(ReadError) -> Page {
+        /// One record by sequence number, for as long as the buffer retains it.
+        func lookup(stream: Stream, seq: UInt64) -> Lookup {
+            if let record = records.first(where: { $0.stream == stream && $0.seq == seq }) {
+                return .found(record)
+            }
+            return seq < nextSeq[stream, default: 0] ? .evicted : .notCaptured
+        }
+
+        /// A filtered read scans forward from the cursor (the buffer holds at most `maxRecords`, so the scan is bounded) and
+        /// returns the first `limit` matches. The next cursor follows the last record the scan consumed: records skipped on
+        /// the way are not offered again, and one the scan never reached is still ahead of the cursor.
+        func read(stream: Stream, cursor: String?, limit: Int, filter: Filter = Filter()) throws(ReadError) -> Page {
             guard (1...Buffer.maxReadLimit).contains(limit) else { throw .invalidLimit }
             let next = nextSeq[stream, default: 0]
             let retained = records.filter { $0.stream == stream }
@@ -181,11 +231,23 @@ nonisolated enum PageDiagnostics {
                     start = position
                 }
             }
-            let page = retained.filter { $0.seq >= start }.prefix(limit)
-            let after = page.last.map { $0.seq + 1 } ?? start
+            var page: [Record] = []
+            var skipped = 0
+            var after = start
+            for record in retained where record.seq >= start {
+                if page.count == limit {
+                    break
+                }
+                if filter.matches(record) {
+                    page.append(record)
+                } else {
+                    skipped += 1
+                }
+                after = record.seq + 1
+            }
             return Page(
-                records: Array(page), nextCursor: encode(stream: stream, seq: after), gap: gap,
-                evicted: evicted(stream), truncated: page.filter(\.truncated).count, epoch: epoch, documentID: documentID)
+                records: page, nextCursor: encode(stream: stream, seq: after), gap: gap, evicted: evicted(stream),
+                truncated: page.filter(\.truncated).count, skipped: skipped, epoch: epoch, documentID: documentID)
         }
 
         // MARK: Cursor
@@ -235,20 +297,31 @@ nonisolated enum PageDiagnostics {
 
     private static let hierarchicalSchemes: Set<String> = ["http", "https", "ws", "wss", "ftp", "file"]
 
-    /// Keeps scheme, host, port and path only. Userinfo, query and fragment are removed; opaque schemes (data, blob,
-    /// javascript, about, …) reveal just their scheme. Idempotent, so it can be applied again at output.
-    static func sanitize(url: String) -> String? {
+    /// Keeps scheme, host, port and path. Userinfo and fragment are removed; opaque schemes (data, blob, javascript, about, …)
+    /// reveal just their scheme. The query keeps plain parameter names and conceals everything else (`QueryValues`).
+    static func sanitize(url: String, queryValues: QueryValues) -> String? {
+        sanitized(url: url, queryValues: queryValues)?.text
+    }
+
+    /// `sanitize`, also reporting whether the query was cut: more than `maxQueryParameters` parameters (the rest become `…`).
+    static func sanitized(url: String, queryValues: QueryValues) -> (text: String, cut: Bool)? {
         guard let colon = url.firstIndex(of: ":") else { return nil }
         let scheme = url[..<colon].lowercased()
         guard let first = scheme.unicodeScalars.first, first.value >= 0x61 && first.value <= 0x7A,
             scheme.unicodeScalars.allSatisfy({ ($0.value >= 0x61 && $0.value <= 0x7A) || ($0.value >= 0x30 && $0.value <= 0x39) || "+-.".unicodeScalars.contains($0) })
         else { return nil }
-        guard hierarchicalSchemes.contains(scheme) else { return "\(scheme):" }
+        guard hierarchicalSchemes.contains(scheme) else { return ("\(scheme):", false) }
         guard let components = URLComponents(string: url) else { return nil }
         var host = components.percentEncodedHost ?? ""
         if host.isEmpty, scheme != "file" { return nil }
         if host.contains(":"), !host.hasPrefix("[") { host = "[\(host)]" }
         let port = components.port.map { ":\($0)" } ?? ""
-        return "\(scheme)://\(host)\(port)\(components.percentEncodedPath)"
+        var query = ""
+        var cut = false
+        if let raw = components.percentEncodedQuery, !raw.isEmpty {
+            (query, cut) = render(query: raw, queryValues)
+            query = "?" + query
+        }
+        return ("\(scheme)://\(host)\(port)\(components.percentEncodedPath)\(query)", cut)
     }
 }

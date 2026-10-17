@@ -10,14 +10,18 @@ import Testing
 /// Untrusted page messages (WebKit hook) and CDP events (Chromium) become bounded records here, or nothing.
 struct PageDiagnosticsIngestTests {
     private func entry(_ body: Any) -> PageDiagnostics.Entry? {
-        PageDiagnosticsHook.entry(from: body)
+        PageDiagnosticsHook.entry(from: body, queryValues: DiagnosticsTestKey.values)
     }
 
     // MARK: WebKit hook messages
 
     @Test func acceptsAWellFormedConsoleMessage() {
         let result = entry(["k": "console", "level": "error", "text": "boom", "url": "https://a.test/app.js?v=secret#x", "line": 12])
-        #expect(result == .init(stream: .console, fields: ["level": "error", "text": "boom", "url": "https://a.test/app.js", "line": 12, "source": "webkit-hook"]))
+        #expect(
+            result
+                == .init(
+                    stream: .console,
+                    fields: ["level": "error", "text": "boom", "url": .text("https://a.test/app.js?v=*short"), "line": 12, "source": "webkit-hook"]))
     }
 
     @Test(arguments: ["log", "info", "warn", "error", "debug"])
@@ -44,12 +48,12 @@ struct PageDiagnosticsIngestTests {
 
     @Test func clipsConsoleTextAndIgnoresExtraKeys() throws {
         let long = String(repeating: "é", count: 5_000)
-        let result = try #require(entry(["k": "console", "level": "log", "text": long, "cookie": "hunter2", "stack": "at x"]))
+        let result = try #require(entry(["k": "console", "level": "log", "text": long, "cookie": "hunter2", "headers": "hunter2"]))
         guard case .text(let text)? = result.fields["text"] else { Issue.record("text missing"); return }
         #expect(text.utf8.count <= 4_096)
         #expect(result.truncated)
         #expect(result.fields["cookie"] == nil)
-        #expect(result.fields["stack"] == nil)
+        #expect(result.fields["headers"] == nil)
     }
 
     @Test func aShortMessageIsNotFlaggedTruncated() throws {
@@ -112,7 +116,8 @@ struct PageDiagnosticsIngestTests {
             "status": 404, "ms": 12.6, "outcome": "completed",
         ])
         #expect(result == .init(stream: .network, fields: [
-            "method": "POST", "url": "https://api.test/v1/x", "status": 404, "durationMs": 13, "outcome": "completed", "source": "webkit-fetch",
+            "method": "POST", "url": .text("https://api.test/v1/x?token=*short"), "status": 404, "durationMs": 13, "outcome": "completed",
+            "source": "webkit-fetch", "type": "fetch",
         ]))
     }
 
@@ -145,13 +150,14 @@ struct PageDiagnosticsIngestTests {
     // MARK: Chromium events
 
     private func console(_ type: String, _ args: [[String: Any]]) -> PageDiagnostics.Entry? {
-        let mapper = ChromiumDiagnosticsMapper()
+        let mapper = ChromiumDiagnosticsMapper(queryValues: DiagnosticsTestKey.values)
         return mapper.entry(method: "Runtime.consoleAPICalled", params: ["type": type, "args": args])
     }
 
     @Test func mapsConsoleTypesAndPrimitiveArguments() {
         let result = console("warning", [["type": "string", "value": "slow"], ["type": "number", "value": 3], ["type": "boolean", "value": true], ["type": "undefined"]])
         #expect(result == .init(stream: .console, fields: ["level": "warn", "text": "slow 3 true undefined", "source": "cdp"]))
+        #expect(console("log", [["type": "string", "value": "x"]])?.fields["stack"] == nil, "only warnings and errors carry a location and stack")
         #expect(console("error", [["type": "string", "value": "x"]])?.fields["level"] == "error")
     }
 
@@ -181,20 +187,20 @@ struct PageDiagnosticsIngestTests {
     }
 
     @Test func mapsExceptionsWithSanitizedLocation() {
-        let mapper = ChromiumDiagnosticsMapper()
+        let mapper = ChromiumDiagnosticsMapper(queryValues: DiagnosticsTestKey.values)
         let result = mapper.entry(method: "Runtime.exceptionThrown", params: [
             "exceptionDetails": ["text": "Uncaught", "url": "https://a.test/app.js?token=hunter2", "lineNumber": 41,
                 "exception": ["type": "object", "subtype": "error", "description": "ReferenceError: nope is not defined\n    at x"],
             ],
         ])
         #expect(result?.fields["text"] == "ReferenceError: nope is not defined")
-        #expect(result?.fields["url"] == "https://a.test/app.js")
+        #expect(result?.fields["url"] == .text("https://a.test/app.js?token=*short"))
         #expect(result?.fields["line"] == 42)  // CDP line numbers are 0-based
         #expect(result?.fields["level"] == "error")
     }
 
     @Test func correlatesANetworkRequestAcrossEventsWithoutTouchingHeaders() throws {
-        let mapper = ChromiumDiagnosticsMapper()
+        let mapper = ChromiumDiagnosticsMapper(queryValues: DiagnosticsTestKey.values)
         #expect(mapper.entry(method: "Network.requestWillBeSent", params: [
             "requestId": "1", "timestamp": 100.0,
             "request": ["url": "https://u:pw@a.test/x?token=hunter2", "method": "PUT", "headers": ["Authorization": "Bearer hunter2"], "postData": "hunter2"],
@@ -202,14 +208,15 @@ struct PageDiagnosticsIngestTests {
         #expect(mapper.entry(method: "Network.responseReceived", params: ["requestId": "1", "response": ["status": 201, "headers": ["Set-Cookie": "hunter2"]]]) == nil)
         let done = try #require(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "1", "timestamp": 100.25, "encodedDataLength": 1]))
         #expect(done == .init(stream: .network, fields: [
-            "method": "PUT", "url": "https://a.test/x", "status": 201, "durationMs": 250, "outcome": "completed", "source": "cdp",
+            "method": "PUT", "url": .text("https://a.test/x?token=*short"), "status": 201, "durationMs": 250, "outcome": "completed",
+            "source": "cdp", "transferBytes": 1,
         ]))
         #expect(!String(describing: done).contains("hunter2"))
         #expect(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "1", "timestamp": 101.0]) == nil)  // already reported
     }
 
     @Test func failuresAndCancellationsAreDistinguishedAndLeaveStatusUnknown() throws {
-        let mapper = ChromiumDiagnosticsMapper()
+        let mapper = ChromiumDiagnosticsMapper(queryValues: DiagnosticsTestKey.values)
         for id in ["a", "b"] {
             _ = mapper.entry(method: "Network.requestWillBeSent", params: ["requestId": id, "timestamp": 1.0, "request": ["url": "https://a.test/", "method": "GET"]])
         }
@@ -221,14 +228,14 @@ struct PageDiagnosticsIngestTests {
     }
 
     @Test func eventsWithoutAStartedRequestAreNotInvented() {
-        let mapper = ChromiumDiagnosticsMapper()
+        let mapper = ChromiumDiagnosticsMapper(queryValues: DiagnosticsTestKey.values)
         #expect(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "ghost", "timestamp": 1.0]) == nil)
         #expect(mapper.entry(method: "Network.loadingFailed", params: ["requestId": "ghost", "timestamp": 1.0]) == nil)
         #expect(mapper.entry(method: "Network.responseReceived", params: ["requestId": "ghost", "response": ["status": 200]]) == nil)
     }
 
     @Test func aRedirectReportsThePreviousHopAndTracksTheNext() throws {
-        let mapper = ChromiumDiagnosticsMapper()
+        let mapper = ChromiumDiagnosticsMapper(queryValues: DiagnosticsTestKey.values)
         _ = mapper.entry(method: "Network.requestWillBeSent", params: ["requestId": "r", "timestamp": 10.0, "request": ["url": "https://a.test/old", "method": "GET"]])
         let hop = try #require(mapper.entry(method: "Network.requestWillBeSent", params: [
             "requestId": "r", "timestamp": 10.1, "request": ["url": "https://a.test/new", "method": "GET"],
@@ -236,12 +243,13 @@ struct PageDiagnosticsIngestTests {
         ]))
         #expect(hop.fields["url"] == "https://a.test/old")
         #expect(hop.fields["status"] == 302)
+        #expect(hop.fields["redirectTo"] == "https://a.test/new")
         let final = try #require(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "r", "timestamp": 10.3]))
         #expect(final.fields["url"] == "https://a.test/new")
     }
 
     @Test func inFlightOverflowIsCountedNotSilent() {
-        let mapper = ChromiumDiagnosticsMapper()
+        let mapper = ChromiumDiagnosticsMapper(queryValues: DiagnosticsTestKey.values)
         for index in 0..<1_000 {
             _ = mapper.entry(method: "Network.requestWillBeSent", params: ["requestId": "\(index)", "timestamp": 1.0, "request": ["url": "https://a.test/\(index)", "method": "GET"]])
         }
@@ -251,7 +259,7 @@ struct PageDiagnosticsIngestTests {
     }
 
     @Test func aFinishEventCarriesTheIdentityOfTheRequestStartNotTheCurrentDocument() throws {
-        let mapper = ChromiumDiagnosticsMapper()
+        let mapper = ChromiumDiagnosticsMapper(queryValues: DiagnosticsTestKey.values)
         _ = mapper.entry(method: "Network.requestWillBeSent", params: [
             "requestId": "x", "timestamp": 1.0, "frameId": "frame-old", "loaderId": "loader-old", "request": ["url": "https://a.test/", "method": "GET"],
         ])
@@ -262,7 +270,7 @@ struct PageDiagnosticsIngestTests {
     }
 
     @Test func resetForgetsEarlierRequestsAndTheLossCount() {
-        let mapper = ChromiumDiagnosticsMapper()
+        let mapper = ChromiumDiagnosticsMapper(queryValues: DiagnosticsTestKey.values)
         for index in 0..<300 {
             _ = mapper.entry(method: "Network.requestWillBeSent", params: ["requestId": "\(index)", "timestamp": 1.0, "request": ["url": "https://a.test/", "method": "GET"]])
         }
@@ -272,7 +280,7 @@ struct PageDiagnosticsIngestTests {
     }
 
     @Test func aDocumentChangeKeepsOnlyTheNewDocumentsOwnRequestsAndClearsTheLossCount() throws {
-        let mapper = ChromiumDiagnosticsMapper()
+        let mapper = ChromiumDiagnosticsMapper(queryValues: DiagnosticsTestKey.values)
         func start(_ id: String, loader: String) {
             _ = mapper.entry(method: "Network.requestWillBeSent", params: [
                 "requestId": id, "timestamp": 1.0, "frameId": "main", "loaderId": loader, "request": ["url": "https://a.test/\(id)", "method": "GET"],
@@ -292,7 +300,7 @@ struct PageDiagnosticsIngestTests {
     }
 
     @Test func aHugeRequestURLIsClippedWhileInFlight() throws {
-        let mapper = ChromiumDiagnosticsMapper()
+        let mapper = ChromiumDiagnosticsMapper(queryValues: DiagnosticsTestKey.values)
         _ = mapper.entry(method: "Network.requestWillBeSent", params: ["requestId": "u", "timestamp": 1.0, "request": ["url": "https://a.test/" + String(repeating: "p", count: 2_000_000), "method": "GET"]])
         let done = try #require(mapper.entry(method: "Network.loadingFinished", params: ["requestId": "u", "timestamp": 1.1]))
         guard case .text(let url)? = done.fields["url"] else { Issue.record("url missing"); return }
@@ -301,7 +309,7 @@ struct PageDiagnosticsIngestTests {
     }
 
     @Test func malformedEventsAreIgnoredWithoutCrashing() {
-        let mapper = ChromiumDiagnosticsMapper()
+        let mapper = ChromiumDiagnosticsMapper(queryValues: DiagnosticsTestKey.values)
         let malformed: [(String, [String: Any])] = [
             ("Runtime.consoleAPICalled", [:]), ("Runtime.consoleAPICalled", ["type": 5, "args": "x"]),
             ("Runtime.exceptionThrown", ["exceptionDetails": 3]),

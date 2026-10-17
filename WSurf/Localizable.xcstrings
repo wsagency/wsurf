@@ -76,8 +76,23 @@
         }
       }
     },
+    "%lld paired" : {
+      "comment" : "Detail on the Connected apps row in Assistant settings. The number is how many apps are paired."
+    },
+    "Add a Developer Site" : {
+      "comment" : "Title of the alert that asks for a developer site on the Connected apps page. Title Case."
+    },
+    "Add Site…" : {
+      "comment" : "Row on the Connected apps page that opens an alert for typing a developer site. The ellipsis promises the alert. Title Case."
+    },
     "All %lld passwords from the old list are in Credential Manager." : {
 
+    },
+    "Allow Developer" : {
+      "comment" : "Button in the sheet where the user chooses what a paired app may do in a tab. It grants the Developer tier: development access, typing test passwords the app supplies itself, and no confirmation before purchases, sending, or deleting on developer sites. Title Case. Offered only for a paired app on a developer site."
+    },
+    "Allow Developer Access in “%@”?" : {
+      "comment" : "Heading of the confirmation shown when the Developer profile is set to a profile WSurf did not create for this. The inserted text is the profile’s name."
     },
     "Allow for this private tab" : {
 
@@ -88,26 +103,68 @@
     "and %lld more entries with notes." : {
 
     },
+    "Apps you paired with WSurf." : {
+      "comment" : "Search result description for the Connected apps page."
+    },
+    "Apps you paired with WSurf. Unpaired apps ask each time they connect." : {
+      "comment" : "Caption under the title of the Connected apps page."
+    },
     "Ask before opening %@" : {
 
     },
     "Ask next time" : {
 
     },
+    "Choose a Developer profile to use this." : {
+      "comment" : "Caption on a paired app’s row when its Without asking level is above Off but no Developer profile is chosen, so the level has no effect yet."
+    },
+    "Connected apps" : {
+      "comment" : "Name of the Settings page and section that list apps paired with WSurf over MCP. Sentence case; it is also the text of a link in the External connections page."
+    },
+    "Connected now" : {
+      "comment" : "Caption of a paired app row while the app has a live connection."
+    },
+    "Copy Configuration" : {
+      "comment" : "Button above the client list when pairing is unavailable and the configuration is copied at once. Title Case."
+    },
+    "Copy Configuration…" : {
+      "comment" : "Button above the client list. The ellipsis promises a dialog that asks for a name before the configuration is copied."
+    },
     "Create a vault to import the passwords saved before Credential Manager." : {
 
+    },
+    "Create Developer Profile" : {
+      "comment" : "Row on the Connected apps page that creates a profile named Developer and chooses it as the Developer profile. Title Case."
     },
     "Credential Manager changed. Review the old list again." : {
 
     },
     "Developer" : {
-
+      "comment" : "Name of the profile WSurf creates for developer work, and the Developer choice in the Without asking menu on a paired app’s row. Title Case."
+    },
+    "Developer access works only in this profile, so connected apps never use your everyday sign-ins." : {
+      "comment" : "Caption under the Developer profile menu on the Connected apps page."
+    },
+    "Developer profile" : {
+      "comment" : "Row title on the Connected apps page for the menu that chooses the only profile where paired apps can work without asking."
+    },
+    "Developer work" : {
+      "comment" : "Title of the section on the Connected apps page that holds the Developer profile and the developer sites."
+    },
+    "Development" : {
+      "comment" : "Choice in the Without asking menu on a paired app’s row, and the name of the access level that adds inspection, diagnostics and device emulation to control. Title Case."
+    },
+    "Enter a site like staging.example.com or staging.example.com:8443. Wildcards and address ranges aren’t supported." : {
+      "comment" : "Error under the developer sites when the typed site is not an exact host with an optional port."
     },
     "Entry" : {
 
     },
     "Entry %lld of the old list" : {
 
+    },
+    "External app" : {
+      "comment" : "Name given to a paired app when none was typed."
     },
     "Fill form controls together without submitting." : {
 
@@ -121,17 +178,26 @@
     "Import…" : {
 
     },
+    "It will need your approval each time it connects until you pair it again." : {
+      "comment" : "Body of the dialog that confirms withdrawing a paired app."
+    },
     "Keep for Now" : {
 
     },
     "Later" : {
 
     },
+    "localhost, 127.0.0.1, and [::1] on any port." : {
+      "comment" : "Caption of the This Mac row: the built-in developer sites. Keep the addresses as written."
+    },
     "Move Tab to Window" : {
 
     },
     "Move Your Saved Passwords" : {
 
+    },
+    "Name This App" : {
+      "comment" : "Title of the alert that asks for a name before WSurf pairs an app and copies its configuration. Title Case."
     },
     "New Page" : {
       "comment" : "Fallback title for a browser tab whose website has no title, including while a new website is loading. Title Case."
@@ -145,6 +211,9 @@
     "No app installed on this Mac handles %@ links." : {
 
     },
+    "No paired apps" : {
+      "comment" : "Title of the empty state on the Connected apps page."
+    },
     "No passkey for this website in WSurf." : {
 
     },
@@ -154,8 +223,20 @@
     "not imported: same as entry %lld." : {
 
     },
+    "Not paired. It asks for approval each time it connects." : {
+      "comment" : "Caption of a client row whose WSurf entry has no valid pairing token. Sentence case."
+    },
+    "Not set" : {
+      "comment" : "Choice in the Developer profile menu meaning no profile is chosen, so paired apps get no standing access."
+    },
+    "Not used yet" : {
+      "comment" : "Caption of a paired app row that has never connected."
+    },
     "Nothing is saved until you review and confirm. The old list stays until you remove it." : {
 
+    },
+    "Off" : {
+      "comment" : "Choice in the Without asking menu on a paired app’s row: the app asks each time it connects."
     },
     "Old Passwords list removed" : {
 
@@ -184,6 +265,39 @@
     "opens %@ without asking" : {
 
     },
+    "Pair" : {
+      "comment" : "Button in the External connections client list that pairs an app already added to a client, so WSurf can recognize it. A verb (a command)."
+    },
+    "Pair %@ with WSurf" : {
+      "comment" : "VoiceOver label of the Pair button on a client row. The inserted text is the client’s name."
+    },
+    "Pair an app under Advanced › External connections." : {
+      "comment" : "Caption of the empty state on the Connected apps page. The names are the Settings page and row where an app is paired."
+    },
+    "Paired apps" : {
+      "comment" : "Row title in the External connections client list; the caption links to Connected apps."
+    },
+    "Paired apps could work on your developer sites without asking, and skip the confirmation before purchases, sending, and deleting, while you’re signed in there." : {
+      "comment" : "Message of the confirmation shown when the Developer profile is set to a profile WSurf did not create for this."
+    },
+    "Paired apps set to work without asking can use this site too. A site without a port covers the usual web port only. Add one, like staging.example.com:8443, to include another." : {
+      "comment" : "Message of the alert that adds a developer site. It says what adding the site allows and how a port works."
+    },
+    "Paired as %@" : {
+      "comment" : "Caption of a client row whose pairing token WSurf recognizes. The inserted text is the paired app’s name."
+    },
+    "Pairing isn’t available because WSurf can’t reach its secure storage." : {
+      "comment" : "Caption of the empty Connected apps list when the keychain item cannot be read."
+    },
+    "Pairing isn’t available because WSurf can’t reach its secure storage. Apps ask for approval each time they connect." : {
+      "comment" : "Caption of the Paired apps row when the keychain item cannot be read, for example in a development build."
+    },
+    "Pairing isn’t available because WSurf can’t reach its secure storage. The app asks for approval each time it connects." : {
+      "comment" : "Error shown when setting up a client cannot pair it because the keychain item cannot be read."
+    },
+    "Pairing lets WSurf recognize an app. Review paired apps in Connected apps." : {
+      "comment" : "Caption of the Paired apps row. “Connected apps” is a link to that Settings page and must stay a substring."
+    },
     "Passwords saved before Credential Manager" : {
 
     },
@@ -192,6 +306,9 @@
     },
     "Press Tab to search this site" : {
       "comment" : "Accessibility hint for the command palette's site search suggestion. Tab is the keyboard key."
+    },
+    "Re-pair" : {
+      "comment" : "Menu command on a client row that replaces the app’s pairing token with a new one. A verb."
     },
     "Remove %@ search" : {
       "comment" : "Accessibility label and tooltip for removing the active site search chip. %@ is the website's name and should not be translated."
@@ -222,6 +339,9 @@
     },
     "Review…" : {
 
+    },
+    "Revoke “%@”?" : {
+      "comment" : "Heading of the dialog that confirms withdrawing a paired app. The inserted text is the app’s name."
     },
     "same website and username as entry %lld with another password. Choose what to do with each of them." : {
 
@@ -264,6 +384,9 @@
     },
     "This import was discarded. No data was written. Your saved passwords are still in the old list. To import them, choose Review again." : {
 
+    },
+    "This Mac" : {
+      "comment" : "Row title for the built-in developer sites on this computer (localhost, 127.0.0.1 and [::1]). Capitalized as a name."
     },
     "This page wants to open %@." : {
 
@@ -358,11 +481,38 @@
     "Use Another Device or Key…" : {
 
     },
+    "Usual web port only. Add a port to include another." : {
+      "comment" : "Caption under a developer site that has no port. It covers port 80 for http and 443 for https only."
+    },
     "Website access" : {
       "comment" : "Row title in Settings › Assistant, Acting on websites. It chooses how much of a website the assistant may use when that website has no setting of its own: Ask, Read Only or Allow Control. Sentence case."
     },
+    "Without asking" : {
+      "comment" : "Label beside the menu on a paired app’s row. The menu sets what the app may do on developer sites without a prompt: Off, Development or Developer."
+    },
+    "Without asking works only on developer sites in the Developer profile. Developer also skips the confirmation before purchases, sending, and deleting there." : {
+      "comment" : "Footnote under the Developer work section on the Connected apps page."
+    },
+    "WSurf added the app but couldn’t save its pairing. Choose Pair to try again." : {
+      "comment" : "Error shown when the client’s configuration was written but the pairing record could not be saved."
+    },
     "WSurf can’t save a passkey here: Credential Manager has no vault yet." : {
 
+    },
+    "WSurf copies a configuration that pairs the app you paste it into. Keep it private." : {
+      "comment" : "Message of the alert that asks for an app name before copying a configuration that contains a pairing token."
+    },
+    "WSurf couldn’t pair this app. Try again." : {
+      "comment" : "Error under the client list when Copy Configuration could not save the new pairing."
+    },
+    "WSurf couldn’t revoke this app. Try again." : {
+      "comment" : "Error on the Connected apps page when the pairing could not be removed."
+    },
+    "WSurf couldn’t save this change. Try again." : {
+      "comment" : "Error on the Connected apps page when a change to a paired app or the developer settings could not be stored."
+    },
+    "WSurf keeps up to %lld developer sites. Remove one to add another." : {
+      "comment" : "Error when the developer site list is full. The number is the most sites that can be listed."
     },
     "WSurf now keeps passwords only in Credential Manager, an encrypted vault you unlock with a passkey. Passwords saved in the profile “%@” aren’t filled until you import them. Nothing is deleted without your confirmation." : {
 
@@ -6142,6 +6292,9 @@
     },
     "This tab cannot be unloaded right now." : {
       "comment" : "Fallback notice when a tab cannot safely be unloaded."
+    },
+    "• Allow Developer: also types test passwords it gives itself, and acts without asking before purchases, sending, and deleting. Only on developer sites in your Developer profile." : {
+      "comment" : "Line in the access sheet that explains the Allow Developer button. It follows the lines for the other buttons."
     }
   },
   "version" : "1.0"
