@@ -190,9 +190,15 @@ struct MCPSecretTypingTests {
         #expect(try await value(of: "pw", in: rig) == Self.password, "the page holds what was typed")
         #expect(everything(typed).contains("Typed a secret into"))
         #expect(rig.session.secrets.count == 1)
-        // A password field the agent filled reads as filled and hidden, like one the user filled.
-        #expect(everything(typed).contains("(filled, hidden)"))
+        // The change report says the field went from empty to filled, without its value.
+        #expect(everything(typed).contains("filled false → true"))
         try expectNoSecret(in: typed, "the typing result", secrets: [Self.password])
+
+        // A password field the agent filled reads as filled and hidden in the whole page, like one the user filled.
+        let full = try await call(rig, "typeOnPage", ["ref": .int(password), "text": .string(Self.password), "secret": true, "result": "full"])
+        #expect(full.isError == false, "\(everything(full))")
+        #expect(everything(full).contains("(filled, hidden)"))
+        try expectNoSecret(in: full, "the full typing result", secrets: [Self.password])
     }
 
     enum Refusal: String, CaseIterable, Sendable {
@@ -661,8 +667,10 @@ struct MCPSecretTypingTests {
         defer { close(rig) }
         _ = try await call(rig, "requestAccess", [:], tab: false)
         let read = try await call(rig, "readPage")
+        // The whole page, so the next field's ref can be read from it.
         let typed = try await call(rig, "typeOnPage", [
             "observationID": .string(try #require(observation(read))), "ref": .int(try ref("Password", in: read)), "text": .string(Self.password), "secret": true,
+            "result": "full",
         ])
         let token = try await call(rig, "typeOnPage", [
             "observationID": .string(try #require(observation(typed))), "ref": .int(try ref("API token", in: typed)), "text": .string(Self.token), "secret": true,
