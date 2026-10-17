@@ -78,4 +78,30 @@ extension CredentialExchangeCoordinatorTests {
         }
 
     }
+
+    /// A decision in the review is local to its own item. Deciding 1,000 items of a 25,000-item review must cost 1,000 small steps, not
+    /// 1,000 passes over the whole review; the budget is generous, and the loop stops at it so a regression fails in seconds, not hours.
+    @Test(.timeLimit(.minutes(2)))
+    func deciding1000ItemsOfA25000ItemReviewIsNotQuadratic() async throws {
+        let clock = ContinuousClock()
+        let transfer = try ExchangeScale.transfer(items: 25_000)
+        try await withFixture { f in
+            try await f.seed([])
+            let staging = try await clock.measure { try await f.stage(transfer) }
+            print("[scale] stage 25,000: \(staging.formatted(.units(allowed: [.seconds, .milliseconds], width: .narrow)))")
+            let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
+            let records = review.candidates.prefix(1_000).compactMap(\.records.first)
+            #expect(records.count == 1_000)
+
+            let started = clock.now
+            var decided = 0
+            for record in records where clock.now - started < .seconds(30) {
+                try f.coordinator.choose(.skip, for: record.incoming, owner: f.owner)
+                decided += 1
+            }
+            let elapsed = clock.now - started
+            print("[scale] decide \(decided) of 1,000: \(elapsed.formatted(.units(allowed: [.seconds, .milliseconds], width: .narrow)))")
+            #expect(decided == 1_000, "only \(decided) of 1,000 decisions fit in 30 seconds")
+        }
+    }
 }
