@@ -12,8 +12,8 @@ import Foundation
 ///
 /// Native decides the route before the page script touches a call: `legacy` (a private page) hands the untouched call to the
 /// engine, `manager` is handled here, and no answer is a refusal, never implicit legacy. A call handled here reaches the
-/// engine only when native says so afterwards (`handoff`): the user chose another device or key, or the vault holds nothing
-/// for it.
+/// engine only when native says so afterwards (`handoff`), and native says so only when the user chose another device or key
+/// on one of its sheets: never because of what the vault does or does not hold.
 nonisolated enum WebAuthnScript {
     static let handlerName = "wsurfWebAuthn"
     static let requestEvent = "wsurf-webauthn-request"
@@ -364,18 +364,18 @@ nonisolated enum WebAuthnScript {
         const query = queryHandlers.get(value.id);
         if (query) { queryHandlers.delete(value.id); query(value.result ?? null); return; }
         if (value.handoff !== undefined) {
-          if (value.handoff === 'modal' || value.handoff === 'conditional') handOff(value.id, value.handoff);
+          if (value.handoff === 'modal') handOff(value.id);
           return;
         }
         settle(value.id, value.error, value.result);
       });
 
-      // Native decided that this request goes to the engine's own authenticator, in place of the vault's answer: the user chose
-      // another device or key, or the vault holds nothing for it. The caller's own values are passed on once. A request the user
-      // never saw (a discovery in a profile with no vault) keeps its conditional mediation; one the user chose to hand over is
-      // modal. The request stays registered until the engine settles it, so a second foreground request is refused exactly as
-      // while the vault was answering, and the engine's own timeout and the caller's abort signal take over from ours.
-      function handOff(id, mode) {
+      // Native says the user chose another device or key on one of its sheets: this request goes to the engine's own
+      // authenticator, in place of the vault's answer. The caller's own values are passed on once, as a modal request (a
+      // discovery the user turned into an explicit choice is no longer a background one). The request stays registered until the
+      // engine settles it, so a second foreground request is refused exactly as while the vault was answering, and the engine's
+      // own timeout and the caller's abort signal take over from ours.
+      function handOff(id) {
         const pending = requests.get(id);
         if (!pending || pending.handedOff) return;
         pending.handedOff = true;
@@ -383,7 +383,7 @@ nonisolated enum WebAuthnScript {
         pending.signal?.removeEventListener('abort', pending.abort);
         const options = {publicKey: pending.publicKey, signal: pending.signal};
         if (pending.mediation !== undefined) options.mediation = pending.mediation;
-        if (mode === 'modal' && pending.conditional) options.mediation = 'optional';
+        if (pending.conditional) options.mediation = 'optional';
         const done = settleWith => value => { requests.delete(id); settleWith(value); };
         let call;
         try { call = originals[pending.operation](options); } catch (error) { done(pending.reject)(error); return; }

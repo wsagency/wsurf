@@ -262,30 +262,21 @@ enum WebAuthnAdapter {
         }
         // A conditional request is only a registered discovery: nothing is unlocked, asked or signed until the user
         // activates a webauthn field (reported by the relay only for a trusted gesture) and then explicitly accepts the
-        // native offer that precedes any unlock. A profile with no vault has nothing to wait for, so its discovery runs in
-        // the engine at once.
-        if parsed.mediation == .conditional {
-            Task { await handOffIfProfileHasNoVault(entry) }
-        } else {
+        // native offer that precedes any unlock. It is pending in exactly the same way whether or not the profile has a
+        // vault or a passkey for the site, so a page can learn neither.
+        if parsed.mediation != .conditional {
             start(entry)
         }
     }
 
-    /// Looking lists the profile's vaults and reads nothing from any of them, so the page learns nothing about a vault's content.
-    private static func handOffIfProfileHasNoVault(_ entry: Entry) async {
-        guard let page = entry.page, !entry.started else { return }
-        let hasVault = await CredentialRouting.hasUsableVault(profile: page.context.profile)
-        guard !hasVault, !entry.started, !entry.cancelled, entries[entry.key] === entry, !page.isClosed else { return }
-        await handOff(entry, page: page, context: nil, mode: "conditional")
-    }
-
-    /// The page's request goes to the system's authenticator: its own call runs in the engine once, in place of the vault's
-    /// answer (see the page script). `mode` is `modal`, or `conditional` for a discovery the user never saw. The entry is retired
-    /// first, so its expiry and a later cancel find nothing, and the engine's own timeout and abort signal take over.
-    private static func handOff(_ entry: Entry, page: BrowserPage, context: WebAuthnContext?, mode: String) async {
+    /// The user chose the system's authenticator: the page's own call runs in the engine once, in place of the vault's answer (see
+    /// the page script). It is only ever sent after one of our sheets was closed by that choice, never on the strength of what
+    /// the vault does or does not hold. The entry is retired first, so its expiry and a later cancel find nothing, and the
+    /// engine's own timeout and abort signal take over.
+    private static func handOff(_ entry: Entry, page: BrowserPage, context: WebAuthnContext?) async {
         guard !entry.cancelled, entries[entry.key] === entry else { return }
         retire(entry)
-        await deliver(["handoff": mode], key: entry.key, page: page, frame: entry.frame, entry: entry, context: context)
+        await deliver(["handoff": "modal"], key: entry.key, page: page, frame: entry.frame, entry: entry, context: context)
     }
 
     private static func reject(_ key: Key, _ page: BrowserPage, _ frame: BrowserFrame, _ error: WebAuthnWire.PageError) {
@@ -367,7 +358,8 @@ enum WebAuthnAdapter {
             // Busy: a modal request fails NotAllowed, a conditional one stays pending (`finish`).
             guard busyWindows.insert(ObjectIdentifier(anchor)).inserted else { throw WebsiteAuthenticatorError.notAllowed }
             claimed = anchor
-            let chosen = try await vault(for: entry, native: native, in: anchor)
+            let interaction: any WebAuthnCeremonyInteraction = interactionForTesting[page.profileID]?() ?? NativeWebAuthnInteraction()
+            let chosen = try await vault(for: entry, native: native, in: anchor, interaction: interaction)
             // The route and the prompt suspended: the request must still be this live document, in this window, before any
             // manager is bound to it. Nothing suspends between these checks and the binding.
             try await requireLiveRequest(entry, page: page)
@@ -377,7 +369,6 @@ enum WebAuthnAdapter {
             guard manager.profileID == native.profileID else { throw WebsiteAuthenticatorError.notAllowed }
             entry.boundManager = manager
 
-            let interaction: any WebAuthnCeremonyInteraction = interactionForTesting[page.profileID]?() ?? NativeWebAuthnInteraction()
             let outcome = try await WebsiteAuthenticator.perform(
                 entry.parsed.request, context: native, manager: manager, in: anchor,
                 conditional: entry.parsed.mediation == .conditional, interaction: interaction
@@ -405,7 +396,7 @@ enum WebAuthnAdapter {
             }
         } catch WebsiteAuthenticatorError.handOff {
             // Nothing was written, signed or unlocked for it, and every sheet of ours is already closed.
-            await handOff(entry, page: page, context: context, mode: "modal")
+            await handOff(entry, page: page, context: context)
         } catch {
             // Whatever ended the run (also a discarded entry, which `finish` ignores), a saved passkey is never lost silently.
             noteUnconfirmedReceipt()
@@ -413,13 +404,15 @@ enum WebAuthnAdapter {
         }
     }
 
-    /// The vault that answers the request, or `nil` when the choice came to nothing (a cancel). Throws `handOff` when the request
-    /// is the system authenticator's instead: the profile has no usable vault, or the user chose it in the vault prompt. It
-    /// reads the vault list and the open vaults' contents, never a locked vault, and unlocks nothing.
-    private static func vault(for entry: Entry, native: WebAuthnContext, in anchor: ASPresentationAnchor) async throws -> CredentialManager? {
+    /// The vault that answers the request, or `nil` when the choice came to nothing (a cancel). Throws `handOff` only when the user
+    /// chose the system's authenticator in a sheet of ours, here (the vault prompt, or the step a profile with no vault shows) or in
+    /// the ceremony; never on the strength of what a vault holds. It reads the vault list and the open vaults' contents, never a
+    /// locked vault, and unlocks nothing.
+    private static func vault(
+        for entry: Entry, native: WebAuthnContext, in anchor: ASPresentationAnchor, interaction: some WebAuthnCeremonyInteraction
+    ) async throws -> CredentialManager? {
         guard let profile = entry.page?.context.profile else { throw WebsiteAuthenticatorError.notAllowed }
         let route: VaultRoute
-        var assertionRP: String?
         switch entry.parsed.request.options {
         case .creation:
             // The context's origin is already validated (it may be http://localhost, which a password origin never is).
@@ -430,15 +423,14 @@ enum WebAuthnAdapter {
                   let rpID = try? RelyingPartyPolicy.validate(rpID: options.rpID, origin: url) else {
                 throw WebsiteAuthenticatorError.invalidRequest
             }
-            assertionRP = rpID
             route = await CredentialRouting.route(
                 profile: profile, origin: native.origin, passkeyRPID: rpID, allowed: options.allowCredentials
             )
         }
-        // No usable vault, now: the system's authenticator answers a modal request without any sheet of ours. A discovery stays
-        // as it is, pending and silent.
+        // No usable vault: the user is asked all the same, in the same words as by a vault with nothing for the request, so a page
+        // cannot tell the two apart. The system's authenticator is the only way on.
         if case .unavailable = route {
-            throw entry.parsed.mediation == .conditional ? WebsiteAuthenticatorError.notAllowed : WebsiteAuthenticatorError.handOff
+            try await WebsiteAuthenticator.offerSystemAuthenticator(entry.parsed.request, context: native, in: anchor, interaction: interaction)
         }
         let chosen: CredentialManager?
         if case .needsUnlock(let only) = route {
@@ -454,13 +446,6 @@ enum WebAuthnAdapter {
             case .none:
                 chosen = nil
             }
-        }
-        // A discovery the user triggers by clicking a field asks nothing of them when the open vault holds no passkey for
-        // this site: it stays pending, silent. (A modal request hands off instead, in the ceremony.)
-        if entry.parsed.mediation == .conditional, case .assertion(let options) = entry.parsed.request.options,
-           let rpID = assertionRP, let open = chosen, open.isUnlocked, let accounts = try? await open.snapshot().accounts,
-           WebsiteAuthenticator.assertionCandidates(accounts, rpID: rpID, allowed: options.allowCredentials).isEmpty {
-            throw WebsiteAuthenticatorError.notAllowed
         }
         return chosen
     }

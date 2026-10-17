@@ -245,7 +245,7 @@ struct WebsiteAuthenticatorCeremonyTests {
         )
     }
 
-    private func passkeys(_ fixture: Fixture) async throws -> [WebsitePasskey] {
+    func passkeys(_ fixture: Fixture) async throws -> [WebsitePasskey] {
         try await fixture.manager.snapshot().accounts.flatMap(\.passkeys)
     }
 

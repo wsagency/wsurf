@@ -81,15 +81,16 @@ extension WebAuthnAdapterTests {
         #expect(native.requests.count == 1)
     }
 
-    @Test(.boundedWebViews, arguments: [("modal", "optional"), ("conditional", "conditional")])
-    func aConditionalRequestIsHandedOverModalOnlyWhenTheUserChoseIt(mode: String, mediation: String) async throws {
+    /// The user's explicit choice turns a background discovery into the modal request it is now: the engine is not asked to wait
+    /// for a field again.
+    @Test(.boundedWebViews) func aConditionalRequestTheUserHandedOverRunsAsAModalOne() async throws {
         let (view, native) = try await load(engine)
         try await startGet(view, "navigator.credentials.get({ mediation: 'conditional', publicKey: window.pk })")
         _ = try #require(await pending(native))
 
-        #expect(try await handOff(mode, view, native))
+        #expect(try await handOff("modal", view, native))
         #expect(await waitUntil { (try? await outcome(view)) == "engine-get" })
-        #expect(try await engineCalls(view).first?["mediation"] as? String == mediation)
+        #expect(try await engineCalls(view).first?["mediation"] as? String == "optional")
     }
 
     @Test(.boundedWebViews) func aHandedOffRequestStillBlocksAnotherForegroundRequestUntilTheEngineSettles() async throws {
@@ -144,10 +145,12 @@ extension WebAuthnAdapterTests {
         let request = try #require(await pending(native))
         let id = try #require(request["id"] as? String), document = try #require(request["document"] as? String)
 
-        // Unknown words are no hand-off: the engine is not asked.
-        _ = try await deliver(["handoff": "everything"], id: id, document: document, in: view)
-        try await barrier(view)
-        #expect(try await engineCalls(view).isEmpty)
+        // Unknown words are no hand-off, and neither is the removed mode that handed a discovery over unseen: the engine is not asked.
+        for words in ["everything", "conditional", ""] {
+            _ = try await deliver(["handoff": words], id: id, document: document, in: view)
+            try await barrier(view)
+            #expect(try await engineCalls(view).isEmpty)
+        }
 
         // A request that was never made, or is already settled, is not handed over either.
         #expect(try await !deliver(["handoff": "modal"], id: "never-asked", document: document, in: view))

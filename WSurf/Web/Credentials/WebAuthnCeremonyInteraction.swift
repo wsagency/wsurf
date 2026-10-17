@@ -73,13 +73,21 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         // A window already showing a sheet is refused, never queued behind it by AppKit.
         guard anchor.isVisible, !anchor.isMiniaturized, anchor.attachedSheet == nil else { return .declined }
 
+        let nothing = Self.hasNothingToApprove(prompt)
         let alert = NSAlert()
         alert.messageText = Self.title(for: prompt)
         alert.informativeText = Self.body(for: prompt)
-        alert.addButton(withTitle: prompt.operation == .create
-            ? String(localized: "Create Passkey") : String(localized: "Use Passkey"))
-        alert.addButton(withTitle: String(localized: "Cancel"))
-        alert.addButton(withTitle: Self.handOffTitle)
+        if nothing {
+            // Nothing of ours to approve, but the step is the same one with the same origin: the way on is the system's
+            // authenticator, and Cancel is Cancel.
+            alert.addButton(withTitle: Self.handOffTitle)
+            alert.addButton(withTitle: String(localized: "Cancel"))
+        } else {
+            alert.addButton(withTitle: prompt.operation == .create
+                ? String(localized: "Create Passkey") : String(localized: "Use Passkey"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
+            alert.addButton(withTitle: Self.handOffTitle)
+        }
 
         let popup = Self.makeChooser(for: prompt)
         popup.map { alert.accessoryView = $0 }
@@ -90,6 +98,9 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         case .cancelled:
             return .cancelled
         case let .response(response):
+            if nothing {
+                return response == .alertFirstButtonReturn ? .handOff : .declined
+            }
             if response == .alertThirdButtonReturn {
                 return .handOff
             }
@@ -225,6 +236,12 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         return .approved(choice: entry.id)
     }
 
+    /// Neither an account to use nor a new one to create: a vault that holds no passkey for the request, or a profile that has no
+    /// vault. The user is still asked, with the website named, so a page learns nothing from which of these it met.
+    static func hasNothingToApprove(_ prompt: WebAuthnPrompt) -> Bool {
+        prompt.choices.isEmpty && !prompt.offersNewAccount
+    }
+
     private static func title(for prompt: WebAuthnPrompt) -> String {
         switch prompt.operation {
         case .create:
@@ -238,6 +255,13 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         var lines = [String(localized: "Website: \(prompt.origin)")]
         if let top = prompt.topOrigin { lines.append(String(localized: "Embedded in: \(top)")) }
         lines.append(String(localized: "Relying party: \(prompt.rpID)"))
+        if hasNothingToApprove(prompt) {
+            lines.append("")
+            lines.append(prompt.operation == .get
+                ? String(localized: "No passkey for this website in WSurf.")
+                : String(localized: "WSurf can’t save a passkey here: Credential Manager has no vault yet."))
+            return lines.joined(separator: "\n")
+        }
         if prompt.operation == .get, prompt.choices.count == 1, let only = prompt.choices.first {
             lines.append(String(localized: "Account: \(only.title) — \(only.detail)"))
         }

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
+import AppKit
+import AuthenticationServices
 import Foundation
 import Testing
 import WebKit
@@ -351,40 +353,185 @@ extension WebAuthnAdapterTests {
         try await results(of: page).compactMap { $0["handoff"] as? String }
     }
 
-    /// No usable vault: the page's modal request goes to the system's authenticator. Native answers it with a hand-off, never a
-    /// refusal and never a sheet of ours; the page script then runs the caller's own call in the engine.
-    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
-    func aModalRequestWithNoUsableVaultIsHandedToTheEngine(engine: BrowserEngine) async throws {
-        try await withRealm(engine) { realm in
-            let context = try await realm.context()
-            let page = try await realm.open(context)
-            try await recordResults(in: page)
-            try await requestModalGet(in: page)
-            #expect(try await waitUntil { try await handOffs(of: page) == ["modal"] }, "native handed the request to the engine")
-            #expect(try await results(of: page).allSatisfy { $0["error"] == nil }, "it is not a refusal")
-            try await fence(page)
-            #expect(try await handOffs(of: page) == ["modal"], "exactly one answer")
-            #expect(CredentialManager.unlockedManagers(for: context.profile).isEmpty)
+    /// What a page can see of a profile's vault: nothing. The same request makes the same observable sequence, whether the profile
+    /// has no vault, an open vault with no passkey for the site, or a locked one: nothing at all until the user answers the
+    /// step, then the same single ending for the same answer. Only the explicit choice of the system's authenticator reaches
+    /// the engine.
+    private enum ProfileVault: CaseIterable { case noVault, openVaultWithNoMatch, lockedVault }
+
+    /// A user whose answer to the first step is the test's to give, so what the page saw while the step was open can be read.
+    @MainActor private final class StepUser: WebAuthnCeremonyInteraction {
+        private(set) var steps = 0
+        private(set) var isOpen = false
+        private var pending: CheckedContinuation<WebAuthnDecision, Never>?
+        var canVerifyUser: Bool {
+            true
+        }
+
+        private func ask() async -> WebAuthnDecision {
+            steps += 1
+            isOpen = true
+            let decision = await withCheckedContinuation { pending = $0 }
+            isOpen = false
+            return decision
+        }
+
+        func answer(_ decision: WebAuthnDecision) {
+            pending?.resume(returning: decision)
+            pending = nil
+        }
+
+        func decide(_ prompt: WebAuthnPrompt, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision {
+            await ask()
+        }
+
+        func offerStart(operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision {
+            await ask()
+        }
+
+        func verifyUser(reason: String, until deadline: ContinuousClock.Instant?) async throws {}
+        func reportUnconfirmedRegistration(rpID: String, userName: String, in anchor: ASPresentationAnchor) {}
+    }
+
+    private func makeContext(_ state: ProfileVault, _ realm: Realm) async throws -> BrowserProfileContext {
+        switch state {
+        case .noVault:
+            try await realm.context()
+        case .openVaultWithNoMatch:
+            try await realm.context(vaults: [.unlocked])
+        case .lockedVault:
+            try await realm.context(vaults: [.locked])
         }
     }
 
-    /// A discovery in a profile with no vault has nothing for a vault to wait for: it runs in the engine as a conditional request
-    /// at once. With a vault, it stays registered and silent until the user clicks a field.
-    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
-    func aConditionalRequestIsHandedOverOnlyWhereThereIsNoVault(engine: BrowserEngine) async throws {
-        try await withRealm(engine) { realm in
-            let without = try await realm.open(try await realm.context())
-            let with = try await realm.open(try await realm.context(vaults: [.locked]))
-            for page in [without, with] {
-                try await recordResults(in: page)
-                try await requestConditionalGet(in: page)
+    /// Every page-visible effect of one request in a profile in `state`, answered by `decision`: what the page saw while the
+    /// step was open, and then the result events it got.
+    private func observe(_ state: ProfileVault, engine: BrowserEngine, answering decision: WebAuthnDecision, create: Bool = false) async throws -> [String] {
+        var trace: [String] = []
+        let realm = try await Realm.start(engine: engine)
+        do {
+            let context = try await makeContext(state, realm)
+            let user = StepUser()
+            WebAuthnAdapter.interactionForTesting[context.profile.id] = { user }
+            defer { WebAuthnAdapter.interactionForTesting[context.profile.id] = nil }
+            let page = try await realm.open(context)
+            try await recordResults(in: page)
+            if create {
+                _ = try await page.evaluateJavaScript("""
+                window.outcomes = [];
+                navigator.credentials.create({ publicKey: { challenge: new Uint8Array(4), rp: { name: 'Example' },
+                  user: { id: new Uint8Array([1]), name: 'ada', displayName: 'Ada' }, pubKeyCredParams: [{ type: 'public-key', alg: -7 }] } })
+                  .then(() => outcomes.push('resolved'), e => outcomes.push(e.name)); true
+                """)
+            } else {
+                try await requestModalGet(in: page)
             }
-            #expect(try await waitUntil { try await handOffs(of: without) == ["conditional"] }, "no vault: the engine's own discovery")
-            try await fence(with)
-            #expect(try await handOffs(of: with).isEmpty, "a vault keeps its discovery registered")
-            #expect(try await results(of: with).isEmpty, "and silent")
-            #expect(try await outcomes(of: with).isEmpty)
+            #expect(await waitUntil { user.isOpen }, "a step is shown in every state: \(state)")
+            try await fence(page)
+            trace.append("while open: \(try await results(of: page).count) events, \(try await outcomes(of: page).count) outcomes, steps \(user.steps)")
+            user.answer(decision)
+            #expect(try await waitUntil { try await !results(of: page).isEmpty })
+            try await fence(page)
+            for event in try await results(of: page) {
+                let error = event["error"] as? [String: Any]
+                trace.append("event: \(event["handoff"] as? String ?? "-") \(error?["name"] as? String ?? "-") \(error?["message"] as? String ?? "-")")
+            }
+        } catch {
+            await realm.close()
+            throw error
         }
+        await realm.close()
+        return trace
+    }
+
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
+    func aModalRequestLooksTheSameToThePageInEveryVaultStateUntilTheUserChoosesTheSystem(engine: BrowserEngine) async throws {
+        for decision in [WebAuthnDecision.declined, .cancelled, .expired, .handOff] {
+            var traces: [[String]] = []
+            for state in ProfileVault.allCases {
+                traces.append(try await observe(state, engine: engine, answering: decision))
+            }
+            #expect(traces.dropFirst().allSatisfy { $0 == traces[0] }, "\(decision): \(traces)")
+            let first = try #require(traces.first)
+            #expect(first.first == "while open: 0 events, 0 outcomes, steps 1", "nothing reaches the page before the user answers")
+            if decision == .handOff {
+                #expect(first.dropFirst() == ["event: modal - -"], "exactly one hand-off and no error")
+            } else {
+                #expect(first.dropFirst().count == 1 && first.dropFirst().first?.hasPrefix("event: - ") == true, "one refusal, never a hand-off")
+            }
+        }
+    }
+
+    /// A registration asks the same question of a profile with no vault, and hands over only on the choice.
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
+    func aModalRegistrationLooksTheSameWithAndWithoutAVaultUntilTheUserChoosesTheSystem(engine: BrowserEngine) async throws {
+        for decision in [WebAuthnDecision.declined, .handOff] {
+            let without = try await observe(.noVault, engine: engine, answering: decision, create: true)
+            let with = try await observe(.openVaultWithNoMatch, engine: engine, answering: decision, create: true)
+            #expect(without == with, "\(decision)")
+            #expect(without.first == "while open: 0 events, 0 outcomes, steps 1")
+        }
+    }
+
+    /// A discovery (a conditional request) is pending in exactly the same way in every vault state, and nothing is handed over
+    /// until the user clicks a webauthn field (here the relay's own report of that gesture is posted, as the relay does only for a
+    /// trusted one) and then chooses the system's authenticator. Declining the step leaves it pending.
+    @Test(.boundedWebViews) func aConditionalRequestIsPendingAlikeInEveryVaultStateAndHandedOverOnlyAfterAGestureAndTheChoice() async throws {
+        var traces: [[String]] = []
+        for state in ProfileVault.allCases {
+            let realm = try await Realm.start(engine: .webKit)
+            var trace: [String] = []
+            do {
+                let context = try await makeContext(state, realm)
+                let user = StepUser()
+                WebAuthnAdapter.interactionForTesting[context.profile.id] = { user }
+                defer { WebAuthnAdapter.interactionForTesting[context.profile.id] = nil }
+                let page = try await realm.open(context)
+                try await recordResults(in: page)
+                _ = try await page.evaluateJavaScript("""
+                window.ids = []; document.addEventListener('wsurf-webauthn-request', event => {
+                  const body = JSON.parse(event.detail);
+                  if (body.action === 'request' && body.operation !== 'capabilities') ids.push(body.id);
+                }); true
+                """)
+                try await requestConditionalGet(in: page)
+                try await fence(page)
+                trace.append("registered: \(try await results(of: page).count) events, \(try await outcomes(of: page).count) outcomes, steps \(user.steps)")
+
+                // The user's click on a webauthn field, as the relay reports it. A step is shown; the page still sees nothing.
+                func click() async throws {
+                    let id = try #require(try await page.evaluateJavaScript("ids[0]") as? String)
+                    _ = try await page.callAsyncJavaScript(
+                        "globalThis.__wsurfSend('wsurfWebAuthn', { action: 'conditionalActivate', id, document: globalThis.__wsurfNativeFrameNonce });",
+                        arguments: ["id": id], in: nil, contentWorld: PageAutomationGuard.world
+                    )
+                }
+                try await click()
+                #expect(await waitUntil { user.isOpen }, "a step follows the gesture in every state: \(state)")
+                try await fence(page)
+                trace.append("step open: \(try await results(of: page).count) events, \(try await outcomes(of: page).count) outcomes")
+
+                // Declining leaves the discovery pending, as it always does; clicking again asks again; only the choice hands over.
+                user.answer(.declined)
+                #expect(await waitUntil { !user.isOpen })
+                try await fence(page)
+                trace.append("declined: \(try await results(of: page).count) events, \(try await outcomes(of: page).count) outcomes")
+                try await click()
+                #expect(await waitUntil { user.isOpen && user.steps == 2 })
+                user.answer(.handOff)
+                #expect(try await waitUntil { try await !results(of: page).isEmpty })
+                trace.append("chosen: \(try await results(of: page).compactMap { $0["handoff"] as? String })")
+            } catch {
+                await realm.close()
+                throw error
+            }
+            await realm.close()
+            traces.append(trace)
+        }
+        #expect(traces.dropFirst().allSatisfy { $0 == traces[0] }, "\(traces)")
+        #expect(traces.first == [
+            "registered: 0 events, 0 outcomes, steps 0", "step open: 0 events, 0 outcomes", "declined: 0 events, 0 outcomes", "chosen: [\"modal\"]",
+        ])
     }
 
     /// "Use Another Device or Key…" on the offer a locked vault shows first: the request is handed over and the vault was never

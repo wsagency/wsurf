@@ -207,6 +207,54 @@ extension WebsiteAuthenticator {
         )
     }
 
+    // MARK: No vault
+
+    /// What a profile with no usable vault does with a passkey request: the same origin-bearing step a vault shows, because a page
+    /// must not be able to tell whether a profile has a vault. The request is checked exactly as the vault's ceremony checks it
+    /// first, so a malformed one fails the same way, and then the user is asked. The only way on is the system's authenticator
+    /// (`handOff`); every other answer is a refusal, and nothing is read, written, unlocked or verified.
+    @MainActor
+    static func offerSystemAuthenticator(
+        _ request: WebAuthnRequest,
+        context: WebAuthnContext,
+        in anchor: ASPresentationAnchor,
+        interaction: some WebAuthnCeremonyInteraction
+    ) async throws -> Never {
+        let rawRPID: String?, preference: WebAuthnUserVerification, operation: WebAuthnPrompt.Operation, userName: String?
+        switch request.options {
+        case let .creation(options):
+            (rawRPID, preference, operation, userName) = (options.rpID, options.userVerification, .create, options.userName.displaySafe)
+        case let .assertion(options):
+            (rawRPID, preference, operation, userName) = (options.rpID, options.userVerification, .get, nil)
+        }
+        let willVerify = try verificationPlan(preference, interaction: interaction)
+        try Task.checkCancellation()
+        try validateDeadline(request)
+        guard !context.isPrivate, let origin = URL(string: context.origin) else { throw WebsiteAuthenticatorError.invalidContext }
+        let resolved: String
+        do {
+            resolved = try RelyingPartyPolicy.validate(rpID: rawRPID, origin: origin)
+        } catch {
+            throw WebsiteAuthenticatorError.invalidRequest
+        }
+        _ = try validateClient(
+            WebAuthnClientData(origin: context.origin, topOrigin: context.topOrigin, crossOrigin: context.crossOrigin, rpID: resolved),
+            rawRPID: rawRPID
+        )
+        try await context.validate()
+        try validateDeadline(request)
+        let decision = await interaction.decide(
+            WebAuthnPrompt(
+                operation: operation, origin: context.origin, topOrigin: context.topOrigin, rpID: resolved, requestedUserName: userName,
+                choices: [], offersNewAccount: false, userVerification: preference, willVerifyUser: willVerify
+            ),
+            in: anchor,
+            until: request.deadline
+        )
+        _ = try approval(decision)
+        throw WebsiteAuthenticatorError.notAllowed
+    }
+
     // MARK: Assertion
 
     @MainActor
@@ -226,9 +274,10 @@ extension WebsiteAuthenticator {
         )
         let listed = try await snapshot(manager, bound: bound)
         let candidates = assertionCandidates(listed.accounts, rpID: bound.rpID, allowed: options.allowCredentials)
-        // A vault with no passkey for this request has nothing to offer, so it asks nothing and answers nothing: the request
-        // goes to the system's authenticator, with no vault sheet in front of it. The page is never told "no passkey" here.
-        guard !candidates.isEmpty else { throw WebsiteAuthenticatorError.handOff }
+        // No matching passkey is still a user-visible decision, never an immediate error or an immediate hand-off: either would tell
+        // a page whether this vault holds a passkey for it, with no origin-bearing native step. The prompt names the site; with
+        // nothing to approve it offers only the way to the system's authenticator, and the page hears of it only if the user
+        // chose that. Dismissing it, or letting it expire, is the same refusal as dismissing a prompt that had an account to use.
         let decision = await interaction.decide(
             WebAuthnPrompt(
                 operation: .get,
@@ -244,6 +293,10 @@ extension WebsiteAuthenticator {
             in: anchor,
             until: request.deadline
         )
+        guard !candidates.isEmpty else {
+            _ = try approval(decision)
+            throw WebsiteAuthenticatorError.notAllowed
+        }
         guard let selected = try approval(decision),
               let pick = candidates.first(where: { $0.choice.id == selected }) else {
             throw WebsiteAuthenticatorError.notAllowed

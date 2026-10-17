@@ -30,14 +30,6 @@ enum CredentialRouting {
         return await store.openState() == .firstRun
     }
 
-    /// Whether the profile has a vault the browser can use at all: the test every route makes before it looks at any vault. Looking
-    /// lists the vaults and reads nothing from them.
-    static func hasUsableVault(profile: Profile) async -> Bool {
-        guard let store = try? CredentialManager.store(for: profile), case .provisional = await store.openState(),
-              let listing = try? await store.listing() else { return false }
-        return !listing.isEmpty
-    }
-
     static func route(profile: Profile, origin: String, username: String?) async -> VaultRoute {
         guard let store = try? CredentialManager.store(for: profile),
               case .provisional = await store.openState(),
