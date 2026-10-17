@@ -29,6 +29,11 @@ final class BrowserSettings {
         static let sidebarTextStyles = "appearance.sidebar.textStyles"
         static let themeCustomizations = "appearance.themeCustomizations"
         static let themePreset = "appearance.themePreset"
+        static let colorMode = "appearance.colorMode"
+        static let themeID = "appearance.themeID"
+        static let userThemes = "appearance.themes.user"
+        static let themeAdjustments = "appearance.themes.adjustments"
+        static let themesVersion = "appearance.themes.version"
         static let sleepsInactiveTabs = "tabs.sleep"
         static let sleepAfterMinutes = "tabs.sleepAfterMinutes"
         static let pageZoom = "content.defaultZoom"
@@ -84,6 +89,10 @@ final class BrowserSettings {
     private var globalSettings: BrowserSettings {
         applicationSettings ?? self
     }
+    @ObservationIgnored var storedColorMode: AppearanceMode?
+    @ObservationIgnored var storedThemeID: String?
+    @ObservationIgnored var storedUserThemes: [ThemeDefinition]?
+    @ObservationIgnored var storedThemeAdjustments: [String: ThemeAdjustment]?
     @ObservationIgnored private var storedAppearance: AppearanceMode?
     @ObservationIgnored private var storedLoomStyle: LoomStyle?
     @ObservationIgnored private var storedTransparency: Double?
@@ -683,6 +692,12 @@ final class BrowserSettings {
         }
 
         if application == nil {
+            // Read before anything writes the website tint: a fresh install is told apart by having no old key.
+            let themes = Self.loadThemeSettings(from: defaults)
+            storedColorMode = themes.colorMode
+            storedThemeID = themes.themeID
+            storedUserThemes = Self.normalized(themes.userThemes)
+            storedThemeAdjustments = themes.adjustments.mapValues { $0.bounded() }
             storedAppearance = string(Key.appearance)
                 .flatMap(AppearanceMode.init(rawValue:)) ?? .system
             let legacyLoomStyle = string(Key.loomStyle)

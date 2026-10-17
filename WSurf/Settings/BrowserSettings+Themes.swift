@@ -1,0 +1,131 @@
+// SPDX-FileCopyrightText: 2026 WSurf Agency
+// SPDX-License-Identifier: Apache-2.0
+
+import AppKit
+import Foundation
+import SwiftUI
+
+/// The theme settings. Colors are the theme and knobs are the person's: changing a color of a built-in theme makes
+/// a copy, while brightness, material and shape are stored per theme id and never do.
+extension BrowserSettings {
+    static let userThemeLimit = 200
+    /// Written once the old appearance settings have been turned into themes.
+    static let themesVersion = 2
+
+    /// The old keys. A fresh install has none of them; they are read once and never written or removed.
+    static let legacyAppearanceKeys = [
+        Key.appearance, Key.themePreset, Key.themeCustomizations, Key.sidebarTextStyles, Key.loomStyle,
+        Key.transparency, Key.websiteTint, Key.websiteColor,
+    ]
+
+    // MARK: - Stored settings
+
+    /// System, Light or Dark: which variant of the theme the window shows.
+    var colorMode: AppearanceMode {
+        get { globalValue(\.colorMode, storage: storedColorMode) }
+        set {
+            setGlobal(\BrowserSettings.colorMode, storage: \BrowserSettings.storedColorMode, value: newValue,
+                      key: Key.colorMode, encode: { $0.rawValue }) { $0.applyAppearance() }
+        }
+    }
+
+    /// The selected theme. An id that names no theme falls back to the default theme.
+    var themeID: String {
+        get { globalValue(\.themeID, storage: storedThemeID) }
+        set {
+            setGlobal(\BrowserSettings.themeID, storage: \BrowserSettings.storedThemeID, value: newValue,
+                      key: Key.themeID)
+        }
+    }
+
+    /// The themes the person saved or that a copy made.
+    var userThemes: [ThemeDefinition] {
+        get { globalValue(\.userThemes, storage: storedUserThemes) }
+        set {
+            setGlobal(\BrowserSettings.userThemes, storage: \BrowserSettings.storedUserThemes,
+                      value: Self.normalized(newValue), key: Key.userThemes, encode: { try? JSONEncoder().encode($0) })
+        }
+    }
+
+    /// The knobs, by theme id. A theme without an entry has the default knobs.
+    var themeAdjustments: [String: ThemeAdjustment] {
+        get { globalValue(\.themeAdjustments, storage: storedThemeAdjustments) }
+        set {
+            setGlobal(\BrowserSettings.themeAdjustments, storage: \BrowserSettings.storedThemeAdjustments,
+                      value: newValue.mapValues { $0.bounded() }, key: Key.themeAdjustments,
+                      encode: { try? JSONEncoder().encode($0) })
+        }
+    }
+
+    // MARK: - The selected theme
+
+    var allThemes: [ThemeDefinition] {
+        ThemeCatalog.builtIn + userThemes.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    var selectedTheme: ThemeDefinition {
+        let id = themeID
+        return userThemes.first { $0.id == id } ?? ThemeCatalog.builtIn(id) ?? ThemeCatalog.fallback
+    }
+
+    /// The knobs of the selected theme. Setting them never makes a copy.
+    var themeAdjustment: ThemeAdjustment {
+        get { themeAdjustments[selectedTheme.id] ?? ThemeAdjustment() }
+        set {
+            var adjustments = themeAdjustments
+            adjustments[selectedTheme.id] = newValue == ThemeAdjustment() ? nil : newValue
+            themeAdjustments = adjustments
+        }
+    }
+
+    // MARK: - Loading
+
+    /// The saved themes as they are stored: bounded, within the limit, with ids and names that cannot clash.
+    static func normalized(_ themes: [ThemeDefinition]) -> [ThemeDefinition] {
+        var result: [ThemeDefinition] = []
+        var ids = Set(ThemeCatalog.builtIn.map(\.id))
+        var names = ThemeCatalog.builtIn.map(\.name)
+        for theme in themes where result.count < userThemeLimit && !theme.id.isEmpty && ids.insert(theme.id).inserted {
+            var bounded = theme.bounded()
+            bounded.name = ThemeNames.unique(bounded.name, among: names)
+            names.append(bounded.name)
+            result.append(bounded)
+        }
+        return result
+    }
+
+    static func decodeUserThemes(_ data: Data?) -> [ThemeDefinition] {
+        guard let data, let stored = try? JSONDecoder().decode([LenientDecodable<ThemeDefinition>].self, from: data) else {
+            return []
+        }
+        return normalized(stored.compactMap(\.value))
+    }
+
+    static func decodeThemeAdjustments(_ data: Data?) -> [String: ThemeAdjustment] {
+        guard let data,
+              let stored = try? JSONDecoder().decode([String: LenientDecodable<ThemeAdjustment>].self, from: data)
+        else { return [:] }
+        return stored.compactMapValues { $0.value?.bounded() }
+    }
+
+    /// The theme settings of this install: stored ones once they exist, otherwise the migration of the old
+    /// appearance settings. The migration writes the new keys and leaves the old ones as they are.
+    static func loadThemeSettings(from defaults: UserDefaults) -> MigratedAppearance {
+        let keys = Key.self
+        if defaults.integer(forKey: keys.themesVersion) >= themesVersion {
+            return MigratedAppearance(
+                colorMode: defaults.string(forKey: keys.colorMode).flatMap(AppearanceMode.init(rawValue:)) ?? .system,
+                themeID: defaults.string(forKey: keys.themeID) ?? ThemeCatalog.defaultID,
+                userThemes: decodeUserThemes(defaults.data(forKey: keys.userThemes)),
+                adjustments: decodeThemeAdjustments(defaults.data(forKey: keys.themeAdjustments))
+            )
+        }
+        let migrated = ThemeMigration.migrate(LegacyAppearance.read(from: defaults))
+        defaults.set(migrated.colorMode.rawValue, forKey: keys.colorMode)
+        defaults.set(migrated.themeID, forKey: keys.themeID)
+        defaults.set(try? JSONEncoder().encode(migrated.userThemes), forKey: keys.userThemes)
+        defaults.set(try? JSONEncoder().encode(migrated.adjustments), forKey: keys.themeAdjustments)
+        defaults.set(themesVersion, forKey: keys.themesVersion)
+        return migrated
+    }
+}
