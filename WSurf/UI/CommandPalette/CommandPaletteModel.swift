@@ -630,7 +630,8 @@ final class CommandPaletteModel {
             isLyricsVisible: coordinator.sidePanel.isShowing(.lyrics),
             canShowLyrics: BrowserSettings.application.showsLyrics,
             isFullScreen: window?.styleMask.contains(.fullScreen) ?? false,
-            canCheckForUpdates: coordinator.updates.canCheck
+            canCheckForUpdates: coordinator.updates.canCheck,
+            hasExternalConnections: coordinator.hasExternalConnections
         )
     }
 
@@ -769,6 +770,8 @@ final class CommandPaletteModel {
             coordinator.toggleSpeechMute()
         case .toggleListening:
             coordinator.toggleMicListening()
+        case .stopExternalConnections:
+            coordinator.stopExternalConnections()
         case .showHistory:
             coordinator.showHistory()
         case .showDownloads:

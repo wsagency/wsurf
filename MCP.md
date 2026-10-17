@@ -376,6 +376,29 @@ The MCP transport stays on this Mac. Shared page data goes to the connected
 application, which may send it to its own model provider. A local transport does
 not imply that the external application's processing is local.
 
+## Seeing a connection and stopping it
+
+While an external app holds a grant for a tab in a window, that window's toolbar shows a badge with the app's name and
+its widest access, such as "Claude Code · Development". The badge stays for as long as the connection holds a grant or a
+development lease. It shows a spinner while a call works on one of the connection's tabs. Click it to see the tabs the
+app can use and a **Stop** button. VoiceOver announces the badge when it appears; its popover and **Stop** work from the
+keyboard.
+
+**Stop** is always reachable: the **Stop** button in the badge, **View › Stop External Connections** (⌥⌘.), and the
+command palette. It ends every connection bound to that window at once:
+
+- the running call is cancelled and returns nothing;
+- development leases are released, so viewport, emulation and diagnostics are removed;
+- the connection's grants and remembered action approvals are revoked and its socket is closed;
+- other windows' connections are not touched.
+
+The client can reconnect on its next call, but it starts with no access and the user has to approve it again.
+
+Agent Activity shows an "External: *client*" group under the tab's own tasks. It lists, per call, the time, the tool,
+the element number, the outcome (succeeded, failed, stopped) and, for `navigate` and `newTab`, the host. It never holds
+tool arguments, typed text, page content or tool output. The log lives in memory for the app session, keeps the latest
+1,000 entries per connection and the logs of the last 8 connections that ended, and is gone when WSurf quits.
+
 ## Implementation
 
 `WSurf --mcp` starts a relay before initializing AppDelegate, profiles, databases,

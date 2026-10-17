@@ -29,6 +29,7 @@ struct CommandPaletteContext {
     var canShowLyrics = false
     var isFullScreen = false
     var canCheckForUpdates = false
+    var hasExternalConnections = false
 }
 
 enum CommandPaletteAction: String, CaseIterable {
@@ -91,6 +92,7 @@ enum CommandPaletteAction: String, CaseIterable {
 
     case toggleSpeech
     case toggleListening
+    case stopExternalConnections
 
     case showHistory
     case showDownloads
@@ -655,6 +657,16 @@ enum CommandPaletteCatalog {
                     title: listenTitle,
                     symbol: context.isListening ? "mic.slash" : "mic",
                     aliases: ["microphone", "dictate", "talk", "voice input"]
+                ),
+                make(
+                    .stopExternalConnections,
+                    group: .assistant,
+                    title: "Stop External Connections",
+                    detail: "disconnect apps using this window",
+                    symbol: "hand.raised",
+                    shortcut: "⌥⌘.",
+                    aliases: ["stop agent", "kill switch", "disconnect", "revoke access", "mcp"],
+                    isAvailable: context.hasExternalConnections
                 ),
             ]
         }
