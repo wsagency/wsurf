@@ -15,16 +15,27 @@ import os
 /// carries an HTML-escaped page). Matching ignores ASCII case, because a page can upper-case what it shows. It is not a
 /// heuristic: a secret nobody registered is not recognised here, which is why the Developer tier is the only way to type one.
 ///
+/// The registry is agent-controlled: the agent chooses what it registers. That is harmless for what the agent itself is told,
+/// where hiding a value only blinds the agent, and wrong for anything the user relies on. A record of what the agent did (an
+/// approval it skipped, an activity entry, a consent) must never go through `scrub(_:)`, or the agent could erase a record by
+/// registering its text. Those records use `scrubForAudit(_:)`, which hides only the values that were written into a password,
+/// code or card field (`confirm(_:)`, called after the write) and puts a visible marker where it hid one, so the record still
+/// says what happened.
+///
 /// Nothing is stored anywhere but in this object. It keeps byte copies that `wipe()` overwrites before releasing them (a Swift
 /// `String` cannot be overwritten, so the registry never keeps one), and it prints as a count, never as its content, so a log
 /// line, a dump or a crash report that mentions the registry shows no secret.
 ///
-/// Integration points for code that produces text outside a tool result: call `scrub(_:)` on anything that can carry page
-/// content before it is stored or shown. `MCPBrowserSession.scrubbed(_:)` is the session's entry to it; the connection's
-/// diagnostics buffer, its activity log and a change report built from page values all go through it.
+/// Integration points for code that produces text outside a tool result. Text that goes back to the agent (a diagnostics
+/// record, a change report built from page values) is cleaned with `scrub(_:)`, through `MCPBrowserSession.scrubbed(_:)`. Text
+/// the user reads as a record of the agent's actions (an activity entry's tab title or target, an approval label) is cleaned
+/// with `scrubForAudit(_:)`, through `MCPBrowserSession.scrubbedForAudit(_:)`.
 nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     /// What replaces a secret in any output.
     static let replacement = "‹secret›"
+    /// What replaces a confirmed secret in a record the user reads: visibly a hidden value, so the record cannot be mistaken for
+    /// an empty one.
+    static let auditReplacement = "‹hidden secret›"
     /// A shorter value cannot be hidden without destroying ordinary output (`[12]`, ports, counts), so it is never typed.
     static let minimumBytes = 4
     /// Distinct secrets one connection may hold.
@@ -36,11 +47,19 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
         case registered, tooShort, tooMany
     }
 
+    /// One form of a secret as an output can show it, folded to lower case, and the secret it belongs to.
+    private struct Needle {
+        var bytes: [UInt8]
+        let owner: Int
+    }
+
     private struct State {
         /// The values as typed, folded to lower case, so a repeated registration is recognised.
         var secrets: [[UInt8]] = []
-        /// Every form a registered value can take in an output, folded to lower case. Longest first.
-        var needles: [[UInt8]] = []
+        /// The secrets (by index) that were written into a password, code or card field.
+        var confirmed: Set<Int> = []
+        /// Every form of every secret, longest first.
+        var needles: [Needle] = []
         /// A secret was registered at some point, even if `wipe()` has run since.
         var used = false
     }
@@ -81,10 +100,22 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
             guard state.secrets.count < Self.maximumSecrets else { return .tooMany }
             state.secrets.append(bytes)
             state.used = true
-            let known = Set(state.needles)
-            let added = Self.forms(of: secret).filter { !known.contains($0) }
-            state.needles = (state.needles + added).sorted { $0.count > $1.count }
+            let owner = state.secrets.count - 1
+            let added = Self.forms(of: secret).map { Needle(bytes: $0, owner: owner) }
+            state.needles = (state.needles + added).sorted { $0.bytes.count > $1.bytes.count }
             return .registered
+        }
+    }
+
+    /// Marks an already registered secret as written into a password, code or card field. Call it after the write, and only for
+    /// a field the page driver treats as sensitive: nothing else may be hidden in a record the user reads. A value that was
+    /// never registered is not confirmed.
+    func confirm(_ secret: String) {
+        let bytes = Self.fold(Array(secret.utf8))
+        state.withLock { state in
+            if let index = state.secrets.firstIndex(of: bytes) {
+                state.confirmed.insert(index)
+            }
         }
     }
 
@@ -98,26 +129,38 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
             state.secrets[index].zero()
         }
         for index in state.needles.indices {
-            state.needles[index].zero()
+            state.needles[index].bytes.zero()
         }
         state = State(used: state.used)
     }
 
     // MARK: Scrubbing
 
+    /// For text that goes back to the agent: hides every registered secret.
     func scrub(_ text: String) -> String {
-        let needles = state.withLock { $0.needles }
-        return Self.scrub(text, needles: needles)
+        Self.scrub(text, needles: allNeedles)
     }
 
     func scrub(_ value: Value) -> Value {
-        let needles = state.withLock { $0.needles }
+        let needles = allNeedles
         return needles.isEmpty ? value : Self.scrub(value, needles: needles)
+    }
+
+    /// For a record the user reads about what the agent did: hides only the values confirmed as written into a password, code
+    /// or card field, and marks each place with `auditReplacement`. Whatever else the agent registered stays visible, so a
+    /// record cannot be blanked by registering its text.
+    func scrubForAudit(_ text: String) -> String {
+        let needles = state.withLock { state in state.needles.filter { state.confirmed.contains($0.owner) }.map(\.bytes) }
+        return Self.scrub(text, needles: needles, marker: Self.auditReplacement)
+    }
+
+    private var allNeedles: [[UInt8]] {
+        state.withLock { $0.needles.map(\.bytes) }
     }
 
     /// Text blocks and the structured copy. Images carry pixels, which `PageScreenshotMasking` handles at the source.
     func scrub(_ result: CallTool.Result) -> CallTool.Result {
-        let needles = state.withLock { $0.needles }
+        let needles = allNeedles
         guard !needles.isEmpty else { return result }
         let content = result.content.map { block -> MCP.Tool.Content in
             guard case .text(let text, let annotations, let meta) = block else { return block }
@@ -141,8 +184,8 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
         }
     }
 
-    /// Every run of bytes covered by any needle becomes one replacement. Overlapping and adjacent matches merge.
-    private static func scrub(_ text: String, needles: [[UInt8]]) -> String {
+    /// Every run of bytes covered by any needle becomes one `marker`. Overlapping and adjacent matches merge.
+    private static func scrub(_ text: String, needles: [[UInt8]], marker: String = replacement) -> String {
         guard let shortest = needles.last?.count, text.utf8.count >= shortest else { return text }
         let original = Array(text.utf8)
         let folded = fold(original)
@@ -166,7 +209,7 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
         for (index, byte) in original.enumerated() {
             if covered[index] {
                 if !inside {
-                    output.append(contentsOf: Array(replacement.utf8))
+                    output.append(contentsOf: Array(marker.utf8))
                 }
                 inside = true
             } else {

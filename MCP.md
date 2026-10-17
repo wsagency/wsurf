@@ -312,6 +312,12 @@ WSurf cannot reach, and the page under test receives the value like any other in
   `‹secret›`. The registry is wiped when the connection ends: disconnect, **Stop**, revoking
   the app or turning MCP off, and a result still being computed at that moment is dropped.
   Nothing is written to disk or to a log, and the registry prints as a count.
+- **Your records stay complete.** The app decides what it registers as a secret, so that
+  registry only shapes what the app is told, never what you read about what it did. A
+  record of an action (a confirmation the Developer tier skipped, an activity entry) hides
+  only a value that went into a password, code or card field, shows `‹hidden secret›`
+  where it did, and still names the action, the site and the control. A phrase typed
+  into an ordinary field is never hidden there.
 - **Screenshots cover the fields.** In the Developer tier, filled sensitive fields and
   fields a secret was typed into are painted black in the returned image instead of
   refusing the capture (a field inside a frame is covered by the whole frame, and one

@@ -65,11 +65,17 @@ extension MCPBrowserSession {
         return nil
     }
 
-    /// What a field holds after a secret went in, when a page changed it (it formatted a card number, say): that form is a
-    /// secret too, and is hidden like the value that was typed.
-    var storedSecretSink: (String) -> Void {
-        { [secrets] stored in
-            secrets.register(stored)
+    /// What a secret came to once the page had it. A form the page stored (it grouped a card number, say) is a secret too and is
+    /// hidden from the agent like the value typed. Only a value that went into a password, code or card field is also a secret
+    /// in the user's own records; a phrase the agent put in an ordinary field never is, so it cannot hide anything there.
+    var secretWriteSink: (PageDriver.SecretWrite) -> Void {
+        { [secrets] write in
+            if write.stored != write.typed {
+                secrets.register(write.stored)
+            }
+            guard write.isSensitiveField else { return }
+            secrets.confirm(write.typed)
+            secrets.confirm(write.stored)
         }
     }
 
@@ -100,9 +106,16 @@ extension MCPBrowserSession {
         return secrets.scrub(result)
     }
 
-    /// `text` with this connection's secrets hidden. For anything that carries page content outside a tool result before it
-    /// is stored or shown: an activity entry's tab title or target, a diagnostics record, a line in a change report.
+    /// `text` with every secret this connection typed hidden. For text that goes back to the agent outside a tool result: a
+    /// diagnostics record, a line in a change report. Never for a record of what the agent did; see `scrubbedForAudit`.
     func scrubbed(_ text: String) -> String {
         secrets.scrub(text)
+    }
+
+    /// `text` with only the values that went into a password, code or card field hidden, each marked. For the records the user
+    /// reads about what the agent did (an approval it skipped, an activity entry's tab title or target): the agent chooses what
+    /// it registers, so the full registry must not touch them, or registering a record's text would erase it.
+    func scrubbedForAudit(_ text: String) -> String {
+        secrets.scrubForAudit(text)
     }
 }

@@ -15,9 +15,9 @@ extension PageDriver {
     /// - Parameters:
     ///   - secretRefs: The refs whose values are test secrets, typed even into a sensitive text field (see `type`'s
     ///     `allowSensitive`). Every other field keeps the sensitive-field refusal.
-    ///   - storedSecret: See `type`.
+    ///   - secretWritten: See `type`.
     static func fillFields(
-        _ fields: [FieldValue], secretRefs: Set<Int> = [], storedSecret: ((String) -> Void)? = nil, in webView: BrowserPage,
+        _ fields: [FieldValue], secretRefs: Set<Int> = [], secretWritten: ((SecretWrite) -> Void)? = nil, in webView: BrowserPage,
         announced: Bool = false
     ) async -> String {
         guard (1...32).contains(fields.count), fields.allSatisfy({ $0.ref > 0 }),
@@ -73,7 +73,7 @@ extension PageDriver {
                 continue
             } else {
                 result = await type(text: field.value, intoField: "", ref: field.ref, submit: false, allowSensitive: secret,
-                                    storedSecret: storedSecret, in: webView, announced: announced && index == 0, refreshControls: false)
+                                    secretWritten: secretWritten, in: webView, announced: announced && index == 0, refreshControls: false)
             }
             if ["Typed", "Selected", "Set checked", "Checked state already"].contains(where: result.hasPrefix) {
                 written.append(field)

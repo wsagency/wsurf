@@ -158,7 +158,7 @@ extension MCPBrowserSession {
         case "typeOnPage":
             return await PageDriver.type(
                 text: arguments["text"]?.stringValue ?? "", intoField: "", ref: ref, submit: arguments["submit"]?.boolValue ?? false,
-                allowSensitive: secret != nil, storedSecret: storedSecretSink, in: view, announced: true)
+                allowSensitive: secret != nil, secretWritten: secretWriteSink, in: view, announced: true)
         case "selectOption":
             return await PageDriver.selectOption(arguments["option"]?.stringValue ?? "", ref: ref, field: "", in: view, announced: true)
         case "scrollPage":
@@ -176,7 +176,7 @@ extension MCPBrowserSession {
                     return .init(ref: ref, value: value, select: select)
                 } ?? []
             return await PageDriver.fillFields(
-                fields, secretRefs: secret?.refs ?? [], storedSecret: storedSecretSink, in: view, announced: true)
+                fields, secretRefs: secret?.refs ?? [], secretWritten: secretWriteSink, in: view, announced: true)
         case "inspectControl":
             return await PageDriver.inspectControl(ref: ref, offset: arguments["offset"]?.intValue ?? 0, in: view)
         case "setChecked":

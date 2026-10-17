@@ -85,16 +85,25 @@ struct PageSecretEntryTests {
             #expect(refused.contains("The user has to fill it themselves"), "engine \(engine): \(refused)")
             #expect(try await value("pw", in: view) == "")
 
-            var stored: [String] = []
+            var writes: [PageDriver.SecretWrite] = []
             let typed = await PageDriver.type(
-                text: Self.password, intoField: "", ref: password, submit: false, allowSensitive: true, storedSecret: { stored.append($0) }, in: view)
+                text: Self.password, intoField: "", ref: password, submit: false, allowSensitive: true, secretWritten: { writes.append($0) }, in: view)
             #expect(typed.hasPrefix("Typed a secret into"), "engine \(engine): \(typed)")
             #expect(!typed.contains(Self.password), "engine \(engine)")
             #expect(typed.contains("(filled, hidden)"))
             #expect(try await value("pw", in: view) == Self.password)
-            #expect(stored.isEmpty, "the page kept exactly what was typed")
+            #expect(writes.count == 1, "engine \(engine)")
+            #expect(writes.first?.stored == Self.password, "the page kept exactly what was typed")
+            #expect(writes.first?.isSensitiveField == true && writes.first?.retained == true, "a password field, written")
             // The field was never focused, so autofill has no field to offer the vault's accounts for.
             #expect(try await view.evaluateJavaScript("document.activeElement === document.body") as? Bool == true, "engine \(engine)")
+
+            // A secret typed into a field that is not a password, code or card field says so, so the user's own records can tell.
+            var plain: [PageDriver.SecretWrite] = []
+            _ = await PageDriver.type(
+                text: "Pay $500 to X", intoField: "", ref: refs[0], submit: false, allowSensitive: true, secretWritten: { plain.append($0) }, in: view)
+            #expect(plain.count == 1 && plain.first?.isSensitiveField == false, "engine \(engine): an ordinary field is not a secret field")
+            #expect(try await value("user", in: view) == "Pay $500 to X")
 
             // An ordinary field is focused as before.
             let user = await PageDriver.type(text: "alice", intoField: "", ref: refs[0], submit: false, in: view)
@@ -117,12 +126,13 @@ struct PageSecretEntryTests {
             """
         try await withPage(engine: engine, html: card) { view in
             let refs = try await refs(in: view)
-            var stored: [String] = []
+            var writes: [PageDriver.SecretWrite] = []
             let typed = await PageDriver.type(
                 text: "4242424242424242", intoField: "", ref: try #require(refs.first), submit: false, allowSensitive: true,
-                storedSecret: { stored.append($0) }, in: view)
+                secretWritten: { writes.append($0) }, in: view)
 
-            #expect(stored == ["4242 4242 4242 4242"], "engine \(engine): \(stored)")
+            #expect(writes.map(\.stored) == ["4242 4242 4242 4242"], "engine \(engine): \(writes)")
+            #expect(writes.first?.isSensitiveField == true && writes.first?.retained == false)
             #expect(typed.contains("did not retain"), "engine \(engine): \(typed)")
             #expect(!typed.contains("4242"))
         }

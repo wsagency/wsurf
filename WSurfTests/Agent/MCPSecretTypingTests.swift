@@ -416,6 +416,100 @@ struct MCPSecretTypingTests {
         #expect(rig.session.secrets.count == 2, "the typed value and the form the page stored")
     }
 
+    // MARK: Records of what the agent did
+
+    /// The Developer tier lets a purchase through without asking and notes it; this is that path with a label of the test's choosing.
+    private func approve(_ label: String, in rig: Rig) async -> Bool {
+        let policy = AgentActionPolicy(storage: MCPActionGrantStorage())
+        return await AgentActionConsent.$decisionForTesting.withValue(.init { _, _, _, _ in .decline }) {
+            await AgentActionConsent.$developerApproval.withValue(rig.session.developerApproval(for: rig.tab)) {
+                await AgentActionConsent.permit(label: label, category: .purchase, host: "127.0.0.1", policy: policy)
+            }
+        }
+    }
+
+    private func type(_ text: String, into label: String, secret: Bool?, in rig: Rig) async throws -> CallTool.Result {
+        let read = try await call(rig, "readPage")
+        var arguments: [String: Value] = [
+            "observationID": .string(try #require(observation(read))), "ref": .int(try ref(label, in: read)), "text": .string(text),
+        ]
+        if let secret {
+            arguments["secret"] = .bool(secret)
+        }
+        return try await call(rig, "typeOnPage", arguments)
+    }
+
+    private static let phrase = "Pay $500 to X"
+
+    @Test func aPhraseTypedWithoutTheSecretFlagRegistersNothingSoARecordShowsIt() async throws {
+        let rig = try await makeRig()
+        defer { close(rig) }
+        _ = try await call(rig, "requestAccess", [:], tab: false)
+
+        let typed = try await type(Self.phrase, into: "Username", secret: nil, in: rig)
+        #expect(typed.isError == false, "\(everything(typed))")
+        #expect(rig.session.secrets.isEmpty, "only a value the agent marks secret is ever registered")
+
+        #expect(await approve(Self.phrase, in: rig))
+        let record = try #require(rig.session.developerApprovals.last)
+        #expect(record.label == Self.phrase)
+        #expect(record.category == .purchase)
+        #expect(record.host == "127.0.0.1")
+    }
+
+    @Test func aPhraseRegisteredAsASecretInAnOrdinaryFieldCannotBlankARecord() async throws {
+        let rig = try await makeRig()
+        defer { close(rig) }
+        _ = try await call(rig, "requestAccess", [:], tab: false)
+
+        let typed = try await type(Self.phrase, into: "Username", secret: true, in: rig)
+        #expect(typed.isError == false, "\(everything(typed))")
+        #expect(rig.session.secrets.count == 1, "it is hidden from what the agent is told")
+        #expect(!everything(try await call(rig, "readPage")).contains(Self.phrase))
+
+        // But the agent chose it, and the record of a purchase it skipped the confirmation for still says what was approved.
+        #expect(await approve(Self.phrase, in: rig))
+        let record = try #require(rig.session.developerApprovals.last)
+        #expect(record.label == Self.phrase, "the record must not be blanked by registering its text: \(record.label)")
+        #expect(record.category == .purchase)
+        #expect(record.host == "127.0.0.1")
+        #expect(rig.session.scrubbedForAudit("tab: \(Self.phrase)") == "tab: \(Self.phrase)")
+    }
+
+    @Test func aRealSecretIsHiddenFromTheAgentWhileARecordStillNamesTheAction() async throws {
+        let rig = try await makeRig()
+        defer { close(rig) }
+        _ = try await call(rig, "requestAccess", [:], tab: false)
+
+        let typed = try await type(Self.password, into: "Password", secret: true, in: rig)
+        #expect(typed.isError == false, "\(everything(typed))")
+        try expectNoSecret(in: try await call(rig, "readPage"), "the page read", secrets: [Self.password])
+
+        #expect(await approve("Pay with \(Self.password)", in: rig))
+        let record = try #require(rig.session.developerApprovals.last)
+        #expect(record.label == "Pay with \(MCPSecretScrubber.auditReplacement)", "the secret is hidden and the hiding is visible: \(record.label)")
+        #expect(record.category == .purchase)
+        #expect(record.host == "127.0.0.1")
+        #expect(rig.session.scrubbed("Pay with \(Self.password)") == "Pay with \(Self.hidden)", "the agent's own view uses the other marker")
+    }
+
+    @Test func aPhraseTypedIntoAPasswordFieldHidesOnlyItselfAndLeavesAMarkedRecord() async throws {
+        let rig = try await makeRig()
+        defer { close(rig) }
+        _ = try await call(rig, "requestAccess", [:], tab: false)
+
+        // The page decides which fields are password fields, so a phrase typed into one is a secret field's value like any other.
+        let typed = try await type(Self.phrase, into: "Password", secret: true, in: rig)
+        #expect(typed.isError == false, "\(everything(typed))")
+
+        #expect(await approve(Self.phrase, in: rig))
+        let record = try #require(rig.session.developerApprovals.last)
+        #expect(record.label == MCPSecretScrubber.auditReplacement, "a visible marker, never an empty or missing label")
+        #expect(record.category == .purchase, "the action's identity stays")
+        #expect(record.host == "127.0.0.1")
+        #expect(rig.session.developerApprovals.count == 1, "the approval is still on record")
+    }
+
     // MARK: Connection end
 
     @Test func secretsAreForgottenWhenTheConnectionEnds() async throws {

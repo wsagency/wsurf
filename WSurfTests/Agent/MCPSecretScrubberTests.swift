@@ -148,4 +148,24 @@ struct MCPSecretScrubberTests {
         // With nothing registered a result is returned as it was.
         #expect(MCPSecretScrubber().scrub(result) == result)
     }
+
+    @Test func recordsTheUserReadsHideOnlyValuesConfirmedAsWrittenIntoASecretField() {
+        let scrubber = MCPSecretScrubber()
+        scrubber.register("Pay $500 to X")  // the agent chose to register a phrase
+        scrubber.register("hunter2-real")  // a value that went into a password field
+        scrubber.confirm("HUNTER2-REAL")
+        scrubber.confirm("never registered")
+
+        let record = "Pay $500 to X using hunter2-real"
+        // What goes back to the agent hides everything registered.
+        #expect(scrubber.scrub(record) == "\(Self.hidden) using \(Self.hidden)")
+        // A record of what the agent did hides only the confirmed value, and says it did.
+        #expect(scrubber.scrubForAudit(record) == "Pay $500 to X using \(MCPSecretScrubber.auditReplacement)")
+        #expect(MCPSecretScrubber.auditReplacement != Self.hidden)
+        // The phrase cannot be turned into a hidden value afterwards by confirming something else.
+        #expect(scrubber.scrubForAudit("Pay $500 to X") == "Pay $500 to X")
+
+        scrubber.wipe()
+        #expect(scrubber.scrubForAudit(record) == record)
+    }
 }
