@@ -135,10 +135,12 @@ enum AgentActionConsent {
         authoredByAI: Bool = false
     ) -> String {
         let location = site.map { String(localized: "on \($0)") } ?? String(localized: "on this page")
-        let stakes = String(localized: """
-            The assistant wants to click “\(label)” \(location). This \(String(localized: category.consequence)) \
-            and usually can’t be undone.
-            """)
+        let stakes = category == .accountAccess
+            ? String(localized: "The assistant wants to click “\(label)” \(location). This \(String(localized: category.consequence)).")
+            : String(localized: """
+                The assistant wants to click “\(label)” \(location). This \(String(localized: category.consequence)) \
+                and usually can’t be undone.
+                """)
         let injection = String(localized: """
             Webpages can carry hidden instructions aimed at the assistant. Allow this only if \
             it’s what you asked for.
