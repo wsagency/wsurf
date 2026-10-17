@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 
 @testable import WSurf
@@ -189,6 +191,48 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                 XCTAssertLessThanOrEqual(projected.flattened.count, 10)
                 XCTAssertFalse(tab.isMaterialised)
             }
+        }
+    }
+
+    func testLayingOutACrowdedSidebar() {
+        MainActor.assumeIsolated {
+            let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
+            let browser = coordinator.browser
+            let tabs = (0..<300).map { _ in browser.newTab(activate: false) }
+            // Every tenth row is marked, the way Select All would mark them: each wears a glass layer.
+            for tab in tabs.enumerated() where tab.offset % 10 == 0 {
+                browser.sidebarSelection.toggle(.tab(tab.element.id))
+            }
+            let context = SidebarRowContext(
+                browser: browser,
+                coordinator: coordinator,
+                selection: browser.sidebarSelection,
+                drag: nil,
+                pinsCarried: false,
+                space: "BrowserPerformanceTests",
+                frames: SidebarFrames()
+            )
+            let rows = VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
+                ForEach(tabs) { SidebarTabRow(tab: $0, depth: 0, context: context) }
+            }
+            .glassGroup()
+            .frame(width: 220)
+            .environment(\.sidebarStyle, .full)
+            .environment(\.chromeWash, .of(NSColor(srgbRed: 0.105, green: 0.105, blue: 0.125, alpha: 1), isLight: false))
+            .environment(\.chromeIsLight, false)
+            .environment(\.colorScheme, .dark)
+            .environment(\.windowColorScheme, .dark)
+
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                let host = NSHostingView(rootView: rows)
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 220, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.contentView = host
+                host.layoutSubtreeIfNeeded()
+                host.displayIfNeeded()
+                window.close()
+            }
+            browser.cancelPendingSave()
         }
     }
 }

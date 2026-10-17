@@ -111,7 +111,7 @@ struct AskSurfaceMaterial: ViewModifier {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(wash)
             }
-            .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius, style: .continuous))
+            .chromeGlass(in: .rect(cornerRadius: cornerRadius, style: .continuous))
     }
 }
 

@@ -245,6 +245,7 @@ private struct SidebarPinnedCards: View {
             UpdateBanner(updates: coordinator.updates)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { measuredBanner = $0 }
         }
+        .glassGroup()
         .frame(maxWidth: .infinity)
         .zIndex(1)
         .onAppear { obscuredHeight = stackedHeight }

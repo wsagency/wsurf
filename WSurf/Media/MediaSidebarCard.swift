@@ -272,7 +272,7 @@ struct MediaSidebarCard: View {
                 .padding(.horizontal, Self.controlsInset(panelWidth: panelWidth))
                 .padding(.vertical, 8)
                 .onHover { showsControls = $0 }
-                .glassEffect(.regular, in: .rect(cornerRadius: Theme.Radius.card, style: .continuous))
+                .chromeGlass(in: .rect(cornerRadius: Theme.Radius.card, style: .continuous))
                 .contentShape(.rect(cornerRadius: Theme.Radius.card, style: .continuous))
                 .transition(.opacity)
             }
@@ -308,7 +308,7 @@ struct MediaSidebarCard: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(isPulledOut ? Theme.accent : Color.secondary)
-        .glassEffect(.regular, in: .capsule)
+        .chromeGlass(in: .capsule)
         .help(isPulledOut ? Text("Hide Player") : Text(verbatim: media.model.title))
     }
 }

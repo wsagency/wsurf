@@ -38,7 +38,13 @@ private struct SidebarRowSelectionEffect: ViewModifier {
             return .regular.tint(glassTint.opacity(0.32))
         }
         let base = glassTint ?? Theme.windowBackground
-        return .clear.tint(base.opacity(glassTint == nil ? 0.34 : 0.16))
+        return .regular.tint(base.opacity(glassTint == nil ? 0.34 : 0.16))
+    }
+
+    /// What a selected row shows while Reduce Transparency or Increase Contrast replaces its glass.
+    private var solidFill: Color {
+        guard let glassTint else { return Theme.controlSurface }
+        return Theme.controlSurface.mix(with: glassTint, by: 0.32)
     }
 
     private var surfaceWash: Color {
@@ -57,7 +63,7 @@ private struct SidebarRowSelectionEffect: ViewModifier {
             .background {
                 ZStack {
                     if wearsGlass {
-                        Color.clear.glassEffect(glass, in: shape)
+                        Color.clear.chromeGlass(glass, fill: solidFill, in: shape)
                         if !wearsPanelGlass {
                             shape.fill(surfaceWash)
                             shape.strokeBorder(surfaceEdge, lineWidth: 1)

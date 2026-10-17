@@ -137,6 +137,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
                     .contextMenu { emptySpaceMenu }
                     .animation(Theme.Motion.drift, value: bottomClearance)
             }
+            .glassGroup()
             .padding(.leading, contentInsets.leading)
             .padding(.trailing, contentInsets.trailing)
         }
@@ -529,7 +530,7 @@ struct SidebarDragChip: View {
     @Environment(\.windowColorScheme) private var windowColorScheme
 
     private var glass: Glass {
-        .clear.tint(Theme.controlSurface.opacity(SidebarDragGhost.chipFillOpacity))
+        .regular.tint(Theme.controlSurface.opacity(SidebarDragGhost.chipFillOpacity))
     }
 
     var body: some View {
@@ -537,7 +538,7 @@ struct SidebarDragChip: View {
         content
             .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .glassEffect(glass, in: shape)
+            .chromeGlass(glass, fill: Theme.controlSurface, in: shape)
             .overlay {
                 shape.strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5)
             }

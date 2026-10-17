@@ -127,3 +127,15 @@ check_average \
   '4096' \
   'Ask surface projection memory growth' \
   'kB'
+check_average \
+  'BrowserPerformanceTests/testLayingOutACrowdedSidebar()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '1.300' \
+  '300-row sidebar layout with every tenth row marked' \
+  's'
+check_average \
+  'BrowserPerformanceTests/testLayingOutACrowdedSidebar()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '8192' \
+  'Crowded sidebar layout memory growth' \
+  'kB'

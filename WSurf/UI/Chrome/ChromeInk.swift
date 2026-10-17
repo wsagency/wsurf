@@ -57,7 +57,7 @@ enum ChromeInk {
     }
 }
 
-private struct GlassSurface<S: Shape>: ViewModifier {
+private struct GlassSurface<S: InsettableShape>: ViewModifier {
     let isActive: Bool
     let isEnabled: Bool
     let tint: Color?
@@ -71,14 +71,14 @@ private struct GlassSurface<S: Shape>: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .glassEffect(isEnabled ? .regular : .identity, in: shape)
+            .chromeGlass(isEnabled ? .regular : .identity, in: shape)
             .background { shape.fill(hoverFill) }
             .contentShape(shape)
     }
 }
 
 extension View {
-    func glassSurface<S: Shape>(
+    func glassSurface<S: InsettableShape>(
         isActive: Bool = false,
         isEnabled: Bool = true,
         tint: Color? = nil,
@@ -101,12 +101,12 @@ private struct ControlGlassSurface<S: InsettableShape>: ViewModifier {
 
     private var glass: Glass {
         if let tint {
-            return .clear.tint(tint.opacity(isActive ? 0.16 : 0.07))
+            return .regular.tint(tint.opacity(isActive ? 0.16 : 0.07))
         }
         if isLifted {
-            return .clear.tint(Theme.controlSurface.opacity(isActive ? 0.62 : 0.48))
+            return .regular.tint(Theme.controlSurface.opacity(isActive ? 0.62 : 0.48))
         }
-        return .clear.tint(Theme.windowBackground.opacity(isActive ? 0.34 : 0.26))
+        return .regular.tint(Theme.windowBackground.opacity(isActive ? 0.34 : 0.26))
     }
 
     private var surfaceWash: Color {
@@ -132,7 +132,7 @@ private struct ControlGlassSurface<S: InsettableShape>: ViewModifier {
                 ZStack {
                     shape
                         .fill(.clear)
-                        .glassEffect(glass, in: shape)
+                        .chromeGlass(glass, fill: isLifted ? Theme.controlSurface : Theme.windowBackground, in: shape)
 
                     shape.fill(surfaceWash)
                 }
@@ -187,7 +187,7 @@ extension View {
     }
 }
 
-private struct SelectionBackground<S: Shape>: ViewModifier {
+private struct SelectionBackground<S: InsettableShape>: ViewModifier {
     let isSelected: Bool
     let isHovering: Bool
     let hoverTint: Color?
@@ -224,12 +224,12 @@ private struct SelectionBackground<S: Shape>: ViewModifier {
                 shape
                     .fill(hoverFill)
             }
-            .glassEffect(glass, in: shape)
+            .chromeGlass(glass, fill: Theme.controlSurface, in: shape)
     }
 }
 
 extension View {
-    func selectionBackground<S: Shape>(
+    func selectionBackground<S: InsettableShape>(
         isSelected: Bool,
         isHovering: Bool,
         hoverTint: Color? = nil,

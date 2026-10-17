@@ -154,8 +154,8 @@ private struct LoomPreviewChrome: View {
             }
         case .transparent:
             Color.clear
-                .glassEffect(
-                    .clear.tint(
+                .chromeGlass(
+                    .regular.tint(
                         usesWebsiteTint
                             ? Color(red: 0.76, green: 0.24, blue: 0.56).opacity(0.22)
                             : Color.white.opacity(0.035)
