@@ -213,7 +213,75 @@ struct MCPDeveloperCaptureTests {
         }
         #expect(text(second, "detail").contains("Developer access"))
         let info = try await call(rig, "readNetwork")
-        #expect(info.structuredContent?.objectValue?["detail"]?.objectValue?["active"]?.boolValue == false)
+        let detail = info.structuredContent?.objectValue?["detail"]?.objectValue
+        #expect(detail?["active"]?.boolValue == false && detail?["ended"]?.boolValue == true)
+
+        // What the capture had recorded with the tier is gone from the buffer, not merely left out of the reply.
+        let before = try record(records(info), path: "/echo")
+        for key in detailKeys {
+            #expect(before[key] == nil, "\(key) of a record made while the tier held is purged")
+        }
+        let diagnostics = try #require(rig.tab.developmentOwner?.diagnostics)
+        #expect(diagnostics.detailEnded)
+        let page = try diagnostics.buffer.read(stream: .network, cursor: nil, limit: 100)
+        #expect(!page.records.isEmpty)
+        for stored in page.records {
+            #expect(Set(stored.fields.keys).isDisjoint(with: PageDiagnostics.detailKeys), "\(stored.fields.keys.sorted())")
+        }
+
+        // It does not come back with the tier, and a new request for it is told to start over.
+        rig.session.pairedClient = rig.trust.clients.first
+        try #require(rig.session.permits(rig.tab, capability: .developer))
+        let again = try await call(rig, "startDiagnostics", ["headers": true, "bodies": true])
+        #expect(status(again) == "invalidInput", "\(everything(again))")
+        try await run(rig, Self.post)
+        let later = try await read(rig) { ($0["url"]?.stringValue ?? "").contains("/echo") && $0["seq"]?.intValue != first["seq"]?.intValue }
+        let after = try #require(later.last { ($0["url"]?.stringValue ?? "").contains("/echo") })
+        for key in detailKeys {
+            #expect(after[key] == nil, "\(key) is not recorded again once detail ended")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(3)), arguments: [BrowserEngine.webKit, BrowserEngine.chromium])
+    func recordsMadeWithDeveloperAccessAreNotReadWithoutIt(engine: BrowserEngine) async throws {
+        let rig = try await makeRig(engine, standing: .off, answer: .developer)
+        defer { close(rig) }
+        try await start(rig, ["headers": true, "bodies": true, "fullConsole": true, "clearQueries": true])
+        try await run(rig, Self.post)
+        try await run(rig, "logIt()")
+        let network = try await read(rig) { ($0["url"]?.stringValue ?? "").contains("/echo") && $0["responseBody"] != nil }
+        let echo = try record(network, path: "/echo")
+        let console = try await read(rig, "readConsole") { $0["text"]?.stringValue?.hasPrefix("plain") == true }
+        let hello = try #require(console.first { $0["text"]?.stringValue?.hasPrefix("hello") == true })
+        #expect(echo["requestHeaders"] != nil && text(echo, "url").contains("x=hello") && hello["preview"] != nil, "the tier was held when they were made")
+
+        // The capture does not find out that the tier is gone (nothing asks it), so what the reader gets is stripped on the way out.
+        let diagnostics = try #require(rig.tab.developmentOwner?.diagnostics)
+        diagnostics.policyProvider = nil
+        rig.session.pairedClient = nil
+        try #require(!rig.session.permits(rig.tab, capability: .developer) && rig.session.permits(rig.tab, capability: .development))
+
+        let seq = try #require(echo["seq"]?.intValue)
+        let one = try await call(rig, "readNetwork", ["seq": .int(seq)])
+        let page = try await call(rig, "readNetwork")
+        for (name, result) in [("seq", one), ("page", page)] {
+            let stripped = try record(records(result), path: "/echo")
+            for key in detailKeys {
+                #expect(stripped[key] == nil, "\(name): \(key) is still readable")
+            }
+            #expect(!text(stripped, "url").contains("hello"), "\(name): \(text(stripped, "url"))")
+            #expect(stripped["method"] != nil && stripped["status"]?.intValue == 200, "the metadata stays")
+            let reply = everything(result)
+            for leaked in ["hunter2", "tok-xyz", "srv-secret", "x-trace"] {
+                #expect(!reply.contains(leaked), "\(name): \(leaked)")
+            }
+        }
+        let console2 = records(try await call(rig, "readConsole"))
+        let bare = try #require(console2.first { $0["text"]?.stringValue?.hasPrefix("hello") == true })
+        #expect(bare["preview"] == nil && bare["stack"] == nil, "a log keeps neither a preview nor a stack without the full console")
+        // The buffer still holds them: it is the read that withholds, which is what protects a capture that was not told.
+        let stored = try diagnostics.buffer.read(stream: .network, cursor: nil, limit: 100)
+        #expect(stored.records.contains { $0.fields["requestHeaders"] != nil })
     }
 
     // MARK: What is hidden

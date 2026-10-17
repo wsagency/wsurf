@@ -124,6 +124,100 @@ struct PageDiagnosticsDetailTests {
         #expect(Redaction.hideCredentials("{\"a\":1,\"password\":\"hunter2\",\"b\":\"cut", kind: .json) == "{\"a\":1,\"password\":\(hidden),\"b\":\"cut")
     }
 
+    // MARK: Values that nest
+
+    @Test(arguments: [
+        ("password={\"a\":\"x\",\"b\":\"secret\"} tail=1", "password=‹hidden› tail=1"),
+        ("token: [\"a\",\"secret\",{\"b\":\"c\"}] done", "token: ‹hidden› done"),
+        ("secret={\"a\":\"}]\\\"x\",\"b\":\"s3\"}\nnext=1", "secret=‹hidden›\nnext=1"),
+        ("{\"password\":\"ab\\\"cd\",\"k\":1}", "{\"password\":‹hidden›,\"k\":1}"),
+        ("a={\"password\":{\"x\":[1,2,{\"y\":\"z\"}]},\"b\":[1]} c=2", "a={\"password\":‹hidden›,\"b\":[1]} c=2"),
+        ("password=\"abc\nnext=1", "password=‹hidden›\nnext=1"),
+    ])
+    func aValueThatNestsIsHiddenWholeNotUpToItsFirstSeparator(text: String, expected: String) {
+        #expect(Redaction.hideText(text) == expected)
+        // The same text as the body of the text types that are read as text.
+        var budget = Redaction.captureBodyBytes
+        for type in ["text/plain", "application/xml"] {
+            let body = Redaction.body(.init(text: text, contentType: type), side: "request", budget: &budget, scrub: { $0 })
+            #expect(body.fields["requestBody"] == .text(expected), "\(type)")
+        }
+    }
+
+    @Test func aValueThatNeverClosesOrNestsTooDeepIsHiddenToTheEnd() {
+        let hidden = Self.hidden
+        let tail = "\nnext=1&other: visible"
+        #expect(Redaction.hideText("password={\"a\":\"x\",\"b\":\"secret" + tail) == "password=\(hidden)", "unterminated object")
+        #expect(Redaction.hideText("password=[\"a\",[\"secret\"]" + tail) == "password=\(hidden)", "unterminated array")
+        #expect(Redaction.hideText("password=\(String(repeating: "[", count: 40))secret\(String(repeating: "]", count: 40))" + tail) == "password=\(hidden)", "too deep")
+        #expect(Redaction.hideText("password={\"a\":[1,2}\"secret\"" + tail) == "password=\(hidden)", "mismatched brackets")
+        // A quote left open ends at the end of its line.
+        #expect(Redaction.hideText("password=\"secret\(tail)") == "password=\(hidden)\(tail)")
+    }
+
+    @Test func anOversizedPreviewHidesACredentialObjectBeforeItIsCut() throws {
+        let nested: [String: Any] = ["password": ["a": "x", "b": "topsecret"], "token": ["items": ["topsecret2", ["k": "topsecret3"]]]]
+        let wide = String(repeating: "x", count: 5_000)
+        let preview = try #require(Redaction.preview([nested.merging(["text": wide]) { $1 }]))
+        #expect(preview.truncated && preview.text.utf8.count <= Redaction.maxPreviewBytes)
+        for secret in ["topsecret", "topsecret2", "topsecret3"] {
+            #expect(!preview.text.contains(secret), "\(secret) is in \(preview.text.prefix(200))")
+        }
+        #expect(preview.text.contains(Self.hidden))
+    }
+
+    // MARK: Records without their detail
+
+    private func record(_ stream: PageDiagnostics.Stream, _ fields: [String: PageDiagnostics.Field]) -> PageDiagnostics.Record {
+        PageDiagnostics.Record(seq: 3, timestamp: Date(), documentID: "doc", stream: stream, fields: fields, truncated: true)
+    }
+
+    @Test func aRecordWithoutItsDetailKeepsTheMetadataAndConcealsAClearQuery() throws {
+        let options = PageDiagnostics.DetailOptions(headers: true, bodies: true, console: true, clearQueries: true)
+        let network = record(.network, [
+            "method": "POST", "url": .text("http://127.0.0.1:3000/api?token=hunter2&x=hello"), "status": 200,
+            "redirectTo": .text("http://127.0.0.1:3000/next?sid=abc"),
+            "requestHeaders": "a: b", "responseHeaders": "c: d", "requestBody": "{}", "responseBody": "{}", "requestBodyBytes": 2,
+            "responseBodyBytes": 2, "requestBodyNote": "n", "responseBodyNote": "n", "detail": "kept",
+        ])
+        let bare = PageDiagnostics.withoutDetail(network, options: options, queryValues: DiagnosticsTestKey.values)
+        #expect(Set(bare.fields.keys) == ["method", "url", "status", "redirectTo", "detail"])
+        #expect(bare.fields["url"] == .text("http://127.0.0.1:3000/api?token=*short&x=*short"))
+        #expect(bare.fields["redirectTo"] == .text("http://127.0.0.1:3000/next?sid=*short"))
+        #expect(bare.seq == 3 && bare.documentID == "doc" && bare.truncated)
+
+        let stack = (1...30).map { "f\($0) (http://127.0.0.1:3000/a.js:\($0):1)" }.joined(separator: "\n")
+        let log = record(.console, ["level": "log", "text": "hi", "preview": "[1]", "stack": .text(stack)])
+        let warn = record(.console, ["level": "warn", "text": "hi", "preview": "[1]", "stack": .text(stack)])
+        let strippedLog = PageDiagnostics.withoutDetail(log, options: options, queryValues: DiagnosticsTestKey.values)
+        let strippedWarn = PageDiagnostics.withoutDetail(warn, options: options, queryValues: DiagnosticsTestKey.values)
+        #expect(strippedLog.fields["preview"] == nil && strippedLog.fields["stack"] == nil, "a log carries a stack only in the full console")
+        #expect(strippedWarn.fields["preview"] == nil)
+        guard case .text(let kept)? = strippedWarn.fields["stack"] else {
+            Issue.record("a warning keeps a stack")
+            return
+        }
+        #expect(kept.split(separator: "\n").count == PageDiagnostics.maxStackFrames, "cut back to the usual length")
+        // A capture that asked for nothing has nothing to remove.
+        #expect(PageDiagnostics.withoutDetail(network, options: .init(), queryValues: DiagnosticsTestKey.values) == network)
+    }
+
+    @MainActor @Test func rewritingABufferKeepsSequenceNumbersAndUpdatesItsSize() throws {
+        let buffer = PageDiagnostics.Buffer(connection: UUID(), tab: "tab", documentID: "doc")
+        let body = String(repeating: "b", count: 4_000)
+        for number in 0..<3 {
+            buffer.append(stream: .network, timestamp: Date(), documentID: "doc", fields: ["url": .text("http://127.0.0.1/\(number)"), "responseBody": .text(body)])
+        }
+        let before = buffer.byteCount
+        buffer.rewrite { PageDiagnostics.withoutDetail($0, options: .init(bodies: true), queryValues: DiagnosticsTestKey.values) }
+        #expect(buffer.byteCount < before / 4, "\(buffer.byteCount) of \(before)")
+        let page = try buffer.read(stream: .network, cursor: nil, limit: 10)
+        #expect(page.records.map(\.seq) == [0, 1, 2])
+        #expect(page.records.allSatisfy { $0.fields["responseBody"] == nil && $0.fields["url"] != nil })
+        buffer.append(stream: .network, timestamp: Date(), documentID: "doc", fields: ["url": .text("http://127.0.0.1/3")])
+        #expect(try buffer.read(stream: .network, cursor: page.nextCursor, limit: 10).records.map(\.seq) == [3], "an earlier cursor still works")
+    }
+
     @Test(arguments: [
         "password", "Password", "user[password]", "new_password", "confirmPassword", "pass", "user_pass", "pwd", "otp", "OTP", "token", "accessToken",
         "refresh_token", "id_token", "secret", "clientSecret", "card", "card_number", "cvv", "apiKey", "api-key", "X-Api-Key", "authorization",

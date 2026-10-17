@@ -426,23 +426,92 @@ nonisolated extension PageDiagnostics {
             return result
         }
 
-        /// Where the value that starts at `start` ends: after its closing quote, or at the first line break or separator.
+        /// The deepest nesting and the longest stretch (in UTF-16 units) a bracketed value is followed through.
+        private static let maxValueDepth = 32
+        private static let maxValueScan = 65_536
+
+        /// Where the value that starts at `start` ends, read the way the text means it so that none of it is left visible:
+        /// - `{` or `[` runs to its matching bracket, string-aware, however many lines and separators lie between;
+        /// - a quoted value runs to its closing quote, past escaped quotes;
+        /// - anything else runs to the first line break or separator.
+        /// A bracketed value that does not close within the bounds (an unterminated one, a depth over `maxValueDepth`, a mismatched
+        /// bracket) is hidden to the end of the text, and a quote left open to the end of its line: when the text cannot be read
+        /// with certainty it fails closed.
         private static func valueEnd(in text: NSString, from start: Int) -> Int {
             guard start < text.length else { return start }
             let first = text.character(at: start)
+            if first == 0x7B || first == 0x5B {
+                return bracketEnd(in: text, from: start) ?? text.length
+            }
+            if first == 0x22 || first == 0x27 {
+                return quoteEnd(in: text, from: start)
+            }
             let stops: Set<unichar> = Set("\n&,;\"'<>".utf16)
             var index = start
-            if first == 0x22 || first == 0x27 {
-                index += 1
-                while index < text.length, text.character(at: index) != first, text.character(at: index) != 0x0A {
-                    index += 1
-                }
-                return min(index + 1, text.length)
-            }
             while index < text.length, !stops.contains(text.character(at: index)) {
                 index += 1
             }
             return index
+        }
+
+        /// The index after the quote that closes the one at `start`, past backslash escapes. A quote left open runs to the end of its
+        /// line, or to the end of the text when it passes `maxValueScan`.
+        private static func quoteEnd(in text: NSString, from start: Int) -> Int {
+            let quote = text.character(at: start)
+            var index = start + 1
+            let limit = min(text.length, start + maxValueScan)
+            while index < limit {
+                let character = text.character(at: index)
+                if character == 0x5C {
+                    index += 2
+                    continue
+                }
+                if character == quote {
+                    return index + 1
+                }
+                if character == 0x0A {
+                    return index
+                }
+                index += 1
+            }
+            return text.length
+        }
+
+        /// The index after the bracket that closes the one at `start`. Strings (either quote, with escapes) hide the brackets inside
+        /// them. Nil when it does not close within `maxValueScan` units, nests deeper than `maxValueDepth`, or closes with the
+        /// wrong kind of bracket.
+        private static func bracketEnd(in text: NSString, from start: Int) -> Int? {
+            var closers: [unichar] = []
+            var quote: unichar = 0
+            var index = start
+            let limit = min(text.length, start + maxValueScan)
+            while index < limit {
+                let character = text.character(at: index)
+                if quote != 0 {
+                    if character == 0x5C {
+                        index += 1
+                    } else if character == quote {
+                        quote = 0
+                    }
+                } else {
+                    switch character {
+                    case 0x22, 0x27:
+                        quote = character
+                    case 0x7B, 0x5B:
+                        guard closers.count < maxValueDepth else { return nil }
+                        closers.append(character == 0x7B ? 0x7D : 0x5D)
+                    case 0x7D, 0x5D:
+                        guard closers.popLast() == character else { return nil }
+                        if closers.isEmpty {
+                            return index + 1
+                        }
+                    default:
+                        break
+                    }
+                }
+                index += 1
+            }
+            return nil
         }
 
         // MARK: Previews
@@ -459,7 +528,11 @@ nonisolated extension PageDiagnostics {
                     return (String(decoding: data, as: UTF8.self), depth < 4)
                 }
             }
-            let full = (try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed, .sortedKeys]))
+            // Too large for either depth: the text is cut, so what is cut must already have its credentials hidden, and the hidden
+            // value is what is written, never the raw one.
+            let hiddenValue = hiding(value, depth: 0)
+            guard JSONSerialization.isValidJSONObject(hiddenValue) || hiddenValue is String else { return nil }
+            let full = (try? JSONSerialization.data(withJSONObject: hiddenValue, options: [.fragmentsAllowed, .sortedKeys]))
                 .map { String(decoding: $0, as: UTF8.self) } ?? ""
             let cut = PageDiagnostics.clip(hideText(full), bytes: maxPreviewBytes)
             return (cut.text, true)
@@ -491,6 +564,37 @@ nonisolated extension PageDiagnostics {
 }
 
 nonisolated extension PageDiagnostics {
+    /// The record fields that exist only because a capture asked for detail.
+    static let detailKeys: Set<String> = [
+        "requestHeaders", "responseHeaders", "requestBody", "responseBody", "requestBodyBytes", "responseBodyBytes", "requestBodyNote",
+        "responseBodyNote", "preview",
+    ]
+
+    /// `record` as it would have been without the opt-ins: no header, body or preview field; a query shown in clear on a network
+    /// record concealed again under `queryValues`; a console stack of a call that carries none without the full console dropped
+    /// (the others cut back to the usual length). For a record read, or kept, when Developer access no longer holds.
+    static func withoutDetail(_ record: Record, options: DetailOptions, queryValues: QueryValues) -> Record {
+        guard options.isEnabled else { return record }
+        var fields = record.fields.filter { !detailKeys.contains($0.key) }
+        if options.clearQueries, record.stream == .network {
+            for key in ["url", "redirectTo"] {
+                guard case .text(let address)? = fields[key] else { continue }
+                fields[key] = sanitize(url: address, queryValues: queryValues).map { .text($0) }
+            }
+        }
+        if options.console, record.stream == .console, case .text(let stack)? = fields["stack"] {
+            if fields["level"] == "error" || fields["level"] == "warn" {
+                let lines = stack.split(separator: "\n", omittingEmptySubsequences: false).prefix(maxStackFrames).joined(separator: "\n")
+                fields["stack"] = .text(clip(lines, bytes: maxStackBytes).text)
+            } else {
+                fields["stack"] = nil
+            }
+        }
+        return Record(
+            seq: record.seq, timestamp: record.timestamp, documentID: record.documentID, stream: record.stream, fields: fields,
+            truncated: record.truncated)
+    }
+
     /// The detail fields of one network record, for a request the policy covers. Callers check `DetailPolicy.network` first and
     /// again after every suspension before they get here.
     static func detailFields(

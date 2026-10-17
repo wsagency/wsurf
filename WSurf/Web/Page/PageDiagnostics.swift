@@ -206,6 +206,13 @@ nonisolated enum PageDiagnostics {
             }
         }
 
+        /// Replaces every retained record by `change(record)`. Sequence numbers, cursors and the epoch are untouched; the byte count
+        /// follows the new records.
+        func rewrite(_ change: (Record) -> Record) {
+            records = records.map(change)
+            byteCount = records.reduce(0) { $0 + $1.byteCount }
+        }
+
         /// One record by sequence number, for as long as the buffer retains it.
         func lookup(stream: Stream, seq: UInt64) -> Lookup {
             if let record = records.first(where: { $0.stream == stream && $0.seq == seq }) {

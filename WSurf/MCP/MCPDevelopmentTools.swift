@@ -393,11 +393,12 @@ extension MCPBrowserSession {
         ]
         let options = diagnostics.options
         if options.isEnabled {
-            // `active` is false while Developer access does not hold for the page: the capture goes on without the detail.
+            // `active` is false once Developer access stopped holding for the page: the capture goes on without the detail, and what
+            // it had recorded is gone. It does not come back; a new capture is needed.
             info["detail"] = .object([
                 "headers": .bool(options.headers), "bodies": .bool(options.bodies), "fullConsole": .bool(options.console),
-                "clearQueries": .bool(options.clearQueries), "active": .bool(permits(tab, capability: .developer)),
-                "bodyBytesLeft": .int(diagnostics.bodyBudget),
+                "clearQueries": .bool(options.clearQueries), "active": .bool(!diagnostics.detailEnded && permits(tab, capability: .developer)),
+                "ended": .bool(diagnostics.detailEnded), "bodyBytesLeft": .int(diagnostics.bodyBudget),
             ])
         }
         return info
@@ -428,6 +429,11 @@ extension MCPBrowserSession {
                 return MCPDevelopmentTools.result(
                     .invalidInput, tabID: tab.id,
                     message: "Capture is already running with different options. Call resetDevelopment, then startDiagnostics again.")
+            }
+            if options.isEnabled, running.detailEnded {
+                return MCPDevelopmentTools.result(
+                    .invalidInput, tabID: tab.id,
+                    message: "Developer access stopped holding for this page, so the capture's detail ended. Call resetDevelopment, then startDiagnostics again.")
             }
             return MCPDevelopmentTools.result(.ok, tabID: tab.id, message: "Capture is already running; nothing was cleared.", diagnosticsInfo(running, tab: tab))
         }
@@ -482,6 +488,13 @@ extension MCPBrowserSession {
         }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        // Nothing suspends from here to the reply. Records made with the Developer tier are read with it: a read without Developer
+        // access gets them as the metadata they would have been (headers, bodies, previews and clear query values removed), even
+        // if the capture has not yet found out that the tier is gone.
+        let strip = diagnostics.options.isEnabled && !permits(tab, capability: .developer)
+        func shown(_ record: PageDiagnostics.Record) -> Value {
+            MCPDevelopmentTools.value(strip ? diagnostics.withoutDetail(record) : record, formatter: formatter)
+        }
         var fields = diagnosticsInfo(diagnostics, tab: tab)
         fields["lostInFlight"] = .int(diagnostics.lostInFlight)
         if diagnostics.engine == "webkit" { fields["lostEarly"] = .int(diagnostics.lostEarly) }
@@ -491,7 +504,7 @@ extension MCPBrowserSession {
             let message: String?
             switch diagnostics.buffer.lookup(stream: stream, seq: seq) {
             case .found(let record):
-                fields["records"] = .array([MCPDevelopmentTools.value(record, formatter: formatter)])
+                fields["records"] = .array([shown(record)])
                 message = nil
             case .evicted:
                 fields["records"] = .array([])
@@ -513,7 +526,7 @@ extension MCPBrowserSession {
                 }
                 fields["documentID"] = .string(page.documentID)
                 fields["epoch"] = .int(page.epoch)
-                fields["records"] = .array(page.records.map { MCPDevelopmentTools.value($0, formatter: formatter) })
+                fields["records"] = .array(page.records.map(shown))
                 fields["nextCursor"] = .string(page.nextCursor)
                 fields["dropped"] = .int(page.gap)
                 fields["evicted"] = .int(page.evicted)

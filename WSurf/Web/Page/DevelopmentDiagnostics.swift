@@ -73,11 +73,32 @@ final class DevelopmentDiagnostics {
         mapper = ChromiumDiagnosticsMapper(queryValues: queryValues)
     }
 
-    /// The policy for this event: the options this capture was started with, under the tier as it is now.
+    /// Set when the Developer tier stopped holding for the page: the detail capture ended for good, and what it had recorded was
+    /// purged. Metadata goes on; call `resetDevelopment` and `startDiagnostics` again for a new capture with detail.
+    private(set) var detailEnded = false
+
+    /// The policy for this event: the options this capture was started with, under the tier as it is now. The first time the tier
+    /// is found gone, detail ends and is purged, so a record made with it is never left to be read without it.
     private func currentPolicy() -> PageDiagnostics.DetailPolicy {
-        guard options.isEnabled, var policy = policyProvider?() else { return .off }
+        guard options.isEnabled, !detailEnded, var policy = policyProvider?() else { return .off }
+        guard policy.tier else {
+            endDetail()
+            return .off
+        }
         policy.options = options
         return policy
+    }
+
+    /// Ends the detail capture and removes what it recorded (headers, bodies, previews, clear query values and the full console's
+    /// extra stacks) from the buffer.
+    private func endDetail() {
+        detailEnded = true
+        buffer.rewrite(withoutDetail)
+    }
+
+    /// `record` without the detail this capture's options added.
+    func withoutDetail(_ record: PageDiagnostics.Record) -> PageDiagnostics.Record {
+        PageDiagnostics.withoutDetail(record, options: options, queryValues: queryValues)
     }
 
     var engine: String { page?.chromium != nil ? "chromium" : "webkit" }
@@ -214,6 +235,9 @@ final class DevelopmentDiagnostics {
     /// Safety net for reads: brings the capture to the page's current document. Returns false when the lease is gone or the
     /// new document is no longer authorized (the lease is released first).
     func sync() async -> Bool {
+        if options.isEnabled {
+            _ = currentPolicy()
+        }
         await follow()?.value
         return !stopped
     }
@@ -283,6 +307,9 @@ final class DevelopmentDiagnostics {
     private func noDetail(for entry: PageDiagnostics.Entry, _ policy: PageDiagnostics.DetailPolicy) -> String {
         if entry.fields["source"] == "webkit-resource" {
             return "not captured: resource loads have no headers or bodies on WebKit"
+        }
+        if detailEnded {
+            return "not captured: detail ended when Developer access stopped holding for this page"
         }
         guard policy.tier else { return "not captured: Developer access does not hold for this page" }
         if case .text(let address)? = entry.fields["url"], let url = URL(string: address), !policy.isDeveloperSite(url) {
