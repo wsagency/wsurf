@@ -15,7 +15,9 @@ nonisolated enum PageDialogText {
         let cleaned = text.replacing(/[A-Za-z][A-Za-z0-9+.\-]*:\/\/[^\s<>"'`]+/) { match in
             let link = String(match.output)
             let trimmed = link.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?)]}"))
-            return (PageDiagnostics.sanitize(url: trimmed) ?? "[link]") + link.dropFirst(trimmed.count)
+            // A dialog's link keeps no query at all (diagnostics keep tagged names), so cut it before sanitizing; the mode is then moot.
+            let bare = String(trimmed.prefix { $0 != "?" && $0 != "#" })
+            return (PageDiagnostics.sanitize(url: bare, queryValues: .clear) ?? "[link]") + link.dropFirst(trimmed.count)
         }
         var scalars = String.UnicodeScalarView()
         for scalar in cleaned.unicodeScalars.prefix(maxScalars) {
