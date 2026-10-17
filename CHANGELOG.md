@@ -7,6 +7,9 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+- The import review recognizes exact duplicates: an item that matches a saved login (same site, username and password, or the same passkey) is shown as already saved, or as a suggested merge that only adds what’s missing.
+- Passkeys with user handles longer than 64 bytes (for example PayPal’s) now import and sign in.
+- File › Free Memory unloads background tabs in every window.
 - WSurf has a new app icon, the Tandem mark: a violet disc with a smaller mint disc riding in its wake. It follows the system’s light, dark and tinted looks.
 - Pins, pinned folders and Favorites now belong to the profile and appear in every window of it. Pins that existing windows already had are merged into the profile once.
 - Closing the last window and then quitting brings that window back at the next launch.
