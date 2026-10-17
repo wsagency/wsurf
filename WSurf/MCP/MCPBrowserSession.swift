@@ -82,6 +82,9 @@ final class MCPBrowserSession: Identifiable {
 
     func revoke() {
         isConnected = false
+        for tab in browser.tabs {
+            tab.dialogs.handBack(connection: id)
+        }
         for (tab, owner) in Array(developmentTabs.values) {
             tab.releaseDevelopment(owner, reason: .disconnect)
         }
@@ -141,12 +144,20 @@ final class MCPBrowserSession: Identifiable {
         if capability == .control, !onScreen(tab) {
             return failure("Use switchTab before controlling this shared tab.")
         }
+        if name == "handleDialog" { return await handleDialog(arguments, tab: tab) }
+        if let open = dialogRefusal(for: tab) {
+            return open
+        }
+        // Dialogs the page opens while this call runs come to this connection, and a dialog ends the wait for the call.
+        let dialogClaim = controlDialogs(of: tab, capability: capability)
+        defer { dialogClaim?.endSoon() }
         if name == "navigate" {
-            return await navigate(arguments["url"]?.stringValue ?? "", tab: tab, grant: grant)
+            let url = arguments["url"]?.stringValue ?? ""
+            return await interrupting(tab) { await self.navigate(url, tab: tab, grant: grant) } ?? interruptedResult(tab)
         }
         if name == "goBack", let refusal = goBackRefusal(tab, grant: grant) { return refusal }
         if Self.developmentCalls.contains(name) {
-            return await developmentCall(name: name, arguments: arguments, tab: tab)
+            return await interrupting(tab) { await self.developmentCall(name: name, arguments: arguments, tab: tab) } ?? interruptedResult(tab)
         }
         return await usePage(entry, arguments: arguments, tab: tab, capability: capability)
     }

@@ -74,7 +74,12 @@ extension MCPBrowserSession {
                         }
                     }
                 } else {
-                    output = await pageAction(name: name, arguments: arguments, view: view)
+                    // A dialog the action opens blocks the page, so the action cannot return until it is answered.
+                    guard let acted = await interrupting(tab, { await self.pageAction(name: name, arguments: arguments, view: view) }) else {
+                        observations[tab.id] = nil
+                        return interruptedResult(tab)
+                    }
+                    output = acted
                 }
                 guard scope.validate(), !Task.isCancelled else {
                     observations[tab.id] = nil
