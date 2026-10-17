@@ -194,7 +194,7 @@ text added: "Added to cart"
 | `focus: A → B` | The focused element moved. |
 | `scroll: y of max px` | The scroll position, for `scrollPage` only (acting on a control scrolls it into view, which is not reported). |
 | `console:` / `failed requests:` | New console errors (first 3) and requests that failed or returned 400 or more, only while this connection's `startDiagnostics` capture runs on the tab. Otherwise the reply says `"diagnostics": "off"`. |
-| `opened:` | A tab the action opened (a popup). It is not shared; its URL counts as an observed link. |
+| `opened:` | A tab the action's own page opened (a popup, or a link that opens a new tab). It is not shared; its URL counts as an observed link. A tab a person or another window opened meanwhile is neither reported nor an observed link. |
 | `No visible change.` | Nothing above changed. |
 
 `cost` states `bytes` (the size of the text block), `settleMs` (time spent waiting for the page) and `totalMs`, and

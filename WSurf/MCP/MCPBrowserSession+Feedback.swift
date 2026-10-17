@@ -183,7 +183,7 @@ extension MCPBrowserSession {
         effect.diagnosticsRunning = watch.isRunning
         effect.console = changes.console
         effect.failedRequests = changes.failed
-        effect.popups = openedTabs(since: tabsBefore)
+        effect.popups = openedTabs(since: tabsBefore, by: tab)
         // The client now holds the refs this reply lists, besides those of earlier replies for the same document.
         let reply = feedbackReply(name: name, tab: tab, effect: effect, budget: budget, settle: meter.elapsed, started: started, ok: true, image: nil)
         guard reading.validate(), !Task.isCancelled else {
@@ -211,9 +211,11 @@ extension MCPBrowserSession {
         }
     }
 
-    private func openedTabs(since known: Set<UUID>) -> [ActionEffect.Popup] {
+    /// The tabs that appeared during the action and were opened by `opener`'s own page. A tab a person, another window or
+    /// another page opened meanwhile is neither reported nor made a destination the connection may navigate to.
+    private func openedTabs(since known: Set<UUID>, by opener: BrowserTab) -> [ActionEffect.Popup] {
         browser.tabs.compactMap { tab in
-            guard !known.contains(tab.id), !tab.isPrivate, let url = URL(string: tab.urlString),
+            guard !known.contains(tab.id), browser.openerByTab[tab.id] == opener.id, !tab.isPrivate, let url = URL(string: tab.urlString),
                 ["http", "https"].contains(url.scheme?.lowercased() ?? "")
             else { return nil }
             return .init(title: tab.title, url: url.absoluteString)

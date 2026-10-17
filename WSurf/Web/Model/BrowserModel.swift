@@ -168,15 +168,15 @@ final class BrowserModel {
             self?.newTab(url: url)
         }
         tab.onNewWindow = { [weak self, weak tab] view, activate in
-            let opened = self?.newTab(activate: activate, adopting: view, after: tab)
-            guard let self, let opened, let tab, let origin = lastVisitID[tab.id] else { return }
-            lastVisitID[opened.id] = origin
+            guard let opened = self?.newTab(activate: activate, adopting: view, after: tab), let tab else { return }
+            self?.noteOpened(opened, by: tab)
         }
         tab.onOpenInNewTab = { [weak self, weak tab] url, activate in
             guard let self else { return }
             let opened = newTab(url: url, activate: activate, after: tab, transition: .link)
-            guard let tab, let origin = lastVisitID[tab.id] else { return }
-            lastVisitID[opened.id] = origin
+            if let tab {
+                noteOpened(opened, by: tab)
+            }
         }
         tab.onOpenInNewWindow = { [weak self, weak tab] url, isPrivate in
             guard let tab, !tab.isClosed else { return }
@@ -264,6 +264,18 @@ final class BrowserModel {
     }
 
     var lastVisitID: [UUID: Int64] = [:]
+
+    /// A page opened `opened`: the tab continues that page's visit, and the page is remembered as its opener.
+    private func noteOpened(_ opened: BrowserTab, by tab: BrowserTab) {
+        openerByTab[opened.id] = tab.id
+        if let origin = lastVisitID[tab.id] {
+            lastVisitID[opened.id] = origin
+        }
+    }
+
+    /// For a tab a page opened (a popup, or a link opened in a new tab), the tab of that page. A tab a person, an extension
+    /// or an agent opened is absent, so an agent is told only about tabs its own page opened.
+    var openerByTab: [UUID: UUID] = [:]
 
     private func recordVisit(for tab: BrowserTab) {
         guard !tab.isPrivate, !tab.isClosed, tabsByID[tab.id] === tab else { return }
