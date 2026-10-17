@@ -18,6 +18,10 @@ struct DevelopmentCapabilities {
     let viewport: Support
     let deviceAxes: [String: Support]
     let diagnostics: [String: Support]
+    /// `colorScheme`, `reducedMotion` and `offline`: the Developer tier's media and network emulation.
+    let media: [String: Support]
+    /// What `clearSiteData` can remove on this engine.
+    let siteData: Support
 }
 
 extension BrowserPage {
@@ -34,7 +38,12 @@ extension BrowserPage {
                     "network": .limited(
                         "Main-frame requests after capture starts: method, sanitized URL (plain parameter names, concealed values), status, resource type, media type, "
                             + "transfer size, redirect target and timing; no headers or bodies."),
-                ])
+                ],
+                media: [
+                    "colorScheme": verified, "reducedMotion": verified,
+                    "offline": .limited("Offline only, through DevTools network emulation; there is no throttling. Verified by the page's own online state."),
+                ],
+                siteData: Self.siteDataSupport)
         }
         let none = DevelopmentCapabilities.Support.unsupported("WebKit exposes no public override for this axis.")
         return DevelopmentCapabilities(
@@ -48,8 +57,17 @@ extension BrowserPage {
                     "fetch and XMLHttpRequest (status, media type, timing; a URL only for a string argument, a method only for fetch(url) without an init) and resource loads "
                         + "(type, size when exposed, timing) of the document: sanitized URLs with plain parameter names and concealed values, no headers or bodies; "
                         + "WebSockets and workers are not observed."),
-            ])
+            ],
+            media: [
+                "colorScheme": .limited("Applied through the view's appearance and verified by the page's own prefers-color-scheme."),
+                "reducedMotion": .unsupported("WebKit follows the system Reduce Motion setting; there is no public per-view override."),
+                "offline": .unsupported("WebKit has no public offline or network-condition override."),
+            ],
+            siteData: Self.siteDataSupport)
     }
+
+    private static let siteDataSupport = DevelopmentCapabilities.Support.limited(
+        "Storage of the tab's own origin and the cookies of its host, which every port of the host shares. The HTTP cache is not cleared.")
 
     /// The main-frame document identity both engines already keep (Chromium loader id, WebKit frame-registry nonce).
     var mainDocumentID: String? {

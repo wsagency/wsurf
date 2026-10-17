@@ -104,6 +104,7 @@ nonisolated enum MCPDevelopmentTools {
             "engine": .string(capabilities.engine), "viewport": value(capabilities.viewport),
             "deviceAxes": .object(capabilities.deviceAxes.mapValues(value)),
             "diagnostics": .object(capabilities.diagnostics.mapValues(value)),
+            "media": .object(capabilities.media.mapValues(value)), "siteData": value(capabilities.siteData),
         ])
     }
 
@@ -143,11 +144,11 @@ extension MCPBrowserSession {
     /// observation-bound tools (their catalog entries carry the scope).
     static let developmentCalls: Set<String> = [
         "getDevelopmentInfo", "setViewport", "emulateDevice", "reloadPage", "resetDevelopment", "startDiagnostics", "readConsole",
-        "readNetwork",
+        "readNetwork", "emulateMedia", "clearSiteData",
     ]
 
     func developmentCall(name: String, arguments: [String: Value], tab: BrowserTab) async -> CallTool.Result {
-        let mutates = ["setViewport", "emulateDevice", "reloadPage", "startDiagnostics"].contains(name)
+        let mutates = ["setViewport", "emulateDevice", "reloadPage", "startDiagnostics", "emulateMedia", "clearSiteData"].contains(name)
         if mutates, !onScreen(tab) {
             return MCPDevelopmentTools.result(.denied, tabID: tab.id, message: "Use switchTab before changing this shared tab.")
         }
@@ -161,7 +162,7 @@ extension MCPBrowserSession {
             return MCPDevelopmentTools.result(.pageGone, tabID: tab.id, message: "The page is not ready. Try again.")
         }
         guard let url = webURL(of: tab) else { return MCPDevelopmentTools.result(.pageGone, tabID: tab.id, message: "The webpage is unavailable.") }
-        let scope: Scope = name == "getDevelopmentInfo" ? .read : .development
+        let scope = MCPToolCatalog.entries.first { $0.name == name }?.scope ?? .development
         let guardScope = PageAutomationGuard(
             documentURL: url.absoluteString, snapshot: nil,
             validate: { [weak self, weak tab, weak view] in
@@ -197,6 +198,10 @@ extension MCPBrowserSession {
                 return await resetDevelopment(tab: tab)
             case "startDiagnostics":
                 return await startDiagnostics(tab: tab, view: view)
+            case "emulateMedia":
+                return await emulateMedia(arguments: arguments, tab: tab, view: view)
+            case "clearSiteData":
+                return await clearSiteData(tab: tab, view: view, generation: generation)
             default:
                 return await readDiagnostics(
                     stream: name == "readConsole" ? .console : .network, arguments: arguments, tab: tab, view: view, generation: generation)
@@ -214,10 +219,10 @@ extension MCPBrowserSession {
 
     /// Nil on conflict or when `view` is no longer the tab's live page. Acquisition is synchronous, so two connections racing
     /// for one tab yield exactly one owner.
-    private func acquireDevelopment(_ tab: BrowserTab, view: BrowserPage) -> DevelopmentOwner? {
+    func acquireDevelopment(_ tab: BrowserTab, view: BrowserPage) -> DevelopmentOwner? {
         let authorized = { [weak self, weak tab] () -> Bool in
             guard let self, let tab else { return false }
-            return self.permits(tab, capability: .development)
+            return self.permits(tab, capability: self.leaseScope(of: tab.developmentOwner))
         }
         switch tab.acquireDevelopment(connection: id, page: view, isAuthorized: authorized) {
         case .alreadyOwned(let owner):
@@ -237,33 +242,33 @@ extension MCPBrowserSession {
     }
 
     /// A lease that applied nothing is not kept, so a rejected request leaves the slot free.
-    private func releaseIfIdle(_ owner: DevelopmentOwner, tab: BrowserTab) {
-        if owner.viewport == nil, owner.diagnostics == nil {
+    func releaseIfIdle(_ owner: DevelopmentOwner, tab: BrowserTab) {
+        if owner.viewport == nil, owner.media == nil, owner.diagnostics == nil {
             tab.releaseDevelopment(owner, reason: .reset)
         }
     }
 
     /// Why `acquireDevelopment` returned nil.
-    private func refusal(_ tab: BrowserTab, view: BrowserPage) -> CallTool.Result {
+    func refusal(_ tab: BrowserTab, view: BrowserPage) -> CallTool.Result {
         guard !tab.isClosed, tab.liveView === view else {
             return MCPDevelopmentTools.result(.stale, tabID: tab.id, message: "The page was replaced. Try again.")
         }
         return conflict(tab)
     }
 
-    private func conflict(_ tab: BrowserTab) -> CallTool.Result {
+    func conflict(_ tab: BrowserTab) -> CallTool.Result {
         MCPDevelopmentTools.result(.ownershipConflict, tabID: tab.id, message: "Another connection is using development tools on this tab. Nothing was changed.")
     }
 
     /// The lease this connection holds on `tab`, if any.
-    private func ownLease(_ tab: BrowserTab) -> DevelopmentOwner? {
+    func ownLease(_ tab: BrowserTab) -> DevelopmentOwner? {
         tab.developmentRelation(of: id) == .own ? tab.developmentOwner : nil
     }
 
     func releaseUnauthorizedDevelopment() {
         for (tab, owner) in Array(developmentTabs.values) {
             tab.releaseInvalidDevelopment()
-            if tab.developmentOwner === owner, !permits(tab, capability: .development) {
+            if tab.developmentOwner === owner, !permits(tab, capability: leaseScope(of: owner)) {
                 tab.releaseDevelopment(owner, reason: .grantDowngrade)
             }
         }
@@ -287,6 +292,7 @@ extension MCPBrowserSession {
         let relation = tab.developmentRelation(of: id)
         fields["owner"] = .string(relation == .own ? "self" : relation.rawValue)
         if let size = view.developmentViewport { fields["viewportOverride"] = .object(["width": .int(Int(size.width)), "height": .int(Int(size.height))]) }
+        if let media = tab.developmentOwner?.media?.media { fields["emulation"] = MCPDevelopmentTools.value(media) }
         guard let measured else {
             return MCPDevelopmentTools.result(.pageGone, tabID: tab.id, message: "The page did not respond.", fields)
         }
