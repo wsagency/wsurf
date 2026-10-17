@@ -487,6 +487,42 @@
     "Website access" : {
       "comment" : "Row title in Settings › Assistant, Acting on websites. It chooses how much of a website the assistant may use when that website has no setting of its own: Ask, Read Only or Allow Control. Sentence case."
     },
+    "Ask to close tabs" : {
+      "comment" : "Choice of the Closing tabs row in Settings › Assistant, the default: the assistant and connected apps ask before closing a tab. Sentence case."
+    },
+    "Allow closing tabs" : {
+      "comment" : "Choice of the Closing tabs row in Settings › Assistant, shown under the Allow Control default: the assistant closes ordinary tabs without asking. Sentence case."
+    },
+    "Closing tabs" : {
+      "comment" : "Row title in Settings › Assistant, Acting on websites, shown under the Allow Control default. It chooses whether the assistant asks before closing a tab. Sentence case."
+    },
+    "Pinned tabs are never closed. The assistant can always close tabs it opened. Connected apps ask unless they opened the tab or have Developer access." : {
+      "comment" : "Caption of the Closing tabs row in Settings › Assistant. Pinned tabs are the tabs the person pinned, including pages in a pinned folder. Developer access is the Developer level of a paired app on the Connected apps page."
+    },
+    "Close “%@”?" : {
+      "comment" : "Heading of the sheet that asks whether the assistant or a connected app may close a tab. %@ is the title of the tab, cut to one short line."
+    },
+    "Close this tab?" : {
+      "comment" : "Heading of the sheet that asks whether the assistant or a connected app may close a tab, when the tab has no title."
+    },
+    "“%@” wants to close this tab." : {
+      "comment" : "First sentence of the sheet that asks whether a connected app may close a tab. %@ is the app’s name."
+    },
+    "The assistant wants to close this tab." : {
+      "comment" : "First sentence of the sheet that asks whether the assistant may close a tab."
+    },
+    "You can reopen it with Reopen Last Closed Tab." : {
+      "comment" : "Second sentence of the sheet that asks whether the assistant or a connected app may close a tab. Reopen Last Closed Tab is the name of the menu command. Left out for private tabs, which cannot be reopened."
+    },
+    "Keep Open" : {
+      "comment" : "Button in the sheet that asks whether the assistant or a connected app may close a tab: leaves the tab open. Title Case."
+    },
+    "Don’t ask again for this task" : {
+      "comment" : "Checkbox in the sheet that asks whether the assistant may close a tab. When checked and the person closes the tab, the assistant closes other tabs of the same task without asking."
+    },
+    "Don’t ask again for this connection" : {
+      "comment" : "Checkbox in the sheet that asks whether a connected app may close a tab. When checked and the person closes the tab, that connection closes other tabs without asking until it disconnects."
+    },
     "Without asking" : {
       "comment" : "Label beside the menu on a paired app’s row. The menu sets what the app may do on developer sites without a prompt: Off, Development or Developer."
     },

@@ -95,6 +95,15 @@ private struct AssistantOverview: View {
                 isPrivate: coordinator.context.profile.isPrivate
             )
 
+            if TabClosingRow.appears(
+                defaultAccess: coordinator.context.sitePermissions.assistantDefault,
+                isPrivate: coordinator.context.profile.isPrivate
+            ) {
+                RowSeparator()
+
+                TabClosingRow(permissions: coordinator.context.sitePermissions)
+            }
+
             RowSeparator()
 
             DrillInRow(

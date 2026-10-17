@@ -180,6 +180,10 @@ final class SitePermissions {
     /// never No Access, and the tabs of a private window never use it (`TabAssistantAccessCenter`).
     private(set) var assistantDefault: AssistantAccessPolicy = .ask
 
+    /// Whether the assistant may close an ordinary tab without asking. It counts only under the Allow Control default
+    /// (`allowsClosingTabsWithoutAsking`), and a private window never has it.
+    private(set) var assistantTabClosing: AssistantTabClosing = .ask
+
     private var keptActiveOriginSet: Set<String> = []
     private(set) var keptActiveOrigins: [String] = []
 
@@ -247,6 +251,12 @@ final class SitePermissions {
 
     func assistantAccess(for origin: String) -> AssistantAccessPolicy {
         assistantRecord(for: origin) ?? assistantDefault
+    }
+
+    /// True only for the Allow Control default with "Allow closing tabs". Pinned tabs and tabs the agent opened itself are
+    /// handled by the caller; this answers for every other tab.
+    var allowsClosingTabsWithoutAsking: Bool {
+        assistantDefault == .control && assistantTabClosing == .allow
     }
 
     var assistantOrigins: [String] {
@@ -384,6 +394,13 @@ final class SitePermissions {
         onAssistantAccessChanged?()
     }
 
+    /// A store that does not persist (a private window) always asks.
+    func setAssistantTabClosing(_ setting: AssistantTabClosing) {
+        guard persists, setting != assistantTabClosing else { return }
+        assistantTabClosing = setting
+        scheduleSave()
+    }
+
     func removeAllAssistantAccess() {
         assistantRecords = [:]
         scheduleSave()
@@ -517,6 +534,8 @@ final class SitePermissions {
         var assistantAccess: [String: AssistantAccessPolicy] = [:]
         /// Absent for Ask, so a file nobody changed stays as it was and older builds ignore the key.
         var assistantDefault: AssistantAccessPolicy?
+        /// Absent for Ask to close tabs, for the same reason.
+        var assistantTabClosing: AssistantTabClosing?
         var keptActive: Set<String> = []
         var noAutomaticPicture: Set<String> = []
         var autoplay: [String: AutoplayPolicy] = [:]
@@ -530,6 +549,7 @@ final class SitePermissions {
                 [WebPermission: PermissionPolicy],
             assistantAccess: [String: AssistantAccessPolicy],
             assistantDefault: AssistantAccessPolicy?,
+            assistantTabClosing: AssistantTabClosing?,
             keptActive: Set<String>,
             noAutomaticPicture: Set<String>,
             autoplay: [String: AutoplayPolicy],
@@ -541,6 +561,7 @@ final class SitePermissions {
             self.defaults = defaults
             self.assistantAccess = assistantAccess
             self.assistantDefault = assistantDefault
+            self.assistantTabClosing = assistantTabClosing
             self.keptActive = keptActive
             self.noAutomaticPicture = noAutomaticPicture
             self.autoplay = autoplay
@@ -564,6 +585,7 @@ final class SitePermissions {
                 forKey: .assistantAccess
             ) ?? [:]
             assistantDefault = try? values.decodeIfPresent(AssistantAccessPolicy.self, forKey: .assistantDefault)
+            assistantTabClosing = try? values.decodeIfPresent(AssistantTabClosing.self, forKey: .assistantTabClosing)
             keptActive = try values.decodeIfPresent(
                 Set<String>.self,
                 forKey: .keptActive
@@ -613,6 +635,7 @@ final class SitePermissions {
                 defaults,
             assistantAccess: assistantRecords,
             assistantDefault: assistantDefault == .ask ? nil : assistantDefault,
+            assistantTabClosing: assistantTabClosing == .ask ? nil : assistantTabClosing,
             keptActive: keptActiveOriginSet,
             noAutomaticPicture: noAutomaticPictureOriginSet,
             autoplay: autoplayRecords,
@@ -645,6 +668,7 @@ final class SitePermissions {
         if let stored = snapshot.assistantDefault, stored != .deny {
             assistantDefault = stored
         }
+        assistantTabClosing = snapshot.assistantTabClosing ?? .ask
         for key in snapshot.keptActive {
             let origin = normalize(key)
             if !origin.isEmpty {

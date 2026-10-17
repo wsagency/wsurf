@@ -81,7 +81,7 @@ struct AgentToolkitPolicyTests {
             ("navigate", { await subject.navigate(to: "https://example.com") }),
             ("newTab", { await subject.newTab(url: nil) }),
             ("switchTab", { subject.switchTab(matching: "example") }),
-            ("closeTab", { subject.closeTab(matching: nil) }),
+            ("closeTab", { await subject.closeTab(matching: nil) }),
             ("readPage", { await subject.readPage() }),
             ("clickOnPage", { await subject.clickOnPage(ref: 1, label: "") }),
             ("typeOnPage", { await subject.typeOnPage(text: "x", field: "q", ref: 0, submit: false) }),
@@ -121,7 +121,7 @@ struct AgentToolkitPolicyTests {
         #expect((await subject.navigate(to: "file:///tmp/private")).contains("Invalid URL"))
         #expect((await subject.newTab(url: "javascript:alert(1)")).contains("Invalid URL"))
         #expect(subject.switchTab(matching: "missing").contains("no tabs"))
-        #expect(subject.closeTab(matching: nil).contains("no tabs"))
+        #expect((await subject.closeTab(matching: nil)).contains("no tabs"))
         #expect((await subject.readPage()).contains("No tab"))
         #expect((await subject.clickOnPage(ref: 1, label: "")).contains("No tab"))
         #expect((await subject.typeOnPage(text: "x", field: "q", ref: 0, submit: false)).contains("No tab"))
@@ -151,12 +151,12 @@ struct AgentToolkitPolicyTests {
 
         #expect(subject.switchTab(matching: "First").contains("Switched"))
         #expect(browser.activeTab === first)
-        #expect(subject.closeTab(matching: "Second").contains("Closed"))
+        #expect((await subject.closeTab(matching: "Second")).contains("Closed"))
         #expect(browser.tabs.count == 1)
         #expect(browser.tabs.first === first)
     }
 
-    @Test func theAssistantDoesNotClosePinnedPages() {
+    @Test func theAssistantDoesNotClosePinnedPages() async {
         let browser = BrowserModel(database: .temporary())
         let pinned = browser.newTab()
         pinned.customTitle = "Pinned project"
@@ -170,9 +170,9 @@ struct AgentToolkitPolicyTests {
         let subject = toolkit(browser: browser)
         subject.beginTask(AgentTaskContext(id: UUID(), tabID: pinned.id, mentionedTabIDs: [inFolder.id]))
 
-        #expect(subject.closeTab(matching: "Pinned").contains("must be closed by the user"))
-        #expect(subject.closeTab(matching: "Folder").contains("must be closed by the user"))
-        #expect(subject.closeTab(matching: nil).contains("must be closed by the user"))
+        #expect((await subject.closeTab(matching: "Pinned")).contains("must be closed by the user"))
+        #expect((await subject.closeTab(matching: "Folder")).contains("must be closed by the user"))
+        #expect((await subject.closeTab(matching: nil)).contains("must be closed by the user"))
         #expect(browser.tabs.count == 2)
     }
 

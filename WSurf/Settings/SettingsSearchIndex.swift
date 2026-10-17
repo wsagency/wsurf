@@ -234,6 +234,11 @@ enum SettingsIndex {
                        "control", "every website", "all websites", "sites", "access", "approve", "consent",
                        ]),
 
+        SettingsEntry("assistant.tabClosing", .provider, "Closing tabs",
+                      "Whether the assistant may close a tab without asking. Pinned tabs are never closed.",
+                      ["agent", "assistant", "close", "closing", "tab", "tabs", "ask to close tabs",
+                       "allow closing tabs", "pinned", "allow control", "permission", "consent",
+                       ]),
         SettingsEntry("assistant.connectedApps", .provider, "Connected apps", "Apps you paired with WSurf.",
                       ["mcp", "pair", "paired", "token", "claude", "codex", "cursor", "omp", "client", "external",
                        "revoke", "connection", "developer", "profile", "localhost", "sites", "without asking", "standing",
