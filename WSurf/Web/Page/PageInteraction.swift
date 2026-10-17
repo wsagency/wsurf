@@ -193,10 +193,12 @@ extension PageDriver {
     /// `developmentAllowed` is asked before any work, after each await and just before pixels are returned: an element
     /// registered only by `findElements` is captured while it answers true, never otherwise. Ordinary control refs, the
     /// viewport and regions never ask for it. `maximumBytes` bounds the returned JPEG and may shrink its pixels; the
-    /// returned `scale` always describes the image that is returned.
+    /// returned `scale` always describes the image that is returned. With `masking` (the Developer tier) filled sensitive
+    /// fields are painted black in the returned image instead of refusing the capture; a field that cannot be measured
+    /// still refuses it.
     static func screenshot(
         _ target: ScreenshotTarget = .viewport, developmentAllowed: () -> Bool = { false }, maximumBytes: Int? = nil,
-        maxWidth: Int? = nil, in view: BrowserPage
+        maxWidth: Int? = nil, masking: ScreenshotMasking? = nil, in view: BrowserPage
     ) async -> Result<ScreenshotCapture, ScreenshotFailure> {
         guard PageAutomationGuard.allowsExecution else { return .failure(.stale) }
         guard target != .fullPage || view.chromium != nil else { return .failure(.fullPageUnsupported) }
@@ -216,6 +218,7 @@ extension PageDriver {
             const root = document.documentElement;
             const out = { document: R.documentID, vw: window.innerWidth, vh: window.innerHeight, dw: root.scrollWidth, dh: root.scrollHeight,
               safe: !Array.from(R.walk(document.body)).some(el => R.isSensitiveField(el) && (el.value || el.isContentEditable && el.textContent)) };
+            \(masking?.probeScript ?? "")
             const ref = \(ref);
             if (ref) {
               const geometry = R.screenshotGeometry(ref);
@@ -230,7 +233,11 @@ extension PageDriver {
         let foundOnly = before["foundOnly"] as? Bool == true
         let needsDevelopment = foundOnly || target == .fullPage
         guard !(needsDevelopment && !developmentAllowed()) else { return .failure(.needsDevelopment) }
-        guard before["safe"] as? Bool == true else { return .failure(.privacy) }
+        // Without masking a filled sensitive field refuses the capture; with it, only a field that was not measured does.
+        func isPrivate(_ probe: [String: Any]) -> Bool {
+            masking == nil ? probe["safe"] as? Bool == true : ScreenshotMasking.isMeasured(probe)
+        }
+        guard isPrivate(before) else { return .failure(.privacy) }
         func number(_ object: [String: Any]?, _ key: String) -> CGFloat? {
             (object?[key] as? NSNumber).map { CGFloat($0.doubleValue) }
         }
@@ -268,10 +275,18 @@ extension PageDriver {
         // Development access is checked again right before pixels leave, after the last await.
         let requiresDevelopment = needsDevelopment || after["foundOnly"] as? Bool == true
         guard !(requiresDevelopment && !developmentAllowed()) else { return .failure(.needsDevelopment) }
-        guard after["safe"] as? Bool == true else { return .failure(.privacy) }
+        guard isPrivate(after) else { return .failure(.privacy) }
         guard placementHeld(placed, in: after) else { return .failure(.stale) }
+        // The boxes painted over the pixels are the ones measured after the capture, and they must be where they were before it.
+        var picture = bitmap
+        if masking != nil {
+            let masks = ScreenshotMasking.masks(in: after)
+            guard ScreenshotMasking.held(ScreenshotMasking.masks(in: before), masks) else { return .failure(.stale) }
+            guard let painted = ScreenshotMasking.apply(masks, over: css, to: bitmap) else { return .failure(.captureFailed) }
+            picture = painted
+        }
         // The limit may have shrunk the pixels, so the scale comes from the image that is returned.
-        guard let encoded = PageScreenshotEncoding.jpeg(bitmap, fitting: maximumBytes, maxPixelWidth: pixelLimit) else { return .failure(.captureFailed) }
+        guard let encoded = PageScreenshotEncoding.jpeg(picture, fitting: maximumBytes, maxPixelWidth: pixelLimit) else { return .failure(.captureFailed) }
         return .success(
             ScreenshotCapture(
                 jpeg: encoded.data, bounds: css, scale: CGFloat(encoded.pixelsWide) / css.width,

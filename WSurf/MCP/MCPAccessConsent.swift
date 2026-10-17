@@ -12,7 +12,7 @@ enum MCPAccessConsent {
         case control
         /// Control plus DOM inspection, console and network metadata, viewport and device emulation.
         case development
-        /// Development, and no confirmation before consequential actions. Only a paired app on a developer site in the
+        /// Development, typing test secrets, and no confirmation before consequential actions. Only a paired app on a developer site in the
         /// Developer profile can hold it.
         case developer
     }
@@ -82,8 +82,8 @@ enum MCPAccessConsent {
             buttons.append(.init(title: String(localized: "Allow Development"), access: .development, isEscape: false))
             if pages.contains(where: \.developerEligible) {
                 message += "\n" + String(localized: """
-                    • Allow Developer: also acts without asking before purchases, sending, and deleting. \
-                    Only on developer sites in your Developer profile.
+                    • Allow Developer: also types test passwords it gives itself, and acts without asking before purchases, \
+                    sending, and deleting. Only on developer sites in your Developer profile.
                     """)
                 buttons.append(.init(title: String(localized: "Allow Developer"), access: .developer, isEscape: false))
             }

@@ -246,7 +246,7 @@ extension MCPBrowserSession {
     func developerApproval(for tab: BrowserTab) -> AgentActionConsent.DeveloperApproval {
         .init { [weak self, weak tab] label, category, host in
             guard let self, let tab, self.permits(tab, capability: .developer) else { return false }
-            self.developerApprovals.append(.init(date: Date(), category: category, label: String(label.prefix(80)), host: host))
+            self.developerApprovals.append(.init(date: Date(), category: category, label: String(self.scrubbedForAudit(label).prefix(80)), host: host))
             self.developerApprovals.removeFirst(max(0, self.developerApprovals.count - 100))
             Pipeline.log.notice("mcp: developer access let a \(category.rawValue, privacy: .public) action through without asking")
             return true

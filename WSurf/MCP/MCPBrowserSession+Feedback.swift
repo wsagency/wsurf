@@ -136,7 +136,7 @@ extension MCPBrowserSession {
     /// the whole page, as `result: full` does.
     func deltaAction(
         name: String, arguments: [String: Value], tab: BrowserTab, view: BrowserPage, scope: PageAutomationGuard,
-        reading: PageAutomationGuard, observation: PageObservation?
+        reading: PageAutomationGuard, observation: PageObservation?, secret: SecretEntry?
     ) async -> CallTool.Result? {
         let budget = FeedbackBudget(arguments["budget"])
         let viewportOnly = name == "scrollPage" && arguments["ref"] == nil
@@ -150,7 +150,7 @@ extension MCPBrowserSession {
         let acted = await PageSettle.$meter.withValue(meter) {
             await PageSettle.$limits.withValue(.init(grace: .zero, quietCeiling: .milliseconds(budget.settleMs))) {
                 await PageDriver.$feedbackMode.withValue(.delta) {
-                    await interrupting(tab) { await self.pageAction(name: name, arguments: arguments, view: view) }
+                    await interrupting(tab) { await self.performAction(name: name, arguments: arguments, tab: tab, view: view, secret: secret) }
                 }
             }
         }
@@ -339,7 +339,8 @@ extension MCPBrowserSession {
         targets.append(.viewport)
         for target in targets {
             let outcome = await PageDriver.screenshot(
-                target, developmentAllowed: { false }, maximumBytes: Self.failureImageBytes, maxWidth: Self.failureImageWidth, in: view)
+                target, developmentAllowed: { false }, maximumBytes: Self.failureImageBytes, maxWidth: Self.failureImageWidth,
+                masking: screenshotMasking(for: tab), in: view)
             if case .success(let capture) = outcome, !capture.requiresDevelopment, scope.validate() {
                 return capture.jpeg
             }

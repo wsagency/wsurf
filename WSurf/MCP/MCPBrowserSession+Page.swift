@@ -26,6 +26,13 @@ extension MCPBrowserSession {
             return refusal
         }
         let arguments = targeted
+        // A secret is typed only in the Developer tier. Refused before anything is typed, and registered before it is. This
+        // reads the arguments after a selector became a ref, so a selector-targeted secret is covered like a ref-targeted one.
+        let secretEntry = Self.secretEntry(tool: name, arguments: arguments)
+        if let secretEntry, let refusal = secretEntryRefusal(secretEntry, tab: tab) {
+            return refusal
+        }
+        let typesSecret = secretEntry != nil
         let usesRef = entry.usesRef || arguments["ref"] != nil || arguments["toRef"] != nil
         let observation = observations[tab.id]
         if usesRef {
@@ -40,6 +47,7 @@ extension MCPBrowserSession {
             validate: { [weak self, weak tab, weak view] in
                 guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
                 return self.mayProceed(tab, capability: capability)
+                    && (!typesSecret || self.mayProceed(tab, capability: .developer))
                     && (capability != .control || self.onScreen(tab))
             }
         )
@@ -57,7 +65,8 @@ extension MCPBrowserSession {
             return await PageDriver.$accumulatesRefs.withValue(true) {
                 await PageDriver.$expectedObservation.withValue(usesRef ? observation?.snapshot : nil) {
                     await pageReply(
-                        name: name, arguments: arguments, tab: tab, view: view, scope: scope, reading: reading, observation: observation)
+                        name: name, arguments: arguments, tab: tab, view: view, scope: scope, reading: reading, observation: observation,
+                        secret: secretEntry)
                 }
             }
         }
@@ -66,11 +75,12 @@ extension MCPBrowserSession {
     /// The reply for a page tool whose guard and expected observation are already in place.
     private func pageReply(
         name: String, arguments: [String: Value], tab: BrowserTab, view: BrowserPage, scope: PageAutomationGuard,
-        reading: PageAutomationGuard, observation: PageObservation?
+        reading: PageAutomationGuard, observation: PageObservation?, secret: SecretEntry?
     ) async -> CallTool.Result {
         if Self.feedbackActions.contains(name), arguments["result"]?.stringValue != "full",
             let reply = await deltaAction(
-                name: name, arguments: arguments, tab: tab, view: view, scope: scope, reading: reading, observation: observation) {
+                name: name, arguments: arguments, tab: tab, view: view, scope: scope, reading: reading, observation: observation,
+                secret: secret) {
             return reply
         }
         var capturedImage: Data?
@@ -82,7 +92,7 @@ extension MCPBrowserSession {
             let limits = PageSettle.Limits(quietCeiling: .milliseconds(FeedbackBudget(arguments["budget"]).settleMs))
             // A dialog the action opens blocks the page, so the action cannot return until it is answered.
             let acted = await PageSettle.$limits.withValue(limits) {
-                await interrupting(tab) { await self.pageAction(name: name, arguments: arguments, view: view) }
+                await interrupting(tab) { await self.performAction(name: name, arguments: arguments, tab: tab, view: view, secret: secret) }
             }
             guard let acted else {
                 observations[tab.id] = nil
@@ -147,7 +157,10 @@ extension MCPBrowserSession {
         await throttleCapture()
         let outcome = await PageDriver.screenshot(
             request.target, developmentAllowed: developmentAllowed, maximumBytes: Self.screenshotBytes,
-            maxWidth: arguments["maxWidth"]?.intValue, in: view)
+            maxWidth: arguments["maxWidth"]?.intValue,
+            // The Developer tier types its own test secrets, so its screenshots cover filled sensitive fields; anywhere else a
+            // filled sensitive field still prevents the capture.
+            masking: screenshotMasking(for: tab), in: view)
         switch outcome {
         case .success(let capture):
             let box = capture.bounds
@@ -191,7 +204,16 @@ extension MCPBrowserSession {
         return (ref.map { .element(ref: $0) } ?? .viewport, nil)
     }
 
-    func pageAction(name: String, arguments: [String: Value], view: BrowserPage) async -> String {
+    /// `pageAction`, and after a secret entry what must follow it: the fields remembered, and autofill and the vault kept away.
+    func performAction(name: String, arguments: [String: Value], tab: BrowserTab, view: BrowserPage, secret: SecretEntry?) async -> String {
+        let output = await pageAction(name: name, arguments: arguments, view: view, secret: secret)
+        if let secret {
+            finishSecretEntry(secret, tab: tab, view: view)
+        }
+        return output
+    }
+
+    private func pageAction(name: String, arguments: [String: Value], view: BrowserPage, secret: SecretEntry?) async -> String {
         let ref = arguments["ref"]?.intValue ?? 0
         switch name {
         case "readPage":
@@ -203,7 +225,8 @@ extension MCPBrowserSession {
             return await PageDriver.click(ref: ref, label: "", in: view, announced: true)
         case "typeOnPage":
             return await PageDriver.type(
-                text: arguments["text"]?.stringValue ?? "", intoField: "", ref: ref, submit: arguments["submit"]?.boolValue ?? false, in: view, announced: true)
+                text: arguments["text"]?.stringValue ?? "", intoField: "", ref: ref, submit: arguments["submit"]?.boolValue ?? false,
+                allowSensitive: secret != nil, secretWritten: secretWriteSink, in: view, announced: true)
         case "selectOption":
             return await PageDriver.selectOption(arguments["option"]?.stringValue ?? "", ref: ref, field: "", in: view, announced: true)
         case "scrollPage":
@@ -222,7 +245,8 @@ extension MCPBrowserSession {
                     else { return nil }
                     return .init(ref: ref, value: value, select: select)
                 } ?? []
-            return await PageDriver.fillFields(fields, in: view, announced: true)
+            return await PageDriver.fillFields(
+                fields, secretRefs: secret?.refs ?? [], secretWritten: secretWriteSink, in: view, announced: true)
         case "inspectControl":
             return await PageDriver.inspectControl(ref: ref, offset: arguments["offset"]?.intValue ?? 0, in: view)
         case "setChecked":

@@ -21,7 +21,10 @@ nonisolated enum MCPToolCatalog {
         document and control are unchanged, so the observationID is optional. Pass result full to get the \
         whole page. Prefer \
         text over screenshots. Keyboard input needs a visible tab; hover moves the real pointer and needs WSurf active with the tab on screen. \
-        Inspection, viewport and diagnostics tools need requestAccess with development set; one connection owns a tab's development state, so call resetDevelopment when done.
+        Inspection, viewport and diagnostics tools need requestAccess with development set; one connection owns a tab's development state, so call resetDevelopment when done. \
+        Passwords, codes and card fields stay the user's to fill. The one exception is the Developer tier: there typeOnPage and \
+        fillFields accept secret: true for test credentials you supply yourself, and WSurf hides every secret you typed from \
+        its results. Never type real credentials; WSurf never offers or reads saved passwords.
         """
 
     struct Parameter: Sendable {
@@ -61,6 +64,10 @@ nonisolated enum MCPToolCatalog {
                             "ref": .object(["type": "integer", "minimum": 1, "maximum": 100000]),
                             "value": .object(["type": "string", "maxLength": 32768]),
                             "select": .object(["type": "boolean"]),
+                            "secret": .object([
+                                "type": "boolean",
+                                "description": "Developer tier only: the value is a test secret you supply, typed into a sensitive text field.",
+                            ]),
                         ]),
                     ]),
                 ])
@@ -151,10 +158,12 @@ nonisolated enum MCPToolCatalog {
                     case ("array", .array(let fields)):
                         (1...32).contains(fields.count)
                             && fields.allSatisfy { field in
-                                guard case .object(let object) = field, Set(object.keys) == ["ref", "value", "select"],
+                                guard case .object(let object) = field,
+                                    Set(["ref", "value", "select"]).isSubset(of: Set(object.keys)),
+                                    Set(object.keys).isSubset(of: ["ref", "value", "select", "secret"]),
                                     let ref = object["ref"]?.intValue, ref > 0, ref <= 100_000,
                                     let text = object["value"]?.stringValue, text.utf8.count <= 32_768,
-                                    object["select"]?.boolValue != nil
+                                    object["select"]?.boolValue != nil, object["secret"].map({ $0.boolValue != nil }) ?? true
                                 else { return false }
                                 return true
                             }
@@ -169,6 +178,14 @@ nonisolated enum MCPToolCatalog {
             }
         }
     }
+
+    /// Appended to the tools that can type a secret. They share their base description with the in-app assistant, which never can.
+    private static let secretNote =
+        """
+        With secret: true, in the Developer tier only (a paired app on a developer site in the Developer profile), a \
+        test credential you supply is typed into a password, code or card field. It must be at least 4 characters and \
+        is hidden from every result. Without it, a sensitive field is refused.
+        """
 
     static let tab = Parameter(name: "tabID", type: "string", description: "Exact tab ID returned by listTabs.")
     static let snapshot = Parameter(
@@ -240,10 +257,14 @@ nonisolated enum MCPToolCatalog {
             name: "clickOnPage", description: AgentToolkit.Descriptions.clickOnPage, parameters: [tab, currentSnapshot, ref] + feedback,
             scope: .control, usesRef: true),
         Entry(
-            name: "typeOnPage", description: AgentToolkit.Descriptions.typeOnPage,
+            name: "typeOnPage", description: AgentToolkit.Descriptions.typeOnPage + " " + secretNote,
             parameters: [
                 tab, currentSnapshot, ref, Parameter(name: "text", type: "string", description: "Text to enter."),
                 Parameter(name: "submit", type: "boolean", description: "Press Enter after typing.", required: false),
+                Parameter(
+                    name: "secret", type: "boolean",
+                    description: "Developer tier only: the text is a test secret you supply, typed into a sensitive field and hidden from results.",
+                    required: false),
             ] + feedback, scope: .control, usesRef: true),
         Entry(
             name: "selectOption", description: AgentToolkit.Descriptions.selectOption,
@@ -268,10 +289,11 @@ nonisolated enum MCPToolCatalog {
                     description: "Enter, Tab, Escape, Space, ArrowLeft, ArrowRight, ArrowDown, ArrowUp, Home, End, Backspace, or Delete"),
             ] + feedback, scope: .control, usesRef: true),
         Entry(
-            name: "fillFields", description: AgentToolkit.Descriptions.fillFields,
+            name: "fillFields", description: AgentToolkit.Descriptions.fillFields + " " + secretNote,
             parameters: [
                 tab, currentSnapshot, Parameter(name: "fields", type: "array",
-                                         description: "One to 32 controls with ref, value, and select. Use true/false for checkbox/radio states, #RRGGBB for colors, and numbers for ranges."),
+                                         description: "One to 32 controls with ref, value, and select, and optionally secret. "
+                                         + "Use true/false for checkbox/radio states, #RRGGBB for colors, and numbers for ranges."),
             ] + feedback, scope: .control, usesRef: true),
         Entry(
             name: "inspectControl", description: "Inspect control state and up to twelve dropdown options.",
@@ -298,7 +320,8 @@ nonisolated enum MCPToolCatalog {
                 that must lie fully inside the viewport, as an image. A ref from readPage (a control) needs only read access; \
                 a ref from findElements that is not a control needs development access. Never scrolls or stitches. \
                 The image has one pixel per CSS pixel unless maxWidth says otherwise. \
-                Filled sensitive fields prevent any capture. Prefer readPage for text.
+                Filled sensitive fields prevent any capture, except in the Developer tier, where they are covered in black. \
+                Prefer readPage for text.
                 """,
             parameters: [
                 tab,

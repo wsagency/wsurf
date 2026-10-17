@@ -324,16 +324,27 @@ enum PageDriver {
         }
     }
 
+    /// - Parameters:
+    ///   - allowSensitive: Types into a password, code or card field instead of refusing it. Only the Developer tier of an MCP
+    ///     connection sets it, for a test secret that connection registered with its `MCPSecretScrubber`. The page is not
+    ///     focused (so autofill never offers the vault), the field's frame must be the page itself, the value is not kept in
+    ///     the page-side runtime, and the reply says a secret was typed without repeating it.
+    ///   - secretWritten: Told what the secret came to once it was written: what the field holds now (a page may reformat a card
+    ///     number), and whether the field is a password, code or card field. The caller hides the stored form too, and only
+    ///     treats the value as a secret in the user's own records when the field really is one.
     static func type(
         text: String,
         intoField fieldLabel: String,
         ref: Int,
         submit: Bool,
+        allowSensitive: Bool = false,
+        secretWritten: ((SecretWrite) -> Void)? = nil,
         in webView: BrowserPage,
         announced: Bool = false,
         refreshControls: Bool = true
     ) async -> String {
         guard let encodedText = jsonString(text) else { return "Could not encode the input." }
+        guard !allowSensitive || selectedFrame == nil else { return Self.secretInFrameMessage }
         let resolved = await resolve(ref: ref, label: fieldLabel, kinds: #"["field"]"#, in: webView)
         switch resolved {
         case .failure(let message):
@@ -359,9 +370,7 @@ enum PageDriver {
                 """
                   const el = window.__wsurfRefs[\(found.ref) - 1];
                   if (!el || !el.isConnected) { return JSON.stringify({ stale: true }); }
-                  if (R.isSensitiveField(el)) {
-                    return JSON.stringify({ refused: true });
-                  }
+                  \(allowSensitive ? Self.secretFieldGuard : "if (R.isSensitiveField(el)) { return JSON.stringify({ refused: true }); }")
                   if (R.disabled(el) || el.readOnly || el.getAttribute('aria-readonly') === 'true') { return JSON.stringify({ unavailable: true }); }
                   if (!['INPUT','TEXTAREA'].includes(el.tagName) && !el.isContentEditable) return JSON.stringify({ error: 'This control is not directly editable. Use click or keyboard controls.' });
                   if (el.tagName === 'INPUT' && ['file','hidden','checkbox','radio','button','submit'].includes(el.type)) {
@@ -392,12 +401,13 @@ enum PageDriver {
                   const error = R.actionable(el);
                   if (error) return JSON.stringify({ error });
                   el.scrollIntoView({ block: 'center' });
-                  if (\(refreshControls)) el.focus();
-                  R.expectValue(el, value);
+                  if (\(refreshControls && !allowSensitive)) el.focus();
+                  \(allowSensitive ? "" : "R.expectValue(el, value);")
                   R.setValue(el, value);
-                  const retained = R.valueState(\(found.ref)) === 'matched';
+                  \(allowSensitive ? "const stored = el.isContentEditable ? el.textContent : el.value;" : "")
+                  const retained = \(allowSensitive ? "stored === value" : "R.valueState(\(found.ref)) === 'matched'");
                   if (\(submit ? "true" : "false") && retained) { R.pressEnter(el); }
-                  return JSON.stringify({ ok: true, submitted: \(submit ? "true" : "false") && retained });
+                  return JSON.stringify({ ok: true, retained, \(allowSensitive ? "stored, sensitive," : "") submitted: \(submit ? "true" : "false") && retained });
                 """)
             guard let object = await evaluateAction(script, fallback: ["ok": true, "submitted": submit], in: webView) else {
                 return "The page didn't respond to typing."
@@ -415,12 +425,43 @@ enum PageDriver {
             let submitted = object["submitted"] as? Bool == true
             let status = submit && !submitted
                 ? "The field did not retain the requested value; submission was not attempted. Inspect the current page before retrying."
-                : "Typed into “\(found.label)”\(submitted ? " and requested submission" : "")."
+                : "Typed \(allowSensitive ? "a secret " : "")into “\(found.label)”\(submitted ? " and requested submission" : "")."
+            // A sensitive field cannot be read back through the runtime, so a secret was checked by the script that typed it.
+            if allowSensitive, let stored = object["stored"] as? String {
+                secretWritten?(
+                    SecretWrite(
+                        typed: text, stored: stored, isSensitiveField: object["sensitive"] as? Bool == true,
+                        retained: object["retained"] as? Bool == true))
+            }
+            if allowSensitive, object["retained"] as? Bool != true {
+                return "The page did not retain the requested value. Inspect validation messages before retrying."
+            }
             return await finishValueAction(
                 status: status, ref: found.ref, documentID: observation(in: webView)?.documentID,
-                submissionRequested: submitted, refreshControls: refreshControls, in: webView)
+                submissionRequested: submitted, knownRetained: allowSensitive, refreshControls: refreshControls, in: webView)
         }
     }
+
+    /// What a secret entry came to once the page had it.
+    struct SecretWrite {
+        let typed: String
+        /// What the field holds now. It differs from `typed` when the page reformatted it.
+        let stored: String
+        /// Whether the page driver treats the field as sensitive (password, one-time code, card, account number).
+        let isSensitiveField: Bool
+        /// Whether the field kept exactly what was typed.
+        let retained: Bool
+    }
+
+    /// A secret goes into the page's own document only: a frame (or a selected frame) could belong to another origin than the
+    /// developer site the grant covers.
+    private static let secretInFrameMessage = "A secret can only be typed into the page itself, not into a frame."
+    private static let secretFieldGuard = """
+        if (el.ownerDocument !== document) {
+          return JSON.stringify({ error: '\(secretInFrameMessage)' });
+        }
+        const sensitive = R.isSensitiveField(el);
+        """
 
     static func selectOption(
         _ option: String,

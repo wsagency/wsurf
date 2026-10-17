@@ -15,8 +15,10 @@ extension PageDriver {
         return object?["state"] as? String ?? "unverified"
     }
 
+    /// - Parameter knownRetained: The caller already checked the value where it was written, which the runtime cannot do for a
+    ///   sensitive field (it never reads one back).
     static func finishValueAction(
-        status: String, ref: Int, documentID: String?, submissionRequested: Bool = false,
+        status: String, ref: Int, documentID: String?, submissionRequested: Bool = false, knownRetained: Bool = false,
         refreshControls: Bool, in view: BrowserPage
     ) async -> String {
         if refreshControls {
@@ -24,7 +26,7 @@ extension PageDriver {
         } else {
             await PageSettle.untilQuiet(view, ceiling: .milliseconds(350))
         }
-        let state = submissionRequested ? "matched" : await valueState(ref: ref, documentID: documentID, in: view)
+        let state = submissionRequested || knownRetained ? "matched" : await valueState(ref: ref, documentID: documentID, in: view)
         let result: String
         switch state {
         case "matched":

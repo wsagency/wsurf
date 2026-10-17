@@ -74,6 +74,11 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored private var busy = false
     /// Every call this connection ran, for Agent Activity. Never holds arguments or results.
     @ObservationIgnored let activity = ExternalActivityLog()
+    /// The test secrets this connection typed. Every result it gets passes through here (see `finished`); memory only, and
+    /// wiped when the connection ends.
+    @ObservationIgnored let secrets = MCPSecretScrubber()
+    /// The fields of each tab's current document that this connection typed a secret into, so a screenshot covers them too.
+    @ObservationIgnored var secretFields: [UUID: SecretFields] = [:]
 
     var lastActionTitle: String? {
         lastTool.isEmpty ? nil : Self.actionTitle(forTool: lastTool)
@@ -125,6 +130,8 @@ final class MCPBrowserSession: Identifiable {
         observations = [:]
         destinations = []
         actionPolicy.revokeAll()
+        secrets.wipe()
+        secretFields = [:]
     }
 
     func call(name: String, arguments: [String: Value]) async throws -> CallTool.Result {
@@ -151,8 +158,9 @@ final class MCPBrowserSession: Identifiable {
                 }
             }
         }
-        logCall(name, subject: subject, result: result, since: started)
-        return result
+        let scrubbed = finished(result)
+        logCall(name, subject: subject, result: scrubbed, since: started)
+        return scrubbed
     }
 
     private func execute(_ entry: MCPToolCatalog.Entry, arguments: [String: Value]) async -> CallTool.Result {

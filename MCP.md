@@ -168,13 +168,13 @@ revoke it immediately.
 | `listTabs` | List only tabs shared with this connection. |
 | `readPage` | Search rendered text, scope or paginate controls, and return an observation ID. |
 | `clickOnPage` | Click a numbered control. Returns what the click changed (see Action results). |
-| `typeOnPage` | Fill a nonsensitive field, optionally submitting it. |
+| `typeOnPage` | Fill a nonsensitive field, optionally submitting it. In the Developer tier, `secret: true` types a test credential into a sensitive field; see Test credentials. |
 | `selectOption` | Choose an option in a select control. |
-| `fillFields` | Fill up to 32 distinct nonsensitive form controls without submitting; report exactly which refs retained their values. |
+| `fillFields` | Fill up to 32 distinct nonsensitive form controls without submitting; report exactly which refs retained their values. In the Developer tier an item may add `secret: true` for a test credential. |
 | `inspectControl` | Read control state and paginate dropdown options. |
 | `setChecked` | Set a checkbox, switch, or radio to the requested state. |
 | `waitForPage` | Wait up to 15 seconds for text, absent text, a URL substring, document readiness, or a CSS selector that matches exactly one element to be visible, hidden/absent, or enabled. An element wait ends as stale if the page navigates. The page watches for the condition itself, so a wait is one call, not a poll. Selectors are limited to a safe subset; see below. |
-| `screenshotPage` | Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part, also when it sits in a same-origin iframe (the frame's border, padding, scale, clipping, CSS zoom and any 2D rotation, reflection or skew are applied; a selected frame, a frame or clipping container under a 3D transform or perspective, or a frame or clipping container inside SVG content, is refused). A control ref from `readPage` needs only read access; any other element ref from `findElements` needs development access, checked before the work, after every wait and again just before the image is returned. The image has one pixel per CSS pixel unless `maxWidth` (320–2,048) asks for another width, and is shrunk further to fit the message limit; the result states the covered rectangle and the scale of the image actually returned. `fullPage: true` (development access, asked again before the image is returned; Chromium only, WebKit reports that it cannot) captures the document from its top-left corner, at most 4,096 by 4,096 CSS pixels and 2,048 image pixels wide, whatever size the page reports. At most two captures a second per connection. Otherwise never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop. |
+| `screenshotPage` | Return an image of the viewport, one referenced element, or a viewport region (`region`: `x`, `y`, `width`, `height` in CSS pixels, which must lie fully inside the viewport and cannot be combined with a reference). An element is cropped to its visible part, also when it sits in a same-origin iframe (the frame's border, padding, scale, clipping, CSS zoom and any 2D rotation, reflection or skew are applied; a selected frame, a frame or clipping container under a 3D transform or perspective, or a frame or clipping container inside SVG content, is refused). A control ref from `readPage` needs only read access; any other element ref from `findElements` needs development access, checked before the work, after every wait and again just before the image is returned. The image has one pixel per CSS pixel unless `maxWidth` (320–2,048) asks for another width, and is shrunk further to fit the message limit; the result states the covered rectangle and the scale of the image actually returned. `fullPage: true` (development access, asked again before the image is returned; Chromium only, WebKit reports that it cannot) captures the document from its top-left corner, at most 4,096 by 4,096 CSS pixels and 2,048 image pixels wide, whatever size the page reports. At most two captures a second per connection. Otherwise never scrolls or stitches. Refused when a sensitive field is filled anywhere on the page, even for a crop; in the Developer tier those fields are covered in black instead (for `fullPage`, wherever the page puts them, scrolled or fixed). |
 | `pressKey` | Send a key or a key chord to a control in a visible tab: a named key (`Enter`, `Tab`, `Escape`, `Space`, the arrows, `Home`, `End`, `PageUp`, `PageDown`, `Backspace`, `Delete`) or one printable ASCII character, with optional `modifiers` (`shift`, `option`, `command`). The key goes to the page only; see Key chords below for what is refused. Name the control with `ref` or `selector`. |
 | `hoverOnPage` | Move the real pointer to a referenced element, so CSS `:hover` and pointer/mouse handlers run. Needs WSurf to be the active app with a key window and the tab on screen; it never activates or raises WSurf. Refused with a specific message when the element is offscreen, covered, or clipped by the window (a development viewport larger than the window), or when the pointer could not be delivered; not available inside frames. |
 | `dragOnPage` | Drag from a source (`ref`, or `selector` with development access) to a destination (`toRef`, `toSelector`, or `dx` and `dy` CSS pixels from the source's centre). By default it dispatches the DOM events of a drag (`dragstart`/`dragover`/`drop`, or pointer and mouse events); they are untrusted and work with the tab in the background. `pointer: true` sends trusted pointer input instead (see Drag below). Both ends must be visible in the top document; frames, file inputs, sensitive and disabled elements are refused. |
@@ -205,7 +205,8 @@ A page action reports what it changed (see Action results) and an `observationID
 A ref stays valid for as long as its document does and its control is unchanged, so
 the next action needs no new read. `fillFields` accepts positive, distinct refs
 the client was given: text, supported value controls, dropdowns and checked states
-(`true`/`false`). Password/payment controls remain blocked, disabled/read-only
+(`true`/`false`). Password/payment controls remain blocked (except an item marked
+`secret` in the Developer tier), disabled/read-only
 controls are skipped, and file pickers cannot be opened by a batch. No batch submits
 a form. Navigation, cancellation or access revocation stops remaining writes.
 
@@ -451,6 +452,49 @@ and works in the Developer window. A connection is refused while the focused win
 private one, as before. Adding a staging host to the developer sites extends standing
 grants to it; Settings says so.
 
+### Test credentials
+
+In the Developer tier an app can type **test** credentials that it supplies itself into
+password, one-time code, card and other sensitive fields: `typeOnPage` with
+`secret: true`, or `secret: true` on `fillFields` items. Without `secret`, a sensitive
+field is refused exactly as before. With it, anywhere the Developer tier does not
+hold (an unpaired app, a site that is not a developer site, a window outside the
+Developer profile, a Read Only site) the call is refused before anything is typed. Use
+test accounts and test values only. The app's own transcript holds what it sent, which
+WSurf cannot reach, and the page under test receives the value like any other input.
+
+- **Saved passwords are never involved.** The vault and autofill are not read, offered
+  or written: the field is not focused (so no suggestion list opens), open suggestions
+  are dismissed, and any save offer the form could raise is dropped.
+- **Every result hides the secret.** WSurf remembers each secret for that connection
+  only, in memory, and removes it from everything it returns: page text and control
+  values, tab titles and URLs, console and network records, and the structured copy of
+  each result. It matches the exact value as typed, with whitespace collapsed,
+  percent-encoded, JSON-escaped and HTML-escaped (also layered, and ignoring ASCII case),
+  so a page that echoes the value into its text, a console line or a URL still shows
+  `‹secret›`. The registry is wiped when the connection ends: disconnect, **Stop**, revoking
+  the app or turning MCP off, and a result still being computed at that moment is dropped.
+  Nothing is written to disk or to a log, and the registry prints as a count.
+- **Your records stay complete.** The app decides what it registers as a secret, so that
+  registry only shapes what the app is told, never what you read about what it did. A
+  record of an action (a confirmation the Developer tier skipped, an activity entry) hides
+  only a value that went into a password, code or card field, shows `‹hidden secret›`
+  where it did, and still names the action, the site and the control. A phrase typed
+  into an ordinary field is never hidden there.
+- **Screenshots cover the fields.** In the Developer tier, filled sensitive fields and
+  fields a secret was typed into are painted black in the returned image instead of
+  refusing the capture (a field inside a frame is covered by the whole frame, and one
+  that cannot be measured still refuses it). Page text that merely repeats a secret is not
+  covered in pixels; use `readPage`, which hides it.
+- **Limits.** A secret is at least 4 characters, because a shorter value cannot be hidden
+  without damaging ordinary results, and one connection holds at most 32 different ones.
+  Secrets go into text fields of the page itself, not into frames, dropdowns or
+  checkboxes. Only the value and the encodings above are recognised, plus the form a
+  field ends up holding when the page reformats it (digits grouped in a card number, say);
+  a page that hashes or otherwise transforms the value shows the result as it is. A page
+  can also keep what it receives (its own logs, a form sent with GET in the address bar
+  and history); choose test values that mean nothing.
+
 ### Safe selectors
 
 A CSS selector is evaluated against the page, so an attribute test such as `input[type=hidden][value^=a]`, also under `:has()`, would read a value one character at a time. Selectors passed to `waitForPage`, `findElements` and `readPage` scope are therefore parsed by the browser first (escapes, case and namespace forms such as `v\61lue` or `[*|value]` are normalised) and may test only attributes WSurf already exposes: `id`, `class`, `role`, `type`, `name`, `for`, `alt`, `title`, `placeholder`, `lang`, `dir`, `target`, `rel`, `aria-*`, the test attributes `data-testid`, `data-test`, `data-test-id`, `data-cy`, `data-qa` and `data-automation-id`, and a few boolean or numeric ones (`disabled`, `checked`, `hidden`, `width`, `min`…). `href` and `src` may be tested for presence only. Any other attribute test, including `value`, other `data-*` and `on*`, is refused with an explicit error rather than answered with an empty result. A selector is at most 2,048 UTF-8 bytes, enforced natively (a `readPage` scope longer than that is refused before anything is read). Structural attributes such as `id`, `class` and `name` can still be probed, including on hidden inputs: they are page structure, not values, and value-bearing attributes cannot be tested. Structural selectors, classes, ids and `:has()` without such tests work as usual.
@@ -544,7 +588,8 @@ It does not cover signed-build features (Keychain, passkeys, Apple Passwords), w
   control even when the connection has a control grant. External sharing does
   not change those settings.
 - The existing page driver detects and masks sensitive fields and refuses to
-  fill them. Consequential actions use WSurf's native confirmation UI. External
+  fill them; the one exception is a test secret typed in the Developer tier, which
+  is hidden from every result (see Test credentials). Consequential actions use WSurf's native confirmation UI. External
   confirmations do not inherit the assistant's saved action approvals; any
   remembered approval lasts only for that connection.
 - External page scripts run in WebKit's isolated client world. Observation IDs
