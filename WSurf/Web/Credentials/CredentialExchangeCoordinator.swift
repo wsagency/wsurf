@@ -370,7 +370,7 @@ final class CredentialExchangeCoordinator {
         }
         let receipt: VaultCommitReceipt
         do {
-            receipt = try await staged.manager.commitAccounts(writes, authorizedEpoch: staged.epoch)
+            receipt = try await staged.manager.commitAccounts(writes, authorizedEpoch: staged.epoch, cause: CredentialChangeCause.import)
         } catch {
             throw end(Self.messageAfterWriteStarted(error, staged.context.origin))
         }

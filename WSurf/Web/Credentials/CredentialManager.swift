@@ -579,6 +579,10 @@ final class CredentialManager {
         try await reading { access in try await store.revisionPage(vaultID: vaultID, accountID: accountID, after: after, using: access) }
     }
 
+    func revisionValuePage(accountID: UUID, after: Int?) async throws -> RevisionValuePage {
+        try await reading { access in try await store.revisionValuePage(vaultID: vaultID, accountID: accountID, after: after, using: access) }
+    }
+
     /// Verified Trash and earlier-version counts: integers from the sealed heads, each checked against the stored rows.
     func historyCounts() async throws -> (live: HistoryCounts, trash: HistoryCounts) {
         try await reading { access in try await store.historyCounts(vaultID: vaultID, using: access) }
