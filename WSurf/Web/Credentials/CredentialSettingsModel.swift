@@ -536,6 +536,7 @@ final class CredentialSettingsModel {
             if store != nil, openState?.isProvisional != true {
                 await discoverVault()
             }
+            await refreshListing()
             await load()
         }
     }
@@ -891,7 +892,11 @@ final class CredentialSettingsModel {
                 self?.session = nil
                 self?.importResult = nil
             }
-            Task { @MainActor [weak self] in if self?.manager === manager { self?.watchAuthorization() } }
+            Task { @MainActor [weak self] in
+                guard self?.manager === manager else { return }
+                self?.watchAuthorization()
+                await self?.refreshListing()
+            }
         }
     }
 

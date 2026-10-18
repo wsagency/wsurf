@@ -53,4 +53,24 @@ struct CredentialSettingsVaultTests {
             #expect(await waitUntil { model.vaults.map(\.displayName) == ["Vault 1"] })
         }
     }
+
+    @Test func aNewVaultIsSuggestedTheNumberTheStoreGivesIt() async throws {
+        try await withProfile { profile, passkeys in
+            let model = CredentialSettingsModel(profile: profile, native: passkeys.native)
+            await model.load()
+            #expect(model.suggestedVaultName == "Vault 1")
+            await model.createVault(name: model.suggestedVaultName, choice: .newPasskey(authorizedBy: nil), in: VaultManagerFixture.anchor())
+            await model.unlock(in: VaultManagerFixture.anchor())
+            #expect(model.suggestedVaultName == "Vault 2")
+
+            await model.createVault(name: model.suggestedVaultName, choice: .newPasskey(authorizedBy: nil), in: VaultManagerFixture.anchor())
+            let locked = model.vaults.map(\.displayName)
+            await model.unlock(in: VaultManagerFixture.anchor())
+
+            // A vault left with its suggested name reads the same locked and unlocked.
+            #expect(locked == ["Vault 1", "Vault 2"])
+            #expect(model.vaults.map(\.displayName) == locked)
+            #expect(model.vaults.map(\.name) == ["Vault 1", "Vault 2"])
+        }
+    }
 }

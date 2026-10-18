@@ -47,7 +47,13 @@ nonisolated extension RecordSubject {
 
 nonisolated extension VaultListing {
     /// A vault's name is sealed until it unlocks, so a locked one is told apart by its ordinal (1-based, never reused).
+    var numberedName: String {
+        String(localized: "Vault \(ordinal)")
+    }
+
+    /// The name only while the vault is unlocked: a listing kept across a lock never shows it.
     var displayName: String {
-        name ?? String(localized: "Vault \(ordinal)")
+        guard isUnlocked, let name else { return numberedName }
+        return name
     }
 }

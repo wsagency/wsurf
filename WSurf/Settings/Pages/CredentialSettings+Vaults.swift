@@ -21,6 +21,7 @@ extension CredentialSettings {
                         SettingsMenu(
                             options: model.vaults.sorted { $0.ordinal < $1.ordinal }.map { listing in
                                 let notes = [
+                                    listing.isUnlocked && listing.name != nil ? listing.numberedName : nil,
                                     model.defaultVaultID == listing.vaultID ? String(localized: "Default") : nil,
                                     listing.isUnlocked ? nil : String(localized: "Locked"),
                                 ].compactMap { $0 }
@@ -88,18 +89,20 @@ struct CredentialNewVaultSheet: View {
     let create: (String, NewVaultChoice) -> Void
     let cancel: () -> Void
 
-    @State private var name = String(localized: "Credentials")
+    @State private var name: String
     @State private var usesExisting: Bool
     @State private var picked: Pick?
 
+    /// `suggestedName` is the name the store would give the vault, so an unedited name reads the same locked and unlocked.
     init(
-        canUseNewPasskey: Bool, existingPasskeys: [Existing],
+        suggestedName: String, canUseNewPasskey: Bool, existingPasskeys: [Existing],
         create: @escaping (String, NewVaultChoice) -> Void, cancel: @escaping () -> Void
     ) {
         self.canUseNewPasskey = canUseNewPasskey
         self.existingPasskeys = existingPasskeys
         self.create = create
         self.cancel = cancel
+        _name = State(initialValue: suggestedName)
         _usesExisting = State(initialValue: !canUseNewPasskey && !existingPasskeys.isEmpty)
     }
 

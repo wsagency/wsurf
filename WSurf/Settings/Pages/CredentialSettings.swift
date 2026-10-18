@@ -133,6 +133,7 @@ struct CredentialSettings: View {
         }
         .sheet(isPresented: $showsCreateWarning) {
             CredentialNewVaultSheet(
+                suggestedName: model.suggestedVaultName,
                 canUseNewPasskey: model.canCreateWithNewPasskey,
                 existingPasskeys: model.existingPasskeys
             ) { name, choice in
