@@ -64,7 +64,7 @@ extension CredentialSettings {
                 }
             }
         )
-        .fixedSize()
+        .frame(width: 176)
     }
 
     /// One vault's Trash, as the model lists it. A permanent delete is confirmed here and then needs a fresh passkey
