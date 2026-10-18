@@ -267,13 +267,20 @@ struct SubPageHeader<Accessory: View>: View {
 struct SettingsList<Content: View>: View {
     @ViewBuilder let content: Content
 
+    @Environment(\.settingsIsCompact) private var isCompact
+
+    /// The inset `SettingsCard` uses, so a lazy list lines up with the cards around it.
+    private var inset: CGFloat {
+        isCompact ? SettingsMetrics.compactCardInset : SettingsMetrics.cardInset
+    }
+
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             content
         }
-        .environment(\.settingsCardInset, SettingsMetrics.cardInset)
+        .environment(\.settingsCardInset, inset)
         .environment(\.settingsSectionLit, false)
-        .padding(.horizontal, SettingsMetrics.cardInset)
+        .padding(.horizontal, inset)
         .padding(.vertical, SettingsMetrics.cardInsetV)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
