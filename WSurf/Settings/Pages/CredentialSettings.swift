@@ -430,6 +430,7 @@ struct CredentialSettings: View {
                 }
             }
         )
+        statisticsSection
         SettingsSection(
             title: "Import & Export",
             symbol: "arrow.up.arrow.down",
