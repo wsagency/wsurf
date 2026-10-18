@@ -192,4 +192,56 @@ struct CredentialExportReviewTests {
             #expect(model.exportStamps == nil)
         }
     }
+
+    // MARK: A credential as one unit
+
+    /// A login with two passkeys, a verification code and notes: four kinds of part.
+    private func whole(_ name: String) throws -> CredentialAccount {
+        var whole = account(name)
+        whole.passkeys = [
+            try VaultFixtures.passkey(credentialID: Data(repeating: 1, count: 32)),
+            try VaultFixtures.passkey(credentialID: Data(repeating: 2, count: 32)),
+        ]
+        whole.totp = VaultFixtures.totp()
+        whole.notes = [CredentialNote(text: "note", field: nil)]
+        return whole
+    }
+
+    @Test func selectingAnItemSelectsEveryPart() throws {
+        let item = try whole("item")
+        let summary = CredentialSummary(item)
+        let selection = CredentialExportSelection(allOf: summary)
+        #expect(selection.password && selection.totp && selection.notes)
+        #expect(selection.passkeyIDs == Set(item.passkeys.map(\.id)))
+        #expect(selection.parts(of: summary).selected == 5 && selection.parts(of: summary).offered == 5)
+
+        // A mixed state counts only what is on; a CSV file offers a login and its notes.
+        var some = selection
+        some.totp = false
+        some.passkeyIDs.removeFirst()
+        #expect(some.parts(of: summary) == (3, 5))
+        let csv = CredentialExportSelection(allOf: summary, csv: true)
+        #expect(csv.password && csv.notes && !csv.totp && csv.passkeyIDs.isEmpty)
+        #expect(csv.parts(of: summary, csv: true) == (2, 2))
+        // A part the credential no longer has is not counted.
+        let stale = CredentialExportSelection(accountID: summary.id, password: false, passkeyIDs: [UUID()], totp: false)
+        #expect(stale.parts(of: summary) == (0, 5))
+    }
+
+    @Test func selectAllSelectsEveryPartOfEveryItem() throws {
+        let items = [try whole("one"), account("two"), try whole("three")]
+        let summaries = items.map(CredentialSummary.init)
+        let all = CredentialExportSelection.setting(true, for: summaries, in: [:])
+        #expect(all.count == 3)
+        for summary in summaries {
+            let selection = try #require(all[summary.id])
+            #expect(selection.parts(of: summary).selected == selection.parts(of: summary).offered)
+            #expect(selection.hasParts)
+        }
+
+        // Select None clears only what it is given, so a search can narrow it.
+        let narrowed = CredentialExportSelection.setting(false, for: [summaries[0]], in: all)
+        #expect(narrowed.keys.contains(summaries[0].id) == false && narrowed.count == 2)
+        #expect(CredentialExportSelection.setting(false, for: summaries, in: all).isEmpty)
+    }
 }

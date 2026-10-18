@@ -26,6 +26,7 @@ struct CredentialExportSheet: View {
     /// The vault's own stamps for those credentials, from the last read that could vouch for them.
     @State private var shownStamps: [UUID: AccountStamp]
     @State private var review: CredentialExportReview?
+    @State private var query = ""
     /// Set once the user asked to export from this sheet, so only that attempt's ending is shown here.
     @State private var attempted = false
 
@@ -39,6 +40,17 @@ struct CredentialExportSheet: View {
 
     private var chosen: [CredentialExportSelection] {
         model.summaries.compactMap { selection[$0.id] }.filter(\.hasParts)
+    }
+
+    /// The credentials this export can carry that match the search.
+    private var listed: [CredentialSummary] {
+        let all = csv ? model.summaries.filter(CredentialCSVExport.isExportable) : model.summaries
+        guard !query.isEmpty else { return all }
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        return all.filter { summary in
+            summary.title.range(of: query, options: options) != nil || summary.username?.range(of: query, options: options) != nil
+                || summary.origins.contains { $0.range(of: query, options: options) != nil }
+        }
     }
 
     /// What a CSV file cannot hold, counted over the whole vault and shown before anything is written.
@@ -101,29 +113,12 @@ struct CredentialExportSheet: View {
             if let review, !review.isEmpty {
                 reviewNotice(review)
             }
+            selectionBar
             ScrollView {
                 // Lazy: the sheet lists every credential, and a vault holds thousands.
-                LazyVStack(alignment: .leading, spacing: 14) {
-                    ForEach(csv ? model.summaries.filter(CredentialCSVExport.isExportable) : model.summaries) { summary in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(verbatim: summary.title).font(Theme.Font.rowTitle)
-                            if summary.hasLogin {
-                                Toggle("Login", isOn: binding(summary.id, \.password))
-                            }
-                            if !csv {
-                                ForEach(summary.passkeys) { passkey in
-                                    Toggle(isOn: passkeyBinding(summary.id, passkey.id)) {
-                                        Text(verbatim: "\(String(localized: "Passkey")) · \(passkey.rpID) · \(passkey.userName)")
-                                    }
-                                }
-                                if summary.hasTOTP {
-                                    Toggle("Verification code setup", isOn: binding(summary.id, \.totp))
-                                }
-                            }
-                            if summary.hasNotes {
-                                Toggle("Notes", isOn: binding(summary.id, \.notes))
-                            }
-                        }
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(listed) { summary in
+                        credentialRow(summary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -149,6 +144,72 @@ struct CredentialExportSheet: View {
         .frame(width: 520)
         .onChange(of: model.summaries) { reconcile() }
         .onChange(of: model.exportStamps) { reconcile() }
+    }
+
+    private var selectionBar: some View {
+        HStack(spacing: 10) {
+            TextField("Search credentials", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Search credentials")
+            Button("Select All") { selection = CredentialExportSelection.setting(true, for: listed, csv: csv, in: selection) }
+            Button("Select None") { selection = CredentialExportSelection.setting(false, for: listed, csv: csv, in: selection) }
+            Text("\(chosen.count) selected").foregroundStyle(.secondary).fixedSize()
+        }
+        .controlSize(.small)
+    }
+
+    /// One credential is one unit: its switch selects every part, and shows a mixed state while only some are. The parts it holds are
+    /// under the disclosure triangle.
+    @ViewBuilder
+    private func credentialRow(_ summary: CredentialSummary) -> some View {
+        let parts = partBindings(summary)
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 4) {
+                if summary.hasLogin {
+                    Toggle("Login", isOn: binding(summary.id, \.password))
+                }
+                if !csv {
+                    ForEach(summary.passkeys) { passkey in
+                        Toggle(isOn: passkeyBinding(summary.id, passkey.id)) {
+                            Text(verbatim: "\(String(localized: "Passkey")) · \(passkey.rpID) · \(passkey.userName)")
+                        }
+                    }
+                    if summary.hasTOTP {
+                        Toggle("Verification code setup", isOn: binding(summary.id, \.totp))
+                    }
+                }
+                if summary.hasNotes {
+                    Toggle("Notes", isOn: binding(summary.id, \.notes))
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            if parts.isEmpty {
+                Text(verbatim: summary.title).font(Theme.Font.rowTitle)
+            } else {
+                Toggle(sources: parts, isOn: \.self) {
+                    Text(verbatim: summary.title).font(Theme.Font.rowTitle)
+                }
+            }
+        }
+    }
+
+    /// One binding per part this export offers for `summary`.
+    private func partBindings(_ summary: CredentialSummary) -> [Binding<Bool>] {
+        var result: [Binding<Bool>] = []
+        if summary.hasLogin {
+            result.append(binding(summary.id, \.password))
+        }
+        if !csv {
+            result += summary.passkeys.map { passkeyBinding(summary.id, $0.id) }
+            if summary.hasTOTP {
+                result.append(binding(summary.id, \.totp))
+            }
+        }
+        if summary.hasNotes {
+            result.append(binding(summary.id, \.notes))
+        }
+        return result
     }
 
     /// What the refresh did to the chosen credentials. Nothing is sent by it: the user reads this, checks the selection
