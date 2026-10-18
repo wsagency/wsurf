@@ -1,0 +1,56 @@
+// SPDX-FileCopyrightText: 2026 WSurf Agency
+// SPDX-License-Identifier: Apache-2.0
+
+import Foundation
+import Testing
+
+@testable import WSurf
+
+// A vault's name is sealed in its head, so the page lists a locked vault by its number and an unlocked one by its name. The listing is
+// read again whenever that changes, never only when a vault is created.
+
+@MainActor
+struct CredentialSettingsVaultTests {
+    private func withProfile(_ body: (Profile, VaultPasskeys) async throws -> Void) async throws {
+        let profile = try await VaultManagerFixture.newProfile()
+        do {
+            try await body(profile, VaultPasskeys())
+        } catch {
+            await VaultManagerFixture.cleanup(profile)
+            throw error
+        }
+        await VaultManagerFixture.cleanup(profile)
+    }
+
+    /// A model over a profile whose one vault, named "Personal", exists and is locked.
+    private func lockedModel(_ profile: Profile, _ passkeys: VaultPasskeys) async -> CredentialSettingsModel {
+        let model = CredentialSettingsModel(profile: profile, native: passkeys.native)
+        await model.load()
+        await model.createVault(name: "Personal", choice: .newPasskey(authorizedBy: nil), in: VaultManagerFixture.anchor())
+        return model
+    }
+
+    @Test func theUnlockedVaultIsListedByItsNameRightAfterUnlocking() async throws {
+        try await withProfile { profile, passkeys in
+            let model = await lockedModel(profile, passkeys)
+            #expect(model.vaults.map(\.displayName) == ["Vault 1"])
+
+            await model.unlock(in: VaultManagerFixture.anchor())
+
+            #expect(model.isUnlocked)
+            #expect(model.vaults.map(\.displayName) == ["Personal"])
+        }
+    }
+
+    @Test func aLockedVaultIsListedByItsNumberAgain() async throws {
+        try await withProfile { profile, passkeys in
+            let model = await lockedModel(profile, passkeys)
+            await model.unlock(in: VaultManagerFixture.anchor())
+            #expect(model.vaults.map(\.displayName) == ["Personal"])
+
+            model.lock()
+
+            #expect(await waitUntil { model.vaults.map(\.displayName) == ["Vault 1"] })
+        }
+    }
+}
