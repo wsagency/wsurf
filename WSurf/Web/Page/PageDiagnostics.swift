@@ -133,6 +133,8 @@ nonisolated enum PageDiagnostics {
     @MainActor
     final class Buffer {
         static let maxReadLimit = 100
+        /// The most record bytes one read returns, so a reply of records with headers and bodies stays inside a transport line (a result carries its records twice, as text and as structured content).
+        static let maxPageBytes = 96 * 1_024
 
         let connection: UUID
         let tab: String
@@ -204,6 +206,13 @@ nonisolated enum PageDiagnostics {
             }
         }
 
+        /// Replaces every retained record by `change(record)`. Sequence numbers, cursors and the epoch are untouched; the byte count
+        /// follows the new records.
+        func rewrite(_ change: (Record) -> Record) {
+            records = records.map(change)
+            byteCount = records.reduce(0) { $0 + $1.byteCount }
+        }
+
         /// One record by sequence number, for as long as the buffer retains it.
         func lookup(stream: Stream, seq: UInt64) -> Lookup {
             if let record = records.first(where: { $0.stream == stream && $0.seq == seq }) {
@@ -215,7 +224,7 @@ nonisolated enum PageDiagnostics {
         /// A filtered read scans forward from the cursor (the buffer holds at most `maxRecords`, so the scan is bounded) and
         /// returns the first `limit` matches. The next cursor follows the last record the scan consumed: records skipped on
         /// the way are not offered again, and one the scan never reached is still ahead of the cursor.
-        func read(stream: Stream, cursor: String?, limit: Int, filter: Filter = Filter()) throws(ReadError) -> Page {
+        func read(stream: Stream, cursor: String?, limit: Int, filter: Filter = Filter(), maxPageBytes: Int = Buffer.maxPageBytes) throws(ReadError) -> Page {
             guard (1...Buffer.maxReadLimit).contains(limit) else { throw .invalidLimit }
             let next = nextSeq[stream, default: 0]
             let retained = records.filter { $0.stream == stream }
@@ -232,6 +241,7 @@ nonisolated enum PageDiagnostics {
                 }
             }
             var page: [Record] = []
+            var pageBytes = 0
             var skipped = 0
             var after = start
             for record in retained where record.seq >= start {
@@ -239,6 +249,11 @@ nonisolated enum PageDiagnostics {
                     break
                 }
                 if filter.matches(record) {
+                    // A reply must fit one transport line: records that would not are left for the next read (never the first).
+                    if !page.isEmpty, pageBytes + record.byteCount > maxPageBytes {
+                        break
+                    }
+                    pageBytes += record.byteCount
                     page.append(record)
                 } else {
                     skipped += 1

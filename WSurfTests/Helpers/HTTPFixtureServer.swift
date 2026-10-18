@@ -72,19 +72,23 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "WSurf.tests.http-fixture")
     private let routes: [String: Response]
+    private let waitsForBody: Bool
 
-    private init(listener: NWListener, routes: [String: Response]) {
+    private init(listener: NWListener, routes: [String: Response], waitsForBody: Bool) {
         self.listener = listener
         self.routes = routes
+        self.waitsForBody = waitsForBody
     }
 
     deinit {
         listener.cancel()
     }
 
-    static func start(routes: [String: Response]) async throws -> HTTPFixtureServer {
+    /// `waitsForBody` answers a request that has a body only after the body arrived, so closing the connection never cuts a POST off.
+    /// Off by default: the other tests send no bodies, and their timing is left as it was.
+    static func start(routes: [String: Response], waitsForBody: Bool = false) async throws -> HTTPFixtureServer {
         let listener = try NWListener(using: .tcp, on: .any)
-        let server = HTTPFixtureServer(listener: listener, routes: routes)
+        let server = HTTPFixtureServer(listener: listener, routes: routes, waitsForBody: waitsForBody)
         listener.newConnectionHandler = { [weak server] connection in
             server?.accept(connection)
         }
@@ -134,13 +138,21 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
             if let data {
                 request.append(data)
             }
-            let hasHeaders = request.range(of: Data("\r\n\r\n".utf8)) != nil
-            guard hasHeaders || complete || error != nil else {
+            let separator = request.range(of: Data("\r\n\r\n".utf8))
+            let bodyPending = waitsForBody && separator.map { Self.bodyLength(ofHead: request[..<$0.lowerBound]) > request.count - $0.upperBound } == true
+            guard (separator != nil && !bodyPending) || complete || error != nil else {
                 receiveRequest(from: connection, accumulated: request)
                 return
             }
             sendResponse(for: request, over: connection)
         }
+    }
+
+    /// The `Content-Length` of a request head, or 0 (a chunked body is not waited for).
+    private static func bodyLength(ofHead head: Data) -> Int {
+        let lines = String(decoding: head, as: UTF8.self).lowercased().split(separator: "\r\n")
+        guard let line = lines.first(where: { $0.hasPrefix("content-length:") }) else { return 0 }
+        return Int(line.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)) ?? 0
     }
 
     private func sendResponse(for request: Data, over connection: NWConnection) {

@@ -15,16 +15,29 @@ nonisolated extension PageDiagnostics {
         var frameID: String?
         var loaderID: String?
         var contextID: Int?
+        /// Headers and bodies the request may show, raw until the owner has checked the policy again and made the fields.
+        var detail: DetailInput?
+        /// Bodies a Chromium request still has to fetch before its record is complete.
+        var bodyFetch: BodyFetch?
     }
 
-    fileprivate static let maxTextBytes = 4_096
-    fileprivate static let maxURLBytes = 2_048
-    fileprivate static let maxConsoleArguments = 16
-    fileprivate static let methodCharacters = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+    /// What the owner fetches from DevTools for a finished request: its response body, and its request body when the event held none.
+    struct BodyFetch: Equatable, Sendable {
+        let requestID: String
+        var response: Bool
+        var requestPost: Bool
+        /// The response's media type, which the body is read under.
+        var mimeType: String?
+    }
+
+    static let maxTextBytes = 4_096
+    static let maxURLBytes = 2_048
+    static let maxConsoleArguments = 16
+    static let methodCharacters = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
 
     /// Cuts `text` to at most `bytes` UTF-8 bytes on a unicode scalar boundary, touching only the kept prefix. Scalars, not
     /// characters: a single grapheme cluster can be arbitrarily many bytes.
-    fileprivate static func clip(_ text: String, bytes: Int = maxTextBytes) -> (text: String, truncated: Bool) {
+    static func clip(_ text: String, bytes: Int = maxTextBytes) -> (text: String, truncated: Bool) {
         var used = 0
         var end = text.unicodeScalars.startIndex
         while end < text.unicodeScalars.endIndex {
@@ -39,24 +52,24 @@ nonisolated extension PageDiagnostics {
     }
 
     /// Bytes are checked first (O(1) on a native string), so a hostile string is never walked by `count` or the set test.
-    fileprivate static func method(_ value: Any?) -> String? {
+    static func method(_ value: Any?) -> String? {
         guard let value = value as? String, (1...16).contains(value.utf8.count),
             value.unicodeScalars.allSatisfy(methodCharacters.contains)
         else { return nil }
         return value.uppercased()
     }
 
-    fileprivate static func status(_ value: Any?) -> Int? {
+    static func status(_ value: Any?) -> Int? {
         guard let value = value as? Int, (100...599).contains(value) else { return nil }
         return value
     }
 
-    fileprivate static func duration(milliseconds: Double?) -> Int? {
+    static func duration(milliseconds: Double?) -> Int? {
         guard let ms = milliseconds, ms.isFinite, ms >= 0, ms < 1e9 else { return nil }
         return Int(ms.rounded())
     }
 
-    fileprivate static func firstLine(_ text: String) -> String {
+    static func firstLine(_ text: String) -> String {
         String(text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
     }
 
@@ -64,7 +77,7 @@ nonisolated extension PageDiagnostics {
     /// string never reaches `URLComponents` or any join), then sanitized and cut again. `truncated` is set whenever bytes
     /// were cut, including when the cut prefix no longer parses and `text` is nil (dropped, not unknown), and when the query
     /// kept fewer parameters or shorter names than the URL had.
-    fileprivate static func boundedURL(_ raw: String, _ queryValues: QueryValues) -> (text: String?, truncated: Bool) {
+    static func boundedURL(_ raw: String, _ queryValues: QueryValues) -> (text: String?, truncated: Bool) {
         let head = clip(raw, bytes: maxURLBytes)
         guard let clean = sanitized(url: head.text, queryValues: queryValues) else { return (nil, head.truncated) }
         let tail = clip(clean.text, bytes: maxURLBytes)
@@ -81,7 +94,7 @@ nonisolated extension PageDiagnostics {
     ]
 
     /// A DevTools resource type; one outside the known set is `other`, a non-string is unknown.
-    fileprivate static func resourceType(_ value: Any?) -> String? {
+    static func resourceType(_ value: Any?) -> String? {
         guard let raw = value as? String, raw.utf8.count <= 32 else { return nil }
         let type = raw.lowercased()
         return resourceTypes.contains(type) ? type : "other"
@@ -89,7 +102,7 @@ nonisolated extension PageDiagnostics {
 
     /// The type of a WebKit resource-timing entry from its initiator, refined by file extension where the initiator (`link`,
     /// `css`) covers several kinds. `fetch` and `xmlhttprequest` are never mapped: the page hook already records those calls.
-    fileprivate static func resourceType(initiator: String, url: String?) -> String {
+    static func resourceType(initiator: String, url: String?) -> String {
         switch initiator {
         case "img", "image", "input":
             return "image"
@@ -124,7 +137,7 @@ nonisolated extension PageDiagnostics {
 
     /// The media type of a `Content-Type` value, without parameters (a charset, a boundary), lowercased and shaped
     /// `type/subtype`; anything else is unknown. The value is checked by byte count first, so it is never walked when long.
-    fileprivate static func mediaType(_ value: Any?) -> String? {
+    static func mediaType(_ value: Any?) -> String? {
         guard let raw = value as? String, raw.utf8.count <= 256 else { return nil }
         let essence = (raw.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
             .trimmingCharacters(in: .whitespaces).lowercased()
@@ -136,7 +149,7 @@ nonisolated extension PageDiagnostics {
     }
 
     /// A byte count: a non-negative whole number the page or DevTools gave, or unknown (never `0` for "not exposed").
-    fileprivate static func byteCount(_ value: Any?) -> Int? {
+    static func byteCount(_ value: Any?) -> Int? {
         if let int = value as? Int {
             return int >= 0 ? int : nil
         }
@@ -148,8 +161,12 @@ nonisolated extension PageDiagnostics {
 
     static let maxStackFrames = 10
     static let maxStackBytes = 2_048
-    fileprivate static let maxStackSourceBytes = 4_096
-    fileprivate static let maxFunctionBytes = 64
+    /// The Developer tier's full console keeps longer stacks.
+    static let maxFullStackFrames = 30
+    static let maxFullStackBytes = 6_144
+    static let maxStackSourceBytes = 4_096
+    static let maxFullStackSourceBytes = 8_192
+    static let maxFunctionBytes = 64
 
     struct StackFrame: Equatable {
         var function = ""
@@ -161,11 +178,13 @@ nonisolated extension PageDiagnostics {
     /// One `function (url:line:column)` line per frame. URLs are sanitized like every other URL in a record; a function name is
     /// page text, cut to `maxFunctionBytes` with control characters blanked. At most `maxStackFrames` frames and
     /// `maxStackBytes` bytes are kept, and `truncated` says whether anything was left out. Nil when no frame survives.
-    static func stack(_ frames: [StackFrame], queryValues: QueryValues) -> (text: String, truncated: Bool)? {
+    static func stack(_ frames: [StackFrame], queryValues: QueryValues, full: Bool = false) -> (text: String, truncated: Bool)? {
+        let maxFrames = full ? maxFullStackFrames : maxStackFrames
+        let maxBytes = full ? maxFullStackBytes : maxStackBytes
         var lines: [String] = []
         var used = 0
-        var truncated = frames.count > maxStackFrames
-        for frame in frames.prefix(maxStackFrames) {
+        var truncated = frames.count > maxFrames
+        for frame in frames.prefix(maxFrames) {
             let function = clip(frame.function, bytes: maxFunctionBytes)
             let name = String(String.UnicodeScalarView(function.text.unicodeScalars.map { $0.value < 0x20 || $0.value == 0x7F ? " " : $0 }))
             var location = frame.url.flatMap { boundedURL($0, queryValues).text } ?? ""
@@ -175,9 +194,9 @@ nonisolated extension PageDiagnostics {
             let text = name.isEmpty ? location : location.isEmpty ? name : "\(name) (\(location))"
             guard !text.isEmpty else { continue }
             let size = text.utf8.count + (lines.isEmpty ? 0 : 1)
-            guard used + size <= maxStackBytes else {
+            guard used + size <= maxBytes else {
                 truncated = true
-                if lines.isEmpty { lines.append(clip(text, bytes: maxStackBytes).text) }  // one frame alone over the bound is cut, not dropped
+                if lines.isEmpty { lines.append(clip(text, bytes: maxBytes).text) }  // one frame alone over the bound is cut, not dropped
                 break
             }
             used += size
@@ -190,8 +209,8 @@ nonisolated extension PageDiagnostics {
     /// Frames from a WebKit `Error.stack`, whose lines read `function@url:line:column` (`@url:…` without a name). The page
     /// supplied the string, so only the first `maxStackFrames + 1` lines are looked at and a line that does not end in a
     /// location keeps just its function name.
-    fileprivate static func webKitFrames(_ stack: String) -> [StackFrame] {
-        stack.split(separator: "\n", omittingEmptySubsequences: true).prefix(maxStackFrames + 1).map { (line: Substring) -> StackFrame in
+    static func webKitFrames(_ stack: String, limit: Int = maxStackFrames) -> [StackFrame] {
+        stack.split(separator: "\n", omittingEmptySubsequences: true).prefix(limit + 1).map { (line: Substring) -> StackFrame in
             let at = line.firstIndex(of: "@")
             var frame = StackFrame(function: at.map { String(line[..<$0]) } ?? "")
             var location: Substring = at.map { line[line.index(after: $0)...] } ?? line
@@ -219,13 +238,13 @@ nonisolated enum PageDiagnosticsHook {
     private static let outcomes: Set<String> = ["completed", "failed", "aborted"]
     private static let transports: Set<String> = ["fetch", "xhr", "resource"]
 
-    static func entry(from body: Any, queryValues: PageDiagnostics.QueryValues) -> PageDiagnostics.Entry? {
+    static func entry(from body: Any, queryValues: PageDiagnostics.QueryValues, detail: PageDiagnostics.DetailPolicy = .off) -> PageDiagnostics.Entry? {
         guard let body = body as? [String: Any] else { return nil }
         switch body["k"] as? String {
         case "console":
-            return console(body, queryValues)
+            return console(body, queryValues, detail)
         case "net":
-            return network(body, queryValues)
+            return network(body, queryValues, detail)
         default:
             return nil
         }
@@ -237,7 +256,7 @@ nonisolated enum PageDiagnosticsHook {
         return count
     }
 
-    private static func console(_ body: [String: Any], _ queryValues: PageDiagnostics.QueryValues) -> PageDiagnostics.Entry? {
+    private static func console(_ body: [String: Any], _ queryValues: PageDiagnostics.QueryValues, _ detail: PageDiagnostics.DetailPolicy) -> PageDiagnostics.Entry? {
         guard let level = body["level"] as? String, levels.contains(level), let text = body["text"] as? String else { return nil }
         let message = PageDiagnostics.clip(text)
         var fields: [String: PageDiagnostics.Field] = ["level": .text(level), "text": .text(message.text), "source": "webkit-hook"]
@@ -250,12 +269,18 @@ nonisolated enum PageDiagnosticsHook {
         if let line = body["line"] as? Int, line >= 0 { fields["line"] = .number(line) }
         if let column = body["col"] as? Int, column > 0 { fields["column"] = .number(column) }
         if let raw = body["stack"] as? String {
-            let source = PageDiagnostics.clip(raw, bytes: PageDiagnostics.maxStackSourceBytes)
-            let frames = PageDiagnostics.webKitFrames(source.text)
-            if let stack = PageDiagnostics.stack(frames, queryValues: queryValues) {
+            let full = detail.consoleDetail
+            let source = PageDiagnostics.clip(raw, bytes: full ? PageDiagnostics.maxFullStackSourceBytes : PageDiagnostics.maxStackSourceBytes)
+            let frames = PageDiagnostics.webKitFrames(source.text, limit: full ? PageDiagnostics.maxFullStackFrames : PageDiagnostics.maxStackFrames)
+            if let stack = PageDiagnostics.stack(frames, queryValues: queryValues, full: full) {
                 fields["stack"] = .text(stack.text)
                 truncated = truncated || stack.truncated || source.truncated
             }
+        }
+        if detail.consoleDetail, let raw = body["pv"] as? String {
+            let preview = PageDiagnostics.Redaction.preview(json: raw)
+            fields["preview"] = .text(preview.text)
+            truncated = truncated || preview.truncated
         }
         return .init(stream: .console, fields: fields, truncated: truncated)
     }
@@ -263,12 +288,13 @@ nonisolated enum PageDiagnosticsHook {
     /// `method` and `url` are absent when the hook could not know them without running page code (a Request, URL or
     /// RequestInit argument): unknown is never reported as a guess. `urlClipped` is the hook's own cut of a long URL.
     /// `type` is the call kind for fetch and XMLHttpRequest and the mapped initiator for a resource-timing entry.
-    private static func network(_ body: [String: Any], _ queryValues: PageDiagnostics.QueryValues) -> PageDiagnostics.Entry? {
+    private static func network(_ body: [String: Any], _ queryValues: PageDiagnostics.QueryValues, _ detail: PageDiagnostics.DetailPolicy) -> PageDiagnostics.Entry? {
         guard let via = body["via"] as? String, transports.contains(via) else { return nil }
         let outcome = (body["outcome"] as? String).flatMap { outcomes.contains($0) ? $0 : nil } ?? "unknown"
         var fields: [String: PageDiagnostics.Field] = ["outcome": .text(outcome), "source": .text("webkit-\(via)")]
         fields["method"] = PageDiagnostics.method(body["method"]).map { .text($0) }
-        let url = (body["url"] as? String).map { PageDiagnostics.boundedURL($0, queryValues) }
+        let raw = body["url"] as? String
+        let url = raw.map { PageDiagnostics.boundedURL($0, detail.queryValues(for: $0, tagged: queryValues)) }
         fields["url"] = url?.text.map { .text($0) }
         fields["status"] = PageDiagnostics.status(body["status"]).map { .number($0) }
         fields["durationMs"] = PageDiagnostics.duration(milliseconds: body["ms"] as? Double).map { .number($0) }
@@ -282,7 +308,38 @@ nonisolated enum PageDiagnosticsHook {
             fields["type"] = .text(via)
         }
         let truncated = (url?.truncated ?? false) || body["urlClipped"] as? Bool == true
-        return .init(stream: .network, fields: fields, truncated: truncated)
+        var entry = PageDiagnostics.Entry(stream: .network, fields: fields, truncated: truncated)
+        if let raw, via != "resource", detail.network(raw), let rd = body["rd"] as? [String: Any] {
+            entry.detail = detailInput(rd, url: raw, detail, queryValues)
+        }
+        return entry
+    }
+
+    /// The raw detail the page hook read for a request to `url`. Nil when the page reports that the request left the developer
+    /// sites (a redirect) or when the final address is not one: nothing is kept then, not even the request's own side.
+    static func detailInput(
+        _ rd: [String: Any], url: String, _ policy: PageDiagnostics.DetailPolicy, _ queryValues: PageDiagnostics.QueryValues
+    ) -> PageDiagnostics.DetailInput? {
+        if rd["off"] as? Bool == true { return nil }
+        if let final = rd["fin"] as? String, !policy.covers(final) { return nil }
+        let mode: (String) -> PageDiagnostics.QueryValues = { policy.queryValues(for: $0, tagged: queryValues) }
+        func headers(_ key: String) -> [PageDiagnostics.Header]? {
+            guard policy.options.headers, let list = rd[key] as? [[Any]] else { return nil }
+            let pairs = list.prefix(PageDiagnostics.Redaction.maxHeaders).compactMap { entry -> (name: String, value: String)? in
+                guard entry.count == 2, let name = entry[0] as? String, let value = entry[1] as? String else { return nil }
+                return (name, PageDiagnostics.clip(value, bytes: 1_024).text)
+            }
+            return PageDiagnostics.Redaction.headers(pairs, requestURL: url, mode: mode)
+        }
+        func body(_ key: String) -> PageDiagnostics.RawBody? {
+            guard policy.options.bodies, let raw = rd[key] as? [String: Any] else { return nil }
+            return PageDiagnostics.RawBody(
+                text: raw["t"] as? String, contentType: (raw["ct"] as? String).map { PageDiagnostics.clip($0, bytes: 512).text },
+                size: PageDiagnostics.byteCount(raw["size"]), binary: raw["bin"] as? Bool == true, partial: raw["more"] as? Bool == true,
+                note: (raw["note"] as? String).map { PageDiagnostics.clip($0, bytes: 200).text })
+        }
+        return PageDiagnostics.DetailInput(
+            url: url, requestHeaders: headers("reqH"), responseHeaders: headers("resH"), requestBody: body("reqB"), responseBody: body("resB"))
     }
 
     // MARK: Page-side scripts
@@ -307,14 +364,28 @@ nonisolated enum PageDiagnosticsHook {
     /// is described from its own data properties `message`, `name` and `stack` only; an accessor is never called. Resource
     /// timing entries are read through getters captured at install. Ceiling: builtins the page patched before the hook was
     /// installed cannot be told apart from the platform's, which the document-start install narrows to nothing.
-    static func pageHook(event: String) -> String {
-        [hookCore(event: event), hookConsole, hookNetwork, hookResources, hookClose].joined(separator: "\n")
+    static func pageHook(event: String, detail: PageDiagnostics.DetailPolicy = .off) -> String {
+        [hookCore(event: event, detail: detail), hookDetail, hookConsole, hookNetwork, hookResources, hookClose].joined(separator: "\n")
     }
 
-    private static func hookCore(event: String) -> String {
+    /// What the page-side hook may read, as the JSON the script starts with: nothing unless the Developer tier holds. The hook
+    /// reads a request's detail only for a host on `hosts`; native code checks every address again.
+    private static func detailConfiguration(_ detail: PageDiagnostics.DetailPolicy) -> String {
+        let active = detail.tier
+        let object: [String: Any] = [
+            "headers": active && detail.options.headers, "bodies": active && detail.options.bodies, "console": active && detail.options.console,
+            "n": active && detail.options.network, "hosts": active ? detail.anyPortHosts : [],
+            "sites": active ? detail.sites.map { site -> [String: Any] in ["h": site.host, "p": site.port.map { $0 as Any } ?? NSNull()] } : [],
+        ]
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func hookCore(event: String, detail: PageDiagnostics.DetailPolicy) -> String {
         """
         (() => {
           const EV = "\(event)";
+          const DET = \(detailConfiguration(detail));
           const apply = Reflect.apply, dispatch = document.dispatchEvent.bind(document), CE = CustomEvent, stringify = JSON.stringify;
           const now = performance.now.bind(performance), URLCtor = URL, slice = String.prototype.slice;
           const thenOf = Promise.prototype.then, addListener = EventTarget.prototype.addEventListener, removeListener = EventTarget.prototype.removeEventListener;
@@ -402,13 +473,17 @@ nonisolated enum PageDiagnosticsHook {
           for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
             wrap(console, level, orig => function (...args) {
               try {
-                let out = '', stack = '';
+                let out = '', stack = '', pre = DET.console ? [] : null, objects = false;
                 for (let i = 0; i < 16 && i < args.length && out.length < 4096; i++) {
                   const info = errorInfo(args[i]);
                   if (info && !stack) stack = info.stack;
                   out += (i ? ' ' : '') + clip(info ? info.text : text(args[i]), 4096);
+                  if (pre) {
+                    objects = objects || (!info && typeof args[i] === 'object' && args[i] !== null);
+                    apply(push, pre, [info ? info.text : pv(args[i], 0, [])]);
+                  }
                 }
-                emit({ k: 'console', level, text: clip(out, 4096), stack });
+                emit({ k: 'console', level, text: clip(out, 4096), stack: stack || (pre ? stackHere() : ''), pv: pre && objects ? clip(stringify(pre), 2048) : undefined });
               } catch (e) {}
               return apply(orig, this, args);
             });
@@ -449,8 +524,9 @@ nonisolated enum PageDiagnosticsHook {
             return { href, clipped };
           };
           const verb = m => typeof m === 'string' && m.length <= 16 ? m : null;
-          const net = (via, method, target, start, status, outcome, mime) =>
-            emit({ k: 'net', via, method, url: target ? target.href : null, urlClipped: target ? target.clipped : false, status, ms: now() - start, outcome, mime });
+          const net = (via, method, target, start, status, outcome, mime, rd, ms) =>
+            emit({ k: 'net', via, method, url: target ? target.href : null, urlClipped: target ? target.clipped : false, status,
+              ms: ms === undefined ? now() - start : ms, outcome, mime, rd });
           const mimeOfResponse = r => {
             try { const v = apply(headersGet, apply(responseHeaders, r, []), ['content-type']); return typeof v === 'string' ? clip(v, 256) : null; } catch (e) { return null; }
           };
@@ -459,33 +535,61 @@ nonisolated enum PageDiagnosticsHook {
           };
           wrap(window, 'fetch', orig => function (...args) {
             const start = now();
-            let method = null, target = null;
+            let method = null, target = null, req = null;
             try {
               if (typeof args[0] === 'string') { target = known(args[0]); if (args[1] == null) method = 'GET'; }
+              if (DET.n) {
+                req = fetchRequest(args);
+                if (req) { method = req.method || method; target = req.target || target; }
+              }
             } catch (e) {}
             const result = apply(orig, this, args);
             // Same fulfillment and rejection reach the page; only a foreign (non-Promise) result is returned untouched.
             try {
               return apply(thenOf, result, [
-                r => { net('fetch', method, target, start, read(responseStatus, r), 'completed', mimeOfResponse(r)); return r; },
-                err => { net('fetch', method, target, start, null, read(errorName, err) === 'AbortError' ? 'aborted' : 'failed', null); throw err; },
+                r => {
+                  try {
+                    if (req) fetchDetail(r, req, method, target, start);
+                    else net('fetch', method, target, start, read(responseStatus, r), 'completed', mimeOfResponse(r));
+                  } catch (e) {}
+                  return r;
+                },
+                err => {
+                  net('fetch', method, target, start, null, read(errorName, err) === 'AbortError' ? 'aborted' : 'failed', null,
+                    req ? { reqH: req.rh, reqB: req.rb } : undefined);
+                  throw err;
+                },
               ]);
             } catch (e) { return result; }
           });
           const states = new WeakMap(), proto = XMLHttpRequest.prototype;
           wrap(proto, 'open', orig => function (...args) {
-            try { apply(wmSet, states, [this, { method: verb(args[0]), target: known(args[1]) }]); } catch (e) {}
+            try { apply(wmSet, states, [this, { method: verb(args[0]), target: known(args[1]), rh: [] }]); } catch (e) {}
             return apply(orig, this, args);
           });
+          if (DET.n) {
+            wrap(proto, 'setRequestHeader', orig => function (...args) {
+              try {
+                const state = apply(wmGet, states, [this]);
+                if (state && state.target && covered(state.target.href) && typeof args[0] === 'string' && typeof args[1] === 'string' && state.rh.length < 64) {
+                  apply(push, state.rh, [[clip(args[0], 100), clip(args[1], 1024)]]);
+                }
+              } catch (e) {}
+              return apply(orig, this, args);
+            });
+          }
           wrap(proto, 'send', orig => function (...args) {
             try {
               const state = apply(wmGet, states, [this]);
               if (state && !state.watched) {
                 state.watched = true;
                 const start = now(), self = this;
+                state.det = DET.n && !!state.target && covered(state.target.href);
+                if (state.det && DET.bodies) state.rb = bodyOf(args[0], contentTypeOf(state.rh));
                 apply(addListener, this, ['abort', () => { state.aborted = true; }]);
                 apply(addListener, this, ['loadend', () => {
                   const status = read(xhrStatus, self);
+                  if (state.det) { try { xhrDetail(self, state, start, status); } catch (e) {} return; }
                   net('xhr', state.method, state.target, start, status || null, status ? 'completed' : state.aborted ? 'aborted' : 'failed', status ? mimeOfRequest(self) : null);
                 }]);
               }
@@ -564,224 +668,5 @@ nonisolated enum PageDiagnosticsHook {
     /// Tears down both scripts of one install through the DOM, so it works in either world and before the relay exists.
     static func off(event: String) -> String {
         "(() => { document.dispatchEvent(new CustomEvent(\"\(event)-off\")); return true; })();"
-    }
-}
-
-/// Turns Chromium DevTools events into bounded records. Correlates one request across its events but only keeps method,
-/// sanitized URL (parameter names, tagged values), status, resource type, media type, transfer size and timing: headers,
-/// bodies and cookies in the events are never read.
-nonisolated final class ChromiumDiagnosticsMapper {
-    private struct Pending {
-        var method: String?
-        /// The URL as the page sent it, cut to its byte bound. It is concealed when a record is made, with the key the document
-        /// that record belongs to has by then, not the key of the document that was current when the request began.
-        var url: String?
-        var urlTruncated = false
-        var start: Double?
-        var status: Int?
-        var type: String?
-        var mimeType: String?
-        var frameID: String?
-        var loaderID: String?
-    }
-
-    private static let maxInFlight = 256
-    private static let consoleLevels = ["log": "log", "debug": "debug", "info": "info", "error": "error", "assert": "error", "warning": "warn"]
-
-    /// Replaced by the owner whenever the document changes; see `PageDiagnostics.QueryValues`.
-    var queryValues: PageDiagnostics.QueryValues
-    private var pending: [String: Pending] = [:]
-    private var order: [String] = []
-    /// In-flight requests dropped because more than `maxInFlight` were open at once. Their outcome is unknown; the owner
-    /// surfaces this count in its read response instead of losing them silently.
-    private(set) var lostInFlight = 0
-
-    init(queryValues: PageDiagnostics.QueryValues) {
-        self.queryValues = queryValues
-    }
-
-    /// Forgets in-flight requests and the loss count: a finish event for a request that is gone maps to nothing. Call on
-    /// each document change with the new document's identity, which keeps only that document's own requests (its
-    /// main-document request and early subresources start before the commit is observed); without it, everything is
-    /// forgotten (a new lease). Stale entries never occupy slots, and the loss count never carries into another document.
-    func reset(keeping documentID: String? = nil) {
-        pending = pending.filter { documentID != nil && $0.value.loaderID == documentID }
-        order.removeAll { pending[$0] == nil }
-        lostInFlight = 0
-    }
-
-    func entry(method: String, params: [String: Any]) -> PageDiagnostics.Entry? {
-        switch method {
-        case "Runtime.consoleAPICalled":
-            return console(params)
-        case "Runtime.exceptionThrown":
-            return exception(params)
-        case "Network.requestWillBeSent":
-            return requestWillBeSent(params)
-        case "Network.responseReceived":
-            if let id = params["requestId"] as? String, var request = pending[id] {
-                let response = params["response"] as? [String: Any]
-                request.status = PageDiagnostics.status(response?["status"])
-                request.mimeType = PageDiagnostics.mediaType(response?["mimeType"])
-                request.type = PageDiagnostics.resourceType(params["type"]) ?? request.type
-                pending[id] = request
-            }
-            return nil
-        case "Network.loadingFinished":
-            return finish(params, outcome: "completed")
-        case "Network.loadingFailed":
-            return finish(params, outcome: (params["canceled"] as? Bool) == true ? "aborted" : "failed")
-        default:
-            return nil
-        }
-    }
-
-    // MARK: Console
-
-    private func console(_ params: [String: Any]) -> PageDiagnostics.Entry? {
-        guard let type = params["type"] as? String, let level = Self.consoleLevels[type], let args = params["args"] as? [[String: Any]] else { return nil }
-        var text = ""
-        var truncated = args.count > PageDiagnostics.maxConsoleArguments
-        for arg in args.prefix(PageDiagnostics.maxConsoleArguments) {
-            let separator = text.isEmpty ? "" : " "
-            let room = PageDiagnostics.maxTextBytes - text.utf8.count - separator.utf8.count
-            let piece = PageDiagnostics.clip(Self.describe(arg), bytes: max(room, 0))
-            text += separator + piece.text
-            if piece.truncated {
-                truncated = true
-                break
-            }
-        }
-        var fields: [String: PageDiagnostics.Field] = ["level": .text(level), "text": .text(text), "source": "cdp"]
-        // Where a warning or error was logged, and how it got there. Lower levels would only add noise.
-        if level == "error" || level == "warn" {
-            truncated = location(of: params["stackTrace"], into: &fields) || truncated
-        }
-        return .init(stream: .console, fields: fields, truncated: truncated, contextID: params["executionContextId"] as? Int)
-    }
-
-    /// Primitives only. Objects and functions are never rendered: their descriptions can embed arbitrary page data.
-    private static func describe(_ arg: [String: Any]) -> String {
-        switch arg["type"] as? String {
-        case "string":
-            return arg["value"] as? String ?? ""
-        case "number":
-            if let int = arg["value"] as? Int { return String(int) }
-            if let double = arg["value"] as? Double { return String(double) }
-            return arg["unserializableValue"] as? String ?? "[number]"
-        case "boolean":
-            return (arg["value"] as? Bool) == true ? "true" : "false"
-        case "undefined":
-            return "undefined"
-        case "function":
-            return "[function]"
-        case "object":
-            switch arg["subtype"] as? String {
-            case "null":
-                return "null"
-            case "error":
-                return PageDiagnostics.firstLine(arg["description"] as? String ?? "Error")
-            default:
-                return "[object omitted]"
-            }
-        default:
-            return "[value omitted]"
-        }
-    }
-
-    private func exception(_ params: [String: Any]) -> PageDiagnostics.Entry? {
-        guard let details = params["exceptionDetails"] as? [String: Any] else { return nil }
-        let described = (details["exception"] as? [String: Any])?["description"] as? String
-        let message = PageDiagnostics.clip(PageDiagnostics.firstLine(described ?? details["text"] as? String ?? "Uncaught"))
-        var fields: [String: PageDiagnostics.Field] = ["level": "error", "text": .text(message.text), "source": "cdp"]
-        var truncated = message.truncated
-        if let raw = details["url"] as? String {
-            let url = PageDiagnostics.boundedURL(raw, queryValues)
-            fields["url"] = url.text.map { .text($0) }
-            truncated = truncated || url.truncated
-        }
-        if let line = details["lineNumber"] as? Int, line >= 0 { fields["line"] = .number(line + 1) }  // CDP lines are 0-based
-        if let column = details["columnNumber"] as? Int, column >= 0 { fields["column"] = .number(column + 1) }
-        truncated = location(of: details["stackTrace"], into: &fields, onlyStack: true) || truncated
-        return .init(stream: .console, fields: fields, truncated: truncated, contextID: details["executionContextId"] as? Int)
-    }
-
-    /// Adds `stack` (and, unless `onlyStack`, the top frame as `url`, `line` and `column`) from a DevTools `StackTrace`.
-    /// Returns whether anything was cut.
-    private func location(of trace: Any?, into fields: inout [String: PageDiagnostics.Field], onlyStack: Bool = false) -> Bool {
-        guard let frames = (trace as? [String: Any])?["callFrames"] as? [[String: Any]], !frames.isEmpty else { return false }
-        let mapped = frames.prefix(PageDiagnostics.maxStackFrames + 1).map { frame in
-            PageDiagnostics.StackFrame(
-                function: frame["functionName"] as? String ?? "", url: frame["url"] as? String,
-                line: (frame["lineNumber"] as? Int).map { $0 + 1 }, column: (frame["columnNumber"] as? Int).map { $0 + 1 })
-        }
-        var cut = frames.count > PageDiagnostics.maxStackFrames
-        if !onlyStack, let top = mapped.first, let raw = top.url, !raw.isEmpty {
-            let url = PageDiagnostics.boundedURL(raw, queryValues)
-            fields["url"] = url.text.map { .text($0) }
-            top.line.map { fields["line"] = .number($0) }
-            top.column.map { fields["column"] = .number($0) }
-            cut = cut || url.truncated
-        }
-        if let stack = PageDiagnostics.stack(mapped, queryValues: queryValues) {
-            fields["stack"] = .text(stack.text)
-            cut = cut || stack.truncated
-        }
-        return cut
-    }
-
-    // MARK: Network
-
-    private func requestWillBeSent(_ params: [String: Any]) -> PageDiagnostics.Entry? {
-        guard let id = params["requestId"] as? String, let request = params["request"] as? [String: Any] else { return nil }
-        let timestamp = params["timestamp"] as? Double
-        let url = (request["url"] as? String).map { PageDiagnostics.clip($0, bytes: PageDiagnostics.maxURLBytes) }
-        var hop: PageDiagnostics.Entry?
-        if let redirect = params["redirectResponse"] as? [String: Any], var previous = pending[id] {
-            previous.status = PageDiagnostics.status(redirect["status"])
-            previous.mimeType = PageDiagnostics.mediaType(redirect["mimeType"])
-            hop = network(
-                previous, end: timestamp, outcome: "completed", bytes: PageDiagnostics.byteCount(redirect["encodedDataLength"]),
-                redirectTo: url?.text)
-        }
-        let next = Pending(
-            method: PageDiagnostics.method(request["method"]), url: url?.text, urlTruncated: url?.truncated ?? false, start: timestamp,
-            type: PageDiagnostics.resourceType(params["type"]), frameID: params["frameId"] as? String, loaderID: params["loaderId"] as? String
-        )
-        if pending.updateValue(next, forKey: id) == nil {
-            order.append(id)
-            if order.count > Self.maxInFlight {
-                pending[order.removeFirst()] = nil
-                lostInFlight += 1
-            }
-        }
-        return hop
-    }
-
-    private func finish(_ params: [String: Any], outcome: String) -> PageDiagnostics.Entry? {
-        guard let id = params["requestId"] as? String, let request = pending.removeValue(forKey: id) else { return nil }
-        order.removeAll { $0 == id }
-        return network(
-            request, end: params["timestamp"] as? Double, outcome: outcome, bytes: PageDiagnostics.byteCount(params["encodedDataLength"]),
-            redirectTo: nil)
-    }
-
-    /// The record for a request, with its URLs concealed now. `redirectTo` is the raw bounded URL of the redirect target.
-    private func network(_ request: Pending, end: Double?, outcome: String, bytes: Int?, redirectTo: String?) -> PageDiagnostics.Entry {
-        var fields: [String: PageDiagnostics.Field] = ["outcome": .text(outcome), "source": "cdp"]
-        let url = request.url.map { PageDiagnostics.boundedURL($0, queryValues) }
-        let target = redirectTo.map { PageDiagnostics.boundedURL($0, queryValues) }
-        fields["method"] = request.method.map { .text($0) }
-        fields["url"] = url?.text.map { .text($0) }
-        fields["status"] = request.status.map { .number($0) }
-        fields["type"] = request.type.map { .text($0) }
-        fields["mimeType"] = request.mimeType.map { .text($0) }
-        fields["transferBytes"] = bytes.map { .number($0) }
-        fields["redirectTo"] = target?.text.map { .text($0) }
-        if let start = request.start, let end {
-            fields["durationMs"] = PageDiagnostics.duration(milliseconds: ((end - start) * 1000).rounded()).map { .number($0) }
-        }
-        let truncated = request.urlTruncated || (url?.truncated ?? false) || (target?.truncated ?? false)
-        return .init(stream: .network, fields: fields, truncated: truncated, frameID: request.frameID, loaderID: request.loaderID)
     }
 }

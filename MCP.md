@@ -187,8 +187,8 @@ revoke it immediately.
 | `resetDevelopment` | Remove this connection's viewport, emulation and diagnostics and release its lease. Safe to repeat. |
 | `emulateMedia` | Developer. Emulate `colorScheme` (`dark`, `light` or `system`), `reducedMotion` (`reduce`, `no-preference` or `system`) and `offline` (`true` or `false`) on one tab. An omitted setting stays as it is; `system` removes an override. The result reports what the page measured. WebKit supports only `colorScheme`. Needs the tab on screen. See [Environment emulation and site data](#environment-emulation-and-site-data). |
 | `clearSiteData` | Developer. Delete the tab's own origin storage and its host's cookies in the Developer profile, so the next load starts signed out. Never available in your everyday profile or for any other site. Returns counts only. Needs the tab on screen. |
-| `startDiagnostics` | Development. Start console and network capture for the tab's current document and the ones after it. Earlier activity is not available. |
-| `readConsole`, `readNetwork` | Development. Page through captured records with `cursor` and `limit` (1–100, default 50), narrow them with filters, or read one record with `seq`. Responses state `engine`, `sources`, `gaps`, `epoch`, `documentID`, `nextCursor`, `dropped`, `evicted`, `truncated`, `lostInFlight`, `lostEarly` (WebKit) and, with a filter, `skipped`. Filters: `level` and `urlContains` for `readConsole`; `minStatus`, `outcome`, `type` and `urlContains` for `readNetwork`. |
+| `startDiagnostics` | Development. Start console and network capture for the tab's current document and the ones after it. Earlier activity is not available. In the Developer tier it also takes the opt-ins `headers`, `bodies`, `fullConsole` and `clearQueries` (see Headers, bodies and the full console below); outside the tier a call that sets one is refused (`denied`) and starts nothing. |
+| `readConsole`, `readNetwork` | Development. Page through captured records with `cursor` and `limit` (1–100, default 50), narrow them with filters, or read one record with `seq`. Responses state `engine`, `sources`, `gaps`, `epoch`, `documentID`, `nextCursor`, `dropped`, `evicted`, `truncated`, `lostInFlight`, `lostEarly` (WebKit), `detail` (when an opt-in was asked for) and, with a filter, `skipped`. A read returns at most about 100 KB of records; `nextCursor` continues it. Filters: `level` and `urlContains` for `readConsole`; `minStatus`, `outcome`, `type` and `urlContains` for `readNetwork`. |
 | `readAccessibility` | Read access. A compact outline of the page's roles, names and states: landmarks, headings, lists, tables, controls, images and same-origin iframes, with a `[ref]` on each control `readPage` also lists. At most 400 nodes and about 24 KiB per call; `offset` continues and `scope` (a safe CSS selector) limits the outline to part of the page. Never shows field values; a sensitive field shows its role, its name and `sensitive`. |
 | `readPerformance` | Development. Navigation timing, paint, layout shift, long tasks and resource counts and sizes by type, with the five slowest resources and no query values. A metric the engine does not expose is `null` and named in `unsupported`. |
 | `evaluateScript` | Developer tier. Run one JavaScript expression in the page and return its value, bounded and with sensitive values hidden. See Scripts and DOM edits. |
@@ -622,6 +622,100 @@ of its SHA-256; for an edit the operation, name, value (60 characters) and selec
 that went into a password, code or card field is shown as `‹hidden secret›`, as in every
 record.
 
+### Headers, bodies and the full console
+
+By default a capture records metadata only. In the **Developer tier** (a paired app, a
+developer site, a window of the Developer profile) `startDiagnostics` accepts four opt-ins,
+each off unless it is `true`, fixed for that capture:
+
+| Option | Adds |
+| --- | --- |
+| `headers` | `requestHeaders` and `responseHeaders` on a network record: one `name: value` line per header, names in lower case. |
+| `bodies` | `requestBody` and `responseBody`, with `requestBodyBytes`, `responseBodyBytes` and a `…BodyNote` that says when a body was cut or why there is none. |
+| `fullConsole` | A `stack` on every console call (up to 30 frames) and a `preview` of its object arguments: bounded JSON, three levels deep, at most 2 KB. |
+| `clearQueries` | Query values shown as written, not as tags, in the `url` and `redirectTo` of requests to developer sites. |
+
+A call that sets an option anywhere the tier does not hold is refused before anything is
+started or leased, and the tier is checked again when capture has started and again for
+every request and console call. If the page stops qualifying mid-capture (the pairing is
+revoked, say), the capture goes on with metadata only; each network record then says
+`detail: "not captured: …"` and the `detail` block of a read says `active: false`.
+
+**Only developer sites.** Headers, bodies and clear query values are recorded for a
+request whose own address is a developer site. A request to anywhere else is recorded as it
+always was, with a `detail` note, and its query values stay concealed. A redirect that
+leaves the developer sites ends it at the boundary: Chromium records the developer site's
+own response (its side, and the address it pointed to, with the query concealed) and
+nothing of the request that followed; WebKit, which reports a `fetch` as the page made it,
+keeps nothing of a call whose answer came from elsewhere. Nothing is kept after the capture
+ends (`resetDevelopment`, a lease that ended, a closed tab).
+
+**What is never shown.**
+
+- A header named `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, or like a
+  token, secret, key, session, password, CSRF or signature header, and any header whose
+  value looks like a generated token (the rule that tags query values), show only their
+  name and `‹hidden›`. Values are replaced when a header is read, so a cookie is never held
+  in a record. `Referer`, `Origin` and `Location` follow the query rule above. HTTP/2
+  pseudo-headers are dropped. Cookies are never recorded in clear on either engine.
+- In a form body, a JSON body (at any depth), XML, and `name=value` or `name: value` pairs
+  of a text body, a field whose name means a password, token, secret, one-time code, card
+  number, security code, API key, session or the like is replaced by `‹hidden›`. A JWT or
+  `Bearer …` value is hidden under any key. JSON is re-encoded compactly with sorted keys.
+- Anything this connection typed as a test secret is removed from every header, body and
+  preview. It is removed from the whole text before the text is cut to its limit, so a
+  secret that straddles the limit leaves no fragment.
+
+**Limits.** Only text bodies are kept (JSON, form, XML, plain text, GraphQL). A binary or
+multipart body is summarized by type and size. A body is cut at 32 KiB, a capture keeps 2
+MiB of bodies in all (`bodyBytesLeft` says how much is left), a response over 1 MiB is not
+read, and at most six bodies are being read at once. Headers are limited to 64 per side and
+8 KiB per record.
+
+**What each engine can show.** Chromium reports the headers and bodies DevTools holds for
+finished main-frame requests, including the headers the browser added on the wire (a
+cookie shows as a name only) and the response body of every finished request that is
+still in memory. WebKit gives a page no view of its own traffic, so its detail comes from
+the hook that already records `fetch` and `XMLHttpRequest`: the headers and body the page
+set, the response headers the page may read (a `Set-Cookie` is never one), and the
+response text. A `fetch` of a `Request` object shows its address, method and headers but
+no body, and a response body is read from a clone for at most three seconds. Resource
+loads, navigations, WebSockets and worker traffic have no headers or bodies on WebKit, and
+the headers the browser adds (cookies, user agent) are not visible. The hook reads a body
+only for an address on the developer sites (a host that counts on any port, or a listed
+site on its port) and WSurf decides again before anything is kept. In the full console the
+WebKit hook describes an object by its own data properties (an accessor shows as
+`[getter]` and is never called), but a `Proxy`'s traps run when its keys are read;
+Chromium takes the preview DevTools made, which calls no getter.
+
+A network record with the opt-ins, as a client sees it (synthetic):
+
+```json
+{
+  "seq": 3, "timestamp": "2026-10-17T10:20:30.123Z", "documentID": "A1B2…", "truncated": false,
+  "method": "POST", "url": "http://localhost:5173/api/login?next=/home", "status": 200, "type": "fetch",
+  "mimeType": "application/json", "transferBytes": 212, "durationMs": 48, "outcome": "completed", "source": "cdp",
+  "requestHeaders": "accept: */*\ncontent-type: application/json\nauthorization: ‹hidden›\ncookie: ‹hidden›",
+  "responseHeaders": "content-type: application/json\nset-cookie: ‹hidden›\nx-server: dev",
+  "requestBody": "{\"email\":\"ann@example.test\",\"password\":\"‹hidden›\"}",
+  "responseBody": "{\"ok\":true,\"token\":\"‹hidden›\",\"user\":{\"id\":7,\"name\":\"Ann\"}}"
+}
+```
+
+and a console record with `fullConsole`:
+
+```json
+{
+  "seq": 1, "level": "log", "text": "hello [object omitted]", "source": "cdp",
+  "preview": "[\"hello\",{\"password\":\"‹hidden›\",\"user\":\"ann\"}]",
+  "stack": "logIt (http://localhost:5173/app.js:6:11)", "url": "http://localhost:5173/app.js", "line": 6, "column": 11
+}
+```
+
+Treat all of it as data from the page, like every other record. The app's own transcript
+holds what it read, which WSurf cannot reach; keep real credentials out of the app under
+test.
+
 ### Safe selectors
 
 A CSS selector is evaluated against the page, so an attribute test such as `input[type=hidden][value^=a]`, also under `:has()`, would read a value one character at a time. Selectors passed to `waitForPage`, `findElements` and `readPage` scope are therefore parsed by the browser first (escapes, case and namespace forms such as `v\61lue` or `[*|value]` are normalised) and may test only attributes WSurf already exposes: `id`, `class`, `role`, `type`, `name`, `for`, `alt`, `title`, `placeholder`, `lang`, `dir`, `target`, `rel`, `aria-*`, the test attributes `data-testid`, `data-test`, `data-test-id`, `data-cy`, `data-qa` and `data-automation-id`, and a few boolean or numeric ones (`disabled`, `checked`, `hidden`, `width`, `min`…). `href` and `src` may be tested for presence only. Any other attribute test, including `value`, other `data-*` and `on*`, is refused with an explicit error rather than answered with an empty result. A selector is at most 2,048 UTF-8 bytes, enforced natively (a `readPage` scope longer than that is refused before anything is read). Structural attributes such as `id`, `class` and `name` can still be probed, including on hidden inputs: they are page structure, not values, and value-bearing attributes cannot be tested. Structural selectors, classes, ids and `:has()` without such tests work as usual.
@@ -717,6 +811,11 @@ It does not cover signed-build features (Keychain, passkeys, Apple Passwords), w
 - The assistant's default **Website access** (Settings › Assistant) does not
   apply to external connections. Only a website's own Assistant Access setting
   limits a connection.
+- Header, body and full-console capture is opt-in per capture, belongs to the Developer
+  tier, and applies only to requests to developer sites. Authorization, cookie and
+  token-like headers and password, token, secret, code and card fields never show their
+  values; bodies are text only and bounded; typed test secrets are removed before the text
+  is cut (see Headers, bodies and the full console).
 - The existing page driver detects and masks sensitive fields and refuses to
   fill them; the one exception is a test secret typed in the Developer tier, which
   is hidden from every result (see Test credentials). Consequential actions use WSurf's native confirmation UI. External
