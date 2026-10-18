@@ -211,22 +211,212 @@ struct CredentialSettingsHistoryTests {
         #expect(!RecordSubject.account.restoresFromEarlierVersions)
     }
 
-    @Test func restoringAnEarlierPasswordKeepsTheReplacedOneAsAVersion() async throws {
+    // MARK: History panel
+
+    /// A stored credential whose password was changed once, so one earlier version exists.
+    private func seedChangedPassword(_ f: Fixture, id: UUID, notes: [CredentialNote]? = nil) async throws {
+        try await VaultManagerFixture.unlock(f.vault)
+        var first = account("ada", id: id, password: "old")
+        first.notes = notes
+        try await f.save([first])
+        var second = account("ada", id: id, password: "new")
+        second.notes = notes
+        try await f.save([second])
+        await f.model.load()
+    }
+
+    @Test func historyOpensForTheEditedCredential() async throws {
         try await withFixture { f in
             let id = UUID()
-            try await VaultManagerFixture.unlock(f.vault)
-            try await f.save([account("ada", id: id, password: "old")])
-            try await f.save([account("ada", id: id, password: "new")])
-            await f.model.load()
-            try await f.model.loadVersions(accountID: id)
-            let item = try #require(f.model.revisionItems.first { $0.subject == .password })
+            try await seedChangedPassword(f, id: id)
+            #expect(f.model.history == nil)
 
-            await f.model.restoreVersion(revisionID: item.id)
-            #expect(f.model.error == nil)
+            try await f.model.openHistory(accountID: id)
+            #expect(f.model.draft?.accountID == id)
+            let history = try #require(f.model.history)
+            #expect(history.versions.count == 2)
+            #expect(history.versions[0].isCurrent && history.versions[0].account.password == "new")
+            #expect(history.versions[1].account.password == "old" && history.versions[1].changed == [.password])
+            // The newest earlier version is the one shown first; nothing is unmasked.
+            #expect(history.selected == history.versions[1].id)
+            #expect(!history.revealsSecrets && history.next == nil)
+
+            // Closing the editor closes History with it.
+            f.model.cancelEditing()
+            #expect(f.model.history == nil)
+        }
+    }
+
+    @Test func historyOnAnotherCredentialStartsThatEdit() async throws {
+        try await withFixture { f in
+            let first = UUID(), second = UUID()
+            try await VaultManagerFixture.unlock(f.vault)
+            try await f.save([account("ada", id: first, password: "a1")])
+            try await f.save([account("ada", id: first, password: "a2"), account("grace", id: second, password: "g1")])
+            try await f.save([account("ada", id: first, password: "a2"), account("grace", id: second, password: "g2")])
+            await f.model.load()
+
+            try await f.model.beginEditing(accountID: first)
+            try await f.model.openHistory(accountID: second)
+            #expect(f.model.draft?.accountID == second)
+            #expect(f.model.history?.accountID == second)
+            #expect(f.model.history?.versions[1].account.password == "g1")
+
+            // Opening another draft drops the History of the one it replaces.
+            try await f.model.beginEditing(accountID: first)
+            #expect(f.model.history == nil)
+        }
+    }
+
+    @Test func historyRefusesADraftTheVaultHasMovedPast() async throws {
+        try await withFixture { f in
+            let id = UUID()
+            try await seedChangedPassword(f, id: id)
+            try await f.model.beginEditing(accountID: id)
+            try await f.save([account("ada", id: id, password: "newest")])
+
+            await #expect(throws: CredentialVaultError.staleRevision) { try await f.model.openHistory(accountID: id) }
+            #expect(f.model.history == nil)
+        }
+    }
+
+    @Test func copyToCurrentChangesOnlyTheDraft() async throws {
+        try await withFixture { f in
+            let id = UUID()
+            try await seedChangedPassword(f, id: id)
+            try await f.model.openHistory(accountID: id)
+            let before = try await f.vault.manager.snapshot()
+            let older = try #require(f.model.history?.versions[1].id)
+
+            f.model.copyToDraft(.login, from: older)
+            #expect(f.model.draft?.password == "old")
+            #expect(f.model.draft?.changesNothing == false)
+            // Nothing is stored, and no earlier version is added, until Save.
+            let after = try await f.vault.manager.snapshot()
+            #expect(after.revision == before.revision && after.accounts == before.accounts)
+            #expect(try await f.vault.manager.revisionPage(accountID: id, after: nil).items.count == 1)
+
+            // An id History does not list is ignored.
+            f.model.copyToDraft(.name, from: UUID())
+            f.model.selectVersion(UUID())
+            #expect(f.model.history?.selected == older)
+        }
+    }
+
+    @Test func savingACopiedPasswordKeepsTheReplacedOneAsAVersion() async throws {
+        try await withFixture { f in
+            let id = UUID()
+            try await seedChangedPassword(f, id: id)
+            try await f.model.openHistory(accountID: id)
+            f.model.copyToDraft(.login, from: f.model.history?.versions[1].id)
+
+            _ = try await f.model.commitDraft()
             #expect(try await f.vault.manager.snapshot().accounts.first?.password == "old")
-            // The replaced value is itself now an earlier version.
-            #expect(f.model.versionsAccountID == id)
-            #expect(f.model.revisionItems.count >= 2)
+            #expect(f.model.history == nil && f.model.draft == nil)
+
+            try await f.model.openHistory(accountID: id)
+            let versions = try #require(f.model.history?.versions)
+            #expect(versions.map(\.account.password) == ["old", "new", "old"])
+        }
+    }
+
+    @Test func aRemovedNoteIsAVersionThatCanBeAddedBack() async throws {
+        try await withFixture { f in
+            let id = UUID()
+            let kept = CredentialNote(text: "kept", field: nil), removed = CredentialNote(text: "removed", field: nil)
+            try await VaultManagerFixture.unlock(f.vault)
+            var stored = account("ada", id: id)
+            stored.notes = [kept, removed]
+            try await f.save([stored])
+            stored.notes = [kept]
+            try await f.save([stored])
+            await f.model.load()
+
+            try await f.model.openHistory(accountID: id)
+            let older = try #require(f.model.history?.versions[1])
+            #expect(older.changed == [.note] && older.account.notes == [kept, removed])
+            f.model.copyToDraft(.note(1), from: older.id)
+            #expect(f.model.draft?.notes == [kept, removed])
+            // Adding it again changes nothing.
+            f.model.copyToDraft(.note(1), from: older.id)
+            #expect(f.model.draft?.notes.count == 2)
+
+            _ = try await f.model.commitDraft()
+            #expect(try await f.vault.manager.snapshot().accounts.first?.notes == [kept, removed])
+        }
+    }
+
+    @Test func lockDropsTheHistoryAndItsSecrets() async throws {
+        try await withFixture { f in
+            let id = UUID()
+            try await seedChangedPassword(f, id: id)
+            try await f.model.openHistory(accountID: id)
+            try await f.model.revealHistorySecrets()
+            #expect(f.model.history?.revealsSecrets == true)
+
+            f.vault.manager.lock(reason: .manual)
+            #expect(f.model.history == nil && f.model.draft == nil)
+            await #expect(throws: (any Error).self) { try await f.model.revealHistorySecrets() }
+
+            try await VaultManagerFixture.unlock(f.vault)
+            await f.model.load()
+            #expect(f.model.history == nil && f.model.draft == nil)
+        }
+    }
+
+    @Test func secretsStayHiddenUntilShownUnderTheCurrentUnlock() async throws {
+        try await withFixture { f in
+            let id = UUID()
+            try await seedChangedPassword(f, id: id)
+            await #expect(throws: CredentialVaultError.invalidData) { try await f.model.revealHistorySecrets() }
+
+            try await f.model.openHistory(accountID: id)
+            #expect(f.model.history?.revealsSecrets == false)
+            try await f.model.revealHistorySecrets()
+            #expect(f.model.history?.revealsSecrets == true)
+            f.model.hideSecrets()
+            #expect(f.model.history?.revealsSecrets == false)
+            try await f.model.revealHistorySecrets()
+            f.model.hideHistorySecrets()
+            #expect(f.model.history?.revealsSecrets == false)
+
+            // A new unlock starts again with everything hidden and nothing loaded.
+            try await f.model.revealHistorySecrets()
+            f.vault.manager.lock(reason: .manual)
+            try await VaultManagerFixture.unlock(f.vault)
+            await f.model.load()
+            #expect(f.model.history == nil)
+            try await f.model.openHistory(accountID: id)
+            #expect(f.model.history?.revealsSecrets == false)
+        }
+    }
+
+    @Test func olderVersionsLoadPageByPage() async throws {
+        try await withFixture { f in
+            let id = UUID()
+            let changes = StoreFormat.historyPage + 2
+            try await VaultManagerFixture.unlock(f.vault)
+            try await f.save([account("ada", id: id, password: "pw-0")])
+            for index in 1...changes {
+                try await f.save([account("ada", id: id, password: "pw-\(index)")])
+            }
+            await f.model.load()
+
+            try await f.model.openHistory(accountID: id)
+            let first = try #require(f.model.history)
+            #expect(first.values.count == StoreFormat.historyPage && first.next != nil)
+            #expect(first.versions.count == StoreFormat.historyPage + 1)
+            #expect(first.versions.last?.account.password == "pw-2")
+
+            try await f.model.loadOlderVersions()
+            let all = try #require(f.model.history)
+            #expect(all.values.count == changes && all.next == nil)
+            #expect(all.versions.count == changes + 1)
+            #expect(all.versions.last?.account.password == "pw-0")
+            #expect(Set(all.values.map(\.item.id)).count == changes)
+            // Nothing follows the last page.
+            try await f.model.loadOlderVersions()
+            #expect(f.model.history?.values.count == changes)
         }
     }
 

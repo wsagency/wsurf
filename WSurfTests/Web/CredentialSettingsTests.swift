@@ -269,8 +269,9 @@ struct CredentialSettingsTests {
             let saved = try #require(try await f.stored().accounts.first)
             #expect(saved.notes?.map(\.text) == ["first", "second, edited"])
             #expect(saved.notes?[0].field?.label == "Memo")
-            try await f.model.loadVersions(accountID: stored.id)
-            #expect(f.model.revisionItems.contains { $0.subject == .note })
+            try await f.model.openHistory(accountID: stored.id)
+            #expect(f.model.history?.values.contains { $0.item.subject == .note } == true)
+            f.model.cancelEditing()
 
             try await f.model.beginEditing(accountID: stored.id)
             f.model.draft?.notes = []

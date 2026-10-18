@@ -170,7 +170,7 @@ final class CredentialSettingsModel {
         ) ?? false
     }
 
-    // MARK: Trash and earlier versions (state)
+    // MARK: Trash and editing (state)
 
     var trashItems: [TrashItem] {
         live?.trash ?? []
@@ -187,15 +187,6 @@ final class CredentialSettingsModel {
     }
     var pendingPurge: PendingPurge? {
         live?.pendingPurge
-    }
-    var revisionItems: [RevisionItem] {
-        live?.revisions ?? []
-    }
-    var revisionHasMore: Bool {
-        live?.revisionNext != nil
-    }
-    var versionsAccountID: UUID? {
-        live?.versionsAccountID
     }
 
     var draft: CredentialDraft? {
@@ -552,7 +543,7 @@ final class CredentialSettingsModel {
         storedDefaultVaultID = await store.defaultVaultID()
     }
 
-    // MARK: Trash and earlier versions
+    // MARK: Trash
 
     /// The first page of the vault's Trash and its verified counts. Everything lives in the authorization session, so a lock,
     /// a re-unlock or another vault starts again from nothing.
@@ -642,47 +633,6 @@ final class CredentialSettingsModel {
         _ = await guarded { try await reloadAfterWrite(epoch: pending.epoch) }
     }
 
-    /// The first page of one credential's earlier versions.
-    func loadVersions(accountID: UUID) async throws {
-        guard let live else { throw CredentialVaultError.unauthorized }
-        try await fetchVersions(accountID: accountID, epoch: live.epoch)
-    }
-
-    func loadMoreVersions() async throws {
-        guard let live, let accountID = live.versionsAccountID, let after = live.revisionNext, let manager else { return }
-        let page = try await manager.revisionPage(accountID: accountID, after: after)
-        try Task.checkCancellation()
-        try update(live.epoch) {
-            guard $0.versionsAccountID == accountID, $0.revisionNext == after else { return }
-            let known = Set($0.revisions.map(\.id))
-            $0.revisions += page.items.filter { !known.contains($0.id) }
-            $0.revisionNext = page.next
-        }
-    }
-
-    func closeVersions() {
-        if live != nil {
-            session?.versionsAccountID = nil
-            session?.revisions = []
-            session?.revisionNext = nil
-        }
-    }
-
-    /// Only a listed version of a password, one-time code or website details restores; a passkey never does, so this refuses
-    /// before the vault is asked. The value being replaced is kept as a new earlier version.
-    func restoreVersion(revisionID: UUID) async {
-        guard let live, let manager, let item = live.revisions.first(where: { $0.id == revisionID }) else { return }
-        guard item.subject.restoresFromEarlierVersions else {
-            error = String(localized: "A passkey can’t be restored from an earlier version.")
-            return
-        }
-        _ = await guarded {
-            let (epoch, snapshot) = try await authorizedSnapshot(epoch: live.epoch)
-            _ = try await manager.restoreRevision(revisionID: revisionID, expectedRevision: snapshot.revision, authorizedEpoch: epoch)
-            try await reloadAfterWrite(epoch: epoch)
-        }
-    }
-
     private func fetchTrash(epoch: UInt64) async throws {
         guard let manager, manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
         let page = try await manager.trashPage(after: nil)
@@ -697,26 +647,12 @@ final class CredentialSettingsModel {
         }
     }
 
-    private func fetchVersions(accountID: UUID, epoch: UInt64) async throws {
-        guard let manager, manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-        let page = try await manager.revisionPage(accountID: accountID, after: nil)
-        try Task.checkCancellation()
-        try update(epoch) {
-            $0.versionsAccountID = accountID
-            $0.revisions = page.items
-            $0.revisionNext = page.next
-        }
-    }
-
-    /// After a write this page made: the accounts as stored, and whichever history list is open, from its first page. Internal for the model's extensions.
+    /// After a write this page made: the accounts as stored, and the Trash from its first page when it is open. Internal for the model's extensions.
     func reloadAfterWrite(epoch: UInt64) async throws {
         let (_, snapshot) = try await authorizedSnapshot(epoch: epoch)
         try update(epoch) { $0.refresh(snapshot) }
         if live?.counts != nil {
             try await fetchTrash(epoch: epoch)
-        }
-        if let accountID = live?.versionsAccountID {
-            try await fetchVersions(accountID: accountID, epoch: epoch)
         }
     }
 
