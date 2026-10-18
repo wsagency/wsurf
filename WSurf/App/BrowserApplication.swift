@@ -81,6 +81,7 @@ final class BrowserApplication {
         updates.start()
         let lastWindowID = defaults.string(forKey: Self.lastWindowKey).flatMap(UUID.init(uuidString:))
         let catalog = ProfileStore.shared
+        InputHistory.shared.purgeAllProfilesAtLaunch(catalog.profiles)
         restoreWindows(of: catalog.profiles)
         if windows.isEmpty {
             newWindow(profile: catalog.current)

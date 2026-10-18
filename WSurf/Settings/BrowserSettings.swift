@@ -54,6 +54,9 @@ final class BrowserSettings {
         static let passwordAutofill = "autofill.passwords"
         static let contactAutofill = "autofill.contacts"
         static let paymentCardAutofill = "privacy.paymentCardAutofill"
+        static let inputHistory = "autofill.inputHistory"
+        static let inputHistoryRetention = "autofill.inputHistory.retention"
+        static let inputHistoryExcludedSites = "autofill.inputHistory.excludedSites"
         static let downloadFolder = "downloads.folder"
         static let askWhereToSave = "downloads.ask"
         static let downloadRetention = "downloads.retention"
@@ -70,7 +73,7 @@ final class BrowserSettings {
         Key.searchEngine, Key.customSearchName, Key.customSearchTemplate,
         Key.suggestions, Key.agentOnlyInput,
         Key.historyRetention, Key.clearOnQuit, Key.certificateExceptions,
-        Key.paymentCardAutofill, Key.contactAutofill, Key.passwordAutofill,
+        Key.paymentCardAutofill, Key.contactAutofill, Key.passwordAutofill, Key.inputHistory, Key.inputHistoryRetention, Key.inputHistoryExcludedSites,
         Key.javaScript, Key.blockPopups, Key.blockTrackers, Key.autoplay,
         Key.startPageOrder, Key.startPageHidden, Key.startPageHiddenSites,
     ]
@@ -502,6 +505,18 @@ final class BrowserSettings {
         }
     }
 
+    var recordsInputHistory: Bool {
+        didSet { write(recordsInputHistory, forKey: Key.inputHistory) }
+    }
+
+    var inputHistoryRetention: InputHistoryRetention {
+        didSet { write(inputHistoryRetention.rawValue, forKey: Key.inputHistoryRetention) }
+    }
+
+    var inputHistoryExcludedSites: [String] {
+        didSet { write(inputHistoryExcludedSites, forKey: Key.inputHistoryExcludedSites) }
+    }
+
     // MARK: - Downloads
 
     var downloadFolder: URL {
@@ -746,6 +761,9 @@ final class BrowserSettings {
         }
         fillsContacts = object(Key.contactAutofill) as? Bool ?? true
         fillsPaymentCards = object(Key.paymentCardAutofill) as? Bool ?? true
+        recordsInputHistory = object(Key.inputHistory) as? Bool ?? false
+        inputHistoryRetention = string(Key.inputHistoryRetention).flatMap(InputHistoryRetention.init(rawValue:)) ?? .standard
+        inputHistoryExcludedSites = stringArray(Key.inputHistoryExcludedSites) ?? []
 
         searchEngineID = string(Key.searchEngine) ?? SearchEngine.duckDuckGo.id
         customSearchName = string(Key.customSearchName) ?? ""

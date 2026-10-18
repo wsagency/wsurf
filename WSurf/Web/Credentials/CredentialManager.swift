@@ -201,6 +201,8 @@ final class CredentialManager {
         for profileID in Set(stores.keys).union(managers.keys).union(creations.keys) {
             lock(profileID: profileID, reason: reason)
         }
+        // A profile with no vault state is not in that set, and its Input History can be open all the same.
+        InputHistory.shared.lockAll()
     }
 
     /// Locks one profile's vault managers, creations and ceremonies, and withdraws its pending autofill vault choices. A profile
@@ -212,6 +214,7 @@ final class CredentialManager {
         revokeCreations(profileID)
         WebAuthnAdapter.cancel(profileID: profileID)
         AutofillSaveCoordinator.shared.vaultAccessEnded(profileID: profileID)
+        InputHistory.shared.lock(profileID: profileID)
     }
 
     private static func revokeCreations(_ profileID: UUID) {
@@ -232,6 +235,7 @@ final class CredentialManager {
         revokeCreations(profileID)
         WebAuthnAdapter.cancel(profileID: profileID)
         AutofillSaveCoordinator.shared.vaultAccessEnded(profileID: profileID)
+        InputHistory.shared.lock(profileID: profileID)
         await stores.removeValue(forKey: profileID)?.close()
     }
 
@@ -297,7 +301,9 @@ final class CredentialManager {
         }
     }
 
-    private static func installObserversOnce() {
+    /// Observes the events that lock the whole session (sleep, screen lock, termination). Input History calls it too, so a profile
+    /// that never opened a vault still locks on them.
+    static func installObserversOnce() {
         guard observers.isEmpty else { return }
         func observe(_ center: NotificationCenter, _ name: Notification.Name, _ reason: CredentialLockReason) -> any NSObjectProtocol {
             center.addObserver(forName: name, object: nil, queue: .main) { _ in
