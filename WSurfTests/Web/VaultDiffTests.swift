@@ -323,12 +323,15 @@ struct VaultDiffTests {
         #expect(plan.setsModifiedAt == [id])
     }
 
-    @Test func clearingNotesMovesThemToTrash() throws {
+    @Test func clearingNotesKeepsThemAsAnEarlierVersion() throws {
         let plan = try diff(old: withNotes(), new: rich())
 
         #expect(plan.persistence == .semantic)
-        #expect(plan.revisions.isEmpty)
-        #expect(plan.removals == [.credential(ownerID: id, subject: .note, passkeyID: nil)])
+        #expect(plan.removals.isEmpty)
+        #expect(plan.revisions.count == 1)
+        let revision = try pick(.note, in: plan)
+        #expect(revision.ownerID == id)
+        #expect(try decode([CredentialNote].self, revision) == Self.planted)
         #expect(plan.setsModifiedAt == [id])
     }
 
