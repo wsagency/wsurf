@@ -7,6 +7,20 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+- Credential Manager no longer freezes after unlocking a vault with thousands of credentials; long lists draw only the rows on screen.
+- MCP for development and QA:
+  - Paired apps connect with revocable tokens.
+  - Every action reports what changed on the page.
+  - Page dialogs, drag and key chords.
+  - Console and network detail, plus opt-in headers and bodies on developer sites.
+  - An accessibility outline and a performance summary.
+  - The Developer tier, with a Developer profile and developer sites: test passwords, scripts and DOM edits.
+  - Compare a page in WebKit and Chromium.
+  - Media emulation, and clearing one site’s data.
+- A badge in the window shows which app controls it, with a Stop button.
+- Paired apps can follow a default website access level instead of asking before every new website.
+- WSurf asks before the assistant or a connected app closes a tab. Pinned tabs are never closed.
+- Back in a new Chromium tab no longer returns to the empty startup page.
 - The import review recognizes exact duplicates: an item that matches a saved login (same site, username and password, or the same passkey) is shown as already saved, or as a suggested merge that only adds what’s missing.
 - Passkeys with user handles longer than 64 bytes (for example PayPal’s) now import and sign in.
 - File › Free Memory unloads background tabs in every window.

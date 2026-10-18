@@ -148,8 +148,16 @@ Use Apple Intelligence on your Mac, add a provider API key, or connect to a loca
 server such as Ollama or LM Studio. Supported providers include OpenAI,
 Anthropic, Gemini, DeepSeek, Groq, Mistral, OpenRouter, and xAI.
 
-External assistants can access only the tabs you share through WSurf's
-[MCP server](MCP.md). Each connection stays bound to its original regular window.
+### Assistant and MCP
+
+External assistants such as Claude Code or Codex connect through WSurf's
+[MCP server](MCP.md) and can use only the tabs you share. Each connection stays
+bound to its original regular window, shows a badge with a Stop button, and can
+be paired so you can revoke it later. For development and QA you can give a
+paired app Developer access on developer sites such as localhost: it can read
+console and network detail, type test passwords, run scripts and compare a page in
+WebKit and Chromium. [MCP.md](MCP.md) lists the tools, the access levels and what
+is never shared.
 
 ## Privacy and control
 
