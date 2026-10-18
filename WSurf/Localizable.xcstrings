@@ -14,6 +14,12 @@
         }
       }
     },
+    "A website’s own Assistant Access setting wins. Private windows always ask. Stop External Connections pauses an app until you resume it." : {
+      "comment" : "Note under the Websites section of the Connected apps page. Assistant Access is the name of the per-website setting. Stop External Connections is the exact name of the menu command; Resume is the button on this page."
+    },
+    "Allow %@ to Use This Page?" : {
+      "comment" : "Heading of the sheet that asks whether a paired app may use a page that shows a password or payment field, after it opened the website under the Website access default. %@ is the app’s name, supplied at runtime. Title Case."
+    },
     "assistant asks first" : {
       "comment" : "Fragment in the one-line summary under a website, meaning its Assistant Access is set to Ask even if the default would allow more. Lower case: joined with other fragments by a separator, never shown alone."
     },
@@ -28,6 +34,9 @@
     },
     "A website’s own Assistant Access setting wins over this default. Private windows always ask." : {
       "comment" : "Note under the Acting on websites section in Settings. Assistant Access is the name of the per-website setting in the site menu and on a website’s settings page; this default is the Website access row above."
+    },
+    "Follow Website access" : {
+      "comment" : "Row on the Connected apps page. Its switch lets paired apps open and use new websites under the Website access default, as the assistant does. Sentence case. Website access is the name of the row in Acting on websites."
     },
     "%@ — Private Browsing" : {
 
@@ -65,6 +74,9 @@
     },
     "Private windows always ask." : {
       "comment" : "Caption of the Website access row when Settings is open in a private window, and the end of the note under the Acting on websites section. The Website access default never applies in private windows."
+    },
+    "This page has a password or payment field. %@ will be able to click, type, and navigate on %@. Password and payment fields stay blocked." : {
+      "comment" : "Body of the sheet that asks whether a paired app may use a page with a password or payment field. The first %@ is the app’s name and the second is the website’s host, both supplied at runtime. The consequence comes first."
     },
     "%@ wants to open %@." : {
       "localizations" : {
@@ -486,6 +498,9 @@
     },
     "Website access" : {
       "comment" : "Row title in Settings › Assistant, Acting on websites. It chooses how much of a website the assistant may use when that website has no setting of its own: Ask, Read Only or Allow Control. Sentence case."
+    },
+    "With the default set to Allow Control, paired apps open and use new websites without asking again. They still ask on pages with a password or payment field, and before signing in, purchases, and deleting." : {
+      "comment" : "Caption of the Follow Website access row on the Connected apps page. Allow Control is the exact name of a Website access level. Paired apps are apps the user paired with WSurf."
     },
     "Without asking" : {
       "comment" : "Label beside the menu on a paired app’s row. The menu sets what the app may do on developer sites without a prompt: Off, Development or Developer."

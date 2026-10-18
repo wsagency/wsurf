@@ -106,6 +106,12 @@ final class MCPTrustStore {
         var developerProfileID: UUID?
         /// The profile WSurf created for developer work. Choosing any other profile needs the owner's confirmation.
         var dedicatedProfileID: UUID?
+        /// Whether paired apps open and use new websites under the Website access default. Off until the owner turns it on in
+        /// Settings. It lives here, not in the profile's SitePermissions file, which a process with a shell can edit.
+        var appsFollowDefault = false
+        /// The Website access default the owner approved for apps, as Settings last wrote it. The profile's own file can only
+        /// lower what apps get from it.
+        var appsDefaultLevel = AssistantAccessPolicy.ask
 
         init() {}
 
@@ -117,6 +123,21 @@ final class MCPTrustStore {
             includesThisMac = try values.decodeIfPresent(Bool.self, forKey: .includesThisMac) ?? true
             developerProfileID = try values.decodeIfPresent(UUID.self, forKey: .developerProfileID)
             dedicatedProfileID = try values.decodeIfPresent(UUID.self, forKey: .dedicatedProfileID)
+            appsFollowDefault = try values.decodeIfPresent(Bool.self, forKey: .appsFollowDefault) ?? false
+            // A level this build does not know reads as Ask rather than making the whole document unreadable.
+            appsDefaultLevel = Self.defaultLevel(try? values.decodeIfPresent(AssistantAccessPolicy.self, forKey: .appsDefaultLevel))
+        }
+
+        /// No Access is a choice for one website, never for the default, so it is stored as Ask.
+        static func defaultLevel(_ policy: AssistantAccessPolicy?) -> AssistantAccessPolicy {
+            switch policy {
+            case .readOnly:
+                .readOnly
+            case .control:
+                .control
+            case .ask, .deny, nil:
+                .ask
+            }
         }
     }
 
@@ -134,6 +155,8 @@ final class MCPTrustStore {
     private(set) var includesThisMac = true
     private(set) var developerProfileID: UUID?
     private(set) var dedicatedProfileID: UUID?
+    private(set) var appsFollowDefault = false
+    private(set) var appsDefaultLevel = AssistantAccessPolicy.ask
     @ObservationIgnored private let storage: (any MCPTrustStorage)?
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var document = Document()
@@ -207,6 +230,12 @@ final class MCPTrustStore {
         }
         if dedicatedProfileID != stored.dedicatedProfileID {
             dedicatedProfileID = stored.dedicatedProfileID
+        }
+        if appsFollowDefault != stored.appsFollowDefault {
+            appsFollowDefault = stored.appsFollowDefault
+        }
+        if appsDefaultLevel != stored.appsDefaultLevel {
+            appsDefaultLevel = stored.appsDefaultLevel
         }
         return changed
     }
@@ -337,6 +366,25 @@ final class MCPTrustStore {
                 draft.dedicatedProfileID = id
             }
         }
+    }
+
+    // MARK: Website access default
+
+    /// Lets paired apps follow the Website access default, up to `level`: what Settings shows as the default when the owner
+    /// turns this on. Only Settings calls it, and the keychain holds it, so a process with a shell cannot turn it on.
+    func setAppsFollowDefault(_ follows: Bool, level: AssistantAccessPolicy) throws {
+        try edit { draft in
+            draft.appsFollowDefault = follows
+            draft.appsDefaultLevel = Document.defaultLevel(level)
+        }
+    }
+
+    /// Records the default Settings now shows, so what apps may follow keeps up with the owner's own change. Settings only.
+    /// Does nothing while following is off: the level matters only then, and turning it on writes the level too.
+    func setAppsDefaultLevel(_ level: AssistantAccessPolicy) throws {
+        loadIfNeeded()
+        guard appsFollowDefault else { return }
+        try edit { $0.appsDefaultLevel = Document.defaultLevel(level) }
     }
 
     /// Applies `change` to a copy and stores it, or stores nothing.

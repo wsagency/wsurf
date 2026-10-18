@@ -86,7 +86,9 @@ extension MCPBrowserSession {
         }
         let previousURL = webURL(of: tab)
         let origin = SitePermissions.origin(for: url)
-        if origin != grant.origin, !followsDeveloperSites(grant, to: url) {
+        // A default grant stays a default grant on its own website. A new website joins it only where the default applies.
+        let viaDefault = (origin != grant.origin || grant.source == .appDefault) && followsWebsiteDefault(at: url)
+        if origin != grant.origin, !followsDeveloperSites(grant, to: url), !viaDefault {
             guard await openConsent(clientName, url) else { return failure("Navigation was not approved.") }
         }
         guard mayProceed(tab, capability: .control), onScreen(tab), webURL(of: tab) == previousURL else {
@@ -94,7 +96,13 @@ extension MCPBrowserSession {
         }
         guard browser.sitePermissions.assistantRecord(for: origin) != .deny else { return failure("Assistant access is off for this website.") }
         observations[tab.id] = nil
-        grants[tab.id] = followsDeveloperSites(grant, to: url) ? Grant(origin: origin, access: grant.access, source: grant.source) : moved(grant, to: origin)
+        if followsDeveloperSites(grant, to: url) {
+            grants[tab.id] = Grant(origin: origin, access: grant.access, source: grant.source)
+        } else if viaDefault {
+            grants[tab.id] = Grant(origin: origin, access: .control, source: .appDefault)
+        } else {
+            grants[tab.id] = moved(grant, to: origin)
+        }
         let immediate = tab.load(url, transition: .agent)
         let navigation = await tab.waitForPendingNavigation() ?? immediate
         guard navigation != nil else {
@@ -122,14 +130,16 @@ extension MCPBrowserSession {
         guard grants.keys.contains(where: { sharedTab($0).map { permits($0, capability: .control) } ?? false }),
             let url = permittedDestination(raw)
         else { return failure("Opening a tab requires control access and an allowed HTTP(S) URL.") }
-        guard await openConsent(clientName, url), isConnected, available(), !Task.isCancelled else {
+        let viaDefault = followsWebsiteDefault(at: url)
+        let approved = viaDefault ? true : await openConsent(clientName, url)
+        guard approved, isConnected, available(), !Task.isCancelled else {
             return failure("Opening the page was not approved.")
         }
         guard browser.sitePermissions.assistantRecord(for: SitePermissions.origin(for: url)) != .deny else {
             return failure("Assistant access is off for this website.")
         }
         let tab = browser.newTab(url: url, transition: .agent, engine: engine)
-        grants[tab.id] = Grant(origin: SitePermissions.origin(for: url), access: .control)
+        grants[tab.id] = Grant(origin: SitePermissions.origin(for: url), access: .control, source: viaDefault ? .appDefault : .sheet)
         return success("Opened tab \(tab.id.uuidString).\(opened) Use readPage after it loads.")
     }
 
@@ -260,13 +270,13 @@ extension MCPBrowserSession {
             // A page-initiated move between developer sites keeps the grant; any other move ends it. A standing grant that
             // no longer holds is dropped: the app asks again, and gets it back only where it applies.
             guard followsDeveloperSites(grant, to: url) else {
-                dropIfStanding(id)
+                dropIfConditional(id)
                 return nil
             }
             grants[id] = Grant(origin: origin, access: grant.access, source: grant.source)
         }
         guard let current = grants[id], effectiveAccess(of: current, at: url) != nil else {
-            dropIfStanding(id)
+            dropIfConditional(id)
             return nil
         }
         tab.assistantAccess.pageChanged(url: url)
@@ -306,7 +316,31 @@ extension MCPBrowserSession {
         case .standing:
             guard let standing = standingAccess(at: url) else { return nil }
             return grant.access.rank <= standing.rank ? grant.access : standing
+        case .appDefault:
+            return followsWebsiteDefault(at: url) ? grant.access : nil
         }
+    }
+
+    // MARK: The Website access default
+
+    /// Whether this paired app opens `url` under the owner's Website access default. Read from the trust store and the
+    /// window's profile now, never from a snapshot: turning it off, pausing the app, or lowering the default ends it.
+    func followsWebsiteDefault(at url: URL) -> Bool {
+        MCPDefaultAccess.opens(url, client: livePairedClient, in: browser, trust: trust)
+    }
+
+    /// A page reached under the default asks before the app controls it when it shows a password or payment field, as it
+    /// does for the assistant. Allowing it is the user's answer for this website and connection: the grant then stands like
+    /// one from the Open and Share sheet. Nil means the call may go on.
+    func sensitivePageRefusal(_ tab: BrowserTab, view: BrowserPage, url: URL) async -> CallTool.Result? {
+        guard let grant = grants[tab.id], grant.source == .appDefault, await sensitivePageProbe(view) else { return nil }
+        let stillHolds = { [self] in
+            isConnected && available() && !Task.isCancelled && webURL(of: tab) == url && grants[tab.id]?.source == .appDefault
+        }
+        guard stillHolds() else { return failure("Page access changed. Read the page again.") }
+        guard await sensitiveConsent(clientName, url), stillHolds() else { return failure("Using this page was not approved.") }
+        grants[tab.id] = Grant(origin: grant.origin, access: grant.access)
+        return nil
     }
 
     /// Developer-class grants (standing, or Developer from the sheet) move between developer sites without a sheet and
@@ -322,15 +356,17 @@ extension MCPBrowserSession {
         return Grant(origin: origin, access: access)
     }
 
-    private func dropIfStanding(_ id: UUID) {
-        guard grants[id]?.source == .standing else { return }
+    /// Drops a grant that depends on a setting (standing, or from the default), never one the user gave in a sheet.
+    private func dropIfConditional(_ id: UUID) {
+        guard let source = grants[id]?.source, source != .sheet else { return }
         grants[id] = nil
         observations[id] = nil
     }
 
-    /// Drops standing grants that no longer hold and releases the leases they carried. Runs when the trust store changes.
+    /// Drops standing and default grants that no longer hold and releases the leases they carried. Runs when the trust store
+    /// changes.
     func refreshStanding() {
-        for (id, grant) in grants where grant.source == .standing {
+        for (id, grant) in grants where grant.source != .sheet {
             let holds = browser.tabs.first { $0.id == id }.flatMap(webURL(of:)).map { effectiveAccess(of: grant, at: $0) != nil }
             if holds != true {
                 grants[id] = nil

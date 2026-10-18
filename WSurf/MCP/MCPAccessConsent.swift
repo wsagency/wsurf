@@ -128,6 +128,22 @@ enum MCPAccessConsent {
         return await present(alert, in: window) == .alertFirstButtonReturn
     }
 
+    /// The question for a page that shows a password or payment field, reached under the Website access default.
+    static func useSensitivePage(client: String, url: URL, in window: NSWindow?) async -> Bool {
+        guard !AppDatabase.isRunningTests, window != nil else { return false }
+        let alert = NSAlert()
+        let name = displayName(for: client)
+        alert.messageText = String(localized: "Allow \(name) to Use This Page?")
+        alert.informativeText = String(localized: """
+            This page has a password or payment field. \(name) will be able to click, type, and navigate on \(url.host() ?? url.absoluteString). \
+            Password and payment fields stay blocked.
+            """)
+        alert.addButton(withTitle: String(localized: "Allow"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        alert.buttons.last?.keyEquivalent = "\u{1b}"
+        return await present(alert, in: window) == .alertFirstButtonReturn
+    }
+
     private static func displayName(for client: String) -> String {
         client == "codex-mcp-client" ? "Codex" : client
     }
