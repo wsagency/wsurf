@@ -480,8 +480,12 @@ nonisolated enum PageRuntime {
         return out;
       };
       const ATTRIBUTE_BODY = /^\s*(?:(?:[^\s|=~^$*\\\[\]"']*|\*)\|(?!=))?([^\s|=~^$*\\\[\]"']+)\s*(?:([~|^$*]?=)[\s\S]*)?$/;
-      // null when the selector may run; otherwise 'invalid' (not a selector) or 'unsafe' (reads an unexposed attribute).
-      const selectorProblem = selector => {
+      // null when the selector may run; otherwise 'invalid' (not a selector), 'unsafe' (reads an unexposed attribute) or 'secret'
+      // (reads the value attribute, which not even `unrestricted` allows).
+      // `unrestricted` (the Developer tier) lifts the attribute allowlist, not the rule for `value`: a selector on a field's value
+      // attribute (`input[type=password][value^="a"]`, also under :has or :is) would read a prefilled password a character at a
+      // time. It is refused ('secret') whether or not anything would match, so the refusal tells nothing.
+      const selectorProblem = (selector, unrestricted = false) => {
         try { document.createDocumentFragment().querySelector(selector); } catch (e) { return 'invalid'; }
         let canonical;
         try {
@@ -494,12 +498,17 @@ nonisolated enum PageRuntime {
           const m = ATTRIBUTE_BODY.exec(body);
           if (!m) return 'unsafe';
           const name = m[1].toLowerCase(), hasValue = !!m[2];
+          if (unrestricted) {
+            if (name === 'value') return 'secret';
+            continue;
+          }
           if (name.startsWith('aria-') || TEST_ATTRIBUTES.has(name)) continue;
           if (!ATTRIBUTE_ALLOWLIST.has(name) || (hasValue && URL_ATTRIBUTES.has(name))) return 'unsafe';
         }
         return null;
       };
       const SELECTOR_ERRORS = { invalid: 'Invalid selector.',
+        secret: 'That selector reads the value attribute, which can reveal what a password or payment field holds. Select by another attribute.',
         unsafe: 'That selector reads an attribute value that is not exposed. Use id, class, role, type, name, aria-*, or a test attribute (data-testid); href and src by presence only.' };
       const refFor = el => {
         let ref = refIDs.get(el);
@@ -551,8 +560,8 @@ nonisolated enum PageRuntime {
         return out;
       };
 
-      const findAll = (selector, offset, limit) => {
-        const problem = selectorProblem(selector);
+      const findAll = (selector, offset, limit, unrestricted = false) => {
+        const problem = selectorProblem(selector, unrestricted);
         if (problem) return { problem, error: SELECTOR_ERRORS[problem] };
         if (!Number.isInteger(offset) || offset < 0 || offset > 10000 || !Number.isInteger(limit) || limit < 1 || limit > 100) {
           return { problem: 'range', error: 'offset must be 0 to 10000 and limit 1 to 100.' };

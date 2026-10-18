@@ -215,7 +215,9 @@ extension ChromiumDevTools {
             throw ChromiumError.protocolFailure("Runtime.evaluate returned no result.")
         }
         if let exception = response["exceptionDetails"] as? [String: Any] {
-            let description = exception["text"] as? String ?? "JavaScript evaluation failed."
+            // `text` is only "Uncaught"; the thrown object says what happened, for a compile error the SyntaxError and its message.
+            let thrown = (exception["exception"] as? [String: Any])?["description"] as? String
+            let description = thrown?.split(separator: "\n").first.map(String.init) ?? exception["text"] as? String ?? "JavaScript evaluation failed."
             throw ChromiumError.protocolFailure(description)
         }
         if result["type"] as? String == "undefined" { return NSNull() }

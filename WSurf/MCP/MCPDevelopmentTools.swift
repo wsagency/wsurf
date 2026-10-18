@@ -14,6 +14,10 @@ nonisolated enum MCPDevelopmentTools {
 
     enum Kind: String {
         case ok, unsupported, invalidInput, stale, denied, ownershipConflict, pageGone
+        /// A script threw or could not be compiled.
+        case scriptError
+        /// A script ran past its time limit.
+        case timedOut
     }
 
     static func result(_ kind: Kind, tabID: UUID, message: String? = nil, _ fields: [String: Value] = [:]) -> CallTool.Result {
