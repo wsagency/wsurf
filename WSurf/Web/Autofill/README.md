@@ -42,8 +42,10 @@ the one form being filled in (a styled `div`, or a link that stays on the page:
 document abandons the capture. Values an extension or the page filled count when
 a trusted click or Enter follows within 1.5 seconds; for a plain click that is
 true of passwords only. Only the fields a snapshot was read from can veto a
-submit as invalid, so an empty captcha or terms box does not. A form whose
-`action` is empty, `#` or `javascript:` is safe; another origin never is. Of
+submit as invalid, so an empty captcha or terms box does not. A form with
+an empty or `javascript:` action is safe. Any other action, `#x` included, is
+resolved against the document's base and must stay on the page's origin, and a
+page whose `<base>` is on another origin is never safe. Of
 several account fields the one before the first password is used, and two
 unlabelled passwords that differ are an old and a new one unless the second asks
 to confirm. Form disappearance covers SPA and automatic submission. A

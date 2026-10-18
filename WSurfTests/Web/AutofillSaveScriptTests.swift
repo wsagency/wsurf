@@ -63,6 +63,15 @@ struct AutofillSaveScriptTests {
             try await run("globalThis.__wsurfAutofillSave.__test[name](document.getElementById(id));", ["name": name, "id": id])
         }
 
+        /// What the fill and capture paths ask: the shared `safe(form)` and the group's cached answer.
+        func safety(of id: String) async throws -> String {
+            let result = try await page.callAsyncJavaScript(
+                "const f = globalThis.__wsurfAutofillForms, e = document.getElementById(id); return [f.safe(e), f.group(e).safe].join();",
+                arguments: ["id": id], in: nil, contentWorld: AutofillPage.world
+            )
+            return try #require(result as? String)
+        }
+
         func check() async throws {
             try await run("globalThis.__wsurfAutofillSave.check();")
         }
@@ -80,11 +89,13 @@ struct AutofillSaveScriptTests {
     }
 
     private func withHarness(
-        _ engine: BrowserEngine, _ html: String,
+        _ engine: BrowserEngine, _ html: String, head: String = "",
         policy: [String: Bool] = ["password": true, "card": false, "contact": false],
         body: (Harness) async throws -> Void
     ) async throws {
-        let server = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><html><body>\(html)</body></html>")])
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<!doctype html><html><head>\(head)</head><body>\(html)</body></html>"),
+        ])
         defer { withExtendedLifetime(server) {} }
         let url = try server.url()
         let context = BrowserProfileContext(profile: .privateBrowsing())
@@ -215,6 +226,30 @@ struct AutofillSaveScriptTests {
             try await harness.hook("click", "go")
             try await harness.settle()
             #expect(harness.staged.isEmpty)
+        }
+    }
+
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases, ["action=\"#x\"", ""])
+    func crossOriginBaseMakesEveryFormUnsafe(engine: BrowserEngine, attribute: String) async throws {
+        let head = #"<base href="https://evil.example/">"#
+        try await withHarness(engine, Self.form(attributes: attribute), head: head) { harness in
+            #expect(try await harness.safety(of: "form") == "false,false")
+            try await typeLogin(harness)
+            try await harness.hook("click", "go")
+            try await harness.hook("enter", "p")
+            try await harness.settle()
+            #expect(harness.staged.isEmpty)
+        }
+    }
+
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func fragmentActionIsSafeAndCapturedWhileTheBaseStaysOnTheOrigin(engine: BrowserEngine) async throws {
+        let head = #"<base href="/app/">"#
+        try await withHarness(engine, Self.form(attributes: ##"action="#x""##), head: head) { harness in
+            #expect(try await harness.safety(of: "form") == "true,true")
+            try await typeLogin(harness)
+            try await harness.hook("click", "go")
+            try #require(await waitUntil { harness.staged.count == 1 })
         }
     }
 

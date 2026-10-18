@@ -114,6 +114,18 @@ struct PasswordAutofillScriptTests {
         #expect(sink.body?["token"] as? String == nil)
     }
 
+    @Test(.boundedWebViews, arguments: [##"action="#x""##, ""])
+    func refusesFormsWhoseBaseMovesTheirActionToAnotherOrigin(attribute: String) async throws {
+        let (view, sink) = try await load(#"""
+        <base href="https://other.example/">
+        <form \#(attribute)><input id="username" autocomplete="username"><input id="password" type="password"></form>
+        """#)
+        _ = try await view.callAsyncJavaScript("password.focus();", arguments: [:], in: nil, contentWorld: PasswordAutofill.world)
+        #expect(try await fill(UUID().uuidString, in: view) == 0)
+        #expect(sink.body?["token"] as? String == nil)
+        #expect(try await view.evaluateJavaScript("username.value + password.value") as? String == "")
+    }
+
     @Test(.boundedWebViews) func componentInputsUseTheirOuterFormAndHostMetadata() async throws {
         let (view, sink) = try await load(#"""
         <form id="login" autocomplete="off" onsubmit="window.submitted=true; return false">

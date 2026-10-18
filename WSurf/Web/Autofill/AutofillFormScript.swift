@@ -215,13 +215,17 @@ nonisolated enum AutofillFormScript {
         }
         return el;
       };
-      // Read the attribute, not `form.action`: a field named "action" would answer for the property.
+      // Read the attribute, not `form.action`: a field named "action" would answer for the property. A <base> on
+      // another origin moves every relative action ("#x" included) there, so such a page is never safe.
       const safe = root => {
         if (!root) return false;
-        const action = (Element.prototype.getAttribute.call(root,'action') || '').trim();
-        // These never leave the page. Any other URL must stay on this origin.
-        if (!action || action.startsWith('#') || /^javascript:/i.test(action)) return true;
-        try { return new URL(action,document.baseURI).origin === location.origin; } catch { return false; }
+        try {
+          if (new URL(document.baseURI).origin !== location.origin) return false;
+          const action = (Element.prototype.getAttribute.call(root,'action') || '').trim();
+          // An empty action submits to this document, and "javascript:" never leaves it. Any other value is resolved.
+          if (!action || /^javascript:/i.test(action)) return true;
+          return new URL(action,document.baseURI).origin === location.origin;
+        } catch { return false; }
       };
       const group = target => {
         const root = scope(target);
