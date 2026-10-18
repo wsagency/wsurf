@@ -25,7 +25,7 @@ import threading
 import time
 
 FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixture")
-EXPECTED_TOOLS = 33
+EXPECTED_TOOLS = 39
 JPEG = "/9j/"  # base64 of FF D8 FF
 
 
