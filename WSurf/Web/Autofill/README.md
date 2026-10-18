@@ -36,10 +36,24 @@ Typing or dismissal requires another focus/click interaction to reopen the panel
 
 `AutofillSaveScript` tracks trusted edits and separates an attempt from evidence
 of completion. Submit events, Enter, and structural action controls stage an
-attempt without inspecting their wording. Form disappearance covers SPA and
-automatic submission. A replacement password field, a disabled form, or a
-recognized verification-code step delays completion. Snapshots and attempts are
-bounded and expire after two minutes.
+attempt without inspecting their wording. So does any other trusted click inside
+the one form being filled in (a styled `div`, or a link that stays on the page:
+`#`, a fragment, `javascript:`), except a click into a field. A link to another
+document abandons the capture. Values an extension or the page filled count when
+a trusted click or Enter follows within 1.5 seconds; for a plain click that is
+true of passwords only. Only the fields a snapshot was read from can veto a
+submit as invalid, so an empty captcha or terms box does not. A form whose
+`action` is empty, `#` or `javascript:` is safe; another origin never is. Of
+several account fields the one before the first password is used, and two
+unlabelled passwords that differ are an old and a new one unless the second asks
+to confirm. Form disappearance covers SPA and automatic submission. A
+replacement password field, a disabled form, or a recognized verification-code
+step delays completion. Snapshots and attempts are bounded and expire after two
+minutes, or five once a verification step has been shown.
+
+The script's test hooks (`__test`, and plain HTTP so a loopback fixture can load
+it) exist only when `AppDatabase.isRunningTests` is true; `client(testHooks: false)`
+is what ships.
 
 `AutofillSubmissionTracker` retains pending candidates in the tab's memory across
 navigation. It checks registered frame reports for a settled new document or a

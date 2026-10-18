@@ -215,10 +215,13 @@ nonisolated enum AutofillFormScript {
         }
         return el;
       };
+      // Read the attribute, not `form.action`: a field named "action" would answer for the property.
       const safe = root => {
         if (!root) return false;
-        const action = root instanceof HTMLFormElement ? root.action : root.getAttribute('action');
-        try { return new URL(action || location.href, location.href).origin === location.origin; } catch { return false; }
+        const action = (Element.prototype.getAttribute.call(root,'action') || '').trim();
+        // These never leave the page. Any other URL must stay on this origin.
+        if (!action || action.startsWith('#') || /^javascript:/i.test(action)) return true;
+        try { return new URL(action,document.baseURI).origin === location.origin; } catch { return false; }
       };
       const group = target => {
         const root = scope(target);
