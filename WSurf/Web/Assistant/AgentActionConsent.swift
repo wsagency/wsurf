@@ -131,7 +131,8 @@ enum AgentActionConsent {
         return !Task.isCancelled && response == .alertFirstButtonReturn ? .allowOnce : .decline
     }
 
-    private static var hasCurrentWindow: Bool {
+    /// Whether the window this task or connection works for is still there and still its window.
+    static var hasCurrentWindow: Bool {
         guard let scopedWindow else { return true }
         guard let browser = scopedWindow.browser, browser.sessionClosedAt == nil,
               browser.context.isRegistered(browser) else { return false }
@@ -139,7 +140,7 @@ enum AgentActionConsent {
     }
 
     /// Never wait for an unanswered native authorization sheet in automated tests.
-    private static var isRunningTests: Bool {
+    static var isRunningTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
 

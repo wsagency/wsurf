@@ -141,6 +141,12 @@ model describes it as an instruction.
   consequential-action rules.
 - `AgentActionConsent` asks from trusted app UI. The model cannot suppress it.
 - `AgentActionPolicy` stores narrow, revocable category-and-host grants.
+- `AgentTabClosing` asks before an agent closes a tab. Pinned tabs never close, and a
+  tab the agent opened itself closes without asking. Only the in-app assistant reads
+  the profile's "Allow closing tabs" choice, and only under an Allow Control default.
+  A connection skips the question for its own tabs and under the keychain-backed
+  Developer tier; the profile file, which a process with a shell can edit, never
+  relaxes it.
 - `ConversationLog` persists the activity trail inside the active profile.
 
 Background research uses a non-persistent WebKit data store for each task. It

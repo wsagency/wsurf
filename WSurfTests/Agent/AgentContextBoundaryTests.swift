@@ -46,7 +46,7 @@ struct AgentContextBoundaryTests {
         #expect(browser.activeTab === taskTab)
     }
 
-    @Test func closeTabStopsAtTheContextBoundary() {
+    @Test func closeTabStopsAtTheContextBoundary() async {
         let browser = BrowserModel(database: .temporary())
         let secret = browser.newTab()
         secret.customTitle = "Secret research"
@@ -56,7 +56,7 @@ struct AgentContextBoundaryTests {
         let subject = toolkit(browser: browser)
         subject.beginTask(task(on: taskTab))
 
-        let output = subject.closeTab(matching: "Secret")
+        let output = await subject.closeTab(matching: "Secret")
 
         #expect(output.contains("No tab in this conversation matches"))
         #expect(!output.contains("Secret research"))
@@ -65,7 +65,7 @@ struct AgentContextBoundaryTests {
 
     /// The user moving to another tab mid-task does not pull that tab into
     /// the conversation - "close the active tab" must not close it.
-    @Test func closingTheActiveTabRequiresItToBeInContext() {
+    @Test func closingTheActiveTabRequiresItToBeInContext() async {
         let browser = BrowserModel(database: .temporary())
         let taskTab = browser.newTab()
         taskTab.customTitle = "Task page"
@@ -76,7 +76,7 @@ struct AgentContextBoundaryTests {
         let wandered = browser.newTab()
         wandered.customTitle = "Private reading"
 
-        let output = subject.closeTab(matching: nil)
+        let output = await subject.closeTab(matching: nil)
 
         #expect(output.contains("active tab changed"))
         #expect(browser.tabs.count == 2)

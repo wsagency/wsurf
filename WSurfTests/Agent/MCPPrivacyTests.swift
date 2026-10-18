@@ -170,7 +170,10 @@ struct MCPPrivacyTests {
         #expect(browser.tabs.contains { $0 === tab })
 
         tab.pinID = nil
-        #expect(try await call(subject, "closeTab", tab: tab).isError == false)
+        let closed = try await AgentTabClosing.$decisionForTesting.withValue(.init { _ in .close }) {
+            try await call(subject, "closeTab", tab: tab)
+        }
+        #expect(closed.isError == false)
         #expect(browser.tabs.isEmpty)
     }
 

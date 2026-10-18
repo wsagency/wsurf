@@ -124,6 +124,7 @@ extension MCPBrowserSession {
                 return failure("Assistant access is off for this website.")
             }
             let tab = browser.newTab(url: url, transition: .agent, engine: engine)
+            openedTabs.insert(tab.id)
             grants[tab.id] = Grant(origin: SitePermissions.origin(for: url), access: access, source: .standing)
             return success("Opened tab \(tab.id.uuidString).\(opened) Use readPage after it loads.")
         }
@@ -139,6 +140,7 @@ extension MCPBrowserSession {
             return failure("Assistant access is off for this website.")
         }
         let tab = browser.newTab(url: url, transition: .agent, engine: engine)
+        openedTabs.insert(tab.id)
         grants[tab.id] = Grant(origin: SitePermissions.origin(for: url), access: .control, source: viaDefault ? .appDefault : .sheet)
         return success("Opened tab \(tab.id.uuidString).\(opened) Use readPage after it loads.")
     }
@@ -201,6 +203,7 @@ extension MCPBrowserSession {
         browser.activate(webKit)
         grants[webKit.id] = grant
         grants[chromium.id] = grant
+        openedTabs.formUnion([webKit.id, chromium.id])
         comparison = ComparisonPair(webKit: webKit.id, chromium: chromium.id)
         return comparisonOpened(webKit, chromium, reused: false)
     }
@@ -229,10 +232,11 @@ extension MCPBrowserSession {
         guard let comparison else { return }
         self.comparison = nil
         for id in [comparison.webKit, comparison.chromium] {
-            guard let tab = browser.tabs.first(where: { $0.id == id }), tab.pinnedURL == nil else { continue }
+            guard let tab = browser.tabs.first(where: { $0.id == id }), !tab.isPinnedForProfile else { continue }
             browser.close(tab, recordForReopening: false)
             grants[id] = nil
             observations[id] = nil
+            openedTabs.remove(id)
         }
     }
 

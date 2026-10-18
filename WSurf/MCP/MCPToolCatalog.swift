@@ -371,6 +371,9 @@ nonisolated enum MCPToolCatalog {
                 Parameter(name: "engine", type: "string", description: "webkit or chromium. Omit for the website's own setting.", required: false, choices: ["webkit", "chromium"]),
             ], scope: nil),
         Entry(name: "switchTab", description: "Make a shared tab visible and active. Does not expand this connection’s access.", parameters: [tab], scope: .control),
-        Entry(name: "closeTab", description: "Close a shared, unpinned tab. Requires control access.", parameters: [tab], scope: .control),
+        Entry(
+            name: "closeTab",
+            description: "Close a shared, unpinned tab. Requires control access. WSurf can ask the user first; tabs this connection opened close without asking.",
+            parameters: [tab], scope: .control),
     ]
 }

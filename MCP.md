@@ -200,7 +200,7 @@ revoke it immediately.
 | `openComparison` | Development. Open a page in WebKit and in Chromium, side by side, and share both tabs; see Comparing engines. |
 | `compareTabs` | Development. What differs between two tabs that show one page: pixels, layout numbers, console and network. See Comparing engines. |
 | `switchTab` | Activate an already shared tab before controlling it. |
-| `closeTab` | Close an already shared, unpinned tab. |
+| `closeTab` | Close an already shared, unpinned tab. WSurf asks the user first, except for tabs this connection opened and, in the Developer tier, tabs it holds Developer access to. See Closing tabs below. |
 | `handleDialog` | Read or answer a JavaScript dialog (alert, confirm, prompt, or Chromium's beforeunload "Leave site?") that a page opened in a shared tab. Needs control access. See Page dialogs below. |
 
 These tools cover browser page and tab actions. Assistant conversations, background
@@ -776,7 +776,7 @@ Never sent: Control in any combination; Command with Option; Command with anythi
 
 ### Comparing engines
 
-`openComparison {url}` opens the page in WebKit (Safari's engine) and in Chromium, side by side in the connection's window, and shares both tabs. It needs development access in one of two ways: a paired app's standing grant on a developer site (no sheet), or a page of the same website that the user already shared with development (the pair gets Development; any other address must be a link the connection has seen, as for `navigate`). Anywhere else it is refused and opens nothing, because the Open and Share sheet promises control only. WSurf is not activated or raised, but the pair is shown: Chromium does not load a page that is not on screen, and a screenshot needs one. A connection keeps one pair. Calling it again for the same website loads the same two tabs, and a different website closes them (without leaving them to reopen) and opens a new pair. A tab the user pins is never closed. Close the pair with `closeTab` when done. The tabs carry an engine of their own: it holds across their loads, is never written to the website's setting, and survives a change of that setting. `newTab` takes the same `engine` argument.
+`openComparison {url}` opens the page in WebKit (Safari's engine) and in Chromium, side by side in the connection's window, and shares both tabs. It needs development access in one of two ways: a paired app's standing grant on a developer site (no sheet), or a page of the same website that the user already shared with development (the pair gets Development; any other address must be a link the connection has seen, as for `navigate`). Anywhere else it is refused and opens nothing, because the Open and Share sheet promises control only. WSurf is not activated or raised, but the pair is shown: Chromium does not load a page that is not on screen, and a screenshot needs one. A connection keeps one pair. Calling it again for the same website loads the same two tabs, and a different website closes them (without leaving them to reopen) and opens a new pair. A tab the user pins is never closed. Close the pair with `closeTab` when done; it needs no question, because the connection opened it. The tabs carry an engine of their own: it holds across their loads, is never written to the website's setting, and survives a change of that setting. `newTab` takes the same `engine` argument.
 
 `compareTabs {tabA, tabB}` needs development access to both tabs, both on screen, and no other connection holding a development lease on either. It waits for both pages to finish loading, then measures each tab's viewport. If the sizes differ by more than 2 CSS pixels nothing is captured: the reply is `invalidInput` with both sizes, and the fix is `setViewport` on both (Chromium may not apply a viewport while WSurf is in the background, and a measured size that is still different is reported rather than hidden). Otherwise one reply of about 1 to 2 KB:
 
@@ -796,6 +796,27 @@ Never sent: Control in any combination; Command with Option; Command with anythi
 - **Layout.** Document size, element and image counts, broken images and horizontal scroll, read in each page. `differences` names the numbers that differ (sizes by more than 2 pixels).
 - **Console and network.** Only when `startDiagnostics` runs on both tabs under this connection (`diagnostics: false` skips it); otherwise the reply says capture is not running. Capture starts at the document it was started on, so start it on both tabs and `reloadPage` both. Console warnings and errors are matched by level and text (first line, runs of four or more digits ignored); requests by host and path, without the query. Reported are messages and requests seen in only one tab, requests that failed, were aborted or ended with another error status in only one, and how many failed in both. Engines word the same error differently, so an error can appear once on each side. At most 20 items per list; `more` counts the rest.
 - **Sign-ins.** The engines keep separate cookies and storage. Sign in on both tabs, with test credentials in the Developer tier (see Test credentials), before comparing a page behind a login. Every result passes through the connection's secret scrubber like any other.
+
+### Closing tabs
+
+Closing a tab cannot always be undone, so `closeTab` follows its own rule, the same for every connection:
+
+- **Pinned tabs are never closed.** That covers bookmarked tabs and pages in a pinned folder, under every setting. The call
+  fails with "Pinned tabs must be closed by the user." and no question is shown.
+- **A tab this connection opened** with `newTab` or `openComparison` closes without asking.
+- **Any other shared tab** brings up a sheet in WSurf: "Close “*title*”?" with **Close Tab** and **Keep Open**. The checkbox
+  "Don't ask again for this connection" stops the question for the rest of this connection only; a new connection asks
+  again. If the user keeps the tab open, the call fails and says so; the client should not ask again unprompted.
+- **Stop, a disconnect, or a closed window** while the sheet is open dismisses it and keeps the tab. Pinning the tab while
+  the sheet is open also keeps it.
+- **Developer tier.** A connection that holds Developer access on the tab (a paired app, a developer site and the Developer
+  profile) closes it without asking, like the other confirmations the tier skips, so unattended runs do not wait for a click.
+
+Settings › Assistant › Acting on websites has a **Closing tabs** row (Ask to close tabs, the default, or Allow closing tabs)
+under the Allow Control default. It sets the same rule for the in-app assistant only. Connected apps never read it, because it
+is stored in the profile's own file, which a process with a shell can edit; the only setting that lets an app skip the question
+is the Developer tier, which is kept in the keychain with the pairing. The in-app assistant asks the same way and, like an app,
+never closes pinned tabs or asks about tabs it opened in the same task.
 
 ## Verify with a real client
 

@@ -18,6 +18,8 @@ final class AgentToolkit {
     private var discoveredDestinations: Set<String> = []
     private var seededContextTabIDs: Set<UUID> = []
     private var agentOpenedTabIDs: Set<UUID> = []
+    /// The person chose "Don't ask again" for closing tabs in this task.
+    private var closingWasConfirmed = false
     private(set) var lastToolFailed = false
     var taskLedger = AgentTaskLedger()
     var fileSelection: ((PageFileSelection.Parameters) async -> [URL]?)? {
@@ -184,6 +186,7 @@ final class AgentToolkit {
         self.task = task
         seededContextTabIDs = Set(onScreenTabs.map(\.id))
         agentOpenedTabIDs = []
+        closingWasConfirmed = false
     }
 
     func finishTask(_ completedTask: AgentTaskContext) {
@@ -435,7 +438,9 @@ final class AgentToolkit {
 
     private static let pinnedTabRefusal = "Pinned tabs must be closed by the user."
 
-    func closeTab(matching reference: String?) -> String {
+    /// Closes a tab of the conversation. Pinned tabs never close. An ordinary tab closes only after the person says yes,
+    /// unless the assistant opened it in this task or the settings allow closing (see `closingRefusal`).
+    func closeTab(matching reference: String?) async -> String {
         let step = beginTool(
             name: "closeTab",
             title: reference.map { "Close tab “\($0)”" } ?? "Close the active tab"
@@ -443,39 +448,61 @@ final class AgentToolkit {
         if let output = cancellationOutput(for: step) {
             return output
         }
+        let tab: BrowserTab
+        let namesTab: Bool
         if let reference, !reference.isEmpty {
-            guard let tab = contextTab(matching: reference) else {
+            guard let matched = contextTab(matching: reference) else {
                 let output = "No tab in this conversation matches that."
                 completeTool(step, output: output, failed: true)
                 return output
             }
-            guard !tab.isPinnedForProfile else {
-                completeTool(step, output: Self.pinnedTabRefusal, failed: true)
-                return Self.pinnedTabRefusal
+            tab = matched
+            namesTab = true
+        } else {
+            guard let active = browser.activeTab else {
+                let output = "There are no tabs open."
+                completeTool(step, output: output, failed: true)
+                return output
             }
-            browser.close(tab)
-            let output = "Closed “\(tab.title)”."
-            completeTool(step, output: output)
+            guard contextTabIDs.contains(active.id) else {
+                let output = String(localized: "The active tab changed before the assistant could use it.")
+                completeTool(step, output: output, failed: true)
+                return output
+            }
+            tab = active
+            namesTab = false
+        }
+        let refusal = await closingRefusal(for: tab)
+        if let output = cancellationOutput(for: step) {
             return output
         }
-        guard let active = browser.activeTab else {
-            let output = "There are no tabs open."
-            completeTool(step, output: output, failed: true)
-            return output
+        if let refusal {
+            completeTool(step, output: refusal, failed: true)
+            return refusal
         }
-        guard contextTabIDs.contains(active.id) else {
-            let output = String(localized: "The active tab changed before the assistant could use it.")
-            completeTool(step, output: output, failed: true)
-            return output
-        }
-        guard !active.isPinnedForProfile else {
-            completeTool(step, output: Self.pinnedTabRefusal, failed: true)
-            return Self.pinnedTabRefusal
-        }
-        browser.close(active)
-        let output = "Closed the active tab."
+        browser.close(tab)
+        let output = namesTab ? "Closed “\(tab.title)”." : "Closed the active tab."
         completeTool(step, output: output)
         return output
+    }
+
+    /// Why `tab` stays open, or nil when it may close now. The question comes before any change and the tab is checked
+    /// again after it, because the sheet can stay open while the tab is pinned, closed, or the task is stopped.
+    private func closingRefusal(for tab: BrowserTab) async -> String? {
+        guard !tab.isPinnedForProfile else { return Self.pinnedTabRefusal }
+        let needsQuestion = !agentOpenedTabIDs.contains(tab.id) && !closingWasConfirmed
+            && !browser.sitePermissions.allowsClosingTabsWithoutAsking
+        guard needsQuestion else { return nil }
+        switch await AgentTabClosing.ask(title: tab.title, isPrivate: tab.isPrivate) {
+        case .keepOpen:
+            return "The user chose to keep “\(tab.title)” open. Do not ask again unless they ask for it to be closed."
+        case .closeAndStopAsking:
+            closingWasConfirmed = true
+        case .close:
+            break
+        }
+        guard !Task.isCancelled, browser.tabs.contains(where: { $0 === tab }) else { return "That tab is already closed." }
+        return tab.isPinnedForProfile ? Self.pinnedTabRefusal : nil
     }
 
     func playVideo(topic: String) async -> String {
