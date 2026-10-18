@@ -73,6 +73,9 @@ final class CredentialManager {
     }
     private(set) var unlockCredentials: [VaultUnlock] = []
     private(set) var lastLockReason: CredentialLockReason?
+    /// How long this vault's next unlock lasts. The lease in force keeps the length it began with, except that a shorter choice
+    /// applies to it at once (`setAutoLock`).
+    private(set) var autoLock: CredentialAutoLock
     /// Registrations saved to the vault whose delivery to the website could not be confirmed (page closed, navigated or
     /// locked after the commit, or the outcome is unknown). Memory only and bounded: a restart forgets them, and nothing
     /// here is a secret. Settings shows the details only while unlocked.
@@ -106,6 +109,8 @@ final class CredentialManager {
     @ObservationIgnored private var pending: [VaultAccess] = []
     private var current: VaultAccess?
     @ObservationIgnored private var timer: Task<Void, Never>?
+    /// When the current lease began, which is when the unlock completed. A shorter choice counts from here.
+    @ObservationIgnored private var leaseStart: ContinuousClock.Instant?
     @ObservationIgnored private var isRetired = false
     /// Counts vault writes between their start and their end, and changes whenever one starts or ends.
     @ObservationIgnored private var writesInFlight = 0
@@ -125,6 +130,7 @@ final class CredentialManager {
         self.store = store
         self.now = now
         self.native = native ?? .native(PasskeyVaultUnlocker())
+        autoLock = CredentialAutoLock.stored(for: vaultID, in: ProfileSettingsStore.defaults(for: profile))
     }
 
     // MARK: - Registry
@@ -304,14 +310,17 @@ final class CredentialManager {
                 MainActor.assumeIsolated { lockAll(reason: reason) }
             }
         }
-        let workspace = NSWorkspace.shared.notificationCenter
-        observers = [
-            observe(workspace, NSWorkspace.willSleepNotification, .sleep),
-            // Login-session switch-out; NSApplication focus loss would cancel ceremonies behind provider UI.
-            observe(workspace, NSWorkspace.sessionDidResignActiveNotification, .screenLock),
-            observe(DistributedNotificationCenter.default(), Notification.Name("com.apple.screenIsLocked"), .screenLock),
-            observe(.default, NSApplication.willTerminateNotification, .termination),
-        ]
+        observers = CredentialLockEvent.all.map { event -> any NSObjectProtocol in
+            let center: NotificationCenter = switch event.center {
+            case .workspace:
+                NSWorkspace.shared.notificationCenter
+            case .distributed:
+                DistributedNotificationCenter.default()
+            case .application:
+                .default
+            }
+            return observe(center, event.name, event.reason)
+        }
     }
 
     // MARK: - Access epochs
@@ -499,6 +508,23 @@ final class CredentialManager {
         }
     }
 
+    /// Stores the vault's choice, and applies it to the running lease only when it is shorter: the lease then ends at the unlock plus
+    /// the new time, at once when that has passed. A longer choice, or "When WSurf quits", applies from the next unlock, so no
+    /// choice ever extends a lease. Only an unlocked vault accepts it.
+    func setAutoLock(_ choice: CredentialAutoLock) throws {
+        let instant = now()
+        guard let access = current, let start = leaseStart, access.isAuthorized(at: instant) else { throw CredentialVaultError.unauthorized }
+        CredentialAutoLock.store(choice, for: vaultID, in: ProfileSettingsStore.defaults(for: profile))
+        autoLock = choice
+        guard let end = choice.lifetime.map({ start.advanced(by: $0) }), end < access.deadline else { return }
+        if end <= instant {
+            lock(reason: .timeout)
+        } else {
+            access.shorten(to: end)
+            arm(timerFor: access, until: end, from: instant)
+        }
+    }
+
     // MARK: - Vault access
 
     func snapshot() async throws -> StoreSnapshot {
@@ -616,6 +642,7 @@ final class CredentialManager {
         // Ceremonies bound to this vault stop here, synchronously, before any suspension can let one continue.
         WebAuthnAdapter.cancel(manager: self)
         lastLockReason = reason
+        leaseStart = nil
         timer?.cancel()
         timer = nil
         native.cancel()
@@ -711,9 +738,22 @@ final class CredentialManager {
             previous.revoke()
         }
         current = access
+        // The length is read once, here, from this vault's own setting; the unlock itself was bounded by five minutes (`beginAccess`).
+        autoLock = CredentialAutoLock.stored(for: vaultID, in: ProfileSettingsStore.defaults(for: profile))
+        let end = autoLock.lifetime.map { instant.advanced(by: $0) }
+        // ponytail: "When WSurf quits" is a ten-year deadline and no timer; a lock event is its only end. Upgrade: an optional deadline.
+        access.beginLease(until: end ?? instant.advanced(by: .seconds(315_360_000)))
+        leaseStart = instant
+        arm(timerFor: access, until: end, from: instant)
+    }
+
+    /// The one timer that ends `access` at `end`; none when the vault stays open until a lock event.
+    private func arm(timerFor access: VaultAccess, until end: ContinuousClock.Instant?, from instant: ContinuousClock.Instant) {
         timer?.cancel()
+        timer = nil
+        guard let end else { return }
         timer = Task { [weak self] in
-            try? await ContinuousClock().sleep(for: access.deadline - instant)
+            try? await ContinuousClock().sleep(for: end - instant)
             guard !Task.isCancelled, let self, self.current === access else { return }
             self.lock(reason: .timeout)
         }

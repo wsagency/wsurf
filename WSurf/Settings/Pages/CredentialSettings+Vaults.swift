@@ -11,7 +11,11 @@ extension CredentialSettings {
             SettingsSection(
                 title: "Vaults",
                 symbol: "lock.rectangle.stack",
-                footnote: "Each vault has its own unlock passkeys. The default vault is the one autofill and saving use when they don’t need to ask.",
+                footnote: """
+                    Each vault has its own unlock passkeys and its own lock time. The default vault is the one autofill and saving use \
+                    when they don’t need to ask. Credentials also lock when your Mac or its display sleeps, the screen locks, or you \
+                    quit WSurf. A shorter lock time applies now; a longer one from the next unlock.
+                    """,
                 accessory: {
                     ToolbarChip(symbol: "plus", label: "New Vault") { showsCreateWarning = true }
                         .disabled(model.isBusy || !model.canCreateVault)
@@ -42,6 +46,14 @@ extension CredentialSettings {
                             }
                             .id(selected)
                             .disabled(model.isBusy)
+                        }
+                        RowSeparator()
+                        DetailRow(title: "Lock credentials") {
+                            SettingsMenu(
+                                options: CredentialAutoLock.allCases.map { SettingsMenu<CredentialAutoLock>.Option(value: $0, label: $0.label) },
+                                selection: Binding(get: { model.autoLock }, set: { model.setAutoLock($0) })
+                            )
+                            .disabled(model.isBusy || !model.isUnlocked)
                         }
                         RowSeparator()
                         DetailRow(title: "Default vault") {

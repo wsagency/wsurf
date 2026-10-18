@@ -15,7 +15,7 @@ import Testing
 
 /// Every event that locks the whole session or one profile, with the reason its managers must report.
 nonisolated enum LockTrigger: CaseIterable, Sendable {
-    case profileSwitch, lockAll, sleep, sessionResign, screenLocked, termination
+    case profileSwitch, lockAll, sleep, displaySleep, sessionResign, screenLocked, termination
 
     var reason: CredentialLockReason {
         switch self {
@@ -23,7 +23,7 @@ nonisolated enum LockTrigger: CaseIterable, Sendable {
             .profileSwitch
         case .lockAll:
             .manual
-        case .sleep:
+        case .sleep, .displaySleep:
             .sleep
         case .sessionResign, .screenLocked:
             .screenLock
@@ -41,6 +41,8 @@ nonisolated enum LockTrigger: CaseIterable, Sendable {
             CredentialManager.lockAll(reason: .manual)
         case .sleep:
             NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.willSleepNotification, object: nil)
+        case .displaySleep:
+            NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.screensDidSleepNotification, object: nil)
         case .sessionResign:
             NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
         case .screenLocked:
