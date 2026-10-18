@@ -506,15 +506,27 @@ final class BrowserSettings {
     }
 
     var recordsInputHistory: Bool {
-        didSet { write(recordsInputHistory, forKey: Key.inputHistory) }
+        didSet {
+            guard recordsInputHistory != oldValue else { return }
+            write(recordsInputHistory, forKey: Key.inputHistory)
+            inputHistoryPolicyChanged()
+        }
     }
 
     var inputHistoryRetention: InputHistoryRetention {
-        didSet { write(inputHistoryRetention.rawValue, forKey: Key.inputHistoryRetention) }
+        didSet {
+            guard inputHistoryRetention != oldValue else { return }
+            write(inputHistoryRetention.rawValue, forKey: Key.inputHistoryRetention)
+            inputHistoryRetentionChanged()
+        }
     }
 
     var inputHistoryExcludedSites: [String] {
-        didSet { write(inputHistoryExcludedSites, forKey: Key.inputHistoryExcludedSites) }
+        didSet {
+            guard inputHistoryExcludedSites != oldValue else { return }
+            write(inputHistoryExcludedSites, forKey: Key.inputHistoryExcludedSites)
+            inputHistoryPolicyChanged()
+        }
     }
 
     // MARK: - Downloads
@@ -814,6 +826,9 @@ final class BrowserSettings {
         fillsPasswords = true
         fillsContacts = true
         fillsPaymentCards = true
+        recordsInputHistory = false
+        inputHistoryRetention = .standard
+        inputHistoryExcludedSites = []
         appearance = .system
         loomStyle = .standard
         matchesWebsiteColor = true
@@ -849,63 +864,6 @@ final class BrowserSettings {
         hiddenStartPageSections = []
         hiddenFrequentHosts = []
         onWebPreferencesChanged?()
-    }
-}
-
-enum StartPageSection: String, CaseIterable, Identifiable {
-    case suggestions
-    case recentTasks
-    case frequentSites
-    case history
-    case downloads
-
-    var id: String {
-        rawValue
-    }
-
-    var title: LocalizedStringResource {
-        switch self {
-        case .suggestions:
-            "Suggestions"
-        case .recentTasks:
-            "Recent Tasks"
-        case .frequentSites:
-            "Frequently Visited"
-        case .history:
-            "History"
-        case .downloads:
-            "Downloads"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .suggestions:
-            "sparkles"
-        case .recentTasks:
-            "clock.arrow.circlepath"
-        case .frequentSites:
-            "chart.bar"
-        case .history:
-            "clock"
-        case .downloads:
-            "arrow.down"
-        }
-    }
-
-    var summary: LocalizedStringResource {
-        switch self {
-        case .suggestions:
-            "Things to try"
-        case .recentTasks:
-            "Repeat a recent task"
-        case .frequentSites:
-            "Websites you visit most"
-        case .history:
-            "Recently visited pages"
-        case .downloads:
-            "Recent files"
-        }
     }
 }
 
