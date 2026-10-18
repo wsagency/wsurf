@@ -97,6 +97,8 @@ struct GeneralSettings: View {
             .settingsAnchor("general.linkPreview")
         }
 
+        CommandPaletteSettings(settings: settings)
+
         SettingsSection(title: "Media", symbol: "play.rectangle", footnote: mediaFootnote) {
             DetailRow(
                 title: "Show media player",

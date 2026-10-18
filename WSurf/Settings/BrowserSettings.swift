@@ -64,6 +64,7 @@ final class BrowserSettings {
         static let startPageOrder = "startPage.order"
         static let startPageHidden = "startPage.hidden"
         static let startPageHiddenSites = "startPage.hiddenSites"
+        static let commandPaletteOrder = "palette.order"
     }
 
     static let sessionKeys: [String] = [
@@ -113,6 +114,7 @@ final class BrowserSettings {
     @ObservationIgnored private var storedUserAgentMode: UserAgentMode?
     @ObservationIgnored private var storedCustomUserAgent: String?
     @ObservationIgnored private var storedWebInspectorEnabled: Bool?
+    @ObservationIgnored var storedCommandPaletteOrder: [CommandPaletteSection]?
 
     @ObservationIgnored var onWebPreferencesChanged: (() -> Void)?
     @ObservationIgnored var onContentBlockingChanged: (() -> Void)?
@@ -628,10 +630,17 @@ final class BrowserSettings {
     }
 
     private static func resolveOrder(_ stored: [String]?) -> [StartPageSection] {
-        let known = stored?.compactMap(StartPageSection.init(rawValue:)) ?? []
-        var order = known
-        for section in StartPageSection.allCases where !order.contains(section) {
-            let following = StartPageSection.allCases
+        completeOrder(stored?.compactMap(StartPageSection.init(rawValue:)) ?? [])
+    }
+
+    /// `known` without repeats, then each case it lacks, placed before the next case that is present.
+    static func completeOrder<Section: CaseIterable & Hashable>(_ known: [Section]) -> [Section] {
+        var order: [Section] = []
+        for section in known where !order.contains(section) {
+            order.append(section)
+        }
+        for section in Section.allCases where !order.contains(section) {
+            let following = Section.allCases
                 .drop { $0 != section }
                 .dropFirst()
                 .first { order.contains($0) }
@@ -736,6 +745,9 @@ final class BrowserSettings {
                 .flatMap(UserAgentMode.init(rawValue:)) ?? .safari
             storedCustomUserAgent = string(Key.customUserAgent) ?? ""
             storedWebInspectorEnabled = object(Key.webInspector) as? Bool ?? true
+            storedCommandPaletteOrder = Self.completeOrder(
+                (stringArray(Key.commandPaletteOrder) ?? []).compactMap(CommandPaletteSection.init(rawValue:))
+            )
         }
 
         fillsPasswords = object(Key.passwordAutofill) as? Bool ?? true
@@ -827,6 +839,7 @@ final class BrowserSettings {
         userAgentMode = .safari
         customUserAgent = ""
         webInspectorEnabled = true
+        commandPaletteOrder = CommandPaletteSection.allCases
         startPageOrder = StartPageSection.allCases
         hiddenStartPageSections = []
         hiddenFrequentHosts = []
