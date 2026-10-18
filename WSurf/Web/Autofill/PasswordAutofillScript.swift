@@ -35,10 +35,12 @@ nonisolated enum PasswordAutofillScript {
         if (group.fields.filter(field => field.kind === 'one-time-code').length !== 1) return null;
         return {form:group.root,element:target};
       };
+      // `kind` is what the dropdown may do with typing: only a username field lets typed characters start its search.
       const extra = target => {
-        if (otp(target)) return {field:'totp'};
+        const kind = forms.field(target)?.kind || '';
+        if (otp(target)) return {field:'totp',kind};
         const username = fields(target)?.username?.value;
-        return {field:'password',username:typeof username === 'string' && username.length <= 500 ? username : ''};
+        return {field:'password',kind,username:typeof username === 'string' && username.length <= 500 ? username : ''};
       };
       const suggestions = globalThis.__wsurfAutofillSuggestions;
       const tracker = suggestions.track(channel, state, target => {
