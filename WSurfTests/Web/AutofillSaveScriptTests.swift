@@ -253,6 +253,50 @@ struct AutofillSaveScriptTests {
         }
     }
 
+    /// A login form whose submit button, inside the form or joined to it from outside, names its own destination.
+    private static func submitter(_ kind: String, formaction target: String) -> String {
+        switch kind {
+        case "image":
+            form(credentials, #"<input id="go" type="image" alt="Sign in" formaction="\#(target)">"#)
+        case "outside":
+            form() + #"<button id="ext" type="submit" form="form" formaction="\#(target)">Send</button>"#
+        default:
+            form(credentials, #"<button id="go" type="submit" formaction="\#(target)">Sign in</button>"#)
+        }
+    }
+
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases, ["inside", "image", "outside"])
+    func crossOriginFormactionMakesTheFormUnsafe(engine: BrowserEngine, kind: String) async throws {
+        try await withHarness(engine, Self.submitter(kind, formaction: "https://other.example/post")) { harness in
+            #expect(try await harness.safety(of: "form") == "false,false")
+            try await typeLogin(harness)
+            try await harness.hook("click", "go")
+            try await harness.hook("enter", "p")
+            try await harness.settle()
+            #expect(harness.staged.isEmpty)
+        }
+    }
+
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aFieldNamedElementsCannotHideACrossOriginFormaction(engine: BrowserEngine) async throws {
+        let fields = Self.credentials + #"<input name="elements" value="x"><input name="action" value="x"><input name="formaction" value="x">"#
+        let control = #"<button id="go" type="submit" formaction="https://other.example/post">Sign in</button>"#
+        try await withHarness(engine, Self.form(fields, control)) { harness in
+            let safety = try await harness.safety(of: "form")
+            #expect(safety == "false,false")
+        }
+    }
+
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases, ["/other", "#x", "javascript:void(0)", ""])
+    func formactionThatStaysOnThePageIsSafeAndCaptured(engine: BrowserEngine, target: String) async throws {
+        try await withHarness(engine, Self.submitter("inside", formaction: target)) { harness in
+            #expect(try await harness.safety(of: "form") == "true,true")
+            try await typeLogin(harness)
+            try await harness.hook("click", "go")
+            try #require(await waitUntil { harness.staged.count == 1 })
+        }
+    }
+
     // MARK: Fields that do not belong to the login
 
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases)

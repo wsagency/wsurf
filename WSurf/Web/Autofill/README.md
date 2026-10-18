@@ -45,7 +45,8 @@ true of passwords only. Only the fields a snapshot was read from can veto a
 submit as invalid, so an empty captcha or terms box does not. A form with
 an empty or `javascript:` action is safe. Any other action, `#x` included, is
 resolved against the document's base and must stay on the page's origin, and a
-page whose `<base>` is on another origin is never safe. Of
+page whose `<base>` is on another origin is never safe. So is a form with any submit
+button (also one joined by `form="id"`) whose `formaction` leaves the origin. Of
 several account fields the one before the first password is used, and two
 unlabelled passwords that differ are an old and a new one unless the second asks
 to confirm. Form disappearance covers SPA and automatic submission. A
