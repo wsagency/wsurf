@@ -18,4 +18,20 @@ extension CredentialSettingsModel {
     var suggestedVaultName: String {
         String(localized: "Vault \((vaults.map(\.ordinal).max() ?? 0) + 1)")
     }
+
+    /// Renames the selected vault. Only an unlocked vault has a name to change; a locked one is refused and nothing is written.
+    func renameVault(_ name: String) async {
+        guard let epoch = authorizationEpoch else {
+            error = Self.message(for: CredentialVaultError.unauthorized)
+            return
+        }
+        let renamed = await perform(epoch: epoch) { manager in
+            _ = try await manager.renameVault(name, authorizedEpoch: epoch)
+            // The rename is a new revision of the vault: the open session reads it, or its next write would be stale.
+            try await self.reloadAfterWrite(epoch: epoch)
+        }
+        if renamed {
+            await refreshListing()
+        }
+    }
 }

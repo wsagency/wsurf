@@ -54,6 +54,54 @@ struct CredentialSettingsVaultTests {
         }
     }
 
+    // MARK: Renaming from the page
+
+    @Test func renamingFromThePageShowsTheNewNameAndLeavesTheSessionWritable() async throws {
+        try await withProfile { profile, passkeys in
+            let model = await lockedModel(profile, passkeys)
+            await model.unlock(in: VaultManagerFixture.anchor())
+            let revision = model.revision
+
+            await model.renameVault("  Household ")
+
+            #expect(model.error == nil)
+            #expect(model.vaults.map(\.displayName) == ["Household"])
+            #expect(try await model.manager?.displayNames().vault == "Household")
+            // The rename is a new revision; the open session reads it, so the next write is not stale.
+            #expect(model.revision == revision + 1)
+            _ = try await model.save(VaultFixtures.account(), expectedRevision: model.revision)
+            #expect(model.error == nil)
+        }
+    }
+
+    @Test func aNameThePageRefusesChangesNothing() async throws {
+        try await withProfile { profile, passkeys in
+            let model = await lockedModel(profile, passkeys)
+            await model.unlock(in: VaultManagerFixture.anchor())
+            let revision = model.revision
+
+            for name in ["", "   ", String(repeating: "n", count: StoreFormat.nameLimit + 1)] {
+                await model.renameVault(name)
+                #expect(model.error == String(localized: "Use a name of 1 to \(StoreFormat.nameLimit) characters."))
+            }
+
+            #expect(model.vaults.map(\.displayName) == ["Personal"])
+            #expect(model.revision == revision)
+        }
+    }
+
+    @Test func aLockedPageCannotRenameTheVault() async throws {
+        try await withProfile { profile, passkeys in
+            let model = await lockedModel(profile, passkeys)
+
+            await model.renameVault("Household")
+
+            #expect(model.error == String(localized: "Credentials are locked."))
+            await model.unlock(in: VaultManagerFixture.anchor())
+            #expect(model.vaults.map(\.displayName) == ["Personal"])
+        }
+    }
+
     @Test func aNewVaultIsSuggestedTheNumberTheStoreGivesIt() async throws {
         try await withProfile { profile, passkeys in
             let model = CredentialSettingsModel(profile: profile, native: passkeys.native)

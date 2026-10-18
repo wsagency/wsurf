@@ -491,6 +491,14 @@ final class CredentialManager {
         )
     }
 
+    /// Renames the vault under the lease the caller decided under (`authorizedEpoch`). The name is sealed in the head, so a
+    /// locked vault cannot be renamed.
+    func renameVault(_ name: String, authorizedEpoch: UInt64) async throws -> VaultCommitReceipt {
+        try await authorizedWrite(epoch: authorizedEpoch) { access in
+            try await store.renameVault(vaultID: vaultID, name: name, using: access)
+        }
+    }
+
     // MARK: - Vault access
 
     func snapshot() async throws -> StoreSnapshot {

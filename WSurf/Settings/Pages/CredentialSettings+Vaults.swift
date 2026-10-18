@@ -35,6 +35,14 @@ extension CredentialSettings {
                         .disabled(model.isBusy)
                     }
                     if let selected = model.selectedVaultID {
+                        if let listing = model.vaults.first(where: { $0.vaultID == selected }) {
+                            RowSeparator()
+                            CredentialVaultNameRow(displayName: listing.displayName, isUnlocked: model.isUnlocked) { name in
+                                run { await model.renameVault(name) }
+                            }
+                            .id(selected)
+                            .disabled(model.isBusy)
+                        }
                         RowSeparator()
                         DetailRow(title: "Default vault") {
                             if model.defaultVaultID == selected {
@@ -67,6 +75,74 @@ extension CredentialSettings {
                     ) { EmptyView() }
                 }
             }
+        }
+    }
+}
+
+/// The selected vault's name. A locked vault shows its number and cannot be renamed: the name is sealed until it unlocks. It keeps
+/// its own typing state, so a keystroke here redraws nothing else on the page; the caller gives it the vault as its identity.
+struct CredentialVaultNameRow: View {
+    let displayName: String
+    let isUnlocked: Bool
+    let rename: (String) -> Void
+
+    @State private var text: String
+    @FocusState private var editing: Bool
+
+    init(displayName: String, isUnlocked: Bool, rename: @escaping (String) -> Void) {
+        self.displayName = displayName
+        self.isUnlocked = isUnlocked
+        self.rename = rename
+        _text = State(initialValue: displayName)
+    }
+
+    private var trimmed: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isTooLong: Bool {
+        trimmed.count > StoreFormat.nameLimit
+    }
+
+    private var canRename: Bool {
+        isUnlocked && !trimmed.isEmpty && !isTooLong && trimmed != displayName
+    }
+
+    private var caption: LocalizedStringResource? {
+        if !isUnlocked {
+            return "Unlock this vault to rename it or change when it locks."
+        }
+        if isTooLong {
+            return "Use at most \(StoreFormat.nameLimit) characters."
+        }
+        return nil
+    }
+
+    var body: some View {
+        DetailRow(title: "Name", caption: caption) {
+            HStack(spacing: 8) {
+                FieldChrome(isFocused: editing) {
+                    TextField("", text: $text)
+                        .textFieldStyle(.plain)
+                        .font(Theme.Font.row)
+                        .fieldPlaceholder("Name", isShowing: text.isEmpty)
+                        .focused($editing)
+                        .onSubmit(submit)
+                        .accessibilityLabel("Vault name")
+                }
+                Button("Rename", action: submit)
+                    .buttonStyle(.bordered)
+                    .disabled(!canRename)
+            }
+            .disabled(!isUnlocked)
+        }
+        // A rename, a lock or an unlock changes what the vault is called; the field then shows that name again.
+        .onChange(of: displayName) { text = displayName }
+    }
+
+    private func submit() {
+        if canRename {
+            rename(trimmed)
         }
     }
 }
