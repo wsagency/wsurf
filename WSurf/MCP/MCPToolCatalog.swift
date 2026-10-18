@@ -23,6 +23,7 @@ nonisolated enum MCPToolCatalog {
         whole page. Prefer \
         text over screenshots. Keyboard input needs a visible tab; hover moves the real pointer and needs WSurf active with the tab on screen. \
         Inspection, viewport and diagnostics tools need requestAccess with development set; one connection owns a tab's development state, so call resetDevelopment when done. \
+        To check a page in both engines, call openComparison and then compareTabs. \
         Passwords, codes and card fields stay the user's to fill. The one exception is the Developer tier: there typeOnPage and \
         fillFields accept secret: true for test credentials you supply yourself, and WSurf hides every secret you typed from \
         its results. Never type real credentials; WSurf never offers or reads saved passwords.
@@ -220,6 +221,7 @@ nonisolated enum MCPToolCatalog {
         + inputEntries
         + inspectionEntries
         + scriptingEntries
+        + compareEntries
 
     static let coreEntries: [Entry] = [
         Entry(
@@ -359,7 +361,15 @@ nonisolated enum MCPToolCatalog {
             description:
                 "Navigate a shared tab. After reading page content, use a URL observed in a link; otherwise ask the user to open it. New websites need approval in WSurf.",
             parameters: [tab, url], scope: .control),
-        Entry(name: "newTab", description: "Ask the user in WSurf to open and share a new webpage. Requires an existing control grant.", parameters: [url], scope: nil),
+        Entry(
+            name: "newTab",
+            description:
+                "Ask the user in WSurf to open and share a new webpage. Requires an existing control grant. With engine, the tab runs in that engine "
+                + "whatever the website's setting is; that needs development access.",
+            parameters: [
+                url,
+                Parameter(name: "engine", type: "string", description: "webkit or chromium. Omit for the website's own setting.", required: false, choices: ["webkit", "chromium"]),
+            ], scope: nil),
         Entry(name: "switchTab", description: "Make a shared tab visible and active. Does not expand this connection’s access.", parameters: [tab], scope: .control),
         Entry(name: "closeTab", description: "Close a shared, unpinned tab. Requires control access.", parameters: [tab], scope: .control),
     ]

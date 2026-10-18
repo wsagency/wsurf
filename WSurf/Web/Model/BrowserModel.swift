@@ -307,9 +307,11 @@ final class BrowserModel {
         activate: Bool = true,
         adopting: WKWebView? = nil,
         after opener: BrowserTab? = nil,
-        transition: HistoryStore.Transition = .typed
+        transition: HistoryStore.Transition = .typed,
+        engine: BrowserEngine? = nil
     ) -> BrowserTab {
         let tab = makeTab(for: url, adopting: adopting)
+        tab.engineOverride = engine
         insert(tab, after: opener)
         // With no active tab the first tab is the one on screen, so a tab inserted there is seen at once.
         tab.isUnseen = !activate && activeTab !== tab
