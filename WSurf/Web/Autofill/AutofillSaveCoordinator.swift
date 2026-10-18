@@ -27,6 +27,9 @@ final class AutofillSaveSession: NSObject {
         var loginURL: URL?
         /// The profile has no vault yet: this offer saves nothing and only suggests setting one up (`save` and `never` refuse it).
         var needsVault = false
+        /// The page the offer was made on has changed: nothing can be saved from it. It stays on screen only to say so, until it is
+        /// dismissed or replaced by an offer from the page the user is on.
+        var isGone = false
     }
     private(set) var offers: [Offer] = []
     private(set) var isBusy = false
@@ -239,7 +242,7 @@ final class AutofillSaveSession: NSObject {
         let liveOrigin = liveOrigin ?? origin
         let bytes = (try? JSONEncoder().encode([origin, candidate.kind.rawValue] + candidate.values)) ?? Data()
         let fingerprint = Data(HMAC<SHA256>.authenticationCode(for: bytes, using: fingerprintKey)).base64EncodedString()
-        guard !offers.contains(where: { $0.fingerprint == fingerprint }) else { return }
+        guard !offers.contains(where: { $0.fingerprint == fingerprint && !$0.isGone }) else { return }
         guard dismissed[candidate.kind]?.contains(fingerprint) != true else {
             AutofillDiagnostics.note(.offerDroppedDismissed, kind: candidate.kind)
             return
@@ -264,7 +267,7 @@ final class AutofillSaveSession: NSObject {
         }
         // The liveness check suspends: whatever it waited through (a clear, a policy change, another offer) is checked again.
         guard revision == self.revision, self.context === context, AutofillSaveCoordinator.shared.isEnabled(candidate.kind, context: context),
-              !offers.contains(where: { $0.fingerprint == fingerprint }) else { return }
+              !offers.contains(where: { $0.fingerprint == fingerprint && !$0.isGone }) else { return }
         guard dismissed[candidate.kind]?.contains(fingerprint) != true else {
             AutofillDiagnostics.note(.offerDroppedDismissed, kind: candidate.kind)
             return
@@ -289,6 +292,10 @@ final class AutofillSaveSession: NSObject {
             error = nil
         }
         AutofillDiagnostics.note(.saveOffered, kind: candidate.kind)
+        scheduleExpiry()
+    }
+    /// An offer, or the note that its page changed, stays for two minutes.
+    private func scheduleExpiry() {
         expiry?.cancel(); expiry = Task { [weak self] in try? await Task.sleep(for: .seconds(120)); guard !Task.isCancelled else { return }; self?.clear() }
     }
     func dismiss(_ offer: Offer, rememberingChoice: Bool = true) {
@@ -401,11 +408,12 @@ final class AutofillSaveSession: NSObject {
               AutofillSaveCoordinator.shared.isEnabled(offer.candidate.kind, context: context),
               let page, page.context === context, page.window != nil else { return }
         guard await liveness(page, offer.documentID, offer.liveOrigin) else {
-            // The page the offer was made on is gone: dropping it silently would leave a Save button that does nothing.
-            guard self.context === context, current?.id == offer.id else { return }
+            // The page the offer was made on is gone. Keep the offer, saveless, so the popover can say why instead of doing nothing.
+            guard self.context === context, current?.id == offer.id, let index = offers.firstIndex(where: { $0.id == offer.id }) else { return }
             AutofillDiagnostics.note(.offerDroppedNotLive, kind: offer.candidate.kind)
-            dismiss(offer, rememberingChoice: false)
+            offers[index].isGone = true
             error = String(localized: "This page changed, so nothing was saved.")
+            scheduleExpiry()
             return
         }
         guard self.context === context, current?.id == offer.id else { return }

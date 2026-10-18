@@ -214,12 +214,36 @@ struct AutofillSaveCompletionTests {
             await flow.session.offer(.password(try flow.login()), origin: Self.loginOrigin, documentID: loginDocument)
             let offer = try #require(flow.session.current)
 
-            _ = try await flow.load(Self.homePage, at: Self.loginOrigin + "/home")
+            let homeDocument = try await flow.load(Self.homePage, at: Self.loginOrigin + "/home")
             await flow.session.save(offer)
 
+            // The popover reads exactly this: the offer stays, cannot be saved, and the reason is shown with only a way to close it.
             #expect(flow.session.error == Self.deadOfferMessage)
-            #expect(flow.session.current == nil, "a dead offer must not stay on screen")
+            #expect(flow.session.current?.id == offer.id && flow.session.current?.isGone == true)
             #expect(try await flow.vault.manager.snapshot().accounts.isEmpty, "nothing is written for a page that is gone")
+
+            // Closing it is not a refusal: the login is still offered from the page the user is on.
+            flow.session.dismiss(try #require(flow.session.current), rememberingChoice: false)
+            #expect(flow.session.current == nil && flow.session.error == nil)
+            await flow.session.offer(.password(try flow.login()), origin: Self.loginOrigin, documentID: homeDocument)
+            #expect(flow.session.current?.isGone == false)
+        }
+    }
+
+    /// The note about a gone page must not swallow the same login when the user types it again on the page they are on.
+    @Test func aGoneOfferIsReplacedByTheSameLoginFromThePageTheUserIsOn() async throws {
+        try await withFlow { flow in
+            let loginDocument = try await flow.load(Self.loginPage, at: Self.loginOrigin + "/login")
+            await flow.session.offer(.password(try flow.login()), origin: Self.loginOrigin, documentID: loginDocument)
+            let offer = try #require(flow.session.current)
+            let homeDocument = try await flow.load(Self.homePage, at: Self.loginOrigin + "/home")
+            await flow.session.save(offer)
+            #expect(flow.session.current?.isGone == true)
+
+            await flow.session.offer(.password(try flow.login()), origin: Self.loginOrigin, documentID: homeDocument)
+            let fresh = try #require(flow.session.current)
+            #expect(fresh.id != offer.id && !fresh.isGone && fresh.documentID == homeDocument)
+            #expect(flow.session.error == nil, "the old reason is not shown on the new offer")
         }
     }
 

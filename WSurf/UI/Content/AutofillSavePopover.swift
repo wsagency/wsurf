@@ -110,7 +110,9 @@ private struct AutofillSavePopover: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if offer.needsVault {
+            if offer.isGone {
+                AutofillGoneOfferActions(session: session, offer: offer)
+            } else if offer.needsVault {
                 AutofillVaultSetupActions(session: session, offer: offer, setUpVault: setUpVault)
             } else {
                 AutofillSaveActions(session: session, offer: offer, review: review)
@@ -186,6 +188,23 @@ private struct AutofillSaveActions: View {
             .controlSize(.regular)
         }
         .disabled(session.isBusy)
+    }
+}
+
+/// What is left of an offer whose page changed: the reason is shown above, and the only thing to do is to close it. Dismissing it
+/// is not a refusal, so the same login is offered again from the page the user is on.
+private struct AutofillGoneOfferActions: View {
+    let session: AutofillSaveSession
+    let offer: AutofillSaveSession.Offer
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 0)
+            Button("OK") { session.dismiss(offer, rememberingChoice: false) }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+        }
+        .controlSize(.regular)
     }
 }
 
