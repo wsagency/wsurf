@@ -824,10 +824,18 @@ struct VaultNoteHistoryTests {
                 #expect(try f.trashEntryIDs().isEmpty)
                 #expect(try f.moveRevisions(in: f.trashID, owner: owner.id, subject: .note).isEmpty)
 
-                // The cleared list comes back from History without a Trash entry.
-                let cleared = try #require(versions.last)
-                let preview = try await store.previewRestoreRevision(vaultID: f.vaultID, revisionID: cleared.recordID, using: access)
-                #expect(preview.notes == Self.second)
+                // Both lists are there to restore, and the one that was cleared comes back without a Trash entry.
+                var clearedVersion: StoredRevision?
+                var previews: [[CredentialNote]?] = []
+                for version in versions {
+                    let notes = try await store.previewRestoreRevision(vaultID: f.vaultID, revisionID: version.recordID, using: access).notes
+                    previews.append(notes)
+                    if notes == Self.second {
+                        clearedVersion = version
+                    }
+                }
+                #expect(previews.contains { $0 == Self.first } && previews.contains { $0 == Self.second })
+                let cleared = try #require(clearedVersion)
                 let revision = try await f.nextRevision(store, access)
                 _ = try await store.restoreRevision(
                     vaultID: f.vaultID, revisionID: cleared.recordID, expectedRevision: revision, using: access

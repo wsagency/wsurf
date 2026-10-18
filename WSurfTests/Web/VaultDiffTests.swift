@@ -335,6 +335,25 @@ struct VaultDiffTests {
         #expect(plan.setsModifiedAt == [id])
     }
 
+    @Test func onlyAnExplicitNotesDeleteMovesThemToTrash() throws {
+        let notesDelete = RemovalScope.credential(ownerID: id, subject: .note, passkeyID: nil)
+        let plan = try CredentialDiff.plan(old: [withNotes()], new: [rich()], removing: notesDelete)
+
+        #expect(plan.removals == [notesDelete])
+        #expect(plan.revisions.isEmpty)
+        #expect(plan.setsModifiedAt == [id])
+
+        // A delete of another part, or of another account's notes, does not turn a notes edit into a removal.
+        let other = [
+            RemovalScope.credential(ownerID: id, subject: .totp, passkeyID: nil),
+            RemovalScope.credential(ownerID: UUID(), subject: .note, passkeyID: nil),
+        ]
+        for scope in other {
+            let edit = try CredentialDiff.plan(old: [withNotes()], new: [rich()], removing: scope)
+            #expect(edit.removals.isEmpty && edit.revisions.map(\.subject) == [.note])
+        }
+    }
+
     @Test func aNoteEditLeavesEveryOtherPartAlone() throws {
         let old = try withNotes()
         var new = old
