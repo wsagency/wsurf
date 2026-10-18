@@ -128,17 +128,17 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
         case .system:
             Self(.mayHaveLanded, .checkSavedCredentials, String(localized: """
                 WSurf could not confirm the result of this import. It may have been saved. \
-                Check Saved Credentials before exporting again.
+                Check Credentials before exporting again.
                 """))
         case .csvFile:
             Self(.mayHaveLanded, .checkSavedCredentials, String(localized: """
                 WSurf could not confirm the result of this import. It may have been saved. \
-                Check Saved Credentials before choosing the file again.
+                Check Credentials before choosing the file again.
                 """))
         case .legacyPasswords:
             Self(.mayHaveLanded, .checkSavedCredentials, String(localized: """
                 WSurf could not confirm the result of this import. It may have been saved. \
-                Check Saved Credentials before choosing Review again. The old list was not changed.
+                Check Credentials before choosing Review again. The old list was not changed.
                 """))
         }
     }

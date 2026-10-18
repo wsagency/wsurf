@@ -99,6 +99,8 @@ struct SiteIcon: View {
 struct SiteRow<Trailing: View>: View {
     let host: String
     var summary: String?
+    /// A last line under the summary, for a row that has one more thing to say, such as when a credential was added.
+    var caption: String?
     @ViewBuilder let trailing: Trailing
 
     var body: some View {
@@ -113,6 +115,14 @@ struct SiteRow<Trailing: View>: View {
 
                 if let summary, !summary.isEmpty {
                     Text(verbatim: summary)
+                        .font(Theme.Font.label)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                if let caption, !caption.isEmpty {
+                    Text(verbatim: caption)
                         .font(Theme.Font.label)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
