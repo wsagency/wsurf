@@ -4,6 +4,7 @@
 import AppKit
 import Foundation
 import Testing
+import WebKit
 
 @testable import WSurf
 
@@ -97,6 +98,50 @@ struct AutofillSuggestionSearchTests {
         #expect(afterClick.state.matches == [2, 5, 7])
     }
 
+    /// What the dropdown does with that effect: the text reaches the focused field through the engine's own text input.
+    @MainActor
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func theUnmatchedQueryLandsInTheFocusedField(engine: BrowserEngine) async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><input id=u autocomplete=username>")])
+        defer { withExtendedLifetime(server) {} }
+        let url = try server.url()
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let page: BrowserPage
+        if engine == .webKit {
+            let configuration = interactiveWebViewConfiguration()
+            configuration.websiteDataStore = .nonPersistent()
+            page = BrowserPage(webKit: WKWebView(frame: NSRect(x: 0, y: 0, width: 600, height: 500), configuration: configuration), context: context)
+        } else {
+            try ChromiumRuntime.shared.ensureInitialized()
+            page = BrowserPage(chromium: ChromiumPage(context: context))
+        }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 500), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = page
+        window.orderBack(nil)
+        var failure: (any Error)?
+        do {
+            page.load(URLRequest(url: url))
+            try #require(await waitUntil { page.url == url && !page.isLoading })
+            try #require(window.makeFirstResponder(page))
+            _ = try await page.evaluateJavaScript("document.getElementById('u').focus(); true")
+            try #require(press(typing("user2x"), on: eight(), typeToSearch: true).effects.last == .dismissAndInsert("user2x"))
+            AutofillSuggestions.insert("user2x", in: page)
+            #expect(await waitUntil {
+                (try? await page.evaluateJavaScript("document.getElementById('u').value")) as? String == "user2x"
+            }, "the typed text is the field's on \(engine)")
+        } catch {
+            failure = error
+        }
+        await page.close()
+        window.contentView = nil
+        window.close()
+        await context.endPrivateSession()
+        if let failure {
+            throw failure
+        }
+    }
+
     @Test func escapeClearsTheQueryThenCloses() {
         let (cleared, first) = press(typing("work") + [.escape], on: eight(), typeToSearch: true)
         #expect(first.last == .consume)
@@ -129,9 +174,25 @@ struct AutofillSuggestionSearchTests {
         #expect(upFromFirst.state.keyboard == 7)
         let chosen = press(typing("work") + [.down, .enter], on: list, typeToSearch: true)
         #expect(chosen.effects.last == .choose(list[5].id))
-        let noMatch = press(typing("nothing") + [.down, .up, .enter], on: list, typeToSearch: true)
+        // A search started from the search row of a password field keeps a query that matches nothing; the arrows have no row to
+        // reach, and Return chooses nothing and goes to the page.
+        let noMatch = press(typing("nothing") + [.down, .up, .enter], on: list, typeToSearch: false, searching: true)
         #expect(noMatch.state.matches.isEmpty && noMatch.state.keyboard == nil)
-        #expect(Array(noMatch.effects.suffix(3)) == [.consume, .consume, .consume], "a query without rows neither chooses nor submits the page")
+        #expect(Array(noMatch.effects.suffix(3)) == [.consume, .consume, .dismissAndPass], "a query without rows never chooses one")
+    }
+
+    /// In a username field typing is meant for the field once it names no saved account: the first character that leaves no
+    /// match closes the dropdown and everything typed so far goes into the field. Nothing typed is lost.
+    @Test func aUsernameQueryThatMatchesNothingBecomesTheFieldsText() {
+        let list = eight()
+        let (state, effects) = press(typing("user2x"), on: list, typeToSearch: true)
+        #expect(Array(effects.prefix(5)) == Array(repeating: .consume, count: 5), "user2 still names a row")
+        #expect(effects.last == .dismissAndInsert("user2x"))
+        #expect(state.matches.isEmpty && state.keyboard == nil)
+        let first = press(typing("z"), on: list, typeToSearch: true)
+        #expect(first.effects == [.dismissAndInsert("z")], "a first character that matches nothing is the field's at once")
+        let afterBackspace = press(typing("wor") + [.backspace] + typing("q"), on: list, typeToSearch: true)
+        #expect(afterBackspace.effects.last == .dismissAndInsert("woq"), "the query as edited, not as typed")
     }
 
     @Test func returnWithNothingHighlightedStillGoesToThePage() {
@@ -163,7 +224,9 @@ struct AutofillSuggestionSearchTests {
     }
 
     @Test func theQueryIsCapped() {
-        let (state, effects) = press(Array(repeating: .character("a"), count: Search.queryLimit + 50), on: eight(), typeToSearch: true)
+        // One row matches every prefix of the typed run, so the cap is what stops the query.
+        let list = eight() + [row(String(repeating: "a", count: Search.queryLimit + 50))]
+        let (state, effects) = press(Array(repeating: .character("a"), count: Search.queryLimit + 50), on: list, typeToSearch: true)
         #expect(state.query.count == Search.queryLimit)
         #expect(effects.allSatisfy { $0 == .consume }, "extra characters are swallowed, not sent to the page")
     }

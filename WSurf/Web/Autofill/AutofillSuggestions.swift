@@ -494,6 +494,11 @@ final class AutofillSuggestions {
         case .dismissAndPass:
             dismiss()
             return event
+        case .dismissAndInsert(let text):
+            hold(event.keyCode)
+            dismiss()
+            Self.insert(text, in: page)
+            return nil
         case .dismiss:
             dismiss()
             return nil
@@ -501,6 +506,11 @@ final class AutofillSuggestions {
             choose?(id)
             return nil
         }
+    }
+
+    /// Typed search text that matched no row goes into the focused field through the engine's own text input, as typing would.
+    static func insert(_ text: String, in page: BrowserPage) {
+        Task { try? await page.insertText(text) }
     }
 
     private func hold(_ keyCode: UInt16) {
