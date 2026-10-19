@@ -262,6 +262,19 @@ nonisolated enum AutofillFormScript {
             if (preceding.length === 1) usernames = preceding;
           }
         }
+        // An identifier-first step asks for an email or user ID alone, without a password and often without
+        // autocomplete="username". As contact details it would get neither the login offer nor the username-step capture.
+        // Only the one fillable field of its group qualifies, with no declared purpose and no newsletter or search wording.
+        if (!usernames.length && !passwords.length) {
+          const fillable = fields.filter(field => present(field.element) &&
+            !['checkbox','radio','submit','button','image','reset','file','range','color'].includes(field.element.type));
+          const only = fillable.length === 1 ? fillable[0] : null;
+          const words = only ? hint(only.element) : '';
+          if (only && only.element instanceof HTMLInputElement && ['text','email'].includes(only.element.type) &&
+              only.tokens.every(token => token === 'on' || token === 'off' || token === 'webauthn') &&
+              (only.kind === 'email' || (!only.kind && /\b(user\s*id|userid|login\s*id|identifier)\b/.test(words))) &&
+              !/\b(newsletter|subscribe|subscription|search|coupon|promo)\b/.test(words)) usernames = [only];
+        }
         for (const field of usernames) field.kind = 'username';
         const off = (root.getAttribute('autocomplete') || '').toLowerCase() === 'off';
         for (const field of fields) {

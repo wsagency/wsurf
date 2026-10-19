@@ -8,7 +8,7 @@ import WebKit
 @testable import WSurf
 
 /// The password client's field tracker, in both engines, read from what the shipped script posts: what it sends again after a vault
-/// was unlocked. No native dropdown is involved.
+/// was unlocked, and which lone field of an identifier-first step it takes for the login's username. No native dropdown is involved.
 @MainActor
 struct PasswordAutofillTrackerTests {
     /// Everything the script posts, in order.
@@ -33,6 +33,14 @@ struct PasswordAutofillTrackerTests {
         @discardableResult
         func run(_ body: String, _ arguments: [String: Any] = [:]) async throws -> Any {
             try await page.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: PasswordAutofill.world)
+        }
+
+        /// The field's kind and category as the shared form model gives them, `kind/category`.
+        func classification(_ id: String) async throws -> String? {
+            try await run(
+                "const f = globalThis.__wsurfAutofillForms.field(document.getElementById(id)); return `${f?.kind ?? null}/${f?.category ?? null}`;",
+                ["id": id]
+            ) as? String
         }
 
         /// Waits until everything posted so far has arrived, so that "nothing was selected" can be asserted.
@@ -120,6 +128,50 @@ struct PasswordAutofillTrackerTests {
                 """)
             try await harness.settle()
             #expect(harness.selections.isEmpty, "a profile with filling off is never offered anything on \(engine)")
+        }
+    }
+
+    // MARK: Identifier-first steps
+
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aLoneEmailOrUserIDStepIsTheLoginsUsername(engine: BrowserEngine) async throws {
+        let html = """
+            <form><input id="email" type="email" name="email"><button>Next</button></form>
+            <form><input id="userid" type="text" name="userId"><input id="remember" type="checkbox"><button>Continue</button></form>
+            <form><input id="identifier" type="text" name="identifier" autocomplete="off"><button>Next</button></form>
+            """
+        try await withHarness(engine, html) { harness in
+            for id in ["email", "userid", "identifier"] {
+                #expect(try await harness.classification(id) == "username/password", "\(id) on \(engine)")
+            }
+            try await harness.run("document.getElementById('email').focus(); globalThis.__wsurfPasswords.refresh();")
+            try #require(await waitUntil { harness.selections.contains { $0["kind"] as? String == "username" } }, "offered on \(engine)")
+            let selection = try #require(harness.selections.last { $0["kind"] as? String == "username" })
+            #expect(selection["field"] as? String == "password")
+            let filled = try await harness.run(
+                "return globalThis.__wsurfPasswords.fill(token, url, {username: 'ada@example.test', password: 'dummy-secret'});",
+                ["token": selection["token"] as? String ?? "", "url": selection["url"] as? String ?? ""]
+            )
+            #expect(filled as? Int == 1, "only the account is filled on \(engine)")
+            #expect(try await harness.run("return document.getElementById('email').value;") as? String == "ada@example.test")
+        }
+    }
+
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func otherLoneFieldsKeepTheirMeaning(engine: BrowserEngine) async throws {
+        let html = """
+            <form><input id="declared" type="email" autocomplete="email"><button>Next</button></form>
+            <form><input id="news" type="email" placeholder="Subscribe to our newsletter"><button>Go</button></form>
+            <form><input id="mail" type="email"><input id="name" autocomplete="name"><button>Send</button></form>
+            <form><input id="query" type="text" name="q"><button>Find</button></form>
+            <form><input id="code" type="text" autocomplete="one-time-code"><button>Verify</button></form>
+            """
+        try await withHarness(engine, html) { harness in
+            #expect(try await harness.classification("declared") == "email/contact", "a declared purpose wins on \(engine)")
+            #expect(try await harness.classification("news") == "email/contact", "newsletter wording on \(engine)")
+            #expect(try await harness.classification("mail") == "email/contact", "not alone in its group on \(engine)")
+            #expect(try await harness.classification("query") == "null/null", "no account wording on \(engine)")
+            #expect(try await harness.classification("code") == "one-time-code/null", "a verification code on \(engine)")
         }
     }
 }

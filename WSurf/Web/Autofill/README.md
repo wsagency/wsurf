@@ -19,7 +19,11 @@ not part of the structural cache.
 
 The category and field kind used to offer/fill a record are also used to capture
 it. `autocomplete` takes precedence over label heuristics. Login usernames are
-classified with their password group, so contact filling cannot claim them.
+classified with their password group, so contact filling cannot claim them. An
+identifier-first step is a username too: the one fillable field of a group with
+no password, an email or user-ID field without a declared `autocomplete`
+purpose and without newsletter or search wording. A lone newsletter field
+without such wording is then offered logins instead of contact details.
 Hidden/disabled controls cannot be filled. An explicit hidden username belonging
 to a native form can supply account metadata for saving a multipage login.
 
