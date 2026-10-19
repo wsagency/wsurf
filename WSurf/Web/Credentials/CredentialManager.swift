@@ -641,6 +641,33 @@ final class CredentialManager {
         }
     }
 
+    /// Deletes this vault and its Trash for good. Like a purge it needs a fresh assertion of a passkey enrolled in THIS vault on top of
+    /// the unlock, and it is bound to `authorizedEpoch`, the lease the user confirmed under: a lock or re-unlock since, a declined
+    /// prompt and another vault's passkey delete nothing. Once it has committed the manager is retired: unregistered, locked, and
+    /// unable to unlock again.
+    func deleteVault(authorizedEpoch: UInt64, in anchor: ASPresentationAnchor) async throws {
+        let access = try currentAccess()
+        guard access.epoch == authorizedEpoch else { throw CredentialVaultError.unauthorized }
+        let unlocks = try await guarded(using: access) { try await store.discovery(vaultID: vaultID) }.unlocks
+        try requireCurrent(access)
+        let proof = try await native.assert(unlocks, anchor)
+        try requireCurrent(access)
+        try await writing {
+            try await guarded(using: access) {
+                try await store.deleteVault(
+                    vaultID: vaultID, authorization: FreshAuthorization(credentialID: proof.credentialID, prf: proof.prf), using: access
+                )
+            }
+        }
+        if Self.managers[profile.id]?[vaultID] === self {
+            Self.managers[profile.id]?[vaultID] = nil
+        }
+        isRetired = true
+        unlockCredentials = []
+        lock(reason: .manual)
+        AutofillSaveCoordinator.shared.vaultAccessEnded(profileID: profile.id)
+    }
+
     /// Synchronous revocation is the security boundary; actor cleanup is conditional on the exact
     /// revoked identities so a delayed cleanup can never clear a newer unlock.
     func lock(reason: CredentialLockReason) {

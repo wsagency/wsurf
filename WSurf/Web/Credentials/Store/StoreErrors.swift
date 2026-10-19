@@ -28,4 +28,5 @@ nonisolated enum CredentialStoreError: Error, Equatable, Sendable {
     case renameSwapUnsupported
     case stateChanged  // the open state read under the lock is not the one the caller routed on
     case undeleteBlocked(UndeleteBlock), metadataUndecodable, invalidVaultName, tooManyVaults, noSuchVault
+    case lastVault  // a profile keeps at least one vault: the store needs an active head to hold the registry key
 }

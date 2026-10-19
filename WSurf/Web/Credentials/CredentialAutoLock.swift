@@ -52,6 +52,11 @@ nonisolated enum CredentialAutoLock: Int, CaseIterable, Sendable {
     static func store(_ choice: CredentialAutoLock, for vaultID: UUID, in defaults: UserDefaults) {
         defaults.set(choice.rawValue, forKey: key(for: vaultID))
     }
+
+    /// The choice of a vault that no longer exists. Idempotent.
+    static func forget(for vaultID: UUID, in defaults: UserDefaults) {
+        defaults.removeObject(forKey: key(for: vaultID))
+    }
 }
 
 /// A system event that locks every vault of every profile, whatever the vault's `CredentialAutoLock`. A table, so a test can read

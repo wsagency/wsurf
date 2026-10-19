@@ -91,6 +91,8 @@ extension CredentialSettingsModel {
             return String(localized: "Your credential files changed while WSurf was reading them. Check again.")
         case CredentialStoreError.noSuchVault:
             return String(localized: "That vault is no longer listed. Check again.")
+        case CredentialStoreError.lastVault:
+            return String(localized: "A profile keeps at least one vault. Nothing was deleted.")
         default:
             return exchangeMessage(for: error)
         }
