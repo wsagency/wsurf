@@ -341,10 +341,13 @@ enum WebAuthnAdapter {
         guard pending else { throw WebAuthnContextError.staleFrame }
     }
 
-    /// Windows with a ceremony in flight: one per native window for its whole run (offer through delivery and the
-    /// unconfirmed notice). A second request for the same window is refused at once, never queued behind the first; other
-    /// windows are unaffected. The run holds the window strongly while it is listed, so its identity cannot be reused.
-    private static var busyWindows = Set<ObjectIdentifier>()
+    /// Windows with a ceremony in flight, and the entry whose run holds each: one per native window for its whole run (offer
+    /// through delivery and the unconfirmed notice). A second request for the same window is refused at once, never queued
+    /// behind the first, unless the first was cancelled (`run`); other windows are unaffected. The run holds the window strongly
+    /// while it is listed, so its identity cannot be reused.
+    private static var busyWindows: [ObjectIdentifier: Entry] = [:]
+    /// Runs waiting for a cancelled run to leave their window. Tests read it to know the wait has begun.
+    private(set) static var waitingRunsForTesting = 0
 
     private static func run(_ entry: Entry) async {
         guard let page = entry.page else { return }
@@ -354,7 +357,7 @@ enum WebAuthnAdapter {
         var context: WebAuthnContext?
         var claimed: NSWindow?
         var receipt: (manager: CredentialManager, outcome: WebAuthnCeremonyOutcome)?
-        defer { if let claimed { busyWindows.remove(ObjectIdentifier(claimed)) } }
+        defer { if let claimed { busyWindows[ObjectIdentifier(claimed)] = nil } }
         /// In-memory notice (at most 16, lost on quit) for a registration that is saved although the page may not have it,
         /// plus the native sheet only in the window the ceremony ran in while the page is still in it. Runs at most once.
         func noteUnconfirmedReceipt() {
@@ -388,9 +391,21 @@ enum WebAuthnAdapter {
             guard !page.isPrivate, native.profileID == page.profileID, let anchor = startWindow, page.window === anchor else {
                 throw WebsiteAuthenticatorError.notAllowed
             }
+            // A page that replaces its conditional request with a modal one cancels the first, whose run may still be closing
+            // its sheet. The new run waits for that run to end instead of being refused for its window, then proves itself again.
+            if let previous = busyWindows[ObjectIdentifier(anchor)], previous.cancelled, let task = previous.task {
+                waitingRunsForTesting += 1
+                await task.value
+                waitingRunsForTesting -= 1
+                try await requireLiveRequest(entry, page: page)
+                try ensureCurrent(entry)
+                guard native.credentialGeneration == entry.generation, page.credentialGeneration == entry.generation,
+                      page.window === anchor else { throw WebsiteAuthenticatorError.notAllowed }
+            }
             // Claimed in the same synchronous step that proved the window, before the first await that can launch a ceremony.
             // Busy: a modal request fails NotAllowed, a conditional one stays pending (`finish`).
-            guard busyWindows.insert(ObjectIdentifier(anchor)).inserted else { throw WebsiteAuthenticatorError.notAllowed }
+            guard busyWindows[ObjectIdentifier(anchor)] == nil else { throw WebsiteAuthenticatorError.notAllowed }
+            busyWindows[ObjectIdentifier(anchor)] = entry
             claimed = anchor
             let interaction: any WebAuthnCeremonyInteraction = interactionForTesting[page.profileID]?() ?? NativeWebAuthnInteraction()
             let chosen = try await vault(for: entry, native: native, in: anchor, interaction: interaction)

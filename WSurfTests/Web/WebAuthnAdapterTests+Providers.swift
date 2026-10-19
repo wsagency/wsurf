@@ -669,6 +669,40 @@ extension WebAuthnAdapterTests {
         }
     }
 
+    /// The page replaces its discovery with a modal request while the discovery's step is still on screen (a sheet closes
+    /// asynchronously after its run is cancelled; here the test holds it open). The modal request waits for that run to end
+    /// instead of failing NotAllowed for a window that is only still busy, and then reaches its own step.
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
+    func aModalRequestThatReplacesAnOpenBackgroundStepReachesItsOwnStep(engine: BrowserEngine) async throws {
+        try await withRealm(engine) { realm in
+            let context = try await realm.context(vaults: [.locked])
+            let user = StepUser()
+            WebAuthnAdapter.interactionForTesting[context.profile.id] = { user }
+            defer { WebAuthnAdapter.interactionForTesting[context.profile.id] = nil }
+            let page = try await realm.open(context)
+            try await requestConditionalGet(in: page)
+            #expect(try await pickPasskeyRow(in: page))
+            #expect(await waitUntil { user.isOpen && user.steps == 1 }, "the background step is open")
+
+            _ = try await page.evaluateJavaScript("""
+            window.modal = [];
+            navigator.credentials.get({ publicKey: { challenge: new Uint8Array(4) } })
+              .then(() => modal.push('resolved'), e => modal.push(e.name)); true
+            """)
+            #expect(await waitUntil { WebAuthnAdapter.waitingRunsForTesting == 1 }, "the modal run waits for the cancelled one")
+            #expect(try await outcomes(of: page) == ["AbortError"], "the page's own script ended the discovery")
+            #expect(try await page.evaluateJavaScript("modal.length") as? Int == 0, "the modal request is not refused")
+
+            // The background sheet closes. The modal request then reaches its own step, and its answer is its own.
+            user.answer(.cancelled)
+            #expect(await waitUntil { user.isOpen && user.steps == 2 }, "the modal request reaches its step")
+            #expect(WebAuthnAdapter.waitingRunsForTesting == 0)
+            #expect(try await page.evaluateJavaScript("modal.length") as? Int == 0)
+            user.answer(.declined)
+            #expect(try await waitUntil { try await page.evaluateJavaScript("modal.join()") as? String == "NotAllowedError" })
+        }
+    }
+
     /// "Use Another Device or Key…" on the offer a locked vault shows first: the request is handed over and the vault was never
     /// unlocked for it. The vault's own unlock passkey is a separate ceremony and still opens it afterwards.
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
