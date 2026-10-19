@@ -11,6 +11,8 @@ nonisolated enum CredentialChangeCause {
     static let `import` = "import"
     /// Written by the merge of two saved credentials (Credential Manager v3, PR E).
     static let merge = "merge"
+    /// Written by Undo (and Redo), which puts back what an earlier action of the same page changed.
+    static let undo = "undo"
 
     /// What the History panel says, `nil` when the writer said nothing.
     static func text(for cause: String?) -> String? {
@@ -20,6 +22,8 @@ nonisolated enum CredentialChangeCause {
             String(localized: "Changed by an import")
         case Self.merge:
             String(localized: "Changed by a merge")
+        case Self.undo:
+            String(localized: "Changed by Undo")
         default:
             cause
         }

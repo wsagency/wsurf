@@ -349,16 +349,21 @@ extension ProfileVaultStore {
     // MARK: Collision rules (§11.3)
 
     /// The first clash restoring `body` into `accounts` would cause, or `nil`. Pure: nothing is read or written.
-    nonisolated static func block(_ body: TrashEntryBody, among accounts: [CredentialAccount]) throws -> UndeleteBlock? {
+    ///
+    /// `forUndo` is an undo putting back a state the user just had. It keeps every identity rule (the account id, the exporter item,
+    /// a live account that holds the entry as a merged item, an occupied slot, the passkey identity, a missing owner) and drops the two
+    /// rules that refuse a legal duplicate: the same username on the same website, which an editor or an import may create, and a
+    /// live account that only shares the exporter's account id (one export gives every item of it the same one).
+    nonisolated static func block(_ body: TrashEntryBody, among accounts: [CredentialAccount], forUndo: Bool = false) throws -> UndeleteBlock? {
         if body.scope == .account {
             guard let removed = body.snapshot else { throw CredentialStoreError.malformed }
             if accounts.contains(where: { $0.id == removed.id }) {
                 return .idCollision
             }
-            if sharesExchangeID(removed, with: accounts) {
+            if sharesExchangeID(removed, with: accounts, identityOnly: forUndo) {
                 return .exchangeIDCollision
             }
-            if overlaps(username: removed.username, origins: removed.origins, with: accounts) {
+            if !forUndo, overlaps(username: removed.username, origins: removed.origins, with: accounts) {
                 return .originUsernameOverlap
             }
             return try passkeyBlock(removed.passkeys, among: accounts)
@@ -371,6 +376,9 @@ extension ProfileVaultStore {
             let items = itemIDs.compactMap { $0 }
             if accounts.contains(where: { $0.id != owner.id && $0.exchangeItemID.map(items.contains) == true }) {
                 return .exchangeIDCollision
+            }
+            if forUndo {
+                return nil
             }
             return overlaps(username: username, origins: owner.origins, with: accounts, excluding: owner.id) ? .originUsernameOverlap : nil
         }
@@ -410,8 +418,17 @@ extension ProfileVaultStore {
     /// §11.3: any live `exchangeAccountID` or `exchangeItemID` equal to the entry's blocks a whole account (conservative: one exchange
     /// account owns many items, so this can refuse more than strictly needed; the user removes the live item and retries). So does a
     /// live account the entry was merged into (`MergedItemLink`): it holds the item now.
-    nonisolated private static func sharesExchangeID(_ removed: CredentialAccount, with accounts: [CredentialAccount]) -> Bool {
-        accounts.contains {
+    ///
+    /// `identityOnly` (an undo) asks only whether a live account claims the same exporter item (the pair of exporter account id and
+    /// item id, which is what the vault itself keeps unique) or holds the entry as a merged item.
+    nonisolated private static func sharesExchangeID(
+        _ removed: CredentialAccount, with accounts: [CredentialAccount], identityOnly: Bool = false
+    ) -> Bool {
+        if identityOnly {
+            guard let identity = try? CredentialExchangeCodec.externalItemID(for: removed) else { return true }
+            return accounts.contains { $0.holdsMergedItem(of: removed) || (try? CredentialExchangeCodec.externalItemID(for: $0)) == identity }
+        }
+        return accounts.contains {
             (removed.exchangeAccountID != nil && $0.exchangeAccountID == removed.exchangeAccountID)
                 || (removed.exchangeItemID != nil && $0.exchangeItemID == removed.exchangeItemID)
                 || $0.holdsMergedItem(of: removed)
@@ -451,7 +468,7 @@ extension ProfileVaultStore {
 
     /// Strict typed decode: the bytes must be the canonical JSON of exactly one `T` (a whole serialized account decodes as a
     /// `PasswordValue` leniently, but never re-encodes to the same bytes). Any failure is `invalidData`.
-    nonisolated private static func decode<T: Codable>(_ type: T.Type, from data: Data) throws -> T {
+    nonisolated static func decode<T: Codable>(_ type: T.Type, from data: Data) throws -> T {
         guard let value = try? JSONDecoder().decode(T.self, from: data), (try? CredentialContent.canonicalJSON(value)) == data else {
             throw CredentialVaultError.invalidData
         }
@@ -460,7 +477,7 @@ extension ProfileVaultStore {
 
     /// `accounts` with the entry applied: a whole account added unchanged, a credential put into its live owner's slot (only that typed
     /// value; a passkey never replaces an existing key).
-    nonisolated private static func restoring(
+    nonisolated static func restoring(
         _ body: TrashEntryBody, into accounts: [CredentialAccount]
     ) throws -> (accounts: [CredentialAccount], account: CredentialAccount) {
         if body.scope == .account {

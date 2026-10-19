@@ -44,8 +44,13 @@ nonisolated enum CredentialDiff {
     ///
     /// `removing` names the explicit credential delete the caller is applying. Only that delete moves the notes to the Trash; an
     /// edit that leaves an account without notes supersedes the list like any other note change.
+    ///
+    /// `returning` lists the accounts an undo gives back from the Trash in the same commit. A password, code or passkey that an
+    /// account loses here and that is byte-equal to the same part of one of them is neither moved to the Trash nor kept as a revision:
+    /// it comes back with its own account and history, so undoing a merge leaves no second copy of it behind.
     static func plan(
-        old: [CredentialAccount], new: [CredentialAccount], restoring: UUID? = nil, removing: RemovalScope? = nil
+        old: [CredentialAccount], new: [CredentialAccount], restoring: UUID? = nil, removing: RemovalScope? = nil,
+        returning: [CredentialAccount] = []
     ) throws -> CredentialChangePlan {
         let oldIndex = try indexByID(old)
         var newIDs = Set<UUID>()
@@ -58,7 +63,7 @@ nonisolated enum CredentialDiff {
         guard try CredentialContent.canonicalJSON(old) != CredentialContent.canonicalJSON(new) else {
             return CredentialChangePlan(persistence: .noop, revisions: [], removals: [], touched: [], setsModifiedAt: [])
         }
-        var plan = Accumulator(restoring: restoring, removing: removing)
+        var plan = Accumulator(restoring: restoring, removing: removing, returning: returning)
         for account in new {
             if let position = oldIndex[account.id] {
                 try plan.compare(old[position], account)
@@ -103,6 +108,7 @@ nonisolated enum CredentialDiff {
     private struct Accumulator {
         let restoring: UUID?
         let removing: RemovalScope?
+        let returning: [CredentialAccount]
         var semantic = false
         var revisions: [RevisionDraft] = []
         var removals: [RemovalScope] = []
@@ -125,6 +131,12 @@ nonisolated enum CredentialDiff {
 
         private mutating func comparePassword(_ old: CredentialAccount, _ new: CredentialAccount) throws -> Bool {
             guard try CredentialContent.hash(.password(old)) != CredentialContent.hash(.password(new)) else { return false }
+            if !returning.isEmpty {
+                let lost = try CredentialContent.hash(.password(old))
+                if try returning.contains(where: { try CredentialContent.hash(.password($0)) == lost }) {
+                    return true
+                }
+            }
             if old.password != nil, new.password == nil, old.id != restoring {
                 removals.append(.credential(ownerID: old.id, subject: .password, passkeyID: nil))
             } else if old.password != nil || !old.username.isEmpty || old.basicAuthenticationMetadata != nil {
@@ -140,6 +152,12 @@ nonisolated enum CredentialDiff {
 
         private mutating func compareTOTP(_ old: CredentialAccount, _ new: CredentialAccount) throws -> Bool {
             guard try CredentialContent.hash(.totp(old)) != CredentialContent.hash(.totp(new)) else { return false }
+            if old.totp != nil, !returning.isEmpty {
+                let lost = try CredentialContent.hash(.totp(old))
+                if try returning.contains(where: { try CredentialContent.hash(.totp($0)) == lost }) {
+                    return true
+                }
+            }
             if new.totp == nil {
                 removals.append(.credential(ownerID: old.id, subject: .totp, passkeyID: nil))
             } else if let previous = old.totp {
@@ -185,12 +203,24 @@ nonisolated enum CredentialDiff {
                     guard try !Self.keyMaterialChanged(passkey, new.passkeys[position]) else { throw CredentialVaultError.invalidData }
                     continue
                 }
-                removals.append(.credential(ownerID: old.id, subject: .passkey, passkeyID: passkey.id))
                 changed = true
+                if try isGivenBack(passkey) {
+                    continue
+                }
+                removals.append(.credential(ownerID: old.id, subject: .passkey, passkeyID: passkey.id))
             }
             // With unique ids on both sides and no old passkey flagged, the old ids map one-to-one into the new ones, so a
             // larger new list means at least one addition.
             return changed || old.passkeys.count != new.passkeys.count
+        }
+
+        /// Whether an account the undo returns holds exactly this passkey (the same bytes).
+        private func isGivenBack(_ passkey: WebsitePasskey) throws -> Bool {
+            guard !returning.isEmpty else { return false }
+            let bytes = try CredentialContent.canonicalJSON(passkey)
+            return try returning.contains { account in
+                try account.passkeys.contains { try CredentialContent.canonicalJSON($0) == bytes }
+            }
         }
 
         /// Byte-identical passkeys are unchanged without hashing, so a stored passkey is never re-parsed needlessly.
