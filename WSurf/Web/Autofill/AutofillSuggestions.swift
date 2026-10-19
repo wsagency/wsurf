@@ -53,6 +53,9 @@ final class AutofillSuggestions {
         /// Every vault of the profile was locked when the lookup ran: the request offers only the unlock row, holds no grant, and
         /// can fill nothing.
         var isLocked = false
+        /// The interaction is over: its panel was dismissed, or its lookup showed nothing. Another `select` for the same field then
+        /// starts a new request instead of being taken for this one (`continues`).
+        var isSettled = false
 
         init(page: BrowserPage, context: BrowserProfileContext, frame: BrowserFrame, token: String, kind: AutofillSaveKind,
              frameURL: URL, topURL: URL, world: WKContentWorld, bridge: String,
@@ -101,6 +104,9 @@ final class AutofillSuggestions {
         if let page, self.page !== page {
             return
         }
+        if let shown = self.page {
+            requests[ObjectIdentifier(shown)]?.isSettled = true
+        }
         presentationID = UUID()
         if let panel {
             panel.parent?.removeChildWindow(panel)
@@ -147,7 +153,8 @@ final class AutofillSuggestions {
               body["rect"] is [String: Double],
               Self.canPresent(in: page) else { return }
         let rawRect = body["rect"]
-        if let old = requests[key], old.token == token, old.documentID == documentID {
+        if let old = requests[key],
+           Self.continues(token: token, documentID: documentID, open: (token: old.token, documentID: old.documentID), isSettled: old.isSettled) {
             return
         }
         dismiss()
@@ -162,10 +169,25 @@ final class AutofillSuggestions {
         let id = presentationID
         Task { [weak self, weak page] in
             guard let self, let page, page.context === context, id == self.presentationID,
-                  let rect = try? await self.awaitRect(rawRect, requestPage: page, frame: message.frameInfo, frameURL: frameURL, world: world) else { return }
+                  let rect = try? await self.awaitRect(rawRect, requestPage: page, frame: message.frameInfo, frameURL: frameURL, world: world) else {
+                request.isSettled = true
+                return
+            }
             request.rect = rect
-            _ = await self.lookUp(request, origin: origin, presentation: id, in: page)
+            let shown = await self.lookUp(request, origin: origin, presentation: id, in: page)
+            if !shown {
+                request.isSettled = true
+            }
         }
+    }
+
+    /// Whether a `select` belongs to the request already open for the page: the same field token and document while that request's
+    /// lookup runs or its panel is shown, as with the focus and the click of one interaction, which share a token. A settled request
+    /// is replaced, so focusing or clicking the same field after any dismissal opens the dropdown again.
+    nonisolated static func continues(
+        token: String, documentID: String, open: (token: String, documentID: String), isSettled: Bool
+    ) -> Bool {
+        !isSettled && token == open.token && documentID == open.documentID
     }
 
     /// Reads the rows for `request` and shows them under `presentation`; `false` when nothing was shown.
@@ -518,13 +540,17 @@ final class AutofillSuggestions {
         let siblings = request.siblings
         guard !siblings.isEmpty, requests[ObjectIdentifier(page)] === request else { return }
         dismiss()
+        request.isSettled = false
         self.page = page
         let id = presentationID
         Task { [weak self, weak page] in
             guard let self, let page, id == self.presentationID,
                   (try? await self.validate(request, in: page, requiresFocus: true)) != nil,
-                  id == self.presentationID, Self.canPresent(in: page) else { return }
-            self.show(siblings, request: request, in: page)
+                  id == self.presentationID, Self.canPresent(in: page) else {
+                request.isSettled = true
+                return
+            }
+            request.isSettled = !self.show(siblings, request: request, in: page)
         }
     }
 
@@ -579,8 +605,12 @@ final class AutofillSuggestions {
             guard unlocked, self.requests[key] === request, request.context === page.context else { return }
             self.isFilling = false
             self.dismiss()
+            request.isSettled = false
             self.page = page
-            _ = await self.lookUp(request, origin: origin, presentation: self.presentationID, in: page)
+            let shown = await self.lookUp(request, origin: origin, presentation: self.presentationID, in: page)
+            if !shown {
+                request.isSettled = true
+            }
         }
     }
 

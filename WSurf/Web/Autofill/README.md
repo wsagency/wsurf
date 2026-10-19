@@ -31,6 +31,10 @@ a disconnected target but never open suggestions or trigger metadata lookups.
 Only a visible, populated panel runs the geometry watcher; ownership, policy and
 origin are still revalidated before presentation and around authenticated filling.
 Typing or dismissal requires another focus/click interaction to reopen the panel.
+Any dismissal ends the interaction, also one WSurf makes itself (Escape, a click
+elsewhere, another window, a lookup that found nothing): the next focus or click
+on the same field, which the page script reports with the same field token,
+starts a new lookup instead of being taken for the old one.
 
 A password list holds only accounts saved for the page's exact origin. When it
 would be empty but an unlocked vault holds accounts for another HTTPS website of
