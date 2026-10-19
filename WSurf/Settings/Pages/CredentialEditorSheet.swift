@@ -101,7 +101,7 @@ struct CredentialEditorSheet: View {
                 }
                 Button("Cancel", role: .cancel) { pendingNoteRemoval = nil }
             } message: { _ in
-                Text("This note is removed when you save. If you saved it before, you can copy it back from History.")
+                Text("This note is removed when you save. If you saved it before, you can restore the previous notes from Earlier Versions.")
             }
         }
     }
