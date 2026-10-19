@@ -11,19 +11,22 @@ import WebKit
 
 @testable import WSurf
 
+/// Selects Standard, the page-tinted theme, in the app-wide settings that `LoomChrome` reads, and returns what puts the
+/// earlier theme back. A solid theme such as WSurf, the default of a fresh install, sets the chrome itself and ignores the page.
+@MainActor
+func useStandardTheme() -> () -> Void {
+    let settings = BrowserSettings.application
+    let saved = (settings.themeID, settings.themeAdjustments)
+    settings.themeID = "standard"
+    settings.themeAdjustments["standard"] = nil
+    return {
+        settings.themeAdjustments = saved.1
+        settings.themeID = saved.0
+    }
+}
+
 @MainActor
 struct LoomChromeTests {
-    private func useStandardTheme() -> () -> Void {
-        let settings = BrowserSettings.application
-        let saved = (settings.themeID, settings.themeAdjustments)
-        settings.themeID = "standard"
-        settings.themeAdjustments["standard"] = nil
-        return {
-            settings.themeAdjustments = saved.1
-            settings.themeID = saved.0
-        }
-    }
-
     @Test func siteColourIsPresentButConstrained() throws {
         let restore = useStandardTheme()
         defer { restore() }
