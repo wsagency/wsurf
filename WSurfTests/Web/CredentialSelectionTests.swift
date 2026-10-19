@@ -12,14 +12,14 @@ import Testing
 struct CredentialSelectionTests {
     private let ids = (0..<6).map { _ in UUID() }
 
-    private func selection(showing rows: [UUID]? = nil) -> CredentialSelection {
+    private func makeSelection(showing rows: [UUID]? = nil) -> CredentialSelection {
         let selection = CredentialSelection()
         selection.show(rows ?? ids)
         return selection
     }
 
     @Test func spaceTogglesTheCursorRow() {
-        let selection = selection()
+        let selection = makeSelection()
         selection.takeKeyboard()
         #expect(selection.cursor == ids[0], "the keyboard starts on the first row")
         selection.toggleCursor()
@@ -32,7 +32,7 @@ struct CredentialSelectionTests {
     }
 
     @Test func aPlainClickTakesTheKeyboardButSelectsNothing() {
-        let selection = selection()
+        let selection = makeSelection()
         selection.click(ids[3])
         #expect(selection.cursor == ids[3] && selection.ownsKeyboard)
         #expect(selection.selected.isEmpty)
@@ -40,7 +40,7 @@ struct CredentialSelectionTests {
     }
 
     @Test func shiftExtendsFromTheAnchorInListOrder() {
-        let selection = selection()
+        let selection = makeSelection()
         selection.click(ids[1])
         selection.moveCursor(by: 2, extending: true)
         #expect(selection.selected == Set(ids[1...3]))
@@ -54,7 +54,7 @@ struct CredentialSelectionTests {
     }
 
     @Test func theCursorStopsAtBothEnds() {
-        let selection = selection()
+        let selection = makeSelection()
         selection.takeKeyboard()
         selection.moveCursor(by: -1, extending: false)
         #expect(selection.cursor == ids[0])
@@ -65,14 +65,14 @@ struct CredentialSelectionTests {
     }
 
     @Test func selectAllTakesOnlyVisibleRows() {
-        let selection = selection(showing: Array(ids[0..<3]))
+        let selection = makeSelection(showing: Array(ids[0..<3]))
         selection.selectAll()
         #expect(selection.selected == Set(ids[0..<3]))
         #expect(selection.targets == Array(ids[0..<3]))
     }
 
     @Test func aSearchPrunesHiddenSelections() {
-        let selection = selection()
+        let selection = makeSelection()
         selection.selectAll()
         selection.click(ids[5])
         selection.show(Array(ids[0..<3]))
@@ -82,7 +82,7 @@ struct CredentialSelectionTests {
     }
 
     @Test func targetsAreTheSelectionElseTheCursor() {
-        let selection = selection()
+        let selection = makeSelection()
         selection.click(ids[2])
         #expect(selection.targets == [ids[2]])
         selection.toggle(ids[4])
@@ -95,7 +95,7 @@ struct CredentialSelectionTests {
     }
 
     @Test func cursorMovesToTheNextRowAfterRemoval() {
-        let selection = selection()
+        let selection = makeSelection()
         #expect(selection.cursorAfterRemoving([ids[2]]) == ids[3])
         #expect(selection.cursorAfterRemoving([ids[1], ids[2]]) == ids[3])
         #expect(selection.cursorAfterRemoving([ids[5]]) == ids[4], "the last row hands over to the one before")
@@ -106,7 +106,7 @@ struct CredentialSelectionTests {
     @Test func bySiteUsesGroupOrder() {
         // Two groups, listed one after the other: the order the page passes is the order of the keys, not of the vault.
         let grouped = [ids[3], ids[0], ids[5], ids[1]]
-        let selection = selection(showing: grouped)
+        let selection = makeSelection(showing: grouped)
         selection.takeKeyboard()
         #expect(selection.cursor == ids[3])
         selection.moveCursor(by: 1, extending: false)
@@ -117,7 +117,7 @@ struct CredentialSelectionTests {
     }
 
     @Test func clearingKeepsTheCursorAndLeavingTheKeyboardKeepsTheSelection() {
-        let selection = selection()
+        let selection = makeSelection()
         selection.click(ids[2])
         selection.toggleCursor()
         selection.releaseKeyboard()
@@ -129,7 +129,7 @@ struct CredentialSelectionTests {
     }
 
     @Test func takingTheKeyboardAgainKeepsTheCursorOrStartsWhereAsked() {
-        let selection = selection()
+        let selection = makeSelection()
         selection.takeKeyboard(cursor: ids[4])
         #expect(selection.cursor == ids[4])
         let request = selection.keyboardRequestID

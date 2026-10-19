@@ -159,7 +159,6 @@ struct CredentialListView<Switcher: View>: View {
     @State private var merge = CredentialMergeState()
     /// The Move to Trash in flight. A second one waits until it is done, so a key held down never cancels a write half way.
     @State private var removal: Task<Void, Never>?
-    @Environment(\.settingsScrollProxy) private var scrollProxy
 
     private var key: CredentialListKey {
         CredentialListKey(
@@ -178,12 +177,10 @@ struct CredentialListView<Switcher: View>: View {
             toolbar
             AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .password)
             CredentialPageNotice(model: model, undo: { run { await model.undo() } })
-            if !selection.isEmpty {
-                CredentialBulkBar(
-                    model: model, selection: selection, visibleCount: visibleCount,
-                    moveToTrash: trash, merge: { merge.route = .review($0) }
-                )
-            }
+            CredentialBulkBar(
+                model: model, selection: selection, visibleCount: visibleCount,
+                moveToTrash: trash, merge: { merge.route = .review($0) }
+            )
             // A vault holds thousands of credentials: the list is lazy, so only the rows on screen are built and laid out.
             SettingsSection(
                 title: LocalizedStringResource("\(title)"),
@@ -205,16 +202,10 @@ struct CredentialListView<Switcher: View>: View {
             }
         }
         .background {
-            CredentialListKeyCatcher(
+            CredentialKeyboardHost(
                 selection: selection, inTrash: false, perform: perform, undo: { run { await model.undo() } },
                 redo: { run { await model.redo() } }, undoTitle: { model.undoMenuTitle }, redoTitle: { model.redoMenuTitle }
             )
-        }
-        // A key that moved the cursor brings its row into view; a click never scrolls.
-        .onChange(of: selection.scrollRequestID) {
-            if let cursor = selection.cursor {
-                scrollProxy?.scrollTo(cursor, anchor: nil)
-            }
         }
         .task(id: key) {
             list.refresh(model.summaries)
@@ -243,7 +234,7 @@ struct CredentialListView<Switcher: View>: View {
     }
 
     private var visibleCount: Int {
-        list.siteGroups.map { $0.reduce(0) { $0 + $1.ids.count } } ?? list.rows(of: model.summaries).count
+        list.siteGroups == nil ? list.rows(of: model.summaries).count : list.rowsByID.count
     }
 
     private func row(_ summary: CredentialSummary) -> some View {
@@ -274,6 +265,8 @@ struct CredentialListView<Switcher: View>: View {
                 try await model.moveToTrash(ids: ids)
                 selection.clear()
                 selection.place(cursor: next)
+                // After a click on a button, the next X or Command-Z acts on the list.
+                selection.takeKeyboard()
             }
         }
     }

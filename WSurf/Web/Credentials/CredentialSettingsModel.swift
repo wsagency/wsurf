@@ -436,9 +436,10 @@ final class CredentialSettingsModel {
             return VaultCommitReceipt(revision: draft.revision)
         }
         let saved = try draft.account()
+        let started = session.knownStamps?[saved.id]
         let receipt = try await save(saved, expectedRevision: draft.revision)
         try? update(session.epoch) { $0.draft = nil }
-        await recordSave(of: saved, from: draft.original, receipt: receipt, epoch: session.epoch)
+        await recordSave(of: saved, from: draft.original, started: started, receipt: receipt, epoch: session.epoch)
         return receipt
     }
 

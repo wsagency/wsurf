@@ -61,7 +61,9 @@ extension CredentialSettings {
                 if !next {
                     leaveTrash()
                 }
-                selection.reset()
+                if next != showsTrash {
+                    selection.reset()
+                }
                 showsTrash = next
                 if next {
                     run { try await model.loadTrash() }
@@ -115,20 +117,12 @@ extension CredentialSettings {
             }
         )
         .background {
-            CredentialListKeyCatcher(
+            CredentialKeyboardHost(
                 selection: selection, inTrash: true, perform: performTrash, undo: { run { await model.undo() } },
                 redo: { run { await model.redo() } }, undoTitle: { model.undoMenuTitle }, redoTitle: { model.redoMenuTitle }
             )
         }
-        // The rows the selection acts on are the ones listed; a key that moved the cursor brings its row into view.
-        .onChange(of: model.trashItems.map(\.id), initial: true) {
-            selection.show(model.trashItems.map(\.id))
-        }
-        .onChange(of: selection.scrollRequestID) {
-            if let cursor = selection.cursor {
-                scrollProxy?.scrollTo(cursor, anchor: nil)
-            }
-        }
+        .background { CredentialTrashRowsSync(model: model, selection: selection) }
         .confirmationDialog(
             "Delete Permanently?",
             isPresented: Binding(get: { model.pendingPurge != nil && !model.isBusy }, set: { _ in }),
@@ -267,5 +261,19 @@ extension CredentialSettings {
             parts.append(String(localized: "A copy from before the vault was upgraded still exists at \(backup.path) and still holds them; delete it yourself if you want it gone."))
         }
         return Text(verbatim: parts.joined(separator: " "))
+    }
+}
+
+/// Tells the selection which Trash entries are listed. A view of its own: it reads the Trash, and the page's selection reads stay out
+/// of the page.
+private struct CredentialTrashRowsSync: View {
+    let model: CredentialSettingsModel
+    let selection: CredentialSelection
+
+    var body: some View {
+        let ids = model.trashItems.map(\.id)
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onChange(of: ids, initial: true) { selection.show(ids) }
     }
 }

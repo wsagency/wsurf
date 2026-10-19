@@ -19,8 +19,6 @@ struct CredentialSettings: View {
     @State var list: CredentialListState
     /// Which rows are selected and where the keyboard cursor is, for the credential list and the Trash.
     @State var selection: CredentialSelection
-    /// Brings a row into view when a key moved the cursor to it.
-    @Environment(\.settingsScrollProxy) var scrollProxy
     @State private var work: Task<Void, Never>?
     @State private var exportContext: CredentialExportContext?
 

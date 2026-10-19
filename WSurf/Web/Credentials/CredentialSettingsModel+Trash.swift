@@ -48,7 +48,8 @@ extension CredentialSettingsModel {
             try update(epoch) { $0.restoreBlocked = nil }
             try await reloadAfterWrite(epoch: epoch)
             let item = live.trash.first { $0.id == entryID }
-            recordRestore(of: item, owner: snapshot.accounts.first { $0.id == item?.ownerID }, receipt: receipt, epoch: epoch)
+            let owner = snapshot.accounts.first { $0.id == item?.ownerID }
+            recordRestore(of: item, owner: owner, started: item.flatMap { snapshot.stamps[$0.ownerID] }, receipt: receipt, epoch: epoch)
         }
     }
 
@@ -103,7 +104,7 @@ extension CredentialSettingsModel {
                 $0.dropMarks(pending.emptyAll ? nil : Set(pending.entryIDs))
             }
         }
-        _ = await guarded { try await reloadAfterWrite(epoch: pending.epoch) }
+        _ = await guarded { _ = try await reloadAfterWrite(epoch: pending.epoch) }
     }
 
     // MARK: Deleting with X
@@ -111,7 +112,7 @@ extension CredentialSettingsModel {
     /// X in the Trash: hides the entries and counts them out. Nothing is deleted until the Trash is left (`commitMarked`), and Undo
     /// shows them again, up to five steps back. Entries the Trash does not list are ignored.
     func markForDeletion(entryIDs: [UUID]) {
-        guard let live else { return }
+        guard !isBusy, let live else { return }
         let listed = Set(live.trash.map(\.id)).subtracting(live.markedForDeletion)
         let fresh = entryIDs.filter { listed.contains($0) }
         guard !fresh.isEmpty else { return }
@@ -137,7 +138,7 @@ extension CredentialSettingsModel {
             showNotice("Nothing was deleted.")
             return
         }
-        _ = await guarded { try await reloadAfterWrite(epoch: epoch) }
+        _ = await guarded { _ = try await reloadAfterWrite(epoch: epoch) }
         let text: LocalizedStringResource = ids.count == 1 ? "Deleted 1 item permanently." : "Deleted \(ids.count) items permanently."
         showNotice(text)
     }

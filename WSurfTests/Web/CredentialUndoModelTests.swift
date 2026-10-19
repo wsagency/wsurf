@@ -325,6 +325,39 @@ struct CredentialUndoModelTests {
         }
     }
 
+    @Test func aChangeFromElsewhereBetweenTwoEditsStopsTheOlderUndo() async throws {
+        try await withFixture { f in
+            let existing = account("ada", on: "a", password: "v0")
+            try await f.seed([existing])
+            func password() async throws -> String? {
+                try await f.snapshot().accounts.first { $0.id == existing.id }?.password
+            }
+            try await f.model.beginEditing(accountID: existing.id)
+            f.model.draft?.password = "v1"
+            _ = try await f.model.commitDraft()
+            // Another window changes the credential, and the page sees it.
+            var foreign = try #require(try await f.snapshot().accounts.first { $0.id == existing.id })
+            foreign.password = "elsewhere"
+            try await VaultManagerFixture.save([foreign], in: f.vault)
+            try await f.model.reloadAfterWrite(epoch: try #require(f.model.authorizationEpoch))
+            try await f.model.beginEditing(accountID: existing.id)
+            f.model.draft?.password = "v2"
+            _ = try await f.model.commitDraft()
+            #expect(f.kinds == [.edit, .edit])
+
+            await f.model.undo()
+            #expect(try await password() == "elsewhere")
+            #expect(f.model.error == nil)
+
+            await f.model.undo()
+            #expect(f.model.error == String(
+                localized: "This can’t be undone: the credential changed since, or its copy in Trash is gone. Nothing was changed."
+            ))
+            #expect(try await password() == "elsewhere", "the change from elsewhere is not written over")
+            #expect(f.kinds.isEmpty)
+        }
+    }
+
     @Test func undoWhileTheEditorIsOpenDoesNothing() async throws {
         try await withFixture { f in
             let accounts = [account("ada", on: "a"), account("grace", on: "b")]
@@ -450,7 +483,7 @@ struct CredentialUndoModelTests {
             await f.model.redo()
 
             #expect(f.model.error == String(
-                localized: "This can’t be undone: the credential changed since, or its copy in Trash is gone. Nothing was changed."
+                localized: "This can’t be redone: the credential changed since, or its copy in Trash is gone. Nothing was changed."
             ))
             #expect(try await f.snapshot().revision == revision, "nothing was written")
             #expect(try await f.liveIDs() == [accounts[0].id, accounts[1].id])

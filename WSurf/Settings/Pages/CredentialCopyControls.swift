@@ -39,7 +39,7 @@ struct CredentialPageNotice: View {
                         .disabled(model.isBusy)
                 }
             }
-            .onAppear { AccessibilityNotification.Announcement(notice.text).post() }
+            .onChange(of: notice, initial: true) { AccessibilityNotification.Announcement(notice.text).post() }
         }
     }
 }

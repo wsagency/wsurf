@@ -24,6 +24,10 @@ extension ProfileVaultStore {
                 throw CredentialStoreError.malformed
             }
         }
+        // An account that comes back from the Trash is not also moved to it in the same write.
+        for case .account(let id) in returning where removing[id] != nil {
+            throw CredentialStoreError.malformed
+        }
         let intent = CommitIntent(vaultID: vaultID, access: access, expectedRevision: nil, cause: CredentialChangeCause.undo, isCommit: true)
         // The scratch is attached up front: the undo may move accounts to the Trash and back, and nothing is ever retried.
         return try await run(intent, ledgerOnDemand: false) { db, request, _ in

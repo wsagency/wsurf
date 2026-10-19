@@ -4,17 +4,47 @@
 import AppKit
 import SwiftUI
 
-/// An invisible first responder behind the credential list or the Trash. It receives the keys the list handles (arrows, Space, Return,
-/// Escape, X, Command-Delete) and the Edit menu's Select All and Undo, and it never takes Tab, so the buttons of every row stay
-/// reachable by keyboard. It is first responder only while the selection says the list owns the keyboard; the search field and every
-/// other control keep their own keys, and Undo and Select All in a text field act on its text.
-struct CredentialListKeyCatcher: NSViewRepresentable {
+/// Behind the credential list or the Trash. A view of its own, so that a key press that moves the cursor or changes the selection
+/// redraws this and not the page around it, which never reads those values. It also brings the cursor row into view.
+struct CredentialKeyboardHost: View {
     let selection: CredentialSelection
     let inTrash: Bool
     let perform: (CredentialListKeys.Command) -> Void
     let undo: () -> Void
     let redo: () -> Void
     /// The Edit menu's titles for Undo and Redo, or `nil` when there is nothing to take back or repeat.
+    let undoTitle: () -> String?
+    let redoTitle: () -> String?
+    @Environment(\.settingsScrollProxy) private var scrollProxy
+
+    var body: some View {
+        CredentialListKeyCatcher(
+            selection: selection, inTrash: inTrash, ownsKeyboard: selection.ownsKeyboard, request: selection.keyboardRequestID,
+            hasSelection: !selection.isEmpty, perform: perform, undo: undo, redo: redo, undoTitle: undoTitle, redoTitle: redoTitle
+        )
+        // A key that moved the cursor brings its row into view; a click never scrolls.
+        .onChange(of: selection.scrollRequestID) {
+            if let cursor = selection.cursor {
+                scrollProxy?.scrollTo(cursor, anchor: nil)
+            }
+        }
+    }
+}
+
+/// An invisible first responder behind the credential list or the Trash. It receives the keys the list handles (arrows, Space, Return,
+/// Escape, X, Command-Delete) and the Edit menu's Select All, Undo and Redo, and it never takes Tab, so the buttons of every row stay
+/// reachable by keyboard. It is first responder only while the selection says the list owns the keyboard; the search field and every
+/// other control keep their own keys, and Undo and Select All in a text field act on its text.
+struct CredentialListKeyCatcher: NSViewRepresentable {
+    /// Used by the closures below; its observed values arrive as the plain values after it, so this view updates when they change.
+    let selection: CredentialSelection
+    let inTrash: Bool
+    let ownsKeyboard: Bool
+    let request: Int
+    let hasSelection: Bool
+    let perform: (CredentialListKeys.Command) -> Void
+    let undo: () -> Void
+    let redo: () -> Void
     let undoTitle: () -> String?
     let redoTitle: () -> String?
 
@@ -24,7 +54,7 @@ struct CredentialListKeyCatcher: NSViewRepresentable {
 
     func updateNSView(_ nsView: CatcherView, context: Context) {
         nsView.inTrash = inTrash
-        nsView.hasSelection = !selection.isEmpty
+        nsView.hasSelection = hasSelection
         nsView.perform = perform
         nsView.onUndo = undo
         nsView.onRedo = redo
@@ -32,18 +62,14 @@ struct CredentialListKeyCatcher: NSViewRepresentable {
         nsView.redoTitle = redoTitle
         nsView.onSelectAll = { selection.selectAll() }
         nsView.onResign = { selection.releaseKeyboard() }
-        let owns = selection.ownsKeyboard
-        let request = selection.keyboardRequestID
-        defer {
-            nsView.wasActive = owns
-            nsView.lastRequestID = request
-        }
         guard let window = nsView.window else { return }
-        if owns && (!nsView.wasActive || nsView.lastRequestID != request) {
+        if ownsKeyboard && (!nsView.wasActive || nsView.lastRequestID != request) {
             window.makeFirstResponder(nsView)
-        } else if !owns && window.firstResponder === nsView {
+        } else if !ownsKeyboard && window.firstResponder === nsView {
             window.makeFirstResponder(nil)
         }
+        nsView.wasActive = ownsKeyboard
+        nsView.lastRequestID = request
     }
 
     final class CatcherView: NSView, NSMenuItemValidation {
@@ -63,6 +89,11 @@ struct CredentialListKeyCatcher: NSViewRepresentable {
             true
         }
 
+        /// Tab must not stop on it.
+        override var canBecomeKeyView: Bool {
+            false
+        }
+
         override func hitTest(_ point: NSPoint) -> NSView? {
             nil
         }
@@ -75,7 +106,18 @@ struct CredentialListKeyCatcher: NSViewRepresentable {
         override func resignFirstResponder() -> Bool {
             let report = onResign
             Task { @MainActor in report?() }
+            restoreMenuTitles()
             return true
+        }
+
+        /// Undo and Redo keep the title this view gave them until a responder sets another, and most do not: the plain titles go back
+        /// when the keyboard leaves the list.
+        private func restoreMenuTitles() {
+            for menu in NSApp.mainMenu?.items.compactMap(\.submenu) ?? [] {
+                for item in menu.items where item.action == #selector(undo(_:)) || item.action == #selector(redo(_:)) {
+                    item.title = item.action == #selector(undo(_:)) ? String(localized: "Undo") : String(localized: "Redo")
+                }
+            }
         }
 
         override func keyDown(with event: NSEvent) {

@@ -13,10 +13,17 @@ struct CredentialBulkBar: View {
     let moveToTrash: ([UUID]) -> Void
     let merge: ([UUID]) -> Void
 
+    @ViewBuilder
     var body: some View {
-        let ids = selection.targets
+        // The list never reads the selection; this bar does, so only it follows a change.
+        if !selection.isEmpty {
+            bar(selection.targets)
+        }
+    }
+
+    private func bar(_ ids: [UUID]) -> some View {
         let canMerge = CredentialMerge.mayMerge(summaries(of: ids))
-        ViewThatFits(in: .horizontal) {
+        return ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
                 count(ids.count)
                 Spacer(minLength: 8)

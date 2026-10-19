@@ -25,9 +25,9 @@ extension CredentialSettingsModel {
         // Last point before the durable write: a cancelled task or a changed authorization never commits.
         try Task.checkCancellation()
         let receipt = try await manager.commitAccounts([], removing: removing, authorizedEpoch: live.epoch)
-        try? await reloadAfterWrite(epoch: live.epoch)
+        _ = try? await reloadAfterWrite(epoch: live.epoch)
         let recorded = recordUndo(receipt: receipt, epoch: live.epoch) { _ in
-            CredentialUndoStep(kind: .moveToTrash, returning: removing.keys.map(RemovalScope.account))
+            CredentialUndoStep(kind: .moveToTrash, returning: removing.keys.map(RemovalScope.account), starting: removing)
         }
         let count = removing.count
         let text: LocalizedStringResource = count == 1 ? "Moved 1 credential to Trash." : "Moved \(count) credentials to Trash."

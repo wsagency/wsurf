@@ -17,6 +17,8 @@ nonisolated struct CredentialUndoStep: Sendable {
         case moveToTrash, merge, edit, add, restore, markForDeletion
     }
 
+    /// Tells this step from the others while a replay is under way, so the step that ran is the one that is taken off its stack.
+    let id = UUID()
     var kind: Kind
     /// Accounts to put back as they were.
     var accounts: [CredentialReplaced] = []
@@ -24,8 +26,11 @@ nonisolated struct CredentialUndoStep: Sendable {
     var returning: [RemovalScope] = []
     /// What the action added or restored; it goes to the Trash.
     var removing: [UUID: AccountStamp] = [:]
-    /// Trash entries only marked for deletion in this session (U5): there is no vault write to take back.
+    /// Trash entries only marked for deletion in this session: there is no vault write to take back.
     var marked: [UUID] = []
+    /// The stamps the accounts it touches had just before it ran (those that existed). The step behind it in its stack is the action
+    /// before this one when it expects those very stamps; only then does it follow the accounts to their new stamps.
+    var starting: [UUID: AccountStamp] = [:]
 }
 
 nonisolated extension RemovalScope {
@@ -49,16 +54,17 @@ nonisolated extension CredentialUndoStep {
         return ids
     }
 
-    /// This step with the stamps of `ids` taken from `stamps`. A step expects the accounts as its own action left them. When a later
-    /// step is undone, the accounts it rewrote have the content this step expects but a new stamp, so this step is bound to it. An
-    /// account anything else changed keeps its old stamp, and the undo of this step refuses it.
-    func rebound(_ ids: Set<UUID>, to stamps: [UUID: AccountStamp]) -> CredentialUndoStep {
+    /// This step, bound to the stamps the accounts have now after `replayed` ran in front of it. This step expects an account as its own
+    /// action left it. When `replayed` rewrote that account, the content is what this step expects but the stamp is new, so the step
+    /// follows it, provided nothing else changed the account in between: that is so when the stamp this step expects is the very stamp
+    /// `replayed` started from. An account anything else changed keeps its old stamp, and the replay of this step refuses it.
+    func rebound(behind replayed: CredentialUndoStep, to stamps: [UUID: AccountStamp]) -> CredentialUndoStep {
         var step = self
         step.accounts = accounts.map { replaced in
-            guard ids.contains(replaced.before.id), let stamp = stamps[replaced.before.id] else { return replaced }
+            guard replayed.starting[replaced.before.id] == replaced.after, let stamp = stamps[replaced.before.id] else { return replaced }
             return CredentialReplaced(before: replaced.before, after: stamp)
         }
-        for id in removing.keys where ids.contains(id) {
+        for (id, expected) in removing where replayed.starting[id] == expected {
             if let stamp = stamps[id] {
                 step.removing[id] = stamp
             }

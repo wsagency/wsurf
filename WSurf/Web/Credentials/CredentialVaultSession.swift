@@ -86,47 +86,54 @@ struct CredentialVaultSession {
         }
     }
 
-    /// The newest step has been replayed. Its inverse goes onto the other stack (`nil` when it cannot be made, and the action is
-    /// then gone from both). Every older step expects the accounts the replay rewrote under their new stamps.
-    mutating func completed(_ direction: CredentialReplay, inverse: CredentialUndoStep?, touching ids: Set<UUID>) {
-        switch direction {
-        case .undo:
-            undoSteps.removeLast()
-        case .redo:
-            redoSteps.removeLast()
-        }
-        if let inverse {
+    /// `step` has been replayed (it is found by its id: the page may have recorded another action meanwhile). Its inverse goes onto the
+    /// other stack; `nil` when it cannot be made, and the action is then gone from both. With `rebinding`, the steps behind it in its
+    /// stack follow the accounts it rewrote to their new stamps (`CredentialUndoStep.rebound`).
+    mutating func completed(_ direction: CredentialReplay, step: CredentialUndoStep, inverse: CredentialUndoStep?, rebinding: Bool) {
+        if discard(step, from: direction), let inverse {
             push(inverse, onto: direction == .undo ? .redo : .undo)
         }
-        undoSteps = undoSteps.map { $0.rebound(ids, to: stamps) }
-        redoSteps = redoSteps.map { $0.rebound(ids, to: stamps) }
-    }
-
-    /// Drops the newest step of a stack because it can no longer be replayed.
-    mutating func discardNewest(_ direction: CredentialReplay) {
+        guard rebinding else { return }
         switch direction {
         case .undo:
-            undoSteps.removeLast()
+            undoSteps = undoSteps.map { $0.rebound(behind: step, to: stamps) }
         case .redo:
-            redoSteps.removeLast()
+            redoSteps = redoSteps.map { $0.rebound(behind: step, to: stamps) }
         }
     }
 
-    /// Replays a mark for deletion: Undo shows its entries again, Redo hides them again. No vault write is involved.
-    mutating func replayMark(_ step: CredentialUndoStep, _ direction: CredentialReplay) {
+    /// Takes `step` off its stack because it was replayed or can no longer be. `false` when it is not there any more.
+    @discardableResult
+    mutating func discard(_ step: CredentialUndoStep, from direction: CredentialReplay) -> Bool {
+        switch direction {
+        case .undo:
+            guard let index = undoSteps.lastIndex(where: { $0.id == step.id }) else { return false }
+            undoSteps.remove(at: index)
+        case .redo:
+            guard let index = redoSteps.lastIndex(where: { $0.id == step.id }) else { return false }
+            redoSteps.remove(at: index)
+        }
+        return true
+    }
+
+    /// Replays a mark for deletion: Undo shows its entries again, Redo hides them again. No vault write is involved. `false` when
+    /// there was nothing to do: the step is gone, or none of its entries is listed any more.
+    @discardableResult
+    mutating func replayMark(_ step: CredentialUndoStep, _ direction: CredentialReplay) -> Bool {
+        guard discard(step, from: direction) else { return false }
         switch direction {
         case .undo:
             markedForDeletion.removeAll { step.marked.contains($0) }
-            undoSteps.removeLast()
             redoSteps.append(step)
         case .redo:
             let listed = Set(trash.map(\.id)).subtracting(markedForDeletion)
             var again = step
             again.marked = step.marked.filter { listed.contains($0) }
+            guard !again.marked.isEmpty else { return false }
             markedForDeletion += again.marked
-            redoSteps.removeLast()
             push(again, onto: .undo)
         }
+        return true
     }
 
     /// The stamps only while they describe the revision shown; after this page's own write they are unknown, not stale.
