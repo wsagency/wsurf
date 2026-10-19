@@ -209,6 +209,7 @@ private struct SettingsDetail: View {
             }
             .scrollContentBackground(.hidden)
             .environment(\.settingsHighlight, highlight)
+            .environment(\.settingsScrollProxy, proxy)
             .environment(\.openURL, OpenURLAction { url in
                 guard url.scheme == SettingsIndex.linkScheme, let anchor = url.host() else {
                     return .systemAction

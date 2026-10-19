@@ -6,6 +6,8 @@ import SwiftUI
 
 extension EnvironmentValues {
     @Entry var settingsDescriptionLineLimit: Int?
+    /// The detail pane's scroll view, so a page can bring a row it moved a cursor to into view.
+    @Entry var settingsScrollProxy: ScrollViewProxy?
 }
 
 enum SettingsMetrics {

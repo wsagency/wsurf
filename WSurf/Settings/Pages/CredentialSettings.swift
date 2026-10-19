@@ -68,7 +68,10 @@ struct CredentialSettings: View {
             model.close()
             model.legacy.endSession()
         }
-        .sheet(isPresented: Binding(get: { model.draft != nil }, set: { if !$0 { model.cancelEditing() } })) {
+        .sheet(
+            isPresented: Binding(get: { model.draft != nil }, set: { if !$0 { model.cancelEditing() } }),
+            onDismiss: { selection.takeKeyboard() }
+        ) {
             CredentialEditorSheet(model: model)
         }
         .sheet(

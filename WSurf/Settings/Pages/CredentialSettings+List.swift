@@ -157,6 +157,9 @@ struct CredentialListView<Switcher: View>: View {
     let switcher: Switcher
     /// The merge suggestions and the merge sheet of this list.
     @State private var merge = CredentialMergeState()
+    /// The Move to Trash in flight. A second one waits until it is done, so a key held down never cancels a write half way.
+    @State private var removal: Task<Void, Never>?
+    @Environment(\.settingsScrollProxy) private var scrollProxy
 
     private var key: CredentialListKey {
         CredentialListKey(
@@ -199,6 +202,18 @@ struct CredentialListView<Switcher: View>: View {
                 } else {
                     ForEach(rows, content: row)
                 }
+            }
+        }
+        .background {
+            CredentialListKeyCatcher(
+                selection: selection, inTrash: false, perform: perform, undo: { run { await model.undo() } },
+                undoTitle: { model.undoMenuTitle }
+            )
+        }
+        // A key that moved the cursor brings its row into view; a click never scrolls.
+        .onChange(of: selection.scrollRequestID) {
+            if let cursor = selection.cursor {
+                scrollProxy?.scrollTo(cursor, anchor: nil)
             }
         }
         .task(id: key) {
@@ -249,11 +264,37 @@ struct CredentialListView<Switcher: View>: View {
 
     /// Moves credentials to the Trash with no dialog. The cursor goes to the row that takes their place once the move has happened.
     private func trash(_ ids: [UUID]) {
+        guard removal == nil, !model.isBusy, !ids.isEmpty else { return }
         let next = selection.cursorAfterRemoving(ids)
-        run {
-            try await model.moveToTrash(ids: ids)
+        let epoch = model.authorizationEpoch
+        removal = Task {
+            defer { removal = nil }
+            guard model.authorizationEpoch == epoch else { return }
+            await model.attempt {
+                try await model.moveToTrash(ids: ids)
+                selection.clear()
+                selection.place(cursor: next)
+            }
+        }
+    }
+
+    /// What a key does while the list has the keyboard (`CredentialListKeys` decides which key means what).
+    private func perform(_ command: CredentialListKeys.Command) {
+        switch command {
+        case .move(let delta, let extending):
+            selection.moveCursor(by: delta, extending: extending)
+        case .toggle:
+            selection.toggleCursor()
+        case .open:
+            if let cursor = selection.cursor {
+                open(cursor)
+            }
+        case .clear:
             selection.clear()
-            selection.place(cursor: next)
+        case .remove:
+            trash(selection.targets)
+        case .none:
+            break
         }
     }
 
@@ -311,6 +352,19 @@ struct CredentialListView<Switcher: View>: View {
                 .font(Theme.Font.secondary)
                 .fieldPlaceholder("Search by name, username or website", isShowing: list.query.isEmpty)
                 .accessibilityLabel("Search credentials")
+                // Down moves into the list. Escape clears a search and, with none, returns to the list.
+                .onKeyPress(.downArrow) {
+                    selection.takeKeyboard()
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    if list.query.isEmpty {
+                        selection.takeKeyboard()
+                    } else {
+                        list.query = ""
+                    }
+                    return .handled
+                }
             if !list.query.isEmpty {
                 ChromeIcon(symbol: "xmark", size: 9, extent: 18, help: String(localized: "Clear Search")) {
                     list.query = ""

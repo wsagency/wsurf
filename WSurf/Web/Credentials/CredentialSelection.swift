@@ -155,7 +155,9 @@ final class CredentialSelection {
 
     /// Another control took the keyboard (the search field, a sheet).
     func releaseKeyboard() {
-        ownsKeyboard = false
+        if ownsKeyboard {
+            ownsKeyboard = false
+        }
     }
 
     // MARK: Removal
