@@ -382,6 +382,7 @@ final class CredentialManager {
             try requirePending(access)
             try activate(access)
             unlockCredentials = unlocks
+            AutofillSuggestions.shared.vaultUnlocked(profileID: profile.id)
         } catch {
             publishScratch()
             discard(access)

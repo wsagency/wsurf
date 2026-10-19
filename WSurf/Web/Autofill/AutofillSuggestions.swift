@@ -95,6 +95,23 @@ final class AutofillSuggestions {
         accessGenerations[profileID, default: 0] &+= 1
     }
 
+    /// A vault of the profile was unlocked: a login field still selected on a page that can show a panel now is offered its logins
+    /// again, through the page's own tracker, which checks the field and sends its `select` once more. A request whose panel is open
+    /// or being filled is left alone; the dropdown's own unlock looks its request up again itself.
+    func vaultUnlocked(profileID: UUID) {
+        guard !isFilling else { return }
+        for request in requests.values
+        where request.kind == .password && request.isSettled && request.context.profile.id == profileID
+            && request.page.context === request.context && Self.canPresent(in: request.page) {
+            let page = request.page, frame = request.frame, world = request.world, bridge = request.bridge
+            Task {
+                _ = try? await page.callAsyncJavaScript(
+                    "globalThis[bridge]?.refresh?.();", arguments: ["bridge": bridge], in: frame, contentWorld: world
+                )
+            }
+        }
+    }
+
     func reset() {
         dismiss()
         requests.removeAll()

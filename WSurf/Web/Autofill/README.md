@@ -59,6 +59,11 @@ vault when there are several), then looks up the same field again. A lock,
 profile switch or a new field while the vault choice is open unlocks nothing.
 The unlock starts the vault's own lease and never extends one.
 
+Any other unlock (Settings, a save offer, a passkey sheet) asks the page script
+of a login field that is still selected, on a page that can show a panel, to
+select it again, and that field's logins are offered without another click.
+A field whose panel is open or being filled is left alone.
+
 ## Submission lifecycle
 
 `AutofillSaveScript` tracks trusted edits and separates an attempt from evidence

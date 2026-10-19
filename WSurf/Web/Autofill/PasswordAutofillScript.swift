@@ -54,6 +54,8 @@ nonisolated enum PasswordAutofillScript {
           if (!enabled) tracker.clear();
           else if (changed) tracker.refresh();
         },
+        // A vault was unlocked: the field that is still focused is selected again, and its select carries the same token.
+        refresh() { if (enabled) tracker.refresh(); },
         eligible,
         bounds(token,url) { return eligible(token,url) ? suggestions.geometry(state.target) : null; },
         fill(token,url,login) {
