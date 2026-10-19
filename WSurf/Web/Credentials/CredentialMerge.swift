@@ -186,10 +186,11 @@ nonisolated enum CredentialMerge {
             let others = accounts.filter { $0.id != survivor.id }
 
             // The password and code fill on the merged credential's websites. The survivor's stay; another credential's website is
-            // added when it is on a site the survivor already has (a website or a passkey's relying party), and is otherwise only
-            // offered, unticked (D2), even when the login comes from that credential: the sheet lists where it will fill.
+            // added when it is on a site of the survivor's websites (of its passkeys' relying parties only when it has no website, so
+            // its own password never starts filling on a passkey's site), and is otherwise only offered, unticked (D2), even when the
+            // login comes from that credential: the sheet lists where it will fill.
             var sites = ImportDuplicates.Sites()
-            let anchor = Set(Self.sites(of: survivor, &sites))
+            let anchor = Set(survivor.origins.isEmpty ? survivor.passkeys.map { sites.site(ofHost: $0.rpID) } : sites.of(survivor.origins))
             var included: [String] = []
             var offered: [String] = []
             for origin in others.flatMap(\.origins) where !survivor.origins.contains(origin) && !included.contains(origin) && !offered.contains(origin) {
@@ -206,10 +207,6 @@ nonisolated enum CredentialMerge {
             self.picks = picks
             self.included = included
             self.offered = offered
-        }
-
-        private static func sites(of account: CredentialAccount, _ sites: inout ImportDuplicates.Sites) -> [String] {
-            sites.of(account.origins) + account.passkeys.map { sites.site(ofHost: $0.rpID) }
         }
 
         func merged() throws -> CredentialAccount {
@@ -244,7 +241,8 @@ nonisolated enum CredentialMerge {
             // Each absorbed item's identity, with what the other app last sent for it, and the items merged into it before. An identity
             // the survivor already holds (two credentials that claimed one item) is kept once.
             var links = survivor.mergedFrom ?? []
-            var held = Set([try CredentialExchangeCodec.externalItemID(for: survivor)] + links.map(\.identity))
+            var held = Set(links.map(\.identity))
+            held.insert(try CredentialExchangeCodec.externalItemID(for: survivor))
             for other in others {
                 let identity = try CredentialExchangeCodec.externalItemID(for: other)
                 let own = MergedItemLink(

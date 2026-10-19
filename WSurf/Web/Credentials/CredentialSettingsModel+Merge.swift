@@ -103,8 +103,10 @@ extension CredentialSettingsModel {
         var skipped = 0
         for group in groups {
             let chosen = group.ids.compactMap { position[$0].map { snapshot.accounts[$0] } }
+            // A group whose merge breaks a rule or a limit (a count, or one credential's bytes) is left as it is, not the whole commit.
             guard chosen.count == group.ids.count, let picks = CredentialMerge.defaultPicks(for: chosen),
-                  let merged = try? CredentialMerge.merged(chosen, picks: picks) else {
+                  let merged = try? CredentialMerge.merged(chosen, picks: picks),
+                  (try? ProfileVaultStore.validate([merged], blockedOrigins: [])) != nil else {
                 skipped += 1
                 continue
             }

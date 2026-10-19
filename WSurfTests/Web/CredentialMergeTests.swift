@@ -91,6 +91,13 @@ struct CredentialMergeTests {
         #expect(merged.origins == ["https://www.example.test"])
         #expect(merged.password == "pw")
         #expect(merged.passkeys.count == 1)
+
+        // A survivor with a website of its own keeps its password where it filled: the passkey's site is then another site.
+        var withWebsite = account("ada", "own", ["https://other.test"])
+        withWebsite.passkeys = passkeyOnly.passkeys
+        let kept = try CredentialMerge.merged([withWebsite, login], picks: picks(withWebsite))
+        #expect(kept.origins == ["https://other.test"])
+        #expect(try CredentialMerge.preview([withWebsite, login], picks: picks(withWebsite)).otherSite == ["https://www.example.test"])
     }
 
     @Test func previewNamesEverySiteThePasswordWillFillOn() throws {
@@ -211,7 +218,7 @@ struct CredentialMergeTests {
         earlier.exchangeItemID = Data([3, 2])
         absorbed.mergedFrom = [MergedItemLink(accountID: earlier.id, exchangeAccountID: Data([3, 1]), exchangeItemID: Data([3, 2]))]
 
-        let merged = try CredentialMerge.merged([keeper, absorbed], picks: picks(keeper))
+        let merged = try CredentialMerge.merged([keeper, absorbed], picks: picks(keeper, code: absorbed))
         let links = try #require(merged.mergedFrom)
         #expect(links.map(\.accountID) == [absorbed.id, earlier.id])
         #expect(links[0].exchangeItemID == Data([2, 2]))
@@ -272,17 +279,17 @@ struct CredentialMergeTests {
     // MARK: Stored format
 
     /// A credential as a build without merges stored it: every field it could hold, written out by hand in the stored form.
-    private static let storedBeforeMerges = #"""
-        {"basicAuthenticationMetadata":{"password":{"fieldType":"concealedString","id":"Ag==","label":"Pass"},\#
-        "username":{"fieldType":"string","id":"AQ==","label":"User"}},"createdAt":10,"displayName":"Work",\#
-        "exchangeAccountID":"oAE=","exchangeItemID":"sAE=","id":"00000000-0000-0000-0000-0000000000A1",\#
-        "loginURLs":["https:\/\/example.test\/login"],"migratedAt":12,"modifiedAt":11,"notes":[{"text":"kept note"}],\#
-        "origins":["https:\/\/example.test"],"passkeys":[],"password":"s3cret",\#
-        "passwordBase":{"contentHash":"q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=","itemID":"sAE="},\#
-        "passwordEvents":{"lastImportedAt":4},"totp":{"algorithm":"sha1","digits":6,"issuer":"Example","period":30,"secret":"AQIDBAU="},\#
-        "totpBase":{"contentHash":"zc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc0=","itemID":"sAE="},"totpEvents":{"lastImportedAt":4},\#
-        "username":"ada"}
-        """#
+    private static let storedBeforeMerges = [
+        #"{"basicAuthenticationMetadata":{"password":{"fieldType":"concealedString","id":"Ag==","label":"Pass"},"#,
+        #""username":{"fieldType":"string","id":"AQ==","label":"User"}},"createdAt":10,"displayName":"Work","#,
+        #""exchangeAccountID":"oAE=","exchangeItemID":"sAE=","id":"00000000-0000-0000-0000-0000000000A1","#,
+        #""loginURLs":["https:\/\/example.test\/login"],"migratedAt":12,"modifiedAt":11,"notes":[{"text":"kept note"}],"#,
+        #""origins":["https:\/\/example.test"],"passkeys":[],"password":"s3cret","#,
+        #""passwordBase":{"contentHash":"q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=","itemID":"sAE="},"#,
+        #""passwordEvents":{"lastImportedAt":4},"totp":{"algorithm":"sha1","digits":6,"issuer":"Example","period":30,"secret":"AQIDBAU="},"#,
+        #""totpBase":{"contentHash":"zc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc0=","itemID":"sAE="},"totpEvents":{"lastImportedAt":4},"#,
+        #""username":"ada"}"#,
+    ].joined()
 
     /// What a vault already holds decodes as it was, with no merged items, and is written back with the same stored fields: opening
     /// and saving it with this build changes nothing, and adds no field an older build would have to drop.
@@ -299,8 +306,8 @@ struct CredentialMergeTests {
         let written = try CredentialContent.canonicalJSON(account)
         let before = try #require(try JSONSerialization.jsonObject(with: stored) as? NSDictionary)
         let after = try #require(try JSONSerialization.jsonObject(with: written) as? NSDictionary)
+        // The same keys and values: in particular no `mergedFrom`, which the stored form never had.
         #expect(after == before)
-        #expect(after["mergedFrom"] == nil)
 
         // A credential this build merged into keeps its links through the same round trip.
         var merged = account

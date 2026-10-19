@@ -23,8 +23,8 @@ nonisolated struct CredentialMergeSuggestion: Equatable, Identifiable, Sendable 
     let reason: CredentialMergeReason
     /// At least two credentials, in the order the vault lists them.
     let ids: [UUID]
-    /// Every member has the same login, no member's code differs, and they all fill on the same websites: merging them loses nothing
-    /// and adds no website, so a bulk merge may do it unasked.
+    /// Every member has the same login, no member's code differs, and their websites are on the same sites: merging them loses nothing
+    /// and adds no website on another site, so a bulk merge may do it unasked.
     let isIdentical: Bool
 }
 
