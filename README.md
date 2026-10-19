@@ -70,11 +70,16 @@ versions.
   WebKit (default) or embedded Chromium. Changing engines reloads the website
   and resets its Back/Forward history; cookies, storage, and sign-ins are separate.
 - **Choose a theme:** Settings › Appearance separates System, Light, or Dark
-  appearance from the theme. Standard, Calm, Catppuccin, Gruvbox, Rosé Pine,
-  Nord, and Dracula each have light and dark variants. Existing choices and
-  customizations migrate. Brightness previews live; changing a built-in theme's
+  appearance from the theme. WSurf, Standard, Calm, Catppuccin, Gruvbox, Rosé Pine,
+  Nord, and Dracula each have light and dark variants. WSurf is the default only
+  for a fresh install; existing choices and customizations migrate. Each theme
+  remembers Plain or Glass, transparency, and separate light/dark brightness.
+  Sliders and colors preview before committing; changing a built-in theme's
   colors makes a saved copy. Control icons and URL text have independent colors
   and opacity, and Reset restores the original colors of the variant you edit.
+  Unreadable text and control-icon colors are adjusted at drawing time without
+  replacing their saved values. Controls inside a glass card use solid fills;
+  Reduce Transparency or Increase Contrast uses solid stand-ins.
 - **Tune the sidebar:** Settings › Appearance › Sidebar controls the installed
   font family, text size and weight, row spacing, and folder tint (including none).
   Loaded and unloaded text/icon colors and opacity are saved separately for each
