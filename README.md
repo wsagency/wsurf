@@ -123,9 +123,13 @@ versions.
   Its Credentials and Settings tabs separate searchable, filtered credentials
   from vault naming, per-vault lock times and statistics. A sectioned editor
   keeps sign-in details, websites, verification codes, passkeys and notes together.
-  Saved notes can be restored through Earlier Versions. The native fill dropdown
-  can search the logins already authorized for the site without sending the query
-  to the page. Save payment cards and contact details in Settings › Autofill;
+  History beside the editor shows a credential's earlier versions; a value copied
+  back from it is written only when you save. Credentials can be grouped by site
+  and merged. The review of an import from Passwords also names what you changed
+  in WSurf and lists saved credentials Passwords no longer has, which stay unless
+  you choose to move them to Trash. The native fill dropdown can search the
+  logins already authorized for the site without sending the query to the page.
+  Save payment cards and contact details in Settings › Autofill;
   unlock cards with Touch ID or your Mac password.
 - **Add WebKit extensions:** install from the Chrome Web Store or Firefox Add-ons.
 - Use profiles to keep cookies, history, tabs, permissions, and extensions
