@@ -41,6 +41,21 @@ release notes will be added above this provenance record.
 - Small element screenshots no longer fail, and Chromium tabs no longer go back to an empty startup page.
 - The native test suite no longer fails on 16 test defects and 4 timing-dependent diagnostics tests.
 
+### 2026-10-19 — Credential Manager, login saving, themes and command palette order
+
+These changes describe the current candidate source, not a published release.
+
+- Credential Manager has Credentials and Settings tabs, search and kind filters, counts, credential dates and vault statistics. Vaults can be renamed while unlocked and keep their own lock time: 1, 5, 15 or 30 minutes, 1 hour, or when WSurf quits. Sleep, display sleep, screen lock, user switching and profile changes still lock credentials. A shorter time applies immediately; a longer one starts at the next unlock. Locked vaults show only their number.
+- The larger credential editor groups sign-in details, websites, verification codes, passkeys and notes. It can generate a password and asks before discarding edits or removing a nonempty note. Ordinary note edits, including clearing the last note, preserve the previous notes in Earlier Versions; the confirmation describes that existing restore action, not a new History copy panel.
+- The native fill dropdown can search its already-authorized site matches when more than five are available. Typing can start search in username fields with a standard keyboard layout; password and code fields require choosing Search. The query stays native and does not reach the page. Scope and authentication checks remain in force.
+- Login saving follows redirects and in-page form completion without treating a verification step as a finished login. An attempt lasts 120 seconds, or 300 seconds when verification has been seen, counted from the attempt. Form actions, document bases and submitter overrides must stay origin-safe. A stale-page save reports “This page changed, so nothing was saved.” Only explicit Save or Update writes credentials.
+- Settings › Appearance separates System, Light and Dark from the theme. Standard, Calm, Catppuccin, Gruvbox, Rosé Pine, Nord and Dracula have light and dark variants. Existing choices and customizations migrate; changing a built-in theme's colors creates a saved copy.
+- Settings › General › Command palette › Section order can move result sections up or down or reset them. Defaults stay the same, and a typed address keeps Search or ask first.
+
+Input History and the unfinished credential History, re-import and forwarding work are not included in this candidate. No new recorder or unfinished UI is exposed.
+
+Verification of code at `83f89f0`: isolated native Debug ARM64 build and identity guard passed; all 20 affected suites passed (245 test definitions, 350 executions, no failures or skips). The 3,000-credential layout measured 0.121752 seconds and 1,661.338 kB average growth, below the existing 0.300-second and 4,096-kB budgets. This was not the final full suite or full performance/coverage gate. SwiftLint 0.65.1 passed. Native keyboard/IME and Chromium fill-dropdown acceptance, real passkey and credential exchange, Stage and manual visuals remain unverified.
+
 ### 2026-10-16 — Preserve test checks under Swift compiler isolation and inference
 
 The pull-to-refresh and development-ownership tests now propagate errors from throwing wait predicates. The context-budget fallback comparison explicitly uses `[Int]`, and the development-ownership test's immutable hostile-alphabet arguments are `nonisolated` for test discovery. Assertions, test cases, production code and security checks are unchanged.

@@ -59,7 +59,9 @@ versions.
 - In the command palette, type a supported site name or domain and press Tab
   to search that site. Enter opens results in a new tab; Option-Enter uses the
   current tab. Backspace in an empty query removes the site chip; its remove
-  button preserves a query you have already typed.
+  button preserves a query you have already typed. Settings › General › Command
+  palette › Section order lets you move result sections up or down or reset
+  them. A typed address keeps Search or ask first.
 - The address field and the Start Page field search a site the same way: type a
   supported site name, press Tab, then type your query. Enter opens the results
   in the current tab. Backspace in an empty field, Escape, or leaving the field
@@ -67,10 +69,12 @@ versions.
 - **Choose a website engine:** Website Settings › Browser Engine selects
   WebKit (default) or embedded Chromium. Changing engines reloads the website
   and resets its Back/Forward history; cookies, storage, and sign-ins are separate.
-- **Choose a theme:** Settings › Appearance offers Auto, Light, Dark, pastel
-  Light Calm, and Dark Calm. Theme customization previews brightness, hue, and
-  a primary-derived palette live. Control icons and URL text have independent
-  colors and opacity, saved per theme; Reset restores that theme's defaults.
+- **Choose a theme:** Settings › Appearance separates System, Light, or Dark
+  appearance from the theme. Standard, Calm, Catppuccin, Gruvbox, Rosé Pine,
+  Nord, and Dracula each have light and dark variants. Existing choices and
+  customizations migrate. Brightness previews live; changing a built-in theme's
+  colors makes a saved copy. Control icons and URL text have independent colors
+  and opacity, and Reset restores the original colors of the variant you edit.
 - **Tune the sidebar:** Settings › Appearance › Sidebar controls the installed
   font family, text size and weight, row spacing, and folder tint (including none).
   Loaded and unloaded text/icon colors and opacity are saved separately for each
@@ -111,8 +115,13 @@ versions.
   open a preview.
 - **Fill forms:** save and fill passwords, passkeys and verification codes in
   Credential Manager, an encrypted per-profile vault you unlock with a passkey.
-  Save payment cards and contact details in Settings › Autofill; unlock cards
-  with Touch ID or your Mac password.
+  Its Credentials and Settings tabs separate searchable, filtered credentials
+  from vault naming, per-vault lock times and statistics. A sectioned editor
+  keeps sign-in details, websites, verification codes, passkeys and notes together.
+  Saved notes can be restored through Earlier Versions. The native fill dropdown
+  can search the logins already authorized for the site without sending the query
+  to the page. Save payment cards and contact details in Settings › Autofill;
+  unlock cards with Touch ID or your Mac password.
 - **Add WebKit extensions:** install from the Chrome Web Store or Firefox Add-ons.
 - Use profiles to keep cookies, history, tabs, permissions, and extensions
   separate. Regular windows of one profile share these services but keep their
@@ -141,6 +150,12 @@ Native PRF, real user presence and verification, the six Apple Passwords
 transfers, Settings keyboard and VoiceOver behavior, and Stage are not verified.
 A WebKit iframe credential request currently fails closed as unsupported;
 Chromium requires native effective policy.
+
+Login-save attempts last 120 seconds, or 300 seconds when a verification step
+has been seen, counted from the attempt rather than extended by later activity.
+Completion detection handles redirects and in-page forms but is not proof that
+the server accepted a login. Only explicit Save or Update writes credentials;
+a save refused because the page changed says that nothing was saved.
 
 ### Choose a model
 
