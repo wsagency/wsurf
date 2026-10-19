@@ -14,6 +14,9 @@ struct CredentialSettings: View {
     @State var showsCreateWarning = false
     @State var showsMigrationConfirmation = false
     @State var showsTrash = false
+    /// Always the Credentials tab when the page opens.
+    @State private var tab = CredentialPageTab.credentials
+    @State var list: CredentialListState
     @State private var work: Task<Void, Never>?
     @State private var exportContext: CredentialExportContext?
 
@@ -21,9 +24,10 @@ struct CredentialSettings: View {
         self.init(model: CredentialSettingsModel(profile: profile))
     }
 
-    /// Test seam: a page over a model that already has its own manager.
-    init(model: CredentialSettingsModel) {
+    /// Test seam: a page over a model that already has its own manager, and the list state a test can drive.
+    init(model: CredentialSettingsModel, list: CredentialListState = CredentialListState()) {
         _model = State(initialValue: model)
+        _list = State(initialValue: list)
     }
 
     var body: some View {
@@ -43,10 +47,8 @@ struct CredentialSettings: View {
                         caption: "Private Browsing and removed profiles don’t keep a credential vault."
                     )
                 }
-            } else if model.isLoaded {
-                unlockedContent
             } else {
-                lockedContent
+                tabs
             }
         }
         .settingsAnchor("autofill.credentials")
@@ -86,11 +88,17 @@ struct CredentialSettings: View {
                 }
             }
         }
-        // The sheet's revision and epoch are only meaningful for the authorization it was opened under.
+        // The sheet's revision and epoch are only meaningful for the authorization it was opened under, and a search or filter
+        // belongs to the vault it was typed in.
         .onChange(of: model.authorizationEpoch) {
             exportContext = nil
             showsTrash = false
+            list.reset()
             model.legacy.endSession()
+        }
+        .onChange(of: model.selectedVaultID) {
+            showsTrash = false
+            list.reset()
         }
         .legacyRemovalDialog(model: model, run: run)
         .confirmationDialog(
@@ -148,12 +156,47 @@ struct CredentialSettings: View {
         }
     }
 
+    // MARK: Tabs
+
+    /// The tab bar, then what the chosen tab shows for the vault's state. The transfer ending sits above both tabs, so it is
+    /// seen wherever the user is when an import or export finishes.
+    @ViewBuilder
+    private var tabs: some View {
+        SegmentedControl(
+            items: [.init(value: .credentials, label: "Credentials"), .init(value: .settings, label: "Settings")],
+            selection: tab,
+            onSelect: { tab = $0 }
+        )
+        .frame(width: 260)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        if model.isLoaded {
+            transferEnding
+        }
+        switch tab {
+        case .credentials:
+            if model.isLoaded {
+                credentialsTab
+            } else {
+                lockedCredentials
+            }
+        case .settings:
+            if model.isLoaded {
+                settingsTab
+            } else {
+                lockedSettings
+            }
+        }
+    }
+
     // MARK: Locked
 
+    /// A locked vault shows no content, so this tab holds only the way in. A profile with several vaults picks which one to open here.
     @ViewBuilder
-    private var lockedContent: some View {
+    private var lockedCredentials: some View {
         if model.vaults.count > 1 {
-            vaultsSection
+            SettingsCard {
+                DetailRow(title: "Vault") { CredentialVaultPicker(model: model, run: run) }
+            }
         }
         SettingsCard {
             VStack(spacing: 12) {
@@ -209,7 +252,13 @@ struct CredentialSettings: View {
             .padding(.vertical, 24)
             .frame(maxWidth: .infinity, minHeight: 160)
         }
-        // The same entries as the unlocked page, visible but off, so it is clear why nothing can be imported or exported yet.
+    }
+
+    /// The vaults stay reachable, and the entries of the unlocked tab stay visible but off.
+    @ViewBuilder
+    private var lockedSettings: some View {
+        vaultsSection
+        // The same entries as the unlocked tab, visible but off, so it is clear why nothing can be imported or exported yet.
         SettingsSection(title: "Import & Export", symbol: "arrow.up.arrow.down", footnote: lockedTransferReason) {
             DetailRow(title: "Import passwords from a CSV file") {
                 Button("Choose File…") {}.buttonStyle(.bordered).disabled(true)
@@ -261,7 +310,8 @@ struct CredentialSettings: View {
         case .none, .exportAgain:
             EmptyView()
         case .checkSavedCredentials:
-            Button("Check Saved Credentials") {
+            Button("Show Credentials") {
+                tab = .credentials
                 showsTrash = false
                 model.dismissTransferMessage()
             }
@@ -316,73 +366,11 @@ struct CredentialSettings: View {
         return parts.joined(separator: " · ")
     }
 
-    // MARK: Unlocked
+    // MARK: Transfer ending
 
+    /// Above both tabs while the vault is open.
     @ViewBuilder
-    private var unlockedContent: some View {
-        vaultsSection
-        SettingsSection(
-            title: "Import & Export",
-            symbol: "arrow.up.arrow.down",
-            footnote: """
-                A CSV file holds passwords with their websites only, and isn’t encrypted: delete it once you have used it. \
-                Passkeys and verification codes can only be moved with Export… and the system’s credential exchange.
-                """
-        ) {
-            legacyImportRows
-            if let token = model.pendingImportToken {
-                DetailRow(
-                    verbatimTitle: String(localized: "Credentials from another app"),
-                    verbatimCaption: String(localized: """
-                        Sent to the profile “\(model.profile.name)”. Nothing is saved until you review and confirm. \
-                        Dismiss declines them; to import them later, send them again from the other app.
-                        """)
-                ) {
-                    HStack(spacing: 8) {
-                        Button("Review…") { run { await model.beginImport() } }
-                        Button("Dismiss") { model.discardPendingImport(token: token) }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isBusy)
-                }
-                RowSeparator()
-            }
-            DetailRow(title: "Import passwords from a CSV file") {
-                Button("Choose File…") { importCSV() }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isBusy)
-            }
-            RowSeparator()
-            DetailRow(title: "Export to another app") {
-                Button("Export…") { openExport() }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isBusy || model.summaries.isEmpty)
-            }
-            RowSeparator()
-            DetailRow(title: "Export passwords to a CSV file") {
-                Button("Export to CSV…") { openExport(csv: true) }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isBusy || !model.summaries.contains(where: CredentialCSVExport.isExportable))
-            }
-        }
-        if model.hasUnconfirmedPasskeys {
-            SettingsSection(
-                title: "Passkeys not confirmed with the website",
-                symbol: "exclamationmark.triangle",
-                footnote: """
-                    These passkeys were saved here, but WSurf could not confirm that the website received them. \
-                    Test sign-in on the website; remove any passkey that does not work. Dismiss only hides this \
-                    notice.
-                    """
-            ) {
-                ForEach(model.unconfirmedPasskeys) { item in
-                    DetailRow(verbatimTitle: String(localized: "\(item.userName) on \(item.rpID)")) { EmptyView() }
-                }
-                DetailRow(title: "Notice") {
-                    Button("Dismiss") { model.dismissUnconfirmedPasskeys() }.buttonStyle(.bordered)
-                }
-            }
-        }
+    private var transferEnding: some View {
         // One ending for a transfer, from the model: its text, the one next step it allows, and (after a saved import) what
         // became of each credential. Dismissing it removes all of it; nothing here repeats it.
         if let message = model.transferMessage {
@@ -410,41 +398,14 @@ struct CredentialSettings: View {
                 }
             }
         }
-        if showsTrash {
-            trashSection
-        } else {
-            // A vault holds thousands of credentials: the list is lazy, so only the rows on screen are built and laid out.
-            SettingsSection(
-                title: "Saved credentials",
-                symbol: "key",
-                footnote: "Passwords, passkeys and verification codes stay hidden until you reveal or copy them.",
-                isLongList: true,
-                accessory: {
-                    HStack(spacing: 10) {
-                        listSwitch
-                        ToolbarChip(symbol: "plus", label: "Add Credential") {
-                            run { try await model.beginEditing(accountID: nil) }
-                        }
-                        .disabled(model.isBusy)
-                        ToolbarChip(symbol: "lock", label: "Lock") { model.lock() }
-                    }
-                },
-                content: {
-                    if model.summaries.isEmpty {
-                        SettingsEmptyState(symbol: "key", title: "No saved credentials", caption: "Add a login, passkey or verification code to see it here.")
-                    }
-                    ForEach(model.summaries) { summary in
-                        CredentialRow(
-                            model: model, summary: summary, run: run,
-                            remove: { model.requestRemoval(accountID: summary.id) },
-                            versions: { run { try await model.loadVersions(accountID: summary.id) } }
-                        )
-                    }
-                    AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .password)
-                }
-            )
-        }
-        saveSuggestionsCard
+    }
+
+    // MARK: Settings tab
+
+    @ViewBuilder
+    private var settingsTab: some View {
+        AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .password)
+        vaultsSection
         SettingsSection(
             title: "Unlock passkeys",
             symbol: "person.badge.key",
@@ -470,6 +431,35 @@ struct CredentialSettings: View {
                 }
             }
         )
+        statisticsSection
+        SettingsSection(
+            title: "Import & Export",
+            symbol: "arrow.up.arrow.down",
+            footnote: """
+                A CSV file holds passwords with their websites only, and isn’t encrypted: delete it once you have used it. \
+                Passkeys and verification codes can only be moved with Export… and the system’s credential exchange.
+                """
+        ) {
+            legacyImportRows
+            DetailRow(title: "Import passwords from a CSV file") {
+                Button("Choose File…") { importCSV() }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy)
+            }
+            RowSeparator()
+            DetailRow(title: "Export to another app") {
+                Button("Export…") { openExport() }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy || model.summaries.isEmpty)
+            }
+            RowSeparator()
+            DetailRow(title: "Export passwords to a CSV file") {
+                Button("Export to CSV…") { openExport(csv: true) }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy || !model.summaries.contains(where: CredentialCSVExport.isExportable))
+            }
+        }
+        saveSuggestionsCard
     }
 
     // MARK: Actions
@@ -502,7 +492,7 @@ struct CredentialSettings: View {
 
 // MARK: - Row
 
-private struct CredentialRow: View {
+struct CredentialRow: View {
     let model: CredentialSettingsModel
     let summary: CredentialSummary
     let run: (@escaping () async throws -> Void) -> Void
@@ -534,7 +524,7 @@ private struct CredentialRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            SiteRow(host: host, summary: detail.isEmpty ? nil : detail) {
+            SiteRow(host: host, summary: detail.isEmpty ? nil : detail, caption: summary.dates.caption(style: .list)) {
                 HStack(spacing: 8) {
                     actions
                     Button("Edit…") { run { try await model.beginEditing(accountID: summary.id) } }

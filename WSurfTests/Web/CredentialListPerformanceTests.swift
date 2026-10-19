@@ -63,10 +63,10 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
 
     /// The page as Settings lays it out: the detail pane's scroll view and column, then the Credential Manager page.
     @MainActor
-    private static func page(_ model: CredentialSettingsModel) -> some View {
+    private static func page(_ model: CredentialSettingsModel, list: CredentialListState = CredentialListState()) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: SettingsMetrics.sectionSpacing) {
-                CredentialSettings(model: model)
+                CredentialSettings(model: model, list: list)
             }
             .environment(\.settingsDescriptionLineLimit, 1)
             .frame(maxWidth: SettingsMetrics.detailWidth, alignment: .leading)
@@ -153,6 +153,33 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
             window.close()
             print("[credential-list] page update after showing one password, \(Self.count) credentials: \(elapsed)")
             XCTAssertEqual(model.revealedPassword?.accountID, target)
+            XCTAssertLessThan(elapsed, .milliseconds(250))
+        }
+    }
+
+    /// Typing in the search field narrows a 3,000-credential list: the page finds the matches from the keys built with the summaries and
+    /// lays out only the rows it shows. The search is applied by the page's own task, not by the test.
+    @MainActor
+    func testSearchingThreeThousandCredentialsUpdatesQuickly() async throws {
+        try await withLargeVault { profile, vault in
+            let model = try await loadedModel(profile, vault)
+            let list = CredentialListState()
+            let (host, window) = Self.mount(Self.page(model, list: list))
+            Self.settle(host)
+            let counted = await waitUntil { list.counts != nil }
+            XCTAssertTrue(counted, "the page counts the kinds when it appears")
+
+            let clock = ContinuousClock()
+            let started = clock.now
+            list.query = "site29"
+            // site29, site290-site299 and site2900-site2999.
+            let found = await waitUntil(tick: .milliseconds(5)) { list.rows(of: model.summaries).count == 111 }
+            Self.settle(host)
+            let elapsed = clock.now - started
+            window.close()
+            print("[credential-list] search update, \(Self.count) credentials, 111 matches: \(elapsed)")
+            XCTAssertTrue(found)
+            XCTAssertEqual(list.counts?[.all], Self.count)
             XCTAssertLessThan(elapsed, .milliseconds(250))
         }
     }

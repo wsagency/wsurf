@@ -143,7 +143,7 @@ extension CredentialExchangeCoordinator {
                         && (CredentialExchangeCoordinator.hasLogin(candidate) || candidate.totp != nil),
                     records: itemRecords,
                     group: group,
-                    searchKey: Self.searchKey(summaries[at]),
+                    searchKey: summaries[at].searchKey,
                     linkedAccountID: linked,
                     omissions: omissions[candidate.id] ?? [],
                     effect: effect,
@@ -168,13 +168,6 @@ extension CredentialExchangeCoordinator {
                 return duplicate.additions.isEmpty ? .linked : .merge
             }
             return CredentialImportDefaults.effect(of: records, linkedTo: lookup.linkedAccountID(for: candidate))
-        }
-
-        /// Title, username (unless concealed) and websites, folded so a search ignores case and accents. No password, seed or note.
-        private static func searchKey(_ summary: CredentialSummary) -> String {
-            let hosts = summary.origins.compactMap { URL(string: $0)?.host }
-            let text = ([summary.title] + [summary.username].compactMap { $0 } + hosts).joined(separator: "\n")
-            return text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
         }
 
         private static func kind(_ identity: CredentialIdentity) -> CredentialImportReview.Record.Kind {
