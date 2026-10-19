@@ -100,6 +100,9 @@ final class BrowserSettings {
     @ObservationIgnored var storedDockIcon: DockIconChoice?
     /// Where the Dock icon goes. Tests replace it, so they never touch the real Dock.
     @ObservationIgnored var showsDockIcon: (NSImage?) -> Void = { DockIconChoice.show($0) }
+    /// Writes that wait for the next turn of the main run loop, by key. See `writeSoon`.
+    @ObservationIgnored var pendingWrites: [String: Any] = [:]
+    @ObservationIgnored var flushTask: Task<Void, Never>?
     /// The resolved colors of the selected theme, rebuilt after the theme, a saved theme or an adjustment changes.
     @ObservationIgnored var themeCache: ResolvedTheme?
     var themePreview: ThemePreview?
@@ -146,7 +149,7 @@ final class BrowserSettings {
         Self.sessionKeySet.contains(key) ? sessionDefaults : appDefaults
     }
 
-    private func write(_ value: Any?, forKey key: String) {
+    func write(_ value: Any?, forKey key: String) {
         store(for: key).set(value, forKey: key)
     }
 
@@ -190,6 +193,7 @@ final class BrowserSettings {
         value: Value,
         key: String,
         encode: (Value) -> Any? = { $0 },
+        defersWrite: Bool = false,
         didChange: (BrowserSettings) -> Void = { _ in }
     ) {
         if let applicationSettings {
@@ -202,7 +206,11 @@ final class BrowserSettings {
         withMutation(keyPath: keyPath) {
             self[keyPath: storage] = value
             if let encoded = encode(value) {
-                write(encoded, forKey: key)
+                if defersWrite {
+                    writeSoon(encoded, forKey: key)
+                } else {
+                    write(encoded, forKey: key)
+                }
             }
             didChange(self)
         }
@@ -647,6 +655,9 @@ final class BrowserSettings {
         self.sessionDefaults = session
         self.appliesAppearanceGlobally = appliesAppearanceGlobally
         self.applicationSettings = application
+        // Reading the defaults now must see every theme choice that another settings object has not written yet.
+        BrowserSettings.flushAllPendingWrites()
+        _ = BrowserSettings.flushObservers
         func pick(_ key: String) -> UserDefaults {
             Self.sessionKeySet.contains(key) ? session : defaults
         }
@@ -766,6 +777,10 @@ final class BrowserSettings {
             }
             refreshTheme()
         }
+    }
+
+    isolated deinit {
+        flushPendingWrites()
     }
 
     // MARK: - Applying
