@@ -223,7 +223,8 @@ extension ProfileVaultStore {
                         items.append(
                             RemovedIdentifier(
                                 entryID: body.entryID, isTombstone: true, accountID: body.ownerID, exchangeAccountID: body.exchangeAccountID,
-                                exchangeItemID: body.exchangeItemID, passkeyCredentialID: body.passkeyCredentialID, rpID: body.rpID
+                                exchangeItemID: body.exchangeItemID, passkeyCredentialID: body.passkeyCredentialID, rpID: body.rpID,
+                                removedAt: body.purgedAt
                             )
                         )
                     case .account, .revision:
@@ -243,7 +244,7 @@ extension ProfileVaultStore {
         func row(accountID: Data?, itemID: Data?, passkey: WebsitePasskey?) -> RemovedIdentifier {
             RemovedIdentifier(
                 entryID: entryID, isTombstone: false, accountID: body.ownerID, exchangeAccountID: accountID, exchangeItemID: itemID,
-                passkeyCredentialID: passkey?.credentialID, rpID: passkey?.rpID
+                passkeyCredentialID: passkey?.credentialID, rpID: passkey?.rpID, removedAt: body.deletedAt
             )
         }
         switch (body.scope, body.subject) {
@@ -264,7 +265,7 @@ extension ProfileVaultStore {
 
     /// One read under the operation lock: the grant authorized, the vault opened against the entries the session verified, `body` run
     /// on a consistent snapshot.
-    private func readHistory<T>(
+    func readHistory<T>(
         _ vaultID: UUID, _ access: VaultAccess, _ body: (Database, VaultGrant, OpenedVault) throws -> T
     ) async throws -> T {
         _ = try authorizedGrant(vaultID, access)

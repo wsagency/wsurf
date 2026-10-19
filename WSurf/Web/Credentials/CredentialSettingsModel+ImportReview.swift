@@ -19,6 +19,16 @@ extension CredentialSettingsModel {
         settle { _ = try exchange.chooseAll(action, in: group, owner: owner) }
     }
 
+    /// Records that the transfer holds everything the other app has, which is what lets a saved credential it lacks be moved to Trash.
+    func declareImportComplete(_ complete: Bool) {
+        settle { try exchange.declareTransferComplete(complete, owner: owner) }
+    }
+
+    /// Keeps, or moves to Trash, saved credentials the transfer no longer holds: the given ones, or all of them. Nothing is written until Import.
+    func chooseMissing(moveToTrash: Bool, for accountIDs: Set<UUID>? = nil) {
+        settle { try exchange.chooseMissing(moveToTrash: moveToTrash, for: accountIDs, owner: owner) }
+    }
+
     /// Stored accounts the credential can be merged into, each with every website it would then work on. A scan of the vault: call it
     /// when the user opens the list of targets, never for a row that is merely shown.
     func mergeTargets(for incoming: CredentialIdentity) -> [CredentialImportReview.Target] {

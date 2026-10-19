@@ -544,10 +544,12 @@ final class CredentialManager {
 
     /// The per-account write of spec §13.5: only the touched accounts are compared and written, so an unrelated concurrent
     /// write survives. The lease and epoch rules are `commit`'s: a caller whose decision was made under another lease is refused
-    /// before anything starts.
-    func commitAccounts(_ writes: [AccountWrite], authorizedEpoch: UInt64, cause: String? = nil) async throws -> VaultCommitReceipt {
+    /// before anything starts. `removing` moves live accounts to Trash in the same write, each bound to its stamp.
+    func commitAccounts(
+        _ writes: [AccountWrite], removing: [UUID: AccountStamp] = [:], authorizedEpoch: UInt64, cause: String? = nil
+    ) async throws -> VaultCommitReceipt {
         try await authorizedWrite(epoch: authorizedEpoch) { access in
-            try await store.commitAccounts(vaultID: vaultID, writes, cause: cause, using: access)
+            try await store.commitAccounts(vaultID: vaultID, writes, removing: removing, cause: cause, using: access)
         }
     }
 
@@ -614,6 +616,12 @@ final class CredentialManager {
 
     func removedIdentifiers() async throws -> RemovedIdentifiers {
         try await reading { access in try await store.removedIdentifiers(vaultID: vaultID, using: access) }
+    }
+
+    /// When and by what cause each saved credential's earlier versions were made, by credential. No value is read out: the import report
+    /// shows which parts changed and when, never what they were.
+    func revisionLog() async throws -> [UUID: [RevisionItem]] {
+        try await reading { access in try await store.revisionLog(vaultID: vaultID, using: access) }
     }
 
     /// A purge needs a fresh assertion of an enrolled passkey on top of the unlock: a cached lease alone never purges.

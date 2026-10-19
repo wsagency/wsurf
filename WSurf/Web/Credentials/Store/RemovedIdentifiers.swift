@@ -18,6 +18,9 @@ nonisolated struct RemovedIdentifier: Equatable, Sendable {
     let exchangeItemID: Data?
     let passkeyCredentialID: Data?
     let rpID: String?
+    /// When the entry went to Trash, or, for a tombstone, when it was purged. A date only, read from the body that is opened for the
+    /// identifiers anyway; the import report shows it and nothing else uses it.
+    var removedAt: Date?
 }
 
 nonisolated struct RemovedIdentifiers: Equatable, Sendable {

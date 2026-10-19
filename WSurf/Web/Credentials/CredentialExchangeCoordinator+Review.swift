@@ -22,6 +22,8 @@ extension CredentialExchangeCoordinator {
         private let lookup: ReviewLookup
         /// The items a saved credential already holds an exact copy of (system imports only), by candidate.
         let duplicates: [UUID: CredentialImportReview.Duplicate]
+        /// The saved credentials an earlier import brought that the transfer no longer holds (system imports only).
+        let missing: [CredentialImportReview.Missing]
         /// How each part relates to the vault: what classification says, except that a part of a duplicate that equals what is saved
         /// is unchanged.
         private let classes: [CredentialIdentity: CredentialImportClass]
@@ -49,6 +51,10 @@ extension CredentialExchangeCoordinator {
                     isLinked: { linked.linkedAccountID(for: $0) != nil }, title: { titles[$0] ?? "" }
                 ) : ImportDuplicates.Found()
             duplicates = found.duplicates
+            missing = context.origin == .system
+                ? CredentialImportReport.missing(
+                    candidates: preview.candidates, accounts: preview.base.accounts, duplicateTargets: Set(found.duplicates.values.map(\.target))
+                ) : []
             mustDecide = context.needsChoice.union(found.duplicates.values.filter(\.needsDecision).flatMap { $0.mergeChoices.keys })
             classes = context.classes.merging(found.unchanged.map { ($0, CredentialImportClass.unchanged) }, uniquingKeysWith: { _, new in new })
         }
@@ -167,6 +173,8 @@ extension CredentialExchangeCoordinator {
                 csvReport: context.csvReport, origin: context.origin, omitted: preview.omitted
             )
             review.unattachedOmissions = unattached
+            review.keptChanges = context.keptChanges
+            review.missing = missing
             return review
         }
 
