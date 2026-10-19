@@ -32,6 +32,11 @@ private struct TabAutofillSaveBadge: View {
                     session.isPopoverPresented.toggle()
                 }
                 .accessibilityLabel(Text(offer.title))
+            } else if let offer = session.websiteOffer {
+                ChromeIcon(symbol: "key", weight: .semibold, tint: Theme.accent, help: String(localized: offer.title)) {
+                    session.isPopoverPresented.toggle()
+                }
+                .accessibilityLabel(Text(offer.title))
             }
         }
         .popover(isPresented: $session.isPopoverPresented, arrowEdge: .bottom) {
@@ -48,6 +53,10 @@ private struct TabAutofillSaveBadge: View {
                     }
                     pendingReview = nil
                 }
+            } else if let offer = session.websiteOffer {
+                AutofillWebsitePopover(session: session, offer: offer)
+                    .id(offer.id)
+                    .environment(\.colorScheme, NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light)
             }
         }
         .sheet(item: $reviewing) { offer in
@@ -93,6 +102,62 @@ private extension AutofillSaveSession.Offer {
         }
     }
 
+}
+
+private extension AutofillSaveSession.WebsiteOffer {
+    var title: LocalizedStringResource {
+        "Add \(host) to “\(name)”?"
+    }
+}
+
+/// The offer to add the page's website to a saved login of a sibling website. It names the login and holds no secret; only "Add
+/// Website" writes, and it writes nothing but the website.
+private struct AutofillWebsitePopover: View {
+    let session: AutofillSaveSession
+    let offer: AutofillSaveSession.WebsiteOffer
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "key")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 40, height: 40)
+                    .background(Theme.accent.opacity(0.12), in: .rect(cornerRadius: 10))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(offer.title).font(.headline)
+                    Text("This saved login is then offered on \(offer.host) too. No copy is saved.")
+                        .font(Theme.Font.label)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let error = session.error {
+                Text(verbatim: error)
+                    .font(Theme.Font.label)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Divider()
+            HStack(spacing: 8) {
+                if session.isBusy {
+                    Spinner(size: 14)
+                }
+                Spacer(minLength: 0)
+                Button("Not Now") { session.dismissWebsite(offer) }
+                Button("Add Website") { Task { await session.addWebsite(offer) } }
+                    .buttonStyle(.borderedProminent)
+            }
+            .controlSize(.regular)
+            .disabled(session.isBusy)
+        }
+        .padding(16)
+        .frame(width: 360)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Autofill save suggestion")
+    }
 }
 
 private struct AutofillSavePopover: View {

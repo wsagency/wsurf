@@ -153,6 +153,17 @@ struct AutofillSaveScriptTests {
     }
 
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func anIdentifierFirstEmailStepStagesItsUsername(engine: BrowserEngine) async throws {
+        try await withHarness(engine, Self.form(#"<input id="e" type="email" name="email">"#)) { harness in
+            try await harness.type("e", Self.account)
+            try await harness.hook("click", "go")
+            try #require(await waitUntil { harness.staged.count == 1 })
+            #expect(harness.staged[0]["username"] as? String == Self.account)
+            #expect(harness.login == nil, "a username step carries no password")
+        }
+    }
+
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
     func clickOnAPlainDivInsideTheFormStagesAnInteraction(engine: BrowserEngine) async throws {
         try await withHarness(engine, Self.form(Self.credentials, #"<div id="go" class="btn">Sign in</div>"#)) { harness in
             try await typeLogin(harness)

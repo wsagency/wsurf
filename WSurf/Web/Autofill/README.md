@@ -19,7 +19,11 @@ not part of the structural cache.
 
 The category and field kind used to offer/fill a record are also used to capture
 it. `autocomplete` takes precedence over label heuristics. Login usernames are
-classified with their password group, so contact filling cannot claim them.
+classified with their password group, so contact filling cannot claim them. An
+identifier-first step is a username too: the one fillable field of a group with
+no password, an email or user-ID field without a declared `autocomplete`
+purpose and without newsletter or search wording. A lone newsletter field
+without such wording is then offered logins instead of contact details.
 Hidden/disabled controls cannot be filled. An explicit hidden username belonging
 to a native form can supply account metadata for saving a multipage login.
 
@@ -31,6 +35,38 @@ a disconnected target but never open suggestions or trigger metadata lookups.
 Only a visible, populated panel runs the geometry watcher; ownership, policy and
 origin are still revalidated before presentation and around authenticated filling.
 Typing or dismissal requires another focus/click interaction to reopen the panel.
+Any dismissal ends the interaction, also one WSurf makes itself (Escape, a click
+elsewhere, another window, a lookup that found nothing): the next focus or click
+on the same field, which the page script reports with the same field token,
+starts a new lookup instead of being taken for the old one.
+
+A password list holds only accounts saved for the page's exact origin. When it
+would be empty but an unlocked vault holds accounts for another HTTPS website of
+the same registrable domain (public-suffix aware, so `a.github.io` and
+`b.github.io` are not related), the panel shows one row, "Check other logins
+for *.example.com". Choosing it lists those accounts, each with the website it
+is saved for. Only titles and websites are shown; the chosen account's secret
+is read again at delivery and filled exactly like a normal choice.
+
+After such a fill, and when a submitted login repeats one saved for a sibling
+website exactly (username and password) while nothing for the page has that
+username, the address-bar popover offers "Add login.example.com to “ada”?"
+instead of saving a copy. The offer holds no secret. Only Add Website writes,
+under the unlock it was offered under, through the vault's ordinary commit, so
+History keeps the earlier list of websites. A credential that already has 64
+websites is never widened, and Not Now is remembered for the page.
+
+When the profile has vaults and every one is locked, a login field gets one
+row, "Unlock Credentials…". Nothing is read before the unlock. Choosing the row
+closes the panel and unlocks through the ordinary passkey unlock (asking which
+vault when there are several), then looks up the same field again. A lock,
+profile switch or a new field while the vault choice is open unlocks nothing.
+The unlock starts the vault's own lease and never extends one.
+
+Any other unlock (Settings, a save offer, a passkey sheet) asks the page script
+of a login field that is still selected, on a page that can show a panel, to
+select it again, and that field's logins are offered without another click.
+A field whose panel is open or being filled is left alone.
 
 ## Submission lifecycle
 
@@ -75,6 +111,10 @@ Native code binds messages to the WebKit or CEF frame identity and origin.
 Filling additionally checks the document/form/field identity, selection token,
 focus, geometry, and policy before and after authentication. A new document at
 the same URL is still a different document.
+
+Each frame is sent its autofill policy when its script reports ready. A refused
+call is tried once more after 300 ms, with the policy read again, so a document
+that was still starting does not keep autofill off.
 
 Diagnostics contain static event names/counts only.
 

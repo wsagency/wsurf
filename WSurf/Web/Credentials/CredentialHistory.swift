@@ -11,6 +11,8 @@ nonisolated enum CredentialChangeCause {
     static let `import` = "import"
     /// Written by the merge of two saved credentials (Credential Manager v3, PR E).
     static let merge = "merge"
+    /// Written when the person adds the page's website to a credential from an autofill offer.
+    static let addWebsite = "add-website"
 
     /// What the History panel says, `nil` when the writer said nothing.
     static func text(for cause: String?) -> String? {
@@ -20,6 +22,8 @@ nonisolated enum CredentialChangeCause {
             String(localized: "Changed by an import")
         case Self.merge:
             String(localized: "Changed by a merge")
+        case Self.addWebsite:
+            String(localized: "Website added from autofill")
         default:
             cause
         }
