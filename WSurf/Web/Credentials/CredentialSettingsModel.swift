@@ -22,8 +22,8 @@ final class CredentialSettingsModel {
     /// Set when unlocking was refused because the vault is a v1 file (or an interrupted migration) and the user has not
     /// yet agreed to migrate it; no passkey prompt happened. Unlock again with `confirmMigration: true` after consent.
     private(set) var needsMigrationConfirmation = false
-    /// The profile's active vaults as the last discovery listed them (names stay `nil` until a vault is unlocked).
-    private(set) var vaults: [VaultListing] = []
+    /// The profile's active vaults as the last discovery listed them (names stay `nil` until a vault is unlocked). Internal for the model's extensions.
+    var vaults: [VaultListing] = []
     /// The open state the last discovery read; `nil` before it and for a test-injected manager. Creating a vault is offered
     /// only from a confirmed state, never inferred from an empty list.
     private(set) var openState: StoreOpenState?
@@ -39,8 +39,8 @@ final class CredentialSettingsModel {
     /// The one vault this page operates on; `nil` until discovery selects one, and while the profile has no vault.
     /// Read by `CredentialSettingsModel+Export`; only this class sets it.
     private(set) var manager: CredentialManager?
-    /// `nil` for private browsing and for a test-injected manager (which owns its own store).
-    @ObservationIgnored private let store: ProfileVaultStore?
+    /// `nil` for private browsing and for a test-injected manager (which owns its own store). Internal for the model's extensions.
+    @ObservationIgnored let store: ProfileVaultStore?
     /// Test seam: managers made here use it instead of the system passkey UI, which the shared registry's managers always use.
     @ObservationIgnored private let native: VaultNativeUnlock?
     @ObservationIgnored private let pasteboard: NSPasteboard
@@ -536,6 +536,7 @@ final class CredentialSettingsModel {
             if store != nil, openState?.isProvisional != true {
                 await discoverVault()
             }
+            await refreshListing()
             await load()
         }
     }
@@ -707,8 +708,8 @@ final class CredentialSettingsModel {
         }
     }
 
-    /// After a write this page made: the accounts as stored, and whichever history list is open, from its first page.
-    private func reloadAfterWrite(epoch: UInt64) async throws {
+    /// After a write this page made: the accounts as stored, and whichever history list is open, from its first page. Internal for the model's extensions.
+    func reloadAfterWrite(epoch: UInt64) async throws {
         let (_, snapshot) = try await authorizedSnapshot(epoch: epoch)
         try update(epoch) { $0.refresh(snapshot) }
         if live?.counts != nil {
@@ -891,7 +892,11 @@ final class CredentialSettingsModel {
                 self?.session = nil
                 self?.importResult = nil
             }
-            Task { @MainActor [weak self] in if self?.manager === manager { self?.watchAuthorization() } }
+            Task { @MainActor [weak self] in
+                guard self?.manager === manager else { return }
+                self?.watchAuthorization()
+                await self?.refreshListing()
+            }
         }
     }
 
@@ -906,7 +911,7 @@ final class CredentialSettingsModel {
         return (epoch, snapshot)
     }
 
-    private func update(_ epoch: UInt64, _ change: (inout CredentialVaultSession) -> Void) throws {
+    func update(_ epoch: UInt64, _ change: (inout CredentialVaultSession) -> Void) throws {
         guard session?.epoch == epoch, manager?.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
         change(&session!)
     }

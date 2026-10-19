@@ -14,7 +14,7 @@ nonisolated struct VaultGrant: Sendable {
     let registryKey: Data
     let ids: StoreIDs
     let ordinal: Int
-    let name: String
+    var name: String
     let trashID: UUID
     var entry: RegistryEntry
     var trashEntry: RegistryEntry

@@ -37,6 +37,7 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
     let hasTOTP: Bool
     let hasNotes: Bool
     let passkeys: [PasskeySummary]
+    let dates: CredentialDates
 
     init(_ account: CredentialAccount) {
         id = account.id
@@ -49,6 +50,17 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
         hasTOTP = account.totp != nil
         hasNotes = account.notes != nil
         passkeys = account.passkeys.map { PasskeySummary($0) }
+        dates = CredentialDates(account)
+    }
+
+    /// Equal when everything a row, a prompt or the export sheet shows is equal. `dates` is left out on purpose: it moves with
+    /// every semantic change, even a secret-only one that no other field shows, and the export review leaves such changes to the
+    /// vault's stamps. Compare every new field here.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        guard lhs.id == rhs.id, lhs.username == rhs.username, lhs.usernameIsConcealed == rhs.usernameIsConcealed,
+              lhs.displayName == rhs.displayName, lhs.origins == rhs.origins, lhs.hasPassword == rhs.hasPassword,
+              lhs.hasLogin == rhs.hasLogin, lhs.hasTOTP == rhs.hasTOTP, lhs.hasNotes == rhs.hasNotes else { return false }
+        return lhs.passkeys == rhs.passkeys
     }
 
     /// What a row, a removal prompt or an import review calls this credential. An empty imported title counts as none.

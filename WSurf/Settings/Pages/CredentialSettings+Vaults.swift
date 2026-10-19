@@ -11,7 +11,11 @@ extension CredentialSettings {
             SettingsSection(
                 title: "Vaults",
                 symbol: "lock.rectangle.stack",
-                footnote: "Each vault has its own unlock passkeys. The default vault is the one autofill and saving use when they don’t need to ask.",
+                footnote: """
+                    Each vault has its own unlock passkeys and its own lock time. The default vault is the one autofill and saving use \
+                    when they don’t need to ask. Credentials also lock when your Mac or its display sleeps, the screen locks, or you \
+                    quit WSurf. A shorter lock time applies now; a longer one from the next unlock.
+                    """,
                 accessory: {
                     ToolbarChip(symbol: "plus", label: "New Vault") { showsCreateWarning = true }
                         .disabled(model.isBusy || !model.canCreateVault)
@@ -21,6 +25,7 @@ extension CredentialSettings {
                         SettingsMenu(
                             options: model.vaults.sorted { $0.ordinal < $1.ordinal }.map { listing in
                                 let notes = [
+                                    listing.isUnlocked && listing.name != nil ? listing.numberedName : nil,
                                     model.defaultVaultID == listing.vaultID ? String(localized: "Default") : nil,
                                     listing.isUnlocked ? nil : String(localized: "Locked"),
                                 ].compactMap { $0 }
@@ -34,6 +39,22 @@ extension CredentialSettings {
                         .disabled(model.isBusy)
                     }
                     if let selected = model.selectedVaultID {
+                        if let listing = model.vaults.first(where: { $0.vaultID == selected }) {
+                            RowSeparator()
+                            CredentialVaultNameRow(displayName: listing.displayName, isUnlocked: model.isUnlocked) { name in
+                                run { await model.renameVault(name) }
+                            }
+                            .id(selected)
+                            .disabled(model.isBusy)
+                        }
+                        RowSeparator()
+                        DetailRow(title: "Lock credentials") {
+                            SettingsMenu(
+                                options: CredentialAutoLock.allCases.map { SettingsMenu<CredentialAutoLock>.Option(value: $0, label: $0.label) },
+                                selection: Binding(get: { model.autoLock }, set: { model.setAutoLock($0) })
+                            )
+                            .disabled(model.isBusy || !model.isUnlocked)
+                        }
                         RowSeparator()
                         DetailRow(title: "Default vault") {
                             if model.defaultVaultID == selected {
@@ -70,6 +91,74 @@ extension CredentialSettings {
     }
 }
 
+/// The selected vault's name. A locked vault shows its number and cannot be renamed: the name is sealed until it unlocks. It keeps
+/// its own typing state, so a keystroke here redraws nothing else on the page; the caller gives it the vault as its identity.
+struct CredentialVaultNameRow: View {
+    let displayName: String
+    let isUnlocked: Bool
+    let rename: (String) -> Void
+
+    @State private var text: String
+    @FocusState private var editing: Bool
+
+    init(displayName: String, isUnlocked: Bool, rename: @escaping (String) -> Void) {
+        self.displayName = displayName
+        self.isUnlocked = isUnlocked
+        self.rename = rename
+        _text = State(initialValue: displayName)
+    }
+
+    private var trimmed: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isTooLong: Bool {
+        trimmed.count > StoreFormat.nameLimit
+    }
+
+    private var canRename: Bool {
+        isUnlocked && !trimmed.isEmpty && !isTooLong && trimmed != displayName
+    }
+
+    private var caption: LocalizedStringResource? {
+        if !isUnlocked {
+            return "Unlock this vault to rename it or change when it locks."
+        }
+        if isTooLong {
+            return "Use at most \(StoreFormat.nameLimit) characters."
+        }
+        return nil
+    }
+
+    var body: some View {
+        DetailRow(title: "Name", caption: caption) {
+            HStack(spacing: 8) {
+                FieldChrome(isFocused: editing) {
+                    TextField("", text: $text)
+                        .textFieldStyle(.plain)
+                        .font(Theme.Font.row)
+                        .fieldPlaceholder("Name", isShowing: text.isEmpty)
+                        .focused($editing)
+                        .onSubmit(submit)
+                        .accessibilityLabel("Vault name")
+                }
+                Button("Rename", action: submit)
+                    .buttonStyle(.bordered)
+                    .disabled(!canRename)
+            }
+            .disabled(!isUnlocked)
+        }
+        // A rename, a lock or an unlock changes what the vault is called; the field then shows that name again.
+        .onChange(of: displayName) { text = displayName }
+    }
+
+    private func submit() {
+        if canRename {
+            rename(trimmed)
+        }
+    }
+}
+
 /// The name, the creation choice and the warning in one step, so nothing is chosen before the user has read what losing
 /// every unlock passkey means. Exactly two ways to protect the vault: a new passkey, or a passkey already enrolled in one of
 /// this profile's vaults (also while that vault is locked: it is asserted again for this creation). Neither falls back to the
@@ -88,18 +177,20 @@ struct CredentialNewVaultSheet: View {
     let create: (String, NewVaultChoice) -> Void
     let cancel: () -> Void
 
-    @State private var name = String(localized: "Credentials")
+    @State private var name: String
     @State private var usesExisting: Bool
     @State private var picked: Pick?
 
+    /// `suggestedName` is the name the store would give the vault, so an unedited name reads the same locked and unlocked.
     init(
-        canUseNewPasskey: Bool, existingPasskeys: [Existing],
+        suggestedName: String, canUseNewPasskey: Bool, existingPasskeys: [Existing],
         create: @escaping (String, NewVaultChoice) -> Void, cancel: @escaping () -> Void
     ) {
         self.canUseNewPasskey = canUseNewPasskey
         self.existingPasskeys = existingPasskeys
         self.create = create
         self.cancel = cancel
+        _name = State(initialValue: suggestedName)
         _usesExisting = State(initialValue: !canUseNewPasskey && !existingPasskeys.isEmpty)
     }
 

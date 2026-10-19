@@ -56,13 +56,33 @@ nonisolated struct VaultUnlockProof: Sendable {
 nonisolated final class VaultAccess: Sendable {
     let profileID: UUID
     let epoch: UInt64
-    let deadline: ContinuousClock.Instant
+    /// The end of the access. It starts as the bound on the unlock itself; `beginLease` sets the lease's own end once the unlock
+    /// has completed, and from then on it can only move earlier.
+    var deadline: ContinuousClock.Instant {
+        limit.withLock { $0.deadline }
+    }
     private let revoked = Mutex(false)
+    private let limit: Mutex<(deadline: ContinuousClock.Instant, leaseBegun: Bool)>
 
     init(profileID: UUID, epoch: UInt64, deadline: ContinuousClock.Instant) {
         self.profileID = profileID
         self.epoch = epoch
-        self.deadline = deadline
+        limit = Mutex((deadline, false))
+    }
+
+    /// Ends the access at `instant`, which may be later than the bound on the unlock. Only the first call counts: it is the moment
+    /// the vault opens, and nothing afterwards lengthens the access.
+    func beginLease(until instant: ContinuousClock.Instant) {
+        limit.withLock { state in
+            guard !state.leaseBegun else { return }
+            state.leaseBegun = true
+            state.deadline = instant
+        }
+    }
+
+    /// Brings the end forward to `instant`; a later one changes nothing.
+    func shorten(to instant: ContinuousClock.Instant) {
+        limit.withLock { $0.deadline = min($0.deadline, instant) }
     }
 
     func revoke() {
