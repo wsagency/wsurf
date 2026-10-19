@@ -303,4 +303,15 @@ struct CredentialImportMissingTests {
         let duplicated = CredentialImportReport.missing(candidates: [sent], accounts: [held, gone], duplicateTargets: [gone.id])
         #expect(duplicated.isEmpty, "a saved credential that an exact copy in the transfer stands for is not missing")
     }
+
+    @Test func aMergedCredentialIsNotMissingWhileAnItemMergedIntoItIsSent() {
+        var survivor = saved(item: 1)
+        survivor.mergedFrom = [MergedItemLink(accountID: UUID(), exchangeAccountID: Data([0xA0, 1]), exchangeItemID: Data([0xB0, 2]))]
+        var unsent = saved(item: 3)
+        unsent.mergedFrom = [MergedItemLink(accountID: UUID(), exchangeAccountID: Data([0xA0, 1]), exchangeItemID: Data([0xB0, 4]))]
+
+        // The transfer still holds item 2, merged into the survivor, but not the survivor's own item 1.
+        let missing = CredentialImportReport.missing(candidates: [saved(item: 2)], accounts: [survivor, unsent], duplicateTargets: [])
+        #expect(missing.map(\.accountID) == [unsent.id], "only a merged credential none of whose items is sent is missing")
+    }
 }

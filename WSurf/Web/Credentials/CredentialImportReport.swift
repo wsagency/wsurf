@@ -91,7 +91,8 @@ nonisolated enum CredentialImportReport {
     }
 
     /// The saved credentials an earlier import brought from an exporter account this transfer covers, whose item the transfer does not
-    /// hold. A credential of another exporter, one made in WSurf, and one that an exact duplicate in the transfer is the copy of
+    /// hold. A credential is present while the transfer holds any of its items: its own or one merged into it (`mergedFrom`). A
+    /// credential of another exporter, one made in WSurf, and one that an exact duplicate in the transfer is the copy of
     /// (`duplicateTargets`) are never missing, so a transfer from another app lists nothing.
     static func missing(
         candidates: [CredentialAccount], accounts: [CredentialAccount], duplicateTargets: Set<UUID>
@@ -101,7 +102,8 @@ nonisolated enum CredentialImportReport {
         return accounts.compactMap { account in
             guard let exporter = account.exchangeAccountID, account.exchangeItemID != nil, exporters.contains(exporter),
                   !duplicateTargets.contains(account.id),
-                  let key = try? CredentialExchangeCodec.externalItemID(for: account), !sent.contains(key) else { return nil }
+                  let key = try? CredentialExchangeCodec.externalItemID(for: account), !sent.contains(key),
+                  !(account.mergedFrom ?? []).contains(where: { sent.contains($0.identity) }) else { return nil }
             return CredentialImportReview.Missing(accountID: account.id, title: CredentialSummary(account).title)
         }
     }
@@ -114,8 +116,8 @@ nonisolated enum CredentialImportReport {
         var mergedAt: Date?
 
         init(_ revisions: [RevisionItem]) {
-            for revision in revisions where revision.cause != "import" {
-                if revision.cause == "merge" {
+            for revision in revisions where revision.cause != CredentialChangeCause.import {
+                if revision.cause == CredentialChangeCause.merge {
                     mergedAt = max(mergedAt ?? revision.recordedAt, revision.recordedAt)
                 } else {
                     latest[revision.subject] = max(latest[revision.subject] ?? revision.recordedAt, revision.recordedAt)
