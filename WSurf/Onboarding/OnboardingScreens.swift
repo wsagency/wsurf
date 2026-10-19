@@ -373,7 +373,7 @@ extension OnboardingUI {
         var size: CGFloat = 104
 
         var body: some View {
-            Image(nsImage: NSApp.applicationIconImage)
+            Image(nsImage: AppIcon.bundle)
                 .resizable()
                 .interpolation(.high)
                 .frame(width: size, height: size)

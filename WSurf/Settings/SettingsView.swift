@@ -302,7 +302,7 @@ private struct AboutSettings: View {
             SettingsPageHeader(
                 title: "WSurf",
                 detail: String(localized: "Version \(UpdateFeed.currentVersion)"),
-                icon: NSApp.applicationIconImage
+                icon: AppIcon.bundle
             )
 
             SettingsCard {

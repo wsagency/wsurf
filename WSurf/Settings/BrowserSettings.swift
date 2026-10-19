@@ -36,6 +36,7 @@ final class BrowserSettings {
         static let userThemes = "appearance.themes.user"
         static let themeAdjustments = "appearance.themes.adjustments"
         static let themesVersion = "appearance.themes.version"
+        static let dockIcon = "appearance.dockIcon"
         static let sleepsInactiveTabs = "tabs.sleep"
         static let sleepAfterMinutes = "tabs.sleepAfterMinutes"
         static let pageZoom = "content.defaultZoom"
@@ -87,7 +88,7 @@ final class BrowserSettings {
 
     @ObservationIgnored private let appDefaults: UserDefaults
     @ObservationIgnored private let sessionDefaults: UserDefaults
-    @ObservationIgnored private let appliesAppearanceGlobally: Bool
+    @ObservationIgnored let appliesAppearanceGlobally: Bool
     @ObservationIgnored private var applicationSettings: BrowserSettings?
     var globalSettings: BrowserSettings {
         applicationSettings ?? self
@@ -96,6 +97,9 @@ final class BrowserSettings {
     @ObservationIgnored var storedThemeID: String?
     @ObservationIgnored var storedUserThemes: [ThemeDefinition]?
     @ObservationIgnored var storedThemeAdjustments: [String: ThemeAdjustment]?
+    @ObservationIgnored var storedDockIcon: DockIconChoice?
+    /// Where the Dock icon goes. Tests replace it, so they never touch the real Dock.
+    @ObservationIgnored var showsDockIcon: (NSImage?) -> Void = { DockIconChoice.show($0) }
     /// The resolved colors of the selected theme, rebuilt after the theme, a saved theme or an adjustment changes.
     @ObservationIgnored var themeCache: ResolvedTheme?
     var themePreview: ThemePreview?
@@ -675,6 +679,7 @@ final class BrowserSettings {
             storedThemeID = themes.themeID
             storedUserThemes = Self.normalized(themes.userThemes)
             storedThemeAdjustments = themes.adjustments.mapValues { $0.bounded() }
+            storedDockIcon = string(Key.dockIcon).flatMap(DockIconChoice.init(rawValue:)) ?? .standard
             let legacyLoomStyle = string(Key.loomStyle)
             if let storedWebsiteTint = object(Key.websiteTint) as? Bool {
                 storedMatchesWebsiteColor = storedWebsiteTint
@@ -788,6 +793,7 @@ final class BrowserSettings {
         colorMode = .system
         themeID = ThemeCatalog.defaultID
         themeAdjustments = [:]
+        dockIcon = .standard
         matchesWebsiteColor = true
         sidebarFontFamily = ""
         sidebarFontSize = 12

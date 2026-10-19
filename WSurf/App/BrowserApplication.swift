@@ -96,6 +96,8 @@ final class BrowserApplication {
         guard !isReady else { return }
         OutputDucker.restoreAfterUncleanExit()
         BrowserSettings.application.applyAppearance()
+        // macOS forgets a runtime Dock icon when the app quits, so the choice is applied again at every launch.
+        BrowserSettings.application.applyDockIcon()
         let menu = MainMenu(application: self)
         mainMenu = menu
         menu.install()
