@@ -806,7 +806,7 @@ struct VaultNoteHistoryTests {
         }
     }
 
-    @Test func clearedNotesGoToTheTrashWithTheirHistoryAndComeBack() async throws {
+    @Test func clearedNotesStayInHistoryAndLeaveTrashEmpty() async throws {
         let owner = try Self.owner()
         try await VaultStoreFixture.with(accounts: [owner]) { f in
             try await f.withWallStore { store, access in
@@ -815,21 +815,34 @@ struct VaultNoteHistoryTests {
                 let left = try #require(try await store.snapshot(vaultID: f.vaultID, using: access).accounts.first)
                 #expect(left.notes == nil && left.password == owner.password)
 
-                let entry = try f.trashEntry(of: owner.id, subject: .note)
-                #expect(entry.body.scope == .credential)
-                let value = try #require(entry.body.credentialValue)
-                #expect(try JSONDecoder().decode([CredentialNote].self, from: value) == Self.second)
-                #expect(try f.moveRevisions(in: f.trashID, owner: owner.id, subject: .note).count == 1)
-                #expect(try f.moveRevisions(in: f.vaultID, owner: owner.id, subject: .note).isEmpty)
-                let item = try #require(try await store.trashPage(vaultID: f.vaultID, after: nil, using: access).items.first)
-                #expect(item.subject == .note && item.revisionCount == 1)
+                // Clearing the notes by an edit supersedes the list like any other note edit: both lists stay earlier versions.
+                let versions = try f.sourceRevisions(of: owner.id).filter { $0.subject == .note }
+                #expect(versions.count == 2)
+                let page = try await store.revisionPage(vaultID: f.vaultID, accountID: owner.id, after: nil, using: access)
+                #expect(page.items.filter { $0.subject == .note }.count == 2)
+                #expect(try await store.trashPage(vaultID: f.vaultID, after: nil, using: access).items.isEmpty)
+                #expect(try f.trashEntryIDs().isEmpty)
+                #expect(try f.moveRevisions(in: f.trashID, owner: owner.id, subject: .note).isEmpty)
 
-                let preview = try await store.previewUndelete(vaultID: f.vaultID, entryID: entry.row.recordID, using: access)
-                #expect(preview.block == nil)
-                try await f.undelete(store, access, entry.row.recordID)
+                // Both lists are there to restore, and the one that was cleared comes back without a Trash entry.
+                var clearedVersion: StoredRevision?
+                var previews: [[CredentialNote]?] = []
+                for version in versions {
+                    let notes = try await store.previewRestoreRevision(vaultID: f.vaultID, revisionID: version.recordID, using: access).notes
+                    previews.append(notes)
+                    if notes == Self.second {
+                        clearedVersion = version
+                    }
+                }
+                #expect(previews.contains { $0 == Self.first } && previews.contains { $0 == Self.second })
+                let cleared = try #require(clearedVersion)
+                let revision = try await f.nextRevision(store, access)
+                _ = try await store.restoreRevision(
+                    vaultID: f.vaultID, revisionID: cleared.recordID, expectedRevision: revision, using: access
+                )
                 let restored = try #require(try await store.snapshot(vaultID: f.vaultID, using: access).accounts.first)
                 #expect(restored.notes == Self.second)
-                #expect(try f.moveRevisions(in: f.vaultID, owner: owner.id, subject: .note).count == 1)
+                #expect(try f.sourceRevisions(of: owner.id).filter { $0.subject == .note }.count == 2)
             }
             #expect(try f.moveHistoryRows(of: f.trashID).isEmpty)
             try f.verify()

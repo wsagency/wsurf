@@ -41,7 +41,12 @@ nonisolated enum CredentialDiff {
     /// `restoring` names the account an explicit earlier-revision restore applies to: its password slot is never a removal there (a
     /// restored username-only or basic-auth revision leaves no password, yet the current password is superseded, not deleted), so the
     /// current value becomes a new revision and nothing goes to the Trash. An ordinary edit or clear passes `nil` and still removes.
-    static func plan(old: [CredentialAccount], new: [CredentialAccount], restoring: UUID? = nil) throws -> CredentialChangePlan {
+    ///
+    /// `removing` names the explicit credential delete the caller is applying. Only that delete moves the notes to the Trash; an
+    /// edit that leaves an account without notes supersedes the list like any other note change.
+    static func plan(
+        old: [CredentialAccount], new: [CredentialAccount], restoring: UUID? = nil, removing: RemovalScope? = nil
+    ) throws -> CredentialChangePlan {
         let oldIndex = try indexByID(old)
         var newIDs = Set<UUID>()
         newIDs.reserveCapacity(new.count)
@@ -53,7 +58,7 @@ nonisolated enum CredentialDiff {
         guard try CredentialContent.canonicalJSON(old) != CredentialContent.canonicalJSON(new) else {
             return CredentialChangePlan(persistence: .noop, revisions: [], removals: [], touched: [], setsModifiedAt: [])
         }
-        var plan = Accumulator(restoring: restoring)
+        var plan = Accumulator(restoring: restoring, removing: removing)
         for account in new {
             if let position = oldIndex[account.id] {
                 try plan.compare(old[position], account)
@@ -97,6 +102,7 @@ nonisolated enum CredentialDiff {
 
     private struct Accumulator {
         let restoring: UUID?
+        let removing: RemovalScope?
         var semantic = false
         var revisions: [RevisionDraft] = []
         var removals: [RemovalScope] = []
@@ -142,11 +148,13 @@ nonisolated enum CredentialDiff {
             return true
         }
 
-        /// Notes are one part: a change supersedes the whole earlier list, and clearing them removes the list to the Trash.
+        /// Notes are one part: any change supersedes the whole earlier list, including an edit that clears every note. Only an
+        /// explicit notes delete (`RemovalScope.credential(subject: .note)`) moves the list to the Trash.
         private mutating func compareNotes(_ old: CredentialAccount, _ new: CredentialAccount) throws -> Bool {
             guard try CredentialContent.hash(.note(old)) != CredentialContent.hash(.note(new)) else { return false }
-            if new.notes == nil {
-                removals.append(.credential(ownerID: old.id, subject: .note, passkeyID: nil))
+            let delete = RemovalScope.credential(ownerID: old.id, subject: .note, passkeyID: nil)
+            if new.notes == nil, removing == delete {
+                removals.append(delete)
             } else if let previous = old.notes {
                 revisions.append(RevisionDraft(ownerID: old.id, subject: .note, superseded: try CredentialContent.canonicalJSON(previous)))
             }

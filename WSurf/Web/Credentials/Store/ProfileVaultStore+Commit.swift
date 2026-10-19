@@ -162,7 +162,7 @@ extension ProfileVaultStore {
             try validate(proposal.accounts, blockedOrigins: transaction.opened.head.blockedOrigins)
         }
         // §11.1: the plan is classified on the complete payload bytes, never on `==`.
-        let plan = try CredentialDiff.plan(old: snapshot.accounts, new: proposal.accounts, restoring: proposal.restoring)
+        let plan = try CredentialDiff.plan(old: snapshot.accounts, new: proposal.accounts, restoring: proposal.restoring, removing: proposal.requires)
         if let required = proposal.requires {
             guard plan.removals.contains(required) else { throw CredentialVaultError.invalidData }
         }

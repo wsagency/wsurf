@@ -17,6 +17,8 @@ nonisolated struct CredentialDraft: Sendable {
     private(set) var passkeys: [WebsitePasskey]
     let revision: UInt64
     let usernameIsConcealed: Bool
+    /// The creation date the other app reported for an imported credential (spec §12.2). Decoded once, when the draft opens.
+    let reportedCreatedAt: Date?
     private let base: CredentialAccount?
     private let originalWebsites: String
     private let originalExtraOrigins: String
@@ -33,6 +35,7 @@ nonisolated struct CredentialDraft: Sendable {
         notes = account?.notes ?? []
         passkeys = account?.passkeys ?? []
         usernameIsConcealed = account?.basicAuthenticationMetadata?.username?.fieldType == .concealedString
+        reportedCreatedAt = account.flatMap { try? CredentialContent.exchangeMetadata($0) }?.created
         self.websites = websites
         extraOrigins = extras
         originalWebsites = websites
@@ -45,6 +48,24 @@ nonisolated struct CredentialDraft: Sendable {
     }
     var isNew: Bool {
         base == nil
+    }
+
+    /// When the stored credential was added and last changed; `nil` for a new one.
+    var dates: CredentialDates? {
+        base.map(CredentialDates.init)
+    }
+
+    /// The editor's date lines: what WSurf recorded, then what the other app reported, each saying whose it is.
+    var dateLines: [String] {
+        var lines: [String] = []
+        if let caption = dates?.caption(style: .editor), !caption.isEmpty {
+            lines.append(caption)
+        }
+        if let reportedCreatedAt {
+            let when = reportedCreatedAt.formatted(date: .abbreviated, time: .shortened)
+            lines.append(String(localized: "Reported by the other app: created \(when)"))
+        }
+        return lines
     }
 
     var passkeySummaries: [PasskeySummary] {
@@ -87,6 +108,16 @@ nonisolated struct CredentialDraft: Sendable {
     var changesNothing: Bool {
         guard let base, let built = try? account() else { return false }
         return built == base
+    }
+
+    /// Whether leaving the editor now would lose something: an edit to a stored credential, or anything typed into a new one.
+    var hasUnsavedChanges: Bool {
+        if base != nil {
+            return !changesNothing
+        }
+        let blank = { (text: String) in text.allSatisfy(\.isWhitespace) }
+        return !(username.isEmpty && displayName == nil && password == nil && blank(websites) && blank(extraOrigins)
+            && totp == nil && passkeys.isEmpty && notes.allSatisfy { $0.text.isEmpty })
     }
 
     func account() throws -> CredentialAccount {
