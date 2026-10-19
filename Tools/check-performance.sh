@@ -79,6 +79,19 @@ check_average \
   '8192' \
   'Tab activation memory growth' \
   'kB'
+# Five-sample Pro baseline: 0.123550 s to archive 50 stale tabs among 500; memory growth was not above zero.
+check_average \
+  'BrowserPerformanceTests/testSweepingACrowdedSessionForStaleTabs()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.250' \
+  '500-tab sweep that archives 50 stale tabs' \
+  's'
+check_average \
+  'BrowserPerformanceTests/testSweepingACrowdedSessionForStaleTabs()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Stale tab sweep memory growth' \
+  'kB'
 check_average \
   'BrowserPerformanceTests/testCommandPaletteHistoryRanking()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \

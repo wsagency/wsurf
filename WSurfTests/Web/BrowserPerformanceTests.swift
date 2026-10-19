@@ -49,6 +49,33 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
         }
     }
 
+    /// The sweep over 500 tabs when 50 of them have sat unused: the filter reads every tab, and the stale ones close
+    /// into the archive. Each run starts with a fresh set of 50, so the setup stays out of the measurement.
+    func testSweepingACrowdedSessionForStaleTabs() {
+        MainActor.assumeIsolated {
+            let browser = BrowserModel(database: .temporary())
+            browser.newTab()
+            for index in 0..<449 {
+                browser.addPage("https://fixture-\(index).example/")
+            }
+            let now = Date()
+            let options = XCTMeasureOptions()
+            options.invocationOptions = [.manuallyStart]
+
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: options) {
+                for index in 0..<50 {
+                    browser.addPage("https://stale-\(index).example/").lastActiveAt = now.addingTimeInterval(-3 * 86_400)
+                }
+                startMeasuring()
+                let archived = browser.archiveTabs(unusedFor: .day, now: now)
+                XCTAssertEqual(archived, 50)
+            }
+            XCTAssertEqual(browser.tabs.count, 450)
+            XCTAssertEqual(browser.tabArchive.entries.count, TabArchive.capacity)
+            browser.cancelPendingSave()
+        }
+    }
+
     func testCommandPaletteHistoryRanking() {
         MainActor.assumeIsolated {
             let database = AppDatabase.temporary()

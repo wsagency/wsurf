@@ -125,6 +125,8 @@ final class BrowserTab: Identifiable {
     @ObservationIgnored var isArmingPresentation = false
     /// When this tab last stopped being in front, or was created. Monotonic, so time the Mac spends asleep counts as idle.
     @ObservationIgnored var lastForegroundAt = ContinuousClock.now
+    /// When the person last used this tab, for the archive. Saved with the session, unlike `lastForegroundAt`.
+    @ObservationIgnored var lastActiveAt = Date()
 
     private(set) var security: PageSecurity = .none
 

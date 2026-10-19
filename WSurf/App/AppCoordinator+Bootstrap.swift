@@ -234,8 +234,10 @@ extension AppCoordinator {
         discoverContextWindow()
     }
 
-    /// Runs the idle-tab sweep while Sleep inactive tabs has a duration; otherwise the timer does not exist.
+    /// Runs the idle-tab sweep while Sleep inactive tabs has a duration; otherwise the timer does not exist. The archive
+    /// sweep follows its own setting.
     func applySleepTimer() {
+        browser.applyArchiveSweeper(running: !isClosed)
         let minutes = settings.sleepAfterMinutes
         guard !isClosed, settings.sleepsInactiveTabs, minutes > 0 else {
             sleepTimer.stop()

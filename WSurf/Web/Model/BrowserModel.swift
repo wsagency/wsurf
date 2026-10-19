@@ -25,6 +25,7 @@ final class BrowserModel {
     var folders: [TabFolder] = []
     var storedTree = SidebarTree()
     var history: HistoryStore
+    var tabArchive: TabArchive
     var sitePermissions: SitePermissions
     var downloads: DownloadManager
     let sidebarUndoManager = UndoManager()
@@ -59,6 +60,11 @@ final class BrowserModel {
         } else {
             self.history = HistoryStore(database: selectedDatabase)
         }
+        if (selectedContext.database.writer as AnyObject) === (selectedDatabase.writer as AnyObject) {
+            tabArchive = selectedContext.tabArchive
+        } else {
+            tabArchive = TabArchive(database: selectedDatabase)
+        }
         self.sitePermissions = sitePermissions ?? selectedContext.sitePermissions
         self.downloads = downloads ?? context?.downloads ?? DownloadManager()
         sessionRevision = Self.savedRevision(in: selectedDatabase, windowID: windowID)
@@ -76,6 +82,7 @@ final class BrowserModel {
             }
             guard oldValue != activeTabID else { return }
             sidebarSelection.dropMarks()
+            noteUse(of: [oldValue, activeTabID])
             if let activeTabID {
                 noteActivation(activeTabID)
             }
@@ -461,6 +468,7 @@ final class BrowserModel {
     @ObservationIgnored var saveChain: Task<Void, Never>?
     @ObservationIgnored var sessionRevision: Int64 = 0
     @ObservationIgnored var sessionClosedAt: Date?
+    @ObservationIgnored let archiveSweeper = TabArchiveSweeper()
 
     @ObservationIgnored var saveWaitingSince: ContinuousClock.Instant?
 

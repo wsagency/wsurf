@@ -128,6 +128,8 @@ enum ProfileMaintenance {
         guard let database = profile.databaseURL,
               FileManager.default.fileExists(atPath: database.path)
         else { return }
-        HistoryStore(database: AppDatabase(at: database)).clear()
+        let profileDatabase = AppDatabase(at: database)
+        HistoryStore(database: profileDatabase).clear()
+        TabArchive(database: profileDatabase).clear()
     }
 }
