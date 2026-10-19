@@ -108,6 +108,10 @@ Filling additionally checks the document/form/field identity, selection token,
 focus, geometry, and policy before and after authentication. A new document at
 the same URL is still a different document.
 
+Each frame is sent its autofill policy when its script reports ready. A refused
+call is tried once more after 300 ms, with the policy read again, so a document
+that was still starting does not keep autofill off.
+
 Diagnostics contain static event names/counts only.
 
 ## Credential Manager

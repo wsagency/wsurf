@@ -742,12 +742,13 @@ final class AutofillSaveCoordinator {
         guard let session = sessions.object(forKey: page), session.page === page, session.context === context else { return }
         let origin = frame.securityOrigin, topURL = page.url
         let secure = frame.hasTrustedSecurityOrigin && origin.protocol == "https" && !origin.host.isEmpty && topURL.flatMap(SavedPassword.origin(for:)) != nil
-        let policy = Dictionary(uniqueKeysWithValues: AutofillSaveKind.allCases.map { ($0.rawValue, secure && isEnabled($0, context: context)) })
         Task {
-            do {
+            await AutofillPolicyDelivery.deliver {
                 guard page.context === context, session.context === context else { return }
+                // Read when sent, so a retry never restores a policy that a later change replaced.
+                let policy = Dictionary(uniqueKeysWithValues: AutofillSaveKind.allCases.map { ($0.rawValue, secure && self.isEnabled($0, context: context)) })
                 _ = try await page.callAsyncJavaScript("globalThis.__wsurfAutofillSave?.setPolicy(policy);", arguments: ["policy": policy], in: frame, contentWorld: Self.world)
-            } catch {
+            } failed: { error in
                 AutofillDiagnostics.policyFailed(.save, error: error, isMainFrame: frame.isMainFrame)
             }
         }
