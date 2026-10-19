@@ -46,7 +46,7 @@ nonisolated extension RecordSubject {
 }
 
 nonisolated extension VaultListing {
-    /// A vault's name is sealed until it unlocks, so a locked one is told apart by its ordinal (1-based, never reused).
+    /// A vault's name is sealed until it unlocks, so a locked one is told apart by its ordinal (1-based; a number can come back after the highest vault is deleted).
     var numberedName: String {
         String(localized: "Vault \(ordinal)")
     }

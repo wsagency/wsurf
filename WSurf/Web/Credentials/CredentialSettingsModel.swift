@@ -69,6 +69,8 @@ final class CredentialSettingsModel {
     /// that vault is selected. `nil` before any, or after the user dismisses it.
     /// Internal for `CredentialSettingsModel+Export`, which records its own endings.
     var ownMessage: (message: CredentialTransferMessage, vaultID: UUID?)?
+    /// The vault this page deleted last, until the user dismisses it. Internal for `CredentialSettingsModel+VaultDeletion`.
+    var deletedVault: DeletedVault?
 
     /// `manager` and `native` are seams for tests that need their own clock or passkeys; production selects the profile's
     /// default vault (else the lowest-ordinal one) through the shared registry once `load()` has listed the vaults.

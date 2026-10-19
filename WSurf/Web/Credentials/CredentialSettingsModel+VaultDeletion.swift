@@ -1,0 +1,128 @@
+// SPDX-FileCopyrightText: 2026 WSurf Agency
+// SPDX-License-Identifier: Apache-2.0
+
+import AuthenticationServices
+import Foundation
+
+/// A vault deletion the user was shown. It lives in the authorization session, so a lock, a re-unlock or a change of vault drops
+/// it: a confirmation shown for one vault can never delete another. The counts are only what the vault held when it was shown.
+nonisolated struct PendingVaultDeletion: Equatable, Sendable {
+    struct Counts: Equatable, Sendable {
+        let credentials: Int
+        let passkeys: Int
+        let codes: Int
+        let inTrash: Int
+        let earlierVersions: Int
+    }
+
+    let vaultID: UUID
+    let epoch: UInt64
+    let ordinal: Int
+    let name: String
+    let counts: Counts
+    /// The vault autofill and saving use instead, when this one is the default.
+    let fallback: String?
+    /// The copy made before this vault was upgraded. WSurf never deletes it, and it still holds the old contents.
+    let preMigrationBackup: URL?
+    /// At least one of this vault's unlock passkeys is enrolled in no other vault, so it is left over in the passkey provider.
+    let hasOwnUnlockPasskey: Bool
+
+    /// The vault's name, typed exactly (surrounding spaces aside): the first of the two confirmations.
+    func accepts(_ typed: String) -> Bool {
+        typed.trimmingCharacters(in: .whitespacesAndNewlines) == name
+    }
+}
+
+/// What the page tells after a vault was deleted: its number only, never its name.
+nonisolated struct DeletedVault: Equatable, Sendable {
+    let ordinal: Int
+    let leavesUnlockPasskey: Bool
+}
+
+/// Why Delete Vault is not offered for the selected vault, in the order the page says it.
+nonisolated enum VaultDeletionBlock: Equatable, Sendable {
+    case locked, onlyVault, importOpen
+}
+
+extension CredentialSettingsModel {
+    var pendingVaultDeletion: PendingVaultDeletion? {
+        live?.pendingVaultDeletion
+    }
+
+    var vaultDeletionBlock: VaultDeletionBlock? {
+        guard let manager, manager.isUnlocked else { return .locked }
+        if vaults.count < 2 {
+            return .onlyVault
+        }
+        return exchange.hasStagedImport(for: manager, owner: owner) ? .importOpen : nil
+    }
+
+    /// Shows what deleting the selected vault would remove. Nothing is deleted: the vault must be open, not the last one, and have
+    /// no import of this window under review.
+    func requestVaultDeletion() async {
+        guard vaultDeletionBlock == nil, !isBusy, let epoch = authorizationEpoch else { return }
+        deletedVault = nil
+        _ = await perform(epoch: epoch) { manager in
+            guard let name = try await manager.displayNames().vault, let listing = self.vaults.first(where: { $0.vaultID == manager.vaultID })
+            else { throw CredentialVaultError.unauthorized }
+            let counts = try await manager.historyCounts()
+            let enrolled = try await self.store?.enrolledPasskeys(of: self.vaults) ?? []
+            let elsewhere = Set(enrolled.filter { $0.vault.vaultID != manager.vaultID }.map { $0.unlock.credentialID })
+            let others = self.vaults.filter { $0.vaultID != manager.vaultID }
+            let fallback = self.defaultVaultID == manager.vaultID ? others.min(by: { $0.ordinal < $1.ordinal })?.displayName : nil
+            let summaries = self.summaries
+            let pending = PendingVaultDeletion(
+                vaultID: manager.vaultID,
+                epoch: epoch,
+                ordinal: listing.ordinal,
+                name: name,
+                counts: PendingVaultDeletion.Counts(
+                    credentials: summaries.count,
+                    passkeys: summaries.reduce(0) { $0 + $1.passkeys.count },
+                    codes: summaries.filter(\.hasTOTP).count,
+                    inTrash: counts.trash.trashEntry,
+                    earlierVersions: counts.live.revision + counts.trash.revision
+                ),
+                fallback: fallback,
+                preMigrationBackup: listing.ordinal == 1 ? manager.preMigrationBackup : nil,
+                hasOwnUnlockPasskey: manager.unlockCredentials.contains { !elsewhere.contains($0.credentialID) }
+            )
+            try self.update(epoch) { $0.pendingVaultDeletion = pending }
+        }
+    }
+
+    func cancelVaultDeletion() {
+        guard let epoch = live?.epoch else { return }
+        try? update(epoch) { $0.pendingVaultDeletion = nil }
+    }
+
+    func dismissDeletedVault() {
+        deletedVault = nil
+    }
+
+    /// The second confirmation: a fresh assertion of this vault's own passkey, after the name was typed. The confirmation stays
+    /// until the deletion has actually run, so a declined or failed assertion deletes nothing and the same deletion can be
+    /// confirmed again or cancelled. A lock or a re-unlock since the sheet was shown deletes nothing. On success the page lists
+    /// the remaining vaults again and opens the default one (still locked, if it is).
+    @discardableResult
+    func confirmVaultDeletion(typedName: String, in anchor: ASPresentationAnchor) async -> Bool {
+        guard !isBusy else { return false }
+        guard let live, let pending = live.pendingVaultDeletion, pending.epoch == live.epoch, pending.vaultID == manager?.vaultID else {
+            error = Self.message(for: CredentialVaultError.unauthorized)
+            return false
+        }
+        guard pending.accepts(typedName) else { return false }
+        guard vaultDeletionBlock == nil else {
+            cancelVaultDeletion()
+            return false
+        }
+        var deleted = await perform(epoch: pending.epoch) { try await $0.deleteVault(authorizedEpoch: pending.epoch, in: anchor) }
+        if !deleted, let store, let listing = try? await store.listing(), !listing.contains(where: { $0.vaultID == pending.vaultID }) {
+            deleted = true  // it committed and then reported a failure: the vault is gone either way
+        }
+        guard deleted else { return false }
+        await retry()
+        deletedVault = DeletedVault(ordinal: pending.ordinal, leavesUnlockPasskey: pending.hasOwnUnlockPasskey)
+        return true
+    }
+}

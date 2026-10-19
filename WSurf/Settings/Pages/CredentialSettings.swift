@@ -315,7 +315,7 @@ struct CredentialSettings: View {
         }
     }
 
-    private func openExport(csv: Bool = false) {
+    func openExport(csv: Bool = false) {
         guard let epoch = model.authorizationEpoch else { return }
         exportContext = CredentialExportContext(epoch: epoch, csv: csv)
     }
