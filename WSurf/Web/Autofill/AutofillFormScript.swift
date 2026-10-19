@@ -42,7 +42,7 @@ nonisolated enum AutofillFormScript {
         roots.add(root);
         const observer = new MutationObserver(invalidate);
         observer.observe(root, {subtree:true,childList:true,attributes:true,characterData:true,
-          attributeFilter:['type','name','id','autocomplete','form','role','disabled','readonly','hidden',
+          attributeFilter:['type','name','id','autocomplete','form','action','formaction','role','disabled','readonly','hidden',
             'inert','style','class','placeholder','aria-label','aria-labelledby','aria-invalid','for','slot']});
         observers.push(observer);
       };
@@ -215,10 +215,29 @@ nonisolated enum AutofillFormScript {
         }
         return el;
       };
+      // Whatever can submit the form decides where it goes: its `action`, or the `formaction` of the button pressed,
+      // including a button elsewhere joined by `form="id"`. Attributes are read through the prototype, because a field
+      // named "action" or "elements" would answer for the property. A <base> on another origin moves every relative
+      // value ("#x" included) there, so such a page is never safe.
+      const stays = value => {
+        const action = (value || '').trim();
+        // An empty value submits to this document, and "javascript:" never leaves it. Any other value is resolved.
+        return !action || /^javascript:/i.test(action) || new URL(action,document.baseURI).origin === location.origin;
+      };
+      const submitters = root => {
+        const tree = Node.prototype.getRootNode.call(root);
+        const owner = tree instanceof Document ? Document : tree instanceof ShadowRoot ? DocumentFragment : Element;
+        return Array.from(owner.prototype.querySelectorAll.call(tree,'[formaction]')).filter(el =>
+          (el instanceof HTMLButtonElement && el.type === 'submit' || el instanceof HTMLInputElement && ['submit','image'].includes(el.type)) &&
+          (el.form === root || Node.prototype.contains.call(root,el)));
+      };
       const safe = root => {
         if (!root) return false;
-        const action = root instanceof HTMLFormElement ? root.action : root.getAttribute('action');
-        try { return new URL(action || location.href, location.href).origin === location.origin; } catch { return false; }
+        const attribute = (el, name) => Element.prototype.getAttribute.call(el,name);
+        try {
+          return new URL(document.baseURI).origin === location.origin && stays(attribute(root,'action')) &&
+            submitters(root).every(el => stays(attribute(el,'formaction')));
+        } catch { return false; }
       };
       const group = target => {
         const root = scope(target);
