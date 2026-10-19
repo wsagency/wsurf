@@ -201,3 +201,17 @@ check_average \
   '4096' \
   'Theme gallery memory growth' \
   'kB'
+
+# Five-sample Pro baselines: 0.009744 s for one extraction of a 200 KB article; memory growth between -33 and 246 kB.
+check_average \
+  'ReaderPerformanceTests/testExtractingALongArticle()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.020' \
+  'Reader extraction of a 200 KB article' \
+  's'
+check_average \
+  'ReaderPerformanceTests/testExtractingALongArticle()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Reader extraction memory growth' \
+  'kB'

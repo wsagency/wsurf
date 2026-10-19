@@ -174,6 +174,8 @@ let vendored = [
     Vendor(name: "dracula", version: "snapshot 2026-10-15", url: "https://draculatheme.com/contribute"),
     Vendor(name: "gruvbox", version: "tinted-theming/schemes spec-0.11", url: "https://github.com/tinted-theming/schemes"),
     Vendor(name: "rose-pine", version: "snapshot 2026-10-15", url: "https://github.com/rose-pine/palette"),
+    // Reader article extraction; see WSurf/Web/Reader/ReaderExtractor.swift.
+    Vendor(name: "readability", version: "0.6.0", url: "https://github.com/mozilla/readability"),
 ]
 
 let vendoredPackages: [Package] = vendored.map { vendor in

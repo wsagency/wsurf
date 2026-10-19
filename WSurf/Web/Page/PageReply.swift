@@ -43,6 +43,39 @@ extension BrowserPage {
     }
 }
 
+extension BrowserPage {
+    /// What an async function `body` returns in `world`, as `Value`, or nil when the call fails, answers another type, the
+    /// caller is cancelled or `ceiling` passes first. `arguments` reach the body as variables.
+    ///
+    /// Unlike the plain script calls, which Chromium runs as a user gesture, this never claims one: a script that only reads
+    /// the page must not hand it an activation it never had. WebKit uses the native completion handler for the reason
+    /// `evaluateJavaScript(_:within:as:)` does, and repeats the synchronous guards of the call it replaces.
+    func callAsyncJavaScript<Value: Sendable>(
+        _ body: String,
+        arguments: [String: any Sendable] = [:],
+        in world: WKContentWorld,
+        within ceiling: Duration,
+        as type: Value.Type
+    ) async -> Value? {
+        await PageReply<Value>.awaiting(within: ceiling) { gate in
+            guard let native = webKit else {
+                Task {
+                    let answer = try? await self.callAsyncJavaScript(
+                        body, in: nil, contentWorld: world, prepareArguments: { arguments }
+                    )
+                    gate.finish(answer as? Value)
+                }
+                return
+            }
+            guard !isClosed, PageAutomationGuard.allowsExecution, PageDriver.selectedFrame == nil else {
+                gate.finish(nil)
+                return
+            }
+            native.callAsyncJavaScript(body, arguments: arguments, in: nil, in: world) { gate.finish((try? $0.get()) as? Value) }
+        }
+    }
+}
+
 /// Resumes its caller once, with the first of the answer, the caller's cancellation or the ceiling.
 @MainActor
 final class PageReply<Value: Sendable> {
