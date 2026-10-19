@@ -84,6 +84,8 @@ nonisolated enum AutofillSuggestionSearch {
         /// The key is not ours and the dropdown stays: the page gets it.
         case pass
         case dismissAndPass
+        /// The typed query matched no row: the dropdown closes and the query goes into the field as text.
+        case dismissAndInsert(String)
         case dismiss
         case choose(UUID)
     }
@@ -94,7 +96,8 @@ nonisolated enum AutofillSuggestionSearch {
     /// Typing starts a search by itself only when `typeToSearch` holds (the focused field is a username field). In any other field
     /// a search starts with the click on the search row, so characters typed for a password are never taken as a query. While
     /// searching, characters and Backspace edit the query and never reach the page; Escape clears the query, then closes; the
-    /// arrows and Return use only the rows that match.
+    /// arrows and Return use only the rows that match. Input is never swallowed: in a username field, a character that leaves no
+    /// matching row closes the dropdown and the query becomes the field's text, and Return that picks no row reaches the page.
     static func reduce(_ state: State, _ key: KeyInput, index: Index, typeToSearch: Bool) -> (State, Effect) {
         var state = state
         switch key {
@@ -106,11 +109,8 @@ nonisolated enum AutofillSuggestionSearch {
             state.keyboard = state.matches[next]
             return (state, .consume)
         case .enter:
-            if let position = state.keyboard {
-                return (state, .choose(index.ids[position]))
-            }
-            // A query that matches nothing is not a request to submit the page's form.
-            return (state, state.query.isEmpty ? .dismissAndPass : .consume)
+            guard let position = state.keyboard else { return (state, .dismissAndPass) }
+            return (state, .choose(index.ids[position]))
         case .escape:
             guard state.isSearching, !state.query.isEmpty else { return (state, .dismiss) }
             state.setQuery("", in: index)
@@ -124,6 +124,10 @@ nonisolated enum AutofillSuggestionSearch {
             state.isSearching = true
             if state.query.count < queryLimit {
                 state.setQuery(state.query + text, in: index)
+            }
+            // In a username field the typing was meant for the field once it names no saved account.
+            if typeToSearch, state.matches.isEmpty {
+                return (state, .dismissAndInsert(state.query))
             }
             return (state, .consume)
         case .other:

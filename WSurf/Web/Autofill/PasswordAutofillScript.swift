@@ -36,11 +36,13 @@ nonisolated enum PasswordAutofillScript {
         return {form:group.root,element:target};
       };
       // `kind` is what the dropdown may do with typing: only a username field lets typed characters start its search.
+      // `webauthn`: the field takes passkeys, so native may add "Use a Passkey…" while the page has a pending conditional request.
       const extra = target => {
         const kind = forms.field(target)?.kind || '';
         if (otp(target)) return {field:'totp',kind};
         const username = fields(target)?.username?.value;
-        return {field:'password',kind,username:typeof username === 'string' && username.length <= 500 ? username : ''};
+        return {field:'password',kind,webauthn:tokens(target).includes('webauthn'),
+          username:typeof username === 'string' && username.length <= 500 ? username : ''};
       };
       const suggestions = globalThis.__wsurfAutofillSuggestions;
       const tracker = suggestions.track(channel, state, target => {

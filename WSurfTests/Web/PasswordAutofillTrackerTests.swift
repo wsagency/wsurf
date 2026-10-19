@@ -131,6 +131,25 @@ struct PasswordAutofillTrackerTests {
         }
     }
 
+    /// The selection of a field whose autocomplete includes `webauthn` says so, which is what lets native add "Use a Passkey…" there.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aWebAuthnFieldIsReportedAsOneAndAPlainUsernameFieldIsNot(engine: BrowserEngine) async throws {
+        let html = """
+            <form><input id="passkey" autocomplete="username webauthn"><button>Next</button></form>
+            <form><input id="plain" autocomplete="username"><input type="password"><button>Go</button></form>
+            """
+        try await withHarness(engine, html) { harness in
+            for (id, expected) in [("passkey", true), ("plain", false)] {
+                let count = harness.selections.count
+                try await harness.run("document.getElementById(id).focus(); globalThis.__wsurfPasswords.refresh();", ["id": id])
+                try #require(await waitUntil { harness.selections.count > count }, "\(id) is offered on \(engine)")
+                let selection = try #require(harness.selections.last)
+                #expect(selection["kind"] as? String == "username", "\(id) on \(engine)")
+                #expect(selection["webauthn"] as? Bool == expected, "\(id) on \(engine)")
+            }
+        }
+    }
+
     // MARK: Identifier-first steps
 
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases)

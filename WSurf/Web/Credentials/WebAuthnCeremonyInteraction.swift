@@ -49,7 +49,7 @@ protocol WebAuthnCeremonyInteraction {
     var canVerifyUser: Bool { get }
     func decide(_ prompt: WebAuthnPrompt, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision
     /// Explicit origin-bearing native step before any unlock, verification or signing: always for a conditional
-    /// (page-gesture) request, and for a modal request whenever the vault is locked, so the system unlock sheet is never
+    /// (dropdown-started) request, and for a modal request whenever the vault is locked, so the system unlock sheet is never
     /// the first thing a page can put in front of the user. Every step of the vault's own UI also offers the way out to the
     /// system's authenticator, so the user is never stuck with the vault's answer.
     func offerStart(operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision
