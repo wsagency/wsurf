@@ -614,6 +614,12 @@ final class CredentialManager {
         try await reading { access in try await store.removedIdentifiers(vaultID: vaultID, using: access) }
     }
 
+    /// When and by what cause each saved credential's earlier versions were made, by credential. No value is read out: the import report
+    /// shows which parts changed and when, never what they were.
+    func revisionLog() async throws -> [UUID: [RevisionItem]] {
+        try await reading { access in try await store.revisionLog(vaultID: vaultID, using: access) }
+    }
+
     /// A purge needs a fresh assertion of an enrolled passkey on top of the unlock: a cached lease alone never purges.
     func purge(entryIDs: [UUID], emptyAll: Bool, in anchor: ASPresentationAnchor) async throws -> PurgeReceipt {
         let access = try currentAccess()

@@ -234,7 +234,7 @@ extension ProfileVaultStore {
 
     /// One read under the operation lock: the grant authorized, the vault opened against the entries the session verified, `body` run
     /// on a consistent snapshot.
-    private func readHistory<T>(
+    func readHistory<T>(
         _ vaultID: UUID, _ access: VaultAccess, _ body: (Database, VaultGrant, OpenedVault) throws -> T
     ) async throws -> T {
         _ = try authorizedGrant(vaultID, access)
