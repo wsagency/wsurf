@@ -624,6 +624,15 @@ final class CredentialManager {
         }
     }
 
+    /// Undo of the page's own last action (`ProfileVaultStore.undo`), as one write under the lease the caller decided under.
+    func undo(
+        writes: [AccountWrite], returning: [RemovalScope], removing: [UUID: AccountStamp], authorizedEpoch: UInt64
+    ) async throws -> VaultCommitReceipt {
+        try await authorizedWrite(epoch: authorizedEpoch) { access in
+            try await store.undo(vaultID: vaultID, writes: writes, returning: returning, removing: removing, using: access)
+        }
+    }
+
     func previewRestoreRevision(revisionID: UUID) async throws -> CredentialAccount {
         try await reading { access in try await store.previewRestoreRevision(vaultID: vaultID, revisionID: revisionID, using: access) }
     }

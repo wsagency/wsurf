@@ -319,4 +319,38 @@ struct CredentialMergeTests {
         try merged.validate()
         #expect(try JSONDecoder().decode(CredentialAccount.self, from: CredentialContent.canonicalJSON(merged)) == merged)
     }
+
+    // MARK: Pre-check from the list
+
+    @Test func mayMergeRefusesTwoVisibleUsernames() {
+        let same = [account("ada", "a"), account("ada", "b")].map(CredentialSummary.init)
+        #expect(CredentialMerge.mayMerge(same))
+        let different = [account("ada", "a"), account("grace", "b")].map(CredentialSummary.init)
+        #expect(!CredentialMerge.mayMerge(different), "the sheet would refuse it: different usernames")
+        #expect(!CredentialMerge.mayMerge(Array(same.prefix(1))), "one credential is nothing to merge")
+        let tooMany = (0...CredentialAccount.mergedFromLimit).map { _ in CredentialSummary(account("ada", "x")) }
+        #expect(!CredentialMerge.mayMerge(tooMany))
+    }
+
+    @Test func mayMergeLeavesConcealedUsernamesToTheSheet() throws {
+        var concealed = account("ada", "a")
+        concealed.basicAuthenticationMetadata = CredentialBasicAuthenticationMetadata(
+            username: CredentialEditableFieldMetadata(id: nil, label: nil, fieldType: .concealedString),
+            password: CredentialEditableFieldMetadata(id: nil, label: nil, fieldType: .concealedString)
+        )
+        let summary = CredentialSummary(concealed)
+        #expect(summary.usernameIsConcealed && summary.username == nil)
+        #expect(CredentialMerge.mayMerge([summary, CredentialSummary(account("grace", "b"))]), "a hidden username is a maybe")
+
+        var first = account("", nil)
+        first.passkeys = [try VaultFixtures.passkey(rpID: "a.example.test", credentialID: Data(repeating: 1, count: 32))]
+        var second = account("", nil)
+        second.passkeys = [try VaultFixtures.passkey(rpID: "b.example.test", credentialID: Data(repeating: 2, count: 32))]
+        #expect(CredentialMerge.mayMerge([first, second].map(CredentialSummary.init)), "passkeys for one person")
+        var two = second
+        var other = try VaultFixtures.passkey(rpID: "c.example.test", credentialID: Data(repeating: 3, count: 32))
+        other.userName = "someone-else"
+        two.passkeys.append(other)
+        #expect(!CredentialMerge.mayMerge([first, two].map(CredentialSummary.init)), "passkeys that name two people")
+    }
 }

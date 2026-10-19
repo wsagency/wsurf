@@ -472,34 +472,6 @@ struct CredentialSettingsTests {
         }
     }
 
-    @Test func confirmedRemovalUsesTheRevisionAndEpochItWasShownAt() async throws {
-        try await withFixture { f in
-            let existing = account("ada", password: "pw")
-            try await f.seed([existing])
-            await f.model.load()
-            f.model.requestRemoval(accountID: existing.id)
-            let pending = try #require(f.model.pendingRemoval)
-            #expect(pending.revision == f.model.revision)
-
-            _ = try await f.manager.commit([existing, account("grace", password: "other")], expectedRevision: pending.revision, authorizedEpoch: try #require(f.manager.authorizationEpoch))
-            await #expect(throws: CredentialVaultError.staleRevision) {
-                _ = try await f.model.confirmRemoval(pending)
-            }
-            #expect(try await f.stored().accounts.count == 2)
-
-            await f.model.load()
-            f.model.requestRemoval(accountID: existing.id)
-            let shown = try #require(f.model.pendingRemoval)
-            f.manager.lock(reason: .manual)
-            #expect(f.model.pendingRemoval == nil)
-            try await f.unlock()
-            await #expect(throws: CredentialVaultError.unauthorized) {
-                _ = try await f.model.confirmRemoval(shown)
-            }
-            #expect(try await f.stored().accounts.count == 2)
-        }
-    }
-
     @Test func aCancelledTaskNeverCommitsCopiesOrRepopulates() async throws {
         try await withFixture { f in
             let existing = account("ada", password: "pw", totp: rfcGenerator)

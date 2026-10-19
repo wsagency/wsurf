@@ -139,7 +139,7 @@ struct CredentialEditorSheet: View {
 
     private func footer(_ draft: CredentialDraft, hasChanges: Bool, showsHistory: Bool) -> some View {
         VStack(alignment: .trailing, spacing: 10) {
-            CredentialCopyNotice(model: model).frame(maxWidth: .infinity, alignment: .leading)
+            CredentialPageNotice(model: model).frame(maxWidth: .infinity, alignment: .leading)
             if let error = model.error {
                 Text(verbatim: error)
                     .foregroundStyle(.secondary)

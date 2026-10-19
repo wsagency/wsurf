@@ -4,8 +4,20 @@
 
 import SwiftUI
 
+/// A key of its own, not `@Entry`: a scroll proxy is not `Sendable`, and a computed default keeps it out of global storage.
+nonisolated private struct SettingsScrollProxyKey: EnvironmentKey {
+    static var defaultValue: ScrollViewProxy? {
+        nil
+    }
+}
+
 extension EnvironmentValues {
     @Entry var settingsDescriptionLineLimit: Int?
+    /// The detail pane's scroll view, so a page can bring a row it moved a cursor to into view.
+    var settingsScrollProxy: ScrollViewProxy? {
+        get { self[SettingsScrollProxyKey.self] }
+        set { self[SettingsScrollProxyKey.self] = newValue }
+    }
 }
 
 enum SettingsMetrics {

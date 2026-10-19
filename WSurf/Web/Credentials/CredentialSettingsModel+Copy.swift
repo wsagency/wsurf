@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
+import AppKit
 import Foundation
 
 /// Copying a credential's values to the clipboard from the list, the editor and History. Every copy reads the vault under the
@@ -43,4 +44,21 @@ extension CredentialSettingsModel {
             return CredentialCopyParts(version.account, allowsCode: false)
         }
     }
+
+    /// The one clipboard exit. `produce` runs first, so whatever it costs (a code calculation, a clock read)
+    /// is over before the last authorization and cancellation check; a failure leaves the pasteboard untouched.
+    /// A secret also carries the concealed marker, which clipboard managers skip.
+    func deliver(epoch: UInt64, notice: LocalizedStringResource, _ produce: () throws -> CredentialCopyValue) throws {
+        let value = try produce()
+        try Task.checkCancellation()
+        guard manager?.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
+        pasteboard.declareTypes(value.isSecret ? [.string, Self.concealedType] : [.string], owner: nil)
+        pasteboard.setString(value.text, forType: .string)
+        if value.isSecret {
+            pasteboard.setString("", forType: Self.concealedType)
+        }
+        showNotice(notice)
+    }
+
+    private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
 }

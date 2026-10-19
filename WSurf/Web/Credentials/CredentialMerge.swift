@@ -260,3 +260,30 @@ nonisolated enum CredentialMerge {
         }
     }
 }
+
+extension CredentialMerge {
+    // ponytail: a pre-check from summaries; `mergeProposal` is the authority and refuses what this lets through.
+    /// Whether merging these credentials could pass the rules, judged from what the list shows alone: nothing is read from the
+    /// vault and no secret is needed. Between 2 and `CredentialAccount.mergedFromLimit` credentials, no two different visible
+    /// usernames, and none whose passkeys name more than one person (the rules of `CredentialMergeSuggestions.identity(of:)`). A
+    /// concealed username counts as a maybe: the merge sheet's own refusal is final.
+    static func mayMerge(_ summaries: [CredentialSummary]) -> Bool {
+        guard summaries.count >= 2, summaries.count <= CredentialAccount.mergedFromLimit else { return false }
+        var names = Set<Data>()
+        for summary in summaries {
+            if let username = summary.username {
+                names.insert(Data(username.utf8))
+                continue
+            }
+            if summary.usernameIsConcealed {
+                continue
+            }
+            let passkeyNames = Set(summary.passkeys.map(\.userName).filter { !$0.isEmpty }.map { Data($0.utf8) })
+            if passkeyNames.count > 1 {
+                return false
+            }
+            names.formUnion(passkeyNames)
+        }
+        return names.count <= 1
+    }
+}

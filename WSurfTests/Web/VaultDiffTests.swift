@@ -58,6 +58,45 @@ struct VaultDiffTests {
         #expect(plan.removals.isEmpty)
     }
 
+    // MARK: Undo
+
+    @Test func aLossThatReturnsWithAnAccountFromTrashIsNeitherMovedNorKept() throws {
+        let merged = try rich()
+        var survivor = merged
+        survivor.password = "own"
+        survivor.totp = nil
+        survivor.passkeys = []
+        var absorbed = VaultFixtures.account(username: "ada", password: "s3cret", origin: "https://example.test")
+        absorbed.totp = merged.totp
+        absorbed.passkeys = merged.passkeys
+
+        let plan = try CredentialDiff.plan(old: [merged], new: [survivor], returning: [absorbed])
+
+        #expect(plan.removals.isEmpty, "the code and the passkey come back with their own account")
+        #expect(plan.revisions.isEmpty, "so does the password")
+        #expect(plan.touched == [id])
+        #expect(plan.persistence == .semantic)
+
+        // Without the returning account the same change keeps the old password and moves the code and the passkey.
+        let plain = try CredentialDiff.plan(old: [merged], new: [survivor])
+        #expect(plain.removals.count == 2)
+        #expect(plain.revisions.map(\.subject) == [.password])
+    }
+
+    @Test func aLossThatDiffersFromWhatReturnsIsStillKept() throws {
+        let merged = try rich()
+        var survivor = merged
+        survivor.totp = nil
+        var absorbed = VaultFixtures.account(username: "ada", password: "other", origin: "https://example.test")
+        var otherCode = try #require(merged.totp)
+        otherCode.digits = 8
+        absorbed.totp = otherCode
+
+        let plan = try CredentialDiff.plan(old: [merged], new: [survivor], returning: [absorbed])
+
+        #expect(plan.removals == [.credential(ownerID: id, subject: .totp, passkeyID: nil)], "a different code is not the one that returns")
+    }
+
     // MARK: Revisions
 
     @Test func passwordReplaceMakesARevision() throws {

@@ -94,7 +94,7 @@ extension CredentialSettings {
         if showsTrash {
             trashSection
         } else {
-            CredentialListView(model: model, list: list, run: run, switcher: listSwitch)
+            CredentialListView(model: model, list: list, selection: selection, run: run, switcher: listSwitch)
         }
     }
 
@@ -151,11 +151,14 @@ extension CredentialSettings {
 struct CredentialListView<Switcher: View>: View {
     let model: CredentialSettingsModel
     @Bindable var list: CredentialListState
+    let selection: CredentialSelection
     let run: (@escaping () async throws -> Void) -> Void
     /// The Active and Trash switch, which the Trash section shows too.
     let switcher: Switcher
     /// The merge suggestions and the merge sheet of this list.
     @State private var merge = CredentialMergeState()
+    /// The Move to Trash in flight. A second one waits until it is done, so a key held down never cancels a write half way.
+    @State private var removal: Task<Void, Never>?
 
     private var key: CredentialListKey {
         CredentialListKey(
@@ -173,7 +176,11 @@ struct CredentialListView<Switcher: View>: View {
         VStack(alignment: .leading, spacing: 12) {
             toolbar
             AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .password)
-            CredentialCopyNotice(model: model)
+            CredentialPageNotice(model: model, undo: { run { await model.undo() } })
+            CredentialBulkBar(
+                model: model, selection: selection, visibleCount: visibleCount,
+                moveToTrash: trash, merge: { merge.route = .review($0) }
+            )
             // A vault holds thousands of credentials: the list is lazy, so only the rows on screen are built and laid out.
             SettingsSection(
                 title: LocalizedStringResource("\(title)"),
@@ -194,8 +201,23 @@ struct CredentialListView<Switcher: View>: View {
                 }
             }
         }
-        .task(id: key) { list.refresh(model.summaries) }
+        .background {
+            CredentialKeyboardHost(
+                selection: selection, inTrash: false, perform: perform, undo: { run { await model.undo() } },
+                redo: { run { await model.redo() } }, undoTitle: { model.undoMenuTitle }, redoTitle: { model.redoMenuTitle }
+            )
+        }
+        .task(id: key) {
+            list.refresh(model.summaries)
+            selection.show(visibleIDs)
+        }
         .task(id: CredentialMergeState.Key(model)) { await merge.refresh(model) }
+        // A merge changes the vault while its sheet is open: what was selected has been merged, so the selection ends.
+        .onChange(of: model.revision) {
+            if merge.route != nil {
+                selection.clear()
+            }
+        }
         .sheet(isPresented: Binding(get: { merge.route != nil }, set: { if !$0 { merge.route = nil } })) {
             if let route = merge.route {
                 CredentialMergeFlow(
@@ -206,13 +228,67 @@ struct CredentialListView<Switcher: View>: View {
         }
     }
 
+    /// The rows in the order the list shows them, for the selection.
+    private var visibleIDs: [UUID] {
+        list.siteGroups?.flatMap(\.ids) ?? list.rows(of: model.summaries).map(\.id)
+    }
+
+    private var visibleCount: Int {
+        list.siteGroups == nil ? list.rows(of: model.summaries).count : list.rowsByID.count
+    }
+
     private func row(_ summary: CredentialSummary) -> some View {
         CredentialRow(
-            model: model, summary: summary, run: run,
-            remove: { model.requestRemoval(accountID: summary.id) },
+            model: model, summary: summary, selection: selection, run: run,
+            remove: { trash([summary.id]) },
+            open: { open(summary.id) },
             history: { run { try await model.openHistory(accountID: summary.id) } },
             mergeWith: { merge.route = .pick(summary.id) }
         )
+    }
+
+    /// Opens the editor on a credential; the cursor stays on its row for when the editor closes.
+    private func open(_ id: UUID) {
+        selection.place(cursor: id)
+        run { try await model.beginEditing(accountID: id) }
+    }
+
+    /// Moves credentials to the Trash with no dialog. The cursor goes to the row that takes their place once the move has happened.
+    private func trash(_ ids: [UUID]) {
+        guard removal == nil, !model.isBusy, !ids.isEmpty else { return }
+        let next = selection.cursorAfterRemoving(ids)
+        let epoch = model.authorizationEpoch
+        removal = Task {
+            defer { removal = nil }
+            guard model.authorizationEpoch == epoch else { return }
+            await model.attempt {
+                try await model.moveToTrash(ids: ids)
+                selection.clear()
+                selection.place(cursor: next)
+                // After a click on a button, the next X or Command-Z acts on the list.
+                selection.takeKeyboard()
+            }
+        }
+    }
+
+    /// What a key does while the list has the keyboard (`CredentialListKeys` decides which key means what).
+    private func perform(_ command: CredentialListKeys.Command) {
+        switch command {
+        case .move(let delta, let extending):
+            selection.moveCursor(by: delta, extending: extending)
+        case .toggle:
+            selection.toggleCursor()
+        case .open:
+            if let cursor = selection.cursor {
+                open(cursor)
+            }
+        case .clear:
+            selection.clear()
+        case .remove:
+            trash(selection.targets)
+        case .none:
+            break
+        }
     }
 
     // MARK: Toolbar
@@ -269,6 +345,19 @@ struct CredentialListView<Switcher: View>: View {
                 .font(Theme.Font.secondary)
                 .fieldPlaceholder("Search by name, username or website", isShowing: list.query.isEmpty)
                 .accessibilityLabel("Search credentials")
+                // Down moves into the list. Escape clears a search and, with none, returns to the list.
+                .onKeyPress(.downArrow) {
+                    selection.takeKeyboard()
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    if list.query.isEmpty {
+                        selection.takeKeyboard()
+                    } else {
+                        list.query = ""
+                    }
+                    return .handled
+                }
             if !list.query.isEmpty {
                 ChromeIcon(symbol: "xmark", size: 9, extent: 18, help: String(localized: "Clear Search")) {
                     list.query = ""

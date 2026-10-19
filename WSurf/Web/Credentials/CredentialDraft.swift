@@ -46,6 +46,10 @@ nonisolated struct CredentialDraft: Sendable {
     var accountID: UUID? {
         base?.id
     }
+    /// The credential as it was stored when the editor opened; `nil` for a new one.
+    var original: CredentialAccount? {
+        base
+    }
     var isNew: Bool {
         base == nil
     }

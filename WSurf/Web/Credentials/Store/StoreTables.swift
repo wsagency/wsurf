@@ -160,6 +160,14 @@ nonisolated enum StoreTables {
         return try Row.fetchOne(db, sql: sql + " ORDER BY recordID LIMIT 1", arguments: arguments).map(recordRow)
     }
 
+    /// The ids of the `trashEntry` rows of one vault owned by `ownerID` with `subject` (`.account` for a whole account), newest first.
+    /// The clear columns are authenticated only by the AEAD's AAD, so the caller opens each row it takes, which checks them.
+    static func trashEntryIDs(_ db: Database, vaultID: UUID, ownerID: UUID, subject: RecordSubject) throws -> [UUID] {
+        let sql = "SELECT recordID FROM record WHERE vaultID = ? AND kind = ? AND ownerID = ? AND subject = ? ORDER BY rowid DESC"
+        let arguments: StatementArguments = [vaultID.sqlText, RecordKind.trashEntry.sqlName, ownerID.sqlText, subject.sqlName]
+        return try Row.fetchAll(db, sql: sql, arguments: arguments).map { try Stored.uuid($0[0] as DatabaseValue) }
+    }
+
     private static func recordRow(_ row: Row) throws -> RecordRow {
         RecordRow(
             vaultID: try Stored.uuid(row[0]),

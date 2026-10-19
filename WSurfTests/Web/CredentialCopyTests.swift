@@ -23,11 +23,14 @@ struct CredentialCopyTests {
         let vault: FixtureVault
         let model: CredentialSettingsModel
 
-        @MainActor init(noticeDuration: Duration = .seconds(60)) async throws {
+        @MainActor init(noticeDuration: Duration = .seconds(60), undoNoticeDuration: Duration = .seconds(60)) async throws {
             let profile = Profile(id: UUID(), name: "Copy", symbol: "key", color: .blue)
             vault = try #require(try await VaultManagerFixture.make(profile: profile, vaults: [.locked]).vaults.first)
             self.profile = profile
-            model = CredentialSettingsModel(profile: profile, pasteboard: pasteboard, manager: vault.manager, noticeDuration: noticeDuration)
+            model = CredentialSettingsModel(
+                profile: profile, pasteboard: pasteboard, manager: vault.manager, noticeDuration: noticeDuration,
+                undoNoticeDuration: undoNoticeDuration
+            )
         }
 
         /// The vault unlocked, holding `accounts`, and the page loaded.
@@ -63,8 +66,10 @@ struct CredentialCopyTests {
         }
     }
 
-    private func withFixture(noticeDuration: Duration = .seconds(60), _ body: (Fixture) async throws -> Void) async throws {
-        let fixture = try await Fixture(noticeDuration: noticeDuration)
+    private func withFixture(
+        noticeDuration: Duration = .seconds(60), undoNoticeDuration: Duration = .seconds(60), _ body: (Fixture) async throws -> Void
+    ) async throws {
+        let fixture = try await Fixture(noticeDuration: noticeDuration, undoNoticeDuration: undoNoticeDuration)
         do { try await body(fixture) } catch { await fixture.cleanup(); throw error }
         await fixture.cleanup()
     }
@@ -182,7 +187,7 @@ struct CredentialCopyTests {
                 await #expect(throws: (any Error).self) { try await f.model.copy(.password, of: source) }
             }
             #expect(f.text == sentinel)
-            #expect(f.model.copyNotice == nil)
+            #expect(f.model.notice == nil)
         }
     }
 
@@ -226,7 +231,7 @@ struct CredentialCopyTests {
                 await f.model.load()
                 try await f.model.beginEditing(accountID: stored.id)
             }
-            #expect(f.model.copyNotice == nil)
+            #expect(f.model.notice == nil)
         }
     }
 
@@ -371,15 +376,15 @@ struct CredentialCopyTests {
         try await withFixture(noticeDuration: .milliseconds(1)) { f in
             let stored = account(password: "very-secret-value")
             try await f.seed([stored])
-            #expect(f.model.copyNotice == nil)
+            #expect(f.model.notice == nil)
 
             try await f.model.copyPassword(accountID: stored.id)
-            #expect(f.model.copyNotice == String(localized: "Password Copied"))
-            #expect(f.model.copyNotice?.contains("very-secret-value") == false)
-            #expect(await waitUntil { f.model.copyNotice == nil })
+            #expect(f.model.notice?.text == String(localized: "Password Copied"))
+            #expect(f.model.notice?.text.contains("very-secret-value") == false)
+            #expect(await waitUntil { f.model.notice == nil })
 
             await #expect(throws: (any Error).self) { try await f.model.copy(.name, of: .stored(stored.id)) }
-            #expect(f.model.copyNotice == nil, "a refused copy confirms nothing")
+            #expect(f.model.notice == nil, "a refused copy confirms nothing")
         }
     }
 
@@ -390,7 +395,23 @@ struct CredentialCopyTests {
 
             try await f.model.copy(.password, of: .stored(stored.id))
             try await f.model.copy(.website(0), of: .stored(stored.id))
-            #expect(f.model.copyNotice == String(localized: "Website Copied"))
+            #expect(f.model.notice?.text == String(localized: "Website Copied"))
+        }
+    }
+
+    @Test func aNoticeThatOffersUndoIsShownLongerAndTheLatestNoticeWins() async throws {
+        try await withFixture(noticeDuration: .milliseconds(1)) { f in
+            f.model.showNotice("Moved 2 credentials to Trash.", undo: true)
+            #expect(f.model.notice?.offersUndo == true)
+            #expect(f.model.notice?.text == String(localized: "Moved 2 credentials to Trash."))
+            // It lasts the undo time (a minute here), not the copy time (a millisecond).
+            f.model.showNotice("Moved 3 credentials to Trash.", undo: true)
+            #expect(f.model.notice?.text == String(localized: "Moved 3 credentials to Trash."))
+            f.model.showNotice("Website Copied")
+            #expect(f.model.notice?.offersUndo == false, "a copy notice never offers Undo")
+            #expect(await waitUntil { f.model.notice == nil })
+            f.model.showNotice("Gone soon", undo: true, duration: .milliseconds(1))
+            #expect(await waitUntil { f.model.notice == nil })
         }
     }
 

@@ -13,6 +13,8 @@ nonisolated enum CredentialChangeCause {
     static let merge = "merge"
     /// Written when the person adds the page's website to a credential from an autofill offer.
     static let addWebsite = "add-website"
+    /// Written by Undo (and Redo), which puts back what an earlier action of the same page changed.
+    static let undo = "undo"
 
     /// What the History panel says, `nil` when the writer said nothing.
     static func text(for cause: String?) -> String? {
@@ -24,6 +26,8 @@ nonisolated enum CredentialChangeCause {
             String(localized: "Changed by a merge")
         case Self.addWebsite:
             String(localized: "Website added from autofill")
+        case Self.undo:
+            String(localized: "Changed by Undo")
         default:
             cause
         }

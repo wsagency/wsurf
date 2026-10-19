@@ -28,7 +28,6 @@ struct CredentialVaultSession {
     }
     /// The open credential's earlier values and versions (secrets included), masked until shown; see `HistoryState`.
     var history: HistoryState?
-    var pendingRemoval: PendingRemoval?
     var pendingUnlockRemoval: PendingUnlockRemoval?
     /// Verified counts of the vault and its Trash, as of the last Trash load.
     var counts: (live: HistoryCounts, trash: HistoryCounts)?
@@ -38,6 +37,15 @@ struct CredentialVaultSession {
     var restoreBlocked: RestoreBlocked?
     var pendingPurge: PendingPurge?
     var pendingVaultDeletion: PendingVaultDeletion?
+    /// Trash entries the user pressed X on: hidden, counted out, and deleted only when the Trash is left (one assertion for the batch).
+    /// Session state, so a lock, a quit or a closed page deletes nothing.
+    var markedForDeletion: [UUID] = []
+    /// The page's last actions that Undo can take back, oldest first; secrets included, so they go with the session.
+    var undoSteps: [CredentialUndoStep] = []
+    /// The actions Undo took back, newest last, that Redo can repeat. A new action ends them.
+    var redoSteps: [CredentialUndoStep] = []
+    /// The most actions Undo keeps; the oldest is dropped for a sixth.
+    static let undoDepth = 5
 
     init(epoch: UInt64, snapshot: StoreSnapshot) {
         self.epoch = epoch
@@ -46,6 +54,87 @@ struct CredentialVaultSession {
         stampsRevision = snapshot.revision
         summaries = snapshot.accounts.map(CredentialSummary.init)
         blockedSiteCount = snapshot.blockedPasswordOrigins.count
+    }
+
+    /// Ends the marks on `ids` (all of them for `nil`) and the steps that held them.
+    mutating func dropMarks(_ ids: Set<UUID>?) {
+        guard let ids else {
+            markedForDeletion = []
+            undoSteps.removeAll { $0.kind == .markForDeletion }
+            redoSteps.removeAll { $0.kind == .markForDeletion }
+            return
+        }
+        markedForDeletion.removeAll { ids.contains($0) }
+        undoSteps.removeAll { $0.kind == .markForDeletion && !ids.isDisjoint(with: $0.marked) }
+        redoSteps.removeAll { $0.kind == .markForDeletion && !ids.isDisjoint(with: $0.marked) }
+    }
+
+    /// A new action of the page: it can be undone, and what was undone before it can no longer be redone.
+    mutating func record(_ step: CredentialUndoStep) {
+        redoSteps = []
+        push(step, onto: .undo)
+    }
+
+    private mutating func push(_ step: CredentialUndoStep, onto direction: CredentialReplay) {
+        switch direction {
+        case .undo:
+            undoSteps.append(step)
+            if undoSteps.count > Self.undoDepth {
+                undoSteps.removeFirst(undoSteps.count - Self.undoDepth)
+            }
+        case .redo:
+            redoSteps.append(step)
+        }
+    }
+
+    /// `step` has been replayed (it is found by its id: the page may have recorded another action meanwhile). Its inverse goes onto the
+    /// other stack; `nil` when it cannot be made, and the action is then gone from both. With `rebinding`, the steps behind it in its
+    /// stack follow the accounts it rewrote to their new stamps (`CredentialUndoStep.rebound`).
+    mutating func completed(_ direction: CredentialReplay, step: CredentialUndoStep, inverse: CredentialUndoStep?, rebinding: Bool) {
+        if discard(step, from: direction), let inverse {
+            push(inverse, onto: direction == .undo ? .redo : .undo)
+        }
+        guard rebinding else { return }
+        switch direction {
+        case .undo:
+            undoSteps = undoSteps.map { $0.rebound(behind: step, to: stamps) }
+        case .redo:
+            redoSteps = redoSteps.map { $0.rebound(behind: step, to: stamps) }
+        }
+    }
+
+    /// Takes `step` off its stack because it was replayed or can no longer be. `false` when it is not there any more.
+    @discardableResult
+    mutating func discard(_ step: CredentialUndoStep, from direction: CredentialReplay) -> Bool {
+        switch direction {
+        case .undo:
+            guard let index = undoSteps.lastIndex(where: { $0.id == step.id }) else { return false }
+            undoSteps.remove(at: index)
+        case .redo:
+            guard let index = redoSteps.lastIndex(where: { $0.id == step.id }) else { return false }
+            redoSteps.remove(at: index)
+        }
+        return true
+    }
+
+    /// Replays a mark for deletion: Undo shows its entries again, Redo hides them again. No vault write is involved. `false` when
+    /// there was nothing to do: the step is gone, or none of its entries is listed any more.
+    @discardableResult
+    mutating func replayMark(_ step: CredentialUndoStep, _ direction: CredentialReplay) -> Bool {
+        guard discard(step, from: direction) else { return false }
+        switch direction {
+        case .undo:
+            markedForDeletion.removeAll { step.marked.contains($0) }
+            redoSteps.append(step)
+        case .redo:
+            let listed = Set(trash.map(\.id)).subtracting(markedForDeletion)
+            var again = step
+            again.marked = step.marked.filter { listed.contains($0) }
+            guard !again.marked.isEmpty else { return false }
+            markedForDeletion += again.marked
+            push(again, onto: .undo)
+        }
+        return true
     }
 
     /// The stamps only while they describe the revision shown; after this page's own write they are unknown, not stale.

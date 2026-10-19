@@ -17,6 +17,8 @@ struct CredentialSettings: View {
     /// Always the Credentials tab when the page opens.
     @State private var tab = CredentialPageTab.credentials
     @State var list: CredentialListState
+    /// Which rows are selected and where the keyboard cursor is, for the credential list and the Trash.
+    @State var selection: CredentialSelection
     @State private var work: Task<Void, Never>?
     @State private var exportContext: CredentialExportContext?
 
@@ -24,10 +26,14 @@ struct CredentialSettings: View {
         self.init(model: CredentialSettingsModel(profile: profile))
     }
 
-    /// Test seam: a page over a model that already has its own manager, and the list state a test can drive.
-    init(model: CredentialSettingsModel, list: CredentialListState = CredentialListState()) {
+    /// Test seam: a page over a model that already has its own manager, and the list state and selection a test can drive.
+    init(
+        model: CredentialSettingsModel, list: CredentialListState = CredentialListState(),
+        selection: CredentialSelection = CredentialSelection()
+    ) {
         _model = State(initialValue: model)
         _list = State(initialValue: list)
+        _selection = State(initialValue: selection)
     }
 
     var body: some View {
@@ -62,7 +68,10 @@ struct CredentialSettings: View {
             model.close()
             model.legacy.endSession()
         }
-        .sheet(isPresented: Binding(get: { model.draft != nil }, set: { if !$0 { model.cancelEditing() } })) {
+        .sheet(
+            isPresented: Binding(get: { model.draft != nil }, set: { if !$0 { model.cancelEditing() } }),
+            onDismiss: { selection.takeKeyboard() }
+        ) {
             CredentialEditorSheet(model: model)
         }
         .sheet(
@@ -94,26 +103,15 @@ struct CredentialSettings: View {
             exportContext = nil
             showsTrash = false
             list.reset()
+            selection.reset()
             model.legacy.endSession()
         }
         .onChange(of: model.selectedVaultID) {
             showsTrash = false
             list.reset()
+            selection.reset()
         }
         .legacyRemovalDialog(model: model, run: run)
-        .confirmationDialog(
-            "Remove Credential?",
-            isPresented: Binding(get: { model.pendingRemoval != nil }, set: { if !$0 { model.cancelRemoval() } }),
-            presenting: model.pendingRemoval
-        ) { pending in
-            // The captured value carries the revision and epoch it was presented at; the model rejects a stale one.
-            Button("Remove Credential", role: .destructive) {
-                run { _ = try await model.confirmRemoval(pending) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { pending in
-            Text("Remove “\(pending.summary.title)” and everything saved with it, including passkeys and verification codes?")
-        }
         .confirmationDialog(
             "Remove Unlock Passkey?",
             isPresented: Binding(get: { model.pendingUnlockRemoval != nil && !model.isBusy }, set: { _ in }),
@@ -162,7 +160,12 @@ struct CredentialSettings: View {
         SegmentedControl(
             items: [.init(value: .credentials, label: "Credentials"), .init(value: .settings, label: "Settings")],
             selection: tab,
-            onSelect: { tab = $0 }
+            onSelect: { next in
+                if next != .credentials {
+                    leaveTrash()
+                }
+                tab = next
+            }
         )
         .frame(width: 260)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -492,8 +495,12 @@ struct CredentialSettings: View {
 struct CredentialRow: View {
     let model: CredentialSettingsModel
     let summary: CredentialSummary
+    /// Read here, row by row, so a change redraws only the rows that are built.
+    let selection: CredentialSelection
     let run: (@escaping () async throws -> Void) -> Void
+    /// Moves it to the Trash, without a dialog.
     let remove: () -> Void
+    let open: () -> Void
     let history: () -> Void
     /// "Merge With…"; `nil` leaves it out of the menu.
     var mergeWith: (() -> Void)?
@@ -526,15 +533,19 @@ struct CredentialRow: View {
             SiteRow(host: host, summary: detail.isEmpty ? nil : detail, caption: summary.dates.caption(style: .list)) {
                 HStack(spacing: 8) {
                     actions
-                    Button("Edit…") { run { try await model.beginEditing(accountID: summary.id) } }
+                    Button("Edit…", action: open)
                         .disabled(model.isBusy)
                     Button("Remove", role: .destructive, action: remove)
                         .disabled(model.isBusy)
+                        .help("Move to Trash")
+                        .accessibilityLabel("Move \(summary.title) to Trash")
                 }
                 .buttonStyle(.bordered).fixedSize()
             }
             revealed
         }
+        .credentialRowSelection(selection, id: summary.id, open: open, remove: remove, removeName: "Move to Trash")
+        .accessibilityAction(named: "Open", open)
     }
 
     private var actions: some View {
