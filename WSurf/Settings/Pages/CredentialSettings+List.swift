@@ -177,7 +177,7 @@ struct CredentialListView<Switcher: View>: View {
                     CredentialRow(
                         model: model, summary: summary, run: run,
                         remove: { model.requestRemoval(accountID: summary.id) },
-                        versions: { run { try await model.loadVersions(accountID: summary.id) } }
+                        history: { run { try await model.openHistory(accountID: summary.id) } }
                     )
                 }
             }

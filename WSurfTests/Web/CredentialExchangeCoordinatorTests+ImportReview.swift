@@ -169,6 +169,7 @@ extension CredentialExchangeCoordinatorTests {
             #expect(stored.accounts.first { $0.exchangeItemID == Data([0xB0, 1]) }?.password == "pw1")
             let versions = try await f.manager.revisionPage(accountID: updated.id, after: nil).items
             #expect(versions.map(\.subject) == [.password], "the replaced password is kept as an earlier version")
+            #expect(versions.map(\.cause) == [CredentialChangeCause.import], "History says the import replaced it")
             // The next import compares with what this one brought in.
             try await f.stage(changed)
             #expect(try review(f).tally.unchanged == 3)

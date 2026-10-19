@@ -187,3 +187,45 @@ nonisolated struct CredentialDraft: Sendable {
             .filter { !$0.isEmpty }
     }
 }
+
+// MARK: - Copying from an earlier version
+
+extension CredentialDraft {
+    /// Puts one part of an earlier version into the draft, as typing it would. Nothing is stored until Save, and then the value it
+    /// replaces becomes an earlier version. The basic-authentication field descriptions stay as the credential has them:
+    /// `account()` keeps them consistent with the copied username and password.
+    mutating func take(_ field: CredentialHistoryField, from version: CredentialAccount) {
+        switch field {
+        case .name:
+            displayName = version.displayName
+        case .login:
+            username = version.username
+            password = version.password
+        case .websites:
+            let lines = CredentialHistory.websites(of: version)
+            websites = lines.filter { !$0.isOtherOrigin }.map(\.text).joined(separator: "\n")
+            extraOrigins = lines.filter(\.isOtherOrigin).map(\.text).joined(separator: "\n")
+        case .website(let url):
+            websites = Self.appending(url.absoluteString, to: websites)
+        case .origin(let origin):
+            extraOrigins = Self.appending(origin, to: extraOrigins)
+        case .code:
+            if let generator = version.totp {
+                totp = generator
+            }
+        case .notes:
+            notes = version.notes ?? []
+        case .note(let index):
+            guard let held = version.notes, held.indices.contains(index), !notes.contains(where: { $0.text == held[index].text }),
+                notes.count < CredentialAccount.noteLimit
+            else { return }
+            let note = held[index]
+            notes.append(note)
+        }
+    }
+
+    private static func appending(_ line: String, to text: String) -> String {
+        let lines = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return lines.contains(line) ? text : (lines + [line]).joined(separator: "\n")
+    }
+}

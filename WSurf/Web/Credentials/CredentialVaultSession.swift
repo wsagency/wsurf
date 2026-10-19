@@ -18,7 +18,16 @@ struct CredentialVaultSession {
     var revealedPassword: RevealedPassword?
     var revealedUsername: RevealedUsername?
     var shownTOTP: (accountID: UUID, generator: TOTPGenerator)?
-    var draft: CredentialDraft?
+    var draft: CredentialDraft? {
+        // History belongs to the draft it was read for: closing the editor, or opening another draft, drops it with its secrets.
+        didSet {
+            if history?.accountID != draft?.accountID || history?.revision != draft?.revision {
+                history = nil
+            }
+        }
+    }
+    /// The open credential's earlier values and versions (secrets included), masked until shown; see `HistoryState`.
+    var history: HistoryState?
     var pendingRemoval: PendingRemoval?
     var pendingUnlockRemoval: PendingUnlockRemoval?
     /// Verified counts of the vault and its Trash, as of the last Trash load.
@@ -28,9 +37,6 @@ struct CredentialVaultSession {
     var trashNext: Int?
     var restoreBlocked: RestoreBlocked?
     var pendingPurge: PendingPurge?
-    var revisions: [RevisionItem] = []
-    var revisionNext: Int?
-    var versionsAccountID: UUID?
 
     init(epoch: UInt64, snapshot: StoreSnapshot) {
         self.epoch = epoch
@@ -50,6 +56,7 @@ struct CredentialVaultSession {
         revealedPassword = nil
         revealedUsername = nil
         shownTOTP = nil
+        history?.revealsSecrets = false
     }
 
     mutating func refresh(_ snapshot: StoreSnapshot) {

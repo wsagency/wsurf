@@ -59,3 +59,43 @@ nonisolated extension CredentialExportSelection {
         password || totp || notes || !passkeyIDs.isEmpty
     }
 }
+
+// MARK: - A credential as one unit
+
+nonisolated extension CredentialExportSelection {
+    /// Everything of `summary` the export can carry: its login, every passkey, its code setup and its notes. A CSV file carries only a
+    /// login and its notes.
+    init(allOf summary: CredentialSummary, csv: Bool = false) {
+        self.init(
+            accountID: summary.id,
+            password: summary.hasLogin,
+            passkeyIDs: csv ? [] : Set(summary.passkeys.map(\.id)),
+            totp: !csv && summary.hasTOTP,
+            notes: summary.hasNotes
+        )
+    }
+
+    /// How many of the parts `summary` offers for this export are selected, and how many it offers.
+    func parts(of summary: CredentialSummary, csv: Bool = false) -> (selected: Int, offered: Int) {
+        let offered = Self(allOf: summary, csv: csv)
+        let selected = Self(
+            accountID: summary.id, password: password && offered.password, passkeyIDs: passkeyIDs.intersection(offered.passkeyIDs),
+            totp: totp && offered.totp, notes: notes && offered.notes
+        )
+        func count(_ selection: Self) -> Int {
+            [selection.password, selection.totp, selection.notes].filter { $0 }.count + selection.passkeyIDs.count
+        }
+        return (count(selected), count(offered))
+    }
+
+    /// `selection` with every credential of `summaries` selected whole (`on`) or not selected at all.
+    static func setting(
+        _ on: Bool, for summaries: [CredentialSummary], csv: Bool = false, in selection: [UUID: CredentialExportSelection]
+    ) -> [UUID: CredentialExportSelection] {
+        var result = selection
+        for summary in summaries {
+            result[summary.id] = on ? Self(allOf: summary, csv: csv) : nil
+        }
+        return result
+    }
+}

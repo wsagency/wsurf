@@ -35,6 +35,18 @@ nonisolated struct RevisionPage: Sendable {
     let next: Int?
 }
 
+/// A revision with the value it superseded: the canonical JSON of one typed value (`PasswordValue`, `TOTPGenerator`,
+/// `[CredentialNote]` or `MetadataProjection`), selected by `item.subject`. It holds a secret; keep it only in an authorized session.
+nonisolated struct RevisionValue: Equatable, Sendable {
+    let item: RevisionItem
+    let value: Data
+}
+
+nonisolated struct RevisionValuePage: Sendable {
+    let items: [RevisionValue]
+    let next: Int?
+}
+
 nonisolated extension HistoryCounts {
     /// Whether the stored rows of `vaultID` number exactly what this (head-authenticated) count says: three `COUNT(*)` reads, no row decoded.
     func matchesRows(_ db: Database, vaultID: UUID, ordinal: Int) throws -> Bool {
@@ -105,16 +117,35 @@ extension ProfileVaultStore {
     func revisionPage(vaultID: UUID, accountID: UUID, after: Int?, using access: VaultAccess) async throws -> RevisionPage {
         try await readHistory(vaultID, access) { db, grant, _ in
             let page = try Self.pageIDs(db, vaultID: vaultID, kind: .revision, ownerID: accountID, after: after, ordinal: grant.ordinal)
-            let items = try page.ids.map { id -> RevisionItem in
-                try mapIntegrity(grant.ordinal) {
-                    guard let row = try StoreTables.record(db, vaultID: vaultID, recordID: id), row.kind == .revision, row.ownerID == accountID else {
-                        throw CredentialStoreError.malformed
-                    }
-                    let body = try JSONDecoder().decode(RevisionBody.self, from: row.opened(key: grant.dek, ids: grant.ids))
-                    return RevisionItem(id: id, subject: row.subject, version: row.version, recordedAt: body.recordedAt, cause: body.cause)
-                }
-            }
+            let items = try page.ids.map { try Self.revision($0, db, vaultID: vaultID, accountID: accountID, grant: grant).item }
             return RevisionPage(items: items, next: page.next)
+        }
+    }
+
+    /// `revisionPage` with each row's superseded value, for rebuilding the earlier versions of one credential. Same owner guard and
+    /// paging. Only a password, code, notes or details row has a value to apply: any other subject is `malformed`.
+    func revisionValuePage(vaultID: UUID, accountID: UUID, after: Int?, using access: VaultAccess) async throws -> RevisionValuePage {
+        try await readHistory(vaultID, access) { db, grant, _ in
+            let page = try Self.pageIDs(db, vaultID: vaultID, kind: .revision, ownerID: accountID, after: after, ordinal: grant.ordinal)
+            let items = try page.ids.map {
+                try Self.revision($0, db, vaultID: vaultID, accountID: accountID, grant: grant, appliesToAnAccount: true)
+            }
+            return RevisionValuePage(items: items, next: page.next)
+        }
+    }
+
+    /// One revision row of `accountID`, opened. A row of another account or kind is `malformed`, and so is one whose subject
+    /// `applying` could not apply when `appliesToAnAccount`.
+    nonisolated private static func revision(
+        _ id: UUID, _ db: Database, vaultID: UUID, accountID: UUID, grant: VaultGrant, appliesToAnAccount: Bool = false
+    ) throws -> RevisionValue {
+        try mapIntegrity(grant.ordinal) {
+            guard let row = try StoreTables.record(db, vaultID: vaultID, recordID: id), row.kind == .revision, row.ownerID == accountID,
+                !appliesToAnAccount || row.subject.restoresFromEarlierVersions
+            else { throw CredentialStoreError.malformed }
+            let body = try JSONDecoder().decode(RevisionBody.self, from: row.opened(key: grant.dek, ids: grant.ids))
+            let item = RevisionItem(id: id, subject: row.subject, version: row.version, recordedAt: body.recordedAt, cause: body.cause)
+            return RevisionValue(item: item, value: body.value)
         }
     }
 
@@ -457,6 +488,33 @@ extension ProfileVaultStore {
         return (result, owner)
     }
 
+    /// `account` with one superseded typed value put back in its own slot, the way `restoreRevision` writes it and the History panel
+    /// rebuilds an earlier version. `value` must be the canonical JSON of exactly one typed value (`decode` is strict); a passkey and
+    /// the account itself are not revision subjects.
+    nonisolated static func applying(_ subject: RecordSubject, value: Data, to account: inout CredentialAccount) throws {
+        switch subject {
+        case .password:
+            let login = try decode(PasswordValue.self, from: value)
+            account.username = login.username
+            account.password = login.password
+            account.basicAuthenticationMetadata = login.basicAuthenticationMetadata
+        case .totp:
+            account.totp = try decode(TOTPGenerator.self, from: value)
+        case .note:
+            account.notes = try decode([CredentialNote].self, from: value)
+        case .metadata:
+            let details = try decode(MetadataProjection.self, from: value)
+            account.displayName = details.displayName
+            account.origins = details.origins
+            account.loginURLs = details.loginURLs
+            account.exchangeMetadata = details.exchange
+            account.exchangeAccountID = details.exchangeAccountID
+            account.exchangeItemID = details.exchangeItemID
+        case .account, .passkey:
+            throw CredentialVaultError.invalidData
+        }
+    }
+
     /// The live accounts with the chosen earlier revision applied to its owner (only the typed value of the revision's subject), and
     /// the owner's id.
     nonisolated private static func restoringRevision(
@@ -469,27 +527,7 @@ extension ProfileVaultStore {
             try JSONDecoder().decode(RevisionBody.self, from: row.opened(key: grant.dek, ids: grant.ids))
         }
         var account = snapshot.accounts[index]
-        switch row.subject {
-        case .password:
-            let value = try decode(PasswordValue.self, from: body.value)
-            account.username = value.username
-            account.password = value.password
-            account.basicAuthenticationMetadata = value.basicAuthenticationMetadata
-        case .totp:
-            account.totp = try decode(TOTPGenerator.self, from: body.value)
-        case .note:
-            account.notes = try decode([CredentialNote].self, from: body.value)
-        case .metadata:
-            let value = try decode(MetadataProjection.self, from: body.value)
-            account.displayName = value.displayName
-            account.origins = value.origins
-            account.loginURLs = value.loginURLs
-            account.exchangeMetadata = value.exchange
-            account.exchangeAccountID = value.exchangeAccountID
-            account.exchangeItemID = value.exchangeItemID
-        case .account, .passkey:
-            throw CredentialVaultError.invalidData
-        }
+        try applying(row.subject, value: body.value, to: &account)
         var accounts = snapshot.accounts
         accounts[index] = account
         return (accounts, account.id)

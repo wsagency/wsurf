@@ -151,9 +151,6 @@ struct CredentialSettings: View {
                 showsCreateWarning = false
             }
         }
-        .sheet(isPresented: Binding(get: { model.versionsAccountID != nil }, set: { if !$0 { model.closeVersions() } })) {
-            CredentialVersionsSheet(model: model, run: run)
-        }
     }
 
     // MARK: Tabs
@@ -497,7 +494,7 @@ struct CredentialRow: View {
     let summary: CredentialSummary
     let run: (@escaping () async throws -> Void) -> Void
     let remove: () -> Void
-    let versions: () -> Void
+    let history: () -> Void
 
     private var host: String {
         summary.origins.lazy.compactMap { URL(string: $0)?.host }.first ?? summary.title
@@ -563,7 +560,7 @@ struct CredentialRow: View {
                     Button("Show Verification Code") { run { try await model.showTOTP(accountID: summary.id) } }
                 }
             }
-            Button("Earlier Versions…", action: versions)
+            Button("History…", action: history)
         } label: {
             Image(systemName: "ellipsis.circle")
                 .accessibilityLabel("More actions for \(summary.title)")
