@@ -376,11 +376,13 @@ extension ProfileVaultStore {
     }
 
     /// §11.3: any live `exchangeAccountID` or `exchangeItemID` equal to the entry's blocks a whole account (conservative: one exchange
-    /// account owns many items, so this can refuse more than strictly needed; the user removes the live item and retries).
+    /// account owns many items, so this can refuse more than strictly needed; the user removes the live item and retries). So does a
+    /// live account the entry was merged into (`MergedItemLink`): it holds the item now.
     nonisolated private static func sharesExchangeID(_ removed: CredentialAccount, with accounts: [CredentialAccount]) -> Bool {
         accounts.contains {
             (removed.exchangeAccountID != nil && $0.exchangeAccountID == removed.exchangeAccountID)
                 || (removed.exchangeItemID != nil && $0.exchangeItemID == removed.exchangeItemID)
+                || $0.holdsMergedItem(of: removed)
         }
     }
 

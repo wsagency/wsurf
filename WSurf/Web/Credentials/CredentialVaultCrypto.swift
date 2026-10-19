@@ -391,6 +391,12 @@ nonisolated enum CredentialVaultCrypto {
             try add(generator.issuer?.utf8.count ?? 0)
             try add(generator.userName?.utf8.count ?? 0)
         }
+        for link in account.mergedFrom ?? [] {
+            try add(link.exchangeAccountID.count)
+            try add(link.exchangeItemID.count)
+            try add(link.passwordBase?.itemID?.count ?? 0)
+            try add(link.totpBase?.itemID?.count ?? 0)
+        }
         for note in account.notes ?? [] {
             try add(note.text.utf8.count)
             try add(note.field?.id?.count ?? 0)
@@ -427,6 +433,12 @@ nonisolated enum CredentialVaultCrypto {
         full.totpEvents = events
         full.passwordBase = base
         full.totpBase = base
+        full.mergedFrom = full.mergedFrom?.map { link in
+            var filled = link
+            filled.passwordBase = ExchangeBase(contentHash: Data(count: 32), itemID: link.exchangeItemID)
+            filled.totpBase = filled.passwordBase
+            return filled
+        }
         for index in full.passkeys.indices {
             full.passkeys[index].createdAt = date
             full.passkeys[index].lastSignedAt = date
