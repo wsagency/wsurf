@@ -96,8 +96,8 @@ extension CredentialExchangeCoordinatorTests {
             let failure = await #expect(throws: CredentialTransferFailure.self) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
-            let after = try f.diskBytes()
-            #expect(failure?.message.kind == .nothingImported && after == before)
+            let afterwards = try f.diskBytes()
+            #expect(failure?.message.kind == .nothingImported && afterwards == before)
         }
     }
 
@@ -192,8 +192,8 @@ extension CredentialExchangeCoordinatorTests {
             let failure = await #expect(throws: CredentialTransferFailure.self) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
-            let after = try f.diskBytes()
-            #expect(failure?.message.kind == .nothingImported && after == before)
+            let afterwards = try f.diskBytes()
+            #expect(failure?.message.kind == .nothingImported && afterwards == before)
 
             // Moving it to Trash is the user's choice, and Import then does that and nothing else.
             let trashBefore = try await f.manager.historyCounts().trash.trashEntry
@@ -203,7 +203,8 @@ extension CredentialExchangeCoordinatorTests {
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             let after = try await f.stored().accounts
             #expect(after.count == full.count - 1 && !after.contains { $0.id == victim.id })
-            #expect(after.allSatisfy { account in account == full.first { $0.id == account.id } }, "every other account is as it was")
+            let untouched = after.allSatisfy { account in full.contains { $0 == account } }
+            #expect(untouched, "every other account is as it was")
             #expect(try await f.manager.historyCounts().trash.trashEntry == trashBefore + 1, "it is in Trash, with its history")
         }
     }
@@ -256,8 +257,8 @@ extension CredentialExchangeCoordinatorTests {
             let failure = await #expect(throws: CredentialTransferFailure.self) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
-            let after = try f.diskBytes()
-            #expect(failure?.message.kind == .discarded && after == before)
+            let afterwards = try f.diskBytes()
+            #expect(failure?.message.kind == .discarded && afterwards == before)
             #expect(try await f.stored().accounts.contains { $0.id == victim.id && $0.password == "changed-meanwhile" })
         }
     }
