@@ -34,23 +34,41 @@ final class AutofillSubmissionTracker {
         }
     }
     enum NavigationKind { case linkActivated, backForward, reload, formSubmitted, formResubmitted, other }
+    /// How long an attempt may wait for proof that the login worked. A verification step (SMS, e-mail, push approval) can take minutes,
+    /// so an attempt that has seen one waits longer.
+    static let attemptLifetime: TimeInterval = 120
+    static let verificationLifetime: TimeInterval = 300
     private struct Attempt {
         let id: UUID
         let context: BrowserProfileContext
         let documentID: String
         let formID: String
         let origin: String
+        /// The page the login was typed on; after a navigation the tab no longer shows it.
+        let loginURL: URL?
         let candidates: [AutofillSaveCandidate]
         let frame: BrowserFrame
-        let created = Date.now
+        let created: Date
+        var sawVerification = false
+        var blockedByFieldNoted = false
+        /// The document (and its origin) that replaced the login after a navigation. A same-document completion never sets them.
         var completionDocumentID: String?
+        var completionOrigin: String?
         var completionObservedAt: Date?
+        var lifetime: TimeInterval {
+            sawVerification ? AutofillSubmissionTracker.verificationLifetime : AutofillSubmissionTracker.attemptLifetime
+        }
+        mutating func resetCompletion() {
+            completionDocumentID = nil; completionOrigin = nil; completionObservedAt = nil
+        }
     }
     private weak var session: AutofillSaveSession?
     private var attempts: [UUID: Attempt] = [:]
     private var formDepartures: [String: Date] = [:]
     private var polling: Task<Void, Never>?
     private var generation = 0
+    /// Tests replace the clock that ages attempts.
+    var now: () -> Date = { .now }
 
     func attach(to session: AutofillSaveSession) {
         self.session = session
@@ -101,7 +119,10 @@ final class AutofillSubmissionTracker {
         navigationRequested(isMainFrame: action.targetFrame?.isMainFrame != false, kind: kind, sourceURL: sourceURL)
     }
 
-    func stage(id: UUID, documentID: String, formID: String, origin: String, candidates: [AutofillSaveCandidate], frame: BrowserFrame, source: String) {
+    func stage(
+        id: UUID, documentID: String, formID: String, origin: String, loginURL: URL? = nil,
+        candidates: [AutofillSaveCandidate], frame: BrowserFrame, source: String
+    ) {
         guard let context = session?.context, !candidates.isEmpty,
               ["submit", "interaction", "automatic", "pagehide"].contains(source) else { return }
         if source == "pagehide" { guard let date = formDepartures[origin], Date.now.timeIntervalSince(date) < 5 else { return } }
@@ -115,7 +136,10 @@ final class AutofillSubmissionTracker {
         }
         let pending = source == "submit" ? candidates.filter { $0.kind != .contact } : candidates
         guard !pending.isEmpty else { return }
-        attempts[id] = Attempt(id: id, context: context, documentID: documentID, formID: formID, origin: origin, candidates: pending, frame: frame)
+        attempts[id] = Attempt(
+            id: id, context: context, documentID: documentID, formID: formID, origin: origin, loginURL: loginURL,
+            candidates: pending, frame: frame, created: now()
+        )
         AutofillDiagnostics.note(.submissionPending, kind: candidates[0].kind); startPolling()
     }
     func discard(id: UUID, documentID: String, formID: String) {
@@ -123,15 +147,34 @@ final class AutofillSubmissionTracker {
         attempts[id] = nil
     }
     func complete(id: UUID, documentID: String, formID: String) {
-        guard let attempt = attempts[id], attempt.documentID == documentID, attempt.formID == formID,
-              Date.now.timeIntervalSince(attempt.created) < 120 else { return }
+        guard let attempt = attempts[id], attempt.documentID == documentID, attempt.formID == formID else { return }
+        guard now().timeIntervalSince(attempt.created) < attempt.lifetime else {
+            expire(attempt)
+            return
+        }
         finish(attempt)
     }
+    /// How long the attempt may wait in total; tests read it to see whether a verification step was noticed.
+    func lifetime(of id: UUID) -> TimeInterval? {
+        attempts[id]?.lifetime
+    }
+    private func expire(_ attempt: Attempt) {
+        attempts[attempt.id] = nil
+        AutofillDiagnostics.note(.attemptExpired, kind: attempt.candidates[0].kind, count: Int(attempt.lifetime))
+    }
+    /// The offer follows the page the user sees now: after a navigation that is the document that replaced the login, which may be on
+    /// another origin. The credential still belongs to the origin it was typed on.
     private func finish(_ attempt: Attempt) {
         attempts[attempt.id] = nil
-        guard let session, session.context === attempt.context, session.page?.context === attempt.context else { return }
+        guard let session, session.context === attempt.context, session.page?.context === attempt.context else {
+            AutofillDiagnostics.note(.offerDroppedNotLive, kind: attempt.candidates[0].kind)
+            return
+        }
         AutofillDiagnostics.note(.submissionCompleted, kind: attempt.candidates[0].kind)
-        session.receive(attempt.candidates, origin: attempt.origin, documentID: attempt.documentID)
+        session.receive(
+            attempt.candidates, origin: attempt.origin, documentID: attempt.completionDocumentID ?? attempt.documentID,
+            liveOrigin: attempt.completionOrigin ?? attempt.origin, loginURL: attempt.loginURL
+        )
     }
 
     private func startPolling() {
@@ -151,7 +194,9 @@ final class AutofillSubmissionTracker {
         }
     }
     private func inspectTransitions(generation: Int) async {
-        attempts = attempts.filter { Date.now.timeIntervalSince($0.value.created) < 120 }
+        for attempt in attempts.values where now().timeIntervalSince(attempt.created) >= attempt.lifetime {
+            expire(attempt)
+        }
         guard let session, let page = session.page, session.context === page.context,
               !page.isLoading, page.window != nil, !page.isHiddenOrHasHiddenAncestor, page.hasOnlySecureContent,
               let topURL = page.url, SavedPassword.origin(for: topURL) != nil else { return }
@@ -160,37 +205,45 @@ final class AutofillSubmissionTracker {
                 attempts[attempt.id] = nil
                 continue
             }
-            if let chromium = page.chromium {
-                let live = (try? await chromium.isLive(frame: attempt.frame)) == true
-                guard generation == self.generation, session.context === attempt.context, page.context === attempt.context else { return }
-                if !live {
-                    attempts[attempt.id] = nil
-                    continue
-                }
-            }
+            // The login's frame may be gone (an iframe that was removed) or hold another document by now. After a navigation to another site,
+            // WebKit's handle can stop running scripts and Chromium's goes stale: no answer here is not a verdict either way, the page
+            // states below decide.
             let value = try? await page.callAsyncJavaScript("return globalThis.__wsurfAutofillForms?.summary();", arguments: [:], in: attempt.frame, contentWorld: AutofillPage.world)
             guard generation == self.generation, session.context === attempt.context, page.context === attempt.context,
                   attempts[attempt.id] != nil, page.url == topURL, !page.isLoading else { return }
             let state = PageState(value)
+            if (state?.challenges ?? 0) > 0 {
+                attempts[attempt.id]?.sawVerification = true
+            }
             if let state, state.documentID == attempt.documentID {
                 continue
             }
-            if attempt.frame.isMainFrame && state == nil {
-                continue
+            let reported = await AutofillSaveCoordinator.shared.pageStates(in: page)
+            if reported?.contains(where: { $0.challenges > 0 }) == true {
+                attempts[attempt.id]?.sawVerification = true
             }
-            guard let pages = await AutofillSaveCoordinator.shared.pageStates(in: page), session.context === attempt.context,
-                  page.context === attempt.context, let main = pages.first, pages.allSatisfy(\.ready),
-                  !pages.contains(where: { $0.documentID == attempt.documentID }), attempt.candidates.allSatisfy({ candidate in !pages.contains { $0.stillContains(candidate.kind) } }) else {
-                attempts[attempt.id]?.completionDocumentID = nil; attempts[attempt.id]?.completionObservedAt = nil; continue
+            guard let pages = reported, session.context === attempt.context, page.context === attempt.context,
+                  let main = pages.first, pages.allSatisfy(\.ready), !pages.contains(where: { $0.documentID == attempt.documentID }) else {
+                attempts[attempt.id]?.resetCompletion(); continue
+            }
+            // A post-login page that still shows a password or code field is not proof of anything yet (the next step of the login).
+            let blocking = pages.filter { frameState in attempt.candidates.contains { frameState.stillContains($0.kind) } }
+            guard blocking.isEmpty else {
+                if !attempt.blockedByFieldNoted {
+                    attempts[attempt.id]?.blockedByFieldNoted = true
+                    AutofillDiagnostics.note(.completionBlockedByField, kind: attempt.candidates[0].kind, count: blocking.count)
+                }
+                attempts[attempt.id]?.resetCompletion(); continue
             }
             guard generation == self.generation, attempts[attempt.id] != nil, session.context === attempt.context,
                   page.context === attempt.context, page.url == topURL, !page.isLoading, page.hasOnlySecureContent else { return }
-            let completionID = state?.documentID ?? main.documentID
-            if let recorded = attempts[attempt.id], recorded.completionDocumentID == completionID,
+            let completion = state ?? main
+            if let recorded = attempts[attempt.id], recorded.completionDocumentID == completion.documentID,
                let first = recorded.completionObservedAt, Date.now.timeIntervalSince(first) >= 1 {
                 finish(recorded)
             } else {
-                attempts[attempt.id]?.completionDocumentID = completionID
+                attempts[attempt.id]?.completionDocumentID = completion.documentID
+                attempts[attempt.id]?.completionOrigin = SavedPassword.origin(for: completion.url)
                 attempts[attempt.id]?.completionObservedAt = .now
             }
         }

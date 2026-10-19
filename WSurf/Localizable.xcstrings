@@ -403,6 +403,9 @@
     "This page wants to open %@." : {
 
     },
+    "This page changed, so nothing was saved." : {
+
+    },
     "This website can open this app without asking." : {
 
     },
