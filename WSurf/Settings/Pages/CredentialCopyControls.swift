@@ -22,13 +22,24 @@ struct CredentialCopyButton: View {
     }
 }
 
-/// The model's brief "Copied" confirmation, in the place the user is looking at: the list, or the editor with History beside it.
-struct CredentialCopyNotice: View {
+/// The model's brief confirmation ("Password Copied", "Moved 3 credentials to Trash."), in the place the user is looking at: the list,
+/// or the editor with History beside it. A notice that offers Undo shows the button when `undo` is given, which only the list does.
+struct CredentialPageNotice: View {
     let model: CredentialSettingsModel
+    var undo: (() -> Void)?
 
     var body: some View {
-        if let text = model.copyNotice {
-            SettingsNotice(symbol: "checkmark.circle", text: text, level: .ready)
+        if let notice = model.notice {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                SettingsNotice(symbol: "checkmark.circle", text: notice.text, level: .ready)
+                if notice.offersUndo, let undo {
+                    Button("Undo", action: undo)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(model.isBusy)
+                }
+            }
+            .onAppear { AccessibilityNotification.Announcement(notice.text).post() }
         }
     }
 }
