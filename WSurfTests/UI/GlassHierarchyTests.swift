@@ -11,7 +11,7 @@ import Testing
 struct GlassHierarchyTests {
     private let fill = NSColor(srgbRed: 0.6, green: 0.6, blue: 0.6, alpha: 1)
 
-    private func bitmap(of view: some View, scheme: ColorScheme) throws -> NSBitmapImageRep {
+    private func bitmap(of view: some View, scheme: ColorScheme) throws -> (bitmap: NSBitmapImageRep, scale: CGFloat) {
         let host = NSHostingView(rootView: view
             .environment(\.colorScheme, scheme)
             .environment(\._accessibilityReduceTransparency, false)
@@ -26,19 +26,27 @@ struct GlassHierarchyTests {
         host.displayIfNeeded()
         let image = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: image)
-        return image
+        return (image, CGFloat(image.pixelsWide) / host.bounds.width)
     }
 
-    private func expectColor(_ actual: NSColor, _ expected: NSColor) {
+    /// The pixel at `(x, y)` points from the top left. `colorAt` counts pixels, and the bitmap follows the
+    /// display's backing scale, so a point is a different pixel on a Retina display.
+    private func pixel(_ image: (bitmap: NSBitmapImageRep, scale: CGFloat), x: CGFloat, y: CGFloat) throws -> NSColor {
+        try #require(image.bitmap.colorAt(x: Int(x * image.scale), y: Int(y * image.scale)))
+    }
+
+    private func expectColor(_ actual: NSColor, _ expected: NSColor, _ sample: String) {
         let actual = actual.usingColorSpace(.sRGB) ?? actual
         let expected = expected.usingColorSpace(.sRGB) ?? expected
-        #expect(actual.alphaComponent == 1)
+        #expect(actual.alphaComponent == 1, "\(sample)")
         // AppKit's display bitmap can shift a few levels when converted back to sRGB.
-        #expect(abs(actual.redComponent - expected.redComponent) < 0.03)
-        #expect(abs(actual.greenComponent - expected.greenComponent) < 0.03)
-        #expect(abs(actual.blueComponent - expected.blueComponent) < 0.03)
+        #expect(abs(actual.redComponent - expected.redComponent) < 0.03, "\(sample)")
+        #expect(abs(actual.greenComponent - expected.greenComponent) < 0.03, "\(sample)")
+        #expect(abs(actual.blueComponent - expected.blueComponent) < 0.03, "\(sample)")
     }
 
+    /// The display's color profile moves a drawn gray by several levels, so a painted fill is compared with the
+    /// same fill drawn plainly through the same capture.
     @Test(arguments: [ColorScheme.light, .dark])
     func nestedGlassPaintsItsOpaqueFill(scheme: ColorScheme) throws {
         let surface = Color.clear
@@ -47,8 +55,9 @@ struct GlassHierarchyTests {
             .padding(15)
             .chromeGlass(in: Rectangle())
         let image = try bitmap(of: surface, scheme: scheme)
+        let plain = try bitmap(of: Color(nsColor: fill), scheme: scheme)
 
-        expectColor(try #require(image.colorAt(x: 40, y: 30)), fill)
+        expectColor(try pixel(image, x: 40, y: 30), try pixel(plain, x: 40, y: 30), "center")
     }
 
     /// The Update banner puts a lifted Settings control inside its glass card. Its inner surface must draw the
@@ -67,10 +76,7 @@ struct GlassHierarchyTests {
             scheme: scheme
         )
 
-        expectColor(
-            try #require(nested.colorAt(x: 40, y: 30)),
-            try #require(solid.colorAt(x: 40, y: 30))
-        )
+        expectColor(try pixel(nested, x: 40, y: 30), try pixel(solid, x: 40, y: 30), "center")
     }
 
     @Test func onlyRealGlassMarksItsOwnContent() throws {
@@ -84,9 +90,9 @@ struct GlassHierarchyTests {
         }
         let image = try bitmap(of: surfaces, scheme: .light)
 
-        expectColor(try #require(image.colorAt(x: 10, y: 30)), .white)
-        for x in [30, 50, 70] {
-            expectColor(try #require(image.colorAt(x: x, y: 30)), .black)
+        expectColor(try pixel(image, x: 10, y: 30), .white, "real glass")
+        for (x, probe) in zip([30, 50, 70] as [CGFloat], ["identity", "Reduce Transparency", "no glass"]) {
+            expectColor(try pixel(image, x: x, y: 30), .black, probe)
         }
     }
 
@@ -98,8 +104,9 @@ struct GlassHierarchyTests {
             .background(Color(nsColor: fill))
             .chromeGlass(in: Rectangle())
         let image = try bitmap(of: surface, scheme: .light)
+        let plain = try bitmap(of: Color(nsColor: fill), scheme: .light)
 
-        expectColor(try #require(image.colorAt(x: 40, y: 30)), fill)
+        expectColor(try pixel(image, x: 40, y: 30), try pixel(plain, x: 40, y: 30), "center")
     }
 }
 
