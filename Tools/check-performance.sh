@@ -201,3 +201,17 @@ check_average \
   '4096' \
   'Theme gallery memory growth' \
   'kB'
+
+# Five-sample Pro baseline in the app test host: 0.107897 s for one pass over twenty due watches (0.0028 s in a bare XCTest bundle).
+check_average \
+  'PageWatchPerformanceTests/testSchedulingTwentyDueWatches()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.220' \
+  'One pass over twenty due page watches' \
+  's'
+check_average \
+  'PageWatchPerformanceTests/testSchedulingTwentyDueWatches()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Page watch scheduling memory growth' \
+  'kB'
