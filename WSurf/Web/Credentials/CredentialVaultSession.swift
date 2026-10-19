@@ -28,7 +28,6 @@ struct CredentialVaultSession {
     }
     /// The open credential's earlier values and versions (secrets included), masked until shown; see `HistoryState`.
     var history: HistoryState?
-    var pendingRemoval: PendingRemoval?
     var pendingUnlockRemoval: PendingUnlockRemoval?
     /// Verified counts of the vault and its Trash, as of the last Trash load.
     var counts: (live: HistoryCounts, trash: HistoryCounts)?

@@ -58,6 +58,7 @@ extension CredentialSettings {
             items: [.init(value: false, label: "Active"), .init(value: true, label: "Trash")],
             selection: showsTrash,
             onSelect: { next in
+                selection.reset()
                 showsTrash = next
                 if next {
                     run { try await model.loadTrash() }

@@ -154,9 +154,6 @@ final class CredentialSettingsModel {
     func dismissUnconfirmedPasskeys() {
         manager?.dismissUnconfirmedPasskeys()
     }
-    var pendingRemoval: PendingRemoval? {
-        live?.pendingRemoval
-    }
     var pendingUnlockRemoval: PendingUnlockRemoval? {
         live?.pendingUnlockRemoval
     }
@@ -556,28 +553,6 @@ final class CredentialSettingsModel {
         guard let store, vaults.contains(where: { $0.vaultID == vaultID }) else { return }
         await store.setDefaultVault(vaultID)
         storedDefaultVaultID = await store.defaultVaultID()
-    }
-
-    // MARK: Removal
-
-    /// Presents a removal for confirmation, capturing the revision and authorization it is shown at.
-    func requestRemoval(accountID: UUID) {
-        guard let live, let summary = live.summaries.first(where: { $0.id == accountID }) else { return }
-        session?.pendingRemoval = PendingRemoval(summary: summary, revision: live.revision, epoch: live.epoch)
-    }
-
-    func cancelRemoval() {
-        if live != nil {
-            session?.pendingRemoval = nil
-        }
-    }
-
-    /// Writes against the revision and epoch captured when the removal was presented, never confirmation time.
-    func confirmRemoval(_ pending: PendingRemoval) async throws -> VaultCommitReceipt {
-        if live?.pendingRemoval == pending {
-            session?.pendingRemoval = nil
-        }
-        return try await remove(accountID: pending.summary.id, expectedRevision: pending.revision, epoch: pending.epoch)
     }
 
     /// The last unlock passkey can't be removed: the vault would have no way to open.

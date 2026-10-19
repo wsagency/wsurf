@@ -94,7 +94,7 @@ extension CredentialSettings {
         if showsTrash {
             trashSection
         } else {
-            CredentialListView(model: model, list: list, run: run, switcher: listSwitch)
+            CredentialListView(model: model, list: list, selection: selection, run: run, switcher: listSwitch)
         }
     }
 
@@ -151,6 +151,7 @@ extension CredentialSettings {
 struct CredentialListView<Switcher: View>: View {
     let model: CredentialSettingsModel
     @Bindable var list: CredentialListState
+    let selection: CredentialSelection
     let run: (@escaping () async throws -> Void) -> Void
     /// The Active and Trash switch, which the Trash section shows too.
     let switcher: Switcher
@@ -174,6 +175,12 @@ struct CredentialListView<Switcher: View>: View {
             toolbar
             AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .password)
             CredentialPageNotice(model: model)
+            if !selection.isEmpty {
+                CredentialBulkBar(
+                    model: model, selection: selection, visibleCount: visibleCount,
+                    moveToTrash: trash, merge: { merge.route = .review($0) }
+                )
+            }
             // A vault holds thousands of credentials: the list is lazy, so only the rows on screen are built and laid out.
             SettingsSection(
                 title: LocalizedStringResource("\(title)"),
@@ -194,8 +201,17 @@ struct CredentialListView<Switcher: View>: View {
                 }
             }
         }
-        .task(id: key) { list.refresh(model.summaries) }
+        .task(id: key) {
+            list.refresh(model.summaries)
+            selection.show(visibleIDs)
+        }
         .task(id: CredentialMergeState.Key(model)) { await merge.refresh(model) }
+        // A merge changes the vault while its sheet is open: what was selected has been merged, so the selection ends.
+        .onChange(of: model.revision) {
+            if merge.route != nil {
+                selection.clear()
+            }
+        }
         .sheet(isPresented: Binding(get: { merge.route != nil }, set: { if !$0 { merge.route = nil } })) {
             if let route = merge.route {
                 CredentialMergeFlow(
@@ -206,13 +222,39 @@ struct CredentialListView<Switcher: View>: View {
         }
     }
 
+    /// The rows in the order the list shows them, for the selection.
+    private var visibleIDs: [UUID] {
+        list.siteGroups?.flatMap(\.ids) ?? list.rows(of: model.summaries).map(\.id)
+    }
+
+    private var visibleCount: Int {
+        list.siteGroups.map { $0.reduce(0) { $0 + $1.ids.count } } ?? list.rows(of: model.summaries).count
+    }
+
     private func row(_ summary: CredentialSummary) -> some View {
         CredentialRow(
-            model: model, summary: summary, run: run,
-            remove: { model.requestRemoval(accountID: summary.id) },
+            model: model, summary: summary, selection: selection, run: run,
+            remove: { trash([summary.id]) },
+            open: { open(summary.id) },
             history: { run { try await model.openHistory(accountID: summary.id) } },
             mergeWith: { merge.route = .pick(summary.id) }
         )
+    }
+
+    /// Opens the editor on a credential; the cursor stays on its row for when the editor closes.
+    private func open(_ id: UUID) {
+        selection.place(cursor: id)
+        run { try await model.beginEditing(accountID: id) }
+    }
+
+    /// Moves credentials to the Trash with no dialog. The cursor goes to the row that takes their place once the move has happened.
+    private func trash(_ ids: [UUID]) {
+        let next = selection.cursorAfterRemoving(ids)
+        run {
+            try await model.moveToTrash(ids: ids)
+            selection.clear()
+            selection.place(cursor: next)
+        }
     }
 
     // MARK: Toolbar

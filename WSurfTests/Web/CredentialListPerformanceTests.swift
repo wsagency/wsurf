@@ -63,10 +63,13 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
 
     /// The page as Settings lays it out: the detail pane's scroll view and column, then the Credential Manager page.
     @MainActor
-    private static func page(_ model: CredentialSettingsModel, list: CredentialListState = CredentialListState()) -> some View {
+    private static func page(
+        _ model: CredentialSettingsModel, list: CredentialListState = CredentialListState(),
+        selection: CredentialSelection = CredentialSelection()
+    ) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: SettingsMetrics.sectionSpacing) {
-                CredentialSettings(model: model, list: list)
+                CredentialSettings(model: model, list: list, selection: selection)
             }
             .environment(\.settingsDescriptionLineLimit, 1)
             .frame(maxWidth: SettingsMetrics.detailWidth, alignment: .leading)
@@ -180,6 +183,36 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
             print("[credential-list] search update, \(Self.count) credentials, 111 matches: \(elapsed)")
             XCTAssertTrue(found)
             XCTAssertEqual(list.counts?[.all], Self.count)
+            XCTAssertLessThan(elapsed, .milliseconds(250))
+        }
+    }
+
+    /// Selecting every credential and moving the cursor along the list changes what each built row reads, not the list: only the rows
+    /// on screen are drawn again, so the cost does not follow the vault. The page tells the selection which rows it shows by itself.
+    @MainActor
+    func testSelectingEveryCredentialAndMovingTheCursorStaysQuick() async throws {
+        try await withLargeVault { profile, vault in
+            let model = try await loadedModel(profile, vault)
+            let selection = CredentialSelection()
+            let (host, window) = Self.mount(Self.page(model, selection: selection))
+            Self.settle(host)
+            let shown = await waitUntil { selection.order.count == Self.count }
+            XCTAssertTrue(shown, "the page tells the selection which rows it shows")
+
+            let clock = ContinuousClock()
+            let started = clock.now
+            selection.takeKeyboard()
+            selection.selectAll()
+            Self.settle(host)
+            for _ in 0..<20 {
+                selection.moveCursor(by: 1, extending: false)
+                Self.settle(host)
+            }
+            let elapsed = clock.now - started
+            window.close()
+            print("[credential-list] select all and 20 cursor moves, \(Self.count) credentials: \(elapsed)")
+            XCTAssertEqual(selection.selected.count, Self.count)
+            XCTAssertEqual(selection.cursor, selection.order[20])
             XCTAssertLessThan(elapsed, .milliseconds(250))
         }
     }

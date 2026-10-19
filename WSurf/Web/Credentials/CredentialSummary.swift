@@ -99,14 +99,6 @@ nonisolated struct RevealedUsername: Equatable, Sendable {
     let value: String
 }
 
-/// A removal the user was shown, with the revision and authorization epoch it was shown at. It lives in the
-/// epoch-bound session, so a lock or re-unlock discards it, and a confirmation carrying an old value is rejected.
-nonisolated struct PendingRemoval: Equatable, Sendable {
-    let summary: CredentialSummary
-    let revision: UInt64
-    let epoch: UInt64
-}
-
 nonisolated struct PendingUnlockRemoval: Equatable, Sendable {
     let credentialID: Data
     let epoch: UInt64
