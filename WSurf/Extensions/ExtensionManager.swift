@@ -72,6 +72,8 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     private(set) var actionRevision = 0
     var installState: StoreInstallState = .idle
     var updateChecks: [String: UpdateCheck] = [:]
+    /// Versions this profile holds back because they ask for more access than it approved.
+    var heldUpdates: [String: String]
 
     @ObservationIgnored private static var systemCatalogue: [SafariExtension]?
     @ObservationIgnored private static let liveManagers = NSHashTable<ExtensionManager>.weakObjects()
@@ -111,6 +113,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     ) {
         self.profile = profile
         self.library = library ?? ExtensionLibrary(profile: profile ?? .original())
+        heldUpdates = Self.savedHeldUpdates(for: profile)
         controller = WKWebExtensionController(
             configuration: Self.controllerConfiguration(for: profile, dataStore: dataStore)
         )
@@ -174,6 +177,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         library.load()
         let ids = library.records.map(\.id)
         library.forgetThisProfile()
+        forgetHeldUpdates(for: profile)
         guard !ids.isEmpty else { return }
 
         let controller = WKWebExtensionController(configuration: controllerConfiguration(for: profile))
@@ -577,8 +581,8 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         await load(refreshed)
     }
 
-    func grantedPermissions(id: String) -> Set<String> {
-        Set(contexts[id]?.webExtension.requestedPermissions.map(\.rawValue) ?? [])
+    func packageURL(for id: String) -> URL {
+        library.packageURL(for: id)
     }
 
     func installedRecord(id: String) -> InstalledExtension? {
@@ -641,6 +645,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
             anchors[key]?[id] = nil
         }
         iconCache[id] = nil
+        setHeldUpdate(nil, id: id)
         Pipeline.log.notice("Extension uninstalled")
     }
 

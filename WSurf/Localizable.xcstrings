@@ -5933,6 +5933,9 @@
     "Update channel" : {
       "comment" : "Title of the pop-up menu in Settings > About that chooses which builds the app updates to. The choices are “Release” and “Preview”. Sentence case. “Channel” is the usual software word for a stream of builds."
     },
+    "Update needs approval" : {
+      "comment" : "Small tag on an installed extension’s row in Settings, shown when a newer version asks for more website access or permissions than you approved and so has not been installed. Clicking it checks again and asks. Sentence case, no final full stop."
+    },
     "Update password?" : {
 
     },
@@ -6049,6 +6052,9 @@
     },
     "Version %@" : {
       "comment" : "Line beside the WSurf heading on the About page in Settings. %@ is the version number of the running app, for example 1.4.2."
+    },
+    "Version %@ asks for more access." : {
+      "comment" : "Tooltip on the “Update needs approval” tag of an extension in Settings. %@ is the version number of the update that has not been installed. Full sentence."
     },
     "Version %@ is available. Installing restarts WSurf." : {
       "comment" : "Status line under the Software Update heading in Settings when a newer release exists. %@ is the new version number, e.g. 1.4.2. The second sentence is the only warning the user gets: the Install button does not ask again."
