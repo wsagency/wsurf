@@ -47,12 +47,13 @@ private struct ChromeGlass<S: InsettableShape>: ViewModifier {
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.chromeHasGlassBackground) private var hasGlassBackground
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if glass == .identity {
             content
-        } else if GlassPolicy.fallsBack(reduceTransparency: reduceTransparency, contrast: contrast) {
+        } else if hasGlassBackground || GlassPolicy.fallsBack(reduceTransparency: reduceTransparency, contrast: contrast) {
             content
                 .background { shape.fill(fill) }
                 .overlay {
@@ -62,9 +63,16 @@ private struct ChromeGlass<S: InsettableShape>: ViewModifier {
                     )
                 }
         } else {
-            content.glassEffect(glass, in: shape)
+            content
+                .environment(\.chromeHasGlassBackground, true)
+                .glassEffect(glass, in: shape)
         }
     }
+}
+
+extension EnvironmentValues {
+    /// Controls inside a glass card use fills, because glass cannot sample glass.
+    @Entry var chromeHasGlassBackground = false
 }
 
 extension View {
@@ -74,8 +82,8 @@ extension View {
         GlassEffectContainer(spacing: spacing) { self }
     }
 
-    /// Draws `glass` in `shape`, or an opaque `fill` with a 1 pt border while Reduce Transparency or Increase
-    /// Contrast is on. Every glass surface in the chrome goes through here, so the policy lives in one place.
+    /// Draws `glass` in `shape`, or an opaque `fill` with a 1 pt border inside glass or while Reduce Transparency
+    /// or Increase Contrast is on. Every glass surface in the chrome goes through here, so the policy lives in one place.
     func chromeGlass<S: InsettableShape>(
         _ glass: Glass = .regular,
         fill: Color = Theme.windowBackground,
