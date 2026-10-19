@@ -41,6 +41,12 @@ struct ThemePersistenceTests {
         BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
     }
 
+    /// Chooses a theme on settings that are gone when this returns.
+    private func choose(_ id: String, in defaults: UserDefaults) {
+        let settings = make(defaults)
+        settings.themeID = id
+    }
+
     @Test func eightySwitchesInOneTurnWriteTheLastThemeOnce() async throws {
         try await withDefaults { defaults in
             let settings = make(defaults)
@@ -92,12 +98,7 @@ struct ThemePersistenceTests {
 
     @Test func aRestartSeesTheLatestThemeEvenWhenTheSettingsAreGone() async throws {
         try await withDefaults { defaults in
-            func choose(_ id: String) {
-                let settings = make(defaults)
-                settings.themeID = id
-            }
-
-            choose("rosePine")
+            choose("rosePine", in: defaults)
 
             #expect(defaults.string(forKey: Self.key) == "rosePine", "an object that goes away writes what it had pending")
             #expect(make(defaults).themeID == "rosePine")
