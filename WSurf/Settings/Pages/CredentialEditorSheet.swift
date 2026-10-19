@@ -139,6 +139,7 @@ struct CredentialEditorSheet: View {
 
     private func footer(_ draft: CredentialDraft, hasChanges: Bool, showsHistory: Bool) -> some View {
         VStack(alignment: .trailing, spacing: 10) {
+            CredentialCopyNotice(model: model).frame(maxWidth: .infinity, alignment: .leading)
             if let error = model.error {
                 Text(verbatim: error)
                     .foregroundStyle(.secondary)
@@ -174,6 +175,41 @@ struct CredentialEditorSheet: View {
         .padding(.vertical, 14)
     }
 
+    /// Copies from the open draft, so unsaved text copies too. A failure shows in the footer like any other action's.
+    private func copy(_ part: CredentialCopyPart) {
+        Task { await model.attempt { try await model.copy(part, of: .draft) } }
+    }
+
+    private func copyableField(
+        _ title: LocalizedStringKey, text: Binding<String>, part: CredentialCopyPart, copyLabel: LocalizedStringKey
+    ) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: 6) {
+                TextField(title, text: text).labelsHidden()
+                CredentialCopyButton(label: copyLabel) { copy(part) }.disabled(text.wrappedValue.isEmpty)
+            }
+        }
+    }
+
+    /// One entry per website line, so any address of the credential can be copied.
+    @ViewBuilder
+    private var websiteCopyMenu: some View {
+        let lines = model.draft.map(CredentialCopyParts.websiteLines(of:)) ?? []
+        if !lines.isEmpty {
+            Menu {
+                ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                    Button { copy(.website(index)) } label: { Text(verbatim: line) }
+                }
+            } label: {
+                Image(systemName: "doc.on.doc").accessibilityLabel("Copy website")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Copy Website")
+        }
+    }
+
     private func discard() {
         model.error = nil
         model.cancelEditing()
@@ -197,13 +233,13 @@ struct CredentialEditorSheet: View {
     private func signIn(_ draft: CredentialDraft) -> some View {
         section("Sign-in") {
             Form {
-                TextField("Name", text: optionalText(\.displayName))
+                copyableField("Name", text: optionalText(\.displayName), part: .name, copyLabel: "Copy Name")
                 if draft.usernameIsConcealed {
-                    ConcealedUsernameField(username: text(\.username))
+                    ConcealedUsernameField(username: text(\.username)) { copy(.username) }
                 } else {
-                    TextField("Username or email", text: text(\.username))
+                    copyableField("Username or email", text: text(\.username), part: .username, copyLabel: "Copy Username")
                 }
-                AutofillPasswordField(password: optionalText(\.password))
+                AutofillPasswordField(password: optionalText(\.password)) { copy(.password) }
                 Button("Generate Password") {
                     do {
                         model.draft?.password = try SavedPassword.generate()
@@ -222,7 +258,11 @@ struct CredentialEditorSheet: View {
             WebsiteListField(
                 kind: .websites, label: "Websites (one HTTPS address per line)", lineLimit: 2...6, text: text(\.websites)
             )
-            caption("One HTTPS address per line. Passwords and codes fill only on these websites.")
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                caption("One HTTPS address per line. Passwords and codes fill only on these websites.")
+                Spacer(minLength: 0)
+                websiteCopyMenu
+            }
             DisclosureGroup("Other HTTPS origins", isExpanded: $showsOtherOrigins) {
                 VStack(alignment: .leading, spacing: 6) {
                     WebsiteListField(
@@ -239,7 +279,7 @@ struct CredentialEditorSheet: View {
         section("Verification code") {
             if let generator = draft.totp {
                 HStack {
-                    Text(verbatim: totpTitle(generator)).foregroundStyle(.secondary)
+                    Text(verbatim: totpTitle(generator)).foregroundStyle(.secondary).textSelection(.enabled)
                     Spacer()
                     Button("Remove…", role: .destructive) { confirmsTOTPRemoval = true }
                         .accessibilityLabel("Remove verification code")
@@ -251,6 +291,7 @@ struct CredentialEditorSheet: View {
                             Text(verbatim: code.value)
                                 .font(.system(.title3, design: .monospaced))
                                 .privacySensitive()
+                            CredentialCopyButton(label: "Copy Verification Code") { copy(.code) }
                             Spacer(minLength: 8)
                             Text("Expires in \(Int(code.remainingSeconds.rounded(.up))) s")
                                 .font(Theme.Font.label)
@@ -292,12 +333,21 @@ struct CredentialEditorSheet: View {
                 ForEach(draft.passkeySummaries) { passkey in
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(verbatim: "\(passkey.rpID) · \(passkey.userName)")
+                            Text(verbatim: "\(passkey.rpID) · \(passkey.userName)").textSelection(.enabled)
                             Text(verbatim: passkeyMetadata(passkey))
                                 .font(Theme.Font.label)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
+                        Menu {
+                            Button("Copy Username") { copy(.passkeyUser(passkey.id)) }
+                            Button("Copy Website") { copy(.passkeyWebsite(passkey.id)) }
+                        } label: {
+                            Image(systemName: "doc.on.doc").accessibilityLabel("Copy passkey details")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
                         Button("Remove…", role: .destructive) { pendingPasskeyRemoval = passkey }
                             .accessibilityLabel(Text(verbatim: passkey.removeLabel(among: draft.passkeySummaries)))
                     }
@@ -330,7 +380,7 @@ struct CredentialEditorSheet: View {
             Text(verbatim: String(text.wrappedValue.prefix(4_000)) + "\n ")
                 .font(.body)
                 .padding(.horizontal, 5)
-                .padding(.trailing, 24)
+                .padding(.trailing, 48)
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .hidden()
@@ -338,7 +388,7 @@ struct CredentialEditorSheet: View {
             TextEditor(text: text)
                 .font(.body)
                 .scrollContentBackground(.hidden)
-                .padding(.trailing, 24)
+                .padding(.trailing, 48)
                 .padding(8)
                 .privacySensitive()
                 .accessibilityLabel("Note \(index + 1)")
@@ -346,19 +396,23 @@ struct CredentialEditorSheet: View {
         .frame(minHeight: 120, maxHeight: 320)
         .background(Theme.Wash.faint, in: RoundedRectangle(cornerRadius: 8))
         .overlay(alignment: .topTrailing) {
-            Button {
-                requestNoteRemoval(at: index)
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 16))
-                    .frame(width: 24, height: 24)
-                    .contentShape(.rect)
+            HStack(spacing: 0) {
+                CredentialCopyButton(label: "Copy note \(index + 1)") { copy(.note(index)) }
+                    .disabled(text.wrappedValue.isEmpty)
+                Button {
+                    requestNoteRemoval(at: index)
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .frame(width: 24, height: 24)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.red)
+                .help("Remove Note")
+                .accessibilityLabel("Remove note \(index + 1)")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.red)
             .padding(4)
-            .help("Remove Note")
-            .accessibilityLabel("Remove note \(index + 1)")
         }
     }
 
@@ -451,6 +505,7 @@ extension PasskeySummary {
 
 private struct ConcealedUsernameField: View {
     @Binding var username: String
+    let copy: () -> Void
     @State private var isRevealed = false
 
     private var toggleLabel: LocalizedStringKey { isRevealed ? "Hide username" : "Show username" }
@@ -478,6 +533,7 @@ private struct ConcealedUsernameField: View {
                 .foregroundStyle(.secondary)
                 .accessibilityLabel(toggleLabel)
                 .help(toggleLabel)
+                CredentialCopyButton(label: "Copy Username", action: copy).disabled(username.isEmpty)
             }
         }
         .onDisappear { isRevealed = false }

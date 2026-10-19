@@ -12,7 +12,8 @@ extension RecordSubject {
 
 /// A credential's earlier versions beside the editor. Read-only: "Use This" and "Add" copy a value into the draft, and nothing is
 /// stored until the user chooses Save, which keeps the value it replaces as a new earlier version. Passwords and notes stay masked
-/// until "Show Secrets"; a verification code's setup key is never shown.
+/// until "Show Secrets"; a verification code's setup key is never shown. Every value shown has a copy button that puts it on the
+/// clipboard (the model reads it under the current unlock, masked or not); non-secret text can also be selected and copied.
 struct CredentialHistoryPanel: View {
     let model: CredentialSettingsModel
     @State private var work: Task<Void, Never>?
@@ -127,9 +128,18 @@ struct CredentialHistoryPanel: View {
         model.copyToDraft(field, from: model.history?.selected)
     }
 
+    /// `current` is the draft's value (the "Current" line); otherwise the shown version's. A failure shows in the editor's footer. It
+    /// has its own task, so a copy never cancels a load of older versions.
+    private func copier(_ part: CredentialCopyPart, current: Bool) -> () -> Void {
+        { Task { await model.attempt { try await model.copy(part, of: current ? .draft : .version) } } }
+    }
+
     private func nameRow(_ from: CredentialAccount, _ draft: CredentialDraft, _ currentLabel: String) -> some View {
         VersionFieldRow(title: "Name", differs: from.displayName != draft.displayName, use: { use(.name) }) {
-            VersionValues(this: from.displayName ?? "", current: draft.displayName ?? "", currentLabel: currentLabel)
+            VersionValues(
+                this: from.displayName ?? "", current: draft.displayName ?? "", currentLabel: currentLabel, copyName: "name",
+                copyThis: copier(.name, current: false), copyCurrent: copier(.name, current: true)
+            )
         }
     }
 
@@ -141,11 +151,13 @@ struct CredentialHistoryPanel: View {
             VStack(alignment: .leading, spacing: 8) {
                 VersionValues(
                     caption: "Username", this: secret(from.username, hides: hidesUsername), current: secret(draft.username, hides: hidesUsername),
-                    currentLabel: currentLabel
+                    currentLabel: currentLabel, isMasked: hidesUsername, copyName: "username",
+                    copyThis: copier(.username, current: false), copyCurrent: copier(.username, current: true)
                 )
                 VersionValues(
                     caption: "Password", this: secret(from.password ?? "", hides: !reveals), current: secret(draft.password ?? "", hides: !reveals),
-                    currentLabel: currentLabel
+                    currentLabel: currentLabel, isMasked: !reveals, copyName: "password",
+                    copyThis: copier(.password, current: false), copyCurrent: copier(.password, current: true)
                 )
             }
         }
@@ -153,34 +165,36 @@ struct CredentialHistoryPanel: View {
 
     private func websitesRow(_ from: CredentialAccount, _ draft: CredentialDraft) -> some View {
         let version = CredentialHistory.websites(of: from)
-        let now = Self.lines(draft.websites) + Self.lines(draft.extraOrigins)
+        let now = CredentialCopyParts.websiteLines(of: draft)
         let versionTexts = Set(version.map(\.text))
         let missing = version.filter { !now.contains($0.text) }
-        let added = now.filter { !versionTexts.contains($0) }
+        let added = Array(now.enumerated()).filter { !versionTexts.contains($0.element) }
         return VersionFieldRow(title: "Websites", differs: !missing.isEmpty || !added.isEmpty, use: { use(.websites) }) {
             VStack(alignment: .leading, spacing: 4) {
                 if version.isEmpty && now.isEmpty {
                     Text("None").foregroundStyle(.secondary)
                 }
-                ForEach(version, id: \.text) { line in
+                ForEach(Array(version.enumerated()), id: \.offset) { index, line in
                     HStack(spacing: 6) {
-                        if now.contains(line.text) {
-                            Text(verbatim: line.text).textSelection(.enabled)
-                        } else {
+                        let isCurrent = now.contains(line.text)
+                        if !isCurrent {
                             Image(systemName: "minus.circle").foregroundStyle(.secondary).accessibilityLabel("Not in the current credential")
-                            Text(verbatim: line.text).textSelection(.enabled)
-                            Spacer(minLength: 4)
-                            if let field = line.field {
-                                Button("Add") { use(field) }.controlSize(.small)
-                                    .accessibilityLabel("Add website \(line.text)")
-                            }
+                        }
+                        Text(verbatim: line.text).textSelection(.enabled)
+                        Spacer(minLength: 4)
+                        CredentialCopyButton(label: "Copy website \(line.text)", extent: 18, action: copier(.website(index), current: false))
+                        if !isCurrent, let field = line.field {
+                            Button("Add") { use(field) }.controlSize(.small)
+                                .accessibilityLabel("Add website \(line.text)")
                         }
                     }
                 }
-                ForEach(added, id: \.self) { line in
+                ForEach(added, id: \.offset) { index, line in
                     HStack(spacing: 6) {
                         Image(systemName: "plus.circle").foregroundStyle(.secondary).accessibilityLabel("Only in the current credential")
                         Text(verbatim: line).foregroundStyle(.secondary).textSelection(.enabled)
+                        Spacer(minLength: 4)
+                        CredentialCopyButton(label: "Copy current website \(line)", extent: 18, action: copier(.website(index), current: true))
                     }
                 }
             }
@@ -191,12 +205,18 @@ struct CredentialHistoryPanel: View {
     private func codeRow(_ from: CredentialAccount, _ draft: CredentialDraft, _ currentLabel: String) -> some View {
         func describe(_ generator: TOTPGenerator?) -> String {
             guard let generator else { return "" }
-            let names = [generator.issuer, generator.userName].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+            let names = generator.accountLabel
             return names.isEmpty ? String(localized: "Verification code") : names
         }
+        // Only the issuer and account are copied. The setup key is not shown here, so it is never offered.
+        let copiesThis = !(from.totp?.accountLabel.isEmpty ?? true), copiesCurrent = !(draft.totp?.accountLabel.isEmpty ?? true)
         return VersionFieldRow(title: "Verification code", differs: from.totp != draft.totp, offersUse: from.totp != nil, use: { use(.code) }) {
             VStack(alignment: .leading, spacing: 4) {
-                VersionValues(this: describe(from.totp), current: describe(draft.totp), currentLabel: currentLabel)
+                VersionValues(
+                    this: describe(from.totp), current: describe(draft.totp), currentLabel: currentLabel, copyName: "verification code name",
+                    copyThis: copiesThis ? copier(.codeLabel, current: false) : nil,
+                    copyCurrent: copiesCurrent ? copier(.codeLabel, current: true) : nil
+                )
                 if let held = from.totp, let now = draft.totp, held != now {
                     Text(held.secret != now.secret ? LocalizedStringKey("Setup key differs") : LocalizedStringKey("Other code settings differ"))
                         .font(Theme.Font.label)
@@ -217,10 +237,11 @@ struct CredentialHistoryPanel: View {
                 }
                 ForEach(Array(held.enumerated()), id: \.offset) { index, note in
                     HStack(alignment: .top, spacing: 8) {
-                        Text(verbatim: reveals ? note.text : Self.mask)
+                        noteText(note.text, reveals: reveals)
                             .lineLimit(8)
                             .privacySensitive()
                             .frame(maxWidth: .infinity, alignment: .leading)
+                        CredentialCopyButton(label: "Copy note \(index + 1)", extent: 18, action: copier(.note(index), current: false))
                         if now.contains(note.text) {
                             Text("In the current credential").font(Theme.Font.label).foregroundStyle(.secondary)
                         } else {
@@ -241,8 +262,14 @@ struct CredentialHistoryPanel: View {
         value.isEmpty || !hides ? value : Self.mask
     }
 
-    private static func lines(_ text: String) -> [String] {
-        text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    /// A shown note can be selected; its mask cannot, so selecting never copies bullets in place of the note.
+    @ViewBuilder
+    private func noteText(_ text: String, reveals: Bool) -> some View {
+        if reveals {
+            Text(verbatim: text).textSelection(.enabled)
+        } else {
+            Text(verbatim: Self.mask)
+        }
     }
 }
 
@@ -287,32 +314,52 @@ private struct VersionFieldRow<Content: View>: View {
     }
 }
 
-/// The value in the shown version above the value in the draft.
+/// The value in the shown version above the value in the draft. A copy button follows each value that is not empty.
 private struct VersionValues: View {
     var caption: LocalizedStringResource?
     let this: String
     let current: String
     let currentLabel: String
+    /// True when the values are masks: a mask is not selectable, so ⌘C never copies bullets in place of the secret.
+    var isMasked = false
+    /// What the buttons copy, for VoiceOver: "Copy this version’s password".
+    let copyName: LocalizedStringResource
+    /// `nil` leaves the button out.
+    var copyThis: (() -> Void)?
+    var copyCurrent: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             if let caption {
                 Text(caption).font(Theme.Font.label).foregroundStyle(.secondary)
             }
-            line(Text("This version"), this)
-            line(Text(verbatim: currentLabel), current)
+            line(Text("This version"), this, copy: copyThis, label: "Copy this version’s \(String(localized: copyName))")
+            line(Text(verbatim: currentLabel), current, copy: copyCurrent, label: "Copy the current \(String(localized: copyName))")
         }
         .font(Theme.Font.label)
     }
 
-    private func line(_ label: Text, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+    private func line(_ label: Text, _ value: String, copy: (() -> Void)?, label copyLabel: LocalizedStringKey) -> some View {
+        HStack(alignment: .top, spacing: 8) {
             label.foregroundStyle(.secondary).frame(width: 104, alignment: .leading)
             if value.isEmpty {
                 Text("None").foregroundStyle(.secondary)
             } else {
-                Text(verbatim: value).privacySensitive().textSelection(.enabled)
+                shown(value)
+                Spacer(minLength: 4)
+                if let copy {
+                    CredentialCopyButton(label: copyLabel, extent: 18, action: copy)
+                }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func shown(_ value: String) -> some View {
+        if isMasked {
+            Text(verbatim: value).privacySensitive()
+        } else {
+            Text(verbatim: value).privacySensitive().textSelection(.enabled)
         }
     }
 }

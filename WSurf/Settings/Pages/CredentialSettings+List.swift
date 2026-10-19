@@ -173,6 +173,7 @@ struct CredentialListView<Switcher: View>: View {
         VStack(alignment: .leading, spacing: 12) {
             toolbar
             AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .password)
+            CredentialCopyNotice(model: model)
             // A vault holds thousands of credentials: the list is lazy, so only the rows on screen are built and laid out.
             SettingsSection(
                 title: LocalizedStringResource("\(title)"),

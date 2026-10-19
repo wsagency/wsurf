@@ -44,6 +44,11 @@ final class CredentialSettingsModel {
     /// Test seam: managers made here use it instead of the system passkey UI, which the shared registry's managers always use.
     @ObservationIgnored private let native: VaultNativeUnlock?
     @ObservationIgnored private let pasteboard: NSPasteboard
+    /// How long a copy confirmation stays; a seam so a test does not wait for the real time.
+    @ObservationIgnored private let noticeDuration: Duration
+    @ObservationIgnored private var copyNoticeGeneration = 0
+    /// What the last copy confirmed ("Password Copied") for a moment; the name of the part, never its value.
+    private(set) var copyNotice: String?
     private var session: CredentialVaultSession?
     /// Internal for `CredentialSettingsModel+Export`.
     @ObservationIgnored let exchange: CredentialExchangeCoordinator
@@ -71,11 +76,13 @@ final class CredentialSettingsModel {
         pasteboard: NSPasteboard = .general,
         exchange: CredentialExchangeCoordinator = .shared,
         manager: CredentialManager? = nil,
-        native: VaultNativeUnlock? = nil
+        native: VaultNativeUnlock? = nil,
+        noticeDuration: Duration = .seconds(1.6)
     ) {
         self.profile = profile
         self.exchange = exchange
         self.pasteboard = pasteboard
+        self.noticeDuration = noticeDuration
         self.native = native
         legacy = LegacyPasswordImport(profile: profile)
         if profile.isPrivate {
@@ -461,11 +468,7 @@ final class CredentialSettingsModel {
     }
 
     func copyPassword(accountID: UUID) async throws {
-        let (epoch, snapshot) = try await authorizedSnapshot()
-        guard let password = snapshot.accounts.first(where: { $0.id == accountID })?.password else {
-            throw CredentialVaultError.invalidData
-        }
-        try deliver(epoch: epoch) { password }
+        try await copy(.password, of: .stored(accountID))
     }
 
     /// `now` is read after the last suspension so a step boundary crossed while waiting yields the new code.
@@ -473,11 +476,7 @@ final class CredentialSettingsModel {
         accountID: UUID,
         now: @MainActor () -> TimeInterval = { Date().timeIntervalSince1970 }
     ) async throws {
-        let (epoch, snapshot) = try await authorizedSnapshot()
-        guard let generator = snapshot.accounts.first(where: { $0.id == accountID })?.totp else {
-            throw CredentialVaultError.invalidData
-        }
-        try deliver(epoch: epoch) { try TOTP.code(generator, at: now()).value }
+        try await copy(.code, of: .stored(accountID), now: now)
     }
 
     // MARK: Native unlock management
@@ -865,13 +864,24 @@ final class CredentialSettingsModel {
 
     /// The one clipboard exit. `produce` runs first, so whatever it costs (a code calculation, a clock read)
     /// is over before the last authorization and cancellation check; a failure leaves the pasteboard untouched.
-    private func deliver(epoch: UInt64, _ produce: () throws -> String) throws {
+    /// A secret also carries the concealed marker, which clipboard managers skip. Internal for `CredentialSettingsModel+Copy`.
+    func deliver(epoch: UInt64, notice: LocalizedStringResource, _ produce: () throws -> CredentialCopyValue) throws {
         let value = try produce()
         try Task.checkCancellation()
         guard manager?.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-        pasteboard.declareTypes([.string, Self.concealedType], owner: nil)
-        pasteboard.setString(value, forType: .string)
-        pasteboard.setString("", forType: Self.concealedType)
+        pasteboard.declareTypes(value.isSecret ? [.string, Self.concealedType] : [.string], owner: nil)
+        pasteboard.setString(value.text, forType: .string)
+        if value.isSecret {
+            pasteboard.setString("", forType: Self.concealedType)
+        }
+        copyNotice = String(localized: notice)
+        copyNoticeGeneration += 1
+        let generation = copyNoticeGeneration
+        Task { [weak self, noticeDuration] in
+            try? await Task.sleep(for: noticeDuration)
+            guard let self, copyNoticeGeneration == generation else { return }
+            copyNotice = nil
+        }
     }
 
     private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
