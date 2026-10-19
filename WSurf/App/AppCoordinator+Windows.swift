@@ -74,7 +74,7 @@ extension AppCoordinator {
         browser.onActiveTabChanged = { [weak self] newTab, previousTab in
             extensionTabChanged?(newTab, previousTab)
             guard let self else { return }
-            if conversationSpaceID != browser.activeSpaceID {
+            if conversationAnchorID != browser.activeAnchorID {
                 conversationVoice?.stop()
             }
             followMedia(to: newTab, from: previousTab)

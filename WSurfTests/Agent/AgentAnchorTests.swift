@@ -11,7 +11,7 @@ import Testing
 /// without switching focus.
 @MainActor
 @Suite(.boundedWebViews)
-struct AgentSpaceTests {
+struct AgentAnchorTests {
     private func makeModel() -> BrowserModel {
         BrowserModel(database: .temporary())
     }
@@ -25,36 +25,36 @@ struct AgentSpaceTests {
         return (left, right)
     }
 
-    // MARK: - The space
+    // MARK: - The anchor
 
-    @Test func bothPanesOfASplitNameOneSpace() {
+    @Test func bothPanesOfASplitNameOneAnchor() {
         let model = makeModel()
         let (left, right) = split(model)
 
-        #expect(model.spaceID(of: left.id) == left.id)
-        #expect(model.spaceID(of: right.id) == left.id)
+        #expect(model.anchorID(of: left.id) == left.id)
+        #expect(model.anchorID(of: right.id) == left.id)
         model.activate(right)
-        #expect(model.activeSpaceID == left.id)
-        #expect(model.spaceTabs(left.id).map(\.id) == [left.id, right.id])
+        #expect(model.activeAnchorID == left.id)
+        #expect(model.anchorTabs(left.id).map(\.id) == [left.id, right.id])
     }
 
-    @Test func aLoneTabIsItsOwnSpace() {
+    @Test func aLoneTabIsItsOwnAnchor() {
         let model = makeModel()
         let tab = model.newTab(url: URL(string: "https://example.com/alone"))
 
-        #expect(model.spaceID(of: tab.id) == tab.id)
-        #expect(model.activeSpaceID == tab.id)
-        #expect(model.spaceTabs(tab.id).map(\.id) == [tab.id])
+        #expect(model.anchorID(of: tab.id) == tab.id)
+        #expect(model.activeAnchorID == tab.id)
+        #expect(model.anchorTabs(tab.id).map(\.id) == [tab.id])
     }
 
-    @Test func removingAPaneReturnsBothToTheirOwnSpaces() {
+    @Test func removingAPaneReturnsBothToTheirOwnAnchors() {
         let model = makeModel()
         let (left, right) = split(model)
 
         model.removeFromSplit(right)
 
-        #expect(model.spaceID(of: right.id) == right.id)
-        #expect(model.spaceID(of: left.id) == left.id)
+        #expect(model.anchorID(of: right.id) == right.id)
+        #expect(model.anchorID(of: left.id) == left.id)
     }
 
     // MARK: - What the model is told
@@ -82,7 +82,7 @@ struct AgentSpaceTests {
         #expect(summary.contains("ON SCREEN, bottom"))
     }
 
-    @Test func aGridOfFourIsOneSpaceCountedInReadingOrder() throws {
+    @Test func aGridOfFourIsOneAnchorCountedInReadingOrder() throws {
         let model = makeModel()
         let (left, right) = split(model)
         let third = model.newTab(url: URL(string: "https://example.com/third"))
@@ -93,9 +93,9 @@ struct AgentSpaceTests {
         model.insertIntoSplit(fourth, beside: third, edge: .right)
         model.activate(third)
 
-        #expect(model.spaceTabs(left.id).map(\.id) == [left.id, right.id, third.id, fourth.id])
-        #expect(model.activeSpaceID == left.id)
-        #expect(model.spaceID(of: fourth.id) == left.id)
+        #expect(model.anchorTabs(left.id).map(\.id) == [left.id, right.id, third.id, fourth.id])
+        #expect(model.activeAnchorID == left.id)
+        #expect(model.anchorID(of: fourth.id) == left.id)
 
         let summary = try #require(model.contextSummary())
         #expect(summary.contains("Left page (example.com) ← ON SCREEN, pane 1 of 4 from the left"))
@@ -116,27 +116,27 @@ struct AgentSpaceTests {
 
     // MARK: - The turn
 
-    @Test func aTurnFromEitherPaneBelongsToTheSpace() async throws {
+    @Test func aTurnFromEitherPaneBelongsToTheAnchor() async throws {
         let model = makeModel()
         let (left, right) = split(model)
         model.activate(right)
 
-        let log = SpaceLog()
+        let log = AnchorLog()
         let turns = AgentTurnModel(
             browser: model,
             log: log,
             speech: SilentSpeech(),
             actionPolicy: AgentActionPolicy(storage: SessionAgentGrantStorage())
         )
-        turns.use(SpaceRunner())
+        turns.use(AnchorRunner())
 
         #expect(turns.run(utterance: "compare these two pages"))
         let task = try #require(turns.activeTask)
 
         #expect(task.tabID == right.id)
-        #expect(task.spaceID == left.id)
+        #expect(task.anchorID == left.id)
         #expect(log.begun.first?.tabID == left.id)
-        #expect(turns.reply.spaceID == left.id)
+        #expect(turns.reply.anchorID == left.id)
         // Both panes remain marked as working when focus changes during a turn.
         #expect(left.isAgentWorking)
         #expect(right.isAgentWorking)
@@ -147,17 +147,17 @@ struct AgentSpaceTests {
         #expect(!right.isAgentWorking)
     }
 
-    // MARK: - Renaming a space
+    // MARK: - Renaming an anchor
 
     @Test func rearrangingTheGridCarriesTheConversationWithIt() {
         let model = makeModel()
         let (left, right) = split(model)
         var moves: [String] = []
-        model.onSpaceAnchorChanged = { moves.append("\($0)→\($1)") }
+        model.onAnchorChanged = { moves.append("\($0)→\($1)") }
 
         model.swapSplitRow(containing: left)
 
-        #expect(model.spaceID(of: left.id) == right.id)
+        #expect(model.anchorID(of: left.id) == right.id)
         #expect(moves == ["\(left.id)→\(right.id)"])
     }
 
@@ -167,11 +167,11 @@ struct AgentSpaceTests {
         let third = model.newTab(url: URL(string: "https://example.com/third"))
         model.insertIntoSplit(third, beside: right, edge: .right)
         var moves: [String] = []
-        model.onSpaceAnchorChanged = { moves.append("\($0)→\($1)") }
+        model.onAnchorChanged = { moves.append("\($0)→\($1)") }
 
         model.close(left)
 
-        #expect(model.spaceID(of: third.id) == right.id)
+        #expect(model.anchorID(of: third.id) == right.id)
         #expect(moves == ["\(left.id)→\(right.id)"])
     }
 
@@ -181,7 +181,7 @@ struct AgentSpaceTests {
         let third = model.newTab(url: URL(string: "https://example.com/third"))
         model.insertIntoSplit(third, beside: right, edge: .right)
         var moves = 0
-        model.onSpaceAnchorChanged = { _, _ in moves += 1 }
+        model.onAnchorChanged = { _, _ in moves += 1 }
 
         model.removeFromSplit(third)
         #expect(moves == 0)
@@ -196,7 +196,7 @@ struct AgentSpaceTests {
         let joining = model.newTab(url: URL(string: "https://example.com/joining"))
         let leader = model.newTab(url: URL(string: "https://example.com/leader"))
         var moves: [String] = []
-        model.onSpaceAnchorChanged = { moves.append("\($0)→\($1)") }
+        model.onAnchorChanged = { moves.append("\($0)→\($1)") }
 
         model.split(leader, with: joining, axis: .sideBySide)
 
@@ -207,8 +207,8 @@ struct AgentSpaceTests {
         let model = makeModel()
         let (left, right) = split(model)
 
-        let log = SpaceLog()
-        let runner = SpaceRunner()
+        let log = AnchorLog()
+        let runner = AnchorRunner()
         runner.waitsForRelease = true
         let turns = AgentTurnModel(
             browser: model,
@@ -223,17 +223,17 @@ struct AgentSpaceTests {
         // release before that would resume nothing.
         #expect(await waitUntil { !(runner.started == 0) })
 
-        turns.reassignSpace(from: left.id, to: right.id)
+        turns.reassignAnchor(from: left.id, to: right.id)
         #expect(log.reassigned.isEmpty)
 
         runner.release(task.id)
         #expect(await waitUntil { !(turns.isRunning) })
         #expect(log.reassigned == [.init(from: left.id, to: right.id)])
         #expect(runner.transferred == [.init(from: left.id, to: right.id)])
-        #expect(turns.reply.spaceID == right.id)
+        #expect(turns.reply.anchorID == right.id)
     }
 
-    @Test func aSpaceThatAlreadyHasATrailIsNotOverwritten() {
+    @Test func anAnchorThatAlreadyHasATrailIsNotOverwritten() {
         let log = ConversationLog(database: .temporary())
         let one = UUID()
         let other = UUID()
@@ -277,7 +277,7 @@ struct AgentSpaceTests {
             media: MediaCenter(),
             log: ConversationLog(database: .temporary())
         )
-        toolkit.beginTask(AgentTaskContext(id: UUID(), tabID: left.id, spaceID: left.id))
+        toolkit.beginTask(AgentTaskContext(id: UUID(), tabID: left.id, anchorID: left.id))
 
         #expect((await toolkit.readPage()).contains("Departure board"))
         #expect((await toolkit.readPage(page: "right")).contains("Arrivals board"))
@@ -314,7 +314,7 @@ struct AgentSpaceTests {
             media: MediaCenter(),
             log: ConversationLog(database: .temporary())
         )
-        toolkit.beginTask(AgentTaskContext(id: UUID(), tabID: panes[0].id, spaceID: panes[0].id))
+        toolkit.beginTask(AgentTaskContext(id: UUID(), tabID: panes[0].id, anchorID: panes[0].id))
 
         #expect(model.splitPanes?.map(\.id) == panes.map(\.id))
         #expect((await toolkit.readPage(page: "third")).contains("Board three"))
@@ -325,7 +325,7 @@ struct AgentSpaceTests {
 }
 
 @MainActor
-private final class SpaceLog: AgentTurnLogging {
+private final class AnchorLog: AgentTurnLogging {
     struct Begun: Equatable {
         let prompt: String
         let tabID: UUID
@@ -354,11 +354,11 @@ private final class SpaceLog: AgentTurnLogging {
 }
 
 @MainActor
-private final class SpaceRunner: AgentRunner {
-    let name = "Space runner"
+private final class AnchorRunner: AgentRunner {
+    let name = "Anchor runner"
     var waitsForRelease = false
     private(set) var started = 0
-    private(set) var transferred: [SpaceLog.Moved] = []
+    private(set) var transferred: [AnchorLog.Moved] = []
     private var continuations: [UUID: CheckedContinuation<Void, Never>] = [:]
 
     func prepare() {}
@@ -367,7 +367,7 @@ private final class SpaceRunner: AgentRunner {
     func discardAllSessions() {}
 
     func transferSession(from tabID: UUID, to newTabID: UUID) {
-        transferred.append(SpaceLog.Moved(from: tabID, to: newTabID))
+        transferred.append(AnchorLog.Moved(from: tabID, to: newTabID))
     }
 
     func run(

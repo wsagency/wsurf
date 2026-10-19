@@ -50,11 +50,11 @@ extension AppCoordinator {
         retainAgentMemory()
         timing.mark("session")
         wireMedia()
-        browser.onSpaceAnchorChanged = { [weak self] from, to in
-            if self?.conversationSpaceID == from {
+        browser.onAnchorChanged = { [weak self] from, to in
+            if self?.conversationAnchorID == from {
                 self?.conversationVoice?.stop()
             }
-            self?.agentTurns.reassignSpace(from: from, to: to)
+            self?.agentTurns.reassignAnchor(from: from, to: to)
         }
         browser.onLinkHovered = { [weak self] tab, url, modifiers, anchor in
             guard let self else { return }

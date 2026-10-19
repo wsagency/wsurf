@@ -135,7 +135,7 @@ final class AppCoordinator {
     var conversationVoice: OpenAIRealtimeConversation?
     var isVoiceConversationPresented = false
     var voiceConversationMessage: String?
-    @ObservationIgnored var conversationSpaceID: UUID?
+    @ObservationIgnored var conversationAnchorID: UUID?
     let voiceInput: VoiceInputModel
     let speech: ProviderSpeechOutput
     @ObservationIgnored var voiceConfigurationID: String?
@@ -344,13 +344,13 @@ final class AppCoordinator {
     }
 
     var isSpeakingInChrome: Bool {
-        agentReply.isStreaming && agentReply.showsInChrome(inSpace: browser.activeSpaceID)
+        agentReply.isStreaming && agentReply.showsInChrome(inAnchor: browser.activeAnchorID)
     }
 
     func pendingAgentQuestion(inChrome: Bool) -> AgentQuestionModel.Ask? {
-        let spaceID = browser.activeSpaceID
-        guard agentReply.showsInChrome(inSpace: spaceID) == inChrome else { return nil }
-        return agentQuestions.ask(inSpace: spaceID)
+        let anchorID = browser.activeAnchorID
+        guard agentReply.showsInChrome(inAnchor: anchorID) == inChrome else { return nil }
+        return agentQuestions.ask(inAnchor: anchorID)
     }
 
     func readAloud(_ text: String) {

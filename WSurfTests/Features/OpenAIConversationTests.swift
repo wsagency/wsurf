@@ -15,8 +15,8 @@ struct OpenAIConversationTests {
         let fixture = ConversationFixture()
         let database = AppDatabase.temporary()
         let log = ConversationLog(database: database)
-        let space = UUID()
-        fixture.session.onTranscriptChanged = log.voiceTranscriptWriter(tabID: space, providerID: "openai")
+        let anchor = UUID()
+        fixture.session.onTranscriptChanged = log.voiceTranscriptWriter(tabID: anchor, providerID: "openai")
         defer { fixture.session.stop() }
         try await fixture.startResponse()
         await fixture.socket.push(["type": "response.output_audio_transcript.delta", "response_id": "response", "item_id": "answer", "delta": "Three links."])
@@ -27,7 +27,7 @@ struct OpenAIConversationTests {
         fixture.session.stop()
         log.saveBlocking()
         let reopened = ConversationLog(database: database)
-        #expect(reopened.exchanges(forTab: space) == [.init(prompt: "What is on the page?", response: "Three links.")])
+        #expect(reopened.exchanges(forTab: anchor) == [.init(prompt: "What is on the page?", response: "Three links.")])
     }
 
     @Test func stoppingDuringMicrophoneStartupDoesNotReviveTheSession() async throws {
