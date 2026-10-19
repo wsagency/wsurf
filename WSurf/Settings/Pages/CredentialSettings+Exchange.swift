@@ -42,15 +42,10 @@ struct CredentialExportSheet: View {
         model.summaries.compactMap { selection[$0.id] }.filter(\.hasParts)
     }
 
-    /// The credentials this export can carry that match the search.
+    /// The credentials this export can carry that match the search: the list's rule, over the summaries' precomputed keys.
     private var listed: [CredentialSummary] {
         let all = csv ? model.summaries.filter(CredentialCSVExport.isExportable) : model.summaries
-        guard !query.isEmpty else { return all }
-        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
-        return all.filter { summary in
-            summary.title.range(of: query, options: options) != nil || summary.username?.range(of: query, options: options) != nil
-                || summary.origins.contains { $0.range(of: query, options: options) != nil }
-        }
+        return CredentialListFilter.visible(all, query: query, filter: .all)
     }
 
     /// What a CSV file cannot hold, counted over the whole vault and shown before anything is written.
@@ -148,7 +143,7 @@ struct CredentialExportSheet: View {
 
     private var selectionBar: some View {
         HStack(spacing: 10) {
-            TextField("Search credentials", text: $query)
+            TextField("Search by name, username or website", text: $query)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityLabel("Search credentials")
             Button("Select All") { selection = CredentialExportSelection.setting(true, for: listed, csv: csv, in: selection) }
