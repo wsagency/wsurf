@@ -48,6 +48,13 @@ under the unlock it was offered under, through the vault's ordinary commit, so
 History keeps the earlier list of websites. A credential that already has 64
 websites is never widened, and Not Now is remembered for the page.
 
+When the profile has vaults and every one is locked, a login field gets one
+row, "Unlock Credentials…". Nothing is read before the unlock. Choosing the row
+closes the panel and unlocks through the ordinary passkey unlock (asking which
+vault when there are several), then looks up the same field again. A lock,
+profile switch or a new field while the vault choice is open unlocks nothing.
+The unlock starts the vault's own lease and never extends one.
+
 ## Submission lifecycle
 
 `AutofillSaveScript` tracks trusted edits and separates an attempt from evidence

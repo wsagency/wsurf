@@ -664,8 +664,10 @@ final class AutofillSaveCoordinator {
             session.clear()
         }
     }
-    /// The profile's vault access ended: every pending vault choice of its pages is withdrawn synchronously.
+    /// The profile's vault access ended: every pending vault choice of its pages, and an unlock the dropdown asked for, is withdrawn
+    /// synchronously.
     func vaultAccessEnded(profileID: UUID) {
+        AutofillSuggestions.shared.vaultAccessEnded(profileID: profileID)
         for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? []
         where session.context?.profile.id == profileID {
             session.vaultAccessEnded()
