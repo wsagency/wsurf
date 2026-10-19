@@ -53,6 +53,54 @@ nonisolated extension CredentialAccount {
         account.modifiedAt = now
         return account
     }
+
+    /// Whether `removed`, a credential that left the vault, was merged into this account: its own id, or the item of the other app it
+    /// held, is one of this account's merged items. Restoring it would put a second holder of that item beside this one.
+    func holdsMergedItem(of removed: CredentialAccount) -> Bool {
+        mergedFrom?.contains { $0.accountID == removed.id || (removed.exchangeItemID != nil && $0.exchangeItemID == removed.exchangeItemID) }
+            ?? false
+    }
+
+    /// This account with every observed base put back as `old` had it: the login's and the code's, and those of the items merged
+    /// into it. What is left differs from `old` only in what an import changed besides recording bases.
+    func withBases(of old: CredentialAccount) -> CredentialAccount {
+        var result = self
+        result.passwordBase = old.passwordBase
+        result.totpBase = old.totpBase
+        result.mergedFrom = mergedFrom?.map { link in
+            var restored = link
+            if let before = old.mergedFrom?.first(where: { $0.identity == link.identity }) {
+                restored.passwordBase = before.passwordBase
+                restored.totpBase = before.totpBase
+            }
+            return restored
+        }
+        return result
+    }
+}
+
+/// An item of the other app that was merged into this credential, and what this credential remembers of it. A later import of that
+/// item finds this credential through `exchangeAccountID` and `exchangeItemID`, and tells what changed since the merge by the bases:
+/// the content hash the other app last sent for the item's login and for its code. Passkeys carry their own `base`, and notes keep
+/// none. The identity is the one the item was exported under (`CredentialExchangeCodec.externalItemID`): the stored ids, else the ones
+/// its own id gives.
+nonisolated struct MergedItemLink: Codable, Sendable, Equatable {
+    /// The merged credential's own id, which names its entry in the Trash.
+    var accountID: UUID
+    var exchangeAccountID: Data
+    var exchangeItemID: Data
+    var passwordBase: ExchangeBase?
+    var totpBase: ExchangeBase?
+
+    func validate() throws {
+        guard !exchangeAccountID.isEmpty, !exchangeItemID.isEmpty,
+              exchangeAccountID.count <= CredentialVaultLimits.payloadBytes,
+              exchangeItemID.count <= CredentialVaultLimits.payloadBytes else { throw CredentialVaultError.invalidData }
+    }
+
+    var identity: CredentialExchangeCodec.ExternalItemID {
+        CredentialExchangeCodec.ExternalItemID(account: exchangeAccountID, item: exchangeItemID)
+    }
 }
 
 /// One free-text note. `field` keeps how the exporter described it (id, label, type) so a note round-trips unchanged.
@@ -89,6 +137,8 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
     var totpEvents: CredentialEvents?
     var passwordBase: ExchangeBase?
     var totpBase: ExchangeBase?
+    /// The other app's items that were merged into this credential. `nil` means none: an empty array is never stored.
+    var mergedFrom: [MergedItemLink]?
 
     func validate() throws {
         guard !username.isEmpty || password != nil || !passkeys.isEmpty || totp != nil || notes != nil,
@@ -134,8 +184,23 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
         }
         try passwordEvents?.validate()
         try totpEvents?.validate()
+        try validateMergedFrom()
         for data in [exchangeAccountID, exchangeItemID].compactMap({ $0 }) where data.count > CredentialVaultLimits.payloadBytes {
             throw CredentialVaultError.invalidData
+        }
+    }
+
+    /// The merged items must be distinct from each other and from this credential, or a later import could not tell which one it met.
+    private func validateMergedFrom() throws {
+        guard let mergedFrom else { return }
+        guard !mergedFrom.isEmpty, mergedFrom.count <= Self.mergedFromLimit else { throw CredentialVaultError.invalidData }
+        var seen = Set([try CredentialExchangeCodec.externalItemID(for: self)])
+        var ids = Set([id])
+        for link in mergedFrom {
+            try link.validate()
+            guard seen.insert(link.identity).inserted, ids.insert(link.accountID).inserted else {
+                throw CredentialVaultError.duplicateIdentifier
+            }
         }
     }
 
@@ -144,6 +209,9 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
 
     /// Most websites (origins, and login addresses) one account keeps.
     static let websiteLimit = 64
+
+    /// Most items of the other app one credential remembers as merged into it.
+    static let mergedFromLimit = 64
 
     static func origin(for url: URL) -> String? {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),

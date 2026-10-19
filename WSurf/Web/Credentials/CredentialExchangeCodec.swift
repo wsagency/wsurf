@@ -728,10 +728,15 @@ nonisolated enum CredentialExchangeCodec {
         against existing: [CredentialAccount]
     ) throws -> [CredentialImportConflict] {
         var existingByExternalID: [ExternalItemID: CredentialAccount] = [:]
+        // An item that was merged into a saved credential is held by that credential (`MergedItemLink`).
+        var holderOfMergedItem: [ExternalItemID: CredentialAccount] = [:]
         for account in existing {
             let key = try externalItemID(for: account)
             guard existingByExternalID.updateValue(account, forKey: key) == nil else {
                 throw CredentialVaultError.duplicateIdentifier
+            }
+            for link in account.mergedFrom ?? [] {
+                holderOfMergedItem[link.identity] = holderOfMergedItem[link.identity] ?? account
             }
         }
 
@@ -746,7 +751,8 @@ nonisolated enum CredentialExchangeCodec {
 
         var conflicts: [CredentialImportConflict] = []
         for candidate in candidates {
-            let linked = existingByExternalID[try externalItemID(for: candidate)]
+            let key = try externalItemID(for: candidate)
+            let linked = existingByExternalID[key] ?? holderOfMergedItem[key]
             if let linked {
                 if hasBasicAuthentication(candidate), hasBasicAuthentication(linked) {
                     conflicts.append(.init(
@@ -836,8 +842,15 @@ nonisolated enum CredentialExchangeCodec {
         for account in accounts {
             try account.validate()
         }
-        // Two accounts claiming one exporter item would make every later import and export ambiguous.
-        guard try Set(accounts.map(externalItemID(for:))).count == accounts.count else { throw CredentialVaultError.duplicateIdentifier }
+        // Two accounts claiming one exporter item, as their own or as one merged into them, would make every later import and export
+        // ambiguous.
+        var claimed = Set<ExternalItemID>()
+        for account in accounts {
+            guard claimed.insert(try externalItemID(for: account)).inserted,
+                  (account.mergedFrom ?? []).allSatisfy({ claimed.insert($0.identity).inserted }) else {
+                throw CredentialVaultError.duplicateIdentifier
+            }
+        }
         var total = blockedOrigins.reduce(0) { $0 + $1.utf8.count }
         for account in accounts {
             let bytes = try CredentialVaultCrypto.liveBytes(of: account)

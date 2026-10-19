@@ -89,8 +89,9 @@ nonisolated enum ImportDuplicates {
         var claim = Claim()
     }
 
-    /// The registrable domain of each website, remembered per host: a library of thousands of items has far fewer hosts.
-    private struct Sites {
+    /// The registrable domain of each website, remembered per host: a library of thousands of items has far fewer hosts. Internal for
+    /// the site groups and the merge suggestions, which group by the same domains.
+    struct Sites {
         private var known: [String: String] = [:]
 
         /// The registrable domain of `host`. An address, `localhost` or a bare public suffix has none, so it stands for itself.

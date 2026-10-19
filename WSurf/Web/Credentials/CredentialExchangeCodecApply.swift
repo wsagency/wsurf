@@ -26,11 +26,12 @@ nonisolated extension CredentialExchangeCodec {
         // exporter items (validated above), so only a stored account that held a candidate's item when the loop began can still hold
         // it; `place` re-checks the account it finds. `result` only grows, so a position stays valid.
         let storedByItem = try positionsByItem(in: result)
+        let storedByMergedItem = mergedItemPositions(in: result)
         var positionByID = Dictionary(result.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         for candidate in preview.candidates {
             try place(
                 candidate, decisions: decisionsByIncoming, conflicts: conflictByIncoming, duplicateMerge: duplicates[candidate.id],
-                storedByItem: storedByItem, positionByID: &positionByID, into: &result
+                storedByItem: storedByItem, storedByMergedItem: storedByMergedItem, positionByID: &positionByID, into: &result
             )
         }
         try recordObservedBases(&result, candidates: preview.candidates)
@@ -48,19 +49,41 @@ nonisolated extension CredentialExchangeCodec {
         for (position, account) in result.enumerated() {
             positions[try externalItemID(for: account)] = position
         }
+        let merged = mergedItemPositions(in: result)
         for candidate in candidates {
-            guard let itemID = candidate.exchangeItemID,
-                  let position = positions[try externalItemID(for: candidate)] else { continue }
-            if hasBasicAuthentication(candidate), hasBasicAuthentication(result[position]) {
-                let hash = try CredentialContent.hash(.password(candidate))
-                if try CredentialContent.hash(.password(result[position])) == hash {
-                    result[position].passwordBase = ExchangeBase(contentHash: hash, itemID: itemID)
+            guard let itemID = candidate.exchangeItemID else { continue }
+            let key = try externalItemID(for: candidate)
+            if let position = positions[key] {
+                try observe(candidate, itemID: itemID, in: &result[position], link: nil)
+            } else if let place = merged[key] {
+                // An item merged into a saved credential: what it sent is recorded against the item, not against the credential's own.
+                try observe(candidate, itemID: itemID, in: &result[place.position], link: place.link)
+            }
+        }
+    }
+
+    /// Records the login and the code of `candidate` that equal what `account` holds, as the base of the item (`link` nil) or of the
+    /// merged item at that place in `account.mergedFrom`.
+    private static func observe(_ candidate: CredentialAccount, itemID: Data, in account: inout CredentialAccount, link: Int?) throws {
+        if hasBasicAuthentication(candidate), hasBasicAuthentication(account) {
+            let hash = try CredentialContent.hash(.password(candidate))
+            if try CredentialContent.hash(.password(account)) == hash {
+                let base = ExchangeBase(contentHash: hash, itemID: itemID)
+                if let link {
+                    account.mergedFrom?[link].passwordBase = base
+                } else {
+                    account.passwordBase = base
                 }
             }
-            if candidate.totp != nil, result[position].totp != nil {
-                let hash = try CredentialContent.hash(.totp(candidate))
-                if try CredentialContent.hash(.totp(result[position])) == hash {
-                    result[position].totpBase = ExchangeBase(contentHash: hash, itemID: itemID)
+        }
+        if candidate.totp != nil, account.totp != nil {
+            let hash = try CredentialContent.hash(.totp(candidate))
+            if try CredentialContent.hash(.totp(account)) == hash {
+                let base = ExchangeBase(contentHash: hash, itemID: itemID)
+                if let link {
+                    account.mergedFrom?[link].totpBase = base
+                } else {
+                    account.totpBase = base
                 }
             }
         }
@@ -138,6 +161,7 @@ nonisolated extension CredentialExchangeCodec {
         conflicts conflictByIncoming: [CredentialIdentity: CredentialImportConflict],
         duplicateMerge: DuplicateMerge?,
         storedByItem: [ExternalItemID: [Int]],
+        storedByMergedItem: [ExternalItemID: MergedItemPlace],
         positionByID: inout [UUID: Int],
         into result: inout [CredentialAccount]
     ) throws {
@@ -146,7 +170,8 @@ nonisolated extension CredentialExchangeCodec {
             try externalItemID(for: result[$0]) == candidateExternalID
         }
         guard linkedIndices.count <= 1 else { throw CredentialVaultError.duplicateIdentifier }
-        let linkedIndex = linkedIndices.first
+        // An item that was merged into a stored account goes where the merge put it, never to a credential of its own.
+        let linkedIndex = linkedIndices.first ?? storedByMergedItem[candidateExternalID]?.position
         var unattached = emptyLike(candidate)
         var unattachedPlaced = false
         // The exporter's item identifiers (and the metadata under them) belong to exactly one account: the
@@ -285,6 +310,27 @@ nonisolated extension CredentialExchangeCodec {
         claimed = true
     }
 
+    /// Where the exporter item merged into a stored account now lives: the account's position and the item's place in `mergedFrom`.
+    struct MergedItemPlace: Sendable {
+        let position: Int
+        let link: Int
+    }
+
+    /// Where each exporter item that was merged into an account of `accounts` lives (the first account that holds one).
+    static func mergedItemPositions(in accounts: [CredentialAccount]) -> [ExternalItemID: MergedItemPlace] {
+        var places: [ExternalItemID: MergedItemPlace] = [:]
+        for (position, account) in accounts.enumerated() {
+            for (link, item) in (account.mergedFrom ?? []).enumerated() where places[item.identity] == nil {
+                places[item.identity] = MergedItemPlace(position: position, link: link)
+            }
+        }
+        return places
+    }
+
+    static func holdsMergedItem(_ account: CredentialAccount, _ key: ExternalItemID) -> Bool {
+        account.mergedFrom?.contains { $0.identity == key } ?? false
+    }
+
     private static func sameKind(_ lhs: CredentialIdentity, _ rhs: CredentialIdentity) -> Bool {
         switch (lhs, rhs) {
         case (.password, .password), (.passkey, .passkey), (.totp, .totp), (.note, .note):
@@ -349,6 +395,12 @@ nonisolated extension CredentialExchangeCodec {
                 linked[key] = account.id
             }
         }
+        // An item merged into an account is held by it: that is where the item's credentials go.
+        for account in accounts {
+            for item in account.mergedFrom ?? [] where linked[item.identity] == nil {
+                linked[item.identity] = account.id
+            }
+        }
         return linked
     }
 
@@ -391,6 +443,11 @@ nonisolated extension CredentialExchangeCodec {
         carried: inout Set<UUID>
     ) throws {
         guard carried.insert(target.id).inserted else { return }
+        if holdsMergedItem(target, id) {
+            // The merged credential keeps its own name and metadata; the item's identifiers stay claimed by its link.
+            claimed = true
+            return
+        }
         if isSameItem(source, target) {
             if source.exchangeMetadata != nil {
                 target.exchangeMetadata = source.exchangeMetadata

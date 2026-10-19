@@ -495,6 +495,8 @@ struct CredentialRow: View {
     let run: (@escaping () async throws -> Void) -> Void
     let remove: () -> Void
     let history: () -> Void
+    /// "Merge With…"; `nil` leaves it out of the menu.
+    var mergeWith: (() -> Void)?
 
     private var host: String {
         summary.origins.lazy.compactMap { URL(string: $0)?.host }.first ?? summary.title
@@ -561,6 +563,9 @@ struct CredentialRow: View {
                 }
             }
             Button("History…", action: history)
+            if let mergeWith {
+                Button("Merge With…", action: mergeWith)
+            }
         } label: {
             Image(systemName: "ellipsis.circle")
                 .accessibilityLabel("More actions for \(summary.title)")

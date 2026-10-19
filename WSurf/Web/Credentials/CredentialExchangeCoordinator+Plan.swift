@@ -142,9 +142,7 @@ extension CredentialExchangeCoordinator {
                 // changes, however many items it compared, so a long review isn't discarded because an unrelated account changed.
                 // A base is recorded for the accounts that are written anyway. (An item saved before bases were recorded stays
                 // unbound until an import changes it; identical content is still recognised as unchanged.)
-                var withoutBases = account
-                withoutBases.passwordBase = old.passwordBase
-                withoutBases.totpBase = old.totpBase
+                let withoutBases = account.withBases(of: old)
                 if withoutBases != old {
                     touched.append(account)
                     // A saved credential that only became the other app's item (its identity, its name if it had none, and the field

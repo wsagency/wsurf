@@ -184,6 +184,33 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
         }
     }
 
+    /// Switching to "By Site" lists the same 3,000 credentials under a heading per site (here all on one registrable site, the heaviest
+    /// group): the page's own task groups them, and only the rows on screen are laid out. Timed from the switch, as a search is, so the
+    /// grouping and its layout are both inside the measurement.
+    @MainActor
+    func testTheSiteGroupsLayOutWellUnderASecond() async throws {
+        try await withLargeVault { profile, vault in
+            let model = try await loadedModel(profile, vault)
+            let list = CredentialListState()
+            let (host, window) = Self.mount(Self.page(model, list: list))
+            Self.settle(host)
+            let counted = await waitUntil { list.counts != nil }
+            XCTAssertTrue(counted, "the page counts the kinds when it appears")
+
+            let clock = ContinuousClock()
+            let started = clock.now
+            list.bySite = true
+            let grouped = await waitUntil(tick: .milliseconds(5)) { list.siteGroups != nil }
+            Self.settle(host)
+            let elapsed = clock.now - started
+            window.close()
+            print("[credential-list] site groups layout, \(Self.count) credentials: \(elapsed)")
+            XCTAssertTrue(grouped, "the page groups the credentials once By Site is on")
+            XCTAssertEqual(list.siteGroups?.flatMap(\.ids).count, Self.count)
+            XCTAssertLessThan(elapsed, .seconds(1))
+        }
+    }
+
     /// Choosing what to export lists every credential too. Both variants, the CSV one filtering to the exportable ones first.
     @MainActor
     func testTheExportSheetsLayOutWellUnderASecond() async throws {

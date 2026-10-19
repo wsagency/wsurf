@@ -17,6 +17,11 @@ enum CredentialPageTab: Hashable {
 final class CredentialListState {
     var query = ""
     var filter = CredentialListFilter.all
+    /// "By Site": the rows under a heading per site. A way of looking, so it stays across vaults and unlocks.
+    var bySite = false
+    /// The rows by site while `bySite` is on, `nil` otherwise; `rowsByID` holds the rows they name.
+    private(set) var siteGroups: [SiteGroup]?
+    private(set) var rowsByID: [UUID: CredentialSummary] = [:]
     /// How many credentials each kind holds; `nil` until the first refresh.
     private(set) var counts: [CredentialListFilter: Int]?
     /// What the last refresh found, `nil` while nothing narrowed the list then. A keystroke shows the previous rows (or the whole
@@ -37,6 +42,10 @@ final class CredentialListState {
     func refresh(_ summaries: [CredentialSummary]) {
         counts = CredentialListFilter.counts(summaries)
         matches = isFiltering ? CredentialListFilter.visible(summaries, query: query, filter: filter) : nil
+        // ponytail: grouped on the main actor too, one registrable-domain lookup per host; detach it with the filter if it shows.
+        let shown = bySite ? rows(of: summaries) : []
+        siteGroups = bySite ? CredentialSiteGroups.groups(shown) : nil
+        rowsByID = Dictionary(shown.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     /// Back to the whole list, for another vault or another unlock.
@@ -54,6 +63,7 @@ private struct CredentialListKey: Equatable {
     let revision: UInt64
     let query: String
     let filter: CredentialListFilter
+    let bySite: Bool
 }
 
 extension CredentialListFilter {
@@ -144,10 +154,13 @@ struct CredentialListView<Switcher: View>: View {
     let run: (@escaping () async throws -> Void) -> Void
     /// The Active and Trash switch, which the Trash section shows too.
     let switcher: Switcher
+    /// The merge suggestions and the merge sheet of this list.
+    @State private var merge = CredentialMergeState()
 
     private var key: CredentialListKey {
         CredentialListKey(
-            vault: model.selectedVaultID, epoch: model.authorizationEpoch, revision: model.revision, query: list.query, filter: list.filter
+            vault: model.selectedVaultID, epoch: model.authorizationEpoch, revision: model.revision, query: list.query, filter: list.filter,
+            bySite: list.bySite
         )
     }
 
@@ -173,16 +186,32 @@ struct CredentialListView<Switcher: View>: View {
                 } else if rows.isEmpty {
                     SettingsEmptyState(symbol: "magnifyingglass", title: "No matches", caption: "Nothing in this vault matches your search or filter.")
                 }
-                ForEach(rows) { summary in
-                    CredentialRow(
-                        model: model, summary: summary, run: run,
-                        remove: { model.requestRemoval(accountID: summary.id) },
-                        history: { run { try await model.openHistory(accountID: summary.id) } }
-                    )
+                if let groups = list.siteGroups {
+                    CredentialSiteGroupsList(groups: groups, rows: list.rowsByID, merge: merge, row: row)
+                } else {
+                    ForEach(rows, content: row)
                 }
             }
         }
         .task(id: key) { list.refresh(model.summaries) }
+        .task(id: CredentialMergeState.Key(model)) { await merge.refresh(model) }
+        .sheet(isPresented: Binding(get: { merge.route != nil }, set: { if !$0 { merge.route = nil } })) {
+            if let route = merge.route {
+                CredentialMergeFlow(
+                    model: model, merge: merge, matches: { CredentialListFilter.visible(model.summaries, query: $0, filter: .all) },
+                    route: route, close: { merge.route = nil }
+                )
+            }
+        }
+    }
+
+    private func row(_ summary: CredentialSummary) -> some View {
+        CredentialRow(
+            model: model, summary: summary, run: run,
+            remove: { model.requestRemoval(accountID: summary.id) },
+            history: { run { try await model.openHistory(accountID: summary.id) } },
+            mergeWith: { merge.route = .pick(summary.id) }
+        )
     }
 
     // MARK: Toolbar
@@ -205,6 +234,14 @@ struct CredentialListView<Switcher: View>: View {
                     HStack(spacing: 6) {
                         ForEach(CredentialListFilter.allCases, id: \.self) { kind in
                             chip(kind)
+                        }
+                        Toggle("By Site", isOn: $list.bySite)
+                            .toggleStyle(.button)
+                            .controlSize(.small)
+                        if merge.suggestionCount > 0 {
+                            Button("Suggested Merges (\(merge.suggestionCount.formatted()))") { merge.route = .suggestions }
+                                .controlSize(.small)
+                                .disabled(model.isBusy)
                         }
                     }
                 }
