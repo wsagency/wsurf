@@ -174,7 +174,7 @@ struct CredentialListView<Switcher: View>: View {
         VStack(alignment: .leading, spacing: 12) {
             toolbar
             AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .password)
-            CredentialPageNotice(model: model)
+            CredentialPageNotice(model: model, undo: { run { await model.undo() } })
             if !selection.isEmpty {
                 CredentialBulkBar(
                     model: model, selection: selection, visibleCount: visibleCount,

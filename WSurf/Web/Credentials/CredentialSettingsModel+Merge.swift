@@ -82,7 +82,10 @@ extension CredentialSettingsModel {
         let merged = try CredentialMerge.merged(accounts, picks: proposal.picks)
         let absorbed = Set(proposal.ids).subtracting([merged.id])
         let result = snapshot.accounts.compactMap { $0.id == merged.id ? merged : (absorbed.contains($0.id) ? nil : $0) }
-        return try await commitMerge(result, revision: proposal.revision, epoch: epoch)
+        let survivor = accounts.filter { $0.id == merged.id }
+        return try await commitMerge(result, revision: proposal.revision, epoch: epoch, survivors: survivor, absorbed: Array(absorbed)) {
+            "Merged \(proposal.ids.count) credentials."
+        }
     }
 
     /// Merges every group the vault finds identical, in one commit, with each group's default picks. A group that can't be merged
@@ -121,11 +124,19 @@ extension CredentialSettingsModel {
         }
         guard !replaced.isEmpty else { return CredentialMergeAllResult(merged: 0, absorbed: 0, skipped: skipped) }
         let result = snapshot.accounts.enumerated().compactMap { offset, account in removed.contains(offset) ? nil : replaced[offset] ?? account }
-        _ = try await commitMerge(result, revision: revision, epoch: epoch)
+        let survivors = replaced.keys.sorted().map { snapshot.accounts[$0] }
+        let gone = removed.sorted().map { snapshot.accounts[$0].id }
+        _ = try await commitMerge(result, revision: revision, epoch: epoch, survivors: survivors, absorbed: gone) {
+            "Merged \(replaced.count) groups of identical credentials."
+        }
         return CredentialMergeAllResult(merged: replaced.count, absorbed: removed.count, skipped: skipped)
     }
 
-    private func commitMerge(_ accounts: [CredentialAccount], revision: UInt64, epoch: UInt64) async throws -> VaultCommitReceipt {
+    /// Writes the merged accounts and keeps a step that takes the merge back: `survivors` as they were, and `absorbed`, which went to Trash.
+    private func commitMerge(
+        _ accounts: [CredentialAccount], revision: UInt64, epoch: UInt64, survivors: [CredentialAccount], absorbed: [UUID],
+        notice: () -> LocalizedStringResource
+    ) async throws -> VaultCommitReceipt {
         guard let manager, manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
         // Last point before the durable write: a cancelled task or a changed authorization never commits.
         try Task.checkCancellation()
@@ -133,6 +144,7 @@ extension CredentialSettingsModel {
         // Nothing throws once the vault has committed: the receipt reflects what is on disk.
         try? update(epoch) { $0.committed(accounts, revision: receipt.revision) }
         try? await reloadAfterWrite(epoch: epoch)
+        recordMerge(survivors, absorbed: absorbed, receipt: receipt, epoch: epoch, notice: notice())
         return receipt
     }
 

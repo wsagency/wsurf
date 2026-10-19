@@ -36,6 +36,10 @@ struct CredentialVaultSession {
     var trashNext: Int?
     var restoreBlocked: RestoreBlocked?
     var pendingPurge: PendingPurge?
+    /// The page's last actions that Undo can take back, oldest first; secrets included, so they go with the session.
+    var undoSteps: [CredentialUndoStep] = []
+    /// The most actions Undo keeps; the oldest is dropped for a sixth.
+    static let undoDepth = 5
 
     init(epoch: UInt64, snapshot: StoreSnapshot) {
         self.epoch = epoch
@@ -44,6 +48,18 @@ struct CredentialVaultSession {
         stampsRevision = snapshot.revision
         summaries = snapshot.accounts.map(CredentialSummary.init)
         blockedSiteCount = snapshot.blockedPasswordOrigins.count
+    }
+
+    mutating func record(_ step: CredentialUndoStep) {
+        undoSteps.append(step)
+        if undoSteps.count > Self.undoDepth {
+            undoSteps.removeFirst(undoSteps.count - Self.undoDepth)
+        }
+    }
+
+    /// After a step was undone: the steps before it are bound to the new stamps of the accounts it rewrote (`CredentialUndoStep.rebound`).
+    mutating func rebindUndoSteps(_ ids: Set<UUID>) {
+        undoSteps = undoSteps.map { $0.rebound(ids, to: stamps) }
     }
 
     /// The stamps only while they describe the revision shown; after this page's own write they are unknown, not stale.

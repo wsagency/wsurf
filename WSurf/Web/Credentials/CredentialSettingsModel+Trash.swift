@@ -38,14 +38,17 @@ extension CredentialSettingsModel {
                 try refuse(block)
                 return
             }
+            let receipt: VaultCommitReceipt
             do {
-                _ = try await manager.undelete(entryID: entryID, expectedRevision: snapshot.revision, authorizedEpoch: epoch)
+                receipt = try await manager.undelete(entryID: entryID, expectedRevision: snapshot.revision, authorizedEpoch: epoch)
             } catch CredentialStoreError.undeleteBlocked(let block) {
                 try refuse(block)
                 return
             }
             try update(epoch) { $0.restoreBlocked = nil }
             try await reloadAfterWrite(epoch: epoch)
+            let item = live.trash.first { $0.id == entryID }
+            recordRestore(of: item, owner: snapshot.accounts.first { $0.id == item?.ownerID }, receipt: receipt, epoch: epoch)
         }
     }
 
