@@ -238,6 +238,13 @@ struct SavedThemeTests {
         }
     }
 
+    @Test func theNameSheetAcceptsOnlyNamesTheSettingsKeepWhole() {
+        #expect(ThemeNames.isAcceptable("Mine") && ThemeNames.isAcceptable("  Mine \n"))
+        #expect(ThemeNames.isAcceptable(String(repeating: "x", count: ThemeDefinition.nameLimit)))
+        #expect(!ThemeNames.isAcceptable("") && !ThemeNames.isAcceptable(" \t\n "))
+        #expect(!ThemeNames.isAcceptable(String(repeating: "x", count: ThemeDefinition.nameLimit + 1)))
+    }
+
     @Test func renamingToNothingChangesNothing() throws {
         try withSettings { settings, defaults in
             let saved = try #require(settings.saveTheme(named: "Mine"))

@@ -9,6 +9,8 @@ struct AppearanceThemeSection: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var isEditing = false
+    @State private var naming: ThemeNaming?
+    @State private var deleting: ThemeDefinition?
 
     private var themes: [ThemeDefinition] {
         let selected = settings.previewedTheme
@@ -27,6 +29,24 @@ struct AppearanceThemeSection: View {
             : "Glass shows your desktop through the window. It uses more GPU."
     }
 
+    private var selectedThemeIsSaved: Bool {
+        !ThemeCatalog.isBuiltIn(settings.selectedTheme.id)
+    }
+
+    private var saveCaption: LocalizedStringResource {
+        settings.canSaveAnotherTheme
+            ? "Keeps this theme’s colors, material, transparency and brightness under a name you choose."
+            : "You have saved \(BrowserSettings.userThemeLimit) themes, the most WSurf keeps. Delete one to save another."
+    }
+
+    private var deleteTitle: Text {
+        Text("Delete “\(deleting?.name ?? "")”?")
+    }
+
+    private var confirmsDeletion: Binding<Bool> {
+        Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
+    }
+
     var body: some View {
         SettingsSection(title: "Theme", symbol: "paintpalette") {
             DetailRow(title: "Appearance") {
@@ -41,8 +61,13 @@ struct AppearanceThemeSection: View {
             DetailRow(title: "Theme", layout: .stacked) {
                 ThemeGallery(
                     themes: themes, selection: settings.selectedTheme.id,
-                    mode: settings.colorMode, adjustments: adjustments
-                ) { settings.themeID = $0 }
+                    mode: settings.colorMode, adjustments: adjustments,
+                    onSelect: { settings.themeID = $0 },
+                    canDuplicate: settings.canSaveAnotherTheme,
+                    onDuplicate: { settings.duplicateTheme($0.id) },
+                    onRename: { naming = .rename($0) },
+                    onDelete: { deleting = $0 }
+                )
             }
             .settingsAnchor("appearance.theme")
             RowSeparator()
@@ -97,11 +122,50 @@ struct AppearanceThemeSection: View {
                 SettingsToggle($settings.refractsTabColor)
             }
             .settingsAnchor("appearance.refraction")
+            RowSeparator()
+            DetailRow(title: "Save as Theme", caption: saveCaption) {
+                SettingsButton(title: "Save as Theme…") {
+                    settings.commitThemePreview()
+                    naming = .save(name: String(localized: "\(settings.selectedTheme.name) copy"))
+                }
+                .disabled(!settings.canSaveAnotherTheme)
+            }
+            .settingsAnchor("appearance.savedThemes")
+            if selectedThemeIsSaved {
+                RowSeparator()
+                DetailRow(title: "This theme", controlWidth: nil) {
+                    HStack(spacing: 8) {
+                        SettingsButton(title: "Rename…") { naming = .rename(settings.selectedTheme) }
+                        SettingsButton(title: "Duplicate") { settings.duplicateTheme(settings.selectedTheme.id) }
+                            .disabled(!settings.canSaveAnotherTheme)
+                        SettingsButton(title: "Delete…", isDestructive: true) { deleting = settings.selectedTheme }
+                    }
+                }
+                .settingsAnchor("appearance.manageTheme")
+            }
         }
         .onDisappear { settings.commitThemePreview() }
         .onChange(of: scheme) { _, _ in
             settings.commitThemePreview()
             isEditing = false
+        }
+        .sheet(item: $naming) { request in
+            ThemeNameSheet(naming: request) { name in
+                switch request {
+                case .save:
+                    _ = settings.saveTheme(named: name)
+                case .rename(let theme):
+                    _ = settings.renameTheme(theme.id, to: name)
+                }
+            }
+        }
+        .confirmationDialog(
+            deleteTitle, isPresented: confirmsDeletion, titleVisibility: .visible, presenting: deleting
+        ) { theme in
+            Button("Delete Theme", role: .destructive) { settings.deleteTheme(theme.id) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("You can’t undo this.")
         }
     }
 
