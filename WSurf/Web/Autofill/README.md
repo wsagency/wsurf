@@ -110,7 +110,10 @@ nothing is saved by it.
 Native code binds messages to the WebKit or CEF frame identity and origin.
 Filling additionally checks the document/form/field identity, selection token,
 focus, geometry, and policy before and after authentication. A new document at
-the same URL is still a different document.
+the same URL is still a different document. The page spends the selection token
+on the fill it takes, so a delivered fill is never checked against that token
+again or reported as failed; the pick is recorded while the request still holds
+its native authority.
 
 Each frame is sent its autofill policy when its script reports ready. A refused
 call is tried once more after 300 ms, with the policy read again, so a document
