@@ -1,0 +1,46 @@
+// SPDX-FileCopyrightText: 2026 WSurf Agency
+// SPDX-License-Identifier: Apache-2.0
+
+import Foundation
+
+/// Copying a credential's values to the clipboard from the list, the editor and History. Every copy reads the vault under the
+/// current unlock first, like every Show: no prompt is added, a locked vault or a stale authorization copies nothing, and a
+/// secret goes out with the concealed marker (`deliver`).
+extension CredentialSettingsModel {
+    /// Puts one part of a credential on the clipboard. A draft or a History version copies only while the session it was read in
+    /// is the current one. A History version never yields a verification code: its setup key stays out of the clipboard.
+    /// `now` is read after the last suspension so a step boundary crossed while waiting yields the new code.
+    func copy(
+        _ part: CredentialCopyPart,
+        of source: CredentialCopySource,
+        now: @MainActor () -> TimeInterval = { Date().timeIntervalSince1970 }
+    ) async throws {
+        let bound: UInt64?
+        switch source {
+        case .stored:
+            bound = nil
+        case .draft, .version:
+            guard let live else { throw CredentialVaultError.unauthorized }
+            bound = live.epoch
+        }
+        let (epoch, snapshot) = try await authorizedSnapshot(epoch: bound)
+        let parts = try copyParts(of: source, in: snapshot, epoch: epoch)
+        try deliver(epoch: epoch, notice: part.copiedNotice) { try parts.value(of: part, now: now) }
+    }
+
+    private func copyParts(of source: CredentialCopySource, in snapshot: StoreSnapshot, epoch: UInt64) throws -> CredentialCopyParts {
+        switch source {
+        case .stored(let id):
+            guard let account = snapshot.accounts.first(where: { $0.id == id }) else { throw CredentialVaultError.invalidData }
+            return CredentialCopyParts(account)
+        case .draft:
+            guard let live, live.epoch == epoch else { throw CredentialVaultError.unauthorized }
+            guard let draft = live.draft else { throw CredentialVaultError.invalidData }
+            return CredentialCopyParts(draft)
+        case .version:
+            guard let live, live.epoch == epoch else { throw CredentialVaultError.unauthorized }
+            guard let version = live.history?.shown else { throw CredentialVaultError.invalidData }
+            return CredentialCopyParts(version.account, allowsCode: false)
+        }
+    }
+}

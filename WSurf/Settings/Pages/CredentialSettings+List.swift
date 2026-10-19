@@ -166,13 +166,14 @@ struct CredentialListView<Switcher: View>: View {
 
     /// The vault's name; the page is about one vault at a time.
     private var title: String {
-        model.vaults.first { $0.vaultID == model.selectedVaultID }?.displayName ?? String(localized: "Credentials")
+        model.vaults.first { $0.vaultID == model.selectedVaultID }?.label ?? String(localized: "Credentials")
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             toolbar
             AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .password)
+            CredentialCopyNotice(model: model)
             // A vault holds thousands of credentials: the list is lazy, so only the rows on screen are built and laid out.
             SettingsSection(
                 title: LocalizedStringResource("\(title)"),
@@ -296,11 +297,10 @@ struct CredentialVaultPicker: View {
         if let first = model.vaults.first, model.vaults.count > 1 {
             SettingsMenu(
                 options: model.vaults.sorted { $0.ordinal < $1.ordinal }.map { listing in
-                    let notes = [
-                        model.defaultVaultID == listing.vaultID ? String(localized: "Default") : nil,
-                        listing.isUnlocked ? nil : String(localized: "Locked"),
-                    ].compactMap { $0 }
-                    return .init(value: listing.vaultID, label: listing.displayName, detail: notes.joined(separator: " · "))
+                    .init(
+                        value: listing.vaultID, label: listing.label,
+                        detail: model.defaultVaultID == listing.vaultID ? String(localized: "Default") : ""
+                    )
                 },
                 selection: Binding(
                     get: { model.selectedVaultID ?? first.vaultID },

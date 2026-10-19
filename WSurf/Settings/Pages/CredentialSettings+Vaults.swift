@@ -24,12 +24,10 @@ extension CredentialSettings {
                     DetailRow(title: "Vault") {
                         SettingsMenu(
                             options: model.vaults.sorted { $0.ordinal < $1.ordinal }.map { listing in
-                                let notes = [
-                                    listing.isUnlocked && listing.name != nil ? listing.numberedName : nil,
-                                    model.defaultVaultID == listing.vaultID ? String(localized: "Default") : nil,
-                                    listing.isUnlocked ? nil : String(localized: "Locked"),
-                                ].compactMap { $0 }
-                                return .init(value: listing.vaultID, label: listing.displayName, detail: notes.joined(separator: " · "))
+                                .init(
+                                    value: listing.vaultID, label: listing.label,
+                                    detail: model.defaultVaultID == listing.vaultID ? String(localized: "Default") : ""
+                                )
                             },
                             selection: Binding(
                                 get: { model.selectedVaultID ?? first.vaultID },
@@ -41,7 +39,9 @@ extension CredentialSettings {
                     if let selected = model.selectedVaultID {
                         if let listing = model.vaults.first(where: { $0.vaultID == selected }) {
                             RowSeparator()
-                            CredentialVaultNameRow(displayName: listing.displayName, isUnlocked: model.isUnlocked) { name in
+                            CredentialVaultNameRow(
+                                displayName: model.isUnlocked ? listing.displayName : listing.label, isUnlocked: model.isUnlocked
+                            ) { name in
                                 run { await model.renameVault(name) }
                             }
                             .id(selected)
@@ -122,7 +122,7 @@ struct CredentialVaultNameRow: View {
 
     private var caption: LocalizedStringResource? {
         if !isUnlocked {
-            return "Unlock this vault to rename it or change when it locks."
+            return "Locked vaults are listed by number. The name appears after you unlock."
         }
         if isTooLong {
             return "Use at most \(StoreFormat.nameLimit) characters."
@@ -244,7 +244,7 @@ struct CredentialNewVaultSheet: View {
                         Picker("Passkey", selection: $picked) {
                             Text("Choose a passkey").tag(Pick?.none)
                             ForEach(Array(existingPasskeys.enumerated()), id: \.offset) { _, item in
-                                Text("Unlock passkey of “\(item.vault.displayName)”")
+                                Text("Unlock passkey of “\(item.vault.label)”")
                                     .tag(Pick?.some(Pick(vaultID: item.vault.vaultID, credentialID: item.unlock.credentialID)))
                             }
                         }

@@ -6,11 +6,14 @@ import Foundation
 extension CredentialSettingsModel {
     /// Reads the vault listing again and changes nothing else. A vault's name is sealed in its head and listed only while that
     /// vault is unlocked, so the list changes whenever one unlocks or locks. A read that fails, is cancelled or straddles a lock or
-    /// an unlock of the selected vault is dropped: the lock or unlock that changed the epoch reads again.
+    /// an unlock of any of the profile's vaults is dropped: the lock or unlock that changed the state reads again, so a name read before a lock is
+    /// never put back after it.
     func refreshListing() async {
         guard let store else { return }
         let epoch = authorizationEpoch
-        guard let listing = try? await store.listing(), !Task.isCancelled, authorizationEpoch == epoch else { return }
+        let changes = VaultStateChanges.shared.count(for: profile.id)
+        guard let listing = try? await store.listing(), !Task.isCancelled, authorizationEpoch == epoch,
+              VaultStateChanges.shared.count(for: profile.id) == changes else { return }
         vaults = listing
     }
 

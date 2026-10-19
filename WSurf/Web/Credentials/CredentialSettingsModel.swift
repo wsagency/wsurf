@@ -29,8 +29,9 @@ final class CredentialSettingsModel {
     private(set) var openState: StoreOpenState?
     /// Set when the store refused to open, or a later read found it closed. The page then shows only the exact paths and a re-check.
     private(set) var failClosed: StoreFailClosed?
-    /// Every enrolled unlock passkey of every listed vault (plaintext discovery, no secret): the pair is the identity.
-    private(set) var existingPasskeys: [(vault: VaultListing, unlock: VaultUnlock)] = []
+    /// Every enrolled unlock passkey of every listed vault (plaintext discovery, no secret): the pair is the identity. Only the vault's
+    /// id is kept; its name is read from `vaults` when asked, so a lock or an unlock cannot leave a second copy of it behind.
+    private var enrolledPasskeys: [(vaultID: UUID, unlock: VaultUnlock)] = []
     private var storedDefaultVaultID: UUID?
     /// True while an unlock is verifying the vault (it took longer than the store's threshold); only meaningful during `unlock`.
     private(set) var isVerifying = false
@@ -44,6 +45,11 @@ final class CredentialSettingsModel {
     /// Test seam: managers made here use it instead of the system passkey UI, which the shared registry's managers always use.
     @ObservationIgnored private let native: VaultNativeUnlock?
     @ObservationIgnored private let pasteboard: NSPasteboard
+    /// How long a copy confirmation stays; a seam so a test does not wait for the real time.
+    @ObservationIgnored private let noticeDuration: Duration
+    @ObservationIgnored private var copyNoticeGeneration = 0
+    /// What the last copy confirmed ("Password Copied") for a moment; the name of the part, never its value.
+    private(set) var copyNotice: String?
     private var session: CredentialVaultSession?
     /// Internal for `CredentialSettingsModel+Export`.
     @ObservationIgnored let exchange: CredentialExchangeCoordinator
@@ -71,11 +77,13 @@ final class CredentialSettingsModel {
         pasteboard: NSPasteboard = .general,
         exchange: CredentialExchangeCoordinator = .shared,
         manager: CredentialManager? = nil,
-        native: VaultNativeUnlock? = nil
+        native: VaultNativeUnlock? = nil,
+        noticeDuration: Duration = .seconds(1.6)
     ) {
         self.profile = profile
         self.exchange = exchange
         self.pasteboard = pasteboard
+        self.noticeDuration = noticeDuration
         self.native = native
         legacy = LegacyPasswordImport(profile: profile)
         if profile.isPrivate {
@@ -86,9 +94,17 @@ final class CredentialSettingsModel {
             store = manager == nil ? try? CredentialManager.store(for: profile) : nil
         }
         watchAuthorization()
+        watchListing()
     }
 
     // MARK: Observable state
+
+    /// The enrolled passkeys of the vaults the page lists now, each with that vault's current listing.
+    var existingPasskeys: [(vault: VaultListing, unlock: VaultUnlock)] {
+        enrolledPasskeys.compactMap { item in
+            vaults.first { $0.vaultID == item.vaultID }.map { (vault: $0, unlock: item.unlock) }
+        }
+    }
 
     var isAvailable: Bool {
         manager != nil || store != nil
@@ -261,6 +277,8 @@ final class CredentialSettingsModel {
             return
         }
         await load()
+        // An already unlocked vault is not discovered again by `load`, so its listing is read here.
+        await refreshListing()
     }
 
     /// Reads the store again from the start. It writes nothing: a closed store is only looked at, never repaired or reset.
@@ -291,7 +309,7 @@ final class CredentialSettingsModel {
                 case .firstRun:
                     failClosed = nil
                     vaults = []
-                    existingPasskeys = []
+                    enrolledPasskeys = []
                     bind(nil)
                     vaultExists = false
                     error = nil
@@ -310,7 +328,7 @@ final class CredentialSettingsModel {
                 guard !Task.isCancelled else { return }
                 failClosed = nil
                 vaults = listing
-                existingPasskeys = enrolled
+                enrolledPasskeys = enrolled.map { (vaultID: $0.vault.vaultID, unlock: $0.unlock) }
                 storedDefaultVaultID = preferred
                 // Past a first run a store holds at least one vault: an empty list is a read the page can't trust.
                 guard let lowest = listing.min(by: { $0.ordinal < $1.ordinal }) else { throw CredentialStoreError.stateChanged }
@@ -345,7 +363,7 @@ final class CredentialSettingsModel {
     private func enterFailClosed(_ closed: StoreFailClosed) {
         failClosed = closed
         vaults = []
-        existingPasskeys = []
+        enrolledPasskeys = []
         bind(nil)
         vaultExists = nil
         error = nil
@@ -461,11 +479,7 @@ final class CredentialSettingsModel {
     }
 
     func copyPassword(accountID: UUID) async throws {
-        let (epoch, snapshot) = try await authorizedSnapshot()
-        guard let password = snapshot.accounts.first(where: { $0.id == accountID })?.password else {
-            throw CredentialVaultError.invalidData
-        }
-        try deliver(epoch: epoch) { password }
+        try await copy(.password, of: .stored(accountID))
     }
 
     /// `now` is read after the last suspension so a step boundary crossed while waiting yields the new code.
@@ -473,11 +487,7 @@ final class CredentialSettingsModel {
         accountID: UUID,
         now: @MainActor () -> TimeInterval = { Date().timeIntervalSince1970 }
     ) async throws {
-        let (epoch, snapshot) = try await authorizedSnapshot()
-        guard let generator = snapshot.accounts.first(where: { $0.id == accountID })?.totp else {
-            throw CredentialVaultError.invalidData
-        }
-        try deliver(epoch: epoch) { try TOTP.code(generator, at: now()).value }
+        try await copy(.code, of: .stored(accountID), now: now)
     }
 
     // MARK: Native unlock management
@@ -735,9 +745,10 @@ final class CredentialSettingsModel {
         { [weak self, vault = manager.vaultID] in self?.ownMessage = ($0, vault) }
     }
 
-    /// The unlocked vault's name, for the transfer header; `nil` while it is locked.
+    /// The unlocked vault's name, for the transfer header; `nil` while it is locked, whatever an older listing still holds.
     var vaultName: String? {
-        vaults.first { $0.vaultID == manager?.vaultID }?.name
+        guard isUnlocked else { return nil }
+        return vaults.first { $0.vaultID == manager?.vaultID }?.name
     }
 
     func beginImport() async {
@@ -836,6 +847,39 @@ final class CredentialSettingsModel {
         }
     }
 
+    /// A lock or an unlock of ANY of the profile's vaults changes what the listing may show, and this page observes only its selected
+    /// manager. So it also observes the shared counter: a lock drops the names of vaults that are no longer open at once, and every
+    /// change reads the list again.
+    private func watchListing() {
+        withObservationTracking {
+            _ = VaultStateChanges.shared.count(for: profile.id)
+        } onChange: { [weak self] in
+            MainActor.assumeIsolated { self?.hideNamesOfLockedVaults() }
+            // Re-armed once the change has landed, so a second change in the same turn is caught here, not by the observation.
+            Task { @MainActor [weak self] in
+                self?.watchListing()
+                self?.hideNamesOfLockedVaults()
+                await self?.refreshListing()
+            }
+        }
+    }
+
+    /// A name is sealed while its vault is locked, so it does not stay in memory until the next read of the list.
+    private func hideNamesOfLockedVaults() {
+        var open = Set(CredentialManager.unlockedManagers(for: profile).map(\.vaultID))
+        if let manager, manager.isUnlocked {
+            open.insert(manager.vaultID)
+        }
+        let hidden = vaults.map { listing in
+            open.contains(listing.vaultID) ? listing : VaultListing(
+                vaultID: listing.vaultID, ordinal: listing.ordinal, name: nil, isUnlocked: false, isVerified: listing.isVerified
+            )
+        }
+        if hidden != vaults {
+            vaults = hidden
+        }
+    }
+
     /// Internal for `CredentialSettingsModel+Export`.
     func authorizedSnapshot(epoch bound: UInt64? = nil) async throws -> (epoch: UInt64, snapshot: StoreSnapshot) {
         guard let manager, let epoch = manager.authorizationEpoch, bound == nil || bound == epoch else {
@@ -865,13 +909,24 @@ final class CredentialSettingsModel {
 
     /// The one clipboard exit. `produce` runs first, so whatever it costs (a code calculation, a clock read)
     /// is over before the last authorization and cancellation check; a failure leaves the pasteboard untouched.
-    private func deliver(epoch: UInt64, _ produce: () throws -> String) throws {
+    /// A secret also carries the concealed marker, which clipboard managers skip. Internal for `CredentialSettingsModel+Copy`.
+    func deliver(epoch: UInt64, notice: LocalizedStringResource, _ produce: () throws -> CredentialCopyValue) throws {
         let value = try produce()
         try Task.checkCancellation()
         guard manager?.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-        pasteboard.declareTypes([.string, Self.concealedType], owner: nil)
-        pasteboard.setString(value, forType: .string)
-        pasteboard.setString("", forType: Self.concealedType)
+        pasteboard.declareTypes(value.isSecret ? [.string, Self.concealedType] : [.string], owner: nil)
+        pasteboard.setString(value.text, forType: .string)
+        if value.isSecret {
+            pasteboard.setString("", forType: Self.concealedType)
+        }
+        copyNotice = String(localized: notice)
+        copyNoticeGeneration += 1
+        let generation = copyNoticeGeneration
+        Task { [weak self, noticeDuration] in
+            try? await Task.sleep(for: noticeDuration)
+            guard let self, copyNoticeGeneration == generation else { return }
+            copyNotice = nil
+        }
     }
 
     private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")

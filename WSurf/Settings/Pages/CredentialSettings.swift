@@ -539,8 +539,19 @@ struct CredentialRow: View {
 
     private var actions: some View {
         Menu {
+            if summary.usernameIsConcealed || summary.username != nil {
+                Button("Copy Username") { run { try await model.copy(.username, of: .stored(summary.id)) } }
+            }
             if summary.hasPassword {
                 Button("Copy Password") { run { try await model.copyPassword(accountID: summary.id) } }
+            }
+            if !summary.origins.isEmpty {
+                Button("Copy Website") { run { try await model.copy(.website(0), of: .stored(summary.id)) } }
+            }
+            if summary.hasTOTP {
+                Button("Copy Verification Code") { run { try await model.copyTOTP(accountID: summary.id) } }
+            }
+            if summary.hasPassword {
                 if model.revealedPassword?.accountID == summary.id {
                     Button("Hide Password") { model.hideSecrets() }
                 } else {
@@ -555,13 +566,13 @@ struct CredentialRow: View {
                 }
             }
             if summary.hasTOTP {
-                Button("Copy Verification Code") { run { try await model.copyTOTP(accountID: summary.id) } }
                 if model.shownTOTPAccountID == summary.id {
                     Button("Hide Verification Code") { model.hideSecrets() }
                 } else {
                     Button("Show Verification Code") { run { try await model.showTOTP(accountID: summary.id) } }
                 }
             }
+            Divider()
             Button("History…", action: history)
             if let mergeWith {
                 Button("Merge With…", action: mergeWith)
