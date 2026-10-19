@@ -4366,6 +4366,54 @@
     "Recently Visited" : {
       "comment" : "Section heading in the ⌘K palette over pages taken from history. Title Case."
     },
+    "Command palette" : {
+      "comment" : "Heading of the Settings > General section that holds the command palette options. Title Case."
+    },
+    "Section order" : {
+      "comment" : "Title of the Settings > General row that sets the order of the command palette's result groups, and its Settings search entry. Sentence case."
+    },
+    "Choose where each group of command palette results appears. The best matches stay first within a group." : {
+      "comment" : "Caption of the Section order row, and its Settings search entry. Group means a set of results under one heading."
+    },
+    "Return runs the first result. An address you type keeps “Search or ask” first, and a command that matches strongly appears right under the first section." : {
+      "comment" : "Footnote under the command palette section in Settings > General. The name in quotes must match the Search or ask row title."
+    },
+    "Open tabs" : {
+      "comment" : "Name of a group in the Settings > General command palette order list: tabs that are open. Sentence case."
+    },
+    "Recently visited" : {
+      "comment" : "Name of a group in the Settings > General command palette order list: pages from history that the palette shows before anything is typed. Sentence case."
+    },
+    "What you type as a search or address, and the option to ask the assistant" : {
+      "comment" : "Caption of the Search or ask group in the command palette order list. Sentence fragment, no final full stop."
+    },
+    "Tabs that match, or recent tabs before you type" : {
+      "comment" : "Caption of the Open tabs group in the command palette order list. Sentence fragment, no final full stop."
+    },
+    "Pages that match as you type" : {
+      "comment" : "Caption of the History group in the command palette order list. Sentence fragment, no final full stop."
+    },
+    "Commands that match, or suggested ones before you type" : {
+      "comment" : "Caption of the Actions group in the command palette order list. Sentence fragment, no final full stop."
+    },
+    "Pages you visited, before you type" : {
+      "comment" : "Caption of the Recently visited group in the command palette order list. Sentence fragment, no final full stop."
+    },
+    "Move Up" : {
+      "comment" : "Tooltip on the small chevron button that moves a command palette group one place up in the Settings order list. Title Case."
+    },
+    "Move Down" : {
+      "comment" : "Tooltip on the small chevron button that moves a command palette group one place down in the Settings order list. Title Case."
+    },
+    "Move %@ Up" : {
+      "comment" : "VoiceOver label of the Move Up button in the command palette order list. The placeholder is the group's name, such as Open tabs."
+    },
+    "Move %@ Down" : {
+      "comment" : "VoiceOver label of the Move Down button in the command palette order list. The placeholder is the group's name, such as Open tabs."
+    },
+    "%@, position %lld of %lld" : {
+      "comment" : "VoiceOver announcement after a command palette group moves. The placeholder is the group's name; the integers are its new place and the number of groups."
+    },
     "Recently visited pages" : {
       "comment" : "Description of the History section in the start page editor. Pages means web pages. No final full stop."
     },
@@ -4813,7 +4861,10 @@
       "comment" : "Placeholder in the search field of the History view. “Search” is the verb and “history” its object. Sentence case, narrow field."
     },
     "Search or ask" : {
-      "comment" : "Accessibility label for the combined search and assistant field on the start page. Keep it short and name both functions."
+      "comment" : "Accessibility label for the combined search and assistant field on the start page, and the name of the search and Ask group in the Settings command palette order list. Keep it short and name both functions."
+    },
+    "Search or Ask" : {
+      "comment" : "Heading in the ⌘K palette over the search and Ask rows when another group comes first. Title Case. The group has no heading when it comes first."
     },
     "Search settings" : {
       "comment" : "Placeholder inside the search field at the top of the Settings sidebar. Search is the verb and settings its object, meaning the settings of this app. Narrow field, so keep it short."

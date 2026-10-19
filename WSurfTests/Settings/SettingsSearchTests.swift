@@ -51,6 +51,13 @@ struct SettingsSearchTests {
         #expect(SettingsIndex.search("summarize").contains { $0.id == "assistant.linkPeek" })
     }
 
+    @Test func thePaletteOrderIsFoundByItsOwnWords() {
+        for query in ["command palette", "reorder", "section order", "tabs first"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "general.paletteOrder" })
+        }
+        #expect(SettingsIndex.all.first { $0.id == "general.paletteOrder" }?.category == .general)
+    }
+
     @Test func searchMatchesWordsInsideTitles() {
         #expect(SettingsIndex.search("links").contains { $0.id == "general.defaultBrowser" })
     }
