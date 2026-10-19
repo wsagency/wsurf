@@ -326,7 +326,7 @@ extension AppCoordinator {
     }
 
     func tabDidClose(_ tab: BrowserTab) {
-        if conversationSpaceID == tab.id {
+        if conversationAnchorID == tab.id {
             endVoiceConversation()
         }
         playedPages[tab.id] = nil

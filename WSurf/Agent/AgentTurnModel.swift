@@ -9,9 +9,9 @@ import Observation
 protocol AgentTurnBrowsing: AnyObject {
     var agentConsentWindow: ExtensionWindowAdapter? { get }
     func ensureAgentTabID() -> UUID
-    func agentSpaceID(forTab tabID: UUID) -> UUID
+    func agentAnchorID(forTab tabID: UUID) -> UUID
     func agentContextSummary(mentionedTabIDs: [UUID]) -> String?
-    func setAgentWorking(_ isWorking: Bool, inSpace spaceID: UUID)
+    func setAgentWorking(_ isWorking: Bool, inAnchor anchorID: UUID)
 }
 
 extension AgentTurnBrowsing {
@@ -29,16 +29,16 @@ extension BrowserModel: AgentTurnBrowsing {
         ensureActiveTab().id
     }
 
-    func agentSpaceID(forTab tabID: UUID) -> UUID {
-        spaceID(of: tabID)
+    func agentAnchorID(forTab tabID: UUID) -> UUID {
+        anchorID(of: tabID)
     }
 
     func agentContextSummary(mentionedTabIDs: [UUID]) -> String? {
         contextSummary(mentionedTabIDs: mentionedTabIDs)
     }
 
-    func setAgentWorking(_ isWorking: Bool, inSpace spaceID: UUID) {
-        for tab in spaceTabs(spaceID) {
+    func setAgentWorking(_ isWorking: Bool, inAnchor anchorID: UUID) {
+        for tab in anchorTabs(anchorID) {
             tab.setAgentWorking(isWorking)
         }
     }
@@ -68,9 +68,9 @@ final class AgentTurnModel {
     private(set) var runnerName = "none"
     private(set) var activeTask: AgentTaskContext?
     private(set) var supportsCompaction = false
-    private(set) var compactingSpaceID: UUID?
+    private(set) var compactingAnchorID: UUID?
     private(set) var compactionMessage: LocalizedStringResource?
-    private(set) var compactionMessageSpaceID: UUID?
+    private(set) var compactionMessageAnchorID: UUID?
 
     @ObservationIgnored private let browser: any AgentTurnBrowsing
     @ObservationIgnored private var log: any AgentTurnLogging
@@ -81,7 +81,7 @@ final class AgentTurnModel {
     @ObservationIgnored private var runTask: Task<Void, Never>?
     @ObservationIgnored private var completion: ((Result<AgentTurnResult, any Error>) -> Void)?
     @ObservationIgnored private var compactionTask: Task<Void, Never>?
-    @ObservationIgnored private var pendingSpaceMoves: [(from: UUID, to: UUID)] = []
+    @ObservationIgnored private var pendingAnchorMoves: [(from: UUID, to: UUID)] = []
     @ObservationIgnored var onTurnFinished: (() -> Void)?
 
     var onCancel: (() -> Void)?
@@ -117,13 +117,13 @@ final class AgentTurnModel {
     }
 
     /// Stop the old owner's work without deleting the transferred tab's conversation.
-    func detachTab(_ tabID: UUID, inSpace spaceID: UUID) {
+    func detachTab(_ tabID: UUID, inAnchor anchorID: UUID) {
         cancel()
         runner?.discardSession(forTab: tabID)
-        if spaceID != tabID {
-            runner?.discardSession(forTab: spaceID)
+        if anchorID != tabID {
+            runner?.discardSession(forTab: anchorID)
         }
-        if reply.spaceID == tabID || reply.spaceID == spaceID {
+        if reply.anchorID == tabID || reply.anchorID == anchorID {
             reply = AgentReplyModel()
         }
     }
@@ -134,8 +134,8 @@ final class AgentTurnModel {
     var activeTabID: UUID? {
         activeTask?.tabID
     }
-    var activeSpaceID: UUID? {
-        activeTask?.spaceID
+    var activeAnchorID: UUID? {
+        activeTask?.anchorID
     }
 
     func use(_ runner: (any AgentRunner)?) {
@@ -145,24 +145,24 @@ final class AgentTurnModel {
         supportsCompaction = runner?.supportsCompaction == true
     }
 
-    func compactContext(inSpace spaceID: UUID) {
-        guard !isRunning, compactingSpaceID == nil, let runner, runner.supportsCompaction else { return }
-        compactingSpaceID = spaceID
+    func compactContext(inAnchor anchorID: UUID) {
+        guard !isRunning, compactingAnchorID == nil, let runner, runner.supportsCompaction else { return }
+        compactingAnchorID = anchorID
         compactionMessage = nil
-        compactionMessageSpaceID = spaceID
+        compactionMessageAnchorID = anchorID
         let modelSettings = modelSettings
         compactionTask = Task { [weak self] in
             let message: LocalizedStringResource
             do {
                 let changed = try await LLMSettings.$scoped.withValue(modelSettings) {
-                    try await runner.compactContext(forTab: spaceID)
+                    try await runner.compactContext(forTab: anchorID)
                 }
                 message = changed ? "Context compacted" : "No context to compact"
             } catch {
                 message = "Couldn’t compact. Context unchanged."
             }
             guard !Task.isCancelled, let self else { return }
-            compactingSpaceID = nil
+            compactingAnchorID = nil
             compactionMessage = message
             compactionTask = nil
         }
@@ -171,9 +171,9 @@ final class AgentTurnModel {
     private func cancelCompaction() {
         compactionTask?.cancel()
         compactionTask = nil
-        compactingSpaceID = nil
+        compactingAnchorID = nil
         compactionMessage = nil
-        compactionMessageSpaceID = nil
+        compactionMessageAnchorID = nil
     }
 
     @discardableResult
@@ -196,7 +196,7 @@ final class AgentTurnModel {
         cancel()
         self.completion = completion
         let tabID = browser.ensureAgentTabID()
-        let spaceID = browser.agentSpaceID(forTab: tabID)
+        let anchorID = browser.agentAnchorID(forTab: tabID)
         let contextualized: String
         if let context = browser.agentContextSummary(mentionedTabIDs: mentionedTabIDs) {
             contextualized = "\(context)\n\(utterance)"
@@ -204,21 +204,21 @@ final class AgentTurnModel {
             contextualized = utterance
         }
         let traceID = LLMSettings.$scoped.withValue(modelSettings) {
-            log.beginTask(isContinuation ? "" : utterance, tabID: spaceID)
+            log.beginTask(isContinuation ? "" : utterance, tabID: anchorID)
         }
         let task = AgentTaskContext(
             id: traceID,
             tabID: tabID,
-            spaceID: spaceID,
+            anchorID: anchorID,
             mentionedTabIDs: mentionedTabIDs,
             attachments: attachments,
             attachmentTextOnly: attachmentTextOnly,
             isContinuation: isContinuation
         )
         log.setAttachments(attachments, textOnly: attachmentTextOnly, taskID: task.id)
-        browser.setAgentWorking(true, inSpace: spaceID)
+        browser.setAgentWorking(true, inAnchor: anchorID)
         activeTask = task
-        reply.bind(toSpace: spaceID, showsInChrome: showsInChrome)
+        reply.bind(toAnchor: anchorID, showsInChrome: showsInChrome)
 
         let speech = speechOverride ?? speech
         let modelSettings = modelSettings
@@ -242,10 +242,10 @@ final class AgentTurnModel {
 
             guard let self, activeTask?.id == task.id else { return }
             log.completeTask(task.id, response: reply.text ?? "")
-            browser.setAgentWorking(false, inSpace: task.spaceID)
+            browser.setAgentWorking(false, inAnchor: task.anchorID)
             activeTask = nil
             runTask = nil
-            applyPendingSpaceMoves()
+            applyPendingAnchorMoves()
             let completed = self.completion
             self.completion = nil
             onTurnFinished?()
@@ -261,7 +261,7 @@ final class AgentTurnModel {
         runTask?.cancel()
         runTask = nil
         if let activeTask {
-            browser.setAgentWorking(false, inSpace: activeTask.spaceID)
+            browser.setAgentWorking(false, inAnchor: activeTask.anchorID)
             log.cancelTask(activeTask.id)
             self.activeTask = nil
         }
@@ -271,31 +271,31 @@ final class AgentTurnModel {
         }
         let completed = completion
         completion = nil
-        applyPendingSpaceMoves()
+        applyPendingAnchorMoves()
         completed?(.failure(CancellationError()))
     }
 
-    func reassignSpace(from spaceID: UUID, to newSpaceID: UUID) {
-        guard spaceID != newSpaceID else { return }
-        if compactingSpaceID == spaceID {
+    func reassignAnchor(from anchorID: UUID, to newAnchorID: UUID) {
+        guard anchorID != newAnchorID else { return }
+        if compactingAnchorID == anchorID {
             cancelCompaction()
         }
-        guard activeTask?.spaceID != spaceID else {
-            pendingSpaceMoves.append((from: spaceID, to: newSpaceID))
+        guard activeTask?.anchorID != anchorID else {
+            pendingAnchorMoves.append((from: anchorID, to: newAnchorID))
             return
         }
-        log.reassign(from: spaceID, to: newSpaceID)
-        runner?.transferSession(from: spaceID, to: newSpaceID)
-        if reply.spaceID == spaceID {
-            reply.bind(toSpace: newSpaceID, showsInChrome: reply.showsInChrome)
+        log.reassign(from: anchorID, to: newAnchorID)
+        runner?.transferSession(from: anchorID, to: newAnchorID)
+        if reply.anchorID == anchorID {
+            reply.bind(toAnchor: newAnchorID, showsInChrome: reply.showsInChrome)
         }
     }
 
-    private func applyPendingSpaceMoves() {
-        let moves = pendingSpaceMoves
-        pendingSpaceMoves = []
+    private func applyPendingAnchorMoves() {
+        let moves = pendingAnchorMoves
+        pendingAnchorMoves = []
         for move in moves {
-            reassignSpace(from: move.from, to: move.to)
+            reassignAnchor(from: move.from, to: move.to)
         }
     }
 
@@ -306,10 +306,10 @@ final class AgentTurnModel {
 
     @discardableResult
     func closeTab(_ tabID: UUID) -> Bool {
-        if compactingSpaceID == tabID {
+        if compactingAnchorID == tabID {
             cancelCompaction()
         }
-        let endedActiveTurn = activeTask?.tabID == tabID || activeTask?.spaceID == tabID
+        let endedActiveTurn = activeTask?.tabID == tabID || activeTask?.anchorID == tabID
         if endedActiveTurn {
             cancel()
         }

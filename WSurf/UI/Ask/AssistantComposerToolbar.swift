@@ -66,30 +66,30 @@ struct AssistantComposerToolbar: View {
             Spacer(minLength: 0)
 
             AssistantContextIndicator(
-                tokens: coordinator.browser.activeSpaceID.map {
+                tokens: coordinator.browser.activeAnchorID.map {
                     coordinator.conversationLog.usage(forTab: $0).estimatedContextTokens
                 } ?? 0,
                 window: ContextWindow.resolve(for: contextProvider, model: contextModel),
                 providerNotice: coordinator.isUsingSelectedProvider ? nil : String(localized: "Using \(contextProvider.name)"),
                 canCompact: coordinator.agentTurns.supportsCompaction
                     && !coordinator.agentTurns.isRunning
-                    && coordinator.agentTurns.compactingSpaceID == nil
-                    && coordinator.browser.activeSpaceID.map {
+                    && coordinator.agentTurns.compactingAnchorID == nil
+                    && coordinator.browser.activeAnchorID.map {
                         coordinator.conversationLog.checkpoint(forTab: $0) != nil
                     } == true,
-                isCompacting: coordinator.agentTurns.compactingSpaceID != nil
-                    && coordinator.agentTurns.compactingSpaceID == coordinator.browser.activeSpaceID
+                isCompacting: coordinator.agentTurns.compactingAnchorID != nil
+                    && coordinator.agentTurns.compactingAnchorID == coordinator.browser.activeAnchorID
                     || coordinator.agentReply.isCompacting
-                    && coordinator.agentReply.spaceID == coordinator.browser.activeSpaceID,
-                compactionMessage: coordinator.agentTurns.compactionMessageSpaceID == coordinator.browser.activeSpaceID
+                    && coordinator.agentReply.anchorID == coordinator.browser.activeAnchorID,
+                compactionMessage: coordinator.agentTurns.compactionMessageAnchorID == coordinator.browser.activeAnchorID
                     ? coordinator.agentTurns.compactionMessage : nil,
                 onCompact: {
-                    if let spaceID = coordinator.browser.activeSpaceID {
-                        coordinator.agentTurns.compactContext(inSpace: spaceID)
+                    if let anchorID = coordinator.browser.activeAnchorID {
+                        coordinator.agentTurns.compactContext(inAnchor: anchorID)
                     }
                 }
             )
-            .id(coordinator.browser.activeSpaceID)
+            .id(coordinator.browser.activeAnchorID)
 
             ComposerSendButton(stops: stops, isVoice: offersVoice && !stops && coordinator.supportsVoiceConversation,
                                isEnabled: canSend || (offersVoice && coordinator.supportsVoiceConversation)) {

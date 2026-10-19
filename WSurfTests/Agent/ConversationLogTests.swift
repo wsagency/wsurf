@@ -23,8 +23,8 @@ struct ConversationLogTests {
 
     @Test func voiceTurnsUpdateWithoutDuplicatesAndSurviveRelaunch() {
         let (log, database) = makeLog()
-        let space = UUID(), turn = UUID()
-        let write = log.voiceTranscriptWriter(tabID: space, providerID: "openai")
+        let anchor = UUID(), turn = UUID()
+        let write = log.voiceTranscriptWriter(tabID: anchor, providerID: "openai")
         write(turn, "What is on this page?", "It has")
         write(turn, "What is on this page?", "It has three links.")
         write(turn, "What is on this page?", "")
@@ -32,14 +32,14 @@ struct ConversationLogTests {
         #expect(log.traces.first?.providerID == "openai")
         log.saveBlocking()
         let reopened = ConversationLog(database: database)
-        #expect(reopened.exchanges(forTab: space) == [.init(prompt: "What is on this page?", response: "It has three links.")])
+        #expect(reopened.exchanges(forTab: anchor) == [.init(prompt: "What is on this page?", response: "It has three links.")])
         #expect(reopened.traces(forTab: UUID()).isEmpty)
     }
 
     @Test func voiceDeltasDoNotRestoreDeletedOrClearedHistory() {
         let (log, _) = makeLog()
-        let space = UUID(), first = UUID()
-        let write = log.voiceTranscriptWriter(tabID: space, providerID: "openai")
+        let anchor = UUID(), first = UUID()
+        let write = log.voiceTranscriptWriter(tabID: anchor, providerID: "openai")
         write(first, "Hello", "Hi")
         log.removeTrace(first)
         write(first, "Hello", "Hi again")
@@ -47,19 +47,19 @@ struct ConversationLogTests {
         log.clearAll()
         write(UUID(), "Late words", "Late reply")
         #expect(log.traces.isEmpty)
-        let next = log.voiceTranscriptWriter(tabID: space, providerID: "openai")
+        let next = log.voiceTranscriptWriter(tabID: anchor, providerID: "openai")
         next(UUID(), "New voice chat", "Hello")
         #expect(log.traces.count == 1)
     }
 
     @Test func voiceWriterDoesNotCrossProfileChangesOrCancelBrowserWork() {
         let (log, _) = makeLog()
-        let space = UUID()
-        let task = log.beginTask("Inspect the page", tabID: space)
-        let write = log.voiceTranscriptWriter(tabID: space, providerID: "openai")
+        let anchor = UUID()
+        let task = log.beginTask("Inspect the page", tabID: anchor)
+        let write = log.voiceTranscriptWriter(tabID: anchor, providerID: "openai")
         write(UUID(), "Tell me about it", "I will check.")
         #expect(log.traces.first { $0.id == task }?.state == .running)
-        #expect(log.isRunning(onTab: space))
+        #expect(log.isRunning(onTab: anchor))
         log.adopt(database: .temporary())
         write(UUID(), "Old profile", "Must not appear")
         #expect(log.traces.isEmpty)

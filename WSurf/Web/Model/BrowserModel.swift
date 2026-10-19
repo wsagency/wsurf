@@ -104,7 +104,7 @@ final class BrowserModel {
     var onTabTransferredOut: ((BrowserTab, Int) -> Void)?
     var onTabTransferredIn: ((BrowserTab, BrowserModel, Int) -> Void)?
     var onActiveTabChanged: ((BrowserTab?, BrowserTab?) -> Void)?
-    var onSpaceAnchorChanged: ((UUID, UUID) -> Void)?
+    var onAnchorChanged: ((UUID, UUID) -> Void)?
     var onContentProcessTerminated: ((BrowserTab) -> Void)?
     var onPageRetired: ((BrowserTab, BrowserPage) -> Void)?
     var onPictureInPictureChanged: ((BrowserTab, Bool) -> Void)?
@@ -386,9 +386,9 @@ final class BrowserModel {
     }
 
     private func insertionAnchor(after opener: BrowserTab) -> BrowserTab? {
-        let space = Set(spaceTabs(spaceID(of: opener.id)).map(\.id))
-        guard !space.isEmpty else { return tabs.contains { $0 === opener } ? opener : nil }
-        return tabs.last { space.contains($0.id) }
+        let anchor = Set(anchorTabs(anchorID(of: opener.id)).map(\.id))
+        guard !anchor.isEmpty else { return tabs.contains { $0 === opener } ? opener : nil }
+        return tabs.last { anchor.contains($0.id) }
     }
 
     @discardableResult
@@ -445,7 +445,7 @@ final class BrowserModel {
         }
     }
 
-    var spaceAnchors: [UUID: UUID] = [:]
+    var tabAnchors: [UUID: UUID] = [:]
 
     var paneInAir: UUID?
 

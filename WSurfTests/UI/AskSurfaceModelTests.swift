@@ -263,11 +263,11 @@ struct AskSurfaceModelTests {
         let model = model(placement: placement)
         defer { model.coordinator.closeWindow() }
         model.browser.newTab()
-        let spaceID = try #require(model.activeSpaceID)
+        let anchorID = try #require(model.activeAnchorID)
         let coordinator = model.coordinator
-        coordinator.agentReply.bind(toSpace: spaceID, showsInChrome: showsInChrome)
+        coordinator.agentReply.bind(toAnchor: anchorID, showsInChrome: showsInChrome)
         let question = coordinator.agentQuestions.present(
-            [.init(text: "Which color?", options: [])], inSpace: spaceID
+            [.init(text: "Which color?", options: [])], inAnchor: anchorID
         )
 
         #expect(model.pendingQuestion == (showsInChrome ? question : nil))
@@ -279,15 +279,15 @@ struct AskSurfaceModelTests {
     }
 
     @Test(arguments: [true, false])
-    func questionsFromAnotherSpaceStayHidden(showsInChrome: Bool) throws {
+    func questionsFromAnotherAnchorStayHidden(showsInChrome: Bool) throws {
         let model = model()
         defer { model.coordinator.closeWindow() }
         let origin = model.browser.newTab()
-        let spaceID = try #require(model.activeSpaceID)
+        let anchorID = try #require(model.activeAnchorID)
         let coordinator = model.coordinator
-        coordinator.agentReply.bind(toSpace: spaceID, showsInChrome: showsInChrome)
+        coordinator.agentReply.bind(toAnchor: anchorID, showsInChrome: showsInChrome)
         let question = coordinator.agentQuestions.present(
-            [.init(text: "Which color?", options: [])], inSpace: spaceID
+            [.init(text: "Which color?", options: [])], inAnchor: anchorID
         )
         model.browser.newTab()
 
