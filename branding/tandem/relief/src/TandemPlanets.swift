@@ -20,6 +20,7 @@ import simd
 
 public enum TandemVariant: String, CaseIterable {
     case earthMoon      // violet oceans, lilac continents, clouds, atmosphere; mint regolith moon
+    case real          // NASA imagery: Blue Marble Earth, alpha clouds, LROC Moon at the true 0.2727 ratio
     case clay           // matte unglazed ceramic, strong sculpted relief
     case topographic    // glowing iso-lines of the height maps on a dark ground
 }
@@ -39,6 +40,7 @@ public struct TandemParams {
     public var heroLongitudeDeg = 270.0           // planet rotation at t = 0
     public var moonFaceDeg = 0.0                // which moon longitude faces the camera at t = 0
     public var gap = 0.17                       // gap ring around the moon (fraction of moon radius)
+    public var moonScale: Float = TandemScene.moonRatio   // moon radius in planet radii (brand 0.48, real 0.2727)
     public var shadows = false                  // soft shadow-mapped key light (clay: plateaus shade the ocean, moon shades the planet)
     public var texturesDir = "textures"
     public var segments = 720                   // longitude segments of the relief meshes
@@ -186,6 +188,7 @@ public final class TandemScene {
         case .earthMoon: buildEarth()
         case .clay: buildClay()
         case .topographic: buildTopo()
+        case .real: buildReal()
         }
         buildLights()
         setTime(0)
@@ -193,7 +196,7 @@ public final class TandemScene {
 
     // ---- hierarchy -----------------------------------------------------------------------
     func buildHierarchy() {
-        let p = params, R = TandemScene.moonRatio
+        let p = params, R = p.moonScale
         let cam = SCNCamera(); cam.zNear = 1; cam.zFar = 200; cam.fieldOfView = 20
         cameraNode.camera = cam; cameraNode.position = SCNVector3(0, 0, 24)
         scene.rootNode.addChildNode(cameraNode)
@@ -221,6 +224,7 @@ public final class TandemScene {
         m.shaderModifiers = [.fragment: "_output.color = float4(0.0);"]
         cutter.geometry!.firstMaterial = m
         cutter.castsShadow = false
+        cutter.isHidden = p.variant == .real        // the brand gap ring is brand-only
         moonPivot.addChildNode(cutter)
 
         planetNode.categoryBitMask = 1; cloudNode.categoryBitMask = 1; moonNode.categoryBitMask = 2
@@ -280,6 +284,12 @@ public final class TandemScene {
             scene.lightingEnvironment.intensity = p.dark ? 0.85 : 1.15
         case .topographic:
             break
+        case .real:
+            dirLight(keyDir, 5200, color(0xFFF1DC), name: "key")
+            dirLight(SIMD3<Float>(-0.55, 0.2, 0.8), 1000, color(0xC9D8F0), name: "fill")
+            if p.dark { dirLight(SIMD3<Float>(0.5, -0.1, 0.85), 300, color(0x9FC2FF), name: "rim") }
+            scene.lightingEnvironment.contents = envImage(top: 0xE8EEF8, bottom: 0x23262E)
+            scene.lightingEnvironment.intensity = 0.8
         }
     }
     func envImage(top: UInt32, bottom: UInt32) -> CGImage {
@@ -314,7 +324,7 @@ public final class TandemScene {
         planetNode.geometry = pg
 
         let mh = tex.grayFloats("moon_height.png")
-        let mg = sphereGeometry(radius: TandemScene.moonRatio, segW: seg, segH: seg / 2, height: mh, amp: 0.040, floor0: 0.5)
+        let mg = sphereGeometry(radius: params.moonScale, segW: seg, segH: seg / 2, height: mh, amp: 0.040, floor0: 0.5)
         mg.firstMaterial = pbr(diffuse: tex.image("moon_color.png"), normal: tex.image("moon_normal.png"), normalIntensity: 1.5, roughness: 0.93)
         mg.firstMaterial!.diffuse.intensity = 0.84
         moonNode.geometry = mg
@@ -370,6 +380,39 @@ public final class TandemScene {
         let d = -keyDir; return simd_normalize(d)
     }
 
+    /// Real-colour Earth and Moon from NASA imagery: Blue Marble surface, alpha cloud shell,
+    /// fresnel atmosphere, LROC Moon at the true 0.2727 radius ratio. No brand gap cutter.
+    func buildReal() {
+        let seg = min(params.segments, 360)
+        let eg = sphereGeometry(radius: 1, segW: seg, segH: seg / 2)
+        let em = SCNMaterial(); em.lightingModel = .physicallyBased
+        setup(em.diffuse, tex.image("earth_color.jpg"))
+        em.roughness.contents = 0.62; em.metalness.contents = 0.0
+        eg.firstMaterial = em; planetNode.geometry = eg
+
+        let mg = sphereGeometry(radius: params.moonScale, segW: seg, segH: seg / 2)
+        let mm = SCNMaterial(); mm.lightingModel = .physicallyBased
+        setup(mm.diffuse, tex.image("moon_color.jpg"))
+        mm.roughness.contents = 0.96; mm.metalness.contents = 0.0
+        mg.firstMaterial = mm; moonNode.geometry = mg
+
+        // clouds
+        let cg = sphereGeometry(radius: 1.014, segW: 360, segH: 180)
+        let cm = SCNMaterial(); cm.lightingModel = .physicallyBased
+        setup(cm.diffuse, tex.image("earth_clouds.png")); cm.roughness.contents = 1.0; cm.metalness.contents = 0.0
+        cm.writesToDepthBuffer = false; cm.blendMode = .alpha
+        cm.colorBufferWriteMask = [.red, .green, .blue]       // blended over opaque ground: never lower the destination alpha
+        cg.firstMaterial = cm; cloudNode.geometry = cg
+
+        // atmosphere: blue fresnel rim + soft outer glow
+        let rimG = sphereGeometry(radius: 1.014, segW: 180, segH: 90)
+        rimG.firstMaterial = atmosphere(noAlphaWrite: true, tint: params.dark ? 0x86B5FF : 0x5B8FEA, power: 3.0, strength: params.dark ? 1.0 : 0.8, backFaces: false, limb: 0)
+        rimNode.geometry = rimG
+        let glowG = sphereGeometry(radius: 1.26, segW: 180, segH: 90)
+        glowG.firstMaterial = atmosphere(tint: params.dark ? 0x5E93FF : 0x6FA0FF, power: 4.0, strength: params.dark ? 0.30 : 0.18, backFaces: true, limb: Float(sqrt(1 - 1 / (1.26 * 1.26))))
+        glowNode.geometry = glowG
+    }
+
     func buildClay() {
         let seg = params.segments
         let ph = tex.grayFloats("planet_clay_height.png")
@@ -377,7 +420,7 @@ public final class TandemScene {
         let pm = pbr(diffuse: tex.image("planet_clay_color.png"), normal: tex.image("planet_clay_normal.png"), normalIntensity: 1.1, roughness: 0.88)
         pg.firstMaterial = pm; planetNode.geometry = pg
         let mh = tex.grayFloats("moon_clay_height.png")
-        let mg = sphereGeometry(radius: TandemScene.moonRatio, segW: seg, segH: seg / 2, height: mh, amp: 0.10, floor0: 0.0)
+        let mg = sphereGeometry(radius: params.moonScale, segW: seg, segH: seg / 2, height: mh, amp: 0.10, floor0: 0.0)
         mg.firstMaterial = pbr(diffuse: tex.image("moon_clay_color.png"), normal: tex.image("moon_clay_normal.png"), normalIntensity: 1.1, roughness: 0.9)
         moonNode.geometry = mg
         mg.firstMaterial!.diffuse.intensity = 0.86
