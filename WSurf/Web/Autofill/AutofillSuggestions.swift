@@ -728,7 +728,10 @@ final class AutofillSuggestions {
                     prepareArguments: prepare
                 )
                 guard (delivered as? Int ?? 0) > 0 else { throw ContactAutofillError.noField }
-                try await self.validate(request, in: page)
+                // The page spent the request's token on this fill, so `validate`, which asks the page about that token, can no
+                // longer pass: a fill the page took is never reported as failed. The pick is recorded only under the request's
+                // native authority.
+                guard (try? self.requireAuthority(request, in: page)) != nil else { return }
                 if request.kind == .password, request.field == .password, let username = filledUsername,
                    let origin = SavedPassword.origin(for: request.frameURL) {
                     let picked = request.rows[id]

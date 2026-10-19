@@ -8,7 +8,8 @@ import WebKit
 @testable import WSurf
 
 /// The password client's field tracker, in both engines, read from what the shipped script posts: what it sends again after a vault
-/// was unlocked, and which lone field of an identifier-first step it takes for the login's username. No native dropdown is involved.
+/// was unlocked, which lone field of an identifier-first step it takes for the login's username, and what a fill it took leaves for
+/// the native request check. No native dropdown is involved.
 @MainActor
 struct PasswordAutofillTrackerTests {
     /// Everything the script posts, in order.
@@ -48,6 +49,46 @@ struct PasswordAutofillTrackerTests {
             let marker = UUID().uuidString
             try await run("globalThis.__wsurfSend('wsurfPasswords', {action: 'ping', marker});", ["marker": marker])
             #expect(await waitUntil { self.posts.contains { $0["marker"] as? String == marker } })
+        }
+
+        /// Focuses the field `id` and returns the `select` the script then posts for it.
+        func select(_ id: String) async throws -> [String: Any] {
+            let count = selections.count
+            try await run("document.getElementById(id).focus(); globalThis.__wsurfPasswords.refresh();", ["id": id])
+            try #require(await waitUntil { self.selections.count > count }, "\(id) is selected")
+            return try #require(selections.last)
+        }
+
+        private func request(_ selection: [String: Any]) -> [String: Any] {
+            ["token", "url", "documentID", "formID", "fieldID"].reduce(into: [:]) { $0[$1] = selection[$1] as? String ?? "" }
+        }
+
+        /// Whether the page still answers the request check `AutofillSuggestions.validate` makes before a fill: the selected field's
+        /// geometry while the request's token is the page's, otherwise nothing.
+        func validates(_ selection: [String: Any]) async throws -> Bool {
+            try await run("""
+                const model = globalThis.__wsurfAutofillForms;
+                const active = globalThis.__wsurfAutofillSuggestions?.active();
+                if (model?.documentID !== documentID || !active || model.id(active) !== fieldID || model.group(active)?.id !== formID) return null;
+                return globalThis.__wsurfPasswords?.bounds(token, url) ?? null;
+                """, request(selection)) is [String: Any]
+        }
+
+        /// Fills through the transport and call `AutofillSuggestions.fill` uses, and returns the page's answer as it reads it.
+        func fill(_ selection: [String: Any], username: String, password: String) async throws -> Int {
+            var arguments = request(selection)
+            arguments["bridge"] = "__wsurfPasswords"
+            arguments["fields"] = ["username": username, "password": password]
+            nonisolated(unsafe) let values = arguments
+            let answer = try await page.callAsyncJavaScript(
+                "if (globalThis.__wsurfAutofillForms?.documentID !== documentID) return 0; return globalThis[bridge]?.fill(token, url, fields) || 0;",
+                in: nil, contentWorld: PasswordAutofill.world, prepareArguments: { values }
+            )
+            return answer as? Int ?? 0
+        }
+
+        func value(_ id: String) async throws -> String? {
+            try await run("return document.getElementById(id).value;", ["id": id]) as? String
         }
     }
 
@@ -196,6 +237,70 @@ struct PasswordAutofillTrackerTests {
             #expect(mail == "email/contact", "not alone in its group on \(engine)")
             #expect(query == "null/null", "no account wording on \(engine)")
             #expect(code == "one-time-code/null", "a verification code on \(engine)")
+        }
+    }
+
+    // MARK: A fill the page took
+
+    // The page spends a field's token on the fill it takes, so the request check made before a fill no longer finds the request
+    // afterwards. Making that check again after delivery reported every delivered fill as "Couldn’t Fill Saved Details" and skipped
+    // recording the pick; the page's answer alone decides now.
+
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aDeliveredFillSpendsTheTokenTheRequestCheckAsksAbout(engine: BrowserEngine) async throws {
+        try await withHarness(engine, Self.login) { harness in
+            let selection = try await harness.select("p")
+            #expect(try await harness.validates(selection), "the request is current before the fill on \(engine)")
+
+            #expect(try await harness.fill(selection, username: "ada@example.test", password: "dummy-secret") == 2, "delivered on \(engine)")
+
+            #expect(try await harness.value("u") == "ada@example.test")
+            #expect(try await harness.value("p") == "dummy-secret")
+            #expect(try await harness.validates(selection) == false, "the page spent the token on \(engine)")
+            #expect(try await harness.fill(selection, username: "ada@example.test", password: "dummy-secret") == 0, "and fills once")
+        }
+    }
+
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func bothStepsOfAnIdentifierFirstLoginAreDelivered(engine: BrowserEngine) async throws {
+        let html = """
+            <form id="login"><input id="email" type="email" name="email"><button id="next" type="button">Next</button></form>
+            <script>
+              document.getElementById('next').onclick = () => {
+                document.getElementById('login').innerHTML = '<input id="p" type="password" autocomplete="current-password">';
+              };
+            </script>
+            """
+        try await withHarness(engine, html) { harness in
+            let account = try await harness.select("email")
+            #expect(try await harness.fill(account, username: "ada@example.test", password: "dummy-secret") == 1, "the account step on \(engine)")
+            #expect(try await harness.value("email") == "ada@example.test")
+            #expect(try await harness.validates(account) == false)
+
+            try await harness.run("document.getElementById('next').click();")
+            let password = try await harness.select("p")
+            #expect(password["token"] as? String != account["token"] as? String)
+            #expect(try await harness.fill(password, username: "ada@example.test", password: "dummy-secret") == 1, "the password step on \(engine)")
+            #expect(try await harness.value("p") == "dummy-secret")
+            #expect(try await harness.validates(password) == false)
+        }
+    }
+
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aFillIsDeliveredWhenThePageReformatsTheValue(engine: BrowserEngine) async throws {
+        let html = Self.login + """
+            <script>
+              document.getElementById('u').addEventListener('input', event => {
+                event.target.value = event.target.value.trim().toLowerCase();
+              });
+            </script>
+            """
+        try await withHarness(engine, html) { harness in
+            let selection = try await harness.select("p")
+            #expect(try await harness.fill(selection, username: " Ada@Example.TEST ", password: "dummy-secret") == 2, "delivered on \(engine)")
+            #expect(try await harness.value("u") == "ada@example.test", "the page's own format on \(engine)")
+            #expect(try await harness.value("p") == "dummy-secret")
+            #expect(try await harness.validates(selection) == false)
         }
     }
 }

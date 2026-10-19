@@ -134,6 +134,28 @@ struct AutofillWebsiteOfferTests {
         }
     }
 
+    @Test(.boundedWebViews) func ofSeveralSiblingsRepeatingTheLoginTheOneJustFilledIsOfferedTheWebsite() async throws {
+        try await withSession { session, vaults in
+            let www = account("ada"), shop = account("ada", origins: ["https://shop.example.test"])
+            try await VaultManagerFixture.save([www, shop], in: vaults[0])
+            let epoch = try #require(vaults[0].manager.authorizationEpoch)
+
+            // Nothing was filled here: the two are never guessed between.
+            await session.offer(try login("ada"), origin: Self.page)
+            #expect(session.websiteOffer == nil)
+            if let offer = session.current {
+                session.dismiss(offer, rememberingChoice: false)
+            }
+
+            AutofillSaveCoordinator.shared.rememberFilledUsername(
+                "ada", origin: Self.page, documentID: "", in: try #require(session.page), accountID: shop.id, epoch: epoch
+            )
+            await session.offer(try login("ada"), origin: Self.page)
+            #expect(session.websiteOffer?.accountID == shop.id)
+            #expect(session.current == nil, "never a copy of the login just filled")
+        }
+    }
+
     @Test(.boundedWebViews) func anotherPasswordOrUsernameIsStillANewLogin() async throws {
         try await withSession { session, vaults in
             try await VaultManagerFixture.save([account("ada")], in: vaults[0])

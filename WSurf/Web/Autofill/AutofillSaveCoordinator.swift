@@ -153,6 +153,15 @@ final class AutofillSaveSession: NSObject {
         self.username = step
     }
 
+    /// The account picked in this tab for `origin` and `username` while that pick is live, as `selectedAccount` checks it, but read
+    /// without retiring it, so a caller that has not confirmed its document yet may ask.
+    private func livePick(origin: String, username value: String) -> (accountID: UUID, epoch: UInt64)? {
+        guard let page, let context, page.context === context, let step = username, let accountID = step.accountID,
+              let epoch = step.epoch, let deadline = step.deadline, step.contextID == context.contextID,
+              step.tab == ObjectIdentifier(page), step.origin == origin, step.value == value, ContinuousClock.now < deadline else { return nil }
+        return (accountID, epoch)
+    }
+
     /// A username seen on a submitted or interacted step. The picked account rides along only for the same tab,
     /// context, origin and username, and keeps its original deadline; any other username starts a plain step.
     func stageUsername(_ value: String, origin: String, documentID: String, attemptID: UUID, in page: BrowserPage) {
@@ -220,13 +229,18 @@ final class AutofillSaveSession: NSObject {
             AutofillDiagnostics.note(.offerDroppedNotLive, kind: .password)
             return nil
         }
-        let route: VaultRoute
+        var route: VaultRoute
         if let target {
             route = .manager(target)
         } else {
             route = await CredentialRouting.route(profile: context.profile, origin: origin, username: login.username)
         }
         guard revision == self.revision, self.page === page else { return nil }
+        // The account just filled names one of the vaults that hold this username: the login is compared with it there.
+        if case .needsChoice(let holders, reason: .matchInSeveral) = route, let pick = livePick(origin: origin, username: login.username),
+           let picked = manager(epoch: pick.epoch), holders.contains(where: { $0.vaultID == picked.vaultID }) {
+            route = .manager(picked)
+        }
         // The page the form was on, not the one the tab shows by now.
         let loginURL = (loginPage ?? page.url).flatMap { CredentialAccountSelection.loginURL(for: $0, origin: origin) }
         let manager: CredentialManager
@@ -356,7 +370,8 @@ final class AutofillSaveSession: NSObject {
 
     /// The one credential, in the profile's unlocked vaults, that `login` repeats exactly (username and password) on a sibling
     /// website of `origin` and that has room for `origin`, while no credential for `origin` itself has that username. Saving the
-    /// login would make a copy of it, so adding the website is offered instead. Several such credentials are never guessed between.
+    /// login would make a copy of it, so adding the website is offered instead. Of several such credentials only the one just filled
+    /// here is taken; the others are never guessed between.
     private func siblingAccount(for login: SavedPassword, origin: String) async -> (accountID: UUID, epoch: UInt64)? {
         guard let context, !context.profile.isPrivate, let page, page.context === context, let origin = managerOrigin(origin),
               CredentialAccountSelection.site(of: origin) != nil,
@@ -375,7 +390,8 @@ final class AutofillSaveSession: NSObject {
                 found.append((accountID: account.id, epoch: epoch))
             }
         }
-        return found.count == 1 ? found[0] : nil
+        let pick = livePick(origin: origin, username: login.username)
+        return found.count == 1 ? found[0] : found.first { $0.accountID == pick?.accountID && $0.epoch == pick?.epoch }
     }
 
     /// Offers to add `origin` to the credential `accountID` of the vault leased under `epoch`: a credential of a sibling website
