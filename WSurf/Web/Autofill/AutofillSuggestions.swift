@@ -41,6 +41,15 @@ final class AutofillSuggestions {
         var grants: [UUID: Grant] = [:]
         /// What the panel returns (a fresh id per row) -> the owning vault and its account. Two vaults may hold the same account id.
         var rows: [UUID: (vaultID: UUID, accountID: UUID)] = [:]
+        /// Rows that list an account of a sibling website (`CredentialAccountSelection.siblings`), not of the page's origin.
+        var siblingRows: Set<UUID> = []
+        /// The rows behind "Check other logins": titles and websites only. No secret is read until one of them is chosen.
+        var siblings: [AutofillSuggestion] = []
+        /// A row that is not an account, and what choosing it does.
+        enum Action {
+            case siblings
+        }
+        var actions: [UUID: Action] = [:]
 
         init(page: BrowserPage, context: BrowserProfileContext, frame: BrowserFrame, token: String, kind: AutofillSaveKind,
              frameURL: URL, topURL: URL, world: WKContentWorld, bridge: String,
@@ -176,7 +185,8 @@ final class AutofillSuggestions {
     /// Account choices for `request`: the union over the profile's unlocked vaults, each read under its own lease. A locked
     /// vault is never read; unlocking happens in settings. Locked, stale or mis-originated requests get no dropdown. The
     /// picked-account lookup can invalidate the carry-over, so it runs only while this is still the page's current request
-    /// and presentation.
+    /// and presentation. With nothing for the exact origin, a password field gets one row that lists the accounts of sibling
+    /// websites (`CredentialDropdown`); the default list itself never widens.
     private func managerSuggestions(for request: Request, origin: String, presentation: UUID) async -> [AutofillSuggestion]? {
         let context = request.context
         guard !context.profile.isPrivate, request.page.context === context,
@@ -223,11 +233,35 @@ final class AutofillSuggestions {
                 result.append(AutofillSuggestion(id: rowID, title: row.title, detail: detail, origin: origin))
             }
         }
-        return result
+        guard result.isEmpty, request.field == .password else { return result }
+        var siblings: [AutofillSuggestion] = []
+        for read in reads {
+            for (account, website) in CredentialAccountSelection.siblings(
+                in: read.snapshot.accounts, origin: origin, entered: request.enteredUsername
+            ) {
+                let rowID = UUID()
+                request.rows[rowID] = (read.manager.vaultID, account.id)
+                request.siblingRows.insert(rowID)
+                // A sibling row says which website the account is saved for, and with several vaults open, which vault.
+                let host = String(website.dropFirst("https://".count))
+                let detail = reads.count > 1 ? "\(host) · \(read.label)" : host
+                siblings.append(AutofillSuggestion(
+                    id: rowID, title: CredentialAccountSelection.title(account, origin: website), detail: detail, origin: origin
+                ))
+            }
+        }
+        guard case .siblings(let site) = CredentialDropdown.plan(
+            exact: result.count, siblings: siblings.count, origin: origin, field: request.field
+        ) else { return result }
+        request.siblings = siblings
+        let rowID = UUID()
+        request.actions[rowID] = .siblings
+        return [AutofillSuggestion(id: rowID, title: String(localized: "Check other logins for *.\(site)"), detail: "", origin: origin)]
     }
 
     /// What may be delivered for the row `rowID` now: the account must still exist in the vault that owns the row, still be
-    /// associated with this origin, and that vault must be the same unlock and revision the choice was shown under. The
+    /// associated with this origin (a sibling row: with a sibling website of it), and that vault must be the same unlock and
+    /// revision the choice was shown under. The
     /// returned generation is the vault content generation the answer is valid for: it was available (no write in flight)
     /// before the read and is unchanged after it, and the caller must see it unchanged again immediately before delivering.
     private func managerAccount(
@@ -241,7 +275,10 @@ final class AutofillSuggestions {
         guard manager.authorizationEpoch == grant.epoch, manager.stableGeneration == generation,
               snapshot.vaultID == row.vaultID, snapshot.revision == grant.revision,
               let account = snapshot.accounts.first(where: { $0.id == row.accountID }),
-              account.origins.contains(origin) else { throw ContactAutofillError.changedPage }
+              account.origins.contains(origin)
+                || (request.siblingRows.contains(rowID) && CredentialAccountSelection.isSibling(account, of: origin)) else {
+            throw ContactAutofillError.changedPage
+        }
         return (manager, account, generation)
     }
 
@@ -443,7 +480,27 @@ final class AutofillSuggestions {
         try requireAuthority(request, in: page)
     }
 
+    /// The "Check other logins" row: the same request now shows the sibling accounts it read. Nothing is read again, and no secret
+    /// is touched, until one of them is chosen.
+    private func showSiblings(_ request: Request, in page: BrowserPage) {
+        let siblings = request.siblings
+        guard !siblings.isEmpty, requests[ObjectIdentifier(page)] === request else { return }
+        dismiss()
+        self.page = page
+        let id = presentationID
+        Task { [weak self, weak page] in
+            guard let self, let page, id == self.presentationID,
+                  (try? await self.validate(request, in: page, requiresFocus: true)) != nil,
+                  id == self.presentationID, Self.canPresent(in: page) else { return }
+            self.show(siblings, request: request, in: page)
+        }
+    }
+
     private func fill(_ id: UUID, request: Request, in page: BrowserPage) {
+        if request.actions[id] == .siblings {
+            showSiblings(request, in: page)
+            return
+        }
         guard !isFilling else { return }
         isFilling = true; dismiss()
         Task { [weak self, weak page] in

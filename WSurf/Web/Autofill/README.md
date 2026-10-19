@@ -32,6 +32,14 @@ Only a visible, populated panel runs the geometry watcher; ownership, policy and
 origin are still revalidated before presentation and around authenticated filling.
 Typing or dismissal requires another focus/click interaction to reopen the panel.
 
+A password list holds only accounts saved for the page's exact origin. When it
+would be empty but an unlocked vault holds accounts for another HTTPS website of
+the same registrable domain (public-suffix aware, so `a.github.io` and
+`b.github.io` are not related), the panel shows one row, "Check other logins
+for *.example.com". Choosing it lists those accounts, each with the website it
+is saved for. Only titles and websites are shown; the chosen account's secret
+is read again at delivery and filled exactly like a normal choice.
+
 ## Submission lifecycle
 
 `AutofillSaveScript` tracks trusted edits and separates an attempt from evidence
