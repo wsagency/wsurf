@@ -45,8 +45,13 @@ final class Shot {
     var baseLine: Float
     init(_ variant: TandemVariant, dark: Bool, tweak: ((inout TandemParams) -> Void)? = nil) {
         var p = TandemParams(variant: variant, dark: dark)
-        p.texturesDir = ProcessInfo.processInfo.environment["TEX"] ?? "textures"
+        p.texturesDir = ProcessInfo.processInfo.environment["TEX"] ?? (variant == .real ? "real/textures" : "textures")
         tweak?(&p)
+        if variant == .real {                       // true Moon/Earth ratio, roomier orbit for the framing
+            if p.moonScale == TandemScene.moonRatio { p.moonScale = 0.2727 }
+            if p.orbitRadius == 1.62 { p.orbitRadius = 2.45 }
+            if p.cloudDriftRevsPerLoop == 0 { p.cloudDriftRevsPerLoop = 1 }
+        }
         if let kv = ProcessInfo.processInfo.environment["TWEAK"] {       // dev: TWEAK="heroLongitudeDeg=90,gap=0.2"
             for pair in kv.split(separator: ",") {
                 let a = pair.split(separator: "="); guard a.count == 2, let v = Double(a[1]) else { continue }
@@ -82,7 +87,7 @@ final class Shot {
     func rawLayout(_ l: Layout, _ size: CGSize) -> (CGPoint, CGFloat) {
         ts.setTime(0)
         let m = ts.moonNode.worldPosition
-        let mx = CGFloat(m.x), my = CGFloat(m.y), mr = CGFloat(TandemScene.moonRatio)
+        let mx = CGFloat(m.x), my = CGFloat(m.y), mr = CGFloat(ts.params.moonScale)
         switch l {
         case .hero:
             let x0 = min(-1, mx - mr), x1 = max(1, mx + mr), y0 = min(-1, my - mr), y1 = max(1, my + mr)

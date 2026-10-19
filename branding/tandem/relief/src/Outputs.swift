@@ -9,7 +9,7 @@ import AVFoundation
 import CoreVideo
 
 let FPS = 30
-let LOOP_SECONDS = 8.0
+let LOOP_SECONDS = Double(ProcessInfo.processInfo.environment["LOOPSEC"] ?? "") ?? 8.0
 let LOOP_FRAMES = Int(LOOP_SECONDS) * FPS        // 240; frame 240 == frame 0
 
 /// default ground per variant for loops (MP4 has no alpha)
@@ -23,10 +23,11 @@ enum Stills {
         ensureDir("stills")
         let plan: [(TandemVariant, [Ground], [Ground])] = [
             (.earthMoon, [.clear, .light, .dark], [.light, .dark]),
+            (.real, [.clear, .light, .dark], [.light, .dark]),
             (.clay, [.clear, .light, .dark], [.light, .dark]),
             (.topographic, [.clear, .dark], [.dark]),
         ]
-        for (v, hero, wide) in plan {
+        for (v, hero, wide) in plan where ProcessInfo.processInfo.environment["ONLY"] == nil || ProcessInfo.processInfo.environment["ONLY"] == v.rawValue {
             var shots: [Bool: Shot] = [:]
             func shot(_ g: Ground) -> Shot {
                 let dark = g == .dark || (g == .clear && v != .clay)
@@ -234,11 +235,17 @@ enum Loops {
         for v in TandemVariant.allCases where only == nil || only == v {
             let g = loopGround(v)
             let shot = Shot(v, dark: g == .dark)
-            for (name, size) in [("1080x1080", CGSize(width: 1080, height: 1080)), ("1920x1080", CGSize(width: 1920, height: 1080))] {
+            let sizes = ProcessInfo.processInfo.environment["LOOPSIZES"].map { s in
+                s.split(separator: ",").map { sz -> (String, CGSize) in
+                    let d = sz.split(separator: "x").map { Double(String($0))! }
+                    return (String(sz), CGSize(width: d[0], height: d[1]))
+                }
+            } ?? [("1080x1080", CGSize(width: 1080, height: 1080)), ("1920x1080", CGSize(width: 1920, height: 1080))]
+            for (name, size) in sizes {
                 let t0 = Date()
                 let (c, r) = shot.layout(.loop, size)
                 let path = (ProcessInfo.processInfo.environment["LOOPDIR"] ?? "loops") + "/\(v.rawValue)_loop_\(name).mp4"
-                let vw = VideoWriter(path: path, size: size, bitrate: name == "1080x1080" ? 7_000_000 : 9_000_000)
+                let vw = VideoWriter(path: path, size: size, bitrate: size.width >= 1900 ? 9_000_000 : (size.width <= 640 ? 3_500_000 : 7_000_000))
                 for i in 0..<LOOP_FRAMES {
                     let lay = shot.layer(t: Double(i) / Double(FPS), size: size, center: c, radius: r)
                     vw.append(shot.compose(lay, ground: g, size: size), frame: i)
