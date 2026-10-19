@@ -40,7 +40,8 @@ struct VaultUndoTests {
         let state = try await read(vault)
         var removing: [UUID: AccountStamp] = [:]
         for id in ids {
-            removing[id] = try #require(state.stamps[id])
+            let stamp = try #require(state.stamps[id])
+            removing[id] = stamp
         }
         _ = try await vault.manager.commitAccounts([], removing: removing, authorizedEpoch: state.epoch)
         return try await read(vault)
