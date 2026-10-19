@@ -544,10 +544,12 @@ final class CredentialManager {
 
     /// The per-account write of spec §13.5: only the touched accounts are compared and written, so an unrelated concurrent
     /// write survives. The lease and epoch rules are `commit`'s: a caller whose decision was made under another lease is refused
-    /// before anything starts.
-    func commitAccounts(_ writes: [AccountWrite], authorizedEpoch: UInt64, cause: String? = nil) async throws -> VaultCommitReceipt {
+    /// before anything starts. `removing` moves live accounts to Trash in the same write, each bound to its stamp.
+    func commitAccounts(
+        _ writes: [AccountWrite], removing: [UUID: AccountStamp] = [:], authorizedEpoch: UInt64, cause: String? = nil
+    ) async throws -> VaultCommitReceipt {
         try await authorizedWrite(epoch: authorizedEpoch) { access in
-            try await store.commitAccounts(vaultID: vaultID, writes, cause: cause, using: access)
+            try await store.commitAccounts(vaultID: vaultID, writes, removing: removing, cause: cause, using: access)
         }
     }
 
