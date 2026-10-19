@@ -167,11 +167,16 @@ struct PasswordAutofillTrackerTests {
             <form><input id="code" type="text" autocomplete="one-time-code"><button>Verify</button></form>
             """
         try await withHarness(engine, html) { harness in
-            #expect(try await harness.classification("declared") == "email/contact", "a declared purpose wins on \(engine)")
-            #expect(try await harness.classification("news") == "email/contact", "newsletter wording on \(engine)")
-            #expect(try await harness.classification("mail") == "email/contact", "not alone in its group on \(engine)")
-            #expect(try await harness.classification("query") == "null/null", "no account wording on \(engine)")
-            #expect(try await harness.classification("code") == "one-time-code/null", "a verification code on \(engine)")
+            let declared = try await harness.classification("declared")
+            let news = try await harness.classification("news")
+            let mail = try await harness.classification("mail")
+            let query = try await harness.classification("query")
+            let code = try await harness.classification("code")
+            #expect(declared == "email/contact", "a declared purpose wins on \(engine)")
+            #expect(news == "email/contact", "newsletter wording on \(engine)")
+            #expect(mail == "email/contact", "not alone in its group on \(engine)")
+            #expect(query == "null/null", "no account wording on \(engine)")
+            #expect(code == "one-time-code/null", "a verification code on \(engine)")
         }
     }
 }
