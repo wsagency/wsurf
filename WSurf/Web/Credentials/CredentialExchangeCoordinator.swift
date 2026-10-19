@@ -387,7 +387,8 @@ final class CredentialExchangeCoordinator {
         }
         let receipt: VaultCommitReceipt
         do {
-            receipt = try await staged.manager.commitAccounts(writes, removing: removing, authorizedEpoch: staged.epoch)
+            // The cause lets the History panel and the import report tell an import's earlier versions from an edit made here.
+            receipt = try await staged.manager.commitAccounts(writes, removing: removing, authorizedEpoch: staged.epoch, cause: "import")
         } catch {
             throw end(Self.messageAfterWriteStarted(error, staged.context.origin))
         }

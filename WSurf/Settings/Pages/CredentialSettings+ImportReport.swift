@@ -31,6 +31,8 @@ extension CredentialImportReview.LocalChange {
             String(localized: "Merged with another credential")
         case let .movedToTrash(part):
             String(localized: "\(part.label) moved to Trash")
+        case let .purged(part):
+            String(localized: "\(part.label) removed for good")
         }
         guard let date else { return what }
         return what + " · " + date.formatted(date: .abbreviated, time: .omitted)

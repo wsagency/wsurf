@@ -18,6 +18,8 @@ nonisolated extension CredentialImportReview {
             case notesRemoved
             case merged
             case movedToTrash(Record.Kind)
+            /// Removed from Trash for good: the vault keeps only that it was removed, and when.
+            case purged(Record.Kind)
         }
 
         let kind: Kind
@@ -157,8 +159,8 @@ nonisolated enum CredentialImportReport {
             keptParts(of: candidate, saved: saved, history: history, into: &found)
         }
         for identity in identities {
-            if case let .previouslyRemoved(entryID, _)? = classes[identity] {
-                found.add(.movedToTrash(part(of: identity)), trashedAt[entryID])
+            if case let .previouslyRemoved(entryID, isTombstone)? = classes[identity] {
+                found.add(isTombstone ? .purged(part(of: identity)) : .movedToTrash(part(of: identity)), trashedAt[entryID])
             }
         }
         return found.changes

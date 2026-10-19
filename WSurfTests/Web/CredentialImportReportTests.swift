@@ -96,7 +96,8 @@ extension CredentialExchangeCoordinatorTests {
             let failure = await #expect(throws: CredentialTransferFailure.self) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
-            #expect(failure?.message.kind == .nothingImported && (try f.diskBytes()) == before)
+            let after = try f.diskBytes()
+            #expect(failure?.message.kind == .nothingImported && after == before)
         }
     }
 
@@ -147,6 +148,23 @@ extension CredentialExchangeCoordinatorTests {
         }
     }
 
+    /// What an import itself leaves as an earlier version is marked with its cause, so the report never takes it for an edit.
+    @Test func anImportRecordsItsCauseOnTheVersionsItLeaves() async throws {
+        try await withFixture { f in
+            try await f.seed(neighbours(1))
+            try await importOnce(f, threeItems())
+            let changed = resent([1, 2, 3], changed: [2: "pw2-remote"])
+            try await importOnce(f, changed)
+
+            let stored = try await f.stored()
+            let item2 = try #require(stored.accounts.first { $0.exchangeItemID == Data([0xB0, 2]) })
+            let log = try await f.manager.revisionLog()
+            #expect(log[item2.id]?.map(\.cause) == ["import"] && log[item2.id]?.map(\.subject) == [.password])
+            try await f.stage(changed)
+            #expect(try review(f).keptChanges.isEmpty)
+        }
+    }
+
     // MARK: - No longer in Passwords
 
     /// Missing from a transfer is a question, not a removal: the credential is listed, kept, and Import writes nothing for it.
@@ -174,7 +192,8 @@ extension CredentialExchangeCoordinatorTests {
             let failure = await #expect(throws: CredentialTransferFailure.self) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
-            #expect(failure?.message.kind == .nothingImported && (try f.diskBytes()) == before)
+            let after = try f.diskBytes()
+            #expect(failure?.message.kind == .nothingImported && after == before)
 
             // Moving it to Trash is the user's choice, and Import then does that and nothing else.
             let trashBefore = try await f.manager.historyCounts().trash.trashEntry
@@ -237,7 +256,8 @@ extension CredentialExchangeCoordinatorTests {
             let failure = await #expect(throws: CredentialTransferFailure.self) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
-            #expect(failure?.message.kind == .discarded && (try f.diskBytes()) == before)
+            let after = try f.diskBytes()
+            #expect(failure?.message.kind == .discarded && after == before)
             #expect(try await f.stored().accounts.contains { $0.id == victim.id && $0.password == "changed-meanwhile" })
         }
     }
