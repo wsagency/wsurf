@@ -339,4 +339,144 @@ struct CredentialUndoModelTests {
             #expect(f.kinds == [.moveToTrash])
         }
     }
+
+    // MARK: Redo
+
+    @Test func redoRepeatsTheUndoneAddEditMergeAndMoveToTrash() async throws {
+        try await withFixture { f in
+            let existing = account("ada", on: "a", password: "old")
+            let twin = account("ada", on: "a", password: "twin")
+            try await f.seed([existing, twin])
+            try await f.model.beginEditing(accountID: nil)
+            f.model.draft?.username = "grace"
+            f.model.draft?.password = "added"
+            f.model.draft?.websites = "https://b.example.test"
+            _ = try await f.model.commitDraft()
+            let added = try #require(f.model.summaries.first { $0.username == "grace" }).id
+            try await f.model.beginEditing(accountID: existing.id)
+            f.model.draft?.password = "changed"
+            _ = try await f.model.commitDraft()
+            try await f.model.confirmMerge(try await f.model.mergeProposal(ids: [existing.id, twin.id], survivor: existing.id))
+            try await f.model.moveToTrash(ids: [added])
+            #expect(f.model.redoMenuTitle == nil, "nothing was undone yet")
+
+            for _ in 0..<4 {
+                await f.model.undo()
+            }
+            #expect(f.model.error == nil)
+            #expect(try await f.liveIDs() == [existing.id, twin.id])
+            #expect(try await f.snapshot().accounts.first { $0.id == existing.id }?.password == "old")
+
+            #expect(f.model.redoMenuTitle == String(localized: "Redo Add Credential"))
+            await f.model.redo()
+            #expect(try await f.liveIDs() == [existing.id, twin.id, added])
+            #expect(f.model.notice?.text == String(localized: "Redid Add Credential."))
+
+            #expect(f.model.redoMenuTitle == String(localized: "Redo Edit"))
+            await f.model.redo()
+            #expect(try await f.snapshot().accounts.first { $0.id == existing.id }?.password == "changed")
+
+            #expect(f.model.redoMenuTitle == String(localized: "Redo Merge"))
+            await f.model.redo()
+            #expect(try await f.liveIDs() == [existing.id, added], "the absorbed credential is merged again")
+            #expect(try await f.snapshot().accounts.first { $0.id == existing.id }?.mergedFrom?.map(\.accountID) == [twin.id])
+
+            #expect(f.model.redoMenuTitle == String(localized: "Redo Move to Trash"))
+            await f.model.redo()
+            #expect(try await f.liveIDs() == [existing.id])
+            #expect(try await f.trashedOwners() == [twin.id, added])
+
+            #expect(f.model.error == nil)
+            #expect(f.model.redoMenuTitle == nil, "everything was repeated")
+            #expect(f.model.undoMenuTitle == String(localized: "Undo Move to Trash"), "and a redone action can be undone again")
+        }
+    }
+
+    @Test func severalEditsOfOneCredentialUndoAndRedoInTurn() async throws {
+        try await withFixture { f in
+            let existing = account("ada", on: "a", password: "v0")
+            try await f.seed([existing])
+            for version in 1...3 {
+                try await f.model.beginEditing(accountID: existing.id)
+                f.model.draft?.password = "v\(version)"
+                _ = try await f.model.commitDraft()
+            }
+            func password() async throws -> String? {
+                try await f.snapshot().accounts.first { $0.id == existing.id }?.password
+            }
+
+            for expected in ["v2", "v1", "v0"] {
+                await f.model.undo()
+                #expect(try await password() == expected)
+            }
+            for expected in ["v1", "v2", "v3"] {
+                await f.model.redo()
+                #expect(try await password() == expected)
+            }
+
+            #expect(f.model.error == nil)
+            #expect(f.model.redoMenuTitle == nil)
+        }
+    }
+
+    @Test func aNewActionClearsRedo() async throws {
+        try await withFixture { f in
+            let accounts = [account("ada", on: "a"), account("grace", on: "b")]
+            try await f.seed(accounts)
+            try await f.model.moveToTrash(ids: [accounts[0].id])
+            await f.model.undo()
+            #expect(f.model.redoMenuTitle == String(localized: "Redo Move to Trash"))
+
+            try await f.model.moveToTrash(ids: [accounts[1].id])
+
+            #expect(f.model.redoMenuTitle == nil, "what was undone can't be repeated after something new")
+            await f.model.redo()
+            #expect(try await f.liveIDs() == [accounts[0].id])
+        }
+    }
+
+    @Test func redoAfterAChangeIsRefused() async throws {
+        try await withFixture { f in
+            let accounts = [account("ada", on: "a"), account("grace", on: "b")]
+            try await f.seed(accounts)
+            try await f.model.moveToTrash(ids: [accounts[0].id])
+            await f.model.undo()
+            // Another window changes the credential that came back.
+            var changed = try #require(try await f.snapshot().accounts.first { $0.id == accounts[0].id })
+            changed.password = "changed-elsewhere"
+            try await VaultManagerFixture.save([changed, accounts[1]], in: f.vault)
+            let revision = try await f.snapshot().revision
+
+            await f.model.redo()
+
+            #expect(f.model.error == String(
+                localized: "This can’t be undone: the credential changed since, or its copy in Trash is gone. Nothing was changed."
+            ))
+            #expect(try await f.snapshot().revision == revision, "nothing was written")
+            #expect(try await f.liveIDs() == [accounts[0].id, accounts[1].id])
+            #expect(f.model.redoMenuTitle == nil, "the step that failed is dropped")
+        }
+    }
+
+    @Test func aMarkForDeletionIsUndoneAndRedoneWithoutAWrite() async throws {
+        try await withFixture { f in
+            let accounts = [account("ada", on: "a"), account("grace", on: "b")]
+            try await f.seed(accounts)
+            try await f.model.moveToTrash(ids: accounts.map(\.id))
+            try await f.model.loadTrash()
+            let entry = try #require(f.model.trashItems.first)
+            let revision = try await f.snapshot().revision
+
+            f.model.markForDeletion(entryIDs: [entry.id])
+            #expect(f.model.markedCount == 1)
+            await f.model.undo()
+            #expect(f.model.markedCount == 0 && f.model.trashItems.count == 2)
+            #expect(f.model.redoMenuTitle == String(localized: "Redo Delete"))
+            await f.model.redo()
+
+            #expect(f.model.markedCount == 1 && f.model.trashItems.count == 1)
+            #expect(f.model.undoMenuTitle == String(localized: "Undo Delete"))
+            #expect(try await f.snapshot().revision == revision, "marks write nothing")
+        }
+    }
 }

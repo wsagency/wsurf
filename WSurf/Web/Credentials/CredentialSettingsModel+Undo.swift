@@ -58,12 +58,17 @@ extension CredentialSettingsModel {
         showNotice("Restored from Trash.", undo: recorded)
     }
 
-    // MARK: Undo
+    // MARK: Undo and Redo
 
     /// Whether Undo has something to take back right now: not while the page is busy, and not while an editor is open (its draft
     /// would be written over a vault that moved).
     var canUndo: Bool {
         !isBusy && draft == nil && live?.undoSteps.isEmpty == false
+    }
+
+    /// Whether Redo has something to repeat, on the same conditions.
+    var canRedo: Bool {
+        !isBusy && draft == nil && live?.redoSteps.isEmpty == false
     }
 
     /// The Edit menu's title, "Undo Move to Trash"; `nil` when there is nothing to take back.
@@ -72,38 +77,80 @@ extension CredentialSettingsModel {
         return String(localized: step.kind.undoTitle)
     }
 
+    /// The Edit menu's title, "Redo Move to Trash"; `nil` when there is nothing to repeat.
+    var redoMenuTitle: String? {
+        guard canRedo, let step = live?.redoSteps.last else { return nil }
+        return String(localized: step.kind.redoTitle)
+    }
+
     /// Takes the last action back, in one commit. A refusal that will not change (the credential changed since, its copy in the Trash is
     /// gone, a passkey is live again) drops that step, writes nothing and says why; the next Undo tries the step before it.
     func undo() async {
-        guard canUndo, let live, let step = live.undoSteps.last else { return }
+        await replay(.undo)
+    }
+
+    /// Repeats the last action that Undo took back, the same way. Any new action ends what could be redone.
+    func redo() async {
+        await replay(.redo)
+    }
+
+    private func replay(_ direction: CredentialReplay) async {
+        guard direction == .undo ? canUndo : canRedo, let live else { return }
+        guard let step = direction == .undo ? live.undoSteps.last : live.redoSteps.last else { return }
         let epoch = live.epoch
+        let notice = direction == .undo ? step.kind.undoneNotice : step.kind.redoneNotice
         if step.kind == .markForDeletion {
-            // Nothing was written: the entries show in the Trash again.
-            try? update(epoch) {
-                $0.markedForDeletion.removeAll { step.marked.contains($0) }
-                $0.undoSteps.removeLast()
-            }
-            showNotice(step.kind.undoneNotice)
+            // Nothing was written: the entries show in the Trash again, or are hidden again.
+            try? update(epoch) { $0.replayMark(step, direction) }
+            showNotice(notice)
             return
         }
-        let undone = await guarded(describe: { Self.undoMessage(for: $0) }) {
+        let replayed = await guarded(describe: { Self.undoMessage(for: $0) }) {
+            let before = try await authorizedSnapshot(epoch: epoch).snapshot
             do {
                 _ = try await applyUndo(step, epoch: epoch)
             } catch let failure where Self.endsUndo(failure) {
-                try? update(epoch) { $0.undoSteps.removeLast() }
+                try? update(epoch) { $0.discardNewest(direction) }
                 throw failure
             }
-            try await reloadAfterWrite(epoch: epoch)
-            // The accounts it rewrote have new stamps; the steps before it expect exactly this content under them.
-            let touched = step.touchedAccounts
-            try update(epoch) {
-                $0.undoSteps.removeLast()
-                $0.rebindUndoSteps(touched)
+            let after = try await reloadAfterWrite(epoch: epoch)
+            let inverse = Self.inverse(of: step, before: before, after: after)
+            // The accounts it rewrote have new stamps; the steps behind it expect exactly this content under them.
+            try update(epoch) { $0.completed(direction, inverse: inverse, touching: step.touchedAccounts) }
+        }
+        if replayed {
+            showNotice(notice)
+        }
+    }
+
+    /// The step that puts back what `step` just changed, for Redo after an Undo and for Undo after a Redo. The accounts it rewrote
+    /// are written back as they were before, bound to the stamps they have now; what it returned from the Trash goes there again;
+    /// what it moved to the Trash returns; and a part of an account that it moved to the Trash returns to the account.
+    private static func inverse(of step: CredentialUndoStep, before: StoreSnapshot, after: StoreSnapshot) -> CredentialUndoStep? {
+        var inverse = CredentialUndoStep(kind: step.kind)
+        var owners = step.accounts.map { $0.before.id }
+        var restored: [CredentialAccount] = []
+        for scope in step.returning {
+            switch scope {
+            case .account(let id):
+                guard let stamp = after.stamps[id] else { return nil }
+                inverse.removing[id] = stamp
+                restored += after.accounts.filter { $0.id == id }
+            case .credential(let owner, _, _):
+                if !owners.contains(owner) {
+                    owners.append(owner)
+                }
             }
         }
-        if undone {
-            showNotice(step.kind.undoneNotice)
+        for id in owners {
+            guard let was = before.accounts.first(where: { $0.id == id }), let stamp = after.stamps[id] else { return nil }
+            inverse.accounts.append(CredentialReplaced(before: was, after: stamp))
+            if let now = after.accounts.first(where: { $0.id == id }) {
+                inverse.returning += (try? CredentialDiff.plan(old: [was], new: [now], returning: restored).removals) ?? []
+            }
         }
+        inverse.returning += step.removing.keys.map(RemovalScope.account)
+        return inverse
     }
 
     private func applyUndo(_ step: CredentialUndoStep, epoch: UInt64) async throws -> VaultCommitReceipt {

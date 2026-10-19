@@ -86,6 +86,42 @@ nonisolated extension CredentialUndoStep.Kind {
         }
     }
 
+    /// The Edit menu's title for Redo.
+    var redoTitle: LocalizedStringResource {
+        switch self {
+        case .moveToTrash:
+            "Redo Move to Trash"
+        case .merge:
+            "Redo Merge"
+        case .edit:
+            "Redo Edit"
+        case .add:
+            "Redo Add Credential"
+        case .restore:
+            "Redo Restore"
+        case .markForDeletion:
+            "Redo Delete"
+        }
+    }
+
+    /// What the page says once the action is repeated.
+    var redoneNotice: LocalizedStringResource {
+        switch self {
+        case .moveToTrash:
+            "Redid Move to Trash."
+        case .merge:
+            "Redid Merge."
+        case .edit:
+            "Redid Edit."
+        case .add:
+            "Redid Add Credential."
+        case .restore:
+            "Redid Restore."
+        case .markForDeletion:
+            "Redid Delete."
+        }
+    }
+
     /// What the page says once the action is taken back.
     var undoneNotice: LocalizedStringResource {
         switch self {
@@ -103,4 +139,9 @@ nonisolated extension CredentialUndoStep.Kind {
             "Undid Delete."
         }
     }
+}
+
+/// Which way a step is replayed: Undo takes the newest action back, Redo repeats the newest one that was taken back.
+nonisolated enum CredentialReplay: Sendable {
+    case undo, redo
 }

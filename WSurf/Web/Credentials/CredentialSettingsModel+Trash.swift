@@ -156,12 +156,14 @@ extension CredentialSettingsModel {
         }
     }
 
-    /// After a write this page made: the accounts as stored, and the Trash from its first page when it is open. Internal for the model's extensions.
-    func reloadAfterWrite(epoch: UInt64) async throws {
+    /// After a write this page made: the accounts as stored (returned), and the Trash from its first page when it is open. Internal for the model's extensions.
+    @discardableResult
+    func reloadAfterWrite(epoch: UInt64) async throws -> StoreSnapshot {
         let (_, snapshot) = try await authorizedSnapshot(epoch: epoch)
         try update(epoch) { $0.refresh(snapshot) }
         if live?.counts != nil {
             try await fetchTrash(epoch: epoch)
         }
+        return snapshot
     }
 }

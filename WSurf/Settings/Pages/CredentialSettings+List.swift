@@ -207,7 +207,7 @@ struct CredentialListView<Switcher: View>: View {
         .background {
             CredentialListKeyCatcher(
                 selection: selection, inTrash: false, perform: perform, undo: { run { await model.undo() } },
-                undoTitle: { model.undoMenuTitle }
+                redo: { run { await model.redo() } }, undoTitle: { model.undoMenuTitle }, redoTitle: { model.redoMenuTitle }
             )
         }
         // A key that moved the cursor brings its row into view; a click never scrolls.

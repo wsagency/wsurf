@@ -41,6 +41,8 @@ struct CredentialVaultSession {
     var markedForDeletion: [UUID] = []
     /// The page's last actions that Undo can take back, oldest first; secrets included, so they go with the session.
     var undoSteps: [CredentialUndoStep] = []
+    /// The actions Undo took back, newest last, that Redo can repeat. A new action ends them.
+    var redoSteps: [CredentialUndoStep] = []
     /// The most actions Undo keeps; the oldest is dropped for a sixth.
     static let undoDepth = 5
 
@@ -53,27 +55,78 @@ struct CredentialVaultSession {
         blockedSiteCount = snapshot.blockedPasswordOrigins.count
     }
 
-    /// Ends the marks on `ids` (all of them for `nil`) and the undo steps that held them.
+    /// Ends the marks on `ids` (all of them for `nil`) and the steps that held them.
     mutating func dropMarks(_ ids: Set<UUID>?) {
         guard let ids else {
             markedForDeletion = []
             undoSteps.removeAll { $0.kind == .markForDeletion }
+            redoSteps.removeAll { $0.kind == .markForDeletion }
             return
         }
         markedForDeletion.removeAll { ids.contains($0) }
         undoSteps.removeAll { $0.kind == .markForDeletion && !ids.isDisjoint(with: $0.marked) }
+        redoSteps.removeAll { $0.kind == .markForDeletion && !ids.isDisjoint(with: $0.marked) }
     }
 
+    /// A new action of the page: it can be undone, and what was undone before it can no longer be redone.
     mutating func record(_ step: CredentialUndoStep) {
-        undoSteps.append(step)
-        if undoSteps.count > Self.undoDepth {
-            undoSteps.removeFirst(undoSteps.count - Self.undoDepth)
+        redoSteps = []
+        push(step, onto: .undo)
+    }
+
+    private mutating func push(_ step: CredentialUndoStep, onto direction: CredentialReplay) {
+        switch direction {
+        case .undo:
+            undoSteps.append(step)
+            if undoSteps.count > Self.undoDepth {
+                undoSteps.removeFirst(undoSteps.count - Self.undoDepth)
+            }
+        case .redo:
+            redoSteps.append(step)
         }
     }
 
-    /// After a step was undone: the steps before it are bound to the new stamps of the accounts it rewrote (`CredentialUndoStep.rebound`).
-    mutating func rebindUndoSteps(_ ids: Set<UUID>) {
+    /// The newest step has been replayed. Its inverse goes onto the other stack (`nil` when it cannot be made, and the action is
+    /// then gone from both). Every older step expects the accounts the replay rewrote under their new stamps.
+    mutating func completed(_ direction: CredentialReplay, inverse: CredentialUndoStep?, touching ids: Set<UUID>) {
+        switch direction {
+        case .undo:
+            undoSteps.removeLast()
+        case .redo:
+            redoSteps.removeLast()
+        }
+        if let inverse {
+            push(inverse, onto: direction == .undo ? .redo : .undo)
+        }
         undoSteps = undoSteps.map { $0.rebound(ids, to: stamps) }
+        redoSteps = redoSteps.map { $0.rebound(ids, to: stamps) }
+    }
+
+    /// Drops the newest step of a stack because it can no longer be replayed.
+    mutating func discardNewest(_ direction: CredentialReplay) {
+        switch direction {
+        case .undo:
+            undoSteps.removeLast()
+        case .redo:
+            redoSteps.removeLast()
+        }
+    }
+
+    /// Replays a mark for deletion: Undo shows its entries again, Redo hides them again. No vault write is involved.
+    mutating func replayMark(_ step: CredentialUndoStep, _ direction: CredentialReplay) {
+        switch direction {
+        case .undo:
+            markedForDeletion.removeAll { step.marked.contains($0) }
+            undoSteps.removeLast()
+            redoSteps.append(step)
+        case .redo:
+            let listed = Set(trash.map(\.id)).subtracting(markedForDeletion)
+            var again = step
+            again.marked = step.marked.filter { listed.contains($0) }
+            markedForDeletion += again.marked
+            redoSteps.removeLast()
+            push(again, onto: .undo)
+        }
     }
 
     /// The stamps only while they describe the revision shown; after this page's own write they are unknown, not stale.

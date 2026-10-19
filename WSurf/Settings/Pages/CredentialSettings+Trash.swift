@@ -117,7 +117,7 @@ extension CredentialSettings {
         .background {
             CredentialListKeyCatcher(
                 selection: selection, inTrash: true, perform: performTrash, undo: { run { await model.undo() } },
-                undoTitle: { model.undoMenuTitle }
+                redo: { run { await model.redo() } }, undoTitle: { model.undoMenuTitle }, redoTitle: { model.redoMenuTitle }
             )
         }
         // The rows the selection acts on are the ones listed; a key that moved the cursor brings its row into view.

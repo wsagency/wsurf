@@ -13,8 +13,10 @@ struct CredentialListKeyCatcher: NSViewRepresentable {
     let inTrash: Bool
     let perform: (CredentialListKeys.Command) -> Void
     let undo: () -> Void
-    /// The Edit menu's title for Undo, or `nil` when nothing can be taken back.
+    let redo: () -> Void
+    /// The Edit menu's titles for Undo and Redo, or `nil` when there is nothing to take back or repeat.
     let undoTitle: () -> String?
+    let redoTitle: () -> String?
 
     func makeNSView(context: Context) -> CatcherView {
         CatcherView()
@@ -25,7 +27,9 @@ struct CredentialListKeyCatcher: NSViewRepresentable {
         nsView.hasSelection = !selection.isEmpty
         nsView.perform = perform
         nsView.onUndo = undo
+        nsView.onRedo = redo
         nsView.undoTitle = undoTitle
+        nsView.redoTitle = redoTitle
         nsView.onSelectAll = { selection.selectAll() }
         nsView.onResign = { selection.releaseKeyboard() }
         let owns = selection.ownsKeyboard
@@ -47,7 +51,9 @@ struct CredentialListKeyCatcher: NSViewRepresentable {
         var hasSelection = false
         var perform: ((CredentialListKeys.Command) -> Void)?
         var onUndo: (() -> Void)?
+        var onRedo: (() -> Void)?
         var undoTitle: (() -> String?)?
+        var redoTitle: (() -> String?)?
         var onSelectAll: (() -> Void)?
         var onResign: (() -> Void)?
         var wasActive = false
@@ -101,14 +107,24 @@ struct CredentialListKeyCatcher: NSViewRepresentable {
             onUndo?()
         }
 
+        @objc func redo(_ sender: Any?) {
+            onRedo?()
+        }
+
         func validateMenuItem(_ item: NSMenuItem) -> Bool {
-            guard item.action == #selector(undo(_:)) else { return true }
-            guard let title = undoTitle?() else {
-                item.title = String(localized: "Undo")
-                return false
+            if item.action == #selector(undo(_:)) {
+                return enable(item, title: undoTitle?(), otherwise: String(localized: "Undo"))
             }
-            item.title = title
+            if item.action == #selector(redo(_:)) {
+                return enable(item, title: redoTitle?(), otherwise: String(localized: "Redo"))
+            }
             return true
+        }
+
+        /// Titles the menu item for what it would do, or leaves it plain and off.
+        private func enable(_ item: NSMenuItem, title: String?, otherwise: String) -> Bool {
+            item.title = title ?? otherwise
+            return title != nil
         }
     }
 }
