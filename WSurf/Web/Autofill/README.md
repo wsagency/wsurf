@@ -51,7 +51,8 @@ is read again at delivery and filled exactly like a normal choice.
 After such a fill, and when a submitted login repeats one saved for a sibling
 website exactly (username and password) while nothing for the page has that
 username, the address-bar popover offers "Add login.example.com to “ada”?"
-instead of saving a copy. The offer holds no secret. Only Add Website writes,
+instead of saving a copy. When several sibling credentials repeat the login, only
+the one just filled is offered. The offer holds no secret. Only Add Website writes,
 under the unlock it was offered under, through the vault's ordinary commit, so
 History keeps the earlier list of websites. A credential that already has 64
 websites is never widened, and Not Now is remembered for the page.
@@ -102,10 +103,12 @@ and policy changes discard pending state. Canceled redirects can continue the
 flow. Username steps are restricted to their HTTPS origin and expire after five
 minutes. A native address-bar popover presents the pending offer without changing
 page layout. Closing it keeps the offer available from its icon until expiry or
-explicit dismissal. Only explicit Save/Update writes a candidate to its store: a
-password goes to Credential Manager, a card or an address to its own vault. A
-profile with no vault gets one offer per run of the app to set one up, and
-nothing is saved by it.
+explicit dismissal. A login that repeats the account just filled in the tab is
+compared with that account in its own vault, also when other unlocked vaults
+hold the same username, so it is not offered again. Only explicit Save/Update
+writes a candidate to its store: a password goes to Credential Manager, a card
+or an address to its own vault. A profile with no vault gets one offer per run
+of the app to set one up, and nothing is saved by it.
 
 Native code binds messages to the WebKit or CEF frame identity and origin.
 Filling additionally checks the document/form/field identity, selection token,

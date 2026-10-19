@@ -94,6 +94,36 @@ struct VaultConsumerRoutingTests {
         }
     }
 
+    /// After a fill from a vault the dropdown records the picked account (`rememberFilledUsername`): a submitted login that repeats it
+    /// is that account, also when another unlocked vault holds the same username.
+    @Test func aLoginJustFilledFromOneOfSeveralVaultsIsNotOfferedAgain() async throws {
+        try await withSession(vaults: [.unlocked, .unlocked]) { session, vaults in
+            let first = account("ada", password: "a"), second = account("ada", password: "b")
+            try await VaultManagerFixture.save([first], in: vaults[0])
+            try await VaultManagerFixture.save([second], in: vaults[1])
+            let epoch = try #require(vaults[1].manager.authorizationEpoch)
+            AutofillSaveCoordinator.shared.rememberFilledUsername(
+                "ada", origin: Self.origin, documentID: "", in: try #require(session.page), accountID: second.id, epoch: epoch
+            )
+            // A password step with no username field submits this username (`AutofillSaveCoordinator.receive`).
+            #expect(session.username?.value == "ada" && session.username?.completed == true)
+            let before = try await vaults.asyncMap { try await $0.manager.snapshot().revision }
+
+            await session.offer(.password(try SavedPassword(website: Self.origin, username: "ada", password: "b")), origin: Self.origin)
+            #expect(session.current == nil, "the login just filled is already saved")
+
+            // Changed after the fill: an update of that account in its own vault, with no vault to choose.
+            await session.offer(.password(try SavedPassword(website: Self.origin, username: "ada", password: "c")), origin: Self.origin)
+            #expect(session.current?.plan == .update(second.id))
+            #expect(session.current?.managerEpoch == epoch)
+
+            // Another login is routed as before.
+            await session.offer(try login("grace"), origin: Self.origin)
+            #expect(session.current?.plan == .create)
+            #expect(try await vaults.asyncMap { try await $0.manager.snapshot().revision } == before, "offering writes nothing")
+        }
+    }
+
     @Test func aLockedVaultIsNeverTheOneAnOfferGuesses() async throws {
         try await withSession(vaults: [.unlocked, .locked]) { session, vaults in
             let ada = account("ada")
