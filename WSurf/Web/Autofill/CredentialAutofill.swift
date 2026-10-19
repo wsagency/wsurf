@@ -127,6 +127,22 @@ nonisolated enum CredentialAccountSelection {
         return siblingWebsite(of: account, for: origin, site: site, sites: &sites) != nil
     }
 
+    /// Whether `origin` may be added to `account`: an account of a sibling website, not saved for `origin` yet, with room under
+    /// `CredentialAccount.websiteLimit`. A full account is never made room in by dropping another website.
+    static func canAddWebsite(_ origin: String, to account: CredentialAccount) -> Bool {
+        account.origins.count < CredentialAccount.websiteLimit && isSibling(account, of: origin)
+    }
+
+    /// The accounts with `origin` added to the account `id`, and nothing else changed.
+    static func addingWebsite(_ origin: String, to id: UUID, in accounts: [CredentialAccount]) throws -> [CredentialAccount] {
+        guard let index = accounts.firstIndex(where: { $0.id == id }), canAddWebsite(origin, to: accounts[index]) else {
+            throw CredentialVaultError.invalidData
+        }
+        var accounts = accounts
+        accounts[index].origins.append(origin)
+        return accounts
+    }
+
     private static func siblingWebsite(
         of account: CredentialAccount, for origin: String, site: String, sites: inout ImportDuplicates.Sites
     ) -> String? {

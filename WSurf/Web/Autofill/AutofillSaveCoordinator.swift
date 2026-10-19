@@ -31,7 +31,27 @@ final class AutofillSaveSession: NSObject {
         /// dismissed or replaced by an offer from the page the user is on.
         var isGone = false
     }
+    /// The page's website, to be added to a saved credential of a sibling website instead of saving a copy of that login. Identity
+    /// only: no secret is held, and confirming reads the credential again under the unlock the offer was made under.
+    nonisolated struct WebsiteOffer: Identifiable, Sendable {
+        let id = UUID()
+        /// The website to add: the page's origin.
+        let origin: String
+        let accountID: UUID
+        /// What the dropdown calls the credential, and the username it must still have when the offer is confirmed.
+        let name: String
+        let username: String
+        let managerEpoch: UInt64
+        let documentID: String
+        let liveOrigin: String
+        let fingerprint: String
+
+        var host: String {
+            String(origin.dropFirst("https://".count))
+        }
+    }
     private(set) var offers: [Offer] = []
+    private(set) var websiteOffer: WebsiteOffer?
     private(set) var isBusy = false
     private(set) var error: String?
     var isPopoverPresented = false
@@ -65,7 +85,7 @@ final class AutofillSaveSession: NSObject {
         clear(); self.page = page; self.context = context; submissions.attach(to: self); dismissed = [:]
     }
     func clear() {
-        revision += 1; offers = []; isPopoverPresented = false; username = nil; submissions.clear(); error = nil
+        revision += 1; offers = []; websiteOffer = nil; isPopoverPresented = false; username = nil; submissions.clear(); error = nil
         expiry?.cancel(); expiry = nil
         vaultAccessEnded()
     }
@@ -79,12 +99,16 @@ final class AutofillSaveSession: NSObject {
         revision += 1; submissions.clear()
         guard let context else {
             offers = []
+            websiteOffer = nil
             username = nil
             isPopoverPresented = false
             return
         }
         offers.removeAll { !AutofillSaveCoordinator.shared.isEnabled($0.candidate.kind, context: context) }
-        if offers.isEmpty {
+        if !AutofillSaveCoordinator.shared.isEnabled(.password, context: context) {
+            websiteOffer = nil
+        }
+        if offers.isEmpty && websiteOffer == nil {
             isPopoverPresented = false
         }
         username?.accountID = nil
@@ -251,6 +275,13 @@ final class AutofillSaveSession: NSObject {
         var managed: ManagedSave?
         let decision: AutofillSaveIndex.Decision
         if case .password(let login) = candidate {
+            if target == nil, let sibling = await siblingAccount(for: login, origin: origin) {
+                guard revision == self.revision else { return }
+                await offerWebsite(
+                    accountID: sibling.accountID, epoch: sibling.epoch, origin: origin, documentID: documentID, liveOrigin: liveOrigin
+                )
+                return
+            }
             guard let found = await managedPlan(
                 for: login, origin: origin, documentID: documentID, liveOrigin: liveOrigin, loginURL: loginURL, revision: revision, target: target
             ) else { return }
@@ -279,6 +310,9 @@ final class AutofillSaveSession: NSObject {
         guard managed?.epoch.map({ manager(epoch: $0) != nil }) ?? true else { return }
         let previous = current?.id
         offers.removeAll { $0.candidate.kind == candidate.kind }
+        if candidate.kind == .password {
+            websiteOffer = nil
+        }
         offers.append(Offer(
             candidate: candidate, origin: origin, isUpdate: decision == .update, fingerprint: fingerprint, documentID: documentID,
             liveOrigin: liveOrigin, plan: managed?.plan, managerEpoch: managed?.epoch, managerRevision: managed?.revision, loginURL: managed?.loginURL,
@@ -300,14 +334,134 @@ final class AutofillSaveSession: NSObject {
     }
     func dismiss(_ offer: Offer, rememberingChoice: Bool = true) {
         if rememberingChoice {
-            var values = dismissed[offer.candidate.kind] ?? []
-            if values.count >= 100 {
-                values.removeAll()
-            }
-            values.insert(offer.fingerprint)
-            dismissed[offer.candidate.kind] = values
+            remember(offer.fingerprint, kind: offer.candidate.kind)
         }
         offers.removeAll { $0.id == offer.id }; isPopoverPresented = !offers.isEmpty; error = nil
+    }
+    private func remember(_ fingerprint: String, kind: AutofillSaveKind) {
+        var values = dismissed[kind] ?? []
+        if values.count >= 100 {
+            values.removeAll()
+        }
+        values.insert(fingerprint)
+        dismissed[kind] = values
+    }
+
+    // MARK: - Adding a website to a sibling's credential
+
+    private func websiteFingerprint(origin: String, accountID: UUID) -> String {
+        let bytes = (try? JSONEncoder().encode([origin, "website", accountID.uuidString])) ?? Data()
+        return Data(HMAC<SHA256>.authenticationCode(for: bytes, using: fingerprintKey)).base64EncodedString()
+    }
+
+    /// The one credential, in the profile's unlocked vaults, that `login` repeats exactly (username and password) on a sibling
+    /// website of `origin` and that has room for `origin`, while no credential for `origin` itself has that username. Saving the
+    /// login would make a copy of it, so adding the website is offered instead. Several such credentials are never guessed between.
+    private func siblingAccount(for login: SavedPassword, origin: String) async -> (accountID: UUID, epoch: UInt64)? {
+        guard let context, !context.profile.isPrivate, let page, page.context === context, let origin = managerOrigin(origin),
+              CredentialAccountSelection.site(of: origin) != nil,
+              let listing = try? await CredentialManager.store(for: context.profile).listing() else { return nil }
+        let listed = Set(listing.map(\.vaultID))
+        var found: [(accountID: UUID, epoch: UInt64)] = []
+        for manager in CredentialManager.unlockedManagers(for: context.profile) where listed.contains(manager.vaultID) {
+            guard let epoch = manager.authorizationEpoch, let snapshot = try? await manager.snapshot(),
+                  manager.authorizationEpoch == epoch else { continue }
+            if snapshot.accounts.contains(where: { $0.origins.contains(origin) && $0.username == login.username }) {
+                return nil
+            }
+            for (account, _) in CredentialAccountSelection.siblings(in: snapshot.accounts, origin: origin, entered: nil)
+            where account.username == login.username && account.password == login.password
+                && CredentialAccountSelection.canAddWebsite(origin, to: account) {
+                found.append((accountID: account.id, epoch: epoch))
+            }
+        }
+        return found.count == 1 ? found[0] : nil
+    }
+
+    /// Offers to add `origin` to the credential `accountID` of the vault leased under `epoch`: a credential of a sibling website
+    /// that was just filled here, or whose login was just submitted here. Nothing is written until `addWebsite`, and only then.
+    func offerWebsite(accountID: UUID, epoch: UInt64, origin: String, documentID: String, liveOrigin: String? = nil) async {
+        guard let context, AutofillSaveCoordinator.shared.isEnabled(.password, context: context),
+              let page, page.context === context, let origin = managerOrigin(origin), let manager = manager(epoch: epoch) else { return }
+        let revision = revision
+        let liveOrigin = liveOrigin ?? origin
+        let fingerprint = websiteFingerprint(origin: origin, accountID: accountID)
+        guard websiteOffer?.fingerprint != fingerprint else { return }
+        guard dismissed[.password]?.contains(fingerprint) != true else {
+            AutofillDiagnostics.note(.offerDroppedDismissed, kind: .password)
+            return
+        }
+        guard let snapshot = try? await manager.snapshot(), self.manager(epoch: epoch) === manager, revision == self.revision else { return }
+        guard !snapshot.blockedPasswordOrigins.contains(origin) else {
+            AutofillDiagnostics.note(.offerDroppedBlocked, kind: .password)
+            return
+        }
+        guard let account = snapshot.accounts.first(where: { $0.id == accountID }),
+              CredentialAccountSelection.canAddWebsite(origin, to: account) else { return }
+        if !documentID.isEmpty, await !liveness(page, documentID, liveOrigin) {
+            AutofillDiagnostics.note(.offerDroppedNotLive, kind: .password)
+            return
+        }
+        // The reads suspend: whatever they waited through (a clear, a policy change, a lock, another offer) is checked again.
+        guard revision == self.revision, self.context === context, page.context === context, self.manager(epoch: epoch) === manager,
+              AutofillSaveCoordinator.shared.isEnabled(.password, context: context), websiteOffer?.fingerprint != fingerprint,
+              dismissed[.password]?.contains(fingerprint) != true else { return }
+        offers.removeAll { $0.candidate.kind == .password }
+        websiteOffer = WebsiteOffer(
+            origin: origin, accountID: accountID,
+            name: CredentialAccountSelection.title(account, origin: account.origins.first ?? origin), username: account.username,
+            managerEpoch: epoch, documentID: documentID, liveOrigin: liveOrigin, fingerprint: fingerprint
+        )
+        isPopoverPresented = true
+        error = nil
+        AutofillDiagnostics.note(.saveOffered, kind: .password)
+        scheduleExpiry()
+    }
+
+    /// Adds the offer's website to its credential through the vault's ordinary commit, so History keeps the earlier list of websites.
+    /// Only the credential that was offered, only under the unlock it was offered under, and only while it still has room for it.
+    func addWebsite(_ offer: WebsiteOffer) async {
+        guard !isBusy, websiteOffer?.id == offer.id, let context, AutofillSaveCoordinator.shared.isEnabled(.password, context: context),
+              let page, page.context === context, page.window != nil else { return }
+        guard await liveness(page, offer.documentID, offer.liveOrigin) else {
+            guard self.context === context, websiteOffer?.id == offer.id else { return }
+            AutofillDiagnostics.note(.offerDroppedNotLive, kind: .password)
+            error = String(localized: "This page changed, so nothing was saved.")
+            return
+        }
+        guard self.context === context, websiteOffer?.id == offer.id else { return }
+        isBusy = true; error = nil; defer { isBusy = false }
+        do {
+            guard let manager = manager(epoch: offer.managerEpoch) else { throw CredentialVaultError.unauthorized }
+            let snapshot = try await manager.snapshot()
+            guard self.manager(epoch: offer.managerEpoch) === manager else { throw CredentialVaultError.unauthorized }
+            guard !snapshot.blockedPasswordOrigins.contains(offer.origin),
+                  snapshot.accounts.first(where: { $0.id == offer.accountID })?.username == offer.username else {
+                throw CredentialVaultError.staleRevision
+            }
+            let accounts = try CredentialAccountSelection.addingWebsite(offer.origin, to: offer.accountID, in: snapshot.accounts)
+            _ = try await manager.commit(
+                accounts, expectedRevision: snapshot.revision, authorizedEpoch: offer.managerEpoch, cause: CredentialChangeCause.addWebsite
+            )
+            guard self.context === context, websiteOffer?.id == offer.id else { return }
+            dismissWebsite(offer, rememberingChoice: false)
+        } catch {
+            guard self.context === context, websiteOffer?.id == offer.id else { return }
+            if Self.isLocked(error) {
+                dismissWebsite(offer, rememberingChoice: false)
+                return
+            }
+            self.error = String(localized: "Couldn’t add this website. Try again.")
+        }
+    }
+
+    /// "Not Now": nothing is written, and the same website is not offered for the same credential again on this page.
+    func dismissWebsite(_ offer: WebsiteOffer, rememberingChoice: Bool = true) {
+        if rememberingChoice {
+            remember(offer.fingerprint, kind: .password)
+        }
+        guard websiteOffer?.id == offer.id else { return }
+        websiteOffer = nil; isPopoverPresented = !offers.isEmpty; error = nil
     }
     func never(_ offer: Offer) async {
         guard !offer.needsVault, !isBusy, current?.id == offer.id, let context else { return }

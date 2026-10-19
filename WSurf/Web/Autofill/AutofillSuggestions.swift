@@ -558,6 +558,14 @@ final class AutofillSuggestions {
                         epoch: picked.flatMap { request.grants[$0.vaultID]?.epoch }
                     )
                 }
+                // A login of a sibling website was just used here: offer to add this website to it, instead of a copy later.
+                if request.kind == .password, request.field == .password, request.siblingRows.contains(id),
+                   let picked = request.rows[id], let epoch = request.grants[picked.vaultID]?.epoch,
+                   let origin = SavedPassword.origin(for: request.frameURL),
+                   let session = AutofillSaveCoordinator.shared.session(for: page) {
+                    let documentID = request.documentID
+                    Task { await session.offerWebsite(accountID: picked.accountID, epoch: epoch, origin: origin, documentID: documentID) }
+                }
             } catch {
                 let canceled = Self.isUserCancellation(error)
                 guard !canceled, self.requests[ObjectIdentifier(page)] === request,

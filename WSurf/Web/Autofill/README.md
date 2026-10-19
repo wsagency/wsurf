@@ -40,6 +40,14 @@ for *.example.com". Choosing it lists those accounts, each with the website it
 is saved for. Only titles and websites are shown; the chosen account's secret
 is read again at delivery and filled exactly like a normal choice.
 
+After such a fill, and when a submitted login repeats one saved for a sibling
+website exactly (username and password) while nothing for the page has that
+username, the address-bar popover offers "Add login.example.com to “ada”?"
+instead of saving a copy. The offer holds no secret. Only Add Website writes,
+under the unlock it was offered under, through the vault's ordinary commit, so
+History keeps the earlier list of websites. A credential that already has 64
+websites is never widened, and Not Now is remembered for the page.
+
 ## Submission lifecycle
 
 `AutofillSaveScript` tracks trusted edits and separates an attempt from evidence
