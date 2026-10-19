@@ -38,6 +38,7 @@ final class BrowserSettings {
         static let themesVersion = "appearance.themes.version"
         static let sleepsInactiveTabs = "tabs.sleep"
         static let sleepAfterMinutes = "tabs.sleepAfterMinutes"
+        static let archiveTabsAfter = "tabs.archive"
         static let pageZoom = "content.defaultZoom"
         static let linkPreview = "content.linkPreview"
         static let linkPeek = "content.linkPeek"
@@ -112,6 +113,7 @@ final class BrowserSettings {
     @ObservationIgnored private var storedShowsLyrics: Bool?
     @ObservationIgnored private var storedSleepsInactiveTabs: Bool?
     @ObservationIgnored var storedSleepAfterMinutes: Int?
+    @ObservationIgnored var storedArchiveTabsAfter: TabArchiveDelay?
     @ObservationIgnored private var storedShowsLinkPreview: Bool?
     @ObservationIgnored private var storedPeeksAtLinks: Bool?
     @ObservationIgnored private var storedRefractsTabColor: Bool?
@@ -698,6 +700,7 @@ final class BrowserSettings {
             storedRefractsTabColor = object(Key.tabColorRefraction) as? Bool ?? true
             storedSleepsInactiveTabs = object(Key.sleepsInactiveTabs) as? Bool ?? false
             storedSleepAfterMinutes = Self.clampedSleepMinutes(finiteNumber(Key.sleepAfterMinutes) ?? 0)
+            storedArchiveTabsAfter = string(Key.archiveTabsAfter).flatMap(TabArchiveDelay.init(rawValue:)) ?? .never
             storedShowsLinkPreview = object(Key.linkPreview) as? Bool ?? true
             storedPeeksAtLinks = object(Key.linkPeek) as? Bool ?? true
             storedAutomaticPictureInPicture = object(Key.automaticPiP) as? Bool ?? false
@@ -813,6 +816,7 @@ final class BrowserSettings {
         userAgentMode = .safari
         customUserAgent = ""
         webInspectorEnabled = true
+        archiveTabsAfter = .never
         commandPaletteOrder = CommandPaletteSection.allCases
         startPageOrder = StartPageSection.allCases
         hiddenStartPageSections = []

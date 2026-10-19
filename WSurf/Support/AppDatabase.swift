@@ -268,6 +268,18 @@ struct AppDatabase: Sendable {
 
         try defineWindowSessions(in: db)
         try defineProfilePins(in: db)
+        try defineTabArchive(in: db)
+    }
+
+    /// Tabs closed for sitting unused. They are history-class data and live in the profile's database next to the
+    /// history.
+    private nonisolated static func defineTabArchive(in db: Database) throws {
+        try db.create(table: "archivedTab", options: .ifNotExists) { t in
+            t.primaryKey("id", .blob)
+            t.column("title", .text).notNull()
+            t.column("url", .text).notNull().indexed()
+            t.column("archivedAt", .datetime).notNull().indexed()
+        }
     }
 
     /// Pins, pinned folders and Favorites belong to the profile, not to a window. A window's tab and folder rows
@@ -309,6 +321,7 @@ struct AppDatabase: Sendable {
             t.column("internalPage", .text)
             t.column("isActive", .boolean).notNull().defaults(to: false)
             t.column("isFavorite", .boolean).notNull().defaults(to: false)
+            t.column("lastActiveAt", .datetime)
         }
 
         if try !db.columns(in: "sessionTab").contains(where: { $0.name == "customTitle" }) {
@@ -320,6 +333,13 @@ struct AppDatabase: Sendable {
         if try !db.columns(in: "sessionTab").contains(where: { $0.name == "isFavorite" }) {
             try db.alter(table: "sessionTab") { t in
                 t.add(column: "isFavorite", .boolean).notNull().defaults(to: false)
+            }
+        }
+
+        // A NULL means no use was recorded: the tab reads as used when the window restores.
+        if try !db.columns(in: "sessionTab").contains(where: { $0.name == "lastActiveAt" }) {
+            try db.alter(table: "sessionTab") { t in
+                t.add(column: "lastActiveAt", .datetime)
             }
         }
 

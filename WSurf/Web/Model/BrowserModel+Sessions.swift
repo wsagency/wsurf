@@ -91,6 +91,7 @@ extension BrowserModel {
         var isActive: Bool
         var isFavorite: Bool
         var pinID: UUID?
+        var lastActiveAt: Date?
     }
 
     private nonisolated struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -271,7 +272,8 @@ extension BrowserModel {
                 internalPage: tab.internalPage,
                 isActive: tab.id == activeTabID,
                 isFavorite: tab.isFavorite,
-                pinID: tab.pinID
+                pinID: tab.pinID,
+                lastActiveAt: tab.lastActiveAt
             )
         }
         writtenStateGeneration = writtenStateGeneration.filter { id, _ in
@@ -364,8 +366,8 @@ extension BrowserModel {
                 sql: """
                     INSERT INTO sessionTab
                         (id, windowID, title, customTitle, url, state, pinnedURL, pinnedTitle,
-                         internalPage, isActive, isFavorite, pinID)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         internalPage, isActive, isFavorite, pinID, lastActiveAt)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         windowID = excluded.windowID,
                         title = excluded.title,
@@ -377,12 +379,13 @@ extension BrowserModel {
                         internalPage = excluded.internalPage,
                         isActive = excluded.isActive,
                         isFavorite = excluded.isFavorite,
-                        pinID = excluded.pinID
+                        pinID = excluded.pinID,
+                        lastActiveAt = excluded.lastActiveAt
                     """,
                 arguments: [
                     tab.id, tab.windowID, tab.title, tab.customTitle, tab.url, tab.state,
                     tab.pinnedURL, tab.pinnedTitle,
-                    tab.internalPage?.rawValue, tab.isActive, tab.isFavorite, tab.pinID,
+                    tab.internalPage?.rawValue, tab.isActive, tab.isFavorite, tab.pinID, tab.lastActiveAt,
                 ]
             )
         }
@@ -437,7 +440,8 @@ extension BrowserModel {
             (
                 tabs: try TabRecord.filter(belongsToWindow).fetchAll(db),
                 folders: try FolderRecord.filter(belongsToWindow).fetchAll(db),
-                items: try ItemRecord.filter(belongsToWindow).order(Column("position")).fetchAll(db)
+                items: try ItemRecord.filter(belongsToWindow).order(Column("position")).fetchAll(db),
+                savedAt: try Date.fetchOne(db, sql: "SELECT lastActiveAt FROM sessionWindow WHERE id = ?", arguments: [windowID])
             )
         }
         guard let stored else {
@@ -473,6 +477,7 @@ extension BrowserModel {
         let byID = Dictionary(ordered.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let profileHoldsPins = store.isAvailable
 
+        let now = Date()
         let activeID = (ordered.first { $0.isActive } ?? ordered.first)?.id
         let grids = Self.grids(from: storedTrees) + Self.grids(fromFlat: storedPanes)
         let onScreen = Set(activeID.map { id in
@@ -497,6 +502,7 @@ extension BrowserModel {
             tab.pinnedTitle = record.pinnedTitle ?? ""
             tab.isFavorite = record.isFavorite
             tab.pinID = record.pinID
+            tab.lastActiveAt = Self.restoredUse(record.lastActiveAt, savedAt: stored.savedAt, now: now)
             tab.deferRestore(state: record.state, url: restoredURL)
             if let host = URL(string: record.url)?.host() {
                 dressRow(tab, fromHost: host)
@@ -551,6 +557,12 @@ extension BrowserModel {
         Pipeline.log.notice(
             "session: restored \(self.tabs.count) of \(stored.tabs.count) stored tabs, \(self.folders.count) folders"
         )
+    }
+
+    /// Time the window spent closed does not count as time unused, and a tab with no recorded use starts now.
+    private nonisolated static func restoredUse(_ lastActiveAt: Date?, savedAt: Date?, now: Date) -> Date {
+        let closedFor = savedAt.map { max(now.timeIntervalSince($0), 0) } ?? 0
+        return lastActiveAt.map { min($0 + closedFor, now) } ?? now
     }
 
     /// The records that are not pins plus the first record of each pin the profile still holds.
@@ -668,10 +680,13 @@ extension BrowserModel {
         }
         if (context.database.writer as AnyObject) === (self.database.writer as AnyObject) {
             history = context.history
+            tabArchive = context.tabArchive
             downloads = context.downloads
         } else {
             history = HistoryStore(database: self.database)
+            tabArchive = TabArchive(database: self.database)
         }
         history.prune(retention: context.settings.historyRetention)
+        tabArchive.prune(retention: context.settings.historyRetention)
     }
 }
