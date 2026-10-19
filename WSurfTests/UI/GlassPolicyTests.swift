@@ -121,17 +121,17 @@ struct GlassPolicyTests {
             && abs(a.blueComponent - b.blueComponent) < 0.03
     }
 
-    private func makeSettings(style: LoomStyle) -> (BrowserSettings, UserDefaults, String) {
+    private func makeSettings(material: ThemeMaterial) -> (BrowserSettings, UserDefaults, String) {
         let suite = "GlassPolicy-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         let settings = BrowserSettings(defaults: defaults)
-        settings.loomStyle = style
+        settings.themeMaterial = material
         return (settings, defaults, suite)
     }
 
-    @Test(arguments: [LoomStyle.standard, .transparent], [true, false])
-    func aReducedTransparencyBackdropIsOneSolidColor(style: LoomStyle, isFloating: Bool) throws {
-        let (settings, defaults, suite) = makeSettings(style: style)
+    @Test(arguments: [ThemeMaterial.plain, .glass], [true, false])
+    func aReducedTransparencyBackdropIsOneSolidColor(material: ThemeMaterial, isFloating: Bool) throws {
+        let (settings, defaults, suite) = makeSettings(material: material)
         defer { defaults.removePersistentDomain(forName: suite) }
         let backdrop = LoomBackdrop(sampledPageColor: nil, settings: settings, isFloating: isFloating, fallsBack: true)
 
@@ -158,7 +158,7 @@ struct GlassPolicyTests {
 
     /// The same backdrops reached the way the window reaches them: through the environment the system fills in.
     @Test func theWindowBackdropsGoSolidWhenTheEnvironmentAsksForIt() throws {
-        let (settings, defaults, suite) = makeSettings(style: .transparent)
+        let (settings, defaults, suite) = makeSettings(material: .glass)
         defer { defaults.removePersistentDomain(forName: suite) }
 
         let ambient = LoomAmbientBackdrop(sampledPageColor: nil, settings: settings)

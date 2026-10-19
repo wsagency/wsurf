@@ -18,6 +18,7 @@ struct SidebarRowRenderTests {
     private struct Fixture {
         let coordinator: AppCoordinator
         let context: SidebarRowContext
+        let restoreTheme: () -> Void
 
         var browser: BrowserModel {
             coordinator.browser
@@ -25,6 +26,10 @@ struct SidebarRowRenderTests {
     }
 
     private func makeFixture() -> Fixture {
+        let settings = BrowserSettings.application
+        let saved = (settings.themeID, settings.themeAdjustments)
+        settings.themeID = "standard"
+        settings.themeAdjustments["standard"] = nil
         let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
         let context = SidebarRowContext(
             browser: coordinator.browser,
@@ -35,7 +40,10 @@ struct SidebarRowRenderTests {
             space: "SidebarRowRenderTests",
             frames: SidebarFrames()
         )
-        return Fixture(coordinator: coordinator, context: context)
+        return Fixture(coordinator: coordinator, context: context, restoreTheme: {
+            settings.themeAdjustments = saved.1
+            settings.themeID = saved.0
+        })
     }
 
     private var rowHeight: CGFloat {
@@ -49,11 +57,13 @@ struct SidebarRowRenderTests {
         height: CGFloat? = nil,
         style: SidebarStyle = .full,
         scheme: ColorScheme = .dark,
-        ground: NSColor? = nil
+        ground: NSColor? = nil,
+        isFloating: Bool = false
     ) -> some View {
         row
             .frame(width: width ?? rowWidth, height: height ?? rowHeight)
             .environment(\.sidebarStyle, style)
+            .environment(\.sidebarIsFloating, isFloating)
             .environment(\.chromeWash, .of(ground ?? darkGround, isLight: scheme == .light))
             .environment(\.chromeIsLight, scheme == .light)
             .environment(\.colorScheme, scheme)
@@ -113,6 +123,7 @@ struct SidebarRowRenderTests {
 
     @Test func theCurrentTabRowIsFilledAndAnotherIsNot() throws {
         let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
         let other = fixture.browser.newTab()
         let current = fixture.browser.newTab()
 
@@ -125,6 +136,7 @@ struct SidebarRowRenderTests {
 
     @Test func nothingIsFilledWhileTheNewTabPaletteIsOpen() throws {
         let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
         let current = fixture.browser.newTab()
         fixture.coordinator.requestNewTab()
         defer { fixture.coordinator.closePalette() }
@@ -136,6 +148,7 @@ struct SidebarRowRenderTests {
 
     @Test func aNewTabHasTheDotAndAFilledOneDoesNot() throws {
         let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
         let current = fixture.browser.newTab()
         let background = fixture.browser.newTab(activate: false)
         fixture.browser.activate(current)
@@ -154,6 +167,7 @@ struct SidebarRowRenderTests {
 
     @Test func openingTheNewTabTakesTheDotAndFillsTheRow() throws {
         let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
         _ = fixture.browser.newTab()
         let background = fixture.browser.newTab(activate: false)
         let row = SidebarTabRow(tab: background, depth: 0, context: fixture.context)
@@ -185,6 +199,7 @@ struct SidebarRowRenderTests {
         settings.userThemes = []
         settings.themeAdjustments = [:]
         let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
         _ = fixture.browser.newTab()
         let current = fixture.browser.newTab()
 
@@ -194,7 +209,8 @@ struct SidebarRowRenderTests {
                 settings.colorMode = scheme == .dark ? .dark : .light
                 let ground = LoomChrome.sampledColor(nil, scheme: scheme, isFloating: true)
                 let row = sidebar(
-                    SidebarTabRow(tab: current, depth: 0, context: fixture.context), scheme: scheme, ground: ground
+                    SidebarTabRow(tab: current, depth: 0, context: fixture.context), scheme: scheme, ground: ground,
+                    isFloating: true
                 )
 
                 let painted = try pixel(of: row, x: emptySpot.x, y: emptySpot.y)
@@ -213,6 +229,7 @@ struct SidebarRowRenderTests {
 
     @Test func theCurrentTabIsFilledInTheIconsOnlySidebar() throws {
         let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
         let other = fixture.browser.newTab()
         let current = fixture.browser.newTab()
         let width = SidebarMetrics.iconsWidth
@@ -230,6 +247,7 @@ struct SidebarRowRenderTests {
 
     @Test func aNewTabHasTheDotInTheIconsOnlySidebar() throws {
         let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
         let current = fixture.browser.newTab()
         let background = fixture.browser.newTab(activate: false)
         fixture.browser.activate(current)
@@ -250,6 +268,7 @@ struct SidebarRowRenderTests {
 
     @Test func onlyTheFocusedPaneOfASplitIsFilled() throws {
         let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
         let left = fixture.browser.newTab()
         let right = fixture.browser.newTab()
         fixture.browser.split(left, with: right, axis: .sideBySide)
@@ -435,6 +454,7 @@ struct SidebarRowRenderTests {
         try withSidebarFont(size: size, family: family) {
             let font = sidebarFont(size: size, family: family)
             let fixture = makeFixture()
+            defer { fixture.restoreTheme() }
             let resting = fixture.browser.newTab()
             let inFolder = fixture.browser.newTab()
             let left = fixture.browser.newTab()
@@ -470,6 +490,7 @@ struct SidebarRowRenderTests {
 
     @Test func aFolderTitleStartsWhereATabTitleStarts() throws {
         let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
         let tab = fixture.browser.newTab()
         let inFolder = fixture.browser.newTab()
         let current = fixture.browser.newTab()
@@ -493,6 +514,7 @@ struct SidebarRowRenderTests {
     func theIconIsCenteredInTheIconsOnlySidebar(size: Double) throws {
         try withSidebarFont(size: size, family: "") {
             let fixture = makeFixture()
+            defer { fixture.restoreTheme() }
             let tab = fixture.browser.newTab()
             let inFolder = fixture.browser.newTab()
             let current = fixture.browser.newTab()
@@ -521,6 +543,7 @@ struct SidebarRowRenderTests {
 
     @Test func aFavoriteIsCenteredInItsTile() throws {
         let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
         _ = fixture.browser.newTab()
         let favorite = fixture.browser.newTab()
         measurable(favorite)
@@ -539,6 +562,7 @@ struct SidebarRowRenderTests {
     @Test func theNewTabDotStaysInsideTheRow() throws {
         try withSidebarFont(size: 10, family: "") {
             let fixture = makeFixture()
+            defer { fixture.restoreTheme() }
             let current = fixture.browser.newTab()
             let background = fixture.browser.newTab(activate: false)
             fixture.browser.activate(current)
@@ -565,6 +589,7 @@ struct SidebarRowRenderTests {
 
     @Test func thePinReturnButtonFitsTheRow() throws {
         let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
         let tab = fixture.browser.newTab()
         let margin: CGFloat = 8
         // The red shows the space the button takes. Beside the row it would spill over the margin.
@@ -588,6 +613,7 @@ struct SidebarRowRenderTests {
 
     @Test func aCollapsedFolderMarksTheCurrentTabWithAnInverseBadge() throws {
         let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
         let current = fixture.browser.newTab()
         let folder = fixture.browser.createFolder(named: "Work", containing: [current])
         folder.isExpanded = false
@@ -602,6 +628,7 @@ struct SidebarRowRenderTests {
 
     @Test func anExpandedFolderGetsNoBadge() throws {
         let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
         let current = fixture.browser.newTab()
         let folder = fixture.browser.createFolder(named: "Work", containing: [current])
         folder.isExpanded = true

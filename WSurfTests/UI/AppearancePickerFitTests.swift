@@ -17,12 +17,14 @@ struct AppearancePickerFitTests {
         return renderer.nsImage?.size.width ?? 0
     }
 
-    @Test func theWindowStyleCardsWrapIntoANarrowPage() {
+    @Test func theMaterialPickerFitsIntoANarrowPage() {
         let narrow = AppearanceThumbnailMetrics.width + 20
-        let picker = LoomStylePicker(
-            selection: .standard,
-            usesWebsiteTint: false,
-            tintsSelectedTab: false,
+        let picker = SegmentedControl(
+            items: [
+                .init(value: ThemeMaterial.plain, label: "Plain"),
+                .init(value: ThemeMaterial.glass, label: "Glass"),
+            ],
+            selection: .plain,
             onSelect: { _ in }
         )
 

@@ -46,13 +46,15 @@ struct ThemePickerTests {
         }
     }
 
-    @Test func windowStyleDefaultsToStandardAndPersists() throws {
+    @Test func standardThemeMaterialDefaultsToPlainAndPersists() throws {
         let suite = try #require(UserDefaults(suiteName: "WebsiteColorTests.\(UUID().uuidString)"))
         defer { suite.removePersistentDomain(forName: suite.description) }
 
-        #expect(BrowserSettings(defaults: suite).loomStyle == .standard)
-        BrowserSettings(defaults: suite).loomStyle = .transparent
-        #expect(BrowserSettings(defaults: suite).loomStyle == .transparent)
+        let settings = BrowserSettings(defaults: suite)
+        settings.themeID = "standard"
+        #expect(settings.themeMaterial == .plain)
+        settings.themeMaterial = .glass
+        #expect(BrowserSettings(defaults: suite).themeMaterial == .glass)
     }
 
     @Test func websiteTintPersistsIndependentlyOfWindowStyle() throws {
@@ -60,11 +62,12 @@ struct ThemePickerTests {
         defer { suite.removePersistentDomain(forName: suite.description) }
 
         let settings = BrowserSettings(defaults: suite)
-        settings.loomStyle = .transparent
+        settings.themeID = "standard"
+        settings.themeMaterial = .glass
         settings.matchesWebsiteColor = true
 
         let restored = BrowserSettings(defaults: suite)
-        #expect(restored.loomStyle == .transparent)
+        #expect(restored.themeMaterial == .glass)
         #expect(restored.matchesWebsiteColor)
     }
 
@@ -74,7 +77,7 @@ struct ThemePickerTests {
         suite.set("websiteTint", forKey: "appearance.loomStyle")
 
         let settings = BrowserSettings(defaults: suite)
-        #expect(settings.loomStyle == .standard)
+        #expect(settings.themeMaterial == .plain)
         #expect(settings.matchesWebsiteColor)
     }
 
@@ -86,7 +89,7 @@ struct ThemePickerTests {
 
         let settings = BrowserSettings(defaults: suite)
         #expect(!settings.matchesWebsiteColor)
-        settings.loomStyle = .transparent
+        settings.themeMaterial = .glass
         #expect(!BrowserSettings(defaults: suite).matchesWebsiteColor)
     }
 }

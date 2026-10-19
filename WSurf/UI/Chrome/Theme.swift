@@ -26,6 +26,18 @@ enum Theme {
         resolved.accent
     }
 
+    static var assistant: Color {
+        resolved.assistant
+    }
+
+    static var accentText: Color {
+        resolved.accentText
+    }
+
+    static var onAccent: Color {
+        resolved.onAccent
+    }
+
     private static let standardThinkingMax = adaptive(
         dark: NSColor(red: 0.77, green: 0.64, blue: 1.00, alpha: 1),
         light: NSColor(red: 0.38, green: 0.12, blue: 0.62, alpha: 1)
@@ -173,6 +185,10 @@ enum Theme {
     /// The ink a theme prescribes for control icons and for URL text, nil when a surface should draw its own.
     static var controlOverride: Color? {
         resolved.controlOverride
+    }
+
+    static func controlOverride(in windowScheme: ColorScheme) -> Color? {
+        resolved.controlOverride(in: windowScheme)
     }
 
     static var urlOverride: Color? {

@@ -98,6 +98,8 @@ final class BrowserSettings {
     @ObservationIgnored var storedThemeAdjustments: [String: ThemeAdjustment]?
     /// The resolved colors of the selected theme, rebuilt after the theme, a saved theme or an adjustment changes.
     @ObservationIgnored var themeCache: ResolvedTheme?
+    var themePreview: ThemePreview?
+    var sidebarInk = ThemeSidebarInk()
     @ObservationIgnored private var storedSidebarFontFamily: String?
     @ObservationIgnored private var storedSidebarFontSize: Double?
     @ObservationIgnored private var storedSidebarFontWeight: SidebarFontWeight?
@@ -753,8 +755,11 @@ final class BrowserSettings {
         )
         hiddenFrequentHosts = Set(stringArray(Key.startPageHiddenSites) ?? [])
 
-        if application == nil, object(Key.websiteTint) == nil {
-            write(matchesWebsiteColor, forKey: Key.websiteTint)
+        if application == nil {
+            if object(Key.websiteTint) == nil {
+                write(matchesWebsiteColor, forKey: Key.websiteTint)
+            }
+            refreshTheme()
         }
     }
 
@@ -775,6 +780,7 @@ final class BrowserSettings {
     }
 
     func resetToDefaults() {
+        cancelThemePreview()
         fillsPasswords = true
         fillsContacts = true
         fillsPaymentCards = true

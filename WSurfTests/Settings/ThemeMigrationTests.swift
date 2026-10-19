@@ -217,7 +217,7 @@ struct ThemeMigrationTests {
         #expect(copy.dark.primary == 0x884488)
         #expect(settings.themeAdjustment.material == .glass)
         #expect(settings.themeAdjustment.glassOpacity == 0.3)
-        #expect(settings.loomStyle == .transparent)
+        #expect(settings.themeMaterial == .glass)
     }
 
     @Test func migrationRunsOnceAndLeavesLegacyKeysInPlace() throws {

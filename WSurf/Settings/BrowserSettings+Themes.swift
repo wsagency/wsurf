@@ -34,7 +34,10 @@ extension BrowserSettings {
         get { globalValue(\.themeID, storage: storedThemeID) }
         set {
             setGlobal(\BrowserSettings.themeID, storage: \BrowserSettings.storedThemeID, value: newValue,
-                      key: Key.themeID, didChange: { $0.themeCache = nil })
+                      key: Key.themeID, didChange: {
+                          $0.themePreview = nil
+                          $0.refreshTheme()
+                      })
         }
     }
 
@@ -44,7 +47,7 @@ extension BrowserSettings {
         set {
             setGlobal(\BrowserSettings.userThemes, storage: \BrowserSettings.storedUserThemes,
                       value: Self.normalized(newValue), key: Key.userThemes, encode: { try? JSONEncoder().encode($0) }) {
-                $0.themeCache = nil
+                $0.refreshTheme()
             }
         }
     }
@@ -55,7 +58,7 @@ extension BrowserSettings {
         set {
             setGlobal(\BrowserSettings.themeAdjustments, storage: \BrowserSettings.storedThemeAdjustments,
                       value: newValue.mapValues { $0.bounded() }, key: Key.themeAdjustments,
-                      encode: { try? JSONEncoder().encode($0) }) { $0.themeCache = nil }
+                      encode: { try? JSONEncoder().encode($0) }) { $0.refreshTheme() }
         }
     }
 
@@ -72,11 +75,23 @@ extension BrowserSettings {
 
     /// The knobs of the selected theme. Setting them never makes a copy.
     var themeAdjustment: ThemeAdjustment {
-        get { themeAdjustments[selectedTheme.id] ?? ThemeAdjustment() }
+        get {
+            let id = selectedTheme.id
+            if let preview = globalSettings.themePreview, preview.themeID == id {
+                return preview.adjustment
+            }
+            return themeAdjustments[id] ?? ThemeAdjustment()
+        }
         set {
+            let hadPreview = globalSettings.themePreview != nil
+            globalSettings.themePreview = nil
             var adjustments = themeAdjustments
-            adjustments[selectedTheme.id] = newValue == ThemeAdjustment() ? nil : newValue
+            let bounded = newValue.bounded()
+            adjustments[selectedTheme.id] = bounded == ThemeAdjustment() ? nil : bounded
             themeAdjustments = adjustments
+            if hadPreview || globalSettings.themeCache?.adjustment != bounded {
+                globalSettings.refreshTheme()
+            }
         }
     }
 
@@ -85,25 +100,33 @@ extension BrowserSettings {
     var resolvedTheme: ResolvedTheme {
         let settings = globalSettings
         // Reading these registers the observation of the caller; the cache itself is not observed.
-        _ = themeID
-        _ = userThemes
-        _ = themeAdjustments
+        let id = themeID
+        let themes = userThemes
+        let adjustments = themeAdjustments
+        let preview = settings.themePreview
         if let cached = settings.themeCache {
             return cached
         }
-        let theme = selectedTheme
-        let resolved = ResolvedTheme(theme, adjustment: themeAdjustments[theme.id] ?? ThemeAdjustment())
+        let selected = themes.first { $0.id == id } ?? ThemeCatalog.builtIn(id) ?? ThemeCatalog.fallback
+        let theme = preview?.applying(to: selected) ?? selected
+        let adjustment: ThemeAdjustment
+        if let preview, preview.themeID == selected.id {
+            adjustment = preview.adjustment
+        } else {
+            adjustment = adjustments[selected.id] ?? ThemeAdjustment()
+        }
+        let resolved = ResolvedTheme(theme, adjustment: adjustment)
         settings.themeCache = resolved
         return resolved
     }
 
-    // MARK: - Window style, as the Appearance page still shows it
+    // MARK: - Material
 
-    var loomStyle: LoomStyle {
-        get { themeAdjustment.material == .glass ? .transparent : .standard }
+    var themeMaterial: ThemeMaterial {
+        get { themeAdjustment.material }
         set {
             var adjustment = themeAdjustment
-            adjustment.material = newValue == .transparent ? .glass : .plain
+            adjustment.material = newValue
             themeAdjustment = adjustment
         }
     }

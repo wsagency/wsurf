@@ -33,7 +33,7 @@ struct SiteControlsMenu: View {
         } label: {
             Image(systemName: "slider.horizontal.3")
                 .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(ChromeInk.glyph(onLight: chromeIsLight, hovering: hovering))
+                .foregroundStyle(ChromeInk.glyph(onLight: chromeIsLight, windowScheme: windowColorScheme, hovering: hovering))
                 .frame(width: extent, height: extent)
                 .hoverBackground(isActive: hovering || isPresented)
         }

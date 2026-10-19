@@ -60,6 +60,8 @@ struct SidebarRowInk {
 /// What a row reads from its surroundings to draw a `SidebarRowStyle`. Every kind of row keeps one, so none of
 /// them reads the environment on its own.
 struct SidebarRowInkSource: DynamicProperty {
+    @Environment(\.windowColorScheme) private var windowScheme
+    @Environment(\.sidebarIsFloating) private var isFloating
     @Environment(\.colorScheme) private var scheme
     @Environment(\.chromeWash) private var wash
     @Environment(\.colorSchemeContrast) private var contrast
@@ -70,7 +72,7 @@ struct SidebarRowInkSource: DynamicProperty {
 
     func ink(for style: SidebarRowStyle, isDeferred: Bool = false) -> SidebarRowInk {
         let settings = BrowserSettings.application
-        let resting = settings.sidebarTextColor(isDeferred: isDeferred, scheme: scheme)
+        let resting = settings.sidebarTextColor(isDeferred: isDeferred, scheme: windowScheme, isFloating: isFloating)
         guard style.emphasis == .current || style.marksCurrentTab || style.mark != .none else {
             return SidebarRowInk(style: style, resting: resting, colors: nil)
         }
@@ -78,7 +80,7 @@ struct SidebarRowInkSource: DynamicProperty {
             style: style,
             resting: resting,
             colors: SidebarRowStyle.colors(
-                text: SidebarRowStyle.srgb(settings.sidebarTextColor(scheme: scheme), scheme: scheme),
+                text: SidebarRowStyle.srgb(settings.sidebarTextColor(scheme: windowScheme, isFloating: isFloating), scheme: windowScheme),
                 ground: wash.groundColor,
                 accent: SidebarRowStyle.srgb(Theme.accent, scheme: scheme)
             ),

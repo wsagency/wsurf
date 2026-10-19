@@ -15,7 +15,6 @@ struct FolderSection: View {
 
     @Environment(\.sidebarStyle) private var sidebarStyle
     @Environment(\.windowColorScheme) private var windowColorScheme
-    @Environment(\.colorScheme) private var colorScheme
     private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var windowFrame: CGRect = .zero
@@ -106,7 +105,7 @@ struct FolderSection: View {
                 } else if sidebarStyle == .full {
                     Text(verbatim: folder.name)
                         .font(BrowserSettings.application.sidebarFont)
-                        .foregroundStyle(BrowserSettings.application.sidebarTextColor(scheme: colorScheme))
+                        .foregroundStyle(ink.resting)
                         .lineLimit(1)
                         .sidebarRowAccessibility(style)
                         .sidebarTitleCentered()

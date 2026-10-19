@@ -24,12 +24,13 @@ enum ChromeInk {
 
     static func glyph(
         onLight: Bool,
+        windowScheme: ColorScheme,
         enabled: Bool = true,
         hovering: Bool = false,
         subdued: Bool = false,
         honorsOverride: Bool = true
     ) -> AnyShapeStyle {
-        if honorsOverride, let override = Theme.controlOverride {
+        if honorsOverride, let override = Theme.controlOverride(in: windowScheme) {
             return AnyShapeStyle(override.opacity(enabled ? 1 : 0.35))
         }
         let base: Color = onLight ? .black : .white
@@ -269,13 +270,14 @@ struct ChromeIcon: View {
     @Environment(\.chromeIsLight) private var chromeIsLight
     @Environment(\.chromeIconExtent) private var inheritedExtent
     @Environment(\.ignoresControlOverride) private var ignoresOverride
+    @Environment(\.windowColorScheme) private var windowColorScheme
 
     private var side: CGFloat {
         extent ?? inheritedExtent
     }
 
     private var style: AnyShapeStyle {
-        if !ignoresOverride, let override = Theme.controlOverride {
+        if !ignoresOverride, let override = Theme.controlOverride(in: windowColorScheme) {
             return AnyShapeStyle(override.opacity(isEnabled ? 1 : 0.35))
         }
         if let tint {
@@ -283,6 +285,7 @@ struct ChromeIcon: View {
         }
         return ChromeInk.glyph(
             onLight: chromeIsLight,
+            windowScheme: windowColorScheme,
             enabled: isEnabled,
             hovering: hovering,
             subdued: isSubdued,

@@ -93,7 +93,7 @@ struct ThemeResolutionTests {
             #expect(settings.themeAdjustments["gruvbox"] == adjustment)
             #expect(settings.themeAdjustments["nord"] == nil, "a knob belongs to one theme")
             #expect(BrowserSettings(defaults: defaults).themeAdjustments["gruvbox"] == adjustment)
-            #expect(settings.loomStyle == .transparent && settings.transparency == 0.8)
+            #expect(settings.themeMaterial == .glass && settings.transparency == 0.8)
         }
     }
 
@@ -327,6 +327,7 @@ struct ThemeResolutionTests {
 
     @Test func aSolidThemePaintsTheSidebarInItsOwnColorAndIgnoresTheWebsite() throws {
         try onApplication { settings in
+            settings.themeID = "standard"
             let page = NSColor(srgbRed: 0, green: 0.2, blue: 1, alpha: 1)
             let standard = try hex(LoomChrome.sampledColor(page, scheme: .light))
 
@@ -342,6 +343,7 @@ struct ThemeResolutionTests {
 
     @Test func aChangedPaletteReplacesTheWebsiteTintAndResetBringsItBack() throws {
         try onApplication { settings in
+            settings.themeID = "standard"
             let page = NSColor(srgbRed: 0, green: 0.2, blue: 1, alpha: 1)
             let sampled = LoomChrome.sampledColor(page, scheme: .light)
 
@@ -360,6 +362,7 @@ struct ThemeResolutionTests {
 
     @Test func editedInksWinOverTheDefaultsAndResetRemovesThem() throws {
         try onApplication { settings in
+            settings.themeID = "standard"
             NSApp.appearance = NSAppearance(named: .aqua)
             #expect(Theme.controlOverride == nil && Theme.urlOverride == nil)
 
@@ -370,7 +373,21 @@ struct ThemeResolutionTests {
 
             let controls = try #require(Theme.controlOverride.flatMap { NSColor($0).usingColorSpace(.sRGB) })
             let url = try #require(Theme.urlOverride.flatMap { NSColor($0).usingColorSpace(.sRGB) })
-            #expect(controls.greenComponent > 0.99 && abs(controls.alphaComponent - 0.4) < 0.01)
+            #expect(settings.selectedTheme.light.icons == SidebarTextStyle(colorRGB: 0x00FF00, opacity: 0.4))
+            let variant = settings.resolvedTheme.light
+            let appearance = try #require(NSAppearance(named: .aqua))
+            let grounds = [variant.window, variant.sidebar].map {
+                SidebarRowStyle.srgb(Color(nsColor: $0.resolved(in: appearance)), scheme: .light)
+            }
+            let raw = SidebarRowStyle.srgb(Color(hex: 0x00FF00).opacity(0.4), scheme: .light)
+            #expect(grounds.contains {
+                SidebarRowStyle.contrast(ThemeReadability.composite(raw, on: $0), $0) < 3
+            })
+            let channels = [controls.redComponent, controls.greenComponent, controls.blueComponent]
+            #expect(controls.alphaComponent == 1 && (channels.allSatisfy { $0 == 0 } || channels.allSatisfy { $0 == 1 }))
+            for ground in grounds {
+                #expect(SidebarRowStyle.contrast(ThemeReadability.composite(controls, on: ground), ground) >= 3)
+            }
             #expect(url.blueComponent > 0.99 && abs(url.alphaComponent - 0.7) < 0.01)
 
             // Only the light variant has an ink, so a dark app keeps each surface's own.

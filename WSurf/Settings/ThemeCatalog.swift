@@ -7,11 +7,12 @@ import Foundation
 /// while their knobs live in `ThemeAdjustment`. Every color is an exact value from the palette's own published
 /// definition; see NOTICE and Acknowledgements for the licenses.
 enum ThemeCatalog {
+    static let wsurfID = "wsurf"
     static let standardID = "standard"
     static let calmID = "calm"
     /// The theme a fresh install starts with, and the one a missing theme id falls back to. Existing installs
     /// keep the theme they had: `ThemeMigration` picks it from their old settings.
-    static let defaultID = standardID
+    static let defaultID = wsurfID
 
     static func builtIn(_ id: String) -> ThemeDefinition? {
         builtIn.first { $0.id == id }
@@ -27,6 +28,19 @@ enum ThemeCatalog {
     }
 
     static let builtIn: [ThemeDefinition] = [
+        ThemeDefinition(
+            id: wsurfID, name: "WSurf", ground: .solid,
+            light: ThemeVariant(
+                window: 0xF7F7FA, sidebar: 0xEFEEF6, surface: 0xFFFFFF, accent: 0x3B1FD1,
+                assistant: 0x087258, text: 0x1D1D1F,
+                unloadedText: SidebarTextStyle(opacity: 0.75), icons: SidebarTextStyle(colorRGB: 0x3D3C4F)
+            ),
+            dark: ThemeVariant(
+                window: 0x1C1C1E, sidebar: 0x151419, surface: 0x28272E, accent: 0x6D55FF,
+                assistant: 0x2FE0B2, text: 0xF5F5F7,
+                unloadedText: SidebarTextStyle(opacity: 0.65), icons: SidebarTextStyle(colorRGB: 0xD2D0DE)
+            )
+        ),
         // Standard has no colors of its own: nil is the adaptive value Standard has always drawn. Calm's are the 8-bit
         // sRGB values of the colors it always drew; the earlier ones were floating point.
         ThemeDefinition(id: standardID, name: String(localized: "Standard"), ground: .pageTinted),

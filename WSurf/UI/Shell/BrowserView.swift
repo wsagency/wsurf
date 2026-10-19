@@ -233,6 +233,7 @@ struct BrowserView: View {
         .environment(\.assistantProviderID, coordinator.selectedProvider.id)
         .environment(\.chromeIsLight, scheme == .light)
         .environment(\.chromeWash, .of(nil, isLight: scheme == .light))
+        .environment(\.windowColorScheme, scheme)
         .animation(chromeMotion, value: sidebar.isVisible)
         .animation(nil, value: sidebar.isPeeking)
         .animation(chromeMotion, value: showsPanel)

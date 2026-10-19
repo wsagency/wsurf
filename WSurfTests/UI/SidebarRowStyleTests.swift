@@ -190,10 +190,10 @@ struct SidebarRowStyleTests {
         settings.userThemes = []
         settings.themeAdjustments = [:]
 
-        func colors(on ground: NSColor, scheme: ColorScheme) -> SidebarRowStyle.Colors {
+        func colors(on ground: NSColor, scheme: ColorScheme, isFloating: Bool = false) -> SidebarRowStyle.Colors {
             let ink: ColorScheme = PageInk.isLight(ground, scheme: scheme) ? .light : .dark
             return SidebarRowStyle.colors(
-                text: SidebarRowStyle.srgb(settings.sidebarTextColor(scheme: ink), scheme: ink),
+                text: SidebarRowStyle.srgb(settings.sidebarTextColor(scheme: scheme, isFloating: isFloating), scheme: scheme),
                 ground: ground,
                 accent: SidebarRowStyle.srgb(Theme.accent, scheme: ink)
             )
@@ -212,7 +212,7 @@ struct SidebarRowStyleTests {
                     let ink = try #require(theme.variant(scheme).text)
                     for isFloating in [false, true] {
                         let ground = LoomChrome.sampledColor(blue, scheme: scheme, isFloating: isFloating)
-                        let result = colors(on: ground, scheme: scheme)
+                        let result = colors(on: ground, scheme: scheme, isFloating: isFloating)
                         let context = "\(theme.id) \(scheme) floating \(isFloating)"
                         expectInverse(result, on: ground, context)
                         #expect(same(result.fill, rgb(
@@ -233,9 +233,9 @@ struct SidebarRowStyleTests {
                 }
             }
         }
-        // Standard and Calm in two appearances on six grounds each; five solid themes, two appearances, two surfaces.
+        // Standard and Calm in two appearances on six grounds each; six solid themes, two appearances, two surfaces.
         #expect(tinted == 2 * 2 * pages.count)
-        #expect(solid == 5 * 2 * 2)
+        #expect(solid == 6 * 2 * 2)
     }
 
     @Test func aCustomTextColorFillsTheCurrentRow() {

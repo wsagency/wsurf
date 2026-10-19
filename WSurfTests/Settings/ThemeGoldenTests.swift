@@ -9,8 +9,8 @@ import Testing
 @testable import WSurf
 
 /// Today's resolved chrome colors for every appearance, preset and saved customization, recorded from the code
-/// that existed before themes gained light and dark variants. The migration to themes has to reproduce each cell:
-/// a person who upgrades sees the same colors, and a cell that changes is a color that was lost.
+/// that existed before themes gained light and dark variants. Migration preserves the stored colors exactly;
+/// only the enumerated below-threshold foregrounds derive an opaque runtime ink under §1.4.
 @MainActor
 struct ThemeGoldenTests {
     /// The legacy settings of one install, as the old keys stored them.
@@ -93,9 +93,15 @@ struct ThemeGoldenTests {
         defaults.set(true, forKey: "appearance.websiteTint")
         defaults.set(scenario.mode, forKey: "appearance.mode")
         defaults.set(scenario.preset, forKey: "appearance.themePreset")
-        defaults.set(try JSONEncoder().encode(scenario.customizations), forKey: "appearance.themeCustomizations")
-        defaults.set(try JSONEncoder().encode(scenario.textStyles), forKey: "appearance.sidebar.textStyles")
+        let customizations = try JSONEncoder().encode(scenario.customizations)
+        let textStyles = try JSONEncoder().encode(scenario.textStyles)
+        defaults.set(customizations, forKey: "appearance.themeCustomizations")
+        defaults.set(textStyles, forKey: "appearance.sidebar.textStyles")
         let upgraded = BrowserSettings(defaults: defaults)
+        #expect(defaults.string(forKey: "appearance.mode") == scenario.mode)
+        #expect(defaults.string(forKey: "appearance.themePreset") == scenario.preset)
+        #expect(defaults.data(forKey: "appearance.themeCustomizations") == customizations)
+        #expect(defaults.data(forKey: "appearance.sidebar.textStyles") == textStyles)
 
         let settings = BrowserSettings.application
         settings.forcesDarkAppearance = false
@@ -221,11 +227,57 @@ struct ThemeGoldenTests {
         "calm-customized|darkAqua": nil,
     ]
 
+    /// The intentional §1.4 changes observed in b06-functional.log, with the exact migrated raw style and
+    /// inherited text. No backgrounds, control surfaces, accents, URLs or passing foregrounds are exempted.
+    /// `palette-and-inks|aqua|unloaded` stays exact: its original ink passes on the actual window ground.
+    private static let guardedLegacyInks: [String: (style: SidebarTextStyle, text: UInt32?)] = [
+        "mode-lightCalm|aqua|unloaded": (SidebarTextStyle(opacity: 0.55), nil),
+        "mode-darkCalm|aqua|unloaded": (SidebarTextStyle(opacity: 0.55), nil),
+        "preset-nord|darkAqua|unloaded": (SidebarTextStyle(opacity: 0.65), 0xD8DEE9),
+        "palette-and-inks|aqua|control": (SidebarTextStyle(colorRGB: 0x0033CC, opacity: 0.4), nil),
+        "sidebar-text-styles|aqua|loaded": (SidebarTextStyle(colorRGB: 0xCC3300, opacity: 0.8), nil),
+        "sidebar-text-styles|aqua|unloaded": (SidebarTextStyle(colorRGB: 0x0033CC, opacity: 0.3), nil),
+        "sidebar-text-styles|darkAqua|unloaded": (SidebarTextStyle(colorRGB: 0xFFCC00, opacity: 0.5), nil),
+        "calm-customized|aqua|control": (SidebarTextStyle(colorRGB: 0x224422, opacity: 0.9), nil),
+        "calm-customized|aqua|loaded": (SidebarTextStyle(colorRGB: 0x553355, opacity: 0.95), nil),
+        "calm-customized|aqua|unloaded": (SidebarTextStyle(opacity: 0.55), nil),
+        "preset-over-customizations|darkAqua|unloaded": (SidebarTextStyle(opacity: 0.65), 0xD8DEE9),
+    ]
+
+    private func expectGuardedLegacyInk(
+        _ original: (style: SidebarTextStyle, text: UInt32?), role: String, measured: String,
+        appearance: NSAppearance, scheme: ColorScheme
+    ) throws {
+        let settings = BrowserSettings.application
+        let stored = settings.selectedTheme.variant(scheme)
+        let style = role == "control" ? stored.icons : (role == "loaded" ? stored.sidebarText : stored.unloadedText)
+        #expect(style == original.style, "the exact stored RGB and opacity survive migration and resolution")
+        #expect(stored.text == original.text)
+        let base = style.color ?? stored.text.map(Color.init(hex:)) ?? (scheme == .dark ? .white : .black)
+        let raw = SidebarRowStyle.srgb(base.opacity(style.opacity), scheme: scheme)
+        let resolved = settings.resolvedTheme.variant(scheme)
+        let roles = role == "control" ? [resolved.window, resolved.sidebar] : [resolved.window]
+        let grounds = roles.map { SidebarRowStyle.srgb(Color(nsColor: $0.resolved(in: appearance)), scheme: scheme) }
+        let minimum: CGFloat = role == "control" ? 3 : 4.5
+        #expect(grounds.contains {
+            SidebarRowStyle.contrast(ThemeReadability.composite(raw, on: $0), $0) < minimum
+        }, "only an actually below-threshold runtime ink may change")
+        let ink: Color? = role == "control" ? resolved.controlInk : (role == "loaded" ? resolved.loadedInk : resolved.unloadedInk)
+        let fallback = SidebarRowStyle.srgb(try #require(ink), scheme: scheme)
+        let channels = [fallback.redComponent, fallback.greenComponent, fallback.blueComponent]
+        #expect(fallback.alphaComponent == 1 && (channels.allSatisfy { $0 == 0 } || channels.allSatisfy { $0 == 1 }))
+        #expect(cell(fallback) == measured, "the chrome consumer receives the derived opaque ink")
+        for ground in grounds {
+            #expect(SidebarRowStyle.contrast(ThemeReadability.composite(fallback, on: ground), ground) >= minimum)
+        }
+    }
+
     @Test func everyRecordedColorSurvivesTheMigration() throws {
         let saved = snapshot()
         defer { restore(saved) }
         var installed: String?
         var checked = 0
+        var guarded = 0
         for line in Self.table.split(separator: "\n") {
             let parts = line.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
             let scenario = try #require(Self.scenarios.first { $0.name == parts[0] }, "\(parts[0])")
@@ -244,15 +296,21 @@ struct ThemeGoldenTests {
             }
             #expect(expected.count == Self.cellNames.count && measured.count == expected.count)
             for (name, pair) in zip(Self.cellNames, zip(expected, measured)) {
-                #expect(
-                    matches(pair.0, pair.1, appearance: appearance),
-                    "\(scenario.name) in \(row.name): \(name) was \(pair.0), is \(pair.1)"
-                )
+                if let original = Self.guardedLegacyInks["\(scenario.name)|\(row.name)|\(name)"] {
+                    try expectGuardedLegacyInk(original, role: name, measured: pair.1, appearance: appearance, scheme: row.scheme)
+                    guarded += 1
+                } else {
+                    #expect(
+                        matches(pair.0, pair.1, appearance: appearance),
+                        "\(scenario.name) in \(row.name): \(name) was \(pair.0), is \(pair.1)"
+                    )
+                }
                 checked += 1
             }
         }
         let skipped = Self.privateWindowRows.values.filter { $0 == nil }.count
         #expect(checked == (Self.scenarios.count * Self.appearances.count - skipped) * Self.cellNames.count)
+        #expect(guarded == Self.guardedLegacyInks.count, "every explicitly allowed case is exercised")
     }
 
     // MARK: - The recorded colors

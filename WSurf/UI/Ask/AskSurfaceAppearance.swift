@@ -167,6 +167,7 @@ struct AskRestingLine: View {
     let content: AskRestingContent
     let security: PageSecurity
     let engine: BrowserEngine?
+    @Environment(\.windowColorScheme) private var windowColorScheme
 
     var body: some View {
         HStack(spacing: 5) {
@@ -219,12 +220,12 @@ struct AskRestingLine: View {
                 if let symbol = security.symbol {
                     Image(systemName: symbol)
                         .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(Theme.controlOverride ?? security.tint)
+                        .foregroundStyle(Theme.controlOverride(in: windowColorScheme) ?? security.tint)
                 }
                 if let engine {
                     Text(verbatim: engine == .webKit ? "WK" : "Cr")
                         .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Theme.controlOverride ?? .secondary)
+                        .foregroundStyle(Theme.controlOverride(in: windowColorScheme) ?? .secondary)
                         .padding(.horizontal, 3)
                         .padding(.vertical, 1)
                         .background(.quaternary, in: .rect(cornerRadius: 3))

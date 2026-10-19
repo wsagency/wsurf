@@ -26,6 +26,8 @@ struct ThemeThumbnailPalette: Equatable {
     let accent: Color
     /// Only a solid theme paints the sidebar as its own surface; the other palettes share the backdrop.
     var sidebar: Color?
+    /// A flat translucent preview, not a backdrop or glass effect.
+    var materialOpacity: Double = 1
 
     private static let light = ThemeThumbnailPalette(
         id: "light",
@@ -75,7 +77,10 @@ struct ThemeThumbnailPalette: Equatable {
     /// fixed picture of their material, with the person's palette changes and inks laid over it.
     init(_ theme: ThemeDefinition, adjustment: ThemeAdjustment, scheme: ColorScheme) {
         let isDark = scheme == .dark
-        let variant = ResolvedVariant(theme.variant(scheme), isDark: isDark, brightness: adjustment.brightness(scheme))
+        let colors = theme.variant(scheme)
+        let variant = ResolvedVariant(
+            colors, isDark: isDark, brightness: adjustment.brightness(scheme), ground: theme.ground
+        )
         let appearance = NSAppearance(named: isDark ? .darkAqua : .aqua) ?? NSApp.effectiveAppearance
         func color(_ role: RoleColor) -> Color {
             Color(nsColor: role.resolved(in: appearance))
@@ -88,6 +93,7 @@ struct ThemeThumbnailPalette: Equatable {
                 secondary: variant.urlInk ?? variant.unloadedInk, accent: color(variant.accent),
                 sidebar: color(variant.sidebar)
             )
+            materialOpacity = adjustment.material == .glass ? 0.35 + 0.55 * adjustment.glassOpacity : 1
             return
         }
         let base = switch (theme.ground, isDark) {
@@ -104,11 +110,15 @@ struct ThemeThumbnailPalette: Equatable {
             guard variant.changesPalette else { return color }
             return Color(nsColor: Theme.customized(NSColor(color), change: variant.change, isAccent: accent))
         }
+        let inheritedAccent = ThemeCatalog.builtIn(theme.basedOn ?? theme.id)?.variant(scheme).accent
+        let accent = colors.accent == nil || colors.accent == inheritedAccent
+            ? adjusted(base.accent, accent: true) : color(variant.accent)
         self.init(
             id: id, backdrop: adjusted(base.backdrop), chrome: adjusted(base.chrome), canvas: base.canvas,
             surface: adjusted(base.surface), primary: variant.controlInk ?? base.primary,
-            secondary: variant.urlInk ?? base.secondary, accent: adjusted(base.accent, accent: true)
+            secondary: variant.urlInk ?? base.secondary, accent: accent
         )
+        materialOpacity = adjustment.material == .glass ? 0.35 + 0.55 * adjustment.glassOpacity : 1
     }
 
     init(
@@ -147,7 +157,11 @@ struct ThemeThumbnailWindow: View {
     var body: some View {
         AppearanceBrowserThumbnail(palette: palette, chromeInk: palette.primary) {
             ZStack {
-                palette.backdrop
+                LinearGradient(
+                    colors: [.white.opacity(0.3), .black.opacity(0.2)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+                palette.backdrop.opacity(palette.materialOpacity)
 
                 if palette.sidebar == nil {
                     LinearGradient(
@@ -186,11 +200,11 @@ struct AppearanceBrowserThumbnail<Backdrop: View>: View {
     var body: some View {
         ZStack {
             backdrop
-            palette.chrome
+            palette.chrome.opacity(palette.materialOpacity)
                 .frame(maxWidth: .infinity)
                 .frame(height: 14, alignment: .top)
             if let sidebar = palette.sidebar {
-                sidebar
+                sidebar.opacity(palette.materialOpacity)
                     .frame(width: 27)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }

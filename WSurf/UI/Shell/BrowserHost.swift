@@ -180,6 +180,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         Self.hideTitlebarDecoration(of: created)
 
         window = created
+        observeTheme()
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
             selector: #selector(accessibilityDisplayOptionsDidChange),
@@ -192,11 +193,22 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         return created
     }
 
-    /// The window shows the desktop through its backdrop unless Reduce Transparency or Increase Contrast is on.
-    /// An opaque window also spares WindowServer from compositing it against what is behind it on every frame.
-    func applyTransparencyPreference(to window: NSWindow, isOpaque: Bool = WindowOpacity.isOpaqueNow) {
+    /// Plain solid themes and accessibility fallbacks spare WindowServer from compositing the desktop.
+    func applyTransparencyPreference(to window: NSWindow, isOpaque: Bool = WindowOpacity.isOpaqueForThemeNow) {
         window.isOpaque = isOpaque
         window.backgroundColor = isOpaque ? NSColor(Theme.windowBackground) : .clear
+    }
+
+    private func observeTheme() {
+        withObservationTracking {
+            _ = BrowserSettings.application.resolvedTheme
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, let window = self.window else { return }
+                self.observeTheme()
+                self.applyTransparencyPreference(to: window)
+            }
+        }
     }
 
     @objc private func accessibilityDisplayOptionsDidChange(_ notification: Notification) {

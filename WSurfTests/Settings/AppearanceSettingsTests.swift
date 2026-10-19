@@ -156,13 +156,16 @@ struct AppearanceSettingsTests {
         #expect(restored.sidebarFolderTint == initial.tint)
     }
 
-    /// A theme that paints a solid ground hides the window style rows, so a search for one opens the theme row.
-    @Test func searchSendsTheRowsASolidThemeHidesToTheThemeRow() throws {
-        let hidden = try #require(SettingsIndex.all.first { $0.id == "appearance.websiteTint" })
-        let shown = try #require(SettingsIndex.all.first { $0.id == "appearance.sidebarFontSize" })
-        #expect(hidden.targetAnchor(themeIsSolid: false) == "appearance.websiteTint")
-        #expect(hidden.targetAnchor(themeIsSolid: true) == "appearance.theme")
-        #expect(shown.targetAnchor(themeIsSolid: true) == "appearance.sidebarFontSize")
+    /// Material and tint stay discoverable for solid themes too; the Glass-only slider targets Material.
+    @Test func searchFindsMaterialBrightnessAndColorsForEveryTheme() throws {
+        for id in ["appearance.material", "appearance.brightness", "appearance.colors", "appearance.websiteTint"] {
+            let entry = try #require(SettingsIndex.all.first { $0.id == id })
+            #expect(entry.targetAnchor == id)
+        }
+        let transparency = try #require(SettingsIndex.all.first { $0.id == "appearance.transparency" })
+        #expect(transparency.targetAnchor == "appearance.material")
+        #expect(SettingsIndex.all.allSatisfy { !["appearance.windowStyle", "appearance.themeCustomization",
+                                               "appearance.sidebarLoadedColor", "appearance.sidebarUnloadedColor", ].contains($0.id) })
     }
 
     @MainActor
@@ -185,14 +188,28 @@ struct AppearanceSettingsTests {
 
         let loaded = try srgb(reopened.sidebarTextColor(scheme: .light))
         let unloaded = try srgb(reopened.sidebarTextColor(isDeferred: true, scheme: .light))
-        #expect(loaded.redComponent > 0.7 && loaded.blueComponent < 0.1)
-        #expect(abs(loaded.alphaComponent - 0.8) < 0.01)
-        #expect(unloaded.blueComponent > 0.7 && unloaded.redComponent < 0.1)
-        #expect(abs(unloaded.alphaComponent - 0.3) < 0.01)
+        #expect(reopened.selectedTheme.light.sidebarText == SidebarTextStyle(colorRGB: 0xCC3300, opacity: 0.8))
+        #expect(reopened.selectedTheme.light.unloadedText == SidebarTextStyle(colorRGB: 0x0033CC, opacity: 0.3))
+        #expect(reopened.selectedTheme.dark.unloadedText == SidebarTextStyle(colorRGB: 0x33CC00, opacity: 0.6))
+
+        // §1.4 derives runtime ink only: all three translucent choices fail AA on their window ground.
+        func expectReadableFallback(_ ink: NSColor, original: SidebarTextStyle, scheme: ColorScheme) throws {
+            let appearance = try #require(NSAppearance(named: scheme == .dark ? .darkAqua : .aqua))
+            let ground = SidebarRowStyle.srgb(
+                Color(nsColor: reopened.resolvedTheme.variant(scheme).window.resolved(in: appearance)), scheme: scheme
+            )
+            let raw = SidebarRowStyle.srgb(try #require(original.color).opacity(original.opacity), scheme: scheme)
+            #expect(SidebarRowStyle.contrast(ThemeReadability.composite(raw, on: ground), ground) < 4.5)
+            let channels = [ink.redComponent, ink.greenComponent, ink.blueComponent]
+            #expect(ink.alphaComponent == 1 && (channels.allSatisfy { $0 == 0 } || channels.allSatisfy { $0 == 1 }))
+            #expect(SidebarRowStyle.contrast(ThemeReadability.composite(ink, on: ground), ground) >= 4.5)
+        }
+        try expectReadableFallback(loaded, original: reopened.selectedTheme.light.sidebarText, scheme: .light)
+        try expectReadableFallback(unloaded, original: reopened.selectedTheme.light.unloadedText, scheme: .light)
 
         // The dark variant has its own unloaded style and keeps the default loaded text: white.
         let dark = try srgb(reopened.sidebarTextColor(isDeferred: true, scheme: .dark))
-        #expect(dark.greenComponent > 0.7 && dark.blueComponent < 0.1 && abs(dark.alphaComponent - 0.6) < 0.01)
+        try expectReadableFallback(dark, original: reopened.selectedTheme.dark.unloadedText, scheme: .dark)
         let darkLoaded = try srgb(reopened.sidebarTextColor(scheme: .dark))
         #expect(darkLoaded.redComponent > 0.95 && darkLoaded.greenComponent > 0.95 && darkLoaded.alphaComponent == 1)
 

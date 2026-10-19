@@ -512,7 +512,7 @@ private struct SidebarDragStack: View {
             if !drag.isSingle {
                 Text(drag.items.count, format: .number)
                     .font(Theme.Font.badge)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.onAccent)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1.5)
                     .background(Theme.accent, in: Capsule())

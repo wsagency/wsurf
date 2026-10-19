@@ -104,7 +104,7 @@ private struct ReleaseNotesSection: View {
                                 """
                         ))
                             .font(Theme.Font.caption)
-                            .foregroundStyle(Theme.accent)
+                            .foregroundStyle(Theme.accentText)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Theme.accent.opacity(0.14), in: Capsule())

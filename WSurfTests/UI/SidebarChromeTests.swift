@@ -13,7 +13,20 @@ import WebKit
 
 @MainActor
 struct LoomChromeTests {
+    private func useStandardTheme() -> () -> Void {
+        let settings = BrowserSettings.application
+        let saved = (settings.themeID, settings.themeAdjustments)
+        settings.themeID = "standard"
+        settings.themeAdjustments["standard"] = nil
+        return {
+            settings.themeAdjustments = saved.1
+            settings.themeID = saved.0
+        }
+    }
+
     @Test func siteColourIsPresentButConstrained() throws {
+        let restore = useStandardTheme()
+        defer { restore() }
         let source = NSColor(srgbRed: 1, green: 0.16, blue: 0, alpha: 1)
         let sampled = try #require(
             LoomChrome.sampledColor(source, scheme: .light).usingColorSpace(.sRGB)
@@ -25,6 +38,8 @@ struct LoomChromeTests {
     }
 
     @Test func anAchromaticPageStillSetsTheLoomsTone() throws {
+        let restore = useStandardTheme()
+        defer { restore() }
         let black = try #require(
             LoomChrome.sampledColor(.black, scheme: .light).usingColorSpace(.sRGB)
         )
@@ -37,6 +52,8 @@ struct LoomChromeTests {
     }
 
     @Test func aDarkColouredPageCanSetADarkAppearance() throws {
+        let restore = useStandardTheme()
+        defer { restore() }
         let navy = NSColor(srgbRed: 0.02, green: 0.05, blue: 0.35, alpha: 1)
         let tinted = try #require(
             LoomChrome.sampledColor(navy, scheme: .light).usingColorSpace(.sRGB)

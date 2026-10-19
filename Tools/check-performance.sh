@@ -167,11 +167,37 @@ check_average \
   'BrowserPerformanceTests/testSwitchingThemes()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
   '0.015' \
-  'Seventy theme switches' \
+  'Eighty theme switches' \
   's'
 check_average \
   'BrowserPerformanceTests/testSwitchingThemes()' \
   'com.apple.dt.XCTMetric_Memory.physical' \
   '4096' \
   'Theme switching memory growth' \
+  'kB'
+
+# Five-sample Pro baselines: 6.998171 s for 30 brightness steps; 0.109710 s for 20 themes.
+check_average \
+  'ThemePerformanceTests/testDraggingThemeBrightness()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '14.000' \
+  'Thirty brightness preview steps across 300 real sidebar rows' \
+  's'
+check_average \
+  'ThemePerformanceTests/testDraggingThemeBrightness()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Theme brightness preview memory growth' \
+  'kB'
+check_average \
+  'ThemePerformanceTests/testRenderingTheThemeGallery()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.220' \
+  'Eight built-in and twelve saved theme gallery layout' \
+  's'
+check_average \
+  'ThemePerformanceTests/testRenderingTheThemeGallery()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Theme gallery memory growth' \
   'kB'

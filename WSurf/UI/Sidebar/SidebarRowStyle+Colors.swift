@@ -54,9 +54,17 @@ extension SidebarRowStyle {
         )
     }
 
+    static func luminance(_ color: NSColor) -> CGFloat {
+        PageInk.luminance(of: opaque(color))
+    }
+
     static func contrast(_ first: NSColor, _ second: NSColor) -> CGFloat {
-        let one = PageInk.luminance(of: opaque(first)) + 0.05
-        let two = PageInk.luminance(of: opaque(second)) + 0.05
+        contrast(luminance(first), luminance(second))
+    }
+
+    static func contrast(_ first: CGFloat, _ second: CGFloat) -> CGFloat {
+        let one = first + 0.05
+        let two = second + 0.05
         return max(one, two) / min(one, two)
     }
 

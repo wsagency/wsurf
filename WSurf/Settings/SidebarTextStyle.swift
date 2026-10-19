@@ -48,8 +48,7 @@ extension BrowserSettings {
     }
 
     /// The text color of a sidebar row in the appearance `scheme` names, from the cached theme.
-    func sidebarTextColor(isDeferred: Bool = false, scheme: ColorScheme) -> Color {
-        let variant = resolvedTheme.variant(scheme)
-        return isDeferred ? variant.unloadedInk : variant.loadedInk
+    func sidebarTextColor(isDeferred: Bool = false, scheme: ColorScheme, isFloating: Bool = false) -> Color {
+        globalSettings.sidebarInk.color(isDeferred: isDeferred, scheme: scheme, isFloating: isFloating)
     }
 }

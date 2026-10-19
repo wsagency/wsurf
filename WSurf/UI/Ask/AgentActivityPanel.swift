@@ -152,7 +152,7 @@ private enum Metrics {
 
 struct AgentStateMarker: View {
     let isRunning: Bool
-    var tint: Color = Theme.accent
+    var tint: Color = Theme.assistant
 
     var body: some View {
         Circle()
@@ -798,7 +798,7 @@ private struct AgentBreadcrumbNode: View {
     private var dotColor: Color {
         switch state {
         case .accent, .running:
-            Theme.accent
+            Theme.assistant
         case .complete:
             .secondary.opacity(0.62)
         case .failed:
@@ -835,7 +835,7 @@ private struct AgentBreadcrumbNode: View {
 
             if state == .running {
                 Circle()
-                    .fill(Theme.accent.opacity(0.22))
+                    .fill(Theme.assistant.opacity(0.22))
                     .frame(width: 13, height: 13)
                     .position(x: centerX, y: dotY)
             }

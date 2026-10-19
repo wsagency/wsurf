@@ -44,7 +44,25 @@ struct ThemeGalleryTests {
         #expect(plain.sidebar == nil, "a tinted theme shares one ground")
         #expect(try hex(plain.backdrop) != hex(darker.backdrop))
         #expect(try hex(plain.canvas) == hex(darker.canvas), "the page stays as it is")
-        #expect(try hex(inked.primary) == 0x00AA00 && hex(plain.primary) != 0x00AA00)
+        #expect(copy.light.icons == SidebarTextStyle(colorRGB: 0x00AA00), "the stored choice is not changed by previewing")
+        let resolved = ResolvedTheme(copy, adjustment: ThemeAdjustment()).light
+        let control = try #require(resolved.controlInk)
+        #expect(inked.primary == control, "the thumbnail uses the guarded foreground, not a guarded surface")
+        let appearance = try #require(NSAppearance(named: .aqua))
+        let grounds = [resolved.window, resolved.sidebar].map {
+            SidebarRowStyle.srgb(Color(nsColor: $0.resolved(in: appearance)), scheme: .light)
+        }
+        let raw = SidebarRowStyle.srgb(Color(hex: 0x00AA00), scheme: .light)
+        #expect(grounds.contains {
+            SidebarRowStyle.contrast(ThemeReadability.composite(raw, on: $0), $0) < 3
+        })
+        let foreground = SidebarRowStyle.srgb(inked.primary, scheme: .light)
+        let channels = [foreground.redComponent, foreground.greenComponent, foreground.blueComponent]
+        #expect(foreground.alphaComponent == 1 && (channels.allSatisfy { $0 == 0 } || channels.allSatisfy { $0 == 1 }))
+        for ground in grounds + [SidebarRowStyle.srgb(inked.backdrop, scheme: .light)] {
+            #expect(SidebarRowStyle.contrast(ThemeReadability.composite(foreground, on: ground), ground) >= 3)
+        }
+        #expect(try hex(plain.primary) != 0x00AA00)
         #expect(plain.id != ThemeThumbnailPalette(standard, adjustment: ThemeAdjustment(), scheme: .dark).id)
     }
 

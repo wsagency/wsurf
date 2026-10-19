@@ -190,28 +190,40 @@ struct LoomFloatingFill: View {
     }
 }
 
-/// The window or sidebar ground in the chosen style. `fallsBack` is `GlassPolicy`'s answer for Reduce
-/// Transparency and Increase Contrast; it takes the same solid path a solid theme takes.
+/// Accessibility takes precedence over material. Glass works with every ground; Plain preserves Standard and
+/// Calm's tinted backdrops, while a solid theme needs no visual effect.
 struct LoomBackdrop: View {
     let sampledPageColor: NSColor?
     let settings: BrowserSettings
     let isFloating: Bool
     let fallsBack: Bool
 
+    enum Kind {
+        case solid, tinted, glass
+    }
+
+    static func kind(ground: ThemeGround, material: ThemeMaterial, fallsBack: Bool) -> Kind {
+        if fallsBack {
+            return .solid
+        }
+        if material == .glass {
+            return .glass
+        }
+        return ground == .solid ? .solid : .tinted
+    }
+
     var body: some View {
-        if fallsBack || settings.resolvedTheme.ground == .solid {
+        switch Self.kind(ground: settings.resolvedTheme.ground, material: settings.themeMaterial, fallsBack: fallsBack) {
+        case .solid:
             LoomSolidBackdrop(sampledPageColor: websiteTint, isFloating: isFloating)
-        } else {
-            switch settings.loomStyle {
-            case .standard:
-                LoomTintedBackdrop(sampledPageColor: websiteTint, isFloating: isFloating)
-            case .transparent:
-                LoomTransparentBackdrop(
-                    sampledPageColor: websiteTint,
-                    opacity: settings.transparency,
-                    isFloating: isFloating
-                )
-            }
+        case .tinted:
+            LoomTintedBackdrop(sampledPageColor: websiteTint, isFloating: isFloating)
+        case .glass:
+            LoomTransparentBackdrop(
+                sampledPageColor: websiteTint,
+                opacity: settings.transparency,
+                isFloating: isFloating
+            )
         }
     }
 
@@ -220,9 +232,8 @@ struct LoomBackdrop: View {
     }
 }
 
-/// An opaque ground, in either window style. A solid theme's color is drawn this way because translucency would
-/// dilute it and the website tint never overrides it; the stored window style and transparency are untouched and
-/// apply again on another theme. Reduce Transparency and Increase Contrast use it for the same reason.
+/// Plain solid themes and accessibility fallbacks draw an opaque ground, without a backdrop effect. Stored
+/// material and transparency choices are untouched by the accessibility override.
 private struct LoomSolidBackdrop: View {
     let sampledPageColor: NSColor?
     let isFloating: Bool

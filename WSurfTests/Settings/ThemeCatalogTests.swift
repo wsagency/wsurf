@@ -11,7 +11,7 @@ struct ThemeCatalogTests {
         let ids = ThemeCatalog.builtIn.map(\.id)
 
         #expect(Set(ids).count == ids.count)
-        #expect(ids == ["standard", "calm", "catppuccin", "gruvbox", "rosePine", "nord", "dracula"])
+        #expect(ids == ["wsurf", "standard", "calm", "catppuccin", "gruvbox", "rosePine", "nord", "dracula"])
         #expect(ThemeCatalog.isBuiltIn(ThemeCatalog.defaultID))
         #expect(ThemeCatalog.fallback.id == ThemeCatalog.defaultID)
         #expect(ThemeCatalog.builtIn("nothing") == nil)
@@ -24,7 +24,7 @@ struct ThemeCatalogTests {
         #expect(standard.ground == .pageTinted && standard.light == ThemeVariant() && standard.dark == ThemeVariant())
         #expect(calm.ground == .softTinted)
         #expect([calm.light, calm.dark].allSatisfy { $0.window != nil && $0.accent != nil && $0.text == nil })
-        #expect(ThemeCatalog.builtIn.filter { $0.ground == .solid }.count == 5)
+        #expect(ThemeCatalog.builtIn.filter { $0.ground == .solid }.count == 6)
     }
 
     /// A solid theme replaces the whole chrome palette, so every text and accent color it ships has to stay
@@ -66,7 +66,7 @@ struct ThemeCatalogTests {
                 checked += 1
             }
         }
-        #expect(checked == 10, "five solid themes in two appearances")
+        #expect(checked == 12, "six solid themes in two appearances")
     }
 
     @Test func aVariantDecodesWhateverItsFileHolds() throws {

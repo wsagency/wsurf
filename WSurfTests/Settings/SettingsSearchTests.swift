@@ -99,7 +99,7 @@ struct SettingsSearchTests {
         #expect(SettingsIndex.search("endpoint").contains { $0.id == "provider.endpoint" })
         #expect(SettingsIndex.search("transparency").contains { $0.id == "appearance.transparency" })
         #expect(SettingsIndex.all.first { $0.id == "appearance.transparency" }?.targetAnchor
-            == "appearance.windowStyle")
+            == "appearance.material")
     }
 
     @Test func appearanceModeAndThemesAreSearchable() {

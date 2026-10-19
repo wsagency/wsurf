@@ -37,24 +37,6 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
     }
 }
 
-enum LoomStyle: String, CaseIterable, Identifiable {
-    case standard
-    case transparent
-
-    var id: String {
-        rawValue
-    }
-
-    var label: LocalizedStringResource {
-        switch self {
-        case .standard:
-            "Standard"
-        case .transparent:
-            "Transparent"
-        }
-    }
-}
-
 enum SidebarFontWeight: String, CaseIterable, Identifiable {
     case regular
     case medium

@@ -32,19 +32,8 @@ struct SettingsEntry: Identifiable, Hashable {
         String(localized: detail)
     }
 
-    /// Appearance rows that Settings hides while the theme draws a solid ground of its own.
-    private static let hiddenBySolidTheme: Set<String> = [
-        "appearance.windowStyle", "appearance.websiteTint", "appearance.transparency",
-    ]
-
-    /// `themeIsSolid` sends a row the theme hides to the theme row, which is what controls those colors then.
-    func targetAnchor(themeIsSolid: Bool) -> String {
-        if themeIsSolid, Self.hiddenBySolidTheme.contains(id) { return "appearance.theme" }
-        return targetAnchor
-    }
-
     var targetAnchor: String {
-        if id == "appearance.transparency" { return "appearance.windowStyle" }
+        if id == "appearance.transparency" { return "appearance.material" }
         if id == "websites.engine" { return "websites.list" }
         return id
     }
@@ -148,20 +137,23 @@ enum SettingsIndex {
         SettingsEntry("appearance.mode", .appearance, "Appearance", "Use light or dark, or match your Mac.",
                       ["dark mode", "light mode", "system", "automatic", "auto", "night", "appearance", "theme"]),
         SettingsEntry("appearance.theme", .appearance, "Theme",
-                      "Choose a theme such as Standard, Calm, Catppuccin, Nord, Dracula, Gruvbox, or Rosé Pine.",
-                      ["calm", "pastel", "theme", "colour", "color", "preset", "catppuccin", "latte", "mocha", "nord",
+                      "Choose WSurf, Standard, Calm, Catppuccin, Nord, Dracula, Gruvbox, or Rosé Pine.",
+                      ["wsurf", "calm", "pastel", "theme", "colour", "color", "preset", "catppuccin", "latte", "mocha", "nord",
                        "dracula", "gruvbox", "rose pine", "rosé pine", "dawn", "palette", "terminal", "copy",
                       ]),
-        SettingsEntry("appearance.themeCustomization", .appearance, "Theme customization",
-                      "Adjust brightness, hue, main color, control icons, and URL color and opacity. Built-in themes make a copy.",
-                      ["theme", "brightness", "darker", "lighter", "hue", "color", "colour", "controls",
-                       "icons", "url", "opacity", "reset", "palette",
+        SettingsEntry("appearance.colors", .appearance, "Colors",
+                      "Adjust accent, tab text, unloaded tab text, icons, URL text, primary color, hue and opacity. Built-in themes make a copy.",
+                      ["theme", "hue", "color", "colour", "accent", "controls", "icons", "url", "opacity", "reset", "palette",
+                       "sidebar", "font", "text", "loaded", "unloaded", "sleep",
                       ]),
-        SettingsEntry("appearance.windowStyle", .appearance, "Window style", "Choose Standard or Transparent.",
-                      ["loom", "window", "standard", "liquid glass", "clear", "opacity",
-                       "transparency", "transparent", "translucent", "contrast", "toolbar",
-                       "sidebar", "chrome",
+        SettingsEntry("appearance.material", .appearance, "Material",
+                      "Choose Plain or Glass. Glass shows your desktop through the window and uses more GPU.",
+                      ["loom", "window", "plain", "glass", "liquid glass", "clear", "opacity", "transparency", "transparent",
+                       "translucent", "contrast", "toolbar", "sidebar", "chrome", "gpu",
                       ]),
+        SettingsEntry("appearance.brightness", .appearance, "Brightness",
+                      "Make this theme’s light or dark colors darker or lighter.",
+                      ["theme", "brightness", "darker", "lighter", "dark", "light", "palette"]),
         SettingsEntry("appearance.transparency", .appearance, "Transparency",
                       "Move left for more transparency or right for more contrast.",
                       ["opacity", "glass", "translucent", "contrast", "window style"]),
@@ -186,13 +178,6 @@ enum SettingsIndex {
         SettingsEntry("appearance.sidebarFontSize", .appearance, "Sidebar font size",
                       "Adjust the text size in the sidebar.",
                       ["sidebar", "font", "size", "text", "larger", "smaller"]),
-        SettingsEntry("appearance.sidebarLoadedColor", .appearance, "Loaded tab color",
-                      "Text and icon color and opacity are saved with the theme.",
-                      ["sidebar", "font", "text", "color", "colour", "opacity", "loaded", "theme"]),
-        SettingsEntry("appearance.sidebarUnloadedColor", .appearance, "Unloaded tab color",
-                      "Text and icon color and opacity are saved with the theme.",
-                      ["sidebar", "font", "text", "color", "colour", "opacity", "unloaded", "sleep", "theme"]),
-
         SettingsEntry("appearance.sidebarRowSpacing", .appearance, "Sidebar row spacing",
                       "Add vertical breathing room between sidebar rows.",
                       ["sidebar", "spacing", "padding", "compact", "rows"]),
