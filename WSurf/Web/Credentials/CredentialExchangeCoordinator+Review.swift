@@ -92,6 +92,16 @@ extension CredentialExchangeCoordinator {
                     }
                 }
             }
+            // Items merged into one saved credential can each find their login changed in the other app, and a saved credential takes
+            // one replacement. The first keeps its default; the others wait for the user, who then sees both.
+            var taken = Set<CredentialIdentity>()
+            for candidate in preview.candidates {
+                for incoming in CredentialExchangeCoordinator.identities(in: candidate) where choices[incoming] == .replace {
+                    if let target = existingByIncoming[incoming], !taken.insert(target).inserted {
+                        choices[incoming] = nil
+                    }
+                }
+            }
             return choices
         }
 

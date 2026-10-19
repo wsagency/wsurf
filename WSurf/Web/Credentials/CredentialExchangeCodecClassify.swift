@@ -27,6 +27,8 @@ nonisolated struct ImportDestinationView: Sendable {
     fileprivate let positionsByItem: [CredentialExchangeCodec.ExternalItemID: [Int]]
     /// Every stored passkey by its identity (website and credential id), in the order the accounts and passkeys are stored.
     fileprivate let passkeysByIdentity: [PasskeyIdentity: [WebsitePasskey]]
+    /// Where an exporter item that was merged into a stored account now lives (a vault holds each item once: `validateAccounts`).
+    fileprivate let positionsByMergedItem: [CredentialExchangeCodec.ExternalItemID: CredentialExchangeCodec.MergedItemPlace]
     /// Some stored account has an exporter id that cannot be derived. Classifying a login, a code or a note then fails, as it
     /// always did when it met such an account.
     fileprivate let hasUnreadableIdentity: Bool
@@ -54,6 +56,7 @@ nonisolated struct ImportDestinationView: Sendable {
             }
         }
         positionsByItem = positions
+        positionsByMergedItem = CredentialExchangeCodec.mergedItemPositions(in: accounts)
         passkeysByIdentity = passkeys
         hasUnreadableIdentity = unreadable
     }
@@ -88,6 +91,7 @@ nonisolated extension CredentialExchangeCodec {
                 hasPart: hasBasicAuthentication,
                 hash: { try CredentialContent.hash(.password($0)) },
                 base: \.passwordBase,
+                linkBase: \.passwordBase,
                 identicalWithoutBaseIsUnchanged: false
             )
         case .totp:
@@ -97,6 +101,7 @@ nonisolated extension CredentialExchangeCodec {
                 hasPart: { $0.totp != nil },
                 hash: { try CredentialContent.hash(.totp($0)) },
                 base: \.totpBase,
+                linkBase: \.totpBase,
                 identicalWithoutBaseIsUnchanged: true
             )
         case .note:
@@ -106,7 +111,9 @@ nonisolated extension CredentialExchangeCodec {
                 hasPart: { $0.notes != nil },
                 hash: { try CredentialContent.hash(.note($0)) },
                 base: { _ in nil },
-                identicalWithoutBaseIsUnchanged: true
+                linkBase: { _ in nil },
+                identicalWithoutBaseIsUnchanged: true,
+                isHeld: notesAreHeld
             )
         case let .passkey(_, passkeyID):
             guard let passkey = candidate.passkeys.first(where: { $0.id == passkeyID }) else {
@@ -131,19 +138,28 @@ nonisolated extension CredentialExchangeCodec {
     }
 
     /// Password, TOTP and notes: an exchange id is a hint, so a match counts only with a bound pairing. Notes keep no observed
-    /// base, so identical notes are unchanged and different ones have no common base.
+    /// base, so notes the saved credential already holds (`isHeld`: a note added here, or the notes of items merged into it) are
+    /// unchanged, and any other difference has no common base.
+    ///
+    /// An item that was merged into a saved credential (`CredentialMerge`) is found there, never in the Trash it left for: the
+    /// credential that holds it is `local`, and what the other app last sent for the item (`linkBase`) is the base, so a change made
+    /// in the other app is told from one made here by the same rule as for any linked item. A part the item did not supply to the
+    /// merged credential differs from that base, so a change to it is a conflict, never a replacement nobody chose.
     private static func classifyLogin(
         _ candidate: CredentialAccount,
         destination: ImportDestinationView,
         hasPart: (CredentialAccount) -> Bool,
         hash: (CredentialAccount) throws -> Data,
         base: (CredentialAccount) -> ExchangeBase?,
-        identicalWithoutBaseIsUnchanged: Bool
+        linkBase: (MergedItemLink) -> ExchangeBase?,
+        identicalWithoutBaseIsUnchanged: Bool,
+        isHeld: (_ incoming: CredentialAccount, _ local: CredentialAccount) -> Bool = { _, _ in false }
     ) throws -> CredentialImportClass {
         let key = try externalItemID(for: candidate)
         guard !destination.hasUnreadableIdentity else { throw CredentialVaultError.invalidData }
         let matches = (destination.positionsByItem[key] ?? []).map { destination.accounts[$0] }
-        guard let local = matches.first else {
+        let place = matches.isEmpty ? destination.positionsByMergedItem[key] : nil
+        guard let local = matches.first ?? place.map({ destination.accounts[$0.position] }) else {
             // A removed row keeps the external ids as stored; a native account has none and exported under its own
             // id, so both sides are derived exactly like the live accounts' (no wildcard, no raw comparison).
             return try previouslyRemoved(destination.removed) { entry in
@@ -155,21 +171,22 @@ nonisolated extension CredentialExchangeCodec {
                 return removedKey == key
             } ?? .new
         }
-        guard matches.count == 1 else { return .ambiguous }
+        guard matches.count <= 1 else { return .ambiguous }
         _ = try CredentialContent.exchangeMetadata(local)
-        guard isBound(local, to: key.item) else {
+        let merged = place.flatMap { local.mergedFrom?[$0.link] }
+        guard isBound(local, to: key.item, merged: merged) else {
             // No accepted pairing yet: the item was saved before bases were recorded. The exchange id is still only a hint, but a
             // part that equals what is saved is the same credential whoever pairs it; anything that differs waits for the user.
-            guard hasPart(local), try hash(candidate) == hash(local) else { return .ambiguous }
+            guard hasPart(local), try hash(candidate) == hash(local) || isHeld(candidate, local) else { return .ambiguous }
             return .unchanged
         }
         guard hasPart(local) else { return .new }
 
         let incomingHash = try hash(candidate)
         let localHash = try hash(local)
-        let observed = base(local).flatMap { $0.itemID == key.item ? $0 : nil }
+        let observed = (merged.map(linkBase) ?? base(local)).flatMap { $0.itemID == key.item ? $0 : nil }
         // Equal content is "unchanged" through a bound base; without one only an identical TOTP (§13.3) is.
-        if incomingHash == localHash, observed != nil || identicalWithoutBaseIsUnchanged {
+        if incomingHash == localHash || isHeld(candidate, local), observed != nil || identicalWithoutBaseIsUnchanged {
             return .unchanged
         }
         guard let observed else { return .noCommonBase }
@@ -183,9 +200,17 @@ nonisolated extension CredentialExchangeCodec {
         }
     }
 
-    /// An accepted pairing (§13.2a): some credential of `account` was observed from this exact remote item.
-    private static func isBound(_ account: CredentialAccount, to itemID: Data) -> Bool {
-        let bases = [account.passwordBase, account.totpBase] + account.passkeys.map(\.base)
+    /// Whether every note `incoming` brings is already one of `local`'s, compared as exact UTF-8 text as a merge compares them: the
+    /// other app sent nothing that isn't saved here.
+    private static func notesAreHeld(_ incoming: CredentialAccount, by local: CredentialAccount) -> Bool {
+        let held = Set((local.notes ?? []).map { Data($0.text.utf8) })
+        return (incoming.notes ?? []).allSatisfy { held.contains(Data($0.text.utf8)) }
+    }
+
+    /// An accepted pairing (§13.2a): some credential of `account` was observed from this exact remote item, or `merged`, the item
+    /// that was merged into it, records what was.
+    private static func isBound(_ account: CredentialAccount, to itemID: Data, merged: MergedItemLink?) -> Bool {
+        let bases = [account.passwordBase, account.totpBase] + account.passkeys.map(\.base) + [merged?.passwordBase, merged?.totpBase]
         return bases.contains { $0?.itemID == itemID }
     }
 
