@@ -320,6 +320,26 @@ struct CredentialSettingsHistoryTests {
         }
     }
 
+    @Test func hidingHistoryDropsTheVersionsButKeepsTheEdit() async throws {
+        try await withFixture { f in
+            let id = UUID()
+            try await seedChangedPassword(f, id: id)
+            try await f.model.openHistory(accountID: id)
+            try await f.model.revealHistorySecrets()
+            f.model.copyToDraft(.login, from: f.model.history?.versions[1].id)
+
+            f.model.closeHistory()
+            #expect(f.model.history == nil)
+            #expect(f.model.draft?.password == "old", "the copied value stays in the draft")
+
+            // Showing it again reads the stored versions, masked, and leaves the edited draft alone.
+            try await f.model.openHistory(accountID: id)
+            #expect(f.model.history?.versions.map(\.account.password) == ["new", "old"])
+            #expect(f.model.history?.revealsSecrets == false)
+            #expect(f.model.draft?.password == "old")
+        }
+    }
+
     @Test func aRemovedNoteIsAVersionThatCanBeAddedBack() async throws {
         try await withFixture { f in
             let id = UUID()

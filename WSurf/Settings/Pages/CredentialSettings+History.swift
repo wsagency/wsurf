@@ -41,7 +41,8 @@ struct CredentialHistoryPanel: View {
                 Spacer(minLength: 0)
             }
         }
-        .frame(minWidth: 380, idealWidth: 420, maxWidth: .infinity, alignment: .topLeading)
+        .padding(20)
+        .frame(minWidth: 380, idealWidth: 440, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onDisappear { work?.cancel() }
     }
 

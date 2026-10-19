@@ -17,6 +17,9 @@ struct CredentialEditorSheet: View {
     @State private var pendingNoteRemoval: Int?
     @State private var confirmsTOTPRemoval = false
     @State private var confirmsDiscard = false
+    /// Set while History is being read, so a second click can't start another read.
+    @State private var isOpeningHistory = false
+    @State private var openingHistory: Task<Void, Never>?
     /// Open when the credential already has other origins, so nothing saved is hidden.
     @State private var showsOtherOrigins: Bool
 
@@ -28,34 +31,22 @@ struct CredentialEditorSheet: View {
     var body: some View {
         if let draft = model.draft {
             let hasChanges = draft.hasUnsavedChanges
-            VStack(spacing: 0) {
-                Group {
-                    if draft.isNew { Text("Add Credential") } else { Text("Edit Credential") }
+            // History is read for this draft and lives in the session beside it, so the panel shows exactly while that read exists.
+            let showsHistory = model.history != nil
+            HStack(alignment: .top, spacing: 0) {
+                form(draft, hasChanges: hasChanges, showsHistory: showsHistory)
+                if showsHistory {
+                    Divider()
+                    CredentialHistoryPanel(model: model)
                 }
-                .font(.headline)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 16)
-                Divider()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        signIn(draft)
-                        websites
-                        totp(draft)
-                        passkeys(draft)
-                        notes(draft)
-                        dates(draft)
-                    }
-                    .padding(24)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                Divider()
-                footer(hasChanges: hasChanges)
             }
-            .frame(minWidth: 600, idealWidth: 640, minHeight: 480, idealHeight: 680)
+            // Two columns of about 450 points each while History shows; the form alone is as wide as before.
+            .frame(
+                minWidth: showsHistory ? 960 : 600, idealWidth: showsHistory ? 1_040 : 640, minHeight: 480, idealHeight: 680
+            )
             // Escape reaches the Cancel button, which asks first; nothing else may close the sheet over unsaved edits.
             .interactiveDismissDisabled(hasChanges)
-            .onDisappear { totpInput = ""; saving?.cancel() }
+            .onDisappear { totpInput = ""; saving?.cancel(); openingHistory?.cancel() }
             .confirmationDialog(
                 "Discard Changes?",
                 isPresented: $confirmsDiscard
@@ -101,12 +92,39 @@ struct CredentialEditorSheet: View {
                 }
                 Button("Cancel", role: .cancel) { pendingNoteRemoval = nil }
             } message: { _ in
-                Text("This note is removed when you save. If you saved it before, you can restore the previous notes from Earlier Versions.")
+                Text("This note is removed when you save. You can copy it back from History.")
             }
         }
     }
 
     // MARK: Layout
+
+    private func form(_ draft: CredentialDraft, hasChanges: Bool, showsHistory: Bool) -> some View {
+        VStack(spacing: 0) {
+            Group {
+                if draft.isNew { Text("Add Credential") } else { Text("Edit Credential") }
+            }
+            .font(.headline)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    signIn(draft)
+                    websites
+                    totp(draft)
+                    passkeys(draft)
+                    notes(draft)
+                    dates(draft)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Divider()
+            footer(draft, hasChanges: hasChanges, showsHistory: showsHistory)
+        }
+    }
 
     private func section<Content: View>(_ title: LocalizedStringKey, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -119,7 +137,7 @@ struct CredentialEditorSheet: View {
         Text(text).font(Theme.Font.label).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 
-    private func footer(hasChanges: Bool) -> some View {
+    private func footer(_ draft: CredentialDraft, hasChanges: Bool, showsHistory: Bool) -> some View {
         VStack(alignment: .trailing, spacing: 10) {
             if let error = model.error {
                 Text(verbatim: error)
@@ -128,6 +146,9 @@ struct CredentialEditorSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack {
+                // A new credential has no earlier versions to browse.
+                Button(showsHistory ? "Hide History" : "View History") { toggleHistory(draft) }
+                    .disabled(draft.isNew || isOpeningHistory || isSaving)
                 Spacer()
                 Button("Cancel", role: .cancel) {
                     // A save in flight has already read the draft; asking then would only hide its result.
@@ -156,6 +177,19 @@ struct CredentialEditorSheet: View {
     private func discard() {
         model.error = nil
         model.cancelEditing()
+    }
+
+    /// Reads the open credential's earlier versions into the session beside the draft, or drops them. Nothing is written.
+    private func toggleHistory(_ draft: CredentialDraft) {
+        if model.history != nil {
+            model.closeHistory()
+        } else if let accountID = draft.accountID {
+            isOpeningHistory = true
+            openingHistory = Task {
+                await model.attempt { try await model.openHistory(accountID: accountID) }
+                isOpeningHistory = false
+            }
+        }
     }
 
     // MARK: Sections
