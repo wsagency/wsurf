@@ -77,6 +77,15 @@ extension CredentialSettingsModel {
     func undo() async {
         guard canUndo, let live, let step = live.undoSteps.last else { return }
         let epoch = live.epoch
+        if step.kind == .markForDeletion {
+            // Nothing was written: the entries show in the Trash again.
+            try? update(epoch) {
+                $0.markedForDeletion.removeAll { step.marked.contains($0) }
+                $0.undoSteps.removeLast()
+            }
+            showNotice(step.kind.undoneNotice)
+            return
+        }
         let undone = await guarded(describe: { Self.undoMessage(for: $0) }) {
             do {
                 _ = try await applyUndo(step, epoch: epoch)

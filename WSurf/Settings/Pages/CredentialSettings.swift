@@ -19,6 +19,8 @@ struct CredentialSettings: View {
     @State var list: CredentialListState
     /// Which rows are selected and where the keyboard cursor is, for the credential list and the Trash.
     @State var selection: CredentialSelection
+    /// Brings a row into view when a key moved the cursor to it.
+    @Environment(\.settingsScrollProxy) var scrollProxy
     @State private var work: Task<Void, Never>?
     @State private var exportContext: CredentialExportContext?
 
@@ -160,7 +162,12 @@ struct CredentialSettings: View {
         SegmentedControl(
             items: [.init(value: .credentials, label: "Credentials"), .init(value: .settings, label: "Settings")],
             selection: tab,
-            onSelect: { tab = $0 }
+            onSelect: { next in
+                if next != .credentials {
+                    leaveTrash()
+                }
+                tab = next
+            }
         )
         .frame(width: 260)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -523,18 +530,6 @@ struct CredentialRow: View {
         return parts.joined(separator: " · ")
     }
 
-    private var isSelected: Bool {
-        selection.selected.contains(summary.id)
-    }
-
-    private var isCursor: Bool {
-        selection.cursor == summary.id
-    }
-
-    private var selectActionName: LocalizedStringKey {
-        isSelected ? "Deselect" : "Select"
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             SiteRow(host: host, summary: detail.isEmpty ? nil : detail, caption: summary.dates.caption(style: .list)) {
@@ -551,65 +546,8 @@ struct CredentialRow: View {
             }
             revealed
         }
-        .background { selectionWash }
-        .overlay { cursorRing }
-        .overlay(alignment: .bottomLeading) { selectionMark }
-        .contentShape(.rect)
-        .onTapGesture(perform: click)
-        .accessibilityElement(children: .contain)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityAction(named: selectActionName) { selection.toggle(summary.id) }
+        .credentialRowSelection(selection, id: summary.id, open: open, remove: remove, removeName: "Move to Trash")
         .accessibilityAction(named: "Open", open)
-        .accessibilityAction(named: "Move to Trash", remove)
-    }
-
-    /// A click on the row itself (the buttons take their own). Plain: the cursor and the keyboard. Command: toggles the row. Shift: the
-    /// range from the anchor. Double: opens the editor.
-    private func click() {
-        if NSApp.currentEvent?.clickCount == 2 {
-            open()
-            return
-        }
-        let modifiers = NSEvent.modifierFlags
-        if modifiers.contains(.command) {
-            selection.toggle(summary.id)
-            selection.takeKeyboard()
-        } else if modifiers.contains(.shift) {
-            selection.extend(to: summary.id)
-            selection.takeKeyboard()
-        } else {
-            selection.click(summary.id)
-        }
-    }
-
-    @ViewBuilder
-    private var selectionWash: some View {
-        if isSelected {
-            RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.accentColor.opacity(0.14))
-        }
-    }
-
-    @ViewBuilder
-    private var cursorRing: some View {
-        if isCursor {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(Color.accentColor.opacity(selection.ownsKeyboard ? 0.9 : 0.35), lineWidth: 1.5)
-                .allowsHitTesting(false)
-        }
-    }
-
-    @ViewBuilder
-    private var selectionMark: some View {
-        if isSelected {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(Color.accentColor)
-                .background(Circle().fill(.background))
-                .padding(.leading, 17)
-                .padding(.bottom, 3)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
     }
 
     private var actions: some View {

@@ -190,12 +190,19 @@ final class CredentialSettingsModel {
 
     // MARK: Trash and editing (state)
 
+    /// The loaded Trash entries, without the ones marked for deletion.
     var trashItems: [TrashItem] {
-        live?.trash ?? []
+        guard let live else { return [] }
+        let marked = Set(live.markedForDeletion)
+        return marked.isEmpty ? live.trash : live.trash.filter { !marked.contains($0.id) }
     }
-    /// The vault's verified Trash count, not the rows on screen; `nil` until the Trash has been loaded.
+    /// The vault's verified Trash count without the entries marked for deletion, not the rows on screen; `nil` until the Trash has been loaded.
     var trashTotal: Int? {
-        live?.counts?.trash.trashEntry
+        live?.counts.map { max($0.trash.trashEntry - (live?.markedForDeletion.count ?? 0), 0) }
+    }
+    /// How many Trash entries X has marked for deletion in this session.
+    var markedCount: Int {
+        live?.markedForDeletion.count ?? 0
     }
     var trashHasMore: Bool {
         live?.trashNext != nil

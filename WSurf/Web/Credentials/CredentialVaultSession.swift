@@ -36,6 +36,9 @@ struct CredentialVaultSession {
     var trashNext: Int?
     var restoreBlocked: RestoreBlocked?
     var pendingPurge: PendingPurge?
+    /// Trash entries the user pressed X on: hidden, counted out, and deleted only when the Trash is left (one assertion for the batch).
+    /// Session state, so a lock, a quit or a closed page deletes nothing.
+    var markedForDeletion: [UUID] = []
     /// The page's last actions that Undo can take back, oldest first; secrets included, so they go with the session.
     var undoSteps: [CredentialUndoStep] = []
     /// The most actions Undo keeps; the oldest is dropped for a sixth.
@@ -48,6 +51,17 @@ struct CredentialVaultSession {
         stampsRevision = snapshot.revision
         summaries = snapshot.accounts.map(CredentialSummary.init)
         blockedSiteCount = snapshot.blockedPasswordOrigins.count
+    }
+
+    /// Ends the marks on `ids` (all of them for `nil`) and the undo steps that held them.
+    mutating func dropMarks(_ ids: Set<UUID>?) {
+        guard let ids else {
+            markedForDeletion = []
+            undoSteps.removeAll { $0.kind == .markForDeletion }
+            return
+        }
+        markedForDeletion.removeAll { ids.contains($0) }
+        undoSteps.removeAll { $0.kind == .markForDeletion && !ids.isDisjoint(with: $0.marked) }
     }
 
     mutating func record(_ step: CredentialUndoStep) {

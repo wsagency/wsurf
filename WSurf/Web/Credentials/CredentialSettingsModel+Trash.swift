@@ -94,10 +94,52 @@ extension CredentialSettingsModel {
             _ = try await $0.purge(entryIDs: pending.entryIDs, emptyAll: pending.emptyAll, in: anchor)
         }
         guard purged else { return }
-        if let current = self.live, current.pendingPurge == pending {
-            try? update(current.epoch) { $0.pendingPurge = nil }
+        if let current = self.live {
+            try? update(current.epoch) {
+                if current.pendingPurge == pending {
+                    $0.pendingPurge = nil
+                }
+                // Entries that are gone cannot be deleted again: the marks on them end, with their steps.
+                $0.dropMarks(pending.emptyAll ? nil : Set(pending.entryIDs))
+            }
         }
         _ = await guarded { try await reloadAfterWrite(epoch: pending.epoch) }
+    }
+
+    // MARK: Deleting with X
+
+    /// X in the Trash: hides the entries and counts them out. Nothing is deleted until the Trash is left (`commitMarked`), and Undo
+    /// shows them again, up to five steps back. Entries the Trash does not list are ignored.
+    func markForDeletion(entryIDs: [UUID]) {
+        guard let live else { return }
+        let listed = Set(live.trash.map(\.id)).subtracting(live.markedForDeletion)
+        let fresh = entryIDs.filter { listed.contains($0) }
+        guard !fresh.isEmpty else { return }
+        try? update(live.epoch) {
+            $0.markedForDeletion += fresh
+            $0.record(CredentialUndoStep(kind: .markForDeletion, marked: fresh))
+        }
+        let text: LocalizedStringResource = fresh.count == 1
+            ? "1 item will be deleted permanently when you leave Trash."
+            : "\(fresh.count) items will be deleted permanently when you leave Trash."
+        showNotice(text, undo: true)
+    }
+
+    /// Leaving the Trash, or Delete Now: deletes everything marked, in one purge with ONE fresh passkey or Touch ID assertion and no
+    /// dialog of the app. A declined or failed assertion deletes nothing; the marks end either way, so the entries show again.
+    func commitMarked(in anchor: ASPresentationAnchor) async {
+        guard !isBusy, let live, !live.markedForDeletion.isEmpty else { return }
+        let ids = live.markedForDeletion
+        let epoch = live.epoch
+        let purged = await perform(epoch: epoch) { _ = try await $0.purge(entryIDs: ids, emptyAll: false, in: anchor) }
+        try? update(epoch) { $0.dropMarks(nil) }
+        guard purged else {
+            showNotice("Nothing was deleted.")
+            return
+        }
+        _ = await guarded { try await reloadAfterWrite(epoch: epoch) }
+        let text: LocalizedStringResource = ids.count == 1 ? "Deleted 1 item permanently." : "Deleted \(ids.count) items permanently."
+        showNotice(text)
     }
 
     func fetchTrash(epoch: UInt64) async throws {
