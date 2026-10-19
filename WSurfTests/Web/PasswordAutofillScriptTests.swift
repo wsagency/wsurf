@@ -341,4 +341,17 @@ struct PasswordAutofillScriptTests {
         #expect(try await fillCode(token, in: view) == 0)
         #expect(try await view.evaluateJavaScript("code.value + password.value") as? String == "")
     }
+
+    @Test(.boundedWebViews) func selectReportsTheFieldKind() async throws {
+        let (view, sink) = try await load(#"""
+        <form><input id="username" autocomplete="username"><input id="password" type="password" autocomplete="current-password"></form>
+        <form><input id="code" autocomplete="one-time-code"></form>
+        """#)
+        for (id, kind) in [("username", "username"), ("password", "current-password"), ("code", "one-time-code")] {
+            sink.selections = []
+            _ = try await view.callAsyncJavaScript("document.getElementById(id).focus();", arguments: ["id": id], in: nil, contentWorld: PasswordAutofill.world)
+            #expect(await waitUntil { !sink.selections.isEmpty }, "\(id) is offered suggestions")
+            #expect(sink.selections.last?["kind"] as? String == kind, "\(id) reports its kind, which decides whether typing may start a search")
+        }
+    }
 }

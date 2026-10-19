@@ -30,6 +30,9 @@ final class AutofillSuggestions {
         /// What this request asked for. Set once; a later change of vault state makes the request stale instead of redirecting it.
         let field: CredentialAutofillField
         let enteredUsername: String?
+        /// Whether typing may start the dropdown's search: only in a username field. In a password or code field a search starts
+        /// with a click on the search row, so typed password characters are never taken as a query.
+        let typeToSearch: Bool
         /// One unlocked vault the request read, with the lease and revision it read it under.
         struct Grant {
             let epoch: UInt64
@@ -42,12 +45,12 @@ final class AutofillSuggestions {
         init(page: BrowserPage, context: BrowserProfileContext, frame: BrowserFrame, token: String, kind: AutofillSaveKind,
              frameURL: URL, topURL: URL, world: WKContentWorld, bridge: String,
              documentID: String, formID: String, fieldID: String,
-             field: CredentialAutofillField, enteredUsername: String?) {
+             field: CredentialAutofillField, enteredUsername: String?, typeToSearch: Bool) {
             self.page = page; self.context = context; self.frame = frame; self.token = token; self.kind = kind
             self.frameURL = frameURL; self.topURL = topURL
             self.world = world; self.bridge = bridge; self.documentID = documentID
             self.formID = formID; self.fieldID = fieldID
-            self.field = field; self.enteredUsername = enteredUsername
+            self.field = field; self.enteredUsername = enteredUsername; self.typeToSearch = typeToSearch
         }
     }
 
@@ -55,10 +58,13 @@ final class AutofillSuggestions {
     private weak var page: BrowserPage?
     private var presentationID = UUID()
     private var panel: AutofillSuggestionPanel?
-    private var suggestions: [AutofillSuggestion] = []
+    private var searchIndex: AutofillSuggestionSearch.Index?
     private let selection = AutofillSuggestionSelection()
     private var choose: ((UUID) -> Void)?
     private var eventMonitor: Any?
+    /// Key codes whose key-down became search text. Their key-up is ours too: a page that saw only the key-up would learn the letter.
+    private var heldKeys: Set<UInt16> = []
+    private var keyUpMonitor: Any?
     private var observers: [NSObjectProtocol] = []
     private var navigation: NSKeyValueObservation?
     private var loading: NSKeyValueObservation?
@@ -81,7 +87,7 @@ final class AutofillSuggestions {
             panel.parent?.removeChildWindow(panel)
             panel.orderOut(nil)
         }
-        panel = nil; self.page = nil; suggestions = []; choose = nil; selection.keyboardID = nil
+        panel = nil; self.page = nil; searchIndex = nil; choose = nil; selection.state = .init(rowCount: 0)
         navigation = nil; loading = nil
         geometryWatch?.cancel(); geometryWatch = nil
         if let eventMonitor {
@@ -133,7 +139,7 @@ final class AutofillSuggestions {
                               frameURL: frameURL, topURL: topURL, world: world,
                               bridge: bridge, documentID: documentID, formID: formID, fieldID: fieldID,
                               field: manager && body["field"] as? String == "totp" ? .totp : .password,
-                              enteredUsername: enteredUsername)
+                              enteredUsername: enteredUsername, typeToSearch: manager && body["kind"] as? String == "username")
         requests[key] = request; self.page = page
         let id = presentationID
         Task { [weak self, weak page] in
@@ -292,19 +298,23 @@ final class AutofillSuggestions {
             area = area.intersection(screen.visibleFrame)
         }
         let width = min(360.0, area.width - 16), availableBelow = max(0, field.minY - area.minY - 12), availableAbove = max(0, area.maxY - field.maxY - 12)
-        let desired = AutofillSuggestionLayout.height(for: records.count), below = availableBelow >= desired || (availableAbove < desired && availableBelow >= availableAbove)
+        let index = AutofillSuggestionSearch.Index(records, searchable: request.kind == .password)
+        let desired = AutofillSuggestionLayout.height(for: records.count, searchable: index.isSearchable)
+        let below = availableBelow >= desired || (availableAbove < desired && availableBelow >= availableAbove)
         let height = min(desired, below ? availableBelow : availableAbove)
         guard width >= 200, height >= AutofillSuggestionLayout.minimumHeight else { return }
         let frame = NSRect(x: max(area.minX + 8, min(field.minX, area.maxX - width - 8)), y: below ? field.minY - height - 4 : field.maxY + 4, width: width, height: height)
         let panel = AutofillSuggestionPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true; panel.hidesOnDeactivate = true; panel.isReleasedWhenClosed = false
         panel.setAccessibilityLabel(String(localized: "Autofill suggestions"))
-        let content = NSHostingView(rootView: AutofillSuggestionList(kind: request.kind, origin: origin, suggestions: records, selection: selection,
-            choose: { [weak self] id in self?.choose?(id) }, manage: { [weak self] in self?.dismiss(); self?.openSettings?() })
+        selection.state = .init(rowCount: records.count)
+        let content = NSHostingView(rootView: AutofillSuggestionList(kind: request.kind, origin: origin, suggestions: records, searchable: index.isSearchable,
+            selection: selection, choose: { [weak self] id in self?.choose?(id) }, beginSearch: { [weak self] in self?.selection.state.beginSearching() },
+            manage: { [weak self] in self?.dismiss(); self?.openSettings?() })
             .frame(width: frame.width, height: frame.height, alignment: .topLeading).clipShape(.rect(cornerRadius: 10)))
         content.sizingOptions = []; content.safeAreaRegions = []; content.frame = NSRect(origin: .zero, size: frame.size); content.autoresizingMask = [.width, .height]
         panel.contentView = content; panel.contentMinSize = frame.size; panel.contentMaxSize = frame.size; panel.setFrame(frame, display: false)
-        self.panel = panel; suggestions = records
+        self.panel = panel; searchIndex = index
         choose = { [weak self, weak page] id in guard let self, let page, records.contains(where: { $0.id == id }) else { return }; self.fill(id, request: request, in: page) }
         window.addChildWindow(panel, ordered: .above); panel.orderFront(nil)
         AutofillDiagnostics.note(.dropdownShown, kind: request.kind, count: records.count)
@@ -339,29 +349,58 @@ final class AutofillSuggestions {
            event.window === page.window, request.rect.contains(page.convert(event.locationInWindow, from: nil)) {
             return event
         }
-        guard event.type == .keyDown, let page, Self.isFocused(page) else { dismiss(); return event }
+        guard event.type == .keyDown, let page, let index = searchIndex, Self.isFocused(page) else { dismiss(); return event }
         guard event.modifierFlags.isDisjoint(with: [.command, .control, .option]) else { dismiss(); return event }
-        switch event.keyCode {
-        case 125, 126:
-            guard !suggestions.isEmpty else { return event }
-            let index = selection.keyboardID.flatMap { id in suggestions.firstIndex { $0.id == id } }
-            let next = index.map { ($0 + (event.keyCode == 125 ? 1 : -1) + suggestions.count) % suggestions.count } ?? (event.keyCode == 125 ? 0 : suggestions.count - 1)
-            selection.keyboardID = suggestions[next].id
-            return nil
-        case 36, 76:
-            guard let id = selection.keyboardID else {
-                dismiss()
-                return event
+        let key = AutofillSuggestionSearch.KeyInput(event)
+        let typeToSearch = requests[ObjectIdentifier(page)]?.typeToSearch == true && !Self.usesInputMethod(page)
+        let (state, effect) = AutofillSuggestionSearch.reduce(selection.state, key, index: index, typeToSearch: typeToSearch)
+        selection.state = state
+        switch effect {
+        case .consume:
+            switch key {
+            case .character, .backspace:
+                hold(event.keyCode)
+            default:
+                break
             }
-            choose?(id)
             return nil
-        case 53:
-            dismiss()
-            return nil
-        default:
+        case .pass:
+            return event
+        case .dismissAndPass:
             dismiss()
             return event
+        case .dismiss:
+            dismiss()
+            return nil
+        case .choose(let id):
+            choose?(id)
+            return nil
         }
+    }
+
+    private func hold(_ keyCode: UInt16) {
+        heldKeys.insert(keyCode)
+        guard keyUpMonitor == nil else { return }
+        keyUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyUp) { [weak self] event in
+            let consumed = MainActor.assumeIsolated { self?.release(event.keyCode) ?? false }
+            return consumed ? nil : event
+        }
+    }
+
+    private func release(_ keyCode: UInt16) -> Bool {
+        let held = heldKeys.remove(keyCode) != nil
+        if heldKeys.isEmpty, let keyUpMonitor {
+            NSEvent.removeMonitor(keyUpMonitor)
+            self.keyUpMonitor = nil
+        }
+        return held
+    }
+
+    /// An input method composes text from several key presses, so a raw key is not yet a character of the query. Only a plain keyboard
+    /// layout starts a search by typing; with an input method a search starts with the click on the search row.
+    private static func usesInputMethod(_ page: BrowserPage) -> Bool {
+        guard let source = (page.window?.firstResponder as? NSView)?.inputContext?.selectedKeyboardInputSource else { return false }
+        return !source.hasPrefix("com.apple.keylayout.")
     }
 
     /// The one synchronous answer to "may this request still act?": still the page's current request, (for a password) the
@@ -534,6 +573,29 @@ final class AutofillSuggestions {
             "fields": fields,
             "documentID": request.documentID,
         ]
+    }
+}
+
+nonisolated extension AutofillSuggestionSearch.KeyInput {
+    /// A key-down as the dropdown sees it. Function keys report private-use characters and Tab reports a control character: neither is text.
+    init(_ event: NSEvent) {
+        switch event.keyCode {
+        case 125:
+            self = .down
+        case 126:
+            self = .up
+        case 36, 76:
+            self = .enter
+        case 53:
+            self = .escape
+        case 51:
+            self = .backspace
+        default:
+            let isText = event.characters.map { text in
+                text.count == 1 && text.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) && !(0xF700...0xF8FF).contains($0.value) }
+            } ?? false
+            self = isText ? .character(event.characters ?? "") : .other
+        }
     }
 }
 
