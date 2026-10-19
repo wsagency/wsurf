@@ -58,6 +58,14 @@ These changes describe the current candidate source, not a published release.
 - Credentials can be grouped By Site. Suggested Merges finds likely copies of one login, and Merge With… joins credentials: you choose what to keep, the others move to Trash with their history, and a website on another site is added only when you tick it. Credentials with different usernames are never merged. Merge All Identical merges copies with the same login and sites.
 - A later import from Passwords finds a merged credential through every item merged into it, so a change made in Passwords to any of them reaches that credential and is reviewed as usual. Notes the saved credential already holds need no decision, and a note removed only in Passwords stays in WSurf.
 - The import review has two collapsed sections. Changed in WSurf (kept) names the fields changed here since the last import, with dates and never values. No longer in Passwords lists saved credentials an earlier import brought that the transfer lacks; they are kept, and can be moved to Trash only after you confirm that the transfer has everything from Passwords.
+- When no login is saved for the exact site, the fill dropdown shows one Check other logins for *.site row. Choosing it lists logins saved for other HTTPS websites of the same registrable domain; shared suffixes such as `github.io` and `co.uk`, IP addresses and localhost get none. The usual list for the exact site is unchanged.
+- After you fill from such a login, or submit a login that matches a credential saved for a sibling site, WSurf offers to add the website to that credential. Only Add Website writes, and it adds that one website; History shows it as Website added from autofill. A credential with 64 websites is never widened, and Not Now is remembered for the page.
+- When every vault is locked, the dropdown shows an Unlock Credentials… row that uses the usual unlock prompt, and offers the logins again when a vault is unlocked, from the dropdown or elsewhere, while the field is still focused.
+- Clicking a field again reopens its dropdown after Escape or any other dismissal.
+- A frame policy the page refuses is sent once more after 300 ms.
+- A username-only step, a lone email or user ID field before the password, is offered logins and its username is captured for saving. Trade-off: a lone email field without newsletter, subscribe, search or coupon wording now gets the login dropdown instead of contact fill when logins exist for the site.
+
+Verification of the autofill changes so far: 161 tests in 16 targeted suites passed natively on WebKit and Chromium. How the dropdown and popover look and behave in the app is not yet checked by hand.
 
 Input History is not included in this candidate. No new recorder or unfinished UI is exposed.
 

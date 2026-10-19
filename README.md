@@ -129,6 +129,9 @@ versions.
   in WSurf and lists saved credentials Passwords no longer has, which stay unless
   you choose to move them to Trash. The native fill dropdown can search the
   logins already authorized for the site without sending the query to the page.
+  When none is saved for the exact site, it can offer logins saved for other
+  websites of the same domain, add the website to such a credential after you
+  confirm, and unlock a locked vault from the dropdown.
   Save payment cards and contact details in Settings › Autofill;
   unlock cards with Touch ID or your Mac password.
 - **Add WebKit extensions:** install from the Chrome Web Store or Firefox Add-ons.
