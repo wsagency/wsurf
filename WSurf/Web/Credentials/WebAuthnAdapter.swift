@@ -164,10 +164,6 @@ enum WebAuthnAdapter {
             if let entry = entries[key] {
                 discard(entry)
             }
-        case "conditionalActivate":
-            if let entry = entries[key], entry.parsed.mediation == .conditional {
-                start(entry)
-            }
         case "route":
             // A document restored from the back/forward cache asks once for the route that owns it. Only the answer
             // (`legacy` or `manager`) goes back, to the frame that asked; it is a hint, never an authority.
@@ -260,10 +256,10 @@ enum WebAuthnAdapter {
                 expire(entry)
             }
         }
-        // A conditional request is only a registered discovery: nothing is unlocked, asked or signed until the user
-        // activates a webauthn field (reported by the relay only for a trusted gesture) and then explicitly accepts the
-        // native offer that precedes any unlock. It is pending in exactly the same way whether or not the profile has a
-        // vault or a passkey for the site, so a page can learn neither.
+        // A conditional request is only a registered discovery: nothing is unlocked, asked or signed until the user picks
+        // "Use a Passkey…" in the fill dropdown of a webauthn field (`startConditionalRequest`) and then explicitly accepts
+        // the native offer that precedes any unlock. A click or a key in the field never starts it. It is pending in exactly
+        // the same way whether or not the profile has a vault or a passkey for the site, so a page can learn neither.
         if parsed.mediation != .conditional {
             start(entry)
         }
@@ -289,6 +285,44 @@ enum WebAuthnAdapter {
         guard !entry.started, !entry.cancelled, entries[entry.key] === entry else { return }
         entry.started = true
         entry.task = Task { await run(entry) }
+    }
+
+    // MARK: Conditional requests
+
+    /// Whether the document in `frame` holds a conditional request that nothing has started: the fill dropdown of a webauthn
+    /// field then offers "Use a Passkey…". Only the page's own requests are read, never a vault, so the row says nothing about
+    /// the vault that the page does not already know.
+    static func hasConditionalRequest(in page: BrowserPage, frame: BrowserFrame) -> Bool {
+        conditionalEntry(in: page, frame: frame) != nil
+    }
+
+    /// The user picked "Use a Passkey…": that document's pending conditional request runs the ceremony, with every check of `run`.
+    /// Only that native row calls this; nothing on the page can.
+    @discardableResult
+    static func startConditionalRequest(in page: BrowserPage, frame: BrowserFrame) -> Bool {
+        guard let entry = conditionalEntry(in: page, frame: frame) else { return false }
+        start(entry)
+        return true
+    }
+
+    private static func conditionalEntry(in page: BrowserPage, frame: BrowserFrame) -> Entry? {
+        guard !page.isClosed, isHandled(by: page) else { return nil }
+        let identity = ObjectIdentifier(page)
+        return entries.values.first { entry in
+            entry.key.page == identity && entry.parsed.mediation == .conditional && !entry.started && !entry.cancelled
+                && entry.generation == page.credentialGeneration && isSameDocument(entry.frame, frame, in: page)
+        }
+    }
+
+    /// Whether the autofill script's `frame` is the document the request was registered for. Chromium names both by the same
+    /// CDP frame and document. WebKit serves only the current main frame (`handle`), and the generation check ties it to the
+    /// document that sent the request.
+    private static func isSameDocument(_ served: BrowserFrame, _ frame: BrowserFrame, in page: BrowserPage) -> Bool {
+        if page.chromium != nil {
+            return served.chromiumID != nil && served.chromiumID == frame.chromiumID && served.documentID == frame.documentID
+        }
+        return served.isMainFrame && frame.isMainFrame && served.securityOrigin == frame.securityOrigin
+            && PageFrameRegistry.shared.isCurrent(served, in: page)
     }
 
     /// Read-only question to the relay of the document that sent the request: is this still your live document, holding
@@ -457,7 +491,8 @@ enum WebAuthnAdapter {
 
     private static func finish(_ entry: Entry, page: BrowserPage, context: WebAuthnContext?, error: any Error) async {
         guard !entry.cancelled, entries[entry.key] === entry else { return }
-        // A user who declines the native offer or prompt, or has no passkey here, leaves a conditional discovery pending.
+        // A user who declines the native offer or prompt, or has no passkey here, leaves a conditional discovery pending; the
+        // dropdown offers it again, and nothing shows it by itself.
         if entry.parsed.mediation == .conditional, case WebsiteAuthenticatorError.notAllowed = error {
             entry.started = false
             entry.task = nil

@@ -5,9 +5,10 @@ import Foundation
 
 /// The two scripts that route `navigator.credentials` public-key calls to the native authenticator on both engines.
 ///
-/// - `relay` runs in an isolated content world. It owns the document fence: it forwards bounded requests to native,
-///   forwards native results back only while its own document is live, and relays a trusted user activation for
-///   conditional requests. The page cannot make it authorize anything; native derives origin, frame, policy and profile.
+/// - `relay` runs in an isolated content world. It owns the document fence: it forwards bounded requests to native and
+///   forwards native results back only while its own document is live. It never starts a conditional request: only the
+///   fill dropdown's "Use a Passkey…" row does, natively. The page cannot make it authorize anything; native derives
+///   origin, frame, policy and profile.
 /// - `page` runs in the page world. It only marshals options and results into browser-facing objects.
 ///
 /// Native decides the route before the page script touches a call: `legacy` (a private page) hands the untouched call to the
@@ -74,7 +75,7 @@ nonisolated enum WebAuthnScript {
         }
         if (body.action !== 'request' || requests.size >= 8 || requests.has(body.id)) return;
         if (!active && !resuming) return;
-        requests.set(body.id, {conditional: body.mediation === 'conditional', capabilities: body.operation === 'capabilities'});
+        requests.set(body.id, {capabilities: body.operation === 'capabilities'});
         (resuming ? resuming.then(identify) : identify()).then(() => {
           if (!requests.has(body.id)) return;
           if (!active) return;
@@ -85,22 +86,6 @@ nonisolated enum WebAuthnScript {
           }
         });
       });
-      // A conditional request is only a pending discovery. Only a real user gesture on a webauthn field may start
-      // the native account selection; scripted focus or synthetic events are not isTrusted and are ignored.
-      const isWebAuthnField = node => {
-        if (!(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement)) return false;
-        return (node.getAttribute('autocomplete') || '').toLowerCase().split(/\s+/).includes('webauthn');
-      };
-      const activate = event => {
-        if (!active || !event.isTrusted || document.visibilityState !== 'visible') return;
-        if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== 'ArrowDown') return;
-        if (!isWebAuthnField(event.composedPath()[0])) return;
-        for (const [id, request] of requests) {
-          if (request.conditional) { try { send({action: 'conditionalActivate', id}); } catch {} return; }
-        }
-      };
-      document.addEventListener('click', activate, true);
-      document.addEventListener('keydown', activate, true);
       addEventListener('pagehide', () => {
         epoch += 1;
         resuming = null;

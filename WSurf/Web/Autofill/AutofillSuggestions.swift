@@ -33,6 +33,8 @@ final class AutofillSuggestions {
         /// Whether typing may start the dropdown's search: only in a username field. In a password or code field a search starts
         /// with a click on the search row, so typed password characters are never taken as a query.
         let typeToSearch: Bool
+        /// A field whose autocomplete includes `webauthn`: it may offer "Use a Passkey…".
+        let isWebAuthnField: Bool
         /// One unlocked vault the request read, with the lease and revision it read it under.
         struct Grant {
             let epoch: UInt64
@@ -47,7 +49,7 @@ final class AutofillSuggestions {
         var siblings: [AutofillSuggestion] = []
         /// A row that is not an account, and what choosing it does.
         enum Action {
-            case siblings, unlock
+            case siblings, unlock, passkey
         }
         var actions: [UUID: Action] = [:]
         /// Every vault of the profile was locked when the lookup ran: the request offers only the unlock row, holds no grant, and
@@ -60,12 +62,13 @@ final class AutofillSuggestions {
         init(page: BrowserPage, context: BrowserProfileContext, frame: BrowserFrame, token: String, kind: AutofillSaveKind,
              frameURL: URL, topURL: URL, world: WKContentWorld, bridge: String,
              documentID: String, formID: String, fieldID: String,
-             field: CredentialAutofillField, enteredUsername: String?, typeToSearch: Bool) {
+             field: CredentialAutofillField, enteredUsername: String?, typeToSearch: Bool, isWebAuthnField: Bool) {
             self.page = page; self.context = context; self.frame = frame; self.token = token; self.kind = kind
             self.frameURL = frameURL; self.topURL = topURL
             self.world = world; self.bridge = bridge; self.documentID = documentID
             self.formID = formID; self.fieldID = fieldID
             self.field = field; self.enteredUsername = enteredUsername; self.typeToSearch = typeToSearch
+            self.isWebAuthnField = isWebAuthnField
         }
     }
 
@@ -181,7 +184,8 @@ final class AutofillSuggestions {
                               frameURL: frameURL, topURL: topURL, world: world,
                               bridge: bridge, documentID: documentID, formID: formID, fieldID: fieldID,
                               field: manager && body["field"] as? String == "totp" ? .totp : .password,
-                              enteredUsername: enteredUsername, typeToSearch: manager && body["kind"] as? String == "username")
+                              enteredUsername: enteredUsername, typeToSearch: manager && body["kind"] as? String == "username",
+                              isWebAuthnField: manager && body["webauthn"] as? Bool == true)
         requests[key] = request; self.page = page
         let id = presentationID
         Task { [weak self, weak page] in
@@ -218,10 +222,24 @@ final class AutofillSuggestions {
                 try AutofillSaveIndex.suggestions(kind: kind, origin: origin, profileID: profileID)
             }.value
         }
-        guard page.context === context, id == presentationID, let records, !records.isEmpty,
+        var rows = records ?? []
+        if kind == .password, request.isWebAuthnField,
+           let passkey = Self.passkeyRow(origin: origin, in: page, frame: request.frame) {
+            request.actions[passkey.id] = .passkey
+            rows.append(passkey)
+        }
+        guard page.context === context, id == presentationID, !rows.isEmpty,
               (try? await validate(request, in: page, requiresFocus: true)) != nil,
               Self.canPresent(in: page) else { return false }
-        return show(records, request: request, in: page)
+        return show(rows, request: request, in: page)
+    }
+
+    /// "Use a Passkey…" for a webauthn field whose document holds a pending conditional request, and `nil` otherwise. It is
+    /// offered whatever the vault holds, whether it is locked or whether there is one, so the dropdown depends only on what the
+    /// page itself asked for.
+    static func passkeyRow(origin: String, in page: BrowserPage, frame: BrowserFrame) -> AutofillSuggestion? {
+        guard WebAuthnAdapter.hasConditionalRequest(in: page, frame: frame) else { return nil }
+        return AutofillSuggestion(id: UUID(), title: String(localized: "Use a Passkey…"), detail: "", origin: origin)
     }
 
     /// The manager that may answer for `vaultID`: same profile, and still the unlock the request read it under.
@@ -513,11 +531,12 @@ final class AutofillSuggestions {
     /// The one synchronous answer to "may this request still act?": still the page's current request, (for a password) the
     /// same unlock, the feature still on, and the page still what it was shown for. Nothing here suspends, so a caller that
     /// runs it right before delivering anything is not racing a lock. Page, field and frame identity are the job of the
-    /// asynchronous checks in `validate`. A request that found every vault locked holds no grant; it can only offer the
-    /// unlock row, since a fill needs a grant of its own (`managerAccount`).
+    /// asynchronous checks in `validate`. A request that found every vault locked, or no vault, holds no grant; it can only
+    /// offer the unlock row or "Use a Passkey…", since a fill needs a grant of its own (`managerAccount`).
     private func requireAuthority(_ request: Request, in page: BrowserPage) throws {
         guard requests[ObjectIdentifier(page)] === request, request.context === page.context,
-              request.kind != .password || request.isLocked || managersAreCurrent(for: request),
+              request.kind != .password || request.isLocked || managersAreCurrent(for: request)
+                || (request.grants.isEmpty && request.actions.values.contains(.passkey)),
               AutofillSaveCoordinator.shared.isEnabled(request.kind, context: request.context), page.url == request.topURL,
               page.hasOnlySecureContent, page.window != nil, !page.isHiddenOrHasHiddenAncestor else { throw ContactAutofillError.changedPage }
     }
@@ -631,6 +650,16 @@ final class AutofillSuggestions {
         }
     }
 
+    /// The "Use a Passkey…" row: the panel closes and the page's pending conditional request runs the passkey ceremony, which
+    /// shows its own sheets. Only this choice starts it; a click, Enter or an arrow key in the field never does.
+    private func usePasskey(_ request: Request, in page: BrowserPage) {
+        dismiss()
+        Task { [weak self, weak page] in
+            guard let self, let page, (try? await self.validate(request, in: page)) != nil else { return }
+            WebAuthnAdapter.startConditionalRequest(in: page, frame: request.frame)
+        }
+    }
+
     private func fill(_ id: UUID, request: Request, in page: BrowserPage) {
         switch request.actions[id] {
         case .siblings:
@@ -638,6 +667,9 @@ final class AutofillSuggestions {
             return
         case .unlock:
             unlock(request, in: page)
+            return
+        case .passkey:
+            usePasskey(request, in: page)
             return
         case nil:
             break

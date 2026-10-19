@@ -52,8 +52,8 @@ extension WebsiteAuthenticator {
 
     /// `interaction` is the only seam: production always passes `NativeWebAuthnInteraction`; tests pass a scripted
     /// user so cancellation, expiry and verification outcomes are reachable without a window or biometrics. A scripted
-    /// user is not evidence of native presence or verification. `conditional` marks a request started by a page
-    /// gesture: an explicit native offer precedes any unlock, verification or signing.
+    /// user is not evidence of native presence or verification. `conditional` marks a request started from the fill
+    /// dropdown's "Use a Passkey…" row: an explicit native offer precedes any unlock, verification or signing.
     @MainActor
     static func perform(
         _ request: WebAuthnRequest,

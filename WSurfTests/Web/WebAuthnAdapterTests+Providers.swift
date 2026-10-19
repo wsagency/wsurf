@@ -233,6 +233,26 @@ extension WebAuthnAdapterTests {
         """)
     }
 
+    private final class FrameBox { var frame: BrowserFrame? }
+
+    /// The main frame as a script message from the live document carries it: what the fill dropdown holds for a field there.
+    private func messageFrame(of page: BrowserPage) async throws -> BrowserFrame {
+        let name = "wsurfTestFrame", box = FrameBox()
+        page.addScriptMessageHandler(name: name, in: PageAutomationGuard.world) { box.frame = $0.frameInfo }
+        defer { page.removeScriptMessageHandler(name: name, in: PageAutomationGuard.world) }
+        _ = try await page.callAsyncJavaScript(
+            "globalThis.__wsurfSend(name, {}); return true;", arguments: ["name": name], in: nil, contentWorld: PageAutomationGuard.world
+        )
+        try #require(await waitUntil { box.frame != nil }, "the page's main frame never posted")
+        return try #require(box.frame)
+    }
+
+    /// The user picks "Use a Passkey…" in the dropdown of the page's webauthn field: what the row does natively.
+    @discardableResult
+    private func pickPasskeyRow(in page: BrowserPage) async throws -> Bool {
+        WebAuthnAdapter.startConditionalRequest(in: page, frame: try await messageFrame(of: page))
+    }
+
     private func errorName(_ result: [String: Any]) -> String? {
         (result["error"] as? [String: Any])?["name"] as? String
     }
@@ -474,12 +494,15 @@ extension WebAuthnAdapterTests {
     }
 
     /// A discovery (a conditional request) is pending in exactly the same way in every vault state, and nothing is handed over
-    /// until the user clicks a webauthn field (here the relay's own report of that gesture is posted, as the relay does only for a
-    /// trusted one) and then chooses the system's authenticator. Declining the step leaves it pending.
-    @Test(.boundedWebViews) func aConditionalRequestIsPendingAlikeInEveryVaultStateAndHandedOverOnlyAfterAGestureAndTheChoice() async throws {
+    /// until the user picks "Use a Passkey…" in the fill dropdown and then chooses the system's authenticator. Declining the step
+    /// leaves it pending, and the row starts it again.
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
+    func aConditionalRequestIsPendingAlikeInEveryVaultStateAndHandedOverOnlyAfterThePasskeyRowAndTheChoice(
+        engine: BrowserEngine
+    ) async throws {
         var traces: [[String]] = []
         for state in ProfileVault.allCases {
-            let realm = try await Realm.start(engine: .webKit)
+            let realm = try await Realm.start(engine: engine)
             var trace: [String] = []
             do {
                 let context = try await makeContext(state, realm)
@@ -488,35 +511,22 @@ extension WebAuthnAdapterTests {
                 defer { WebAuthnAdapter.interactionForTesting[context.profile.id] = nil }
                 let page = try await realm.open(context)
                 try await recordResults(in: page)
-                _ = try await page.evaluateJavaScript("""
-                window.ids = []; document.addEventListener('wsurf-webauthn-request', event => {
-                  const body = JSON.parse(event.detail);
-                  if (body.action === 'request' && body.operation !== 'capabilities') ids.push(body.id);
-                }); true
-                """)
                 try await requestConditionalGet(in: page)
                 try await fence(page)
                 trace.append("registered: \(try await results(of: page).count) events, \(try await outcomes(of: page).count) outcomes, steps \(user.steps)")
 
-                // The user's click on a webauthn field, as the relay reports it. A step is shown; the page still sees nothing.
-                func click() async throws {
-                    let id = try #require(try await page.evaluateJavaScript("ids[0]") as? String)
-                    _ = try await page.callAsyncJavaScript(
-                        "globalThis.__wsurfSend('wsurfWebAuthn', { action: 'conditionalActivate', id, document: globalThis.__wsurfNativeFrameNonce });",
-                        arguments: ["id": id], in: nil, contentWorld: PageAutomationGuard.world
-                    )
-                }
-                try await click()
-                #expect(await waitUntil { user.isOpen }, "a step follows the gesture in every state: \(state)")
+                // The row is picked. A step is shown; the page still sees nothing.
+                #expect(try await pickPasskeyRow(in: page), "the row finds the pending request: \(state)")
+                #expect(await waitUntil { user.isOpen }, "a step follows the row in every state: \(state)")
                 try await fence(page)
                 trace.append("step open: \(try await results(of: page).count) events, \(try await outcomes(of: page).count) outcomes")
 
-                // Declining leaves the discovery pending, as it always does; clicking again asks again; only the choice hands over.
+                // Declining leaves the discovery pending, as it always does; the row asks again; only the choice hands over.
                 user.answer(.declined)
                 #expect(await waitUntil { !user.isOpen })
                 try await fence(page)
                 trace.append("declined: \(try await results(of: page).count) events, \(try await outcomes(of: page).count) outcomes")
-                try await click()
+                #expect(try await pickPasskeyRow(in: page))
                 #expect(await waitUntil { user.isOpen && user.steps == 2 })
                 user.answer(.handOff)
                 #expect(try await waitUntil { try await !results(of: page).isEmpty })
@@ -532,6 +542,131 @@ extension WebAuthnAdapterTests {
         #expect(traces.first == [
             "registered: 0 events, 0 outcomes, steps 0", "step open: 0 events, 0 outcomes", "declined: 0 events, 0 outcomes", "chosen: [\"modal\"]",
         ])
+    }
+
+    /// A relay message no longer starts anything: the report a click on a webauthn field used to send is ignored. WebKit only:
+    /// the test can name a WebKit document by its native nonce, while a Chromium relay's fence identity never leaves the relay.
+    @Test(.boundedWebViews) func theRelaysOldActivationMessageStartsNothing() async throws {
+        try await withRealm(.webKit) { realm in
+            let context = try await realm.context(vaults: [.locked])
+            let user = StepUser()
+            WebAuthnAdapter.interactionForTesting[context.profile.id] = { user }
+            defer { WebAuthnAdapter.interactionForTesting[context.profile.id] = nil }
+            let page = try await realm.open(context)
+            _ = try await page.evaluateJavaScript("""
+            window.ids = []; document.addEventListener('wsurf-webauthn-request', event => {
+              const body = JSON.parse(event.detail);
+              if (body.action === 'request' && body.operation !== 'capabilities') ids.push(body.id);
+            }); true
+            """)
+            try await requestConditionalGet(in: page)
+            let id = try #require(try await page.evaluateJavaScript("ids[0]") as? String)
+            _ = try await page.callAsyncJavaScript(
+                "globalThis.__wsurfSend('wsurfWebAuthn', { action: 'conditionalActivate', id, document: globalThis.__wsurfNativeFrameNonce }); return true;",
+                arguments: ["id": id], in: nil, contentWorld: PageAutomationGuard.world
+            )
+            try await fence(page)
+            #expect(user.steps == 0, "no step without the row")
+            #expect(try await outcomes(of: page).isEmpty)
+            let frame = try await messageFrame(of: page)
+            #expect(WebAuthnAdapter.hasConditionalRequest(in: page, frame: frame))
+        }
+    }
+
+    /// A trusted click, Enter and ArrowDown in the `username webauthn` field, sent the way the native input path sends them, leave
+    /// a pending discovery alone: no step is shown, the page gets every event, and the request is still there for the row.
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
+    func trustedClicksAndKeysInAWebAuthnFieldNeverStartTheConditionalRequest(engine: BrowserEngine) async throws {
+        try await withRealm(engine) { realm in
+            let context = try await realm.context(vaults: [.locked])
+            let user = StepUser()
+            WebAuthnAdapter.interactionForTesting[context.profile.id] = { user }
+            defer { WebAuthnAdapter.interactionForTesting[context.profile.id] = nil }
+            let page = try await realm.open(context)
+            let window = try #require(page.window)
+            // The relay of earlier builds acted only for a visible document, so the fixture is brought to the front.
+            window.orderFrontRegardless()
+            _ = await waitUntil(timeout: .seconds(10)) {
+                (try? await page.evaluateJavaScript("document.visibilityState")) as? String == "visible"
+            }
+            _ = try await page.evaluateJavaScript("""
+            window.seen = []; const field = document.getElementById('field');
+            field.addEventListener('click', event => { if (event.isTrusted) seen.push('click'); });
+            field.addEventListener('keydown', event => { if (event.isTrusted) seen.push(event.key); }); true
+            """)
+            try await requestConditionalGet(in: page)
+
+            let center = try #require(try await page.evaluateJavaScript("""
+            (() => { const r = document.getElementById('field').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()
+            """) as? [Double])
+            let point = CGPoint(x: center[0], y: center[1])
+            if let chromium = page.chromium {
+                try await chromium.dragPointer(path: [point, point]) { true }
+            } else {
+                try PageDriver.computerMouse(point: point, button: "left", phase: "down", in: page, window: window)
+                try PageDriver.computerMouse(point: point, button: "left", phase: "up", in: page, window: window)
+            }
+            #expect(try await waitUntil { try await page.evaluateJavaScript("seen.join()") as? String == "click" }, "a trusted click reached the field")
+
+            try #require(window.makeFirstResponder(page))
+            _ = try await page.evaluateJavaScript("document.getElementById('field').focus(); true")
+            for name in ["ENTER", "ARROWDOWN"] {
+                let (code, characters) = try #require(PageKeyChord.namedKey(name))
+                for type in [NSEvent.EventType.keyDown, .keyUp] {
+                    let event = try #require(NSEvent.keyEvent(
+                        with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                        isARepeat: false, keyCode: code
+                    ))
+                    try #require(page.sendKeyEvent(event))
+                }
+            }
+            #expect(try await waitUntil { try await page.evaluateJavaScript("seen.join()") as? String == "click,Enter,ArrowDown" },
+                    "the page got the trusted Enter and ArrowDown")
+            try await fence(page)
+            #expect(user.steps == 0, "no sheet from a click or a key")
+            #expect(try await outcomes(of: page).isEmpty, "the discovery is still pending")
+            let frame = try await messageFrame(of: page)
+            #expect(WebAuthnAdapter.hasConditionalRequest(in: page, frame: frame))
+        }
+    }
+
+    /// "Use a Passkey…" is offered for a webauthn field whose document has a pending conditional request in every vault state,
+    /// including several locked vaults, and only then; picking it shows the existing flow (here the vault choice).
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
+    func thePasskeyRowDependsOnlyOnThePagesPendingRequest(engine: BrowserEngine) async throws {
+        let states: [[VaultState]] = [[], [.unlocked], [.locked], [.locked, .locked]]
+        for vaults in states {
+            try await withRealm(engine) { realm in
+                let context = try await realm.context(vaults: vaults)
+                let page = try await realm.open(context)
+                let origin = "https://localhost"
+                let frame = try await messageFrame(of: page)
+                #expect(AutofillSuggestions.passkeyRow(origin: origin, in: page, frame: frame)?.title == nil, "no request, no row: \(vaults)")
+
+                try await requestConditionalGet(in: page)
+                let row = try #require(AutofillSuggestions.passkeyRow(origin: origin, in: page, frame: frame), "row: \(vaults)")
+                #expect(row.title == "Use a Passkey…" && row.detail.isEmpty)
+                let other = try await realm.open(context)
+                let otherFrame = try await messageFrame(of: other)
+                #expect(AutofillSuggestions.passkeyRow(origin: origin, in: other, frame: otherFrame)?.title == nil, "another page's field gets no row")
+
+                guard vaults.count == 2 else { return }
+                let choice = OpenChoice()
+                VaultChoicePrompt.answersForTesting[context.profile.id] = { _ in
+                    await choice.wait()
+                    return nil
+                }
+                defer { VaultChoicePrompt.answersForTesting[context.profile.id] = nil }
+                #expect(WebAuthnAdapter.startConditionalRequest(in: page, frame: frame))
+                #expect(await waitUntil { choice.isOpen }, "the row starts the existing flow")
+                #expect(AutofillSuggestions.passkeyRow(origin: origin, in: page, frame: frame)?.title == nil, "a started request is not offered twice")
+                choice.answer()
+                #expect(await waitUntil { AutofillSuggestions.passkeyRow(origin: origin, in: page, frame: frame)?.title != nil },
+                        "a cancelled choice leaves the discovery pending and offered again")
+                #expect(try await outcomes(of: page).isEmpty)
+            }
+        }
     }
 
     /// "Use Another Device or Key…" on the offer a locked vault shows first: the request is handed over and the vault was never
