@@ -21,6 +21,16 @@ extension CredentialSettings {
                         .disabled(model.isBusy || !model.canCreateVault)
                 },
                 content: {
+                    if let deleted = model.deletedVault {
+                        DetailRow(
+                            verbatimTitle: String(localized: "Vault \(deleted.ordinal) was deleted."),
+                            verbatimCaption: deleted.leavesUnlockPasskey
+                                ? String(localized: "You can remove this vault’s unlock passkey from Passwords if nothing else uses it.") : nil
+                        ) {
+                            Button("Dismiss") { model.dismissDeletedVault() }.buttonStyle(.bordered)
+                        }
+                        RowSeparator()
+                    }
                     DetailRow(title: "Vault") {
                         SettingsMenu(
                             options: model.vaults.sorted { $0.ordinal < $1.ordinal }.map { listing in
@@ -65,9 +75,35 @@ extension CredentialSettings {
                                     .disabled(model.isBusy)
                             }
                         }
+                        RowSeparator()
+                        DetailRow(title: "Delete vault", caption: deleteVaultCaption) {
+                            Button("Delete Vault…", role: .destructive) { run { await model.requestVaultDeletion() } }
+                                .buttonStyle(.bordered)
+                                .disabled(model.isBusy || model.vaultDeletionBlock != nil)
+                        }
                     }
                 }
             )
+            .modifier(
+                CredentialDeleteVaultSheetHost(
+                    model: model,
+                    confirm: { typed in withWindow { window in await model.confirmVaultDeletion(typedName: typed, in: window) } },
+                    export: { openExport() }
+                )
+            )
+        }
+    }
+
+    private var deleteVaultCaption: LocalizedStringResource? {
+        switch model.vaultDeletionBlock {
+        case .locked:
+            "Unlock this vault to delete it."
+        case .onlyVault:
+            "A profile keeps at least one vault. To remove its credentials, move them to Trash and empty it."
+        case .importOpen:
+            "Finish or cancel the open import first."
+        case nil:
+            nil
         }
     }
 
@@ -86,6 +122,40 @@ extension CredentialSettings {
                             """)
                     ) { EmptyView() }
                 }
+            }
+        }
+    }
+}
+
+/// Presents the model's pending vault deletion. Export… closes the sheet first and opens the export sheet once it is gone, so the two
+/// never overlap; a lock, a re-unlock or another vault drops the pending deletion with the session and the sheet with it.
+private struct CredentialDeleteVaultSheetHost: ViewModifier {
+    let model: CredentialSettingsModel
+    let confirm: (String) -> Void
+    let export: () -> Void
+    @State private var exportsOnDismiss = false
+
+    func body(content: Content) -> some View {
+        content.sheet(
+            isPresented: Binding(get: { model.pendingVaultDeletion != nil }, set: { if !$0 { model.cancelVaultDeletion() } }),
+            onDismiss: {
+                if exportsOnDismiss {
+                    exportsOnDismiss = false
+                    export()
+                }
+            }
+        ) {
+            if let pending = model.pendingVaultDeletion {
+                CredentialDeleteVaultSheet(
+                    pending: pending,
+                    isBusy: model.isBusy,
+                    confirm: confirm,
+                    export: {
+                        exportsOnDismiss = true
+                        model.cancelVaultDeletion()
+                    },
+                    cancel: { model.cancelVaultDeletion() }
+                )
             }
         }
     }

@@ -37,6 +37,7 @@ struct CredentialVaultSession {
     var trashNext: Int?
     var restoreBlocked: RestoreBlocked?
     var pendingPurge: PendingPurge?
+    var pendingVaultDeletion: PendingVaultDeletion?
 
     init(epoch: UInt64, snapshot: StoreSnapshot) {
         self.epoch = epoch
