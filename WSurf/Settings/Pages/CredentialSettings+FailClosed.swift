@@ -32,7 +32,7 @@ extension CredentialSettings {
         guard model.vaults.count > 1, let vault = model.vaults.first(where: { $0.vaultID == model.selectedVaultID }) else {
             return String(localized: "Unlock Credentials")
         }
-        return String(localized: "Unlock “\(vault.displayName)”")
+        return String(localized: "Unlock “\(vault.numberedName)”")
     }
 
     /// Replaces the whole page. The store refused to open, so nothing here creates, resets or acknowledges anything: the only

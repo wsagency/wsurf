@@ -194,7 +194,7 @@ final class AutofillSuggestions {
         for vault in listing.sorted(by: { $0.ordinal < $1.ordinal }) {
             if let manager = unlocked.first(where: { $0.vaultID == vault.vaultID }), let epoch = manager.authorizationEpoch,
                let snapshot = try? await manager.snapshot(), manager.authorizationEpoch == epoch {
-                reads.append(Read(manager: manager, epoch: epoch, snapshot: snapshot, label: vault.name ?? String(localized: "Vault \(vault.ordinal)")))
+                reads.append(Read(manager: manager, epoch: epoch, snapshot: snapshot, label: vault.label))
             }
         }
         guard !reads.isEmpty, request.page.context === context,

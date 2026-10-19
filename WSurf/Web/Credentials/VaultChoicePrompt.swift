@@ -44,8 +44,7 @@ enum VaultChoicePrompt {
             String(localized: "The default vault is locked.")
         }
         for candidate in candidates {
-            let title = candidate.name ?? String(localized: "Vault \(candidate.ordinal) (locked)")
-            alert.addButton(withTitle: title)
+            alert.addButton(withTitle: candidate.label)
         }
         alert.addButton(withTitle: String(localized: "Cancel"))
         if offersHandOff {

@@ -56,4 +56,13 @@ nonisolated extension VaultListing {
         guard isUnlocked, let name else { return numberedName }
         return name
     }
+
+    /// What every surface that lists or asks for a vault calls it, so one vault never reads "Vault 1" in one place and "Personal" in
+    /// another. Unlocked and named: the name with its number ("Personal · Vault 1"). Locked: the number alone, since the name is
+    /// sealed ("Vault 1 (locked)"). The vault's own name, to edit it, is `displayName`.
+    var label: String {
+        guard isUnlocked else { return String(localized: "Vault \(ordinal) (locked)") }
+        guard let name, !name.isEmpty, name != numberedName else { return numberedName }
+        return String(localized: "\(name) · Vault \(ordinal)")
+    }
 }

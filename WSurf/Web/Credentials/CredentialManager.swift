@@ -52,6 +52,24 @@ enum NewVaultChoice {
     case existing(sourceVaultID: UUID, credentialID: Data, prfInput: Data)
 }
 
+/// Counts the unlocks and locks of each profile's vault managers, in memory only. A vault's name is listed only while that vault is
+/// unlocked, so a page that lists a profile's vaults reads the list again whenever its count changes, including for a vault it has
+/// not selected. Observing it fires for any profile; a reader compares only its own profile's count.
+@MainActor
+@Observable
+final class VaultStateChanges {
+    static let shared = VaultStateChanges()
+    private var counts: [UUID: UInt64] = [:]
+
+    func count(for profileID: UUID) -> UInt64 {
+        counts[profileID, default: 0]
+    }
+
+    fileprivate func note(_ profileID: UUID) {
+        counts[profileID, default: 0] &+= 1
+    }
+}
+
 /// Per-vault unlock state: one manager per (profile, vault). Every await re-checks the captured `VaultAccess` *before* a durable
 /// mutation; nothing throws after a committed mutation, so a receipt always reflects what is on disk.
 @MainActor
@@ -382,6 +400,7 @@ final class CredentialManager {
             try requirePending(access)
             try activate(access)
             unlockCredentials = unlocks
+            VaultStateChanges.shared.note(profile.id)
         } catch {
             publishScratch()
             discard(access)
@@ -658,6 +677,7 @@ final class CredentialManager {
         timer?.cancel()
         timer = nil
         native.cancel()
+        VaultStateChanges.shared.note(profile.id)
         let store = store
         Task { for access in revoked { await store.lock(ifUsing: access) } }
     }
