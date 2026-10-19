@@ -278,6 +278,8 @@ struct CredentialImportReviewSheet: View {
     @State private var shown: [ImportReviewSection] = []
     @State private var itemsWithOmissions = 0
     @State private var collapsed: Set<CredentialImportReview.Group> = []
+    @State private var showsKept = false
+    @State private var showsMissing = false
     @State private var started = false
     @State private var mergeRequest: ImportMergeRequest?
 
@@ -385,7 +387,7 @@ struct CredentialImportReviewSheet: View {
             // Lazy: a real library is thousands of rows, and only the few on screen are built.
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                 if query.isEmpty, filter == .all {
-                    CredentialImportReportSections(model: model, review: review)
+                    CredentialImportReportSections(model: model, review: review, showsKept: $showsKept, showsMissing: $showsMissing)
                 }
                 ForEach(shown) { section in
                     Section {

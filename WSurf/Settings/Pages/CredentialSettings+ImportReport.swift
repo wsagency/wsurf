@@ -45,8 +45,9 @@ extension CredentialImportReview.LocalChange {
 struct CredentialImportReportSections: View {
     let model: CredentialSettingsModel
     let review: CredentialImportReview
-    @State private var showsKept = false
-    @State private var showsMissing = false
+    /// Kept by the sheet: a lazy stack drops the state of a view that scrolls out of sight.
+    @Binding var showsKept: Bool
+    @Binding var showsMissing: Bool
 
     var body: some View {
         if !review.keptChanges.isEmpty {
