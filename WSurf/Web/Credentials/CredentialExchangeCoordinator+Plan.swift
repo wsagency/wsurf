@@ -199,6 +199,17 @@ extension CredentialExchangeCoordinator {
                 id: record.incoming, kind: record.kind, title: record.title, relyingParty: record.relyingParty, action: action
             )
         }
+        // An account is written or moved to Trash, never both: a merge into a saved credential the user also chose to remove doesn't fit.
+        let trashed = removals(in: session)
+        guard Set(planned.touched.map(\.id)).isDisjoint(with: trashed) else { throw CredentialVaultError.invalidData }
+        planned.outcome.movedToTrash = trashed.count
         return planned
+    }
+
+    /// The saved credentials Import moves to Trash: the ones the user chose, and only after they said the transfer holds everything the
+    /// other app has. Keep is what every one of them starts with.
+    static func removals(in session: Session) -> [UUID] {
+        guard session.review.transferIsComplete else { return [] }
+        return session.review.missing.filter(\.movesToTrash).map(\.accountID)
     }
 }

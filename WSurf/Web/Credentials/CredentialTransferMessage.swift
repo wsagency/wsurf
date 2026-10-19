@@ -111,8 +111,14 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
 
     static func succeeded(_ outcome: CredentialImportOutcome, receipt: VaultCommitReceipt, origin: Origin = .system) -> Self {
         guard origin == .legacyPasswords else {
+            guard outcome.movedToTrash > 0 else {
+                return Self(.succeeded, .none, receipt: receipt, String(localized: """
+                    Imported into WSurf: \(outcome.added) added, \(outcome.updated) updated. Nothing was changed in the other app.
+                    """))
+            }
             return Self(.succeeded, .none, receipt: receipt, String(localized: """
-                Imported into WSurf: \(outcome.added) added, \(outcome.updated) updated. Nothing was changed in the other app.
+                Imported into WSurf: \(outcome.added) added, \(outcome.updated) updated, \(outcome.movedToTrash) moved to Trash. \
+                Nothing was changed in the other app.
                 """))
         }
         return Self(.succeeded, .none, receipt: receipt, String(localized: """

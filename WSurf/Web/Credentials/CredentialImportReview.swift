@@ -33,6 +33,8 @@ nonisolated struct CredentialImportOutcome: Equatable, Sendable {
     let added: Int
     let updated: Int
     var results: [Result] = []
+    /// The saved credentials the other app no longer holds that the user chose to move to Trash.
+    var movedToTrash = 0
 }
 
 /// What `cancelImport(for:)` ended. Cancelling a running commit only asks the vault not to write: a write that
@@ -311,6 +313,13 @@ nonisolated struct CredentialImportReview: Sendable {
     var omitted: [CredentialImportOmission] = []
     /// The omissions that belong to no kept item (an item with nothing storable, say).
     var unattachedOmissions: [CredentialImportOmission] = []
+    /// What was changed in WSurf since the last import and stays as it is (`CredentialImportReport`). Fixed when the review is staged.
+    var keptChanges: [KeptChange] = []
+    /// The saved credentials the other app brought earlier and the transfer no longer holds. Each is kept unless the user moves it to Trash.
+    var missing: [Missing] = []
+    /// The user's word that the transfer holds everything the other app has: a transfer does not say whether it is whole, so nothing
+    /// moves to Trash before this is set.
+    var transferIsComplete = false
 
     var conflicts: [Record] {
         candidates.flatMap(\.records).filter(\.isConflict)

@@ -298,9 +298,9 @@ struct CredentialImportReviewSheet: View {
                     Spacer(minLength: 0)
                 } else {
                     toolbar(review)
-                    list(review.origin)
+                    list(review)
                 }
-                Text(verbatim: footer(review.tally)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(verbatim: footer(review)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if let error = model.error {
                     Text(verbatim: error).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
@@ -380,10 +380,13 @@ struct CredentialImportReviewSheet: View {
 
     // MARK: List
 
-    private func list(_ origin: CredentialTransferMessage.Origin) -> some View {
+    private func list(_ review: CredentialImportReview) -> some View {
         ScrollView {
             // Lazy: a real library is thousands of rows, and only the few on screen are built.
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                if query.isEmpty, filter == .all {
+                    CredentialImportReportSections(model: model, review: review)
+                }
                 ForEach(shown) { section in
                     Section {
                         if !collapsed.contains(section.group) {
@@ -450,8 +453,12 @@ struct CredentialImportReviewSheet: View {
 
     // MARK: Footer and buttons
 
-    private func footer(_ tally: CredentialImportReview.Tally) -> String {
+    private func footer(_ review: CredentialImportReview) -> String {
+        let tally = review.tally
         var text = String(localized: "Imports \(tally.new) new, updates \(tally.updates + tally.merges), leaves \(tally.unchanged + tally.linked) unchanged, skips \(tally.skipped).")
+        if review.trashCount > 0 {
+            text += " " + String(localized: "Moves \(review.trashCount) to Trash.")
+        }
         if tally.undecided > 0 {
             text += " " + String(localized: "Needs your decision: \(tally.undecided).")
         }
@@ -472,7 +479,7 @@ struct CredentialImportReviewSheet: View {
             } else {
                 Button("Import") { run { await model.commitImport() } }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(!review.isResolved || review.tally.writes == 0 || model.isBusy)
+                    .disabled(!review.isResolved || review.pendingWrites == 0 || model.isBusy)
             }
         }
     }

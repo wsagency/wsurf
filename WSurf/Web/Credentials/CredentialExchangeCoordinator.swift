@@ -76,6 +76,8 @@ final class CredentialExchangeCoordinator {
         /// CSV rows that must be decided although they are not conflicts with one stored credential.
         var needsChoice: Set<CredentialIdentity> = []
         var csvLines: [CredentialIdentity: Int] = [:]
+        /// What was changed in WSurf since the last import and is kept (`CredentialImportReport`); a system import only.
+        var keptChanges: [CredentialImportReview.KeptChange] = []
     }
 
     /// The staged import. Internal for `CredentialExchangeCoordinator+Review`, which keeps its choices and its review in step.
@@ -245,6 +247,10 @@ final class CredentialExchangeCoordinator {
         let snapshot = try await manager.snapshot()
         let removed = try await manager.removedIdentifiers()
         let names = try await manager.displayNames()
+        var revisions: [UUID: [RevisionItem]] = [:]
+        if source.origin == .system {
+            revisions = try await manager.revisionLog()
+        }
         try Task.checkCancellation()
         // cancelImport() or a newer claim landed while the vault was read: this operation no longer owns anything.
         guard claim?.token == bound.token else { throw CancellationError() }
@@ -255,6 +261,7 @@ final class CredentialExchangeCoordinator {
         var csvReport: CredentialCSVReport?
         var needsChoice: Set<CredentialIdentity> = []
         var csvLines: [CredentialIdentity: Int] = [:]
+        var keptChanges: [CredentialImportReview.KeptChange] = []
         switch source {
         case let .system(data):
             do {
@@ -268,6 +275,9 @@ final class CredentialExchangeCoordinator {
                     classes[incoming] = try CredentialExchangeCodec.classify(incoming, of: candidate, destination: destination)
                 }
             }
+            keptChanges = CredentialImportReport.keptChanges(
+                candidates: preview.candidates, accounts: snapshot.accounts, classes: classes, revisions: revisions, removed: removed
+            )
         case .csv, .legacy:
             do {
                 let staged = try source.stagedRows(against: snapshot)
@@ -287,7 +297,7 @@ final class CredentialExchangeCoordinator {
         }
         let context = ReviewContext(
             classes: classes, profileName: names.profile, vaultName: names.vault, csvReport: csvReport, origin: source.origin,
-            needsChoice: needsChoice, csvLines: csvLines
+            needsChoice: needsChoice, csvLines: csvLines, keptChanges: keptChanges
         )
         generation += 1
         let index = ReviewIndex(preview, context)
@@ -330,9 +340,10 @@ final class CredentialExchangeCoordinator {
             drop(staged.generation)
             throw end(Self.messageBeforeWrite(error, operation: String(localized: "Preparing the imported credentials"), staged.context.origin))
         }
-        guard !plan.touched.isEmpty else { throw end(.nothingImported()) }
+        let removals = Self.removals(in: staged)
+        guard !plan.touched.isEmpty || !removals.isEmpty else { throw end(.nothingImported()) }
 
-        let write = Task { try await self.applyImport(plan.touched, outcome: plan.outcome, staged: staged) }
+        let write = Task { try await self.applyImport(plan.touched, removing: removals, outcome: plan.outcome, staged: staged) }
         committing = Commit(generation: staged.generation, manager: ObjectIdentifier(manager), owner: owner, task: write)
         defer { if committing?.generation == staged.generation { committing = nil } }
         do {
@@ -348,9 +359,10 @@ final class CredentialExchangeCoordinator {
     /// The re-check and the write of one import. The authoritative comparison is inside `commitAccounts`; the fresh read
     /// only discards early, before anything starts.
     private func applyImport(
-        _ touched: [CredentialAccount], outcome: CredentialImportOutcome, staged: Session
+        _ touched: [CredentialAccount], removing removals: [UUID], outcome: CredentialImportOutcome, staged: Session
     ) async throws -> VaultCommitReceipt {
         let writes: [AccountWrite]
+        var removing: [UUID: AccountStamp] = [:]
         do {
             try Task.checkCancellation()
             let fresh = try await staged.manager.snapshot()
@@ -364,13 +376,18 @@ final class CredentialExchangeCoordinator {
                 guard fresh.stamps[account.id] == bound else { throw CredentialVaultError.staleRevision }
                 return AccountWrite(accountID: account.id, expected: .stamp(bound), replacement: account)
             }
+            // A credential moved to Trash is bound to the stamp the review saw, like every account the import writes.
+            for id in removals {
+                guard let bound = staged.preview.base.stamps[id], fresh.stamps[id] == bound else { throw CredentialVaultError.staleRevision }
+                removing[id] = bound
+            }
             await afterLastCheck?()
         } catch {
             throw end(Self.messageBeforeWrite(error, operation: String(localized: "Checking the vault before saving"), staged.context.origin))
         }
         let receipt: VaultCommitReceipt
         do {
-            receipt = try await staged.manager.commitAccounts(writes, authorizedEpoch: staged.epoch)
+            receipt = try await staged.manager.commitAccounts(writes, removing: removing, authorizedEpoch: staged.epoch)
         } catch {
             throw end(Self.messageAfterWriteStarted(error, staged.context.origin))
         }
