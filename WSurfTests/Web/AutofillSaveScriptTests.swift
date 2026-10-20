@@ -72,7 +72,16 @@ struct AutofillSaveScriptTests {
             return try #require(result as? String)
         }
 
+        /// The script's `check` does nothing in a hidden document (a background tab neither completes nor expires an attempt),
+        /// and the engine hides a document whose window another window covers. So it runs only once the document is visible;
+        /// otherwise the window's state is reported here instead of as a 25 s wait for a post that cannot come.
         func check() async throws {
+            let shown = await waitUntil { (try? await self.page.evaluateJavaScript("document.visibilityState")) as? String == "visible" }
+            let window = page.window
+            try #require(shown, """
+                The document is hidden: window.isVisible=\(window?.isVisible == true), \
+                occluded=\(window.map { !$0.occlusionState.contains(.visible) } ?? true), app.isActive=\(NSApp.isActive)
+                """)
             try await run("globalThis.__wsurfAutofillSave.check();")
         }
 
@@ -114,7 +123,9 @@ struct AutofillSaveScriptTests {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 500), styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = page
-        window.orderBack(nil)
+        // In front of every other window, the test's own only: a window ordered to the back is hidden whenever another one
+        // covers it, which depends on what else is on screen at that moment.
+        window.orderFrontRegardless()
         defer { window.contentView = nil; window.close() }
         let harness = Harness(page: page)
         page.installScript(AutofillSaveScript.source, in: AutofillPage.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
@@ -198,7 +209,7 @@ struct AutofillSaveScriptTests {
             try await harness.hook("click", "away")
             #expect(await waitUntil { harness.posted("discard").count == 1 })
             // Leaving the page also stops the automatic path from staging what was typed.
-            try await harness.run("globalThis.__wsurfAutofillSave.check();")
+            try await harness.check()
             try await harness.settle()
             #expect(harness.staged.count == 1)
             #expect(harness.posted("complete").isEmpty)
@@ -489,6 +500,30 @@ struct AutofillSaveScriptTests {
             try #require(await waitUntil { harness.posted("complete").count == 1 })
             #expect(harness.posted("complete")[0]["source"] as? String == "disappearance")
             #expect(harness.posted("discard").isEmpty)
+        }
+    }
+
+    /// What made the test above wait 25 s in a full run: in a hidden document `check` neither completes nor expires an attempt,
+    /// and the first check once the document is shown again does. WebKit hides the document of a window off screen at once.
+    @Test(.boundedWebViews) func aHiddenDocumentKeepsItsAttemptUntilItIsShownAgain() async throws {
+        try await withHarness(.webKit, Self.verifyingPage) { harness in
+            try await typeLogin(harness)
+            try await harness.hook("click", "go")
+            try #require(await waitUntil { harness.staged.count == 1 })
+            let window = try #require(harness.page.window)
+            window.orderOut(nil)
+            try #require(await waitUntil { (try? await harness.page.evaluateJavaScript("document.visibilityState")) as? String == "hidden" })
+            _ = try await harness.page.evaluateJavaScript("document.getElementById('app').innerHTML = '<p>Welcome</p>'; true;")
+            try await harness.age(130_000)
+            try await harness.run("globalThis.__wsurfAutofillSave.check();")
+            try await harness.settle()
+            #expect(harness.posted("complete").isEmpty)
+            #expect(harness.posted("discard").isEmpty)
+
+            window.orderFrontRegardless()
+            try await harness.check()
+            try #require(await waitUntil { harness.posted("discard").count == 1 })
+            #expect(harness.posted("complete").isEmpty)
         }
     }
 
