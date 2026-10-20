@@ -246,6 +246,15 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         hasStarted = false
     }
 
+    /// Whether this profile switched any extension on. Until `start()` loads them the saved library answers, so the first
+    /// pages of a launch already get the extension page scripts.
+    var hasEnabledExtensions: Bool {
+        if !hasStarted {
+            library.refresh()
+        }
+        return library.hasEnabledExtension
+    }
+
     func start() async {
         guard !isStopped, !Task.isCancelled else { return }
         library.load()

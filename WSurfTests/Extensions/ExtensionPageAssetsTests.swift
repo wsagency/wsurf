@@ -332,6 +332,41 @@ struct ExtensionPageAssetsTests {
         collector.messages.first { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
     }
 
+    /// A profile without an extension switched on gets no extension page script, so `document.currentScript` and the
+    /// rest of the page world stay WebKit's own.
+    @Test func pagesGetTheExtensionScriptsOnlyWhileAnExtensionIsOn() {
+        let pool = BrowserProfileContext(profile: .privateBrowsing()).webViewPool
+        var present = false
+        pool.installExtensionController(WKWebExtensionController(), extensionsPresent: { present })
+        let sources = { (view: WKWebView) in view.configuration.userContentController.userScripts.map(\.source) }
+
+        let plain = sources(pool.makeColdView())
+        #expect(!plain.contains(ExtensionPageAssets.script))
+        #expect(!plain.contains(ExtensionExternalConnect.pageScript))
+
+        present = true
+        let extended = sources(pool.makeColdView())
+        #expect(extended.contains(ExtensionPageAssets.script))
+        #expect(extended.contains(ExtensionExternalConnect.pageScript))
+    }
+
+    /// The first pages of a launch are made before the extensions load: the saved library already knows.
+    @Test func theSavedLibraryKnowsBeforeTheExtensionsLoad() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ExtensionPresence-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        #expect(!ExtensionManager(profile: .original(), library: ExtensionLibrary(baseDirectory: directory)).hasEnabledExtensions)
+
+        ExtensionLibrary(baseDirectory: directory).recordInstall(id: "presence-probe")
+        #expect(ExtensionManager(profile: .original(), library: ExtensionLibrary(baseDirectory: directory)).hasEnabledExtensions)
+
+        let library = ExtensionLibrary(baseDirectory: directory)
+        library.refresh()
+        library.setEnabled(false, id: "presence-probe")
+        #expect(!ExtensionManager(profile: .original(), library: ExtensionLibrary(baseDirectory: directory)).hasEnabledExtensions)
+    }
+
     @Test func whatThePageSeesOfAnInjectedExtensionScript() async throws {
         let package = try probePackage()
         defer { try? FileManager.default.removeItem(at: package) }

@@ -322,6 +322,7 @@ final class WebViewPool {
     var configurePage: ((BrowserPage) -> Void)?
 
     private var extensionController: WKWebExtensionController?
+    private var extensionsPresent: () -> Bool = { true }
 
     let dataStore: WKWebsiteDataStore
 
@@ -345,8 +346,14 @@ final class WebViewPool {
         return configuration
     }
 
-    func installExtensionController(_ controller: WKWebExtensionController?) {
+    /// `extensionsPresent` says whether any extension is switched on. Only then do pages get the extension page scripts
+    /// (the `document.currentScript` fix and the external-connect relay), so a profile without extensions leaves the
+    /// page world untouched.
+    func installExtensionController(
+        _ controller: WKWebExtensionController?, extensionsPresent: @escaping () -> Bool = { true }
+    ) {
         extensionController = controller
+        self.extensionsPresent = extensionsPresent
         idle.removeAll()
     }
 
@@ -440,7 +447,9 @@ final class WebViewPool {
         let contentController = configuration.userContentController
 
         contentBlocker.apply(to: contentController)
-        if extensionController != nil {
+        // ponytail: decided when a view is made; tabs open (and two warm views) when the first extension is switched on
+        // get the scripts once remade. Add them to live controllers if an extension needs them sooner.
+        if extensionController != nil, extensionsPresent() {
             for source in [ExtensionPageAssets.script, ExtensionExternalConnect.pageScript] {
                 contentController.addUserScript(WKUserScript(
                     source: source,
