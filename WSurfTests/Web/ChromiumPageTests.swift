@@ -100,8 +100,8 @@ struct ChromiumPageTests {
         await ChromiumRuntime.shared.releaseContext(contextID: context.contextID)
     }
 
-    /// Chromium reaches a subframe's main world through an object of it, so a page-world reply finds the frame that asked:
-    /// the site guard holds an iframe's autoplay until its policy arrives, and under Allow the media then plays.
+    /// Chromium reaches a subframe's world through an object of it, so a reply finds the frame that asked: the site guard
+    /// (in the services world) holds an iframe's autoplay until its policy arrives, and under Allow the media then plays.
     @Test(.boundedWebViews)
     func subframePageWorldRepliesReachTheFrameThatAsked() async throws {
         let server = try await HTTPFixtureServer.start(routes: [
@@ -144,7 +144,7 @@ struct ChromiumPageTests {
             })
             let frame = try #require(child)
             #expect(try await page.callAsyncJavaScript(
-                "return location.pathname + ':' + typeof globalThis.__wsurfSiteGuard;", in: frame, contentWorld: .page
+                "return location.pathname + ':' + typeof globalThis.__wsurfSiteGuard;", in: frame, contentWorld: BrowserPage.servicesWorld
             ) as? String == "/child:object")
             #expect(await waitUntil {
                 (try? await page.evaluateJavaScript(
