@@ -330,6 +330,9 @@ final class WebKitSiteContentTests {
     @Test func aWebsitesOwnAnswerOutranksTheSetting() async throws {
         #expect(try await outcome(of: Self.playing("new Audio('/tone.wav')"), under: .allow, siteAnswer: .block)
             == "NotAllowedError")
+        // The setting is also the view's own fallback; a website's answer still outranks it.
+        #expect(try await outcome(of: Self.playing("new Audio('/tone.wav')"), under: .block, siteAnswer: .allow)
+            == "played")
     }
 
     /// The answer covers the whole document, a frame from another website included.

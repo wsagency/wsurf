@@ -230,11 +230,12 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         return view
     }
 
-    /// `_isUserInitiated` (SPI): a person's click or key started the navigation. A WebKit without it lets every pop-up
-    /// through rather than refuse the person's own.
+    /// `_isUserInitiated` (SPI): whether a person's click or key started a navigation. Without it WebKit keeps its own
+    /// pop-up blocker (`BrowserSettings.apply`), and every pop-up that still reaches the tab counts as the person's.
+    static let decidesPopUps = WKNavigationAction.instancesRespond(to: NSSelectorFromString("_isUserInitiated"))
+
     private static func isUserInitiated(_ action: WKNavigationAction) -> Bool {
-        let selector = NSSelectorFromString("_isUserInitiated")
-        guard action.responds(to: selector) else { return true }
+        guard decidesPopUps else { return true }
         return action.value(forKey: "_isUserInitiated") as? Bool == true
     }
 
