@@ -150,6 +150,20 @@ struct MainMenuKeyTests {
         #expect(app.windows.isEmpty, "Validating a menu must not create a browser window")
     }
 
+    @Test func translatePageWaitsForAWebPage() throws {
+        let coordinator = AppCoordinator()
+        let menu = MainMenu(coordinator: coordinator)
+        menu.install()
+        defer { NSApp.mainMenu = nil }
+        let root = try #require(NSApp.mainMenu)
+        let item = try #require(root.items.compactMap(\.submenu).flatMap(\.items)
+            .first { $0.title == String(localized: "Translate Page") })
+
+        #expect(!menu.validateMenuItem(item), "there is no web page to translate")
+        #expect(item.title == String(localized: "Translate Page"))
+        #expect(item.keyEquivalent.isEmpty)
+    }
+
     @Test(.boundedWebViews) func commandsActOnTheFocusedWindow() async throws {
         let server = try await HTTPFixtureServer.start(routes: [
             "/": .html("<title>Unload target</title><p>Loaded</p>"),

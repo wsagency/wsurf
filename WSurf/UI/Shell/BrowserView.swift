@@ -229,6 +229,7 @@ struct BrowserView: View {
         .onChange(of: ObjectIdentifier(browser.context)) { _, _ in
             settingsWorkspace.adoptProfile(coordinator: coordinator)
         }
+        .modifier(TranslationDownloadHost(downloads: coordinator.translationDownloads))
         .environment(\.profileFavicons, coordinator.context.favicons)
         .environment(\.assistantProviderID, coordinator.selectedProvider.id)
         .environment(\.chromeIsLight, scheme == .light)

@@ -280,6 +280,7 @@ final class BrowserTab: Identifiable {
     let permissions: TabPermissionCenter
     let assistantAccess: TabAssistantAccessCenter
     let find = FindSession()
+    let translation = PageTranslation()
     let dialogs = PageDialogQueue()
 
     let isPrivate: Bool
@@ -605,6 +606,7 @@ final class BrowserTab: Identifiable {
         guard !isClosed else { return }
         isClosed = true
         releaseCurrentDevelopment(reason: .tabClosed)
+        translation.documentChanged()
         pendingNavigationTask?.cancel()
         coverHold?.cancel()
         onChromiumDownload = nil

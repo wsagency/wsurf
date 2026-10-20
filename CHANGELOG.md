@@ -12,6 +12,7 @@ release notes will be added above this provenance record.
 - Pop-ups a page opens by itself, including from a scripted Cmd-click, are blocked like any other pop-up you didn’t open. A blocked pop-up with no address is blocked without a notice.
 - After you switch on an extension, tabs opened from then on get its page script fixes; tabs already open get them once reopened.
 - A screen share in a Chromium tab keeps that tab from being unloaded.
+- Translate a page on this Mac with Apple’s on-device translation, in WebKit and Chromium tabs. The address bar offers it when a page isn’t in a language you read; View › Translate Page works too. Show Original brings the page back, and Always Translate a language is remembered per profile. Private windows translate only when you ask.
 - Credential Manager no longer freezes after unlocking a vault with thousands of credentials; long lists draw only the rows on screen.
 - MCP for development and QA:
   - Paired apps connect with revocable tokens.

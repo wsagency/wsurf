@@ -74,6 +74,8 @@ final class BrowserSettings {
         static let startPageHidden = "startPage.hidden"
         static let startPageHiddenSites = "startPage.hiddenSites"
         static let commandPaletteOrder = "palette.order"
+        static let translationTarget = "translation.target"
+        static let alwaysTranslate = "translation.always"
     }
 
     static let sessionKeys: [String] = [
@@ -83,6 +85,7 @@ final class BrowserSettings {
         Key.paymentCardAutofill, Key.contactAutofill, Key.passwordAutofill,
         Key.javaScript, Key.blockPopups, Key.blockTrackers, Key.autoplay,
         Key.startPageOrder, Key.startPageHidden, Key.startPageHiddenSites,
+        Key.translationTarget, Key.alwaysTranslate,
     ]
 
     private static let sessionKeySet = Set(sessionKeys)
@@ -603,6 +606,23 @@ final class BrowserSettings {
         }
     }
 
+    /// The language a page was last translated to in this profile, as a `TranslationLanguage.key`; empty means the first
+    /// preferred language.
+    var translationTargetID: String = "" {
+        didSet {
+            guard translationTargetID != oldValue else { return }
+            write(translationTargetID.isEmpty ? nil : translationTargetID, forKey: Key.translationTarget)
+        }
+    }
+
+    /// Languages this profile translates without asking, as `TranslationLanguage.key`s.
+    var alwaysTranslatedLanguages: Set<String> = [] {
+        didSet {
+            guard alwaysTranslatedLanguages != oldValue else { return }
+            write(alwaysTranslatedLanguages.sorted(), forKey: Key.alwaysTranslate)
+        }
+    }
+
     func hideFrequentSite(host: String) {
         hiddenFrequentHosts.insert(host.lowercased())
     }
@@ -775,6 +795,8 @@ final class BrowserSettings {
                 .compactMap(StartPageSection.init(rawValue:))
         )
         hiddenFrequentHosts = Set(stringArray(Key.startPageHiddenSites) ?? [])
+        translationTargetID = string(Key.translationTarget) ?? ""
+        alwaysTranslatedLanguages = Set(stringArray(Key.alwaysTranslate) ?? [])
 
         if application == nil {
             if object(Key.websiteTint) == nil {
@@ -844,6 +866,8 @@ final class BrowserSettings {
         startPageOrder = StartPageSection.allCases
         hiddenStartPageSections = []
         hiddenFrequentHosts = []
+        translationTargetID = ""
+        alwaysTranslatedLanguages = []
         onWebPreferencesChanged?()
     }
 }
