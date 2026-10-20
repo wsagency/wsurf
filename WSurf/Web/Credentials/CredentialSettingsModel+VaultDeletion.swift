@@ -49,6 +49,14 @@ extension CredentialSettingsModel {
         live?.pendingVaultDeletion
     }
 
+    /// Whether the sheet is on screen. It comes down while the deletion runs and comes back if the deletion did not happen (a declined
+    /// prompt keeps the confirmation). The system's passkey prompt is a sheet of the same window, and a window that already has a
+    /// sheet does not show a second one: with this sheet up, the prompt would wait for the sheet and the sheet for the prompt, and
+    /// the page would spin until the user cancelled the sheet. The purge and unlock-removal dialogs do the same.
+    var showsVaultDeletionSheet: Bool {
+        pendingVaultDeletion != nil && !isBusy
+    }
+
     var vaultDeletionBlock: VaultDeletionBlock? {
         guard let manager, manager.isUnlocked else { return .locked }
         if vaults.count < 2 {

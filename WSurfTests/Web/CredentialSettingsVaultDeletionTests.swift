@@ -147,6 +147,35 @@ struct CredentialSettingsVaultDeletionTests {
         }
     }
 
+    // MARK: The passkey prompt
+
+    /// The system's passkey prompt is a sheet of the window, and a window with a sheet already attached shows no second one. So the
+    /// delete sheet must be down while the prompt is open, or the prompt waits for the sheet and the sheet for the prompt.
+    @Test func theSheetIsDownWhileThePasskeyPromptIsOpenAndComesBackIfItWasDeclined() async throws {
+        try await withPage { model, passkeys, vaults, _ in
+            await open(model, vaults[1])
+            _ = try await model.save(VaultFixtures.account(), expectedRevision: model.revision)
+            await model.requestVaultDeletion()
+            let pending = try #require(model.pendingVaultDeletion)
+            #expect(model.showsVaultDeletionSheet)
+
+            var shownDuringPrompt: Bool?
+            passkeys.beforeAssert = {
+                shownDuringPrompt = model.showsVaultDeletionSheet
+                throw PasskeyUnlockError.appCancelled
+            }
+            #expect(await model.confirmVaultDeletion(typedName: pending.name, in: VaultManagerFixture.anchor()) == false)
+            #expect(shownDuringPrompt == false, "the sheet was still up when the prompt opened")
+            #expect(model.showsVaultDeletionSheet, "a declined prompt brings the sheet back")
+
+            passkeys.beforeAssert = { shownDuringPrompt = model.showsVaultDeletionSheet }
+            shownDuringPrompt = nil
+            #expect(await model.confirmVaultDeletion(typedName: pending.name, in: VaultManagerFixture.anchor()))
+            #expect(shownDuringPrompt == false)
+            #expect(!model.showsVaultDeletionSheet && model.pendingVaultDeletion == nil)
+        }
+    }
+
     // MARK: Nothing is deleted
 
     @Test func aLockBetweenTheConfirmationsDeletesNothing() async throws {
