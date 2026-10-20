@@ -96,6 +96,8 @@ final class InputHistoryListModel {
     private(set) var error: String?
     /// The result of the last action that has no visible effect on the list, such as copying.
     private(set) var notice: String?
+    /// The last copy's clearing, so a test can wait for it after moving the clock.
+    @ObservationIgnored private(set) var clipboardClearing: Task<Void, Never>?
 
     init(
         profile: Profile,
@@ -264,7 +266,7 @@ final class InputHistoryListModel {
         pasteboard.setString("", forType: .concealed)
         let changeCount = pasteboard.changeCount
         // The task holds the pasteboard and the clock, not the model: closing the list does not cancel the clearing.
-        Task { [pasteboard, clock] in
+        clipboardClearing = Task { [pasteboard, clock] in
             do {
                 try await clock.sleep(for: Self.clipboardLifetime)
             } catch {

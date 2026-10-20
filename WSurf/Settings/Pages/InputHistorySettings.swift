@@ -147,7 +147,11 @@ private struct InputHistoryEntries: View {
     @Environment(\.settingsScrollProxy) private var scrollProxy
 
     private var footnote: LocalizedStringResource? {
-        model.isLocked ? nil : "\(model.entryCount) entries · kept for \(String(localized: model.retention.label))"
+        guard !model.isLocked else { return nil }
+        if model.retention == .untilDeleted {
+            return "\(model.entryCount) entries, kept until you delete them"
+        }
+        return "\(model.entryCount) entries, each kept for \(String(localized: model.retention.label))"
     }
 
     var body: some View {
@@ -473,10 +477,15 @@ private struct InputHistorySaveSheet: View {
     @ViewBuilder
     private var planCaption: some View {
         Group {
-            if save.isUpdate {
-                Text("Replaces the saved password for this username.")
-            } else {
+            switch save.plan {
+            case .create:
                 Text("Saves a new login for this website.")
+            case .update:
+                Text("Replaces the saved password for this username.")
+            case .unchanged:
+                Text("This login is already saved.")
+            case .ambiguous:
+                Text("More than one saved login matches this username. Change the right one in Credential Manager.")
             }
         }
         .font(Theme.Font.secondary)

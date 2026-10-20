@@ -49,7 +49,8 @@ final class InputHistoryCredentialSave: Identifiable {
     @ObservationIgnored private var manager: CredentialManager?
     /// The vault's authorization when the person was shown what saving does. A lock since then writes nothing.
     @ObservationIgnored private var epoch: UInt64?
-    @ObservationIgnored private var planCheck: Task<Void, Never>?
+    /// Observed: `canSave` reads it, so Save turns back on when the check for an edited username ends.
+    private var planCheck: Task<Void, Never>?
     @ObservationIgnored private var reviewedOnce = false
 
     /// Nil for a row that cannot be saved: not a password, an HTTP address, or a value Credential Manager would refuse.
