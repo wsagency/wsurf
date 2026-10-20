@@ -139,7 +139,7 @@ struct ChromiumPageTests {
             try #require(await waitUntil { page.url == url && !page.isLoading })
             var child: BrowserFrame?
             try #require(await waitUntil {
-                child = try? await native.frames().first { !$0.isMainFrame && $0.url.path == "/child" }
+                child = try? await native.frames().first { !$0.isMainFrame && $0.request.url?.path == "/child" }
                 return child != nil
             })
             let frame = try #require(child)
