@@ -33,9 +33,9 @@ struct ProofOfWorkChallengeTests {
         await tab.waitForRetirement()
     }
 
-    /// Bot checks read a zero or smaller-than-the-page outer size as a headless browser.
+    /// Bot checks read a zero or smaller-than-the-page outer size as a headless browser, and wait while a page is hidden.
     @Test(arguments: [BrowserEngine.webKit, .chromium])
-    func pagesSeeTheirWindowsOuterSize(engine: BrowserEngine) async throws {
+    func pagesSeeAVisibleWindowOfTheirSize(engine: BrowserEngine) async throws {
         let server = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><title>Size</title>")])
         defer { withExtendedLifetime(server) {} }
         let url = try server.url("/")
@@ -43,9 +43,13 @@ struct ProofOfWorkChallengeTests {
         defer { window.close() }
         #expect(await settled(tab, at: url))
 
-        let size = try await tab.page.evaluateJavaScript("[outerWidth, outerHeight, innerWidth, innerHeight].join(' ')")
-        let values = (size as? String ?? "").split(separator: " ").compactMap { Int($0) }
-        try #require(values.count == 4, "\(size)")
+        let script = "[outerWidth, outerHeight, innerWidth, innerHeight, document.visibilityState, document.hidden].join(' ')"
+        let reply = try await tab.page.evaluateJavaScript(script) as? String ?? ""
+        let fields = reply.split(separator: " ").map(String.init)
+        try #require(fields.count == 6, "\(reply)")
+        #expect(fields[4] == "visible" && fields[5] == "false", "\(reply)")
+        let values = fields.prefix(4).compactMap { Int($0) }
+        try #require(values.count == 4, "\(reply)")
         #expect(values[0] == Int(window.frame.width) && values[1] == Int(window.frame.height), "\(values)")
         #expect(values[0] >= values[2] && values[1] >= values[3], "\(values)")
         tab.detach()
