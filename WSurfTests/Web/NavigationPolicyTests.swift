@@ -18,6 +18,8 @@ struct NavigationPolicyTests {
         var stubbedModifiers: NSEvent.ModifierFlags = []
         var stubbedButton = 0
         var stubbedDownload = false
+        /// What `_isUserInitiated` answers: whether a person's click started the navigation (a page's own synthetic click is not).
+        var stubbedUserInitiated = true
 
         override var request: URLRequest {
             stubbedRequest
@@ -41,6 +43,10 @@ struct NavigationPolicyTests {
 
         override var targetFrame: WKFrameInfo? {
             nil
+        }
+
+        override func value(forKey key: String) -> Any? {
+            key == "_isUserInitiated" ? stubbedUserInitiated : super.value(forKey: key)
         }
     }
 
@@ -74,13 +80,15 @@ struct NavigationPolicyTests {
         _ address: String,
         type: WKNavigationType = .other,
         modifiers: NSEvent.ModifierFlags = [],
-        button: Int = 0
+        button: Int = 0,
+        userInitiated: Bool = true
     ) -> StubAction {
         let stub = StubAction()
         stub.stubbedRequest = URLRequest(url: URL(string: address)!)
         stub.stubbedType = type
         stub.stubbedModifiers = modifiers
         stub.stubbedButton = button
+        stub.stubbedUserInitiated = userInitiated
         return stub
     }
 
@@ -250,6 +258,43 @@ struct NavigationPolicyTests {
 
         let policy = try decide(delegate, tab, action(
             "https://example.com/target", type: .other, modifiers: [.command, .shift]
+        ))
+
+        #expect(policy == .allow)
+    }
+
+    // A modifier is the person's only when they clicked: a page's own synthetic Cmd-, Shift- or middle-click is a plain click.
+
+    @Test func aPagesOwnCommandClickJustNavigates() throws {
+        let (tab, delegate) = subject()
+        tab.onOpenInNewTab = { _, _ in Issue.record("a synthetic command-click must not open a tab") }
+        tab.onOpenInPeek = { _, _ in Issue.record("a synthetic command-click must not peek") }
+
+        let policy = try decide(delegate, tab, action(
+            "https://example.com/target", type: .linkActivated, modifiers: [.command], userInitiated: false
+        ))
+
+        #expect(policy == .allow)
+    }
+
+    @Test func aPagesOwnShiftClickJustNavigates() throws {
+        let (tab, delegate) = subject()
+        tab.onOpenInNewTab = { _, _ in Issue.record("a synthetic shift-click must not open a tab") }
+        tab.onOpenInPeek = { _, _ in Issue.record("a synthetic shift-click must not peek") }
+
+        let policy = try decide(delegate, tab, action(
+            "https://example.com/target", type: .linkActivated, modifiers: [.shift], userInitiated: false
+        ))
+
+        #expect(policy == .allow)
+    }
+
+    @Test func aPagesOwnMiddleClickJustNavigates() throws {
+        let (tab, delegate) = subject()
+        tab.onOpenInNewTab = { _, _ in Issue.record("a synthetic middle-click must not open a tab") }
+
+        let policy = try decide(delegate, tab, action(
+            "https://example.com/target", type: .linkActivated, button: Self.middleButton, userInitiated: false
         ))
 
         #expect(policy == .allow)

@@ -281,6 +281,8 @@ enum VaultManagerFixture {
     static func rows(of vaultID: UUID, inDirectory directory: URL) throws -> [String: Data] {
         var configuration = GRDB.Configuration()
         configuration.readonly = true
+        // The store may still be finishing a write or a checkpoint: wait for it like the store's own connections do.
+        configuration.busyMode = .timeout(5)
         let queue = try DatabaseQueue(
             path: directory.appendingPathComponent("Credentials.store").path, configuration: configuration
         )

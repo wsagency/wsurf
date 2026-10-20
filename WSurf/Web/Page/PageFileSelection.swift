@@ -88,11 +88,13 @@ extension PageDriver {
             selection.cancel()
             PageFileSelection.pending.removeObject(forKey: view)
         }
+        // The click that opens the chooser is the action the person asked for, so it keeps the gesture (like click and type):
+        // WebKit opens no file chooser without user activation.
         let opened = await evaluateJSON(scripted("""
             const el = window.__wsurfRefs[\(ref) - 1];
             if (!R.matchesRef(\(ref)) || R.actionable(el)) return JSON.stringify({ stale: true });
             el.click(); return JSON.stringify({ ok: true });
-            """), in: view)
+            """), userGesture: true, in: view)
         guard opened?["ok"] as? Bool == true else { return staleMessage }
         let presentationTimeout = Task { @MainActor in
             try? await Task.sleep(for: .seconds(2))

@@ -58,26 +58,23 @@ struct FormConsumerBoundaryTests {
         let server = try await HTTPFixtureServer.start(routes: ["/": .html(fixtureHTML)])
         defer { withExtendedLifetime(server) {} }
         let url = try server.url()
-        try await withOwnedPage(engine: engine, url: url) { browser, tab in
+        var retiredValues: [[String]] = []
+        // A page-world handler registered after a document exists has no relay in that document (Chromium adds its relay to
+        // documents created later; WebKit answers through window.webkit), so the handler is registered before the first load.
+        let registerOwnerRetirement: (BrowserModel, BrowserTab) -> Void = { browser, tab in
+            guard retireOwner else { return }
+            tab.page.addScriptMessageHandler(name: "retire-fill-owner", in: .page) { message in
+                guard let values = message.body as? [String] else { return }
+                retiredValues.append(values)
+                browser.close(tab)
+            }
+        }
+        try await withOwnedPage(engine: engine, url: url, beforeLoad: registerOwnerRetirement) { browser, tab in
             tab.assistantAccess.persistsAnswers = false
             tab.assistantAccess.pageChanged(url: url)
             tab.assistantAccess.set(.control)
-            var retiredValues: [[String]] = []
             if retireOwner {
-                let page = tab.page
-                page.addScriptMessageHandler(name: "retire-fill-owner", in: .page) { message in
-                    guard let values = message.body as? [String] else { return }
-                    retiredValues.append(values)
-                    browser.close(tab)
-                }
-                // A handler registered after the load has no relay in this document on WebKit, only its handler.
-                _ = try await page.evaluateJavaScript("""
-                    { const send = window.__wsurfSend ?? ((name, body) => window.webkit.messageHandlers[name].postMessage(body));
-                      document.addEventListener('input', () => {
-                        send('retire-fill-owner', Array.from(document.querySelectorAll('[data-safe]'), field => field.value));
-                      }, true); }
-                    true
-                    """, in: nil, contentWorld: .page)
+                try await listenForFillInput(in: tab.page)
             }
 
             let output: String
@@ -167,6 +164,7 @@ struct FormConsumerBoundaryTests {
     private func withOwnedPage<T>(
         engine: BrowserEngine,
         url: URL,
+        beforeLoad: (BrowserModel, BrowserTab) -> Void = { _, _ in },
         body: (BrowserModel, BrowserTab) async throws -> T
     ) async throws -> T {
         let profile = Profile(id: UUID(), name: "Form fixture", symbol: "person", color: .gray)
@@ -180,6 +178,7 @@ struct FormConsumerBoundaryTests {
             context: context, windowID: UUID(), database: .temporary(), sitePermissions: permissions
         )
         let tab = browser.newTab(url: url)
+        beforeLoad(browser, tab)
         let page = tab.page
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 500),
@@ -207,6 +206,17 @@ struct FormConsumerBoundaryTests {
             await closeFixture()
             throw error
         }
+    }
+
+    /// The page-world listener that reports every safe field's value to the owner-retiring handler after each input.
+    private func listenForFillInput(in page: BrowserPage) async throws {
+        _ = try await page.evaluateJavaScript("""
+            { const send = window.__wsurfSend ?? ((name, body) => window.webkit.messageHandlers[name].postMessage(body));
+              document.addEventListener('input', () => {
+                send('retire-fill-owner', Array.from(document.querySelectorAll('[data-safe]'), field => field.value));
+              }, true); }
+            true
+            """, in: nil, contentWorld: .page)
     }
 
     private func fields() -> [FillFieldsTool.Field] {
