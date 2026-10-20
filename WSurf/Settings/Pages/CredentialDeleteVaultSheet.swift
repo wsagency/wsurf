@@ -39,6 +39,7 @@ struct CredentialDeleteVaultSheet: View {
                 countRow("Verification codes", pending.counts.codes)
                 countRow("Items in Trash", pending.counts.inTrash)
                 countRow("Earlier versions", pending.counts.earlierVersions)
+                countRow("Excluded sites", pending.counts.excludedSites)
             }
             if pending.counts.passkeys > 0 {
                 note("""

@@ -211,6 +211,65 @@ struct CredentialSettingsVaultDeletionTests {
         }
     }
 
+    @Test func aVaultWhoseTrashWasPurgedIsDeletedAtOnce() async throws {
+        try await withPage { model, passkeys, vaults, profile in
+            await open(model, vaults[1], seeded: false)
+            let account = VaultFixtures.account()
+            _ = try await model.save(account, expectedRevision: model.revision)
+            _ = try await model.remove(accountID: account.id, expectedRevision: model.revision)
+            // Emptying the Trash is itself a passkey prompt; it leaves tombstones, which the sheet does not count.
+            let manager = try #require(model.manager)
+            _ = try await manager.purge(entryIDs: [], emptyAll: true, in: VaultManagerFixture.anchor())
+            let asserted = passkeys.assertions.count
+
+            await model.requestVaultDeletion()
+
+            #expect(model.pendingVaultDeletion == nil && !model.showsVaultDeletionSheet, "the sheet would have shown only zeros")
+            #expect(passkeys.assertions.count == asserted)
+            let remaining = try VaultManagerFixture.rows(of: vaults[1].vaultID, in: profile)
+            #expect(remaining.isEmpty)
+            #expect(model.vaults.map(\.vaultID) == [vaults[0].vaultID] && model.deletedVault?.ordinal == 2)
+        }
+    }
+
+    @Test func aVaultWithOnlyAnExcludedSiteShowsTheSheetWithThatCount() async throws {
+        try await withPage { model, passkeys, vaults, _ in
+            await open(model, vaults[1], seeded: false)
+            let manager = try #require(model.manager)
+            let epoch = try #require(manager.authorizationEpoch)
+            let revision = try await manager.snapshot().revision
+            // Written behind the page's back: the page still thinks nothing is excluded.
+            _ = try await manager.updatePasswordSavePolicy(["https://blocked.example"], expectedRevision: revision, authorizedEpoch: epoch)
+            let asserted = passkeys.assertions.count
+
+            await model.requestVaultDeletion()
+
+            let pending = try #require(model.pendingVaultDeletion)
+            #expect(pending.counts.excludedSites == 1 && pending.counts.credentials == 0 && pending.counts.inTrash == 0)
+            #expect(pending.counts.earlierVersions == 0, "the one count that is not zero is the excluded site")
+            #expect(passkeys.assertions.count == asserted && model.vaults.count == 2 && model.deletedVault == nil)
+        }
+    }
+
+    @Test func theSheetCountsWhatWasSavedSinceThePageLoaded() async throws {
+        try await withPage { model, passkeys, vaults, _ in
+            await open(model, vaults[1], seeded: false)
+            let manager = try #require(model.manager)
+            let epoch = try #require(manager.authorizationEpoch)
+            let revision = try await manager.snapshot().revision
+            // An autofill save lands while the page is open: the page's own list does not know it yet.
+            _ = try await manager.commit([VaultFixtures.account()], expectedRevision: revision, authorizedEpoch: epoch)
+            #expect(model.summaries.isEmpty)
+            let asserted = passkeys.assertions.count
+
+            await model.requestVaultDeletion()
+
+            let pending = try #require(model.pendingVaultDeletion)
+            #expect(pending.counts.credentials == 1, "never a sheet that shows only zeros")
+            #expect(passkeys.assertions.count == asserted && model.vaults.count == 2)
+        }
+    }
+
     @Test func anOpenImportReviewStillBlocksAnEmptyVault() async throws {
         let exchange = CredentialExchangeCoordinator()
         try await withPage(exchange: exchange) { model, _, vaults, profile in

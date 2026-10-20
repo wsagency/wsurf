@@ -691,8 +691,8 @@ final class CredentialManager {
         retireAfterDeletion()
     }
 
-    /// Deletes this vault when it holds nothing at all: no credential, no Trash entry, no earlier version, no tombstone, no blocked
-    /// website, as the store reads its rows inside the deleting transaction. There is nothing to lose, so no passkey is asked for; it
+    /// Deletes this vault when it holds nothing to lose: no credential, no Trash entry, no earlier version and no excluded website
+    /// (tombstones do not count), as the store reads its rows inside the deleting transaction. No passkey is asked for; it
     /// still needs the unlock and the lease the caller decided under, and the last vault is still refused. A vault that holds
     /// anything throws `vaultNotEmpty` with nothing written.
     func deleteEmptyVault(authorizedEpoch: UInt64) async throws {

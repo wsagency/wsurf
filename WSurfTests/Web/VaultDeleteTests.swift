@@ -11,9 +11,9 @@ import Testing
 // Delete Vault: one transaction removes a vault and its linked Trash, needs a fresh assertion of that vault's own passkey, and never
 // touches the other vaults or anything outside the store file.
 
-/// What a vault can hold besides live credentials that keeps it from being deleted without an assertion.
+/// What a vault can hold that keeps it from being deleted without an assertion: what the Delete Vault sheet counts.
 nonisolated enum VaultNotEmpty: CaseIterable, Sendable {
-    case liveCredential, trashEntry, tombstoneOnly, blockedWebsite
+    case liveCredential, trashEntry, blockedWebsite
 }
 
 @MainActor
@@ -384,14 +384,6 @@ struct VaultDeleteTests {
                     break
                 case .trashEntry:
                     try await f.deleteAccount(store, access, victim.id)
-                case .tombstoneOnly:
-                    // Purged: no live credential, no Trash entry and no earlier version is left, only the tombstones.
-                    try await f.deleteAccount(store, access, victim.id)
-                    let entry = try f.trashEntry(of: victim.id).row.recordID
-                    _ = try await store.purge(
-                        vaultID: f.vaultID, entryIDs: [entry], emptyAll: false, authorization: f.freshAuthorization, using: access
-                    )
-                    #expect(try f.trashEntryIDs().isEmpty)
                 }
                 let image = try storeImage(f)
 
@@ -404,6 +396,36 @@ struct VaultDeleteTests {
                 // The two confirmations still delete it.
                 try await store.deleteVault(vaultID: f.vaultID, authorization: f.freshAuthorization, using: access)
                 #expect(try rowCounts(f, of: f.vaultID) == ["vault": 0, "head": 0, "record": 0, "journal": 0])
+            }
+        }
+    }
+
+    /// What the sheet would show as zero is empty, even though a purge leaves tombstones and journal rows behind.
+    @Test func aVaultWhoseTrashWasPurgedIsDeletedAtOnce() async throws {
+        let victim = try MoveFixtures.fullAccount()
+        try await VaultStoreFixture.with(accounts: [victim], historyRows: 2, secondVault: true) { f in
+            try await f.withWallStore { store, access in
+                try await f.deleteAccount(store, access, victim.id)
+                let entry = try f.trashEntry(of: victim.id).row.recordID
+                _ = try await store.purge(
+                    vaultID: f.vaultID, entryIDs: [entry], emptyAll: false, authorization: f.freshAuthorization, using: access
+                )
+                // Nothing the sheet counts is left: no credential, no Trash entry, no earlier version. The tombstones and journal rows are.
+                for vault in [f.vaultID, f.trashID] {
+                    let counted = try f.read { db in
+                        try Int.fetchOne(
+                            db, sql: "SELECT COUNT(*) FROM record WHERE vaultID = ? AND kind != 'tombstone'", arguments: [vault.lowerText]
+                        )
+                    }
+                    #expect(counted == 0)
+                }
+                let counts = try rowCounts(f, of: f.trashID)
+                #expect((counts["record"] ?? 0) > 0 && (counts["journal"] ?? 0) > 0, "\(counts)")
+
+                try await store.deleteEmptyVault(vaultID: f.vaultID, using: access)
+
+                #expect(try rowCounts(f, of: f.vaultID) == ["vault": 0, "head": 0, "record": 0, "journal": 0])
+                #expect(try rowCounts(f, of: f.trashID) == ["vault": 0, "head": 0, "record": 0, "journal": 0])
             }
         }
     }

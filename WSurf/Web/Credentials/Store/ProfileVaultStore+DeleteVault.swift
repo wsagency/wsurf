@@ -6,7 +6,7 @@ import GRDB
 
 /// Delete Vault, the second way credentials leave the store besides a profile erase. Like a purge it is a logical row deletion, not
 /// secure erasure, and it needs a fresh assertion of a passkey enrolled in THIS vault on top of the unlock: a cached lease alone, or
-/// another vault's passkey, never deletes. The one exception is a vault that holds nothing (`deleteEmptyVault`). One
+/// another vault's passkey, never deletes. The one exception is a vault that holds nothing to lose (`deleteEmptyVault`). One
 /// `BEGIN IMMEDIATE` transaction removes every row of the vault and of its linked Trash and rewrites the registry without them; a
 /// failure or cancellation before the commit leaves the store as it was. The other vaults' rows and wrappers, the registry key
 /// (sealed in every active head), the stub, the A3 witness and every other file are not touched.
@@ -16,7 +16,7 @@ extension ProfileVaultStore {
         try await commitDeletion(vaultID: vaultID, using: access, requireEmpty: false)
     }
 
-    /// A vault that holds nothing at all goes with the unlock alone: nothing can be lost, so there is no assertion to ask for. The
+    /// A vault that holds nothing to lose goes with the unlock alone: nothing can be lost, so there is no assertion to ask for. The
     /// store decides what "nothing" is, inside the same transaction that deletes (`vaultNotEmpty` otherwise, with nothing written),
     /// so a credential saved a moment earlier can never be deleted this way. Every other rule is `deleteVault`'s.
     func deleteEmptyVault(vaultID: UUID, using access: VaultAccess) async throws {
@@ -66,19 +66,18 @@ extension ProfileVaultStore {
         try Task.checkCancellation()  // last poll before the commit: a cancel here still rolls everything back
     }
 
-    /// Nothing stored at all, read from the rows and not from any counter: no record row of any kind (live account, earlier version,
-    /// Trash entry, tombstone) and no journal row in the vault or its Trash, and no website blocked from saving. A vault that was
-    /// ever used leaves at least one of them, even after its Trash was emptied.
+    /// Nothing the Delete Vault sheet would count, read from the rows and not from any counter: no live credential, no Trash entry and
+    /// no earlier version in the vault or its Trash (so no `record` row except tombstones), and no website excluded from save
+    /// suggestions. Tombstones (identities of purged items, no content) and journal rows are not counted: a vault whose Trash was
+    /// emptied is empty. The sheet is never shown with every count at zero.
     private nonisolated static func holdsNothing(_ db: Database, head: VaultHead, trashID: UUID) throws -> Bool {
         guard head.blockedOrigins.isEmpty, head.liveCatalog.isEmpty else { return false }
         let ids = [head.vaultID, trashID].map { $0.uuidString.lowercased() }
-        for table in ["record", "journal"] {
-            let rows = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \(table) WHERE vaultID IN (?, ?)", arguments: [ids[0], ids[1]])
-            if rows != 0 {
-                return false
-            }
-        }
-        return true
+        let rows = try Int.fetchOne(
+            db, sql: "SELECT COUNT(*) FROM record WHERE vaultID IN (?, ?) AND kind != ?",
+            arguments: [ids[0], ids[1], RecordKind.tombstone.sqlName]
+        )
+        return rows == 0
     }
 
     /// Every row of one vault id. The head goes before the vault row it references.

@@ -13,6 +13,8 @@ nonisolated struct PendingVaultDeletion: Equatable, Sendable {
         let codes: Int
         let inTrash: Int
         let earlierVersions: Int
+        /// Websites excluded from save suggestions ("Never for This Site"). They keep a vault from counting as empty.
+        var excludedSites = 0
     }
 
     let vaultID: UUID
@@ -65,9 +67,10 @@ extension CredentialSettingsModel {
         return exchange.hasStagedImport(for: manager, owner: owner) ? .importOpen : nil
     }
 
-    /// Deletes the selected vault at once when it holds nothing at all (the store decides, inside the deleting transaction; nothing
-    /// can be lost, so no sheet and no passkey). Otherwise shows what deleting it would remove, and deletes nothing: the vault must
-    /// be open, not the last one, and have no import of this window under review.
+    /// Deletes the selected vault at once when it holds nothing to lose (the store decides, inside the deleting transaction, by the
+    /// rows behind the sheet's counts; no sheet and no passkey). Otherwise shows what deleting it would remove, and deletes nothing:
+    /// the vault must be open, not the last one, and have no import of this window under review. The sheet is never shown with every
+    /// count at zero.
     func requestVaultDeletion() async {
         guard vaultDeletionBlock == nil, !isBusy, let epoch = authorizationEpoch else { return }
         deletedVault = nil
@@ -88,20 +91,22 @@ extension CredentialSettingsModel {
                 // Something is in it: the two confirmations below.
             }
             let counts = try await manager.historyCounts()
+            // Read now, not taken from the page: what was saved since the page was loaded must be in the sheet's counts.
+            let (_, snapshot) = try await self.authorizedSnapshot(epoch: epoch)
             let others = self.vaults.filter { $0.vaultID != manager.vaultID }
             let fallback = self.defaultVaultID == manager.vaultID ? others.min(by: { $0.ordinal < $1.ordinal })?.displayName : nil
-            let summaries = self.summaries
             let pending = PendingVaultDeletion(
                 vaultID: manager.vaultID,
                 epoch: epoch,
                 ordinal: listing.ordinal,
                 name: name,
                 counts: PendingVaultDeletion.Counts(
-                    credentials: summaries.count,
-                    passkeys: summaries.reduce(0) { $0 + $1.passkeys.count },
-                    codes: summaries.filter(\.hasTOTP).count,
+                    credentials: snapshot.accounts.count,
+                    passkeys: snapshot.accounts.reduce(0) { $0 + $1.passkeys.count },
+                    codes: snapshot.accounts.filter { $0.totp != nil }.count,
                     inTrash: counts.trash.trashEntry,
-                    earlierVersions: counts.live.revision + counts.trash.revision
+                    earlierVersions: counts.live.revision + counts.trash.revision,
+                    excludedSites: snapshot.blockedPasswordOrigins.count
                 ),
                 fallback: fallback,
                 preMigrationBackup: listing.ordinal == 1 ? manager.preMigrationBackup : nil,
