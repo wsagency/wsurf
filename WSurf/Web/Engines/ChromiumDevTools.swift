@@ -15,8 +15,17 @@ final class ChromiumDevTools {
     private var pending: [Int: PendingCommand] = [:]
     private var timeouts: [Int: Task<Void, Never>] = [:]
     var closed = false
-    /// MCP development diagnostics. Nil unless a lease is capturing; the domains themselves are never toggled here.
-    var diagnosticsSink: ((String, [String: Any]) -> Void)?
+    /// MCP development diagnostics. Nil unless a lease is capturing. Console and exception events need the Runtime domain,
+    /// which pages can detect, so it is enabled only while a capture runs.
+    var diagnosticsSink: ((String, [String: Any]) -> Void)? {
+        didSet {
+            guard (oldValue == nil) != (diagnosticsSink == nil) else { return }
+            let method = diagnosticsSink == nil ? "Runtime.disable" : "Runtime.enable"
+            Task { [weak self] in _ = try? await self?.command(method) }
+        }
+    }
+    /// Sees every command as it is sent, for tests.
+    var commandObserver: ((String, [String: Any]) -> Void)?
     private var prepared = false
     private var preparing = false
     private var prepareWaiters: [CheckedContinuation<Void, Error>] = []
@@ -42,7 +51,9 @@ final class ChromiumDevTools {
         let frameID: String
         let worldName: String
         var documentID: String
+        var fromRuntimeEvent = false
         var markerSet = false
+        var bound = false
     }
 
     @MainActor
@@ -77,12 +88,17 @@ final class ChromiumDevTools {
     var uniqueIDByExecutionID: [Int: String] = [:]
     private var scripts: [Script] = []
     var handlers: [HandlerKey: Handler] = [:]
-    private var bindingWorlds: Set<String> = []
+    var bindingWorlds: Set<String> = []
     /// Serializes script registration so Chromium's registration order always matches `scripts`.
     private var scriptQueue: Task<Void, Never>?
 
     private let commandTimeout: Duration = .seconds(15)
     let maxBindingPayload = 1_048_576
+    /// The native binding. It exists only in WSurf's isolated worlds, never in a page's main world.
+    static let nativeBinding = "__wsurfNative"
+    /// Carries page-world messages: the main world's relay dispatches them as a DOM event only this world listens for.
+    static let pageBridgeWorld = "WSurfPageBridge"
+    private let pageMessageEvent = "wsurf-" + UUID().uuidString.lowercased()
 
     init(page: ChromiumPage) {
         self.page = page
@@ -125,10 +141,7 @@ final class ChromiumDevTools {
                                                     of: UnsafeMutableRawPointer(observerSelf)) else { return }
             MainActor.assumeIsolated {
                 owner.failAll(ChromiumError.unavailable("Chromium DevTools detached."))
-                owner.frameRevision &+= 1
-                owner.framesByID.removeAll()
-                owner.contextsByUniqueID.removeAll()
-                owner.uniqueIDByExecutionID.removeAll()
+                owner.forgetDocuments()
                 owner.page?.owner?.invalidateCredentialContexts()
             }
         }
@@ -160,8 +173,8 @@ final class ChromiumDevTools {
         }
         preparing = true
         do {
+            // No Runtime.enable: pages can detect it. Contexts come from Page.createIsolatedWorld instead.
             _ = try await command("Page.enable")
-            _ = try await command("Runtime.enable")
             _ = try await command("Security.enable")
             _ = try await command("Network.enable")
 
@@ -175,7 +188,7 @@ final class ChromiumDevTools {
                     continue
                 }
                 let worlds = Set(scripts.map(\.worldName)).union(handlers.keys.map(\.worldName))
-                if let worldName = worlds.sorted().first(where: { !bindingWorlds.contains($0) }) {
+                if let worldName = worlds.sorted().first(where: { !bindingWorlds.contains($0) && needsBinding($0) }) {
                     try await installBinding(worldName: worldName)
                     continue
                 }
@@ -231,6 +244,7 @@ final class ChromiumDevTools {
                     }
                     try dispatchCheck?()
                     guard !closed, self.host == host else { throw ChromiumError.closed }
+                    commandObserver?(method, params)
                     pending[id] = PendingCommand(continuation: continuation, result: result)
                     timeouts[id] = Task { [weak self] in
                         do { try await Task.sleep(for: self?.commandTimeout ?? .seconds(15)) } catch { return }
@@ -381,13 +395,12 @@ final class ChromiumDevTools {
     /// Reports the document's current activation state; never grants or consumes one.
     func transientUserActivationIsActive(in frame: BrowserFrame, world: WKContentWorld) async throws -> Bool {
         let (target, snapshot) = try await credentialContext(for: frame, world: world)
-        let response = try await command("Runtime.evaluate", params: [
+        let response = try await command("Runtime.evaluate", params: address(snapshot).merging([
             "expression": "navigator.userActivation?.isActive === true",
-            "uniqueContextId": snapshot.uniqueID,
             "returnByValue": true,
             "awaitPromise": false,
             "userGesture": false,
-        ], dispatchCheck: { [self] in
+        ]) { $1 }, dispatchCheck: { [self] in
             guard credentialFrameIsCurrent(target), contextIsLive(snapshot) else { throw WebAuthnContextError.staleFrame }
         })
         let value = try runtimeValue(response)
@@ -472,15 +485,14 @@ final class ChromiumDevTools {
         let response = try await command("Runtime.evaluate", dispatchCheck: { [self] in
             guard canDispatch(to: target, snapshot) else { throw ChromiumError.staleFrame }
             try dispatchCheck?()
-        }, prepareParameters: {
+        }, prepareParameters: { [self] in
             let source = try expression()
-            return [
+            return address(snapshot).merging([
                 "expression": source,
-                "uniqueContextId": snapshot.uniqueID,
                 "returnByValue": true,
                 "awaitPromise": true,
                 "userGesture": userGesture,
-            ]
+            ]) { $1 }
         })
         let value = try runtimeValue(response)
         guard try await isLive(frame: target), contextIsLive(snapshot) else { throw ChromiumError.staleFrame }
@@ -637,6 +649,7 @@ final class ChromiumDevTools {
 
     private func receiveResult(id: Int, success: Bool, pointer: UnsafeRawPointer?, size: Int) {
         guard !closed else { return }
+
         guard size <= 8 * 1_048_576 else {
             finishFailure(id: id, error: ChromiumError.protocolFailure("DevTools result is too large."))
             return
@@ -654,26 +667,88 @@ final class ChromiumDevTools {
         }
     }
 
+    /// Registers, for new documents, the `__wsurfSend(name, body)` that scripts of `worldName` call. In an isolated world it
+    /// queues messages until native binds that document's context (`isolatedContext`). The page world gets no binding: a
+    /// relay there dispatches a DOM event that the page bridge world forwards, attributed to the page-world handlers.
     private func installBinding(worldName: String) async throws {
-        guard !bindingWorlds.contains(worldName) else { return }
-        var params: [String: Any] = ["name": "__wsurfSend"]
-        if !worldName.isEmpty { params["executionContextName"] = worldName }
-        _ = try await command("Runtime.addBinding", params: params)
-        let bridge = """
+        guard !bindingWorlds.contains(worldName), needsBinding(worldName) else { return }
+        if worldName.isEmpty {
+            try await installBinding(worldName: Self.pageBridgeWorld)
+            _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: [
+                "source": pageBridgeSource, "worldName": Self.pageBridgeWorld,
+            ])
+            _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: ["source": pageRelaySource])
+        } else {
+            _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: [
+                "source": Self.bindingSource, "worldName": worldName,
+            ])
+        }
+        bindingWorlds.insert(worldName)
+    }
+
+    /// A page-world script alone (such as one that only marshals DOM events) gets no relay; a page-world handler does.
+    private func needsBinding(_ worldName: String) -> Bool {
+        !worldName.isEmpty || handlers.keys.contains { $0.worldName.isEmpty }
+    }
+
+    /// Native calls `__wsurfAttach` after Runtime.addBinding put the native function on this context's global object; the
+    /// messages queued until then go out in order.
+    private static let bindingSource = """
         (() => {
-          const native = globalThis.__wsurfSend;
+          if (Object.prototype.hasOwnProperty.call(globalThis, '__wsurfSend')) return;
+          const queue = [];
+          let native = null;
+          Object.defineProperty(globalThis, '__wsurfAttach', {
+            value: () => {
+              const binding = globalThis.\(nativeBinding);
+              if (typeof binding !== 'function') return false;
+              delete globalThis.\(nativeBinding);
+              native ??= binding;
+              while (queue.length > 0) native(queue.shift());
+              return true;
+            }, writable: false, configurable: false, enumerable: false
+          });
           Object.defineProperty(globalThis, '__wsurfSend', {
             value: (name, body) => {
               if (typeof name !== 'string' || name.length === 0 || name.length > 256) return;
-              native(JSON.stringify([name, body]));
+              const payload = JSON.stringify([name, body]);
+              if (native && queue.length === 0) native(payload);
+              else if (queue.length < 512) queue.push(payload);
             }, writable: false, configurable: false, enumerable: false
           });
         })();
         """
-        var params2: [String: Any] = ["source": bridge]
-        if !worldName.isEmpty { params2["worldName"] = worldName }
-        _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: params2)
-        bindingWorlds.insert(worldName)
+
+    private var pageBridgeSource: String {
+        """
+        (() => {
+          const send = globalThis.__wsurfSend;
+          document.addEventListener(\(jsonLiteral(pageMessageEvent)), event => {
+            if (typeof event.detail !== 'string' || event.detail.length > \(maxBindingPayload)) return;
+            let pair;
+            try { pair = JSON.parse(event.detail); } catch { return; }
+            if (Array.isArray(pair) && pair.length === 2) send(pair[0], pair[1]);
+          }, true);
+        })();
+        """
+    }
+
+    /// The page world's `__wsurfSend`, present only while page-world handlers exist. It keeps its own references, so a
+    /// page that replaces the DOM methods later cannot intercept it.
+    private var pageRelaySource: String {
+        """
+        (() => {
+          if (Object.prototype.hasOwnProperty.call(globalThis, '__wsurfSend')) return;
+          const dispatch = EventTarget.prototype.dispatchEvent, target = document, Message = CustomEvent;
+          const stringify = JSON.stringify, type = \(jsonLiteral(pageMessageEvent));
+          Object.defineProperty(globalThis, '__wsurfSend', {
+            value: (name, body) => {
+              if (typeof name !== 'string' || name.length === 0 || name.length > 256) return;
+              dispatch.call(target, new Message(type, {detail: stringify([name, body])}));
+            }, writable: false, configurable: false, enumerable: false
+          });
+        })();
+        """
     }
 
     private func install(_ script: Script) async throws -> String {
@@ -708,9 +783,9 @@ final class ChromiumDevTools {
         return contextsByUniqueID.removeValue(forKey: uniqueID)?.documentID
     }
 
-    func removeContexts(frameID: String) {
+    func removeContexts(frameID: String, where matches: (ContextState) -> Bool = { _ in true }) {
         let removed = contextsByUniqueID.compactMap { uniqueID, context -> (String, Int)? in
-            context.frameID == frameID ? (uniqueID, context.executionID) : nil
+            context.frameID == frameID && matches(context) ? (uniqueID, context.executionID) : nil
         }
         for (uniqueID, executionID) in removed {
             contextsByUniqueID.removeValue(forKey: uniqueID)

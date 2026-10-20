@@ -7,7 +7,8 @@ import Network
 
 /// A loopback HTTP server for WebKit integration tests. Routes are fixed so
 /// tests cannot depend on the public network or a live service.
-/// Network callbacks stay on `queue`; all state read by them is immutable.
+/// Network callbacks stay on `queue`; all state read by them is immutable,
+/// except the request heads, which only `queue` touches.
 nonisolated final class HTTPFixtureServer: @unchecked Sendable {
     struct Response: Sendable {
         let status: String
@@ -73,6 +74,7 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "WSurf.tests.http-fixture")
     private let routes: [String: Response]
     private let waitsForBody: Bool
+    private var requestHeads: [String: String] = [:]
 
     private init(listener: NWListener, routes: [String: Response], waitsForBody: Bool) {
         self.listener = listener
@@ -123,6 +125,11 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
         return url
     }
 
+    /// The request line and header fields of the latest request for `path`.
+    func lastRequestHead(for path: String) -> String? {
+        queue.sync { requestHeads[path] }
+    }
+
     private func accept(_ connection: NWConnection) {
         connection.start(queue: queue)
         receiveRequest(from: connection, accumulated: Data())
@@ -163,6 +170,8 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
         let parts = line.split(separator: " ")
         let target = parts.count > 1 ? String(parts[1]) : "/"
         let path = target.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
+        let head = request.range(of: Data("\r\n\r\n".utf8)).map { request[..<$0.lowerBound] } ?? request
+        requestHeads[path] = String(decoding: head, as: UTF8.self)
         let response = routes[path] ?? Response(
             status: "404 Not Found",
             headers: ["Content-Type": "text/html; charset=utf-8"],

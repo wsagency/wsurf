@@ -129,9 +129,10 @@ struct ChromiumPageTests {
         defer { window.close() }
 
         func pathname(inContext uniqueID: String) async throws -> String? {
-            let response = try await native.devTools.command("Runtime.evaluate", params: [
-                "expression": "location.pathname", "uniqueContextId": uniqueID, "returnByValue": true,
-            ])
+            let record = try #require(native.devTools.contextsByUniqueID[uniqueID])
+            let response = try await native.devTools.command("Runtime.evaluate", params: native.devTools.address(record).merging([
+                "expression": "location.pathname", "returnByValue": true,
+            ]) { $1 })
             return try native.devTools.runtimeValue(response) as? String
         }
 

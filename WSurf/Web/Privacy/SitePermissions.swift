@@ -278,14 +278,18 @@ final class SitePermissions {
     func popups(for origin: String) -> PopupPolicy? {
         popupRecords[normalize(origin)]
     }
+    /// Google refuses sign-in from embedded Chromium by policy, so its sign-in origin always opens in WebKit.
+    nonisolated static let webKitOnlyOrigins: Set<String> = ["https://accounts.google.com"]
+
     func engine(for origin: String) -> BrowserEngine {
         let key = normalizeEngineOrigin(origin)
+        guard !Self.webKitOnlyOrigins.contains(key) else { return .webKit }
         return BrowserEngine(rawValue: engineRecords[key] ?? "webkit") ?? .webKit
     }
 
     func setEngine(_ engine: BrowserEngine, for origin: String) {
         let key = normalizeEngineOrigin(origin)
-        guard !key.isEmpty else { return }
+        guard !key.isEmpty, !Self.webKitOnlyOrigins.contains(key) else { return }
         if engine == .webKit {
             engineRecords[key] = nil
         } else {

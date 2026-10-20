@@ -258,9 +258,15 @@ private struct SiteHandlingSection: View {
                     ) { engine in
                         Task { _ = await browser.setEngine(engine, for: siteOrigin) }
                     }
+                    .disabled(SitePermissions.webKitOnlyOrigins.contains(siteOrigin))
                 }
                 .help("Changing engines reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL.")
-                if tab.isMaterialised, tab.engine != browser.engine(for: tab) {
+                if SitePermissions.webKitOnlyOrigins.contains(siteOrigin) {
+                    Text("Google blocks sign-in from embedded Chromium, so this page always opens in WebKit.")
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, SiteControlsMetrics.inset)
+                } else if tab.isMaterialised, tab.engine != browser.engine(for: tab) {
                     Text("Current page: \(String(localized: tab.engine.label)). Submitted requests stay in their original engine.")
                         .font(Theme.Font.caption)
                         .foregroundStyle(.secondary)

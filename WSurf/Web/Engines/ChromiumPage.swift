@@ -56,6 +56,8 @@ final class ChromiumPage: NSView {
     var startupResetCommand: (@MainActor () async throws -> Void)?
     private(set) var htmlDocumentURL: URL?
     private var hasAppliedInitialSettings = false
+    /// Whether `applySettings` left a user agent override in place, so a later return to the engine's own string clears it.
+    var hasUserAgentOverride = false
     private var zoom: CGFloat = 1
     var navigationDecision: ((URLRequest, Bool, Bool, Bool, WKNavigationType, URL?, BrowserFrame?) -> Bool)?
     var openWindow: ((URL, Bool, URL?, BrowserFrame?) -> Void)?
@@ -581,6 +583,7 @@ final class ChromiumPage: NSView {
 
     func didTerminate() {
         // The renderer's documents and execution contexts are gone; no DevTools event reports it.
+        devTools.forgetDocuments()
         owner?.invalidateCredentialContexts()
         owner?.onContentProcessTerminated?()
     }

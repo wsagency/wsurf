@@ -18,6 +18,7 @@ extension ChromiumDevTools {
             diagnosticsSink(name, params)
         }
         switch name {
+        // Runtime events arrive only while a diagnostics capture enables the domain.
         case "Runtime.executionContextCreated":
             contextCreated(params)
         case "Runtime.executionContextDestroyed":
@@ -87,15 +88,18 @@ extension ChromiumDevTools {
         let isDefault = aux["isDefault"] as? Bool ?? false
         let worldName = isDefault ? "" : (context["name"] as? String ?? "")
         guard isDefault || !worldName.isEmpty else { return }
+        // A context `isolatedContext` already recorded keeps its record, binding and marker state.
+        if let known = uniqueIDByExecutionID[executionID].flatMap({ contextsByUniqueID[$0] }),
+           known.frameID == frameID, known.worldName == worldName { return }
         let documentID = framesByID[frameID]?.documentID ?? ""
         contextsByUniqueID[uniqueID] = ContextState(executionID: executionID, uniqueID: uniqueID,
                                                      frameID: frameID, worldName: worldName,
-                                                     documentID: documentID)
+                                                     documentID: documentID, fromRuntimeEvent: true)
         uniqueIDByExecutionID[executionID] = uniqueID
     }
 
     private func bindingCalled(_ params: [String: Any]) {
-        guard let name = params["name"] as? String, name == "__wsurfSend",
+        guard let name = params["name"] as? String, name == Self.nativeBinding,
               let payload = params["payload"] as? String,
               payload.utf8.count <= maxBindingPayload,
               let executionID = params["executionContextId"] as? Int,
@@ -105,7 +109,9 @@ extension ChromiumDevTools {
               current.documentID == context.documentID else { return }
         guard let pair = try? Self.jsonObject(Data(payload.utf8)) as? [Any], pair.count == 2,
               let handlerName = pair[0] as? String, !handlerName.isEmpty, handlerName.utf8.count <= 256 else { return }
-        guard let handler = handlers[HandlerKey(name: handlerName, worldName: context.worldName)],
+        // Only the page bridge forwards page-world messages, and only to page-world handlers.
+        let world = context.worldName == Self.pageBridgeWorld ? "" : context.worldName
+        guard let handler = handlers[HandlerKey(name: handlerName, worldName: world)],
               let owner = page?.owner else { return }
         let body = pair[1]
         handler(BrowserScriptMessage(page: owner, body: body, frameInfo: current.browserFrame, name: handlerName))
@@ -121,11 +127,15 @@ extension ChromiumDevTools {
             let retired = [old.documentID] + retireDescendants(parentID: parsed.id)
             if !restoredFromCache {
                 removeContexts(frameID: parsed.id)
+            } else {
+                // Contexts `isolatedContext` found belong to the document that left; the restored one's are found again.
+                removeContexts(frameID: parsed.id) { !$0.fromRuntimeEvent }
             }
             invalidateCredentialContexts(documents: retired, pageWide: parsed.isMainFrame && !old.documentID.isEmpty)
         }
         if restoredFromCache {
-            // Cached contexts are replayed before the restored frame's navigation event.
+            // While a diagnostics capture enables the Runtime domain, cached contexts are replayed before the restored
+            // frame's navigation event.
             var index = contextsByUniqueID.startIndex
             while index != contextsByUniqueID.endIndex {
                 if contextsByUniqueID[index].value.frameID == parsed.id {
@@ -135,8 +145,30 @@ extension ChromiumDevTools {
             }
         }
         if !parsed.documentID.isEmpty {
+            bindDocument(frameID: parsed.id, documentID: parsed.documentID)
             page?.didNavigate(frame: parsed.browserFrame, restoredFromCache: restoredFromCache)
         }
+    }
+
+    /// Binds the new document's isolated worlds, so the messages their document-start scripts queued reach native.
+    private func bindDocument(frameID: String, documentID: String) {
+        let worlds = bindingWorlds.filter { !$0.isEmpty }.sorted()
+        guard !worlds.isEmpty else { return }
+        Task { [weak self] in
+            for world in worlds {
+                guard let self, !self.closed, self.framesByID[frameID]?.documentID == documentID else { return }
+                _ = try? await self.isolatedContext(frameID: frameID, documentID: documentID, worldName: world)
+            }
+        }
+    }
+
+    /// Every document and execution context is gone (renderer exit, DevTools detach). The next renderer can reuse
+    /// numeric context IDs, so no record may survive.
+    func forgetDocuments() {
+        frameRevision &+= 1
+        framesByID.removeAll()
+        contextsByUniqueID.removeAll()
+        uniqueIDByExecutionID.removeAll()
     }
 
     private func frameDetached(_ params: [String: Any]) {
@@ -178,28 +210,78 @@ extension ChromiumDevTools {
             throw ChromiumError.staleFrame
         }
         let name = worldName(world)
-        if let existing = contextsByUniqueID.values.first(where: {
-            $0.frameID == frameID && $0.documentID == frame.documentID && $0.worldName == name
-        }) { return existing }
-        guard !name.isEmpty else { throw ChromiumError.unavailable("Chromium page context is not ready.") }
-        let response = try await command("Page.createIsolatedWorld", params: [
-            "frameId": frameID, "worldName": name, "grantUniveralAccess": false,
-        ])
-        guard let executionID = response["executionContextId"] as? Int,
-              let uniqueID = uniqueIDByExecutionID[executionID],
-              let created = contextsByUniqueID[uniqueID], created.frameID == frameID,
-              created.documentID == frame.documentID else {
-            throw ChromiumError.unavailable("Chromium isolated world context is not ready.")
+        guard name.isEmpty else {
+            return try await isolatedContext(frameID: frameID, documentID: frame.documentID, worldName: name)
         }
-        return created
+        if let existing = contextsByUniqueID.values.first(where: {
+            $0.frameID == frameID && $0.documentID == frame.documentID && $0.worldName.isEmpty
+        }) { return existing }
+        // Without the Runtime domain the only main world Chromium can address is the main frame's default context.
+        guard state.isMainFrame else { throw ChromiumError.unavailable("Chromium page context is not ready.") }
+        let uniqueID = "\(frameID)/\(frame.documentID)/page"
+        let context = ContextState(executionID: 0, uniqueID: uniqueID, frameID: frameID, worldName: "",
+                                   documentID: frame.documentID)
+        contextsByUniqueID[uniqueID] = context
+        return context
+    }
+
+    /// The context of `worldName` in the frame's `documentID`, recorded before a binding world's context is bound, so
+    /// every message names a known frame and document. A context ID is unique only within its renderer process, so the
+    /// record's key also names the frame and document.
+    func isolatedContext(frameID: String, documentID: String, worldName: String) async throws -> ContextState {
+        var context: ContextState
+        if let existing = contextsByUniqueID.values.first(where: {
+            $0.frameID == frameID && $0.documentID == documentID && $0.worldName == worldName
+        }) {
+            context = existing
+        } else {
+            let response = try await command("Page.createIsolatedWorld", params: [
+                "frameId": frameID, "worldName": worldName, "grantUniveralAccess": false,
+            ])
+            guard !closed, let executionID = response["executionContextId"] as? Int else {
+                throw ChromiumError.unavailable("Chromium isolated world context is not ready.")
+            }
+            // A navigation reported meanwhile means the ID may belong to the next document.
+            guard framesByID[frameID]?.documentID == documentID else { throw ChromiumError.staleFrame }
+            if let known = uniqueIDByExecutionID[executionID].flatMap({ contextsByUniqueID[$0] }),
+               known.frameID == frameID, known.documentID == documentID, known.worldName == worldName {
+                context = known
+            } else {
+                if let stale = uniqueIDByExecutionID[executionID] {
+                    contextsByUniqueID.removeValue(forKey: stale)
+                }
+                context = ContextState(executionID: executionID, uniqueID: "\(frameID)/\(documentID)/\(worldName)/\(executionID)",
+                                       frameID: frameID, worldName: worldName, documentID: documentID)
+                contextsByUniqueID[context.uniqueID] = context
+                uniqueIDByExecutionID[executionID] = context.uniqueID
+            }
+        }
+        guard bindingWorlds.contains(worldName), !context.bound else { return context }
+        _ = try await command("Runtime.addBinding", params: [
+            "name": Self.nativeBinding, "executionContextId": context.executionID,
+        ])
+        // A context without the shim (its document predates the world's registration) answers false and stays silent.
+        _ = try await command("Runtime.evaluate", params: address(context).merging([
+            "expression": "globalThis.__wsurfAttach?.() === true", "returnByValue": true,
+        ]) { $1 })
+        guard contextIsLive(context) else { throw ChromiumError.staleFrame }
+        context.bound = true
+        contextsByUniqueID[context.uniqueID]?.bound = true
+        return context
+    }
+
+    /// `Runtime.evaluate` parameters that address `context`. ID 0 is the main frame's default context, which Chromium
+    /// uses when none is named.
+    func address(_ context: ContextState) -> [String: Any] {
+        context.executionID == 0 ? [:] : ["contextId": context.executionID]
     }
 
     func setDocumentMarker(contextID: String, documentID: String) async throws {
         guard let context = contextsByUniqueID[contextID], !context.markerSet else { return }
-        let response = try await command("Runtime.evaluate", params: [
+        let response = try await command("Runtime.evaluate", params: address(context).merging([
             "expression": "void Object.defineProperty(globalThis, '__wsurfFrameDocumentID', {value: \(jsonLiteral(documentID)), writable: false, configurable: false, enumerable: false});",
-            "uniqueContextId": contextID, "returnByValue": true,
-        ])
+            "returnByValue": true,
+        ]) { $1 })
         _ = try runtimeValue(response)
         guard var current = contextsByUniqueID[contextID],
               current.documentID == context.documentID,
