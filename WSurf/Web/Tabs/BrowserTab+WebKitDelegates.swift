@@ -232,6 +232,13 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         return CGPoint(x: inView.x, y: webView.bounds.height - inView.y)
     }
 
+    /// `WKUIDelegatePrivate`. Without an answer WebKit gives pages a zero `outerWidth`, `outerHeight`, `screenX` and
+    /// `screenY`, which bot checks read as a headless browser. Safari answers with its window's frame, as here.
+    @objc(_webView:getWindowFrameWithCompletionHandler:)
+    func webView(_ webView: WKWebView, getWindowFrameWithCompletionHandler completionHandler: @escaping (CGRect) -> Void) {
+        completionHandler(webView.window?.frame ?? .zero)
+    }
+
     @objc(_webView:hasVideoInPictureInPictureDidChange:)
     func webView(_ webView: WKWebView, hasVideoInPictureInPictureDidChange isOut: Bool) {
         tab?.onPictureInPictureChanged?(isOut)
