@@ -127,6 +127,22 @@ struct MCPScriptingTests {
         }
     }
 
+    @Test(.timeLimit(.minutes(3)))
+    func aTabThePersonTookOverIsNotSharedAgainByTheStandingGrant() async throws {
+        try await ScriptingRig.with(html: Self.page) { rig in
+            try #require(rig.session.grants[rig.tab.id]?.source == .standing)
+            rig.session.handBack(rig.tab)
+            #expect(rig.session.grants[rig.tab.id] == nil)
+            #expect(rig.tab.processState.externalControllers.isEmpty, "the tab loses its AI mark")
+            // The tab is still on screen on a developer site, where the standing grant would share it without a sheet.
+            let again = try await rig.session.call(name: "requestAccess", arguments: ["development": true, "developer": true])
+            #expect(rig.session.grants[rig.tab.id] == nil, "\(again.allText)")
+            let refused = try await rig.run("document.title = 'ran'")
+            #expect(refused.allText.contains("not shared"), "\(refused.allText)")
+            #expect(try await rig.page("document.title") as? String == "Scripting")
+        }
+    }
+
     @Test(.timeLimit(.minutes(3)), arguments: BrowserEngine.allCases)
     func aFrameOfAnotherOriginIsOutOfReach(engine: BrowserEngine) async throws {
         let other = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><title>Other</title><p id=inner>Inner</p>")])

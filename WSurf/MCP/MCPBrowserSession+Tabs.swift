@@ -26,6 +26,24 @@ extension MCPBrowserSession {
         WebViewParking.park(page, in: window, size: shown.flatMap { $0.width > 1 && $0.height > 1 ? $0 : nil })
     }
 
+    /// The person took `tab` over: this connection loses its grant, development lease, observation and dialog claim there,
+    /// and a standing grant does not share the tab again for as long as the connection lasts. Its other tabs are untouched,
+    /// and the tab is no longer one it opened, so it never closes it without asking.
+    func handBack(_ tab: BrowserTab) {
+        tab.dialogs.handBack(connection: id)
+        if let held = developmentTabs.removeValue(forKey: tab.id) {
+            held.tab.releaseDevelopment(held.owner, reason: .grantDowngrade)
+        }
+        grants[tab.id] = nil
+        observations[tab.id] = nil
+        secretFields[tab.id] = nil
+        openedTabs.remove(tab.id)
+        if let pair = comparison, [pair.webKit, pair.chromium].contains(tab.id) {
+            comparison = nil
+        }
+        takenBack.insert(tab.id)
+    }
+
     /// Records on each tab whether this connection holds a grant for it: the tab's AI mark and its protection from unloading
     /// follow the grants exactly, whichever path changed them. A tab nobody controls any more pauses again while covered.
     func markControlledTabs(previous: [UUID: Grant]) {

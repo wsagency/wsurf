@@ -96,6 +96,8 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored var accessWasRequested = false
     /// The tabs this connection opened itself with `newTab`. It closes those without asking.
     @ObservationIgnored var openedTabs: Set<UUID> = []
+    /// Tabs the person took over from this connection. A standing grant does not share them again.
+    @ObservationIgnored var takenBack: Set<UUID> = []
     /// The person chose "Don't ask again" when asked to close a tab on this connection.
     @ObservationIgnored var closingWasConfirmed = false
     /// The latest consequential actions let through without asking (see `Grant.Source`), newest last, bounded.

@@ -85,6 +85,28 @@ final class BrowserMCPServer {
         sessions(in: browser).filter(\.isControlling)
     }
 
+    /// The connections bound to `browser`'s window that hold a grant for `tab`. The tab's AI mark names exactly these.
+    func controllers(of tab: BrowserTab, in browser: BrowserModel) -> [MCPBrowserSession] {
+        sessions(in: browser).filter { $0.isConnected && $0.grants[tab.id] != nil }
+    }
+
+    /// The person takes `tab` back from every connection that holds it. A call one of them runs on the tab is cancelled;
+    /// each keeps its other tabs. See `MCPBrowserSession.handBack(_:)`.
+    func takeOver(_ tab: BrowserTab, in browser: BrowserModel) {
+        for session in controllers(of: tab, in: browser) {
+            if activeCall?.sessionID == session.id, tab.processState.isExternalAutomationWorking {
+                activeCall?.task.cancel()
+            }
+            session.handBack(tab)
+        }
+    }
+
+    /// `stop(window:)` for only the connections that hold `tab`; the window's other connections keep working.
+    @discardableResult
+    func stop(controllersOf tab: BrowserTab, in browser: BrowserModel) -> Int {
+        stop(controllers(of: tab, in: browser), in: browser)
+    }
+
     /// The kill switch. Ends every connection bound to `browser`'s window: each loses its grants, development leases and
     /// remembered approvals, its running call is cancelled, and its socket closes. A client that reconnects starts with no
     /// access and has to ask the user again; a paired app that had a standing grant is also paused, so its next call does
@@ -92,7 +114,10 @@ final class BrowserMCPServer {
     /// Returns how many were ended.
     @discardableResult
     func stop(window browser: BrowserModel) -> Int {
-        let ending = sessions(in: browser)
+        stop(sessions(in: browser), in: browser)
+    }
+
+    private func stop(_ ending: [MCPBrowserSession], in browser: BrowserModel) -> Int {
         // An app that works without asking, or opens websites under the Website access default, is paused: either would
         // otherwise come back the moment it reconnects.
         let followsDefault = MCPDefaultAccess.level(in: browser, trust: trustStore) == .control

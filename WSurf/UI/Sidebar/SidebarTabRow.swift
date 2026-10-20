@@ -53,6 +53,7 @@ struct SidebarTabRow: View {
     @FocusState private var renameFocused: Bool
     @State private var windowFrame: CGRect = .zero
     @State private var controlsWidth: CGFloat = 0
+    @State private var markWidth: CGFloat = 0
 
     private var showsTrailingControls: Bool {
         hovering && !isRenaming
@@ -143,7 +144,8 @@ struct SidebarTabRow: View {
 
     private var titleMask: some View {
         let badge = peekedTab == nil ? 0 : PeekRowBadge.extent + 4
-        let covered = (showsTrailingControls ? controlsWidth : 0) + badge
+        let mark = tab.processState.externalControllers.isEmpty ? 0 : markWidth + 4
+        let covered = (showsTrailingControls ? controlsWidth : 0) + badge + mark
         return HStack(spacing: 0) {
             Rectangle()
             LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
@@ -229,6 +231,11 @@ struct SidebarTabRow: View {
             HStack(spacing: SidebarMetrics.rowIconSpacing) {
                 leadingIcon
                     .sidebarRowName(tab.title, style: style, isIconOnly: sidebarStyle == .icons)
+                    .overlay(alignment: .bottomTrailing) {
+                        if sidebarStyle == .icons {
+                            ExternalControlMark(tab: tab, coordinator: coordinator, isCompact: true)
+                        }
+                    }
 
                 if showsSpeaker {
                     SidebarTabMuteButton(isMuted: tab.isMuted) {
@@ -245,6 +252,8 @@ struct SidebarTabRow: View {
                 if sidebarStyle == .full {
                     HStack(spacing: 4) {
                         trailingControls
+                        ExternalControlMark(tab: tab, coordinator: coordinator)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { markWidth = $0 }
                         if let peekedTab {
                             PeekRowBadge(tab: peekedTab, coordinator: coordinator)
                         }
@@ -312,6 +321,7 @@ struct SidebarTabRow: View {
 
     @ViewBuilder
     private var menu: some View {
+        ExternalControlMenuItems(tabs: [tab], coordinator: coordinator)
         SidebarLinkMenuItems(tabs: [tab], coordinator: coordinator)
 
         Button {

@@ -22,7 +22,7 @@ extension MCPBrowserSession {
             return (page, standingAccess(at: url))
         }
         // A paired client's standing grant covers its developer sites without a sheet.
-        for (page, standing) in candidates {
+        for (page, standing) in candidates where !takenBack.contains(page.id) {
             if let standing, (grants[page.id]?.access.rank ?? -1) < standing.rank {
                 grants[page.id] = Grant(origin: SitePermissions.origin(for: page.url), access: standing, source: .standing)
             }

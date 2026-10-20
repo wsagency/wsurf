@@ -195,6 +195,7 @@ struct SidebarSplitRow: View {
 
     @ViewBuilder
     private var menu: some View {
+        ExternalControlMenuItems(tabs: panes, coordinator: coordinator)
         SidebarLinkMenuItems(tabs: panes, coordinator: coordinator)
         SidebarFavoriteMenuItems(tabs: panes, browser: browser)
 
@@ -297,6 +298,9 @@ private struct SplitRowCell: View {
                 TabIcon(tab: tab, tint: ink.text)
                     .sidebarNewMark(ink)
                     .sidebarRowName(tab.title, style: style, isIconOnly: !showsTitle)
+                    .overlay(alignment: .bottomTrailing) {
+                        ExternalControlMark(tab: tab, coordinator: coordinator, isCompact: true)
+                    }
             }
 
             if sidebarStyle == .full, tab.isPlayingAudio || tab.isMuted {
