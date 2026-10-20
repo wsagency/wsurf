@@ -37,7 +37,7 @@ nonisolated enum PageScreenshotEncoding {
         }
     }
 
-    private static func scaled(_ bitmap: NSBitmapImageRep, by factor: Double) -> NSBitmapImageRep? {
+    static func scaled(_ bitmap: NSBitmapImageRep, by factor: Double) -> NSBitmapImageRep? {
         guard let source = bitmap.cgImage else { return nil }
         let width = Int(Double(source.width) * factor), height = Int(Double(source.height) * factor)
         guard width > 0, height > 0,
