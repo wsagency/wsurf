@@ -27,6 +27,16 @@ extension CredentialImportReview.LocalChange {
             }
         case .notesRemoved:
             String(localized: "Notes removed")
+        case .itemsChanged:
+            String(localized: "Cards or other items changed")
+        case let .itemsAdded(count):
+            if count == 1 {
+                String(localized: "An item added")
+            } else {
+                String(localized: "\(count) items added")
+            }
+        case .itemsRemoved:
+            String(localized: "Cards and other items removed")
         case .merged:
             String(localized: "Merged with another credential")
         case let .movedToTrash(part):

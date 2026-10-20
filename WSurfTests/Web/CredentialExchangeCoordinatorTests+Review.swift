@@ -145,19 +145,15 @@ extension CredentialExchangeCoordinatorTests {
             try await f.seed(neighbours(1))
             let before = try f.diskBytes()
             let secret = "must-not-appear-in-the-review"
-            let wifi = ASImportableCredential.wifi(.init(
-                ssid: .init(id: nil, fieldType: .string, value: "network", label: nil),
-                networkSecurityType: nil,
-                passphrase: .init(id: nil, fieldType: .concealedString, value: secret, label: nil)
-            ))
+            let link = ASImportableCredential.itemReference(.init(reference: ASImportableLinkedItem(item: Data([1]), account: nil)))
             try await f.stage(handBuilt([
                 item(id: 1, scoped: true, [password("valid"), .generatedPassword(.init(password: secret))]),
-                item(id: 2, scoped: true, [wifi]),
+                item(id: 2, scoped: true, [link]),
             ]))
 
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.omitted.map(\.reason) == [.unsupportedKind, .unsupportedKind, .nothingToKeep])
-            #expect(review.omitted.map(\.kind) == [.generatedPassword, .wifi, nil])
+            #expect(review.omitted.map(\.kind) == [.generatedPassword, .itemReference, nil])
             #expect(review.omitted.map(\.title) == ["Item 1", "Item 2", "Item 2"])
             #expect(!review.omitted.map(\.text).joined().contains(secret))
             #expect(review.candidates.count == 1 && counts(planned(f)) == [1, 0])

@@ -44,6 +44,10 @@ nonisolated struct CredentialImportOmission: Equatable, Sendable {
         case sharingNotKept
         /// A field kept as plain text, or without its id or label.
         case fieldDetailsSimplified
+        /// Items past the first `SecureItem.itemLimit` of one item: the first ones are kept.
+        case extraItems
+        /// Values past the first `SecureItem.fieldLimit` of one card, address or other item: the first ones are kept.
+        case extraFields
         /// The whole item: it held nothing WSurf can keep.
         case nothingToKeep
     }
@@ -100,6 +104,10 @@ nonisolated struct CredentialImportOmission: Equatable, Sendable {
             return String(localized: "Who it is shared with isn’t imported.")
         case .fieldDetailsSimplified:
             return String(localized: "A field was saved as plain text without its original details.")
+        case .extraItems:
+            return String(localized: "It has more than \(SecureItem.itemLimit) cards and other items. Only the first \(SecureItem.itemLimit) were imported.")
+        case .extraFields:
+            return String(localized: "An item has more than \(SecureItem.fieldLimit) values. Only the first \(SecureItem.fieldLimit) were imported.")
         case .nothingToKeep:
             return String(localized: "It has nothing WSurf can store yet, so it wasn’t imported.")
         }

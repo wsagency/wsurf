@@ -99,7 +99,7 @@ nonisolated struct CredentialImportReview: Sendable {
     }
 
     struct Record: Identifiable, Sendable {
-        enum Kind: Sendable { case password, passkey, totp, note }
+        enum Kind: Sendable { case password, passkey, totp, note, secureItems }
 
         /// Where the record ends up under its current choice, from the plan's own account data.
         enum Destination: Sendable, Equatable {

@@ -526,15 +526,11 @@ extension CredentialExchangeCoordinatorTests {
     @Test func omissionsAttachToTheirItem() async throws {
         try await withFixture { f in
             try await f.seed(neighbours(1))
-            let wifi = ASImportableCredential.wifi(.init(
-                ssid: .init(id: nil, fieldType: .string, value: "network", label: nil),
-                networkSecurityType: nil,
-                passphrase: .init(id: nil, fieldType: .concealedString, value: "wifi-secret", label: nil)
-            ))
+            let link = ASImportableCredential.itemReference(.init(reference: ASImportableLinkedItem(item: Data([1]), account: nil)))
             try await f.stage(handBuilt([
-                item(id: 1, scoped: true, [password("valid"), wifi]),
+                item(id: 1, scoped: true, [password("valid"), link]),
                 item(id: 2, scoped: true, [password("clean")]),
-                item(id: 3, scoped: true, [wifi]),
+                item(id: 3, scoped: true, [link]),
             ]))
             let staged = try review(f)
             #expect(staged.candidates.count == 2)

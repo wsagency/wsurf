@@ -63,6 +63,11 @@ extension CredentialImportReview.Duplicate.Addition {
                 return String(localized: "a note")
             }
             return String(localized: "\(count) notes")
+        case let .items(count):
+            if count == 1 {
+                return String(localized: "a card or other item")
+            }
+            return String(localized: "\(count) cards and other items")
         }
     }
 }
@@ -649,10 +654,10 @@ private struct CredentialImportRow: View {
         }
     }
 
-    /// An item with a single part besides its notes can be merged into a saved credential as a whole; a bigger one is merged part by
-    /// part, in its details.
+    /// An item with a single part besides its notes and items can be merged into a saved credential as a whole; a bigger one is
+    /// merged part by part, in its details.
     private func singlePart(_ candidate: CredentialImportReview.Candidate) -> CredentialImportReview.Record? {
-        let parts = candidate.records.filter { $0.kind != .note }
+        let parts = candidate.records.filter { !$0.incoming.followsLogin }
         return parts.count == 1 ? parts.first : nil
     }
 

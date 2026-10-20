@@ -281,6 +281,8 @@ extension CredentialImportReview.Record.Kind {
             String(localized: "Verification code")
         case .note:
             String(localized: "Notes")
+        case .secureItems:
+            String(localized: "Cards and other items")
         }
     }
 }
