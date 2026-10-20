@@ -5,7 +5,7 @@
 import SwiftUI
 
 enum AutofillDestination: String {
-    case credentials, cards, contacts
+    case credentials, cards, contacts, inputHistory
 
     init?(anchor: String?) {
         guard let anchor else { return nil }
@@ -37,6 +37,8 @@ struct AutofillSettings: View {
                     PaymentCardSettings(context: coordinator.context)
                 case .contacts:
                     ContactAutofillSettings(context: coordinator.context)
+                case .inputHistory:
+                    InputHistorySettings(context: coordinator.context)
                 }
             } else {
                 SettingsPageHeader(title: "Autofill", caption: "WSurf stores saved details on this Mac.")
@@ -54,6 +56,16 @@ struct AutofillSettings: View {
                     DrillInRow(title: "Payment cards", symbol: "creditcard", tint: .blue, caption: "Save and fill payment cards.") { destination = .cards }
                     RowSeparator()
                     DrillInRow(title: "Contacts and addresses", symbol: "person.crop.rectangle", tint: .green, caption: "Save and fill contact details.") { destination = .contacts }
+                    RowSeparator()
+                    DrillInRow(
+                        title: "Input History",
+                        symbol: "list.clipboard",
+                        tint: .orange,
+                        caption: "Find text you typed on websites, encrypted on this Mac. Off until you turn it on."
+                    ) {
+                        destination = .inputHistory
+                    }
+                    .disabled(coordinator.context.profile.isPrivate)
                 }
                 SettingsCard {
                     DetailRow(title: "Save and fill passwords", caption: "Offer to save new logins after you sign in.") {
