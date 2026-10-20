@@ -157,4 +157,36 @@ final class PageFootprintTests {
         #expect(main.webkit == "undefined")
         #expect(main.navigator == ["geolocation"], "only the location stand-in")
     }
+
+    /// WSurf's own script call is no click on either engine: a `window.open` it runs is the pop-up the Block policy stops,
+    /// and only a person's action replayed (`userGesture`) opens one. The gesture-less call goes first, so by the time the
+    /// replayed one has opened its tab the first has been decided.
+    @Test(arguments: BrowserEngine.allCases)
+    func aWSurfEvaluationIsStillABlockedPopUp(_ engine: BrowserEngine) async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<!doctype html><title>Site</title>"),
+            "/popup": .html("<!doctype html><title>Popup</title>"),
+        ])
+        defer { withExtendedLifetime(server) {} }
+        let site = try server.url()
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        context.settings.blocksPopups = true
+        let tab = try tab(engine, for: site, in: context)
+        defer {
+            context.webViewPool.configurePage = nil
+            tab.detach()
+        }
+        var opened = 0
+        tab.onNewWindow = { _, _ in opened += 1 }
+        tab.onOpenInNewTab = { _, _ in opened += 1 }
+        _ = tab.load(site)
+        try #require(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
+
+        _ = try await tab.page.evaluateJavaScript("window.open('/popup'); true", in: nil, contentWorld: .page)
+        _ = try await tab.page.evaluateJavaScript(
+            "window.open('/popup'); true", in: nil, contentWorld: .page, userGesture: true)
+        #expect(await waitUntil { opened == 1 }, "\(engine): the replayed action opens its pop-up")
+        #expect(opened == 1, "\(engine): WSurf's own call opened one too")
+        #expect(tab.popups.blocked == (try server.url("/popup")), "\(engine)")
+    }
 }

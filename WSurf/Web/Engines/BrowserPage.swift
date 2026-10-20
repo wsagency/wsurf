@@ -374,8 +374,8 @@ final class BrowserPage: NSView {
     private(set) var evaluations = 0
     private(set) var asyncCalls = 0
 
-    /// Without a user gesture on WebKit (`WKWebView.evaluate`); `userGesture` replays a person's action. Chromium decides in
-    /// its own engine code.
+    /// Without a user gesture on either engine (`WKWebView.evaluate`; CDP `userGesture: false`); `userGesture` replays a
+    /// person's own action.
     func evaluateJavaScript(
         _ script: String, in frame: BrowserFrame?, contentWorld: WKContentWorld, userGesture: Bool = false
     ) async throws -> Any {
@@ -409,7 +409,7 @@ final class BrowserPage: NSView {
         }
         guard let chromium else { throw ChromiumError.closed }
         try await chromium.ensureReady()
-        return try await chromium.devTools.evaluate(script, in: frame, world: contentWorld)
+        return try await chromium.devTools.evaluate(script, in: frame, world: contentWorld, userGesture: userGesture)
     }
 
     func callAsyncJavaScript(
@@ -447,7 +447,8 @@ final class BrowserPage: NSView {
         }
         guard let chromium else { throw ChromiumError.closed }
         try await chromium.ensureReady()
-        return try await chromium.devTools.callAsync(body, arguments: arguments, in: frame, world: contentWorld)
+        return try await chromium.devTools.callAsync(
+            body, arguments: arguments, in: frame, world: contentWorld, userGesture: userGesture)
     }
 
     func capture(rect: CGRect? = nil, width: CGFloat? = nil, afterScreenUpdates: Bool = false) async throws -> NSImage {

@@ -482,8 +482,9 @@ final class ChromiumDevTools {
         return (target, snapshot)
     }
 
-    func evaluate(_ script: String, in frame: BrowserFrame?, world: WKContentWorld) async throws -> Any {
-        try await evaluate(in: frame, world: world, userGesture: true, dispatchCheck: nil) { script }
+    /// `userGesture` only replays a person's own action; the page's activation is otherwise neither created nor consumed.
+    func evaluate(_ script: String, in frame: BrowserFrame?, world: WKContentWorld, userGesture: Bool = false) async throws -> Any {
+        try await evaluate(in: frame, world: world, userGesture: userGesture, dispatchCheck: nil) { script }
     }
 
     private func evaluate(
@@ -532,8 +533,8 @@ final class ChromiumDevTools {
         return contextIsLive(snapshot)
     }
 
-    func callAsync(_ body: String, arguments: [String: Any], in frame: BrowserFrame?, world: WKContentWorld) async throws -> Any {
-        try await evaluate(try asyncExpression(body, arguments: arguments), in: frame, world: world)
+    func callAsync(_ body: String, arguments: [String: Any], in frame: BrowserFrame?, world: WKContentWorld, userGesture: Bool = false) async throws -> Any {
+        try await evaluate(try asyncExpression(body, arguments: arguments), in: frame, world: world, userGesture: userGesture)
     }
 
     /// Arguments are built, then `dispatchCheck` runs, in the same synchronous turn that sends the command.
