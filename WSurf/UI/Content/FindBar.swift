@@ -31,12 +31,12 @@ struct FindDriver {
                     completion(0)
                     return
                 }
-                webView.evaluateJavaScript(FindSession.countScript(for: query)) { value, _ in
-                    MainActor.assumeIsolated { completion(value as? Int ?? 0) }
+                webView.evaluate(FindSession.countScript(for: query), asFunction: false, in: nil, in: .page) { result in
+                    completion((try? result.get()) as? Int ?? 0)
                 }
             },
             clearHighlight: {
-                webView()?.evaluateJavaScript("window.getSelection().removeAllRanges()")
+                webView()?.evaluate("window.getSelection().removeAllRanges()", asFunction: false, in: nil, in: .page) { _ in }
             }
         )
     }

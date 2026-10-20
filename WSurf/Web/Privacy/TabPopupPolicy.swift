@@ -28,6 +28,7 @@ final class TabPopupPolicy {
         return settings.blocksPopups ? .blockAndNotify : .allow
     }
 
+    @discardableResult
     func pageChanged(url: URL?) -> Bool {
         let next = SystemPages.isSystem(url) ? "" : SitePermissions.origin(for: url)
         guard next != origin else { return false }
@@ -48,12 +49,6 @@ final class TabPopupPolicy {
 
 extension BrowserTab {
     func applySitePopups() {
-        guard popups.pageChanged(url: page.url) else { return }
-        refreshPopupPolicy()
-    }
-
-    func refreshPopupPolicy() {
-        guard isMaterialised else { return }
-        page.webKit?.configuration.preferences.javaScriptCanOpenWindowsAutomatically = !popups.effective.blocks
+        popups.pageChanged(url: page.url)
     }
 }

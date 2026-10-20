@@ -143,7 +143,9 @@ extension AppCoordinator {
                 downloadFlights.noteClick(at: point)
             }
         }
-        context.webViewPool.installExtensionController(extensions.controller)
+        context.webViewPool.installExtensionController(extensions.controller) { [weak extensions] in
+            extensions?.hasEnabledExtensions == true
+        }
         prepareWindowHost()
         installDownloadFlights()
     }

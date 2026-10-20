@@ -102,6 +102,10 @@ final class BrowserPage: NSView {
         closed || chromium?.isClosed == true
     }
 
+    /// Where WSurf's own DOM-only page scripts and their message handlers live, on both engines: an isolated world, so the
+    /// page sees none of their globals, wrappers, message handlers or `__wsurfSend`.
+    static let servicesWorld = WKContentWorld.world(name: "WSurfServices")
+
     init(webKit: WKWebView, context: BrowserProfileContext) {
         engine = .webKit
         self.webKit = webKit
@@ -345,7 +349,11 @@ final class BrowserPage: NSView {
     private(set) var evaluations = 0
     private(set) var asyncCalls = 0
 
-    func evaluateJavaScript(_ script: String, in frame: BrowserFrame?, contentWorld: WKContentWorld) async throws -> Any {
+    /// Without a user gesture on WebKit (`WKWebView.evaluate`); `userGesture` replays a person's action. Chromium decides in
+    /// its own engine code.
+    func evaluateJavaScript(
+        _ script: String, in frame: BrowserFrame?, contentWorld: WKContentWorld, userGesture: Bool = false
+    ) async throws -> Any {
         evaluations += 1
         guard !closed else { throw ChromiumError.closed }
         if let webKit {
@@ -363,7 +371,7 @@ final class BrowserPage: NSView {
                             throw ChromiumError.staleFrame
                         }
                     }
-                    webKit.evaluateJavaScript(script, in: frame?.webKit, in: contentWorld, completionHandler: {
+                    webKit.evaluate(script, asFunction: false, userGesture: userGesture, in: frame?.webKit, in: contentWorld, completionHandler: {
                         result = $0
                         continuation.resume()
                     })
@@ -379,7 +387,10 @@ final class BrowserPage: NSView {
         return try await chromium.devTools.evaluate(script, in: frame, world: contentWorld)
     }
 
-    func callAsyncJavaScript(_ body: String, arguments: [String: Any] = [:], in frame: BrowserFrame?, contentWorld: WKContentWorld) async throws -> Any {
+    func callAsyncJavaScript(
+        _ body: String, arguments: [String: Any] = [:], in frame: BrowserFrame?, contentWorld: WKContentWorld,
+        userGesture: Bool = false
+    ) async throws -> Any {
         asyncCalls += 1
         guard !closed else { throw ChromiumError.closed }
         if let webKit {
@@ -397,7 +408,8 @@ final class BrowserPage: NSView {
                             throw ChromiumError.staleFrame
                         }
                     }
-                    webKit.callAsyncJavaScript(body, arguments: arguments, in: frame?.webKit, in: contentWorld, completionHandler: {
+                    webKit.evaluate(body, asFunction: true, arguments: arguments, userGesture: userGesture,
+                                    in: frame?.webKit, in: contentWorld, completionHandler: {
                         result = $0
                         continuation.resume()
                     })
@@ -493,7 +505,7 @@ final class BrowserPage: NSView {
             try dispatchCheck()
             var result: Result<Any, Error>!
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                webKit.callAsyncJavaScript(body, arguments: arguments, in: frame?.webKit, in: contentWorld, completionHandler: {
+                webKit.evaluate(body, asFunction: true, arguments: arguments, in: frame?.webKit, in: contentWorld, completionHandler: {
                     result = $0
                     continuation.resume()
                 })
@@ -638,6 +650,12 @@ final class BrowserPage: NSView {
         })();
         """
 
+    /// What WebKit stores for `source`: an isolated world's script starts with the `__wsurfSend` relay. A page-world script
+    /// never does; one that needs native registers a handler (`addScriptMessageHandler`), which adds the relay on purpose.
+    private static func stored(_ source: String, in world: WKContentWorld) -> String {
+        world === WKContentWorld.page ? source : bridgeSource + "\n" + source
+    }
+
     static func installBridge(in controller: WKUserContentController, world: WKContentWorld) {
         guard !controller.userScripts.contains(where: {
             ($0.source == bridgeSource || $0.source.hasPrefix(bridgeSource + "\n")) &&
@@ -652,7 +670,7 @@ final class BrowserPage: NSView {
     func installScript(_ source: String, in world: WKContentWorld, injectionTime: WKUserScriptInjectionTime, forMainFrameOnly: Bool) {
         if let webKit {
             let controller = webKit.configuration.userContentController
-            let source = Self.bridgeSource + "\n" + source
+            let source = Self.stored(source, in: world)
             guard !controller.userScripts.contains(where: {
                 $0.source == source && Self.scriptWorlds.object(forKey: $0) === world &&
                 $0.injectionTime == injectionTime && $0.isForMainFrameOnly == forMainFrameOnly
@@ -670,8 +688,8 @@ final class BrowserPage: NSView {
         if let webKit {
             let controller = webKit.configuration.userContentController
             var scripts = controller.userScripts
-            let oldSource = Self.bridgeSource + "\n" + old
-            let newSource = Self.bridgeSource + "\n" + new
+            let oldSource = Self.stored(old, in: world)
+            let newSource = Self.stored(new, in: world)
             guard let index = scripts.firstIndex(where: {
                 $0.source == oldSource && Self.scriptWorlds.object(forKey: $0) === world
             }) else {
@@ -706,7 +724,7 @@ final class BrowserPage: NSView {
     /// that stay are re-added from the same objects.
     func removeScript(_ source: String, in world: WKContentWorld) {
         guard let controller = webKit?.configuration.userContentController else { return }
-        let source = Self.bridgeSource + "\n" + source
+        let source = Self.stored(source, in: world)
         var scripts = controller.userScripts
         guard let index = scripts.firstIndex(where: { $0.source == source && Self.scriptWorlds.object(forKey: $0) === world }) else { return }
         scripts.remove(at: index)
@@ -752,5 +770,53 @@ final class BrowserPage: NSView {
         }
         await chromium?.close()
         removeFromSuperview()
+    }
+}
+
+extension WKWebView {
+    private static let evaluation = NSSelectorFromString(
+        "_evaluateJavaScript:asAsyncFunction:withSourceURL:withArguments:forceUserGesture:inFrame:inWorld:completionHandler:"
+    )
+
+    /// Runs `source` (an async function body when `asFunction`) without the user gesture WebKit's public script calls grant:
+    /// with it, a page WSurf merely reads or answers could open pop-ups, start sound and pass `navigator.userActivation` as
+    /// if the person had acted. `userGesture` is only for replaying a person's own action. Uses WebKit's evaluation entry
+    /// point (internal, guarded); a WebKit without it keeps the public calls, gesture and all.
+    func evaluate(
+        _ source: String, asFunction: Bool, arguments: [String: Any] = [:], userGesture: Bool = false,
+        in frame: WKFrameInfo?, in world: WKContentWorld,
+        completionHandler: @escaping @MainActor (Result<Any, Error>) -> Void
+    ) {
+        typealias Evaluate = @convention(c) (
+            AnyObject, Selector, NSString, ObjCBool, NSURL?, NSDictionary?, ObjCBool, WKFrameInfo?, WKContentWorld,
+            @escaping @convention(block) (Any?, Error?) -> Void
+        ) -> Void
+        guard !userGesture, responds(to: Self.evaluation) else {
+            if asFunction {
+                callAsyncJavaScript(source, arguments: arguments, in: frame, in: world, completionHandler: completionHandler)
+            } else {
+                evaluateJavaScript(source, in: frame, in: world, completionHandler: completionHandler)
+            }
+            return
+        }
+        unsafeBitCast(method(for: Self.evaluation), to: Evaluate.self)(
+            self, Self.evaluation, source as NSString, ObjCBool(asFunction), nil,
+            asFunction ? arguments as NSDictionary : nil, false, frame, world
+        ) { value, error in
+            MainActor.assumeIsolated { completionHandler(error.map { .failure($0) } ?? .success(value as Any)) }
+        }
+    }
+
+    func evaluate(
+        _ source: String, asFunction: Bool, arguments: [String: Any] = [:], in frame: WKFrameInfo?, in world: WKContentWorld
+    ) async throws -> Any {
+        var result: Result<Any, Error>!
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            evaluate(source, asFunction: asFunction, arguments: arguments, in: frame, in: world) {
+                result = $0
+                continuation.resume()
+            }
+        }
+        return try result.get()
     }
 }

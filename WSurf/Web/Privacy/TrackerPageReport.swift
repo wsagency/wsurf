@@ -9,11 +9,8 @@ import WebKit
 enum TrackerPageReport {
     static func matchingDomains(in webView: WKWebView) async -> [String] {
         let topLevelURL = webView.url
-        guard let value = try? await webView.callAsyncJavaScript(
-            resourceURLScript,
-            in: nil,
-            contentWorld: .defaultClient
-        ), let resourceURLs = value as? [String]
+        guard let value = try? await webView.evaluate(resourceURLScript, asFunction: true, in: nil, in: .defaultClient),
+              let resourceURLs = value as? [String]
         else { return [] }
         guard !Task.isCancelled, webView.url == topLevelURL else { return [] }
 

@@ -33,10 +33,11 @@ extension PageDriver {
     }
 
     /// The script's answer. A click or a submit can navigate before the page answers, and the answer is lost with the
-    /// document: when the page was left, `fallback` stands for it. Nil when the page did not answer and was not left.
+    /// document: when the page was left, `fallback` stands for it. Nil when the page did not answer and was not left. It
+    /// runs as the person's gesture: they asked for this action, so its link may open its window.
     static func evaluateAction(_ script: String, fallback: [String: Any], in view: BrowserPage) async -> [String: Any]? {
         let document = view.mainDocumentID, url = view.url
-        if let answer = await evaluateJSON(script, in: view) {
+        if let answer = await evaluateJSON(script, userGesture: true, in: view) {
             return answer
         }
         return await PageSettle.pageWasLeft(view, document: document, url: url) ? fallback : nil

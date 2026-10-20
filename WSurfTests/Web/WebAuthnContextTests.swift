@@ -252,23 +252,54 @@ struct WebAuthnContextTests {
             in contentWorld: WKContentWorld,
             completionHandler: (@MainActor @Sendable (Any?, (any Error)?) -> Void)?
         ) {
+            super.__callAsyncJavaScript(
+                functionBody, arguments: arguments, inFrame: frame, in: contentWorld,
+                completionHandler: holding(functionBody, in: frame, completionHandler)
+            )
+        }
+
+        private typealias Evaluate = @convention(c) (
+            AnyObject, Selector, NSString, Bool, NSURL?, NSDictionary?, Bool, WKFrameInfo?, WKContentWorld,
+            @escaping @convention(block) (Any?, (any Error)?) -> Void
+        ) -> Void
+
+        /// WSurf's own calls take WebKit's evaluation without a user gesture (`WKWebView.evaluate`); this is that entry
+        /// point, passed to WebKit's own implementation with the same hold.
+        @objc(_evaluateJavaScript:asAsyncFunction:withSourceURL:withArguments:forceUserGesture:inFrame:inWorld:completionHandler:)
+        func heldEvaluate(
+            _ source: NSString, asAsyncFunction: Bool, withSourceURL sourceURL: NSURL?, withArguments arguments: NSDictionary?,
+            forceUserGesture: Bool, inFrame frame: WKFrameInfo?, inWorld world: WKContentWorld,
+            completionHandler: @escaping @MainActor @Sendable (Any?, (any Error)?) -> Void
+        ) {
+            let selector = #selector(heldEvaluate(_:asAsyncFunction:withSourceURL:withArguments:forceUserGesture:inFrame:inWorld:completionHandler:))
+            guard let implementation = class_getMethodImplementation(WKWebView.self, selector) else { return }
+            let finish = holding(source as String, in: frame, completionHandler)
+            unsafeBitCast(implementation, to: Evaluate.self)(
+                self, selector, source, asAsyncFunction, sourceURL, arguments, forceUserGesture, frame, world
+            ) { result, error in
+                MainActor.assumeIsolated { finish?(result, error) }
+            }
+        }
+
+        private func holding(
+            _ functionBody: String, in frame: WKFrameInfo?,
+            _ completionHandler: (@MainActor @Sendable (Any?, (any Error)?) -> Void)?
+        ) -> (@MainActor @Sendable (Any?, (any Error)?) -> Void)? {
             let shouldHold = holdChildLiveness
                 && functionBody == "return globalThis.__wsurfNativeFrameNonce === nonce;"
                 && frame?.isMainFrame == false
-            super.__callAsyncJavaScript(
-                functionBody, arguments: arguments, inFrame: frame, in: contentWorld,
-                completionHandler: { [weak self] result, error in
-                    guard shouldHold, let self, let completionHandler else {
-                        completionHandler?(result, error)
-                        return
-                    }
-                    self.holdChildLiveness = false
-                    self.heldResult = result
-                    self.heldError = error
-                    self.heldCompletion = completionHandler
-                    self.didHoldChildLiveness = true
+            guard shouldHold else { return completionHandler }
+            return { [weak self] result, error in
+                guard let self, let completionHandler else {
+                    completionHandler?(result, error)
+                    return
                 }
-            )
+                self.holdChildLiveness = false
+                self.heldResult = result
+                self.heldError = error
+                self.heldCompletion = completionHandler
+                self.didHoldChildLiveness = true
+            }
         }
 
         var heldLivenessValue: Any? {

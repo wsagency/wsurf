@@ -70,11 +70,13 @@ struct FormConsumerBoundaryTests {
                     retiredValues.append(values)
                     browser.close(tab)
                 }
+                // A handler registered after the load has no relay in this document on WebKit, only its handler.
                 _ = try await page.evaluateJavaScript("""
-                    document.addEventListener('input', () => {
-                      window.__wsurfSend('retire-fill-owner',
-                        Array.from(document.querySelectorAll('[data-safe]'), field => field.value));
-                    }, true); true
+                    { const send = window.__wsurfSend ?? ((name, body) => window.webkit.messageHandlers[name].postMessage(body));
+                      document.addEventListener('input', () => {
+                        send('retire-fill-owner', Array.from(document.querySelectorAll('[data-safe]'), field => field.value));
+                      }, true); }
+                    true
                     """, in: nil, contentWorld: .page)
             }
 

@@ -114,6 +114,11 @@ final class ExtensionLibrary {
         arranged(forProfile: profileKey)
     }
 
+    /// Whether this profile switched any extension on, packaged or Safari's (whose placements live here too).
+    var hasEnabledExtension: Bool {
+        placements.profiles[profileKey]?.values.contains { $0.enabled } == true
+    }
+
     private func arranged(forProfile key: String) -> [InstalledExtension] {
         let mine = placements.profiles[key] ?? [:]
         var listed: [(record: InstalledExtension, offset: Int)] = []

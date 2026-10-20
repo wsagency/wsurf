@@ -278,9 +278,7 @@ extension BrowserTab {
             PageClickWatcher.shared.onClick?(view, point)
         }
         PullToRefreshMonitor.install(in: view)
-        SiteContentGuard.shared.install(in: view, permissions: sitePermissions, settings: context.settings) { [weak self] url in
-            self?.popups.note(url)
-        }
+        SiteContentGuard.shared.install(in: view, permissions: sitePermissions, settings: context.settings)
         PaymentCardAutofill.shared.install(in: view)
         ContactAutofill.shared.install(in: view)
         PasswordAutofill.shared.install(in: view)
@@ -331,6 +329,17 @@ extension BrowserTab {
         microphoneObservation = native.observe(\.microphoneCaptureState, options: [.new, .initial]) { [weak self] view, _ in
             MainActor.assumeIsolated { self?.permissions.setLive(.microphone, view.microphoneCaptureState != .none) }
         }
+        displayCaptureObservation = DisplayCaptureObservation(native) { [weak self] isSharing in
+            self?.notePageActivity(PageActivitySignal(
+                kind: .screenShare, token: DisplayCaptureObservation.token, isActive: isSharing
+            ))
+        }
+    }
+
+    /// Chromium never reports a screen share ending, so one protects the tab for the rest of the document.
+    func noteChromiumDisplayCapture(in view: BrowserPage?) {
+        guard let view, liveView === view else { return }
+        notePageActivity(PageActivitySignal(kind: .screenShare, token: "chromium-display-capture", isActive: true))
     }
 
     private func installPermissionCallbacks(for view: BrowserPage) {
@@ -423,6 +432,7 @@ extension BrowserTab {
             permissions.setLive(.camera, camera)
             permissions.setLive(.microphone, microphone)
         }
+        chromium.displayCaptureStarted = { [weak self, weak view] in self?.noteChromiumDisplayCapture(in: view) }
         chromium.downloadDecision = { [weak self, weak view] download, name, completion in
             guard let self, let view, self.liveView === view, let handler = onChromiumDownload else {
                 completion(.deny)

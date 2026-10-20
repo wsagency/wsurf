@@ -76,8 +76,8 @@ final class MediaCenter {
 
     @MainActor
     func install(in page: BrowserPage) {
-        page.installScript(MediaScript.source, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        page.addScriptMessageHandler(name: Self.frameScriptHandlerName, in: .page) { [weak self] message in
+        page.installScript(MediaScript.source, in: BrowserPage.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        page.addScriptMessageHandler(name: Self.frameScriptHandlerName, in: BrowserPage.servicesWorld) { [weak self] message in
             guard let body = message.body as? String else { return }
             self?.receiveScriptMessage(body, from: message.page, isMainFrame: message.frameInfo.isMainFrame)
         }
@@ -364,17 +364,20 @@ final class MediaCenter {
 
     private func send(_ message: String) {
         guard let controlledPage else { return }
-        Self.post(message, to: controlledPage)
+        Self.post(message, to: controlledPage, userGesture: true)
     }
 
     static func seek(to seconds: Double, on page: BrowserPage) {
-        post("wsurf-seekabs:\(seconds)", to: page)
+        post("wsurf-seekabs:\(seconds)", to: page, userGesture: true)
     }
 
     static func setMuted(_ muted: Bool, on page: BrowserPage) {
-        post("wsurf-mute:\(muted ? 1 : 0)", to: page)
+        post("wsurf-mute:\(muted ? 1 : 0)", to: page, userGesture: true)
     }
-    private static func post(_ message: String, to page: BrowserPage) {
+
+    /// `userGesture` for the person's own press on WSurf's controls, so its play is theirs under any auto-play answer;
+    /// WSurf's own requests (resend, rect, reveal, Picture in Picture setup) carry none.
+    private static func post(_ message: String, to page: BrowserPage, userGesture: Bool = false) {
         guard let data = try? JSONSerialization.data(withJSONObject: message, options: [.fragmentsAllowed]),
               let escaped = String(data: data, encoding: .utf8) else { return }
         Task { @MainActor in
@@ -383,7 +386,7 @@ final class MediaCenter {
             Array.prototype.forEach.call(document.querySelectorAll('iframe'), function (f) {
               try { f.contentWindow.postMessage(\(escaped), '*'); } catch (e) {}
             });
-            """)
+            """, in: nil, contentWorld: BrowserPage.servicesWorld, userGesture: userGesture)
         }
     }
 

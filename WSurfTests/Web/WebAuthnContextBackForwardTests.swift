@@ -696,7 +696,9 @@ extension WebAuthnContextTests {
             "[typeof globalThis.__wsurfWebAuthnFence, typeof globalThis.__wsurfNativeFrameReady, typeof globalThis.__wsurfNativeFrameNonce].join(',')",
             in: PageAutomationGuard.world
         )
-        let pageScript = await probe("String(navigator.credentials?.__wsurfWebAuthn)", in: .page)
+        let pageScript = await probe(
+            "String(!Function.prototype.toString.call(navigator.credentials?.get).includes('[native code]'))", in: .page
+        )
         let scriptsNow = page.webKit?.configuration.userContentController.userScripts.count ?? -1
         return """
         The initial route never became manager. lastRoute=\(lastRoute ?? "nil") lastRouteError=\(lastRouteError ?? "none") \

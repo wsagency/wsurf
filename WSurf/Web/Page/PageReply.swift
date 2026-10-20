@@ -25,7 +25,7 @@ extension BrowserPage {
                 gate.finish(nil)
                 return
             }
-            native.evaluateJavaScript(script, in: nil, in: .page) { gate.finish((try? $0.get()) as? Value) }
+            native.evaluate(script, asFunction: false, in: nil, in: .page) { gate.finish((try? $0.get()) as? Value) }
         }
     }
 }
@@ -47,8 +47,8 @@ extension BrowserPage {
     /// What an async function `body` returns in `world`, as `Value`, or nil when the call fails, answers another type, the
     /// caller is cancelled or `ceiling` passes first. `arguments` reach the body as variables.
     ///
-    /// Unlike the plain script calls, which Chromium runs as a user gesture, this never claims one: a script that only reads
-    /// the page must not hand it an activation it never had. WebKit uses the native completion handler for the reason
+    /// This never claims a user gesture (Chromium's plain script calls do): a script that only reads the page must not hand
+    /// it an activation it never had. WebKit uses the native completion handler for the reason
     /// `evaluateJavaScript(_:within:as:)` does, and repeats the synchronous guards of the call it replaces.
     func callAsyncJavaScript<Value: Sendable>(
         _ body: String,
@@ -71,7 +71,7 @@ extension BrowserPage {
                 gate.finish(nil)
                 return
             }
-            native.callAsyncJavaScript(body, arguments: arguments, in: nil, in: world) { gate.finish((try? $0.get()) as? Value) }
+            native.evaluate(body, asFunction: true, arguments: arguments, in: nil, in: world) { gate.finish((try? $0.get()) as? Value) }
         }
     }
 }

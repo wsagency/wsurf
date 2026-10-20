@@ -62,6 +62,8 @@ final class ChromiumPage: NSView {
     var navigationDecision: ((URLRequest, Bool, Bool, Bool, WKNavigationType, URL?, BrowserFrame?) -> Bool)?
     var openWindow: ((URL, Bool, URL?, BrowserFrame?) -> Void)?
     var captureChanged: ((Bool, Bool) -> Void)?
+    /// A screen share this page was granted. `captureChanged` reports device capture only.
+    var displayCaptureStarted: (() -> Void)?
     var onCloseRequested: (() -> Void)?
     var permissionDecision: ((BrowserFrame, [WebPermission]) async -> Bool)?
     var downloadDecision: ((CefDownload, String, @escaping (CefDownloadDecision) -> Void) -> Void)?

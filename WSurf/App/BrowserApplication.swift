@@ -350,8 +350,8 @@ final class BrowserApplication {
     func prepareWebScripts(for coordinator: AppCoordinator) {
         remember(coordinator.context)
         coordinator.context.webViewPool.configurePage = { [weak self] page in
-            page.installScript(MediaCenter.frameScriptSource, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-            page.addScriptMessageHandler(name: MediaCenter.frameScriptHandlerName, in: .page) { [weak self] message in
+            page.installScript(MediaCenter.frameScriptSource, in: BrowserPage.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+            page.addScriptMessageHandler(name: MediaCenter.frameScriptHandlerName, in: BrowserPage.servicesWorld) { [weak self] message in
                 guard let body = message.body as? String else { return }
                 self?.coordinator(for: message.page)?.media.receiveScriptMessage(
                     body, from: message.page, isMainFrame: message.frameInfo.isMainFrame

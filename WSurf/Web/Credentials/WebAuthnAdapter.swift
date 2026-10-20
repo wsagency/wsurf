@@ -60,14 +60,18 @@ enum WebAuthnAdapter {
     static func install(in page: BrowserPage) {
         guard !installedPages.contains(page) else { return }
         installedPages.add(page)
+        // WebKit's vault serves only the main frame (`validateCredentialContextForDispatch`), so its frames get none of these
+        // scripts and keep the engine's own `navigator.credentials`. Chromium serves a frame it has verified, so every
+        // frame gets them there.
+        let mainFrameOnly = page.chromium == nil
         page.installScript(
             WebAuthnScript.relay(nativeNonce: page.chromium == nil), in: world,
-            injectionTime: .atDocumentStart, forMainFrameOnly: false
+            injectionTime: .atDocumentStart, forMainFrameOnly: mainFrameOnly
         )
         // Document-start order is the contract: the frame registry, then the relay, then the route script, then the page
         // script. A page's profile never changes, so neither does its route, and the script is installed once.
-        page.installScript(routeScript(for: page), in: world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        page.installScript(WebAuthnScript.page, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        page.installScript(routeScript(for: page), in: world, injectionTime: .atDocumentStart, forMainFrameOnly: mainFrameOnly)
+        page.installScript(WebAuthnScript.page, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: mainFrameOnly)
         page.addScriptMessageHandler(name: WebAuthnScript.handlerName, in: world) { message in
             handle(message)
         }

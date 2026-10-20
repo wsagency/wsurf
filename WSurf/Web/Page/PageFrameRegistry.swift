@@ -799,11 +799,9 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
     func isLiveAfterReady(_ claim: SourceFrameClaim, in view: BrowserPage) async -> Bool {
         guard let webKit = view.webKit, let source = claim.frame.webKit,
               navigationUnchanged(claim, in: view) else { return false }
-        let proven = try? await webKit.callAsyncJavaScript(
+        let proven = try? await webKit.evaluate(
             "return (await globalThis.__wsurfNativeFrameReady) === true && globalThis.__wsurfNativeFrameNonce === nonce;",
-            arguments: ["nonce": claim.frame.documentID],
-            in: source,
-            contentWorld: PageAutomationGuard.world
+            asFunction: true, arguments: ["nonce": claim.frame.documentID], in: source, in: PageAutomationGuard.world
         ) as? Bool
         return proven == true && navigationUnchanged(claim, in: view) && isCurrent(claim.frame, in: view)
     }

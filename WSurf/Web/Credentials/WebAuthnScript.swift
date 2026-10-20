@@ -173,7 +173,7 @@ nonisolated enum WebAuthnScript {
     private static let pageSource = #"""
     (() => {
       const container = globalThis.navigator && navigator.credentials;
-      if (!container || !globalThis.PublicKeyCredential || container.__wsurfWebAuthn) return;
+      if (!container || !globalThis.PublicKeyCredential) return;
       const proto = Object.getPrototypeOf(container) || container;
       const originals = {create: container.create.bind(container), get: container.get.bind(container)};
       const requests = new Map();
@@ -473,7 +473,6 @@ nonisolated enum WebAuthnScript {
         const wrapper = {[operation](options) { return intercept(operation, options); }}[operation];
         Object.defineProperty(proto, operation, {value: wrapper, writable: true, enumerable: true, configurable: true});
       }
-      Object.defineProperty(container, '__wsurfWebAuthn', {value: true});
 
       // Capability answers come from the native side so they track the selected provider and the Mac's real ability to
       // verify the user. Native names the provider explicitly: 'legacy' (the engine keeps its own behaviour) or 'manager'

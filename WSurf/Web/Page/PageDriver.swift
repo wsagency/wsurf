@@ -706,10 +706,13 @@ enum PageDriver {
         return text
     }
 
-    static func evaluateJSON(_ script: String, in webView: BrowserPage) async -> [String: Any]? {
+    /// `userGesture` only for an action the person asked for (click, type): WSurf's reads never count as their activation.
+    static func evaluateJSON(_ script: String, userGesture: Bool = false, in webView: BrowserPage) async -> [String: Any]? {
         guard PageAutomationGuard.allowsExecution,
             await selectedFrameIsLive(in: webView),
-            let raw = (try? await webView.evaluateJavaScript(script, in: selectedFrame?.frame, contentWorld: PageAutomationGuard.world)) as? String,
+            let raw = (try? await webView.evaluateJavaScript(
+                script, in: selectedFrame?.frame, contentWorld: PageAutomationGuard.world, userGesture: userGesture
+            )) as? String,
             PageAutomationGuard.allowsExecution,
             await selectedFrameIsLive(in: webView),
             let data = raw.data(using: .utf8),

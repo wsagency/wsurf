@@ -16,6 +16,24 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         self.tab = tab
     }
 
+    /// WebKit asks this variant when it exists. A main-frame navigation takes the website's auto-play answer for the
+    /// document it makes; every other decision is the one below.
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        preferences: WKWebpagePreferences,
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
+    ) {
+        if let tab, navigationAction.targetFrame?.isMainFrame == true {
+            SiteContentGuard.apply(
+                SiteContentGuard.autoplay(for: navigationAction.request.url, permissions: tab.sitePermissions,
+                                          settings: tab.context.settings),
+                to: preferences
+            )
+        }
+        self.webView(webView, decidePolicyFor: navigationAction) { decisionHandler($0, preferences) }
+    }
+
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
@@ -38,11 +56,13 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             decisionHandler(.cancel)
             return
         }
+        // A modifier is the person's only when they clicked: a page's own synthetic Cmd-click is a plain click.
         if let tab, let onOpenInNewTab = tab.onOpenInNewTab,
            navigationAction.navigationType == .linkActivated,
            navigationAction.modifierFlags.contains(.command)
                || navigationAction.buttonNumber == Self.middleButton,
            navigationAction.targetFrame?.isMainFrame != false,
+           Self.isUserInitiated(navigationAction),
            let url = navigationAction.request.url {
             decisionHandler(.cancel)
             onOpenInNewTab(url, navigationAction.modifierFlags.contains(.shift))
@@ -52,6 +72,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
            navigationAction.navigationType == .linkActivated,
            navigationAction.modifierFlags == .shift,
            navigationAction.targetFrame?.isMainFrame != false,
+           Self.isUserInitiated(navigationAction),
            let url = navigationAction.request.url {
             decisionHandler(.cancel)
             onOpenInPeek(url, Self.pointer(in: webView))
@@ -190,8 +211,23 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        guard let tab, let onNewWindow = tab.onNewWindow else { return nil }
+        guard let tab else { return nil }
+        // WebKit hands over every pop-up (`javaScriptCanOpenWindowsAutomatically`): one the person did not start obeys
+        // the website's answer here, so the page's `window.open` stays WebKit's own.
+        if tab.popups.effective.blocks, !Self.isUserInitiated(navigationAction) {
+            if let url = navigationAction.request.url, url.scheme != "about" {
+                tab.popups.note(url)
+            }
+            return nil
+        }
+        guard let onNewWindow = tab.onNewWindow else { return nil }
 
+        // The window's first document may never be navigated (its opener can write it), so it starts under the opener's
+        // auto-play answer; its own navigations then take their website's.
+        SiteContentGuard.apply(
+            SiteContentGuard.autoplay(for: webView.url, permissions: tab.sitePermissions, settings: tab.context.settings),
+            to: configuration.defaultWebpagePreferences
+        )
         let view = TabWebView(frame: webView.frame, configuration: configuration)
         tab.context.settings.apply(to: view)
         view.allowsBackForwardNavigationGestures = true
@@ -201,6 +237,15 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         let activate = !modifiers.contains(.command) || modifiers.contains(.shift)
         onNewWindow(view, activate)
         return view
+    }
+
+    /// `_isUserInitiated` (SPI): whether a person's click or key started a navigation. Without it WebKit keeps its own
+    /// pop-up blocker (`BrowserSettings.apply`), and every pop-up that still reaches the tab counts as the person's.
+    static let decidesPopUps = WKNavigationAction.instancesRespond(to: NSSelectorFromString("_isUserInitiated"))
+
+    private static func isUserInitiated(_ action: WKNavigationAction) -> Bool {
+        guard decidesPopUps else { return true }
+        return action.value(forKey: "_isUserInitiated") as? Bool == true
     }
 
     func webViewDidClose(_ webView: WKWebView) {

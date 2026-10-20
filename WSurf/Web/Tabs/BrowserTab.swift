@@ -288,6 +288,7 @@ final class BrowserTab: Identifiable {
     var loadingObservation: NSKeyValueObservation?
     var cameraObservation: NSKeyValueObservation?
     var microphoneObservation: NSKeyValueObservation?
+    var displayCaptureObservation: DisplayCaptureObservation?
     var pageBackgroundObservation: NSKeyValueObservation?
     var addressObservation: NSKeyValueObservation?
     var titleObservation: NSKeyValueObservation?
@@ -449,6 +450,7 @@ final class BrowserTab: Identifiable {
         loadingObservation = nil
         cameraObservation = nil
         microphoneObservation = nil
+        displayCaptureObservation = nil
         pageBackgroundObservation = nil
         addressObservation = nil
         titleObservation = nil
