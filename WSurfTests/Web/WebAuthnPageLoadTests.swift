@@ -40,8 +40,10 @@ final class WebAuthnPageLoadTests {
 
     /// The vault's only passkey, as Apple Passwords exports it (OneAsymmetricKey PKCS#8, a 20-byte credential ID), through
     /// the same import preview and apply the Credential Exchange import uses.
-    private func importedAccounts(scope: URL) throws -> [CredentialAccount] {
+    private func importedAccounts() throws -> [CredentialAccount] {
         let exchange = CredentialExchangeTests()
+        // A login address as Apple sends one; the vault keeps only https addresses, and the passkey's own website is its rpID.
+        let scope = try #require(URL(string: "https://localhost/sign-in"))
         let incoming = exchange.data(
             scope: ASImportableCredentialScope(urls: [scope], androidApps: []),
             credentials: [
@@ -63,7 +65,7 @@ final class WebAuthnPageLoadTests {
         let base = try #require(components.url)
         let made = try await VaultManagerFixture.make(vaults: [.unlocked])
         let vault = try #require(made.vaults.first)
-        _ = try await VaultManagerFixture.save(try importedAccounts(scope: base), in: vault)
+        _ = try await VaultManagerFixture.save(try importedAccounts(), in: vault)
         let user = WebsiteAuthenticatorCeremonyTests.User()
         user.respond = { prompt in .approved(choice: prompt.choices.first?.id) }
         WebAuthnAdapter.interactionForTesting[made.profile.id] = { user }
