@@ -42,10 +42,11 @@ struct CredentialExportSheet: View {
         model.summaries.compactMap { selection[$0.id] }.filter(\.hasParts)
     }
 
-    /// The credentials this export can carry that match the search: the list's rule, over the summaries' precomputed keys.
+    /// The credentials this export can carry that match the search: the list's rule, over the summaries' precomputed keys. A
+    /// credential that holds only cards and other items has nothing an export sends, so it is not listed.
     private var listed: [CredentialSummary] {
         let all = csv ? model.summaries.filter(CredentialCSVExport.isExportable) : model.summaries
-        return CredentialListFilter.visible(all, query: query, filter: .all)
+        return CredentialListFilter.visible(all.filter { CredentialExportSelection(allOf: $0).hasParts }, query: query, filter: .all)
     }
 
     /// What a CSV file cannot hold, counted over the whole vault and shown before anything is written.

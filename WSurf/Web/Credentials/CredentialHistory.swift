@@ -143,4 +143,6 @@ nonisolated enum CredentialHistoryField: Equatable, Sendable {
     case notes
     /// One note, added after the draft's own.
     case note(Int)
+    /// The whole list of cards, addresses and other items.
+    case secureItems
 }

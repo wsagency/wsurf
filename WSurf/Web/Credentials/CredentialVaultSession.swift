@@ -18,6 +18,8 @@ struct CredentialVaultSession {
     var revealedPassword: RevealedPassword?
     var revealedUsername: RevealedUsername?
     var shownTOTP: (accountID: UUID, generator: TOTPGenerator)?
+    /// The items of one credential the user chose to show, hidden values included.
+    var revealedItems: (accountID: UUID, items: [SecureItem])?
     var draft: CredentialDraft? {
         // History belongs to the draft it was read for: closing the editor, or opening another draft, drops it with its secrets.
         didSet {
@@ -146,6 +148,7 @@ struct CredentialVaultSession {
         revealedPassword = nil
         revealedUsername = nil
         shownTOTP = nil
+        revealedItems = nil
         history?.revealsSecrets = false
     }
 

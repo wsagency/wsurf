@@ -150,8 +150,9 @@ struct CredentialListFilterTests {
 
     @Test func countsPerFilterMatchTheVault() throws {
         let all = try oneOfEach()
-        #expect(CredentialListFilter.counts(all) == [.all: 5, .logins: 2, .passkeys: 2, .codes: 2, .notes: 2])
-        #expect(CredentialListFilter.counts([]) == [.all: 0, .logins: 0, .passkeys: 0, .codes: 0, .notes: 0])
+        let noItems: [CredentialListFilter: Int] = [.cards: 0, .addresses: 0, .documents: 0, .otherItems: 0]
+        #expect(CredentialListFilter.counts(all) == [.all: 5, .logins: 2, .passkeys: 2, .codes: 2, .notes: 2].merging(noItems) { $1 })
+        #expect(CredentialListFilter.counts([]) == [.all: 0, .logins: 0, .passkeys: 0, .codes: 0, .notes: 0].merging(noItems) { $1 })
         for kind in CredentialListFilter.allCases {
             #expect(CredentialListFilter.counts(all)[kind] == CredentialListFilter.visible(all, query: "", filter: kind).count)
         }

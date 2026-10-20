@@ -11,6 +11,23 @@ nonisolated enum CredentialListFilter: CaseIterable, Hashable, Sendable {
     case passkeys
     case codes
     case notes
+    case cards
+    /// Addresses and names.
+    case addresses
+    /// Driver's licenses, passports and ID documents.
+    case documents
+    /// Wi-Fi networks, API and SSH keys, and custom fields.
+    case otherItems
+
+    /// A kind of item rather than a part every login can have: its chip is shown only while some credential holds one.
+    var isItemKind: Bool {
+        switch self {
+        case .cards, .addresses, .documents, .otherItems:
+            true
+        case .all, .logins, .passkeys, .codes, .notes:
+            false
+        }
+    }
 
     func includes(_ summary: CredentialSummary) -> Bool {
         switch self {
@@ -24,6 +41,14 @@ nonisolated enum CredentialListFilter: CaseIterable, Hashable, Sendable {
             summary.hasTOTP
         case .notes:
             summary.hasNotes
+        case .cards:
+            summary.itemKinds.contains(.creditCard)
+        case .addresses:
+            summary.itemKinds.contains { $0 == .address || $0 == .personName }
+        case .documents:
+            summary.itemKinds.contains { $0 == .driversLicense || $0 == .passport || $0 == .identityDocument }
+        case .otherItems:
+            summary.itemKinds.contains { $0 == .wifi || $0 == .apiKey || $0 == .sshKey || $0 == .customFields }
         }
     }
 
@@ -59,6 +84,8 @@ nonisolated struct CredentialStatistics: Equatable, Sendable {
     var codes = 0
     /// Credentials that hold notes, as the Notes filter counts them.
     var notes = 0
+    /// Credentials that hold cards, addresses or other items.
+    var items = 0
     var withoutWebsite = 0
 
     init(_ summaries: [CredentialSummary]) {
@@ -69,6 +96,7 @@ nonisolated struct CredentialStatistics: Equatable, Sendable {
             credentialsWithPasskeys += summary.passkeys.isEmpty ? 0 : 1
             codes += summary.hasTOTP ? 1 : 0
             notes += summary.hasNotes ? 1 : 0
+            items += summary.itemKinds.isEmpty ? 0 : 1
             withoutWebsite += summary.origins.isEmpty ? 1 : 0
         }
     }

@@ -13,6 +13,9 @@ nonisolated struct CredentialDraft: Sendable {
     var extraOrigins: String
     /// The notes in order. Each keeps the exporter's field description while its text is edited; an empty one is dropped on save.
     var notes: [CredentialNote]
+    /// The cards, addresses and other items in order. A new item has an empty value for each member so it can be typed; empty values,
+    /// and items left with nothing, are dropped on save.
+    var secureItems: [SecureItem]
     private(set) var totp: TOTPGenerator?
     private(set) var passkeys: [WebsitePasskey]
     let revision: UInt64
@@ -22,6 +25,7 @@ nonisolated struct CredentialDraft: Sendable {
     private let base: CredentialAccount?
     private let originalWebsites: String
     private let originalExtraOrigins: String
+    private let originalSecureItems: [SecureItem]
 
     init(editing account: CredentialAccount?, revision: UInt64) {
         let loginOrigins = Set(account?.loginURLs.compactMap { CredentialAccount.origin(for: $0) } ?? [])
@@ -33,6 +37,8 @@ nonisolated struct CredentialDraft: Sendable {
         password = account?.password
         totp = account?.totp
         notes = account?.notes ?? []
+        secureItems = account?.secureItems ?? []
+        originalSecureItems = account?.secureItems ?? []
         passkeys = account?.passkeys ?? []
         usernameIsConcealed = account?.basicAuthenticationMetadata?.username?.fieldType == .concealedString
         reportedCreatedAt = account.flatMap { try? CredentialContent.exchangeMetadata($0) }?.created
@@ -93,6 +99,32 @@ nonisolated struct CredentialDraft: Sendable {
         notes.remove(at: index)
     }
 
+    mutating func addSecureItem(_ kind: SecureItemKind) {
+        guard secureItems.count < SecureItem.itemLimit else { return }
+        secureItems.append(.empty(kind))
+    }
+
+    mutating func removeSecureItem(at index: Int) {
+        guard secureItems.indices.contains(index) else { return }
+        secureItems.remove(at: index)
+    }
+
+    /// Adds an empty value of `member` to the item at `index`, when the item has none: a member the exporter left out.
+    mutating func addMember(_ member: SecureItemMember, toItem index: Int) {
+        guard secureItems.indices.contains(index), !member.isPlain, !secureItems[index].fields.contains(where: { $0.name == member.name })
+        else { return }
+        secureItems[index].fields.append(
+            SecureItemField(name: member.name, value: "", field: CredentialEditableFieldMetadata(id: nil, label: nil, fieldType: member.type))
+        )
+    }
+
+    /// Adds an empty custom field to the custom-fields item at `index`.
+    mutating func addCustomField(toItem index: Int) {
+        guard secureItems.indices.contains(index), secureItems[index].kind == .customFields,
+              secureItems[index].fields.count < SecureItem.fieldLimit else { return }
+        secureItems[index].fields.append(SecureItemField(name: "", value: "", field: .init(id: nil, label: "", fieldType: .string)))
+    }
+
     /// Leaves the current generator untouched when `input` is not a valid secret or otpauth URI.
     mutating func setUpTOTP(
         _ input: String,
@@ -121,7 +153,7 @@ nonisolated struct CredentialDraft: Sendable {
         }
         let blank = { (text: String) in text.allSatisfy(\.isWhitespace) }
         return !(username.isEmpty && displayName == nil && password == nil && blank(websites) && blank(extraOrigins)
-            && totp == nil && passkeys.isEmpty && notes.allSatisfy { $0.text.isEmpty })
+            && totp == nil && passkeys.isEmpty && notes.allSatisfy { $0.text.isEmpty } && Self.keptItems(secureItems).isEmpty)
     }
 
     func account() throws -> CredentialAccount {
@@ -156,8 +188,25 @@ nonisolated struct CredentialDraft: Sendable {
         result.totp = totp
         let kept = notes.filter { !$0.text.isEmpty }
         result.notes = kept.isEmpty ? nil : kept
+        // Untouched items stay exactly as stored, so an imported item is never rewritten by a save that changed something else.
+        if base == nil || secureItems != originalSecureItems {
+            let items = Self.keptItems(secureItems)
+            result.secureItems = items.isEmpty ? nil : items
+        }
         try result.validate()
         return result
+    }
+
+    /// The items as they are saved: no empty value, no empty custom-fields title, and no item left with nothing.
+    private static func keptItems(_ items: [SecureItem]) -> [SecureItem] {
+        items.compactMap { item in
+            var kept = item
+            kept.fields.removeAll { $0.value.isEmpty }
+            if kept.label?.isEmpty == true {
+                kept.label = nil
+            }
+            return kept.fields.isEmpty && kept.label == nil ? nil : kept
+        }
     }
 
     private static func parseSites(websites: String, extraOrigins: String) throws -> (origins: [String], loginURLs: [URL]) {
@@ -225,6 +274,8 @@ extension CredentialDraft {
             else { return }
             let note = held[index]
             notes.append(note)
+        case .secureItems:
+            secureItems = version.secureItems ?? []
         }
     }
 

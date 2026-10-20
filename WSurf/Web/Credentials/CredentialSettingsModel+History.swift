@@ -53,11 +53,14 @@ extension CredentialSettingsModel {
         try? update(live.epoch) { $0.history?.selected = id }
     }
 
-    /// Unmasks the passwords and notes History shows. The current unlock is the only authority, as for every other Show: the vault
-    /// is read under it first, and no prompt is added.
+    /// Unmasks the passwords, notes and items History shows. The current unlock is the authority, as for every other Show: the vault
+    /// is read under it first. An earlier version that held a card or an identity document also asks for Touch ID.
     func revealHistorySecrets() async throws {
-        guard let live, live.history != nil else { throw CredentialVaultError.invalidData }
+        guard let live, let history = live.history else { throw CredentialVaultError.invalidData }
         let (epoch, _) = try await authorizedSnapshot(epoch: live.epoch)
+        if let sensitive = history.versions.first(where: { $0.account.secureItems?.contains { $0.kind.isSensitive } == true }) {
+            try await verifySensitiveItems(of: sensitive.account)
+        }
         try update(epoch) { $0.history?.revealsSecrets = true }
     }
 

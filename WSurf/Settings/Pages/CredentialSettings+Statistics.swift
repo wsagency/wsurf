@@ -49,6 +49,7 @@ struct CredentialStatisticsSection: View {
             Line(title: "Passkeys", value: statistics?.passkeys, caption: passkeyCaption),
             Line(title: "Verification codes", value: statistics?.codes),
             Line(title: "Notes", value: statistics?.notes),
+            Line(title: "Cards and other items", value: statistics?.items),
             Line(title: "Without a website", value: statistics?.withoutWebsite),
             Line(title: "In Trash", value: model.trashTotal),
             Line(title: "Earlier versions", value: model.earlierVersionCount),

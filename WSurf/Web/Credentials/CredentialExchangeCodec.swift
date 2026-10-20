@@ -486,7 +486,8 @@ nonisolated enum CredentialExchangeCodec {
             fields.removeSubrange(SecureItem.fieldLimit...)
             omit(.extraFields, &state)
         }
-        var item = SecureItem(kind: source.kind, id: source.id, label: source.label, fields: fields)
+        // An empty title is no title, so an untouched item reads the same in the editor as it was imported.
+        var item = SecureItem(kind: source.kind, id: source.id, label: source.label.flatMap { $0.isEmpty ? nil : $0 }, fields: fields)
         if (item.id?.count ?? 0) > 1_024 || (item.label?.utf8.count ?? 0) > 2_048 {
             item.id = nil
             item.label = nil

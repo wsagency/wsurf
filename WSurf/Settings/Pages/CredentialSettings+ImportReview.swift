@@ -152,6 +152,7 @@ extension CredentialImportReview.Candidate {
         if summary.hasNotes {
             parts.append(String(localized: "Notes"))
         }
+        parts += summary.itemTitles
         return parts.joined(separator: " · ")
     }
 
