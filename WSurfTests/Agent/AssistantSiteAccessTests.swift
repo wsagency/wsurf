@@ -123,6 +123,23 @@ struct TabAssistantAccessCenterTests {
 
         center.pageChanged(url: URL(string: "https://example.org/"))
         #expect(center.sessionPolicy == nil)
+        #expect(center.effectivePolicy == .ask)
+    }
+
+    /// A visit's answer never reaches another website, including another name under a private-section suffix.
+    @Test func aPrivateAnswerStaysOnItsOwnHostedSite() async {
+        let (center, _) = makeCenter(privately: true)
+        center.pageChanged(url: URL(string: "https://alice.github.io/")!)
+        await withDecision({ _, _ in .control }) {
+            #expect(await center.authorize(.control))
+        }
+
+        center.pageChanged(url: URL(string: "https://docs.alice.github.io/")!)
+        #expect(center.effectivePolicy == .control)
+        center.pageChanged(url: URL(string: "https://bob.github.io/")!)
+        #expect(center.site == "https://bob.github.io")
+        #expect(center.sessionPolicy == nil)
+        #expect(center.effectivePolicy == .ask)
     }
 
     @Test func aSubdomainUsesTheChoiceSavedForItsSite() async {
