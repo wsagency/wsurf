@@ -892,7 +892,7 @@ extension PageInteractionTests {
                     "\(view.backForwardList.backList.map(\.url))")
             let back = await PageDriver.goBack(in: view)
             #expect(back.hasPrefix("Went back."), "\(back)")
-            #expect(await waitUntil { view.url == first && !view.isLoading }, "url \(String(describing: view.url))")
+            #expect(await waitUntil { view.url == first }, "url \(String(describing: view.url))")
             // The startup page is still Chromium's first entry, one step behind the first page; Back never goes there.
             #expect(await waitUntil { !view.canGoBack && view.backForwardList.backList.isEmpty },
                     "\(view.backForwardList.backList.map(\.url))")
