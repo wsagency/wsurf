@@ -39,6 +39,21 @@ struct SitePermissionsStoreTests {
         #expect(restored.policy(for: "https://example.com", .camera) == .allow)
     }
 
+    @Test func googleSignInAlwaysOpensInWebKitAndOtherChoicesStay() async throws {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SiteEngine-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let store = SitePermissions(storageURL: file)
+        store.setEngine(.chromium, for: "https://accounts.google.com")
+        store.setEngine(.chromium, for: "https://mail.google.com")
+        await store.waitForPendingSave()
+
+        let reader = SitePermissions(storageURL: file)
+        #expect(reader.engine(for: "https://accounts.google.com") == .webKit)
+        #expect(reader.engine(for: "HTTPS://Accounts.Google.COM.:443") == .webKit)
+        #expect(reader.engine(for: "https://mail.google.com") == .chromium)
+    }
+
     @Test func anUnknownSiteGetsAsked() {
         let store = temporaryStore()
         #expect(store.policy(for: "https://example.com", .camera) == .ask)

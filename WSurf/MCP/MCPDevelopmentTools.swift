@@ -457,7 +457,12 @@ extension MCPBrowserSession {
         }
         diagnostics.scrub = { [secrets] in secrets.scrub($0) }
         owner.diagnostics = diagnostics
-        await diagnostics.start()
+        guard await diagnostics.start() else {
+            diagnostics.stop()
+            owner.diagnostics = nil
+            releaseIfIdle(owner, tab: tab)
+            return MCPDevelopmentTools.result(.pageGone, tabID: tab.id, message: "The page's engine did not start the capture. Try again after it loads.")
+        }
         guard tab.isCurrent(owner) else {
             return MCPDevelopmentTools.result(.stale, tabID: tab.id, message: "The development lease ended while capture started.")
         }

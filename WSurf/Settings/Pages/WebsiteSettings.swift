@@ -365,7 +365,9 @@ private struct SiteDetailPage: View {
         SettingsCard {
             DetailRow(
                 title: "Browser engine",
-                caption: "Changing this reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL."
+                caption: SitePermissions.webKitOnlyOrigins.contains(origin)
+                    ? "Google blocks sign-in from embedded Chromium, so this page always opens in WebKit." as LocalizedStringResource
+                    : "Changing this reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL."
             ) {
                 SettingsMenu(
                     options: BrowserEngine.allCases.map {
@@ -378,6 +380,7 @@ private struct SiteDetailPage: View {
                         }
                     )
                 )
+                .disabled(SitePermissions.webKitOnlyOrigins.contains(origin))
             }
             .settingsAnchor("websites.engine")
             RowSeparator()

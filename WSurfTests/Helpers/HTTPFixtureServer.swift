@@ -7,7 +7,8 @@ import Network
 
 /// A loopback HTTP server for WebKit integration tests. Routes are fixed so
 /// tests cannot depend on the public network or a live service.
-/// Network callbacks stay on `queue`; all state read by them is immutable.
+/// Network callbacks stay on `queue`; all state read by them is immutable,
+/// except the request heads, which only `queue` touches.
 nonisolated final class HTTPFixtureServer: @unchecked Sendable {
     struct Response: Sendable {
         let status: String
@@ -82,6 +83,7 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
     private let routes: [String: Response]
     private let waitsForBody: Bool
     private let respond: (@Sendable (Request) -> Response?)?
+    private var requestHeads: [String: String] = [:]
 
     private init(
         listener: NWListener,
@@ -143,6 +145,11 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
         return url
     }
 
+    /// The request line and header fields of the latest request for `path`.
+    func lastRequestHead(for path: String) -> String? {
+        queue.sync { requestHeads[path] }
+    }
+
     private func accept(_ connection: NWConnection) {
         connection.start(queue: queue)
         receiveRequest(from: connection, accumulated: Data())
@@ -182,6 +189,8 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
         let parts = (lines.first ?? "").split(separator: " ")
         let target = parts.count > 1 ? String(parts[1]) : "/"
         let path = target.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
+        let head = request.range(of: Data("\r\n\r\n".utf8)).map { request[..<$0.lowerBound] } ?? request
+        requestHeads[path] = String(decoding: head, as: UTF8.self)
         let headers = lines.dropFirst().reduce(into: [String: String]()) { headers, line in
             guard let colon = line.firstIndex(of: ":") else { return }
             headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)

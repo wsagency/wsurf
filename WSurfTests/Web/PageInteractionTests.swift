@@ -865,11 +865,51 @@ extension PageInteractionTests {
         }
     }
 
+    /// A page can add a history entry (here `pushState`) before the startup reset lands, for instance while a refused reset
+    /// waits for its retry. The reset keeps only the committed entry, so it would then drop the page the entry was pushed
+    /// from. The retry finds the grown history and leaves it alone: Back reaches that page, and still never the startup page.
+    @Test func aStartupResetNeverDropsAnEntryAddedBeforeItLands() async throws {
+        let gate = StartupResetGate()
+        defer { gate.open() }
+        var attempts = 0
+        try await freshChromiumTab(resetCommand: { chromium in
+            attempts += 1
+            if attempts == 1 {
+                await gate.wait()
+                throw ChromiumError.protocolFailure("Not attached to an active page")
+            }
+            _ = try await chromium.command("Page.resetNavigationHistory")
+        }) { view, first, _ in
+            let chromium = try #require(view.chromium)
+            try #require(await waitUntil { gate.reached })
+            _ = try await view.evaluateJavaScript("history.pushState({}, '', '/pushed'); 0")
+            try #require(await waitUntil { view.url?.path == "/pushed" })
+            #expect(view.canGoBack, "Back reaches the page the entry was pushed from while the reset is pending")
+            gate.open()
+            try #require(await waitUntil { chromium.startupEntry == .kept })
+            #expect(attempts == 1, "the retry must not reset a history that grew")
+            #expect(await waitUntil { view.backForwardList.backList.map(\.url) == [first] },
+                    "\(view.backForwardList.backList.map(\.url))")
+            let back = await PageDriver.goBack(in: view)
+            #expect(back.hasPrefix("Went back."), "\(back)")
+            #expect(await waitUntil { view.url == first }, "url \(String(describing: view.url))")
+            // The startup page is still Chromium's first entry, one step behind the first page; Back never goes there.
+            #expect(await waitUntil { !view.canGoBack && view.backForwardList.backList.isEmpty },
+                    "\(view.backForwardList.backList.map(\.url))")
+            #expect(await PageDriver.goBack(in: view) == "There is no page to go back to.")
+        }
+    }
+
     @Test(arguments: BrowserEngine.allCases)
     func goBackHandlesSameDocumentHistory(engine: BrowserEngine) async throws {
         let server = try await HTTPFixtureServer.start(routes: ["/": .html("<h1>Same doc</h1>")])
         defer { withExtendedLifetime(server) {} }
         try await withPage(engine: engine, url: server.url()) { view in
+            if let chromium = view.chromium {
+                // This test is about same-document history; the race with the startup reset has its own test
+                // (`aStartupResetNeverDropsAnEntryAddedBeforeItLands`).
+                try #require(await waitUntil { chromium.startupEntry == .dropped || chromium.startupEntry == .kept })
+            }
             _ = try await view.evaluateJavaScript("history.pushState({}, '', '/pushed'); 0")
             try #require(await waitUntil { view.url?.path == "/pushed" })
             let back = await PageDriver.goBack(in: view)

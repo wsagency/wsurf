@@ -143,6 +143,11 @@ extension BrowserModel {
         guard let scheme = URL(string: canonical)?.scheme?.lowercased(),
               scheme == "http" || scheme == "https"
         else { return false }
+        guard !SitePermissions.webKitOnlyOrigins.contains(canonical) else {
+            // Only WebKit is offered there; choosing it clears a Chromium record kept from before.
+            sitePermissions.setEngine(.webKit, for: canonical)
+            return engine == .webKit
+        }
         guard sitePermissions.engine(for: canonical) != engine else { return true }
 
         let affected = tabs.filter { siteOrigin(for: $0) == canonical && $0.isMaterialised }
