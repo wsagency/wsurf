@@ -19,7 +19,7 @@ struct NavigationPolicyTests {
         var stubbedButton = 0
         var stubbedDownload = false
         /// What `_isUserInitiated` answers: whether a person's click started the navigation (a page's own synthetic click is not).
-        var stubbedUserInitiated = true
+        nonisolated(unsafe) var stubbedUserInitiated = true
 
         override var request: URLRequest {
             stubbedRequest
@@ -45,7 +45,7 @@ struct NavigationPolicyTests {
             nil
         }
 
-        override func value(forKey key: String) -> Any? {
+        override nonisolated func value(forKey key: String) -> Any? {
             key == "_isUserInitiated" ? stubbedUserInitiated : super.value(forKey: key)
         }
     }
