@@ -222,6 +222,54 @@ struct PageTranslationScriptTests {
         }
     }
 
+    // MARK: Tabs
+
+    private static let german = document("""
+    <p>Die Fähre legt jeden Morgen um sieben Uhr am alten Hafen ab und erreicht die Insel nach einer knappen Stunde.</p>
+    <p>Bei starkem Wind fällt die erste Überfahrt aus, und die Reederei informiert die Fahrgäste am Schalter.</p>
+    """)
+
+    /// A finished load in a regular window reads the page's language, so the address bar can offer a translation.
+    @Test(arguments: BrowserEngine.allCases)
+    func aRegularTabDetectsThePageLanguageAfterALoad(engine: BrowserEngine) async throws {
+        try await withTab(engine: engine, privately: false, html: Self.german) { tab in
+            #expect(await waitUntil { tab.translation.hasDetected }, "engine \(engine)")
+            #expect(tab.translation.detectedLanguage.map(TranslationLanguage.key) == "de")
+        }
+    }
+
+    /// A private window's page is not read until the person asks for a translation; asking reads it.
+    @Test(arguments: BrowserEngine.allCases)
+    func aPrivateTabIsReadOnlyWhenATranslationIsAskedFor(engine: BrowserEngine) async throws {
+        try await withTab(engine: engine, privately: true, html: Self.german) { tab in
+            #expect(tab.canTranslate)
+            #expect(!tab.offerTranslation(), "engine \(engine)")
+            #expect(!tab.translation.hasDetected)
+            #expect(tab.translation.targets.isEmpty)
+
+            // Without installed language packs this cannot start, but it must have read the page to know.
+            _ = await tab.translate(to: Locale.Language(identifier: "en"), downloading: nil)
+
+            #expect(tab.translation.detectedLanguage.map(TranslationLanguage.key) == "de", "engine \(engine)")
+        }
+    }
+
+    @Test(arguments: BrowserEngine.allCases)
+    func closingATabEndsItsTranslation(engine: BrowserEngine) async throws {
+        try await withTab(engine: engine, privately: true, html: Self.german) { tab in
+            let request = tab.translation.begin(to: Locale.Language(identifier: "en"))
+            tab.translation.translate(request, in: tab.page) { segments in
+                Dictionary(uniqueKeysWithValues: segments.map { ($0.node, "Translated") })
+            }
+            #expect(await waitUntil { tab.translation.phase == .translated }, "engine \(engine)")
+
+            tab.detach()
+
+            #expect(tab.translation.phase == .original)
+            #expect(!tab.translation.isCurrent(request))
+        }
+    }
+
     // MARK: Pages
 
     private func withPage(engine: BrowserEngine, html: String, body: (BrowserPage) async throws -> Void) async throws {
@@ -262,5 +310,44 @@ struct PageTranslationScriptTests {
         }
         await page.close()
         await context.endPrivateSession()
+    }
+
+    /// A tab of either engine, in a regular or a private window, showing `html`. The regular tab uses the test process's own
+    /// profile, which `AppDatabase.supportDirectory` keeps apart from an installed copy.
+    private func withTab(engine: BrowserEngine, privately: Bool, html: String, body: (BrowserTab) async throws -> Void) async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/news": .html(html)])
+        defer { withExtendedLifetime(server) {} }
+        let url = try server.url("/news")
+        if engine == .chromium {
+            try ChromiumRuntime.shared.ensureInitialized()
+        }
+        let context = privately ? BrowserProfileContext(profile: .privateBrowsing()) : nil
+        let tab = BrowserTab(opensBlank: false, privately: privately, context: context)
+        tab.engineOverride = engine
+        tab.load(url)
+        let page = tab.page
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = page
+        window.orderBack(nil)
+        defer {
+            window.contentView = nil
+            window.close()
+        }
+        do {
+            #expect(page.engine == engine)
+            try #require(await waitUntil { page.url == url && !page.isLoading && !tab.isLoading })
+            try await body(tab)
+        } catch {
+            tab.detach()
+            await page.close()
+            await context?.endPrivateSession()
+            throw error
+        }
+        tab.detach()
+        await page.close()
+        await context?.endPrivateSession()
     }
 }

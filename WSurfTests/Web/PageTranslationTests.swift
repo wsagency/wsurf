@@ -168,4 +168,39 @@ struct PageTranslationTests {
         #expect(translation.phase == .original)
         #expect(translation.target == nil)
     }
+
+    // MARK: - Settings
+
+    @Test func translationLanguagesBelongToTheProfileAndAPrivateWindowKeepsItsOwnInMemory() throws {
+        let names = (0..<3).map { "PageTranslationTests.\($0).\(UUID().uuidString)" }
+        let suites = try names.map { try #require(UserDefaults(suiteName: $0)) }
+        defer {
+            for name in names {
+                UserDefaults.standard.removePersistentDomain(forName: name)
+            }
+        }
+        let (app, work, personal) = (suites[0], suites[1], suites[2])
+        let japanese = Locale.Language(identifier: "ja")
+        let workSettings = BrowserSettings(defaults: app, sessionDefaults: work)
+
+        workSettings.translationTarget = Locale.Language(identifier: "de-AT")
+        workSettings.setAlwaysTranslates(true, japanese)
+
+        let reopened = BrowserSettings(defaults: app, sessionDefaults: work)
+        #expect(reopened.translationTargetID == "de")
+        #expect(reopened.alwaysTranslates(Locale.Language(identifier: "ja-JP")))
+        let other = BrowserSettings(defaults: app, sessionDefaults: personal)
+        #expect(other.translationTargetID.isEmpty)
+        #expect(!other.alwaysTranslates(japanese))
+
+        let privateSettings = BrowserSettings(defaults: app, sessionDefaults: InMemoryUserDefaults(inheriting: work))
+        #expect(privateSettings.alwaysTranslates(japanese))
+        privateSettings.setAlwaysTranslates(true, Locale.Language(identifier: "ko"))
+        #expect(!BrowserSettings(defaults: app, sessionDefaults: work).alwaysTranslates(Locale.Language(identifier: "ko")))
+
+        reopened.resetToDefaults()
+        let reset = BrowserSettings(defaults: app, sessionDefaults: work)
+        #expect(reset.translationTargetID.isEmpty)
+        #expect(!reset.alwaysTranslates(japanese))
+    }
 }

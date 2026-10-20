@@ -59,6 +59,7 @@ extension BrowserTab {
             provisionalNavigation = nil
         }
         noteDocumentChanged()
+        translation.documentChanged()
         noteHoveredLink(nil)
         clearPageActivity()
         if isShowingRealPage, !hasPresentedContent {
@@ -88,6 +89,7 @@ extension BrowserTab {
         releasePageColorHold()
         refreshPageColor(from: page)
         restoreScrollOffsetIfNeeded()
+        offerTranslation()
         onNavigationFinished?(wasRestore || isShowingError)
     }
 
@@ -203,6 +205,7 @@ extension BrowserTab {
 
     func adopt(_ view: BrowserPage) {
         precondition(view.context === context)
+        translation.documentChanged()
         liveView = view
         view.dialogs = dialogs
         dialogs.leaseHolder = { [weak self] in self?.dialogLeaseHolder }
@@ -438,6 +441,7 @@ extension BrowserTab {
         refreshFavicon()
         measureBandUnderBar()
         invalidateSessionState()
+        translationPageMoved()
         onSameDocumentNavigation?()
     }
     func contentProcessDidTerminate() {
