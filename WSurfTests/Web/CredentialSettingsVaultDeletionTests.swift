@@ -168,7 +168,8 @@ struct CredentialSettingsVaultDeletionTests {
             #expect(model.error == nil)
             #expect(model.pendingVaultDeletion == nil && !model.showsVaultDeletionSheet, "no sheet")
             #expect(passkeys.assertions.count == asserted, "no passkey prompt")
-            #expect(try VaultManagerFixture.rows(of: vaults[1].vaultID, in: profile).isEmpty)
+            let remaining = try VaultManagerFixture.rows(of: vaults[1].vaultID, in: profile)
+            #expect(remaining.isEmpty)
             #expect(model.vaults.map(\.vaultID) == [vaults[0].vaultID] && model.selectedVaultID == vaults[0].vaultID)
             #expect(model.deletedVault == DeletedVault(ordinal: 2, leavesUnlockPasskey: true))
         }
