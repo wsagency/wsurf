@@ -184,11 +184,19 @@ final class DevelopmentDiagnostics {
 
     // MARK: Lifecycle
 
-    func start() async {
-        guard let page else { return }
+    /// False when Chromium did not start delivering console and exception events; the capture is then over.
+    @discardableResult
+    func start() async -> Bool {
+        guard let page else { return false }
         if let chromium = page.chromium {
             mapper.reset()
-            chromium.devTools.diagnosticsSink = { [weak self] method, params in self?.receive(method: method, params: params) }
+            do {
+                try await chromium.devTools.startDiagnostics(owner: self) { [weak self] method, params in
+                    self?.receive(method: method, params: params)
+                }
+            } catch {
+                return false
+            }
         } else {
             // Documents that start after this point are hooked before their first script. The current one, already running,
             // is hooked by the follow-up below.
@@ -197,6 +205,7 @@ final class DevelopmentDiagnostics {
             startScript = hookSource
             await follow()?.value
         }
+        return true
     }
 
     func stop() {
@@ -206,7 +215,7 @@ final class DevelopmentDiagnostics {
         // Headers and bodies are not kept past the capture, whoever still holds the buffer.
         buffer.reset()
         guard let page else { return }
-        page.chromium?.devTools.diagnosticsSink = nil
+        page.chromium?.devTools.stopDiagnostics(owner: self)
         guard let webKit = page.webKit else { return }
         // No later document gets the script; documents that already ran it are turned off through the DOM below.
         if let startScript {

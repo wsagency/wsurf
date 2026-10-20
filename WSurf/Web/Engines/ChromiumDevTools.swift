@@ -15,15 +15,9 @@ final class ChromiumDevTools {
     private var pending: [Int: PendingCommand] = [:]
     private var timeouts: [Int: Task<Void, Never>] = [:]
     var closed = false
-    /// MCP development diagnostics. Nil unless a lease is capturing. Console and exception events need the Runtime domain,
-    /// which pages can detect, so it is enabled only while a capture runs.
-    var diagnosticsSink: ((String, [String: Any]) -> Void)? {
-        didSet {
-            guard (oldValue == nil) != (diagnosticsSink == nil) else { return }
-            let method = diagnosticsSink == nil ? "Runtime.disable" : "Runtime.enable"
-            Task { [weak self] in _ = try? await self?.command(method) }
-        }
-    }
+    /// MCP development diagnostics. Nil unless a lease is capturing.
+    private(set) var diagnosticsSink: ((String, [String: Any]) -> Void)?
+    private var diagnosticsOwner: ObjectIdentifier?
     /// Sees every command as it is sent, for tests.
     var commandObserver: ((String, [String: Any]) -> Void)?
     private var prepared = false
@@ -56,6 +50,8 @@ final class ChromiumDevTools {
         var fromRuntimeEvent = false
         var markerSet = false
         var bound = false
+        /// A subframe's main world, addressed by its `document` object (see `context(for:world:)`).
+        var objectID: String?
     }
 
     @MainActor
@@ -206,6 +202,30 @@ final class ChromiumDevTools {
         }
     }
 
+    /// Starts `owner`'s capture. Console and exception events need the Runtime domain, which pages can detect, so it is on
+    /// only while a capture runs. A capture whose domain did not start ends here and throws.
+    func startDiagnostics(owner: AnyObject, sink: @escaping (String, [String: Any]) -> Void) async throws {
+        diagnosticsOwner = ObjectIdentifier(owner)
+        diagnosticsSink = sink
+        do {
+            _ = try await command("Runtime.enable")
+        } catch {
+            stopDiagnostics(owner: owner)
+            throw error
+        }
+    }
+
+    /// Ends `owner`'s capture; another capture started since keeps its sink and the domain.
+    func stopDiagnostics(owner: AnyObject) {
+        guard diagnosticsOwner == ObjectIdentifier(owner) else { return }
+        diagnosticsOwner = nil
+        diagnosticsSink = nil
+        Task { [weak self] in
+            guard let self, diagnosticsSink == nil else { return }
+            _ = try? await command("Runtime.disable")
+        }
+    }
+
     func command(
         _ method: String,
         params baseParams: [String: Any] = [:],
@@ -228,7 +248,7 @@ final class ChromiumDevTools {
                     return
                 }
                 do {
-                    if method == "Runtime.evaluate" {
+                    if method == "Runtime.evaluate" || method == "Runtime.callFunctionOn" {
                         try Task.checkCancellation()
                         guard PageAutomationGuard.allowsExecution else { throw ChromiumError.staleFrame }
                     }
@@ -484,16 +504,19 @@ final class ChromiumDevTools {
         guard PageAutomationGuard.allowsExecution, canDispatch(to: target, snapshot) else {
             throw ChromiumError.staleFrame
         }
-        let response = try await command("Runtime.evaluate", dispatchCheck: { [self] in
+        let response = try await command(snapshot.objectID == nil ? "Runtime.evaluate" : "Runtime.callFunctionOn", dispatchCheck: { [self] in
             guard canDispatch(to: target, snapshot) else { throw ChromiumError.staleFrame }
             try dispatchCheck?()
         }, prepareParameters: { [self] in
             let source = try expression()
-            return address(snapshot).merging([
-                "expression": documentGuard(snapshot) + source,
-                "returnByValue": true,
-                "awaitPromise": true,
-                "userGesture": userGesture,
+            let options: [String: Any] = ["returnByValue": true, "awaitPromise": true, "userGesture": userGesture]
+            guard let objectID = snapshot.objectID else {
+                return address(snapshot).merging(options) { $1 }.merging(["expression": documentGuard(snapshot) + source]) { $1 }
+            }
+            // Runs in the object's world. Only an expression (as every `callAsync` body becomes) can be returned this way.
+            return options.merging([
+                "objectId": objectID,
+                "functionDeclaration": "function() {\n" + documentGuard(snapshot) + "return (\n" + source + "\n);\n}",
             ]) { $1 }
         })
         let value = try runtimeValue(response)
@@ -674,18 +697,24 @@ final class ChromiumDevTools {
     /// relay there dispatches a DOM event that the page bridge world forwards, attributed to the page-world handlers.
     private func installBinding(worldName: String) async throws {
         guard !bindingWorlds.contains(worldName), needsBinding(worldName) else { return }
-        if worldName.isEmpty {
-            try await installBinding(worldName: Self.pageBridgeWorld)
-            _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: [
-                "source": pageBridgeSource, "worldName": Self.pageBridgeWorld,
-            ])
-            _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: ["source": pageRelaySource])
-        } else {
-            _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: [
-                "source": Self.bindingSource, "worldName": worldName,
-            ])
-        }
+        // Claimed before the first await, so a concurrent call cannot register the same scripts twice.
         bindingWorlds.insert(worldName)
+        do {
+            if worldName.isEmpty {
+                try await installBinding(worldName: Self.pageBridgeWorld)
+                _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: [
+                    "source": pageBridgeSource, "worldName": Self.pageBridgeWorld,
+                ])
+                _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: ["source": pageRelaySource])
+            } else {
+                _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: [
+                    "source": Self.bindingSource, "worldName": worldName,
+                ])
+            }
+        } catch {
+            bindingWorlds.remove(worldName)
+            throw error
+        }
     }
 
     /// A page-world script alone (such as one that only marshals DOM events) gets no relay; a page-world handler does.
@@ -724,6 +753,8 @@ final class ChromiumDevTools {
     private var pageBridgeSource: String {
         """
         (() => {
+          if (Object.prototype.hasOwnProperty.call(globalThis, '__wsurfPageBridge')) return;
+          Object.defineProperty(globalThis, '__wsurfPageBridge', {value: true});
           const send = globalThis.__wsurfSend;
           document.addEventListener(\(jsonLiteral(pageMessageEvent)), event => {
             if (typeof event.detail !== 'string' || event.detail.length > \(maxBindingPayload)) return;

@@ -145,8 +145,22 @@ extension ChromiumDevTools {
             }
         }
         if !parsed.documentID.isEmpty {
-            bindDocument(frameID: parsed.id, documentID: parsed.documentID)
+            // The page's own commit work (the startup history reset) goes first; binding sends renderer round trips.
             page?.didNavigate(frame: parsed.browserFrame, restoredFromCache: restoredFromCache)
+            bindDocument(frameID: parsed.id, documentID: parsed.documentID)
+            if restoredFromCache, parsed.isMainFrame {
+                bindRestoredSubframes(of: parsed.id)
+            }
+        }
+    }
+
+    /// A page restored from the cache reports only its main frame; its frames come back with it and are bound from the tree.
+    private func bindRestoredSubframes(of mainFrameID: String) {
+        Task { [weak self] in
+            guard let self, (try? await frames()) != nil, !closed else { return }
+            for frame in framesByID.values where frame.parentID != nil && !frame.documentID.isEmpty {
+                bindDocument(frameID: frame.id, documentID: frame.documentID)
+            }
         }
     }
 
@@ -216,13 +230,40 @@ extension ChromiumDevTools {
         if let existing = contextsByUniqueID.values.first(where: {
             $0.frameID == frameID && $0.documentID == frame.documentID && $0.worldName.isEmpty
         }) { return existing }
-        // Without the Runtime domain the only main world Chromium can address is the main frame's default context.
-        guard state.isMainFrame else { throw ChromiumError.unavailable("Chromium page context is not ready.") }
+        // Without the Runtime domain the main frame's main world is Chromium's default context. A subframe's main world is
+        // reached through an object of it: unlike a context ID, an object ID names its renderer process, so a call made
+        // with it never reaches another document.
         let uniqueID = "\(frameID)/\(frame.documentID)/page"
-        let context = ContextState(executionID: 0, uniqueID: uniqueID, frameID: frameID, worldName: "",
+        var context = ContextState(executionID: 0, uniqueID: uniqueID, frameID: frameID, worldName: "",
                                    documentID: frame.documentID)
+        if !state.isMainFrame {
+            context.objectID = try await mainWorldDocument(frameID: frameID, documentID: frame.documentID)
+        }
         contextsByUniqueID[uniqueID] = context
         return context
+    }
+
+    /// The subframe's `document` as an object of its main world: found from WSurf's isolated world (whose context ID is
+    /// guarded by origin), as the node it names, resolved in the frame's main world.
+    private func mainWorldDocument(frameID: String, documentID: String) async throws -> String {
+        let isolated = try await isolatedContext(frameID: frameID, documentID: documentID, worldName: Self.pageBridgeWorld)
+        let found = try await command("Runtime.evaluate", params: address(isolated).merging([
+            "expression": documentGuard(isolated, marker: false) + "document", "returnByValue": false,
+        ]) { $1 })
+        _ = try runtimeValue(found)
+        guard let isolatedDocument = (found["result"] as? [String: Any])?["objectId"] as? String else {
+            throw ChromiumError.unavailable("Chromium page context is not ready.")
+        }
+        let node = try await command("DOM.describeNode", params: ["objectId": isolatedDocument])
+        guard let backendNodeID = (node["node"] as? [String: Any])?["backendNodeId"] as? Int else {
+            throw ChromiumError.unavailable("Chromium page context is not ready.")
+        }
+        let resolved = try await command("DOM.resolveNode", params: ["backendNodeId": backendNodeID])
+        guard let objectID = (resolved["object"] as? [String: Any])?["objectId"] as? String else {
+            throw ChromiumError.unavailable("Chromium page context is not ready.")
+        }
+        guard framesByID[frameID]?.documentID == documentID else { throw ChromiumError.staleFrame }
+        return objectID
     }
 
     /// The context of `worldName` in the frame's `documentID`, recorded before a binding world's context is bound, so
@@ -257,9 +298,14 @@ extension ChromiumDevTools {
             }
         }
         guard bindingWorlds.contains(worldName), !context.bound else { return context }
+        // A context ID reused by another renderer after a commit not yet reported would get the binding without the shim:
+        // messages from it are refused, but its global would show. The check narrows that to the commit itself.
+        let candidate = context
         _ = try await command("Runtime.addBinding", params: [
             "name": Self.nativeBinding, "executionContextId": context.executionID,
-        ])
+        ], dispatchCheck: { [self] in
+            guard contextIsLive(candidate) else { throw ChromiumError.staleFrame }
+        })
         // A context without the shim (its document predates the world's registration) answers false and stays silent. The
         // guard keeps a context of another origin that reuses the ID from ever attaching.
         _ = try runtimeValue(try await command("Runtime.evaluate", params: address(context).merging([
