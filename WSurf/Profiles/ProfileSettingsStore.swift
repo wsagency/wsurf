@@ -79,7 +79,11 @@ nonisolated final class InMemoryUserDefaults: UserDefaults {
 enum ProfileSettingsStore {
 
     static func suiteName(for id: UUID) -> String {
-        "io.wsagency.wsurf.profile.\(id.uuidString)"
+        let name = "io.wsagency.wsurf.profile.\(id.uuidString)"
+        // CFPreferences reads an absolute-path domain as that plist's location, so a test run keeps every profile domain under
+        // its per-process directory instead of piling `io.wsagency.wsurf.profile.<UUID>.plist` files into ~/Library/Preferences.
+        guard AppDatabase.isRunningTests else { return name }
+        return AppDatabase.supportDirectory.appending(path: "Preferences/\(name)").path
     }
 
     static func defaults(for profile: Profile) -> UserDefaults {
@@ -101,5 +105,9 @@ enum ProfileSettingsStore {
     static func forget(_ id: UUID) {
         guard id != Profile.privateID else { return }
         UserDefaults.standard.removePersistentDomain(forName: suiteName(for: id))
+        // Emptying a domain leaves its plist behind; a test run removes the file too.
+        if AppDatabase.isRunningTests {
+            try? FileManager.default.removeItem(atPath: suiteName(for: id) + ".plist")
+        }
     }
 }
