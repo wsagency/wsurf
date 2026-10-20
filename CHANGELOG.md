@@ -7,6 +7,11 @@ release notes will be added above this provenance record.
 
 ## WSurf
 
+- Pages see far less of WSurf: its own page helpers run out of the page’s reach in WebKit and Chromium, and WebKit keeps each website’s pop-up and auto-play answers itself, so built-ins such as `window.open` stay the browser’s own. What remains in a page is the passkey, notification and location support.
+- Auto-play “Muted” now works like Safari’s “Stop Media with Sound”: a video that would start with sound waits for you; muted videos still play.
+- Pop-ups a page opens by itself, including from a scripted Cmd-click, are blocked like any other pop-up you didn’t open. A blocked pop-up with no address is blocked without a notice.
+- After you switch on an extension, tabs opened from then on get its page script fixes; tabs already open get them once reopened.
+- A screen share in a Chromium tab keeps that tab from being unloaded.
 - Credential Manager no longer freezes after unlocking a vault with thousands of credentials; long lists draw only the rows on screen.
 - MCP for development and QA:
   - Paired apps connect with revocable tokens.
