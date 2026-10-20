@@ -165,6 +165,43 @@ struct VaultCommitTests {
         }
     }
 
+    /// What a snapshot decoded is remembered for the next read, never instead of it: a live row changed on disk after the snapshot
+    /// still fails the next write of another account, whole-payload or per-account, and nothing is written.
+    @Test func aRowChangedAfterASnapshotStillFailsTheNextWrite() async throws {
+        let ada = VaultFixtures.account(username: "ada")
+        let grace = VaultFixtures.account(username: "grace", origin: "https://b.example")
+        try await VaultStoreFixture.with(accounts: [ada, grace], historyRows: 1) { f in
+            let (store, access) = try await f.unlocked()
+            let before = try await store.snapshot(vaultID: f.vaultID, using: access)
+            let row = try f.storedRecord(f.vaultID, grace.id)
+            try f.mutate { db in
+                try db.execute(
+                    sql: "UPDATE record SET sealed = ? WHERE vaultID = ? AND recordID = ?",
+                    arguments: [VaultStoreFixture.flipped(row.sealed), f.vaultID.lowerText, grace.id.lowerText]
+                )
+            }
+            let image = try f.headWriteImage()
+            let edited = commitEditing(before.accounts, ada.id) { $0.password = "changed" }
+
+            let whole = await store.vaultCommitFailure(vaultID: f.vaultID, edited, expectedRevision: before.revision, using: access)
+            var perAccount: (any Error)?
+            do {
+                let replacement = try #require(edited.first { $0.id == ada.id })
+                let stamp = try #require(before.stamps[ada.id])
+                _ = try await store.commitAccounts(
+                    vaultID: f.vaultID, [AccountWrite(accountID: ada.id, expected: .stamp(stamp), replacement: replacement)], cause: nil,
+                    using: access
+                )
+            } catch {
+                perAccount = error
+            }
+
+            #expect(whole as? CredentialStoreError == .integrityFailure(vaultOrdinal: 1))
+            #expect(perAccount as? CredentialStoreError == .integrityFailure(vaultOrdinal: 1))
+            #expect(try f.headWriteImage() == image)
+        }
+    }
+
     /// The handoff hash is local evidence: it persists across a reopen as a persist-only commit (no history, no `modifiedAt`,
     /// no base), and a wrong-length hash is refused before anything is written.
     @Test func exportHandoffHashPersistsAsPersistOnlyAndRejectsBadLength() async throws {

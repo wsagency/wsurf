@@ -117,9 +117,12 @@ nonisolated enum StoreTables {
         try db.execute(sql: "DELETE FROM record WHERE vaultID = ? AND recordID = ?", arguments: [vaultID.sqlText, recordID.sqlText])
     }
 
+    /// Compiled once per connection: a snapshot, a commit and an unlock each read every live row through here.
     static func record(_ db: Database, vaultID: UUID, recordID: UUID) throws -> RecordRow? {
-        let sql = "SELECT vaultID, recordID, kind, ownerID, subject, version, sealed FROM record WHERE vaultID = ? AND recordID = ?"
-        guard let row = try Row.fetchOne(db, sql: sql, arguments: [vaultID.sqlText, recordID.sqlText]) else { return nil }
+        let statement = try db.cachedStatement(
+            sql: "SELECT vaultID, recordID, kind, ownerID, subject, version, sealed FROM record WHERE vaultID = ? AND recordID = ?"
+        )
+        guard let row = try Row.fetchOne(statement, arguments: [vaultID.sqlText, recordID.sqlText]) else { return nil }
         return try recordRow(row)
     }
 

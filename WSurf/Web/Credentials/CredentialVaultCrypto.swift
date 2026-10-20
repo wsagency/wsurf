@@ -451,7 +451,9 @@ nonisolated enum CredentialVaultCrypto {
         return total
     }
 
-    static func validate(_ payload: CredentialVaultPayload) throws {
+    /// `unchanged` names accounts the store holds byte for byte (checked when they were written): they still count towards the
+    /// totals and every uniqueness rule, but their own encoded size and `validate()` are not checked again.
+    static func validate(_ payload: CredentialVaultPayload, unchanged: Set<UUID> = []) throws {
         guard payload.accounts.count <= CredentialVaultLimits.accounts,
               payload.blockedPasswordOrigins.count <= 4_096 else { throw CredentialVaultError.oversized }
         var variableBytes = 0
@@ -467,14 +469,17 @@ nonisolated enum CredentialVaultCrypto {
         for account in payload.accounts {
             guard accountIDs.insert(account.id).inserted else { throw CredentialVaultError.duplicateIdentifier }
             let bytes = try liveBytes(of: account)
+            let checked = unchanged.contains(account.id)
             guard bytes <= CredentialVaultLimits.accountBytes,
-                  try storedBytes(of: account) <= CredentialVaultLimits.encodedAccountBytes else { throw CredentialVaultError.oversized }
+                  try checked || storedBytes(of: account) <= CredentialVaultLimits.encodedAccountBytes else { throw CredentialVaultError.oversized }
             try add(bytes)
             for passkey in account.passkeys {
                 guard credentialIDs.insert(passkey.credentialID).inserted,
                       passkeyIDs.insert(passkey.id).inserted else { throw CredentialVaultError.duplicateIdentifier }
             }
-            try account.validate()
+            if !checked {
+                try account.validate()
+            }
         }
         for origin in payload.blockedPasswordOrigins {
             try add(origin.utf8.count)

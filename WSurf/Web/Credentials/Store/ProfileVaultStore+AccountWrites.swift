@@ -43,8 +43,9 @@ extension ProfileVaultStore {
         return try await run(intent, ledgerOnDemand: false) { db, request, ledgerAttached in
             let (transaction, snapshot) = try Self.begin(db, request)
             let accounts = try Self.candidates(applying: writes, removing: removing, to: snapshot)
+            // Every account but the written ones is the snapshot's own value (`candidates`); a removed one is absent from `accounts`.
             return try Self.apply(
-                Proposal(accounts: accounts, requires: nil), snapshot: snapshot, transaction, request, ledgerAttached: ledgerAttached
+                Proposal(accounts: accounts, requires: nil, changing: ids), snapshot: snapshot, transaction, request, ledgerAttached: ledgerAttached
             )
         }.receipt
     }

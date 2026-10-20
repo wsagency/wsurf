@@ -18,6 +18,9 @@ nonisolated struct VaultGrant: Sendable {
     let trashID: UUID
     var entry: RegistryEntry
     var trashEntry: RegistryEntry
+    /// The live rows as the last snapshot or write under this grant decoded them, by record id. It goes with the grant (lock,
+    /// re-unlock, close), like the key that decrypted them.
+    var decoded: [UUID: DecodedRow] = [:]
 }
 
 /// The stored form of a vault's wrapper list: a binary property list of `[CredentialKeyWrapper]` in insertion order, 1...32
@@ -289,6 +292,13 @@ actor ProfileVaultStore {
         let rows = try mapIntegrity(nil) { try StoreTables.vaultRows(db) }
         guard let row = rows.first(where: { $0.vaultID == vaultID && $0.role == .active }) else { throw CredentialStoreError.noSuchVault }
         return row
+    }
+
+    /// Keeps what a read decoded for the next read of `vaultID`, only while the grant it was read under is still the vault's.
+    func remember(_ decoded: [UUID: DecodedRow], vaultID: UUID, access: VaultAccess) {
+        if grants[vaultID]?.access === access {
+            grants[vaultID]?.decoded = decoded
+        }
     }
 
     /// The grant `access` holds on `vaultID`, still authorized at `now()`.
