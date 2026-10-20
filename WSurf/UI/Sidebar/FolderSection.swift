@@ -15,6 +15,7 @@ struct FolderSection: View {
 
     @Environment(\.sidebarStyle) private var sidebarStyle
     @Environment(\.windowColorScheme) private var windowColorScheme
+    @Environment(\.displayScale) private var displayScale
     private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var windowFrame: CGRect = .zero
@@ -42,7 +43,7 @@ struct FolderSection: View {
     static let edgeOpacity: Double = 0.14
 
     static func outlineRadius(depth: Int) -> CGFloat {
-        var radius = Theme.Radius.control
+        var radius = Theme.Radius.row
         for _ in 0..<max(depth, 0) {
             radius = Theme.Radius.nested(in: radius, inset: outlineInset)
         }
@@ -51,6 +52,21 @@ struct FolderSection: View {
 
     static func rowRadius(depth: Int) -> CGFloat {
         Theme.Radius.nested(in: outlineRadius(depth: depth), inset: outlineInset)
+    }
+
+    /// The width of the outline's edge for the theme's row edge, or nil for none. Increase Contrast always draws 1 pt.
+    static func outlineEdgeWidth(_ frame: FrameStyle, increasedContrast: Bool, displayScale: CGFloat) -> CGFloat? {
+        if increasedContrast {
+            return 1
+        }
+        switch frame {
+        case .standard:
+            return 1
+        case .hairline:
+            return 1 / displayScale
+        case .none:
+            return nil
+        }
     }
 
     private var outlineRadius: CGFloat {
@@ -147,7 +163,7 @@ struct FolderSection: View {
                 isSelected: style.emphasis != .resting,
                 isHovering: hovering,
                 hoverTint: folder.color.tint,
-                radius: showsOutline ? Self.rowRadius(depth: depth) : Theme.Radius.hover
+                radius: showsOutline ? Self.rowRadius(depth: depth) : Theme.Radius.row
             )
             .contentShape(Rectangle())
             .onHover { over in
@@ -207,12 +223,18 @@ struct FolderSection: View {
                         Self.fillOpacity * BrowserSettings.application.sidebarFolderTint
                     ))
                     .overlay {
-                        shape.strokeBorder(
-                            folder.color.tint.opacity(
-                                Self.edgeOpacity * BrowserSettings.application.sidebarFolderTint
-                            ),
-                            lineWidth: 1
-                        )
+                        if let edge = Self.outlineEdgeWidth(
+                            BrowserSettings.application.chromeShape.rowFrame,
+                            increasedContrast: inkSource.increasedContrast,
+                            displayScale: displayScale
+                        ) {
+                            shape.strokeBorder(
+                                folder.color.tint.opacity(
+                                    Self.edgeOpacity * BrowserSettings.application.sidebarFolderTint
+                                ),
+                                lineWidth: edge
+                            )
+                        }
                     }
                 .environment(\.colorScheme, windowColorScheme)
             }

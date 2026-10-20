@@ -58,9 +58,14 @@ struct ThemeSidebarInk: Equatable {
 extension BrowserSettings {
     func refreshTheme() {
         themeCache = nil
-        let ink = ThemeSidebarInk(resolvedTheme)
+        let theme = resolvedTheme
+        let ink = ThemeSidebarInk(theme)
         if sidebarInk != ink {
             sidebarInk = ink
+        }
+        let shape = ThemeShape(theme.adjustment)
+        if chromeShape != shape {
+            chromeShape = shape
         }
     }
 

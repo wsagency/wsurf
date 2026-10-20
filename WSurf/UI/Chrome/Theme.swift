@@ -89,12 +89,19 @@ enum Theme {
         }
         static let tight: CGFloat = 4
 
+        /// A radius `inset` points inside a container of radius `container`. It never rounds more than the container,
+        /// so a square container keeps square content.
         static func nested(in container: CGFloat, inset: CGFloat) -> CGFloat {
-            max(tight, container - inset)
+            min(container, max(tight, container - inset))
         }
 
         static var hover: CGFloat {
             control
+        }
+
+        /// Sidebar rows, their highlights and folder outlines: `control` scaled by the theme's corner rounding.
+        static var row: CGFloat {
+            BrowserSettings.application.chromeShape.rowRadius(control)
         }
     }
 

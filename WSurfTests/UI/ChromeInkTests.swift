@@ -107,7 +107,13 @@ struct ThemeRadiusTests {
 
     @Test func aDeepInsetStopsAtTheTightestCorner() {
         #expect(Theme.Radius.nested(in: Theme.Radius.control, inset: 40) == Theme.Radius.tight)
-        #expect(Theme.Radius.nested(in: 0, inset: 0) == Theme.Radius.tight)
+    }
+
+    /// Square corner rounding makes containers square, and what they hold must be square too.
+    @Test func aContainerSmallerThanTheTightestCornerKeepsItsOwnCorner() {
+        #expect(Theme.Radius.nested(in: 0, inset: 0) == 0)
+        #expect(Theme.Radius.nested(in: 0, inset: 2) == 0)
+        #expect(Theme.Radius.nested(in: 3, inset: 2) == 3)
     }
 
     @Test func anInsetCornerIsNeverRounderThanItsContainer() {

@@ -11,10 +11,14 @@ private struct SidebarRowSelectionEffect: ViewModifier {
     var hoverTint: Color?
     var glassTint: Color?
     var radius = Theme.Radius.hover
+    /// The theme's edge for marked rows. Only Standard wears glass.
+    var frame = FrameStyle.standard
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.windowColorScheme) private var windowColorScheme
     @Environment(\.chromeWash) private var wash
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.displayScale) private var displayScale
 
     private var fill: AnyShapeStyle {
         guard isHovering, !isSelected else { return AnyShapeStyle(.clear) }
@@ -25,7 +29,7 @@ private struct SidebarRowSelectionEffect: ViewModifier {
     }
 
     private var wearsGlass: Bool {
-        isSelected
+        isSelected && frame == .standard
     }
 
     private var wearsPanelGlass: Bool {
@@ -57,6 +61,15 @@ private struct SidebarRowSelectionEffect: ViewModifier {
         return glassTint.opacity(0.24)
     }
 
+    /// The edge of a marked row without glass: one pixel for Thin edge and none for None. Increase Contrast gives both
+    /// a firm 1 pt edge, so a marked row never relies on its fill alone.
+    private var plainEdge: (color: Color, width: CGFloat)? {
+        if contrast == .increased {
+            return (Theme.chrome(GlassPolicy.borderOpacity(contrast: contrast)), 1)
+        }
+        return frame == .hairline ? (surfaceEdge, 1 / displayScale) : nil
+    }
+
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         return content
@@ -67,6 +80,11 @@ private struct SidebarRowSelectionEffect: ViewModifier {
                         if !wearsPanelGlass {
                             shape.fill(surfaceWash)
                             shape.strokeBorder(surfaceEdge, lineWidth: 1)
+                        }
+                    } else if isSelected {
+                        shape.fill(solidFill)
+                        if let plainEdge {
+                            shape.strokeBorder(plainEdge.color, lineWidth: plainEdge.width)
                         }
                     }
                     shape.fill(fill)
@@ -94,14 +112,16 @@ extension View {
         isHovering: Bool,
         hoverTint: Color? = nil,
         glassTint: Color? = nil,
-        radius: CGFloat = Theme.Radius.hover
+        radius: CGFloat = Theme.Radius.row,
+        frame: FrameStyle = BrowserSettings.application.chromeShape.rowFrame
     ) -> some View {
         modifier(SidebarRowSelectionEffect(
             isSelected: isSelected,
             isHovering: isHovering,
             hoverTint: hoverTint,
             glassTint: glassTint,
-            radius: radius
+            radius: radius,
+            frame: frame
         ))
     }
 }
