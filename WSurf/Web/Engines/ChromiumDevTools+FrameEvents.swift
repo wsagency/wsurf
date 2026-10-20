@@ -260,10 +260,11 @@ extension ChromiumDevTools {
         _ = try await command("Runtime.addBinding", params: [
             "name": Self.nativeBinding, "executionContextId": context.executionID,
         ])
-        // A context without the shim (its document predates the world's registration) answers false and stays silent.
-        _ = try await command("Runtime.evaluate", params: address(context).merging([
-            "expression": "globalThis.__wsurfAttach?.() === true", "returnByValue": true,
-        ]) { $1 })
+        // A context without the shim (its document predates the world's registration) answers false and stays silent. The
+        // guard keeps a context of another origin that reuses the ID from ever attaching.
+        _ = try runtimeValue(try await command("Runtime.evaluate", params: address(context).merging([
+            "expression": documentGuard(context, marker: false) + "globalThis.__wsurfAttach?.() === true", "returnByValue": true,
+        ]) { $1 }))
         guard contextIsLive(context) else { throw ChromiumError.staleFrame }
         context.bound = true
         contextsByUniqueID[context.uniqueID]?.bound = true
@@ -276,10 +277,29 @@ extension ChromiumDevTools {
         context.executionID == 0 ? [:] : ["contextId": context.executionID]
     }
 
+    /// Prefixed to every evaluation: it runs only in the document it is aimed at. A context ID is unique only within its
+    /// renderer process and the next one counts from 1 again, so a script dispatched while a navigation commits in another
+    /// process could otherwise reach a different document, even its main world. A page cannot redefine `location.origin`
+    /// and never sees the marker's value (the loader ID). `marker: false` is for the call that sets the marker.
+    func documentGuard(_ context: ContextState, marker: Bool = true) -> String {
+        var stale: [String] = []
+        if let origin = framesByID[context.frameID]?.serializedOrigin {
+            stale.append("location.origin !== \(jsonLiteral(origin))")
+        }
+        if marker, !context.worldName.isEmpty {
+            stale.append("globalThis.__wsurfFrameDocumentID !== \(jsonLiteral(context.documentID))")
+        }
+        guard !stale.isEmpty else { return "" }
+        return "if (\(stale.joined(separator: " || "))) throw \(jsonLiteral(Self.staleDocument));\n"
+    }
+
+    static let staleDocument = "wsurf:stale-document"
+
     func setDocumentMarker(contextID: String, documentID: String) async throws {
         guard let context = contextsByUniqueID[contextID], !context.markerSet else { return }
         let response = try await command("Runtime.evaluate", params: address(context).merging([
-            "expression": "void Object.defineProperty(globalThis, '__wsurfFrameDocumentID', {value: \(jsonLiteral(documentID)), writable: false, configurable: false, enumerable: false});",
+            "expression": documentGuard(context, marker: false)
+                + "void Object.defineProperty(globalThis, '__wsurfFrameDocumentID', {value: \(jsonLiteral(documentID)), writable: false, configurable: false, enumerable: false});",
             "returnByValue": true,
         ]) { $1 })
         _ = try runtimeValue(response)
@@ -297,6 +317,9 @@ extension ChromiumDevTools {
             throw ChromiumError.protocolFailure("Runtime.evaluate returned no result.")
         }
         if let exception = response["exceptionDetails"] as? [String: Any] {
+            if (exception["exception"] as? [String: Any])?["value"] as? String == Self.staleDocument {
+                throw ChromiumError.staleFrame
+            }
             // `text` is only "Uncaught"; the thrown object says what happened, for a compile error the SyntaxError and its message.
             let thrown = (exception["exception"] as? [String: Any])?["description"] as? String
             let description = thrown?.split(separator: "\n").first.map(String.init) ?? exception["text"] as? String ?? "JavaScript evaluation failed."
@@ -372,7 +395,7 @@ extension ChromiumDevTools {
             && originURL?.host?.caseInsensitiveCompare(origin.host) == .orderedSame
         return FrameState(id: id, parentID: parentID, documentID: frame["loaderId"] as? String ?? "",
                           url: url, securityOrigin: origin, hasTrustedSecurityOrigin: trustedOrigin,
-                          isMainFrame: parentID == nil)
+                          isMainFrame: parentID == nil, serializedOrigin: trustedOrigin ? protocolOrigin : nil)
     }
 
 }

@@ -38,6 +38,8 @@ final class ChromiumDevTools {
         let securityOrigin: BrowserSecurityOrigin
         let hasTrustedSecurityOrigin: Bool
         let isMainFrame: Bool
+        /// Chromium's serialization of a trusted origin, the string `location.origin` reports in that document.
+        var serializedOrigin: String?
         var browserFrame: BrowserFrame {
             BrowserFrame(id: id, documentID: documentID, url: url,
                          isMainFrame: isMainFrame, securityOrigin: securityOrigin,
@@ -396,7 +398,7 @@ final class ChromiumDevTools {
     func transientUserActivationIsActive(in frame: BrowserFrame, world: WKContentWorld) async throws -> Bool {
         let (target, snapshot) = try await credentialContext(for: frame, world: world)
         let response = try await command("Runtime.evaluate", params: address(snapshot).merging([
-            "expression": "navigator.userActivation?.isActive === true",
+            "expression": documentGuard(snapshot) + "navigator.userActivation?.isActive === true",
             "returnByValue": true,
             "awaitPromise": false,
             "userGesture": false,
@@ -488,7 +490,7 @@ final class ChromiumDevTools {
         }, prepareParameters: { [self] in
             let source = try expression()
             return address(snapshot).merging([
-                "expression": source,
+                "expression": documentGuard(snapshot) + source,
                 "returnByValue": true,
                 "awaitPromise": true,
                 "userGesture": userGesture,
