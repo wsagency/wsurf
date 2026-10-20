@@ -66,7 +66,9 @@ enum WebAuthnAdapter {
         // Document-start order is the contract: the frame registry, then the relay, then the route script, then the page
         // script. A page's profile never changes, so neither does its route, and the script is installed once.
         page.installScript(routeScript(for: page), in: world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        page.installScript(WebAuthnScript.page, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        // The page script is the one page-world piece, and only the main frame gets it: a frame from another website (a
+        // sign-in or challenge frame) keeps the engine's own `navigator.credentials`.
+        page.installScript(WebAuthnScript.page, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         page.addScriptMessageHandler(name: WebAuthnScript.handlerName, in: world) { message in
             handle(message)
         }
