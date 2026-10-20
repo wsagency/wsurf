@@ -263,6 +263,74 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
         }
     }
 
+    /// The crowded sidebar under a theme that moves every layout knob: thin row edges instead of glass on the marked
+    /// rows, square corners and color favicons on every loaded row. The knobs are a preview of the app-wide theme, so
+    /// nothing is written to the test host's defaults.
+    func testLayingOutACrowdedSidebarWithEveryLayoutOption() throws {
+        try MainActor.assumeIsolated {
+            let settings = BrowserSettings.application
+            guard settings.themePreview == nil else {
+                throw XCTSkip("Layout measurement must not replace an existing theme preview.")
+            }
+            settings.beginThemePreview()
+            defer { settings.cancelThemePreview() }
+            var adjustment = settings.themeAdjustment
+            adjustment.pageFrame = .hairline
+            adjustment.rowFrame = .hairline
+            adjustment.cornerScale = 0
+            adjustment.loadedFavicons = .color
+            settings.previewThemeAdjustment(adjustment)
+            XCTAssertTrue(settings.chromeShape == ThemeShape(adjustment))
+
+            let favicon = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { bounds in
+                NSColor.systemOrange.setFill()
+                bounds.fill()
+                return true
+            }
+            let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
+            let browser = coordinator.browser
+            let tabs = (0..<300).map { _ in browser.newTab(activate: false) }
+            for tab in tabs.enumerated() {
+                tab.element.urlString = "https://fixture-\(tab.offset).example/"
+                tab.element.isLoading = false
+                tab.element.favicon = favicon
+                if tab.offset % 10 == 0 {
+                    browser.sidebarSelection.toggle(.tab(tab.element.id))
+                }
+            }
+            let context = SidebarRowContext(
+                browser: browser,
+                coordinator: coordinator,
+                selection: browser.sidebarSelection,
+                drag: nil,
+                pinsCarried: false,
+                space: "BrowserPerformanceTests",
+                frames: SidebarFrames()
+            )
+            let rows = VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: settings)) {
+                ForEach(tabs) { SidebarTabRow(tab: $0, depth: 0, context: context) }
+            }
+            .glassGroup()
+            .frame(width: 220)
+            .environment(\.sidebarStyle, .full)
+            .environment(\.chromeWash, .of(NSColor(srgbRed: 0.105, green: 0.105, blue: 0.125, alpha: 1), isLight: false))
+            .environment(\.chromeIsLight, false)
+            .environment(\.colorScheme, .dark)
+            .environment(\.windowColorScheme, .dark)
+
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                let host = NSHostingView(rootView: rows)
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 220, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.contentView = host
+                host.layoutSubtreeIfNeeded()
+                host.displayIfNeeded()
+                window.close()
+            }
+            browser.cancelPendingSave()
+        }
+    }
+
     /// What a 300-row sidebar asks the theme for while it draws: the loaded and unloaded text, the accent, and the
     /// icon and URL inks, ten times over. With a copy that changes the palette, so no color is the plain default.
     func testResolvingThemeColorsForACrowdedSidebar() {

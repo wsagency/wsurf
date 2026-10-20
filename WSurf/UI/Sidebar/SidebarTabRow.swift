@@ -584,7 +584,8 @@ struct TabIcon: View {
     /// loaded and unloaded tabs stay apart.
     var colorsFavicon = false
 
-    private var faviconTint: Color? {
+    /// nil draws the favicon in its own colors.
+    var faviconTint: Color? {
         if colorsFavicon, !tab.isDeferred {
             return nil
         }
