@@ -28,6 +28,9 @@ struct ThemeThumbnailPalette: Equatable {
     var sidebar: Color?
     /// A flat translucent preview, not a backdrop or glass effect.
     var materialOpacity: Double = 1
+    /// The theme's corner rounding and page edge, drawn as plain shapes.
+    var cornerScale: CGFloat = 1
+    var pageFrame = FrameStyle.standard
 
     private static let light = ThemeThumbnailPalette(
         id: "light",
@@ -94,6 +97,8 @@ struct ThemeThumbnailPalette: Equatable {
                 sidebar: color(variant.sidebar)
             )
             materialOpacity = adjustment.material == .glass ? 0.35 + 0.55 * adjustment.glassOpacity : 1
+            cornerScale = CGFloat(adjustment.cornerScale)
+            pageFrame = adjustment.pageFrame
             return
         }
         let base = switch (theme.ground, isDark) {
@@ -119,6 +124,8 @@ struct ThemeThumbnailPalette: Equatable {
             secondary: variant.urlInk ?? base.secondary, accent: accent
         )
         materialOpacity = adjustment.material == .glass ? 0.35 + 0.55 * adjustment.glassOpacity : 1
+        cornerScale = CGFloat(adjustment.cornerScale)
+        pageFrame = adjustment.pageFrame
     }
 
     init(
@@ -220,7 +227,8 @@ struct AppearanceBrowserThumbnail<Backdrop: View>: View {
                 secondaryInk: palette.secondary,
                 accent: palette.accent,
                 tintsSelectedTab: tintsSelectedTab,
-                dimsUnloadedRow: palette.sidebar != nil
+                dimsUnloadedRow: palette.sidebar != nil,
+                cornerScale: palette.cornerScale
             )
         }
         .overlay(alignment: .top) {
@@ -241,7 +249,9 @@ private struct AppearanceBrowserPage: View {
     let palette: ThemeThumbnailPalette
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 7, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 7 * palette.cornerScale, style: .continuous)
+        let hasShadow = palette.pageFrame == .standard
+        shape
             .fill(palette.canvas)
             .overlay {
                 VStack(alignment: .leading, spacing: 4) {
@@ -269,7 +279,12 @@ private struct AppearanceBrowserPage: View {
                 }
                 .padding(6)
             }
-            .shadow(color: .black.opacity(0.23), radius: 3, y: 1)
+            .overlay {
+                if palette.pageFrame == .hairline {
+                    shape.strokeBorder(palette.primary.opacity(0.35), lineWidth: 0.5)
+                }
+            }
+            .shadow(color: .black.opacity(hasShadow ? 0.23 : 0), radius: hasShadow ? 3 : 0, y: hasShadow ? 1 : 0)
     }
 }
 
@@ -279,6 +294,7 @@ private struct AppearanceBrowserChrome: View {
     let accent: Color
     let tintsSelectedTab: Bool
     let dimsUnloadedRow: Bool
+    let cornerScale: CGFloat
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -287,7 +303,8 @@ private struct AppearanceBrowserChrome: View {
                 secondaryInk: secondaryInk,
                 accent: accent,
                 tintsSelectedTab: tintsSelectedTab,
-                dimsUnloadedRow: dimsUnloadedRow
+                dimsUnloadedRow: dimsUnloadedRow,
+                cornerScale: cornerScale
             )
                 .padding(.leading, 6)
                 .padding(.top, 17)
@@ -332,6 +349,7 @@ private struct AppearanceBrowserSidebar: View {
     let accent: Color
     let tintsSelectedTab: Bool
     let dimsUnloadedRow: Bool
+    let cornerScale: CGFloat
 
     /// A preset shows loaded rows in its text color and the last row unloaded, as the sidebar draws them.
     private func rowInk(_ index: Int) -> Color {
@@ -360,7 +378,7 @@ private struct AppearanceBrowserSidebar: View {
                 .padding(.horizontal, 1.5)
                 .frame(height: 6)
                 .background {
-                    RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                    RoundedRectangle(cornerRadius: 2.5 * cornerScale, style: .continuous)
                         .fill(
                             index == 1
                                 ? (tintsSelectedTab ? accent.opacity(0.58) : ink.opacity(0.10))

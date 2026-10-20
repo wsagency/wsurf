@@ -567,6 +567,7 @@ struct SegmentedControl<Value: Hashable>: View {
                 .disabled(!item.isEnabled)
                 .opacity(item.isEnabled ? 1 : 0.4)
                 .help(item.help.map(Text.init) ?? Text(verbatim: ""))
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
         .padding(2)
