@@ -18,8 +18,7 @@ nonisolated struct VaultTestEnvironment: @unchecked Sendable {
     static func make() throws -> VaultTestEnvironment {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        // An absolute path keeps the domain's plist in the temporary folder rather than the user's ~/Library/Preferences.
-        let suiteName = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        let suiteName = AppDatabase.defaultsSuite(UUID().uuidString)
         return VaultTestEnvironment(
             directory: directory,
             defaults: UserDefaults(suiteName: suiteName)!,

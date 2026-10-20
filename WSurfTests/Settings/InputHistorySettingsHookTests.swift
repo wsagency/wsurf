@@ -11,7 +11,7 @@ import Testing
 @Suite(.serialized)
 struct InputHistorySettingsHookTests {
     @Test func resettingSettingsSwitchesRecordingOffAndRestoresTheDefaults() throws {
-        let name = "InputHistorySettingsHookTests.\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("InputHistorySettingsHookTests.\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { UserDefaults().removePersistentDomain(forName: name) }
         let settings = BrowserSettings(defaults: defaults)

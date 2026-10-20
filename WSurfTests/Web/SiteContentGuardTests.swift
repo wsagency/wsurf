@@ -13,7 +13,7 @@ import WebKit
 /// these cases drive it on WebKit, in that world. On WebKit itself both answers are WebKit's own (`WebKitSiteContentTests`).
 @Suite(.serialized, .boundedWebViews)
 final class SiteContentGuardTests {
-    private let defaultsName = "SiteContentGuardTests-" + UUID().uuidString
+    private let defaultsName = AppDatabase.defaultsSuite("SiteContentGuardTests-" + UUID().uuidString)
     private let settings: BrowserSettings
 
     init() {

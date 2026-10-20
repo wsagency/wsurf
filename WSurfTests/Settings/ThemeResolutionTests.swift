@@ -13,7 +13,7 @@ import Testing
 @MainActor
 struct ThemeResolutionTests {
     private func withSettings<Result>(_ body: (BrowserSettings, UserDefaults) throws -> Result) throws -> Result {
-        let name = "ThemeResolution-\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("ThemeResolution-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
         return try body(BrowserSettings(defaults: defaults), defaults)

@@ -10,7 +10,7 @@ import Testing
 @Suite(.serialized)
 struct InputHistorySettingsKeysTests {
     private func suite(_ names: inout [String]) throws -> UserDefaults {
-        let name = "InputHistorySettingsKeysTests.\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("InputHistorySettingsKeysTests.\(UUID().uuidString)")
         names.append(name)
         return try #require(UserDefaults(suiteName: name))
     }

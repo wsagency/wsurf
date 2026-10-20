@@ -39,8 +39,8 @@ struct MCPTransportTests {
         let firstSuite = StageMode.defaultsSuiteName(for: firstHome)
         let secondSuite = StageMode.defaultsSuiteName(for: secondHome)
         defer {
-            UserDefaults.standard.removePersistentDomain(forName: firstSuite)
-            UserDefaults.standard.removePersistentDomain(forName: secondSuite)
+            UserDefaults.standard.removePersistentDomain(forName: AppDatabase.defaultsSuite(firstSuite))
+            UserDefaults.standard.removePersistentDomain(forName: AppDatabase.defaultsSuite(secondSuite))
         }
 
         let first = StageMode.defaults(for: firstHome)
@@ -240,7 +240,7 @@ struct MCPTransportTests {
     }
 
     @Test func enablementSurvivesShutdownAndExplicitDisablePersists() async throws {
-        let name = "wsurf-mcp-preference-test-\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("wsurf-mcp-preference-test-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: name))
         let directory = "/tmp/wsurf-mcp-test-\(UUID().uuidString)"
         defer {

@@ -14,7 +14,7 @@ struct ExtensionUpdateTests {
     private let key = "extensions.lastUpdateCheck"
 
     private func scratchDefaults() -> UserDefaults {
-        let suite = "io.wsagency.wsurf.tests.\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("io.wsagency.wsurf.tests.\(UUID().uuidString)")
         return UserDefaults(suiteName: suite) ?? .standard
     }
 

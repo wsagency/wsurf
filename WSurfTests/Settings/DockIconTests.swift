@@ -17,7 +17,7 @@ struct DockIconTests {
         .deletingLastPathComponent()
 
     private func withDefaults(_ test: (UserDefaults) throws -> Void) throws {
-        let name = "DockIconTests-\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("DockIconTests-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
         try test(defaults)
@@ -92,7 +92,7 @@ struct DockIconTests {
             #expect(shown.isEmpty, "settings that do not apply globally leave the Dock alone")
 
             // A window bound to the app's settings (a private window) sets the app's choice.
-            let sessionSuite = "DockIconTests-\(UUID().uuidString)"
+            let sessionSuite = AppDatabase.defaultsSuite("DockIconTests-\(UUID().uuidString)")
             let sessionDefaults = try #require(UserDefaults(suiteName: sessionSuite))
             defer { sessionDefaults.removePersistentDomain(forName: sessionSuite) }
             let session = BrowserSettings(defaults: sessionDefaults, application: app)

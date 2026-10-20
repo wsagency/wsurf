@@ -115,7 +115,7 @@ struct ChromiumPageTests {
         let context = BrowserProfileContext(profile: profile)
         let native = ChromiumPage(context: context)
         let page = BrowserPage(chromium: native)
-        let suite = "ChromiumSubframe-\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("ChromiumSubframe-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: suite))
         let settings = BrowserSettings(defaults: defaults)
         settings.autoplay = .allow

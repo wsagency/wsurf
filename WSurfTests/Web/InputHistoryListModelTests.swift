@@ -27,7 +27,7 @@ struct InputHistoryListModelTests {
             let profile = harness.makeProfile()
             let name = "InputHistoryListModelTests.\(UUID().uuidString)"
             // A suite of its own: the tests never touch the app's settings.
-            let settings = BrowserSettings(defaults: UserDefaults(suiteName: name) ?? UserDefaults())
+            let settings = BrowserSettings(defaults: UserDefaults(suiteName: AppDatabase.defaultsSuite(name)) ?? UserDefaults())
             let pasteboard = NSPasteboard(name: NSPasteboard.Name(name))
             let clock = TestClock()
             self.harness = harness
@@ -35,7 +35,7 @@ struct InputHistoryListModelTests {
             self.settings = settings
             self.pasteboard = pasteboard
             self.clock = clock
-            defaultsName = name
+            defaultsName = AppDatabase.defaultsSuite(name)
             model = InputHistoryListModel(profile: profile, settings: settings, history: harness.history, pasteboard: pasteboard, clock: clock)
         }
 

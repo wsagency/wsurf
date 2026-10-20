@@ -164,7 +164,7 @@ struct MCPPairingConnectionTests {
     }
 
     @Test(.timeLimit(.minutes(1))) func defaultsWritesCannotCreateAPairing() async throws {
-        let suite = "wsurf-mcp-pairing-defaults-\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("wsurf-mcp-pairing-defaults-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let forged = PairedClient(

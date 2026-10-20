@@ -228,7 +228,7 @@ struct TabArchiveTests {
     // MARK: - The setting
 
     @Test func archivingIsOffUntilTheDelayIsChosenAndTheChoiceIsKept() throws {
-        let suite = "TabArchiveTests-\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("TabArchiveTests-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = BrowserSettings(defaults: defaults)

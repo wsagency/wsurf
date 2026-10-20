@@ -100,7 +100,7 @@ struct ContextBudgetTests {
 @Suite(.serialized)
 struct ContextWindowOverrideTests {
     @Test func discoveredLimitsAreScopedToTheModelAndEndpoint() {
-        let suiteName = UUID().uuidString
+        let suiteName = AppDatabase.defaultsSuite(UUID().uuidString)
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let settings = LLMSettings(defaults: defaults)
@@ -128,7 +128,7 @@ struct ContextWindowOverrideTests {
     }
 
     @Test func aStoredOverrideWinsOverTheDefaultWindow() {
-        let suiteName = "context-window-override-tests.\(UUID().uuidString)"
+        let suiteName = AppDatabase.defaultsSuite("context-window-override-tests.\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -167,7 +167,7 @@ struct ContextWindowOverrideTests {
     }
 
     @Test func aStoredOverrideWinsOverTheOnDeviceCapacity() {
-        let suiteName = "context-window-system-tests.\(UUID().uuidString)"
+        let suiteName = AppDatabase.defaultsSuite("context-window-system-tests.\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let settings = LLMSettings(defaults: defaults)

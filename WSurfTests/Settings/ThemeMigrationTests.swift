@@ -20,7 +20,7 @@ struct ThemeMigrationTests {
     }
 
     private func suite() throws -> (UserDefaults, String) {
-        let name = "ThemeMigration-\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("ThemeMigration-\(UUID().uuidString)")
         return (try #require(UserDefaults(suiteName: name)), name)
     }
 

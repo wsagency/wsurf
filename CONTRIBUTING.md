@@ -183,11 +183,12 @@ that exact file. Do the same from your own `build-for-testing` output: export
 check, and launch only that file. The tests then use that identifier's
 standard preferences and default WebKit data instead of the installed app's. A
 one-off check on a build made with a unique suffix confirmed this for a preferences
-key and a `localStorage` key. The favicon cache and each named profile's preference
-domain move under the per-process test directory (the domain as an absolute-path
-suite); other test preference suites still use random UUID names in
-`~/Library/Preferences`. `Tools/list-leaked-test-prefs.sh` lists, without deleting,
-the profile domains older runs left there. The Pro machine's Gitea runners are distinct from this GitHub
+key and a `localStorage` key. The favicon cache and every preference suite a test
+creates (named profiles, stage homes, and each test's own suite) move under the
+per-process test directory: pass every suite name through
+`AppDatabase.defaultsSuite(_:)`, which turns it into an absolute path there.
+`Tools/list-leaked-test-prefs.sh` lists, without deleting, the files older runs
+left in `~/Library/Preferences`. The Pro machine's Gitea runners are distinct from this GitHub
 Actions job, and the job's own account and OS isolation are not verified, so this is namespacing, not OS isolation. The last CI step
 removes only that exact identifier's preferences, WebKit, Caches, HTTPStorages and
 Saved Application State, and unregisters its app and extension when present. It

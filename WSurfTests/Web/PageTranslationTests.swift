@@ -196,7 +196,7 @@ struct PageTranslationTests {
     // MARK: - Settings
 
     @Test func translationLanguagesBelongToTheProfileAndAPrivateWindowKeepsItsOwnInMemory() throws {
-        let names = (0..<3).map { "PageTranslationTests.\($0).\(UUID().uuidString)" }
+        let names = (0..<3).map { AppDatabase.defaultsSuite("PageTranslationTests.\($0).\(UUID().uuidString)") }
         let suites = try names.map { try #require(UserDefaults(suiteName: $0)) }
         defer {
             for name in names {

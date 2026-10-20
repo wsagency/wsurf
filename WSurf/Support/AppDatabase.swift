@@ -50,6 +50,15 @@ struct AppDatabase: Sendable {
         return url
     }()
 
+    /// The name to give `UserDefaults(suiteName:)` and `removePersistentDomain(forName:)`. Under XCTest it is an absolute path in
+    /// the per-process test directory, which CFPreferences reads as the plist's location, so a test run adds nothing to the
+    /// user's ~/Library/Preferences (emptying a domain does not delete its plist, so tens of thousands of test files piled up
+    /// there). Otherwise it is `name` unchanged.
+    nonisolated static func defaultsSuite(_ name: String) -> String {
+        guard isRunningTests else { return name }
+        return testSupportDirectory.appendingPathComponent("Preferences", isDirectory: true).appendingPathComponent(name).path
+    }
+
     static var defaultURL: URL {
         supportDirectory.appendingPathComponent("WSurf.sqlite")
     }

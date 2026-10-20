@@ -11,8 +11,8 @@ import Testing
 @Suite(.serialized)
 struct AgentTurnModelTests {
     @Test func turnKeepsItsSelectedModelAndToolGrantsAcrossSuspension() async throws {
-        let firstSuite = "turn-settings.first.\(UUID().uuidString)"
-        let secondSuite = "turn-settings.second.\(UUID().uuidString)"
+        let firstSuite = AppDatabase.defaultsSuite("turn-settings.first.\(UUID().uuidString)")
+        let secondSuite = AppDatabase.defaultsSuite("turn-settings.second.\(UUID().uuidString)")
         let firstDefaults = UserDefaults(suiteName: firstSuite)!
         let secondDefaults = UserDefaults(suiteName: secondSuite)!
         defer {

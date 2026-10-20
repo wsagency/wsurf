@@ -78,7 +78,7 @@ struct AssistantToolSettingsTests {
     }
 
     private func withCleanDefaults(_ body: (IntelligenceViewModel, LLMSettings, @escaping () -> Int) -> Void) {
-        let suiteName = "assistant-tool-settings-tests.\(UUID().uuidString)"
+        let suiteName = AppDatabase.defaultsSuite("assistant-tool-settings-tests.\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }

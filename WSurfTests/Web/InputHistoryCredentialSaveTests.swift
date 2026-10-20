@@ -20,7 +20,7 @@ struct InputHistoryCredentialSaveTests {
         username: String? = InputHistoryCredentialSaveTests.user,
         url: String = "https://example.test/login", profile: Profile
     ) throws -> InputHistoryListModel.Row {
-        let name = "InputHistoryCredentialSaveTests.\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("InputHistoryCredentialSaveTests.\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { UserDefaults().removePersistentDomain(forName: name) }
         let history = InputHistory(ownsSession: false, makeStore: { _, _ in nil })

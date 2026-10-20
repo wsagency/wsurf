@@ -13,7 +13,7 @@ import WebKit
 struct ContentBlockerTests {
     @Test func privateRulesAreRemovedWithoutPersistingExceptions() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("private-rules-\(UUID())")
-        let suiteName = "ContentBlockerTests.\(UUID())"
+        let suiteName = AppDatabase.defaultsSuite("ContentBlockerTests.\(UUID())")
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer {
@@ -36,7 +36,7 @@ struct ContentBlockerTests {
 
     @Test func privateCleanupCancelsCompilationAndClearsSessionState() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("private-rules-\(UUID())")
-        let suiteName = "ContentBlockerTests.\(UUID())"
+        let suiteName = AppDatabase.defaultsSuite("ContentBlockerTests.\(UUID())")
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer {

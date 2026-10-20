@@ -79,11 +79,7 @@ nonisolated final class InMemoryUserDefaults: UserDefaults {
 enum ProfileSettingsStore {
 
     static func suiteName(for id: UUID) -> String {
-        let name = "io.wsagency.wsurf.profile.\(id.uuidString)"
-        // CFPreferences reads an absolute-path domain as that plist's location, so a test run keeps every profile domain under
-        // its per-process directory instead of piling `io.wsagency.wsurf.profile.<UUID>.plist` files into ~/Library/Preferences.
-        guard AppDatabase.isRunningTests else { return name }
-        return AppDatabase.supportDirectory.appending(path: "Preferences/\(name)").path
+        AppDatabase.defaultsSuite("io.wsagency.wsurf.profile.\(id.uuidString)")
     }
 
     static func defaults(for profile: Profile) -> UserDefaults {

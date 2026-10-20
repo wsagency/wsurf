@@ -11,8 +11,8 @@ import WebKit
 @MainActor
 struct NativeApplePayTests {
     @Test func paymentPreferencesPersistAndCardFillingFollowsTheProfile() throws {
-        let prefix = "PaymentPreferencesTests.\(UUID().uuidString)"
-        let names = [prefix + ".app", prefix + ".work", prefix + ".personal"]
+        let id = UUID().uuidString
+        let names = ["app", "work", "personal"].map { AppDatabase.defaultsSuite("PaymentPreferencesTests.\(id).\($0)") }
         defer { names.forEach { UserDefaults.standard.removePersistentDomain(forName: $0) } }
         let app = try #require(UserDefaults(suiteName: names[0]))
         let work = try #require(UserDefaults(suiteName: names[1]))
