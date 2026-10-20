@@ -75,6 +75,14 @@ final class BrowserSettings {
     @ObservationIgnored var storedCustomUserAgent: String?
     @ObservationIgnored var storedWebInspectorEnabled: Bool?
     @ObservationIgnored var storedCommandPaletteOrder: [CommandPaletteSection]?
+    /// Loaded on first use, because the initializer is already at the function_body_length limit.
+    @ObservationIgnored lazy var storedReaderTypeface: ReaderAppearance.Typeface? =
+        appDefaults.string(forKey: Key.readerTypeface).flatMap(ReaderAppearance.Typeface.init(rawValue:)) ?? .system
+    @ObservationIgnored lazy var storedReaderPalette: ReaderAppearance.Palette? =
+        appDefaults.string(forKey: Key.readerTheme).flatMap(ReaderAppearance.Palette.init(rawValue:)) ?? .automatic
+    @ObservationIgnored lazy var storedReaderTextSize: Int? =
+        (appDefaults.object(forKey: Key.readerTextSize) as? NSNumber).map { ReaderAppearance.clampedTextSize($0.doubleValue) }
+        ?? ReaderAppearance.defaultTextSize
 
     @ObservationIgnored var onWebPreferencesChanged: (() -> Void)?
     @ObservationIgnored var onContentBlockingChanged: (() -> Void)?
@@ -622,6 +630,7 @@ final class BrowserSettings {
         hiddenFrequentHosts = []
         translationTargetID = ""
         alwaysTranslatedLanguages = []
+        resetReaderAppearance()
         onWebPreferencesChanged?()
     }
 }

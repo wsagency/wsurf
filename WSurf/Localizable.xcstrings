@@ -6478,6 +6478,39 @@
     },
     "The website will ask again to use your camera, microphone, location, or notifications. The assistant will ask again before reading any page on %@." : {
       "comment" : "Message of the confirmation for Reset this website in Settings > Websites. %@ is the whole website the assistant’s access covers, for example google.com when resetting maps.google.com: assistant access is reset for every page of that site."
+    },
+    "Show Reader" : {
+      "comment" : "Menu command in View, and accessibility label of the Reader control in the address bar while the page is shown as it is. Reader shows only the article of a page, without the navigation, ads and other things around it. Pairs with “Hide Reader”. Title Case."
+    },
+    "Hide Reader" : {
+      "comment" : "Menu command in View, and accessibility label of the Reader control in the address bar while Reader is on screen. It goes back to the page. Pairs with “Show Reader”. Title Case."
+    },
+    "Show Reader (⌥⌘R)" : {
+      "comment" : "Tooltip on the Reader control in the address bar while the page is shown as it is. ⌥⌘R is the keyboard shortcut — keyboard symbols, keep exactly, including the parentheses. Pairs with “Hide Reader (⌥⌘R)”."
+    },
+    "Hide Reader (⌥⌘R)" : {
+      "comment" : "Tooltip on the Reader control in the address bar while Reader is on screen, and on the Done button of the floating bar over the article. ⌥⌘R is the keyboard shortcut — keyboard symbols, keep exactly, including the parentheses."
+    },
+    "Text appearance" : {
+      "comment" : "Tooltip on the button in Reader's floating bar that opens the choices for the article's text: size, theme and font. Sentence case."
+    },
+    "Make text smaller" : {
+      "comment" : "Tooltip and accessibility label of the small A button in Reader's text appearance popover; it steps the article's text size down. Sentence case. Pairs with “Make text bigger”."
+    },
+    "Make text bigger" : {
+      "comment" : "Tooltip and accessibility label of the large A button in Reader's text appearance popover; it steps the article's text size up. Sentence case. Pairs with “Make text smaller”."
+    },
+    "Font" : {
+      "comment" : "Heading above the list of typefaces in Reader's text appearance popover. A noun; one short word."
+    },
+    "Reset to Defaults" : {
+      "comment" : "Button at the bottom of Reader's text appearance popover that puts the article's text size, theme and font back to the original choices. Title Case, imperative."
+    },
+    "Sepia" : {
+      "comment" : "Name of Reader's warm, paper-colored page theme, one of Automatic, Light, Sepia and Dark. It names a color, as in a sepia-toned photograph. Shown as the tooltip and accessibility label of a round color swatch."
+    },
+    "%lld min read" : {
+      "comment" : "Reading time of an article in Reader, shown under its title beside the author's name. %lld is the number of minutes and is at least 1. Keep it short; it sits on one line."
     }
   },
   "version" : "1.0"
