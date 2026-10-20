@@ -380,6 +380,7 @@ private struct SiteDetailPage: View {
                         }
                     )
                 )
+                .disabled(SitePermissions.webKitOnlyOrigins.contains(origin))
             }
             .settingsAnchor("websites.engine")
             RowSeparator()

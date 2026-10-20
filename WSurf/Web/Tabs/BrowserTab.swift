@@ -237,12 +237,13 @@ final class BrowserTab: Identifiable {
     }
 
     var engineOverride: BrowserEngine?  // A tab opened to compare engines: wins over the site's setting, never written to it.
+    var signInEngine: BrowserEngine?  // Holds a Google sign-in's redirect chain in WebKit (`noteNavigation`).
     func preferredEngine(for url: URL?) -> BrowserEngine {
         guard extensionBaseURL == nil else { return .webKit }
         guard engineOverride == nil, let url else { return engineOverride ?? .webKit }
         let origin = SitePermissions.origin(for: url)
         guard !origin.isEmpty else { return .webKit }
-        return sitePermissions.engine(for: origin)
+        return signInEngine ?? sitePermissions.engine(for: origin)
     }
 
     private func makePage(engine: BrowserEngine) -> BrowserPage {
@@ -706,8 +707,9 @@ final class BrowserTab: Identifiable {
     }
 
     @discardableResult
-    func load(_ url: URL, transition: HistoryStore.Transition = .typed) -> PageNavigation? {
+    func load(_ url: URL, transition: HistoryStore.Transition = .typed, startedByUser: Bool = true) -> PageNavigation? {
         guard !isClosed else { return nil }
+        noteNavigation(to: url, startedByUser: startedByUser)
         pendingNavigationTask?.cancel()
         pendingTransition = transition
         let desired = preferredEngine(for: url)

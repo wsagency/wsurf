@@ -289,7 +289,8 @@ final class SitePermissions {
 
     func setEngine(_ engine: BrowserEngine, for origin: String) {
         let key = normalizeEngineOrigin(origin)
-        guard !key.isEmpty, !Self.webKitOnlyOrigins.contains(key) else { return }
+        // A WebKit-only site takes no Chromium choice; WebKit clears a record left from before.
+        guard !key.isEmpty, engine == .webKit || !Self.webKitOnlyOrigins.contains(key) else { return }
         if engine == .webKit {
             engineRecords[key] = nil
         } else {

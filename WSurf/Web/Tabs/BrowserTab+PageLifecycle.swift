@@ -132,14 +132,26 @@ extension BrowserTab {
         refreshChrome()
     }
 
+    /// Google sign-in completes only in WebKit. The navigations its pages make next (the redirect back to the service that
+    /// asked) stay there: a site set to Chromium would get them without the sign-in and send the tab back to sign in again.
+    /// A navigation the user starts ends the hold. `startedByUser` is false for those the engine asks a decision for.
+    func noteNavigation(to url: URL, startedByUser: Bool) {
+        if SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) {
+            signInEngine = .webKit
+        } else if startedByUser {
+            signInEngine = nil
+        }
+    }
+
     /// Only safe GET navigation is reissued in another engine; submitted requests stay in their original engine.
     func permitsEngineNavigation(_ request: URLRequest, isMainFrame: Bool) -> Bool {
         guard isMainFrame, let url = request.url,
-              SitePermissions.origin(for: url).isEmpty == false,
-              preferredEngine(for: url) != engine,
+              SitePermissions.origin(for: url).isEmpty == false else { return true }
+        noteNavigation(to: url, startedByUser: false)
+        guard preferredEngine(for: url) != engine,
               (request.httpMethod ?? "GET").uppercased() == "GET",
               request.httpBody == nil, request.httpBodyStream == nil else { return true }
-        load(url, transition: pendingTransition)
+        load(url, transition: pendingTransition, startedByUser: false)
         return false
     }
 
