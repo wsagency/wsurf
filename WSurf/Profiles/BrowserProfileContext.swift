@@ -49,6 +49,8 @@ final class BrowserProfileContext {
     )
     lazy var history = HistoryStore(database: database)
     lazy var tabArchive = TabArchive(database: database)
+    /// Nil in a private window: notes about the person are never kept there.
+    lazy var assistantFacts: AssistantFacts? = profile.isPrivate ? nil : AssistantFacts(database: database, settings: modelSettings)
     lazy var conversationLog = ConversationLog(database: database)
     lazy var extensions = ExtensionManager(profile: profile, dataStore: dataStore)
 
