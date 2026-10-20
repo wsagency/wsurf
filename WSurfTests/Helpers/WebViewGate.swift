@@ -67,11 +67,18 @@ nonisolated struct BoundedWebViews: TestTrait, SuiteTrait, TestScoping {
         }
         let requiresCache = test.traits.contains { $0 is RequiresBackForwardCache }
         let permits = await WebViewGate.shared.acquire(exclusive: requiresCache)
+        let windows: Set<ObjectIdentifier>? = await WindowCensus.isEnabled ? WindowCensus.snapshot() : nil
         do {
             try await function()
         } catch {
+            if let windows {
+                await WindowCensus.report(test.name, since: windows)
+            }
             await WebViewGate.shared.release(permits)
             throw error
+        }
+        if let windows {
+            await WindowCensus.report(test.name, since: windows)
         }
         await WebViewGate.shared.release(permits)
     }
