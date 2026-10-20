@@ -124,7 +124,7 @@ nonisolated enum WebsiteAuthenticatorError: Error, Sendable {
 
 nonisolated enum WebsiteAuthenticator {
     private static let maximumRequestBytes = 256 * 1_024
-    private static let maximumChallengeBytes = 1_024
+    private static let maximumChallengeBytes = 64 * 1_024
     private static let maximumDescriptors = 1_000
     private static let maximumCredentialIDBytes = 1_024
     private static let maximumUserNameBytes = 2_048

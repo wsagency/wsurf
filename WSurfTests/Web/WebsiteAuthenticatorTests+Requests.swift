@@ -9,7 +9,8 @@ import Testing
 
 extension WebsiteAuthenticatorTests {
     @Test func challengeAndUserHandleLimitsAreExact() throws {
-        let maximumChallenge = Data(repeating: 0xC1, count: 1_024)
+        // The page script's own BufferSource limit: 64 KiB.
+        let maximumChallenge = Data(repeating: 0xC1, count: 64 * 1_024)
         let maximumUserID = Data(repeating: 0xD1, count: WebsitePasskey.userHandleLimit)
         let maximumRequest = registrationRequest(challenge: maximumChallenge, userID: maximumUserID)
         let maximumRegistration = try WebsiteAuthenticator.makeRegistration(
@@ -42,7 +43,7 @@ extension WebsiteAuthenticatorTests {
             }
         }
 
-        let oversizedChallengeRequest = registrationRequest(challenge: Data(repeating: 0xC2, count: 1_025))
+        let oversizedChallengeRequest = registrationRequest(challenge: Data(repeating: 0xC2, count: 64 * 1_024 + 1))
         #expect(throws: (any Error).self) {
             try WebsiteAuthenticator.makeRegistration(
                 oversizedChallengeRequest,

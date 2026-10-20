@@ -424,6 +424,9 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             return
         }
         downloadSource = navigationResponse.response.url
+        if navigationResponse.isForMainFrame, let page = BrowserPage.from(webView) {
+            PageFrameRegistry.shared.mainFrameNavigationBecameDownload(in: page)
+        }
         decisionHandler(.download)
     }
 

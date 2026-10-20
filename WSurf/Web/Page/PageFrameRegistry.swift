@@ -210,6 +210,10 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
         store.activeNavigation = nil
         store.committedNavigation = navigation
         store.pendingResponse = nil
+        // Once this navigation commits, one it replaced can neither commit nor answer any more. WebKit does not always
+        // report such an end, and a stale entry would keep every later response unrecorded: the tab would have no policy
+        // evidence, so no passkey, for good.
+        store.supersededNavigations.removeAll()
         store.issued = store.issued.filter { $0.value.navigation === navigation }
         if acceptedCurrentDocument, let frame = store.mainFrame {
             store.root = frame.documentID
@@ -224,6 +228,13 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
             store.restorationToken = nil
         }
         pruneRestorable(in: view)
+    }
+
+    /// The active navigation's main-frame response becomes a download, so it will never commit. WebKit need not report its
+    /// end, and an active navigation left behind would keep the current document without policy evidence.
+    func mainFrameNavigationBecameDownload(in view: BrowserPage) {
+        guard let active = stores.object(forKey: view)?.activeNavigation else { return }
+        navigationFailed(active, in: view)
     }
 
     func navigationFailed(_ navigation: WKNavigation?, in view: BrowserPage) {
