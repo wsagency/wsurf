@@ -291,6 +291,27 @@ final class WebKitSiteContentTests {
         #expect(tab.page.title == "frame:NotAllowedError")
     }
 
+    /// A pop-up its opener writes is never navigated, so no navigation decision gives it an answer: it starts under the
+    /// opener's. The player starts outside the gesture that opened the window.
+    @Test func aPopUpTheOpenerWritesKeepsTheOpenersAnswer() async throws {
+        context.settings.autoplay = .block
+        let server = try await server(["/": .html("<!doctype html><title>ready</title>")])
+        defer { withExtendedLifetime(server) {} }
+        let tab = tab()
+        tab.onNewWindow = { _, _ in }
+        _ = tab.load(try server.url())
+        #expect(await waitUntil { tab.page.title == "ready" })
+        // Script run by native counts as the person's click, so the window opens.
+        _ = try await tab.page.evaluateJavaScript("""
+            const popup = window.open('');
+            setTimeout(() => new popup.Audio(new URL('/tone.wav', location.href).href).play()
+              .then(() => { document.title = 'played'; }, error => { document.title = error.name; }), 1500);
+            true
+            """)
+        #expect(await waitUntil(timeout: .seconds(10)) { tab.page.title != "ready" })
+        #expect(tab.page.title == "NotAllowedError")
+    }
+
     /// Once the person has used the page, its players are theirs: a player started well after that interaction plays.
     @Test func aPageThePersonUsedMayPlayLater() async throws {
         context.settings.autoplay = .block

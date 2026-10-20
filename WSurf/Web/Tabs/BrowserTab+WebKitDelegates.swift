@@ -219,6 +219,12 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         }
         guard let onNewWindow = tab.onNewWindow else { return nil }
 
+        // The window's first document may never be navigated (its opener can write it), so it starts under the opener's
+        // auto-play answer; its own navigations then take their website's.
+        SiteContentGuard.apply(
+            SiteContentGuard.autoplay(for: webView.url, permissions: tab.sitePermissions, settings: tab.context.settings),
+            to: configuration.defaultWebpagePreferences
+        )
         let view = TabWebView(frame: webView.frame, configuration: configuration)
         tab.context.settings.apply(to: view)
         view.allowsBackForwardNavigationGestures = true
