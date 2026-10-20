@@ -15,9 +15,16 @@ extension BrowserTab {
         translation.isActive || canTranslate
     }
 
+    /// Whether Always Translate may translate this tab by itself. Not while the assistant works in it or a connected app is in
+    /// a call on it or holds it: that agent must read the page as the website wrote it (QA of a localised page). The offer is
+    /// still made, and the person's own Translate Page works.
+    var translatesAutomatically: Bool {
+        !isUnderAssistantControl && processState.externalControllers.isEmpty
+    }
+
     /// Detects the page's language after a load and offers translation when the person does not read it, translating at once
-    /// when the profile always translates that language. A private window's page is never read unless the person asks for a
-    /// translation, so it gets neither. Answers whether detection started.
+    /// when the profile always translates that language and the tab is not under an app's control. A private window's page is
+    /// never read unless the person asks for a translation, so it gets neither. Answers whether detection started.
     @discardableResult
     func offerTranslation() -> Bool {
         guard !isPrivate, canTranslate, !translation.isActive else { return false }
@@ -41,7 +48,8 @@ extension BrowserTab {
             let targets = await TranslationLanguage.translatable(candidates, from: source)
             guard translation.document == document, !isClosed else { return }
             translation.offer(targets)
-            guard let target = targets.first, settings.alwaysTranslates(source) else { return }
+            // Asked after the detection, which takes a while: an app can have taken the tab meanwhile.
+            guard let target = targets.first, settings.alwaysTranslates(source), translatesAutomatically else { return }
             await translate(to: target, downloading: nil)
         }
         return true

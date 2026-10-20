@@ -82,6 +82,29 @@ struct PageTranslationTests {
         #expect(translation.targets.count == 1)
     }
 
+    /// A tab the assistant or a connected app controls keeps the website's own text, whatever Always Translate says: the agent
+    /// would otherwise read rewritten text. The person's own Translate Page does not ask this.
+    @Test func aTabAnAppControlsIsNotTranslatedByItself() {
+        let tab = BrowserTab(opensBlank: false, context: BrowserProfileContext(profile: .privateBrowsing()))
+        #expect(tab.translatesAutomatically)
+
+        tab.setAgentWorking(true)
+        #expect(!tab.translatesAutomatically, "the assistant is working in it")
+        tab.setAgentWorking(false)
+        #expect(tab.translatesAutomatically)
+
+        tab.setExternalAutomationWorking(true)
+        #expect(!tab.translatesAutomatically, "a connected app is in a call on it")
+        tab.setExternalAutomationWorking(false)
+        #expect(tab.translatesAutomatically)
+
+        let connection = UUID()
+        tab.processState.setExternalController(connection, holds: true)
+        #expect(!tab.translatesAutomatically, "a connected app holds it between calls")
+        tab.processState.setExternalController(connection, holds: false)
+        #expect(tab.translatesAutomatically)
+    }
+
     @Test func documentChangeEndsTheRequestAndForgetsTheOffer() {
         let translation = PageTranslation()
         let english = Locale.Language(identifier: "en")
