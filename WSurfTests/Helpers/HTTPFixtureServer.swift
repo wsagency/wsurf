@@ -63,6 +63,14 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
         }
     }
 
+    /// A request as the fixture read it: header names are lowercased, and the body is whatever arrived.
+    struct Request: Sendable {
+        let method: String
+        let path: String
+        let headers: [String: String]
+        let body: Data
+    }
+
     enum StartError: Error {
         case cancelled
         case invalidURL
@@ -73,11 +81,18 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "WSurf.tests.http-fixture")
     private let routes: [String: Response]
     private let waitsForBody: Bool
+    private let respond: (@Sendable (Request) -> Response?)?
 
-    private init(listener: NWListener, routes: [String: Response], waitsForBody: Bool) {
+    private init(
+        listener: NWListener,
+        routes: [String: Response],
+        waitsForBody: Bool,
+        respond: (@Sendable (Request) -> Response?)?
+    ) {
         self.listener = listener
         self.routes = routes
         self.waitsForBody = waitsForBody
+        self.respond = respond
     }
 
     deinit {
@@ -86,9 +101,14 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
 
     /// `waitsForBody` answers a request that has a body only after the body arrived, so closing the connection never cuts a POST off.
     /// Off by default: the other tests send no bodies, and their timing is left as it was.
-    static func start(routes: [String: Response], waitsForBody: Bool = false) async throws -> HTTPFixtureServer {
+    /// `respond` answers first, on the server's queue, for a test that needs state; nil falls back to `routes`.
+    static func start(
+        routes: [String: Response],
+        waitsForBody: Bool = false,
+        respond: (@Sendable (Request) -> Response?)? = nil
+    ) async throws -> HTTPFixtureServer {
         let listener = try NWListener(using: .tcp, on: .any)
-        let server = HTTPFixtureServer(listener: listener, routes: routes, waitsForBody: waitsForBody)
+        let server = HTTPFixtureServer(listener: listener, routes: routes, waitsForBody: waitsForBody, respond: respond)
         listener.newConnectionHandler = { [weak server] connection in
             server?.accept(connection)
         }
@@ -156,14 +176,23 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
     }
 
     private func sendResponse(for request: Data, over connection: NWConnection) {
-        let line = String(decoding: request, as: UTF8.self)
-            .split(separator: "\n", maxSplits: 1)
-            .first
-            .map(String.init) ?? ""
-        let parts = line.split(separator: " ")
+        let separator = request.range(of: Data("\r\n\r\n".utf8))
+        let lines = String(decoding: request[..<(separator?.lowerBound ?? request.endIndex)], as: UTF8.self)
+            .components(separatedBy: "\r\n")
+        let parts = (lines.first ?? "").split(separator: " ")
         let target = parts.count > 1 ? String(parts[1]) : "/"
         let path = target.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
-        let response = routes[path] ?? Response(
+        let headers = lines.dropFirst().reduce(into: [String: String]()) { headers, line in
+            guard let colon = line.firstIndex(of: ":") else { return }
+            headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        }
+        let received = Request(
+            method: parts.first.map(String.init) ?? "",
+            path: path,
+            headers: headers,
+            body: separator.map { Data(request[$0.upperBound...]) } ?? Data()
+        )
+        let response = respond?(received) ?? routes[path] ?? Response(
             status: "404 Not Found",
             headers: ["Content-Type": "text/html; charset=utf-8"],
             body: Data("<h1>Not found</h1>".utf8)
