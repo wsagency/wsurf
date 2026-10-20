@@ -13,6 +13,7 @@ import WebKit
 struct NotificationShimTests {
     private final class Sink {
         var messages: [[String: Any]] = []
+        var frame: BrowserFrame?
     }
 
     private func page() async -> BrowserPage {
@@ -41,18 +42,34 @@ struct NotificationShimTests {
     private func armed() async -> (BrowserPage, Sink) {
         let page = await page()
         let sink = Sink()
-        page.addScriptMessageHandler(name: NotificationBridge.handlerName, in: .page) { message in
+        PageStandInRelay.install(NotificationBridge.scriptSource, name: NotificationBridge.handlerName, in: page) { message in
+            sink.frame = message.frameInfo
             if let body = message.body as? [String: Any] {
                 sink.messages.append(body)
             }
         }
-        page.installScript(NotificationBridge.scriptSource, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         page.loadHTMLString("<!doctype html><html><body>page</body></html>", baseURL: nil)
         #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
         return (page, sink)
     }
 
+    /// What native says, through the relay, to the frame that spoke.
+    private func answer(_ answer: [String: Any], to page: BrowserPage, _ sink: Sink) async {
+        guard let frame = sink.frame else {
+            Issue.record("the shim never spoke")
+            return
+        }
+        await PageStandInRelay.answer(answer, name: NotificationBridge.handlerName, in: page, frame: frame)
+    }
+
     // MARK: - Installing
+
+    /// The relay leaves the page no channel of WSurf's: no message handler, so no `window.webkit`, and no global.
+    @Test func thePageSeesTheShimButNoChannel() async {
+        let (webView, _) = await armed()
+        #expect(await run("typeof window.webkit", in: webView) as? String == "undefined")
+        #expect(await run("typeof window.__wsurfNotify", in: webView) as? String == "undefined")
+    }
 
     @Test func theShimAnnouncesItselfAsSoonAsItIsInstalled() async {
         let (webView, sink) = await armed()
@@ -75,9 +92,9 @@ struct NotificationShimTests {
     }
 
     @Test func theBrowserCanSetThePermissionWithoutBeingAsked() async {
-        let (webView, _) = await armed()
+        let (webView, sink) = await armed()
 
-        _ = await run("window.__wsurfNotify.setPermission('granted')", in: webView)
+        await answer(["type": "permission", "value": "granted"], to: webView, sink)
 
         #expect(await run("Notification.permission", in: webView) as? String == "granted")
     }
@@ -104,14 +121,14 @@ struct NotificationShimTests {
     }
 
     @Test func answeringARequestSettlesItsPromise() async {
-        let (webView, _) = await armed()
+        let (webView, sink) = await armed()
         _ = await run("""
             window.__answer = null;
             Notification.requestPermission().then(function (v) { window.__answer = v; });
             true;
             """, in: webView)
 
-        _ = await run("window.__wsurfNotify.resolve(1, 'granted')", in: webView)
+        await answer(["type": "resolve", "id": 1, "value": "granted"], to: webView, sink)
         _ = await run("new Promise(function (r) { setTimeout(r, 0); })", in: webView)
 
         #expect(await run("window.__answer", in: webView) as? String == "granted")
@@ -119,39 +136,39 @@ struct NotificationShimTests {
     }
 
     @Test func aRefusalIsRememberedAsARefusal() async {
-        let (webView, _) = await armed()
+        let (webView, sink) = await armed()
         _ = await run("Notification.requestPermission()", in: webView)
 
-        _ = await run("window.__wsurfNotify.resolve(1, 'denied')", in: webView)
+        await answer(["type": "resolve", "id": 1, "value": "denied"], to: webView, sink)
 
         #expect(await run("Notification.permission", in: webView) as? String == "denied")
     }
 
     @Test func anUndecidedAnswerLeavesAnEarlierDecisionStanding() async {
-        let (webView, _) = await armed()
-        _ = await run("window.__wsurfNotify.setPermission('granted')", in: webView)
+        let (webView, sink) = await armed()
+        await answer(["type": "permission", "value": "granted"], to: webView, sink)
         _ = await run("Notification.requestPermission()", in: webView)
 
-        _ = await run("window.__wsurfNotify.resolve(1, 'default')", in: webView)
+        await answer(["type": "resolve", "id": 1, "value": "default"], to: webView, sink)
 
         #expect(await run("Notification.permission", in: webView) as? String == "granted")
     }
 
     @Test func theOldCallbackFormIsAnsweredToo() async {
-        let (webView, _) = await armed()
+        let (webView, sink) = await armed()
         _ = await run("""
             window.__called = null;
             Notification.requestPermission(function (v) { window.__called = v; });
             true;
             """, in: webView)
 
-        _ = await run("window.__wsurfNotify.resolve(1, 'granted')", in: webView)
+        await answer(["type": "resolve", "id": 1, "value": "granted"], to: webView, sink)
 
         #expect(await run("window.__called", in: webView) as? String == "granted")
     }
 
     @Test func aCallbackThatThrowsStillLetsThePromiseSettle() async {
-        let (webView, _) = await armed()
+        let (webView, sink) = await armed()
         _ = await run("""
             window.__answer = null;
             Notification.requestPermission(function () { throw new Error('page bug'); })
@@ -159,35 +176,35 @@ struct NotificationShimTests {
             true;
             """, in: webView)
 
-        _ = await run("window.__wsurfNotify.resolve(1, 'granted')", in: webView)
+        await answer(["type": "resolve", "id": 1, "value": "granted"], to: webView, sink)
         _ = await run("new Promise(function (r) { setTimeout(r, 0); })", in: webView)
 
         #expect(await run("window.__answer", in: webView) as? String == "granted")
     }
 
     @Test func aRequestsCallbackRunsOnlyOnce() async {
-        let (webView, _) = await armed()
+        let (webView, sink) = await armed()
         _ = await run("""
             window.__calls = 0;
             Notification.requestPermission(function () { window.__calls += 1; });
             true;
             """, in: webView)
 
-        _ = await run("window.__wsurfNotify.resolve(1, 'granted')", in: webView)
-        _ = await run("window.__wsurfNotify.resolve(1, 'granted')", in: webView)
+        await answer(["type": "resolve", "id": 1, "value": "granted"], to: webView, sink)
+        await answer(["type": "resolve", "id": 1, "value": "granted"], to: webView, sink)
 
         #expect(await run("window.__calls", in: webView) as? Int == 1)
     }
 
     @Test func anAnswerForAnotherRequestSettlesNothing() async {
-        let (webView, _) = await armed()
+        let (webView, sink) = await armed()
         _ = await run("""
             window.__answer = 'unsettled';
             Notification.requestPermission().then(function (v) { window.__answer = v; });
             true;
             """, in: webView)
 
-        _ = await run("window.__wsurfNotify.resolve(99, 'granted')", in: webView)
+        await answer(["type": "resolve", "id": 99, "value": "granted"], to: webView, sink)
         _ = await run("new Promise(function (r) { setTimeout(r, 0); })", in: webView)
 
         #expect(await run("window.__answer", in: webView) as? String == "unsettled")

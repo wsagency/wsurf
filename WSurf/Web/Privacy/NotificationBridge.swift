@@ -18,8 +18,6 @@ final class NotificationBridge: NSObject {
     /// the browser coordinator so a retired page can never claim a request.
     var tabResolver: ((BrowserPage) -> BrowserTab?)?
 
-    private static let world = WKContentWorld.page
-
     private override init() {
         super.init()
         UNUserNotificationCenter.current().delegate = self
@@ -27,10 +25,11 @@ final class NotificationBridge: NSObject {
 
     // MARK: - Installation
 
+    /// WebKit offers an embedding app no Notification API, so the page gets this stand-in (the one page-world script
+    /// left here), reached through `PageStandInRelay`.
     @MainActor
     func install(in page: BrowserPage) {
-        page.installScript(Self.scriptSource, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        page.addScriptMessageHandler(name: Self.handlerName, in: Self.world) { [weak self] message in
+        PageStandInRelay.install(Self.scriptSource, name: Self.handlerName, in: page) { [weak self] message in
             guard let self, message.frameInfo.isMainFrame,
                   let body = message.body as? [String: Any] else { return }
             self.handle(body, message: message)
@@ -41,9 +40,9 @@ final class NotificationBridge: NSObject {
 
     nonisolated static let scriptSource = """
         (function () {
-          var send = globalThis.__wsurfSend;
-          if (typeof send !== 'function' || globalThis.__wsurfNotify) { return; }
-          var post = function (m) { send('wsurfnotify', m); };
+          var Custom = CustomEvent, dispatch = EventTarget.prototype.dispatchEvent;
+          var stringify = JSON.stringify, parse = JSON.parse;
+          var post = function (m) { dispatch.call(document, new Custom('wsurfnotify', { detail: stringify(m) })); };
           var nextId = 1;
           var permission = 'default';
           var pending = {};
@@ -71,19 +70,20 @@ final class NotificationBridge: NSObject {
             });
           };
           window.Notification = WSurfNotification;
-          window.__wsurfNotify = {
-            setPermission: function (value) {
-              if (value === 'granted' || value === 'denied' || value === 'default') {
-                permission = value;
-              }
-            },
-            resolve: function (id, value) {
+          document.addEventListener('wsurfnotify-answer', function (event) {
+            var m;
+            try { m = parse(event.detail); } catch (e) { return; }
+            if (!m) { return; }
+            var value = m.value;
+            if (m.type === 'permission') {
+              if (value === 'granted' || value === 'denied' || value === 'default') { permission = value; }
+            } else if (m.type === 'resolve') {
               if (value === 'granted' || value === 'denied') { permission = value; }
-              var f = pending[id];
-              delete pending[id];
+              var f = pending[m.id];
+              delete pending[m.id];
               if (f) { f(value); }
             }
-          };
+          });
           post({ type: 'hello', id: 0 });
         })();
         """
@@ -191,17 +191,13 @@ final class NotificationBridge: NSObject {
     }
 
     private func resolve(_ jsID: Int, with answer: String, in page: BrowserPage, frame: BrowserFrame) async {
-        _ = try? await page.callAsyncJavaScript(
-            "globalThis.__wsurfNotify?.resolve(id, answer);",
-            arguments: ["id": jsID, "answer": answer], in: frame, contentWorld: Self.world
-        )
+        await PageStandInRelay.answer(["type": "resolve", "id": jsID, "value": answer],
+                                      name: Self.handlerName, in: page, frame: frame)
     }
 
     private func push(permission: String, to page: BrowserPage, frame: BrowserFrame) async {
-        _ = try? await page.callAsyncJavaScript(
-            "globalThis.__wsurfNotify?.setPermission(permission);",
-            arguments: ["permission": permission], in: frame, contentWorld: Self.world
-        )
+        await PageStandInRelay.answer(["type": "permission", "value": permission],
+                                      name: Self.handlerName, in: page, frame: frame)
     }
 
     // MARK: - Delivery
