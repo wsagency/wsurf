@@ -330,7 +330,8 @@ struct AppHandoffTests {
         let chromium = try #require(tab.page.chromium)
         let frames = try await chromium.devTools.frames()
         let sourceFrame = try #require(frames.first { $0.request.url == frameURL })
-        _ = try await chromium.devTools.evaluate("window.postMessage('handoff', '*'); true", in: sourceFrame, world: .page)
+        // A subframe's page world takes an expression only, not a statement list.
+        _ = try await chromium.devTools.evaluate("(window.postMessage('handoff', '*'), true)", in: sourceFrame, world: .page)
         try #require(await waitUntil { steps[0].requestCount == 1 })
         tab.load(pendingURL)
         try #require(await waitUntil { response.requestCount == 1 })
@@ -712,7 +713,7 @@ struct AppHandoffTests {
         let chromium = try #require(tab.page.chromium)
         let frames = try await chromium.devTools.frames()
         let sourceFrame = try #require(frames.first { $0.request.url == frameURL })
-        _ = try await chromium.devTools.evaluate("window.postMessage('go', '*'); true", in: sourceFrame, world: .page)
+        _ = try await chromium.devTools.evaluate("(window.postMessage('go', '*'), true)", in: sourceFrame, world: .page)
         if suspendedAtPresenter {
             try #require(await waitUntil { presenterEntered })
         } else {

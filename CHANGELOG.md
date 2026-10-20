@@ -12,6 +12,7 @@ release notes will be added above this provenance record.
 - Pop-ups a page opens by itself, including from a scripted Cmd-click, are blocked like any other pop-up you didn’t open. A blocked pop-up with no address is blocked without a notice.
 - After you switch on an extension, tabs opened from then on get its page script fixes; tabs already open get them once reopened.
 - A screen share in a Chromium tab keeps that tab from being unloaded.
+- In a Chromium tab, a script run in the page’s own world inside a subframe must be a single expression; a list of statements is rejected. The main frame and WSurf’s own scripts are not affected.
 - Credential Manager no longer freezes after unlocking a vault with thousands of credentials; long lists draw only the rows on screen.
 - MCP for development and QA:
   - Paired apps connect with revocable tokens.
