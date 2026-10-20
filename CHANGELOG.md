@@ -81,7 +81,13 @@ These changes describe the current candidate source, not a published release.
 
 Each branch above passed its own targeted native gate on the Pro before it was merged; the assembled candidate's gates are recorded separately. None of the screens and prompts above has been checked by hand.
 
-Input History is not included in this candidate. No new recorder or unfinished UI is exposed.
+Input History (Settings › Autofill › Input History) is included on `feature/input-history-c63-20261020`, off by default:
+- With Remember what I type on, text you type on websites, including passwords, is kept encrypted on this Mac for 30 minutes, 2 hours, 1 day, 1 week or until you delete it. It is never synced. Turning it on asks first; turning it off deletes everything.
+- Not recorded: private windows, excluded websites and their subdomains, card numbers, security codes, one-time codes, rich text editors, values a page script or autofill put into a field, and any tab while the assistant or a connected app works in it.
+- The entries open only with Touch ID or your Mac password, and lock two minutes after the page closes or with any vault lock. Passwords stay masked until you reveal one. Copy marks the clipboard concealed and clears it after a minute.
+- Save as Credential saves a password entry into Credential Manager only after you confirm the username and what it changes.
+- The assistant and connected apps have no way to read it.
+- Not in this pass: the address-bar icon, pasted images and uploaded file names. Its native gate has not run yet.
 
 Early verification at `83f89f0`, before the G/B overlays: isolated native Debug ARM64 build and identity guard passed; all 20 affected suites passed (245 test definitions, 350 executions, no failures or skips). The 3,000-credential layout measured 0.121752 seconds and 1,661.338 kB average growth, below the existing 0.300-second and 4,096-kB budgets. SwiftLint 0.65.1 passed. Separately reviewed executor evidence covers G (13 definitions / 17 executions) and corrected B v2 (208 definitions / 250 executions plus ten scoped performance budgets), not the assembled candidate. B's 80-switch mean was 0.0149294858 seconds under the unchanged 0.015-second limit, with two individual samples above it. Final assembled-source full-suite, coverage and all 24 performance checks are pending. Native keyboard/IME and Chromium fill-dropdown acceptance, real passkey and credential exchange, Stage, live private/accessibility/multiwindow visuals and GPU behavior remain unverified.
 
