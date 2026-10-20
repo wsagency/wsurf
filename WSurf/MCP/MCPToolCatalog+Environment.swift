@@ -15,7 +15,7 @@ nonisolated extension MCPToolCatalog {
                 Emulate how the page sees its environment: colorScheme (dark, light or system), reducedMotion \
                 (reduce, no-preference or system) and offline (true or false). Omitted settings stay as they are; system removes an \
                 override. WebKit supports only colorScheme; reducedMotion and offline are rejected before anything changes. \
-                The result reports what the page measured. Needs Developer access and a visible tab. Applies to this tab only; \
+                The result reports what the page measured. Needs Developer access. Applies to this tab only; \
                 resetDevelopment, disconnecting or losing access removes it.
                 """,
             parameters: [
@@ -31,7 +31,7 @@ nonisolated extension MCPToolCatalog {
                 Delete the saved website data of the tab's own site so the next load starts signed out: localStorage, sessionStorage, \
                 IndexedDB, Cache Storage and service workers of its origin, and the cookies of its host (cookies are shared by every \
                 port of a host). Other sites and the HTTP cache are untouched. Nothing is read or returned except counts. \
-                Needs Developer access, a visible tab, a developer site and the Developer profile; never available in your everyday profile.
+                Needs Developer access, a developer site and the Developer profile; never available in your everyday profile.
                 """,
             parameters: [tab], scope: .developer, title: "Clear Site Data"),
     ]

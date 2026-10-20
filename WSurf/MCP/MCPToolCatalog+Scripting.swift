@@ -11,7 +11,7 @@ nonisolated extension MCPToolCatalog {
     private static let developerOnly =
         """
         Developer tier only: a paired app, a developer site and a window of the Developer profile. Refused anywhere else, in \
-        private windows and in frames (only the page itself is touched). Needs the tab on screen. Every call is recorded in \
+        private windows and in frames (only the page itself is touched). Works in background tabs. Every call is recorded in \
         Agent Activity and shown on the connection badge.
         """
 

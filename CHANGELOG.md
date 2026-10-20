@@ -18,6 +18,7 @@ release notes will be added above this provenance record.
   - Compare a page in WebKit and Chromium.
   - Media emulation, and clearing one site’s data.
 - A badge in the window shows which app controls it, with a Stop button.
+- Connected apps work in background tabs without taking your tab or keyboard focus, and every tab an app holds shows an AI mark with Take Over and Stop.
 - Paired apps can follow a default website access level instead of asking before every new website.
 - WSurf asks before the assistant or a connected app closes a tab. Pinned tabs are never closed.
 - Back in a new Chromium tab no longer returns to the empty startup page.

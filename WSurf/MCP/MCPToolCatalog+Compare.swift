@@ -11,9 +11,9 @@ nonisolated extension MCPToolCatalog {
             name: "openComparison",
             description:
                 """
-                Open a page in WebKit and in Chromium, side by side, and share both tabs with this connection. Needs development \
+                Open a page in WebKit and in Chromium, split side by side, and share both tabs with this connection. Needs development \
                 access: a paired app on a developer site, or a page of the same website that the user shared with development. \
-                WSurf is not brought to the front, but the pair is shown, because Chromium loads only on screen. Calling it again for \
+                The pair opens in the background at one size: WSurf is not brought to the front and the user's tab stays. Calling it again for \
                 the same website loads the same two tabs; a different website replaces them. Close them with closeTab when done. \
                 Each engine keeps its own sign-ins and cookies, so sign in on both. Returns both tab IDs; then call compareTabs.
                 """,
@@ -23,7 +23,7 @@ nonisolated extension MCPToolCatalog {
             description:
                 """
                 Compare two shared tabs that show the same page, usually from openComparison. Needs development access to both \
-                and both on screen at the same viewport size (give or take 2 CSS pixels; otherwise nothing is compared and both \
+                and the same viewport size, on screen or in the background (give or take 2 CSS pixels; otherwise nothing is compared and both \
                 sizes are reported). Returns about 1 to 2 KB: the share of pixels that differ (a pixel counts when no pixel within \
                 one pixel of it in the other image is within 24 luma levels) with up to 5 boxes in CSS pixels, layout numbers \
                 (document size, element and image counts, broken images, horizontal scroll), and, when startDiagnostics runs on both \

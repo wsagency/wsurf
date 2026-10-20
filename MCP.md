@@ -181,12 +181,12 @@ revoke it immediately.
 | `getDevelopmentInfo` | Engine, measured viewport (`innerWidth`, `innerHeight`, device pixel ratio, touch), zoom, who holds the tab's development lease (`none`, `self`, `other`) and per-engine capabilities. Works with any grant. |
 | `findElements` | Development. Elements matching a safe CSS selector (the Developer tier may test any attribute except `value`) in the document, same-origin frames and open shadow roots, with `offset` (0–10,000) and `limit` (1–100, default 50); skipped cross-origin frames and closed shadow roots are reported. A page is also bounded by delivered bytes (about 24 KiB of the escaped result); it ends early with `hasMore: true` and a following `offset` continues it. Returns an `observationID` whose refs work with `inspectElement` and, for a screenshot, `screenshotPage`; they are never targets for click, type, hover or any other action. |
 | `inspectElement` | Development. Bounded attributes, geometry, box model, allowlisted computed styles and ancestors of one found element. No field values and no raw HTML. With `full: true` (Developer tier) it also returns all attributes (up to 128), computed properties (all, or the up to 32 named in `properties`; about 8 KiB) and an `outerHTML` excerpt of at most 8 KiB with field values blanked, under the rule in Scripts and DOM edits. The result is kept under the same delivered-bytes budget by dropping ancestors, then attributes, then styles, and says which (`ancestorsTruncated`, `attributesTruncated`, `truncated`). |
-| `setViewport` | Development. Lay the page out at an exact CSS-pixel viewport (64–4,096 per axis). The result is the size measured inside the page. Needs the tab on screen. |
-| `emulateDevice` | Development. Apply a profile and orientation (table below). Needs the tab on screen. |
+| `setViewport` | Development. Lay the page out at an exact CSS-pixel viewport (64–4,096 per axis). The result is the size measured inside the page. A tab in the background keeps its size, which the result reports. |
+| `emulateDevice` | Development. Apply a profile and orientation (table below). A tab in the background may keep its size; the result reports what the page measured. |
 | `reloadPage` | Development. Reload the tab; the lease stays only while the new page is still inside the connection's access. |
 | `resetDevelopment` | Remove this connection's viewport, emulation and diagnostics and release its lease. Safe to repeat. |
-| `emulateMedia` | Developer. Emulate `colorScheme` (`dark`, `light` or `system`), `reducedMotion` (`reduce`, `no-preference` or `system`) and `offline` (`true` or `false`) on one tab. An omitted setting stays as it is; `system` removes an override. The result reports what the page measured. WebKit supports only `colorScheme`. Needs the tab on screen. See [Environment emulation and site data](#environment-emulation-and-site-data). |
-| `clearSiteData` | Developer. Delete the tab's own origin storage and its host's cookies in the Developer profile, so the next load starts signed out. Never available in your everyday profile or for any other site. Returns counts only. Needs the tab on screen. |
+| `emulateMedia` | Developer. Emulate `colorScheme` (`dark`, `light` or `system`), `reducedMotion` (`reduce`, `no-preference` or `system`) and `offline` (`true` or `false`) on one tab. An omitted setting stays as it is; `system` removes an override. The result reports what the page measured. WebKit supports only `colorScheme`. See [Environment emulation and site data](#environment-emulation-and-site-data). |
+| `clearSiteData` | Developer. Delete the tab's own origin storage and its host's cookies in the Developer profile, so the next load starts signed out. Never available in your everyday profile or for any other site. Returns counts only. |
 | `startDiagnostics` | Development. Start console and network capture for the tab's current document and the ones after it. Earlier activity is not available. In the Developer tier it also takes the opt-ins `headers`, `bodies`, `fullConsole` and `clearQueries` (see Headers, bodies and the full console below); outside the tier a call that sets one is refused (`denied`) and starts nothing. |
 | `readConsole`, `readNetwork` | Development. Page through captured records with `cursor` and `limit` (1–100, default 50), narrow them with filters, or read one record with `seq`. Responses state `engine`, `sources`, `gaps`, `epoch`, `documentID`, `nextCursor`, `dropped`, `evicted`, `truncated`, `lostInFlight`, `lostEarly` (WebKit), `detail` (when an opt-in was asked for) and, with a filter, `skipped`. A read returns at most about 100 KB of records; `nextCursor` continues it. Filters: `level` and `urlContains` for `readConsole`; `minStatus`, `outcome`, `type` and `urlContains` for `readNetwork`. |
 | `readAccessibility` | Read access. A compact outline of the page's roles, names and states: landmarks, headings, lists, tables, controls, images and same-origin iframes, with a `[ref]` on each control `readPage` also lists. At most 400 nodes and about 24 KiB per call; `offset` continues and `scope` (a safe CSS selector) limits the outline to part of the page. Never shows field values; a sensitive field shows its role, its name and `sensitive`. |
@@ -196,10 +196,10 @@ revoke it immediately.
 | `scrollPage` | Scroll vertically or horizontally, optionally inside a referenced container. |
 | `goBack` | Go back within the shared website. |
 | `navigate` | Navigate a shared tab; another website requires approval, except for a paired app that follows the Website access default (see Website access default). |
-| `newTab` | Ask to open and share a new webpage. Requires existing control access, except for a paired app's standing grant on a developer site, which needs neither a grant nor a sheet. A paired app that follows the Website access default needs no sheet for the new website either, but still needs the existing control access. `engine` (`webkit` or `chromium`) opens it in that engine whatever the website's setting says; that needs development access. |
-| `openComparison` | Development. Open a page in WebKit and in Chromium, side by side, and share both tabs; see Comparing engines. |
+| `newTab` | Ask to open and share a new webpage. It opens in the background, behind the user's tab (in a window with no tab it becomes the tab shown). Requires existing control access, except for a paired app's standing grant on a developer site, which needs neither a grant nor a sheet. A paired app that follows the Website access default needs no sheet for the new website either, but still needs the existing control access. `engine` (`webkit` or `chromium`) opens it in that engine whatever the website's setting says; that needs development access. |
+| `openComparison` | Development. Open a page in WebKit and in Chromium, split side by side in the background, and share both tabs; see Comparing engines. |
 | `compareTabs` | Development. What differs between two tabs that show one page: pixels, layout numbers, console and network. See Comparing engines. |
-| `switchTab` | Activate an already shared tab before controlling it. |
+| `switchTab` | Show an already shared tab in place of the tab the user sees. Not needed to control a tab (see Background tabs); use it for keyboard input or when the user should watch. |
 | `closeTab` | Close an already shared, unpinned tab. WSurf asks the user first, except for tabs this connection opened and, in the Developer tier, tabs it holds Developer access to. See Closing tabs below. |
 | `handleDialog` | Read or answer a JavaScript dialog (alert, confirm, prompt, or Chromium's beforeunload "Leave site?") that a page opened in a shared tab. Needs control access. See Page dialogs below. |
 
@@ -299,7 +299,7 @@ latest. A failed action leaves the client's observation as it is.
 | `phone` | 390 × 844 | Also device pixel ratio 3, touch, mobile viewport; Chromium only |
 | `tablet` | 768 × 1,024 | Also device pixel ratio 2, touch, mobile viewport; Chromium only |
 
-`phone` and `tablet` are mobile emulation: a page without a `<meta name="viewport" content="width=device-width">` tag is laid out at 980 CSS pixels (measured on Chromium), so the call reports `unsupported` that the page did not reach the requested viewport and changes nothing. On Chromium a viewport or device change reaches the page only while the tab is on screen in a window that is brought forward; a window behind other apps keeps the page at its old size, which the call reports the same way.
+`phone` and `tablet` are mobile emulation: a page without a `<meta name="viewport" content="width=device-width">` tag is laid out at 980 CSS pixels (measured on Chromium), so the call reports `unsupported` that the page did not reach the requested viewport and changes nothing. A responsive size is applied by laying the page out at it, so a tab in the background keeps its size, which the call reports the same way. Chromium used to keep the old size in a window behind other apps; it no longer hides a covered window's pages (see Background tabs), which is expected to lift that limit but has not been measured yet.
 
 Landscape swaps the axes, so `responsive-desktop` in landscape is 1,280 × 800 (`orientation` is required; there is no default). The viewport may be larger than the window; the page is clipped and native pointer input outside the visible part stays unavailable (`hoverOnPage` says so). WebKit has no device pixel ratio, touch or mobile override: a device profile is rejected before anything changes. Overlapping viewport and device changes on one tab are serialized, so the result matches the last one applied.
 
@@ -410,7 +410,7 @@ main
 ### Environment emulation and site data
 
 Both tools are Developer-tier work: a paired app, a developer site and a window of the Developer profile (see below).
-Below that, they are refused like any tool above the connection's access. Both need the tab on screen.
+Below that, they are refused like any tool above the connection's access. Both work in background tabs.
 
 **`emulateMedia`** changes how one tab sees its environment, and nothing else. It takes the tab's development lease, so
 one connection owns it and `resetDevelopment`, a disconnect (which is what Stop does to a connection), the grant
@@ -582,7 +582,7 @@ only in the **Developer tier**: a paired app, a page on a developer site, and a 
 the Developer profile (the same conditions as typing test credentials). Anywhere else, in
 a private window, with a Development or lower grant, or for a Read Only site, the call is
 refused before anything runs, and the tier is checked again before the script starts, after
-the page answered and before anything is returned. The tab must be on screen (`switchTab`).
+the page answered and before anything is returned. The tab may be in the background (see Background tabs).
 Both tools act on the page itself, never on a frame: a frame of another origin is out of
 reach of a script, and an edit refuses any element inside a frame. Each call shows on the
 connection badge while it runs and is recorded in Agent Activity.
@@ -776,9 +776,9 @@ Never sent: Control in any combination; Command with Option; Command with anythi
 
 ### Comparing engines
 
-`openComparison {url}` opens the page in WebKit (Safari's engine) and in Chromium, side by side in the connection's window, and shares both tabs. It needs development access in one of two ways: a paired app's standing grant on a developer site (no sheet), or a page of the same website that the user already shared with development (the pair gets Development; any other address must be a link the connection has seen, as for `navigate`). Anywhere else it is refused and opens nothing, because the Open and Share sheet promises control only. WSurf is not activated or raised, but the pair is shown: Chromium does not load a page that is not on screen, and a screenshot needs one. A connection keeps one pair. Calling it again for the same website loads the same two tabs, and a different website closes them (without leaving them to reopen) and opens a new pair. A tab the user pins is never closed. Close the pair with `closeTab` when done; it needs no question, because the connection opened it. The tabs carry an engine of their own: it holds across their loads, is never written to the website's setting, and survives a change of that setting. `newTab` takes the same `engine` argument.
+`openComparison {url}` opens the page in WebKit (Safari's engine) and in Chromium, split side by side in the connection's window, and shares both tabs. It needs development access in one of two ways: a paired app's standing grant on a developer site (no sheet), or a page of the same website that the user already shared with development (the pair gets Development; any other address must be a link the connection has seen, as for `navigate`). Anywhere else it is refused and opens nothing, because the Open and Share sheet promises control only. WSurf is not activated or raised and the user's tab stays selected: the pair opens in the background, kept in the window at one size so that both load and can be captured (see Background tabs). Selecting the split shows them side by side. A connection keeps one pair. Calling it again for the same website loads the same two tabs, and a different website closes them (without leaving them to reopen) and opens a new pair. A tab the user pins is never closed. Close the pair with `closeTab` when done; it needs no question, because the connection opened it. The tabs carry an engine of their own: it holds across their loads, is never written to the website's setting, and survives a change of that setting. `newTab` takes the same `engine` argument.
 
-`compareTabs {tabA, tabB}` needs development access to both tabs, both on screen, and no other connection holding a development lease on either. It waits for both pages to finish loading, then measures each tab's viewport. If the sizes differ by more than 2 CSS pixels nothing is captured: the reply is `invalidInput` with both sizes, and the fix is `setViewport` on both (Chromium may not apply a viewport while WSurf is in the background, and a measured size that is still different is reported rather than hidden). Otherwise one reply of about 1 to 2 KB:
+`compareTabs {tabA, tabB}` needs development access to both tabs, both on screen or kept in the window in the background, and no other connection holding a development lease on either. It waits for both pages to finish loading, then measures each tab's viewport. If the sizes differ by more than 2 CSS pixels nothing is captured: the reply is `invalidInput` with both sizes, and the fix is `setViewport` on both (Chromium may not apply a viewport while WSurf is in the background, and a measured size that is still different is reported rather than hidden). Otherwise one reply of about 1 to 2 KB:
 
 ```json
 {"status":"ok","a":{"tabID":"…","engine":"webkit"},"b":{"tabID":"…","engine":"chromium"},"viewport":{"width":640,"height":700},
@@ -915,6 +915,26 @@ The MCP transport stays on this Mac. Shared page data goes to the connected
 application, which may send it to its own model provider. A local transport does
 not imply that the external application's processing is local.
 
+## Background tabs
+
+A connection works in a shared tab without showing it. When a call needs a shared tab that is not on screen, WSurf keeps
+its page in the connection's window, out of sight and at the size of the page the window shows, so it loads (Chromium
+needs a window), renders and answers. The user's selected tab, key window, keyboard focus and frontmost app stay as they
+were; WSurf is never activated or raised for it. `newTab` opens behind the user's tab, and `openComparison` splits its pair
+without showing it. `switchTab` is needed only to show a tab to the user.
+
+- A controlled tab keeps rendering while other apps cover its window: WebKit through a per-tab setting, Chromium through a
+  process-wide switch. A minimized window is not supported.
+- Reading, clicking, typing (setter-based), selecting, filling, scrolling, DOM drags, Chromium's trusted pointer drags,
+  waits, screenshots, diagnostics, scripts and DOM edits work in the background.
+- Anything that needs keyboard focus or the real pointer is refused in the background instead of taking them from the
+  user: `pressKey`, the WebKit `pointer: true` drag and `hoverOnPage`. A click on a suggestion uses the page's ordinary
+  click there.
+- A responsive `setViewport` or `emulateDevice` size reaches only a tab on screen; in the background the result reports
+  that the page kept its size.
+- A tab a connection holds a grant for is not unloaded to save memory, so its refs stay valid between calls.
+- A window with no place to keep the tab refuses control calls with a message that names `switchTab`.
+
 ## Seeing a connection and stopping it
 
 While an external app holds a grant for a tab in a window, that window's toolbar shows a badge with the app's name and
@@ -934,6 +954,16 @@ command palette. It ends every connection bound to that window at once:
 - other windows' connections are not touched.
 
 The client can reconnect on its next call, but it starts with no access and the user has to approve it again.
+
+Every tab a connection holds a grant for also shows an AI mark: in its sidebar row, in a split cell and on its
+Favorites tile. It stays for as long as the grant does, between calls too, and shows a spinner while a call works on the
+tab. Its text and VoiceOver label say which app holds the tab and whether it can read or control it. The mark in a full
+sidebar row and the tab's context menu offer:
+
+- **Take Over**: the app loses this tab only (grant, development lease, observation and dialog claim), a call it runs on
+  the tab is cancelled, and a paired app's standing grant does not share the tab again for the rest of that connection.
+  Its other tabs keep working.
+- **Stop**: the window's Stop above, for the apps that hold this tab only.
 
 Agent Activity shows an "External: *client*" group under the tab's own tasks. It lists, per call, the time, the tool,
 the element number, the outcome (succeeded, failed, stopped) and, for `navigate` and `newTab`, the host. It never holds
