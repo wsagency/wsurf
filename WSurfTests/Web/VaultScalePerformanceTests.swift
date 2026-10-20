@@ -196,4 +196,37 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
             finish { await fixture.cleanup() }
         }
     }
+
+    /// One merge per pass in a review with nothing left to decide that fills the vault: 5,000 new items beside 20,000 saved
+    /// credentials make the 25,000 the vault holds at most. A merge is proven by the import's plan before it is kept, so it costs one
+    /// plan of the import (which still checks the 5,000 accounts it would add), never the review rebuilt and never the vault and the
+    /// transfer validated again.
+    func testChoosingAMergeInAReviewThatFillsTheVault() {
+        MainActor.assumeIsolated {
+            let fixture = Fixture()
+            let items = CredentialVaultLimits.accounts - Self.count
+            finish {
+                try await fixture.makeVault()
+                try await fixture.stage(try ExchangeScale.transfer(items: items, passkeyEvery: nil, totpEvery: nil))
+            }
+            guard let review = fixture.review else { return XCTFail("The 5,000-item transfer was not staged.") }
+            XCTAssertTrue(review.isResolved)
+            let notes = review.candidates.compactMap { $0.records.first { $0.kind == .note } }
+            XCTAssertEqual(notes.count, items)
+            var merged = 0
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions()) {
+                // The note of one item joins one saved credential that holds no note and no other app's item.
+                let note = notes[merged], target = fixture.accounts[merged].id
+                merged += 1
+                do {
+                    try fixture.coordinator.choose(.merge(into: target), for: note.incoming, owner: fixture.owner)
+                } catch {
+                    XCTFail("merge \(merged) was refused: \(error)")
+                }
+            }
+            let decided = fixture.review?.candidates.filter { $0.records.contains { $0.choice == .merge(into: fixture.accounts[0].id) } }
+            XCTAssertEqual(decided?.count, 1)
+            finish { await fixture.cleanup() }
+        }
+    }
 }

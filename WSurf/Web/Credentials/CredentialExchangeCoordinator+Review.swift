@@ -426,14 +426,18 @@ extension CredentialExchangeCoordinator {
     /// once the first has claimed the account). When every other decision is made, the plan proves the merge before it is kept; while
     /// something is still undecided it can't, and the plan is proven at Import, which refuses what doesn't fit and keeps the review.
     ///
-    /// ponytail: this is the one decision that costs the size of the import, and only a merge to a named account pays it; slot claims
-    /// per target account would make it a lookup, if merging at the 25,000-item scale turns out to be common.
+    /// ponytail: this is the one decision that costs the size of the import, and only a merge to a named account pays it: a system
+    /// transfer's vault and items are not validated again (`inputsValidated`), but every account the import would add still is. Slot
+    /// claims per target account would make it a lookup, if merging at the 25,000-item scale turns out to be common.
     private func validateCombination(of incoming: CredentialIdentity, _ choice: CredentialImportChoice) throws {
         guard let live else { throw CredentialExchangeCoordinatorError.noStagedImport }
         var trial = live.choices
         trial[incoming] = choice
         do {
-            _ = try Self.plan(live.preview, choices: trial, required: live.index.mustDecide, duplicates: live.index.duplicates)
+            _ = try Self.plan(
+                live.preview, choices: trial, required: live.index.mustDecide, duplicates: live.index.duplicates,
+                inputsValidated: live.inputsValidated
+            )
         } catch CredentialVaultError.invalidData, CredentialVaultError.duplicateIdentifier {
             throw CredentialExchangeCoordinatorError.invalidChoice
         } catch CredentialExchangeCoordinatorError.unresolvedConflicts {

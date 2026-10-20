@@ -294,6 +294,21 @@ struct CredentialAccountValidationTests {
         }
     }
 
+    /// An import plan checks one by one only the accounts it changes or adds: an account equal to the one already checked at its
+    /// position (the vault's own, left alone) counts towards the limits but is not checked again.
+    @Test func anImportChecksOnlyChangedOrAddedAccountsOneByOne() throws {
+        var stored = VaultFixtures.account(username: "ada")
+        stored.notes = []  // never valid: notes are nil or not empty
+        let other = VaultFixtures.account(username: "grace", origin: "https://b.example")
+        #expect(throws: CredentialVaultError.invalidData) { try CredentialExchangeCodec.validateAccounts([stored, other]) }
+        try CredentialExchangeCodec.validateAccounts([stored, other], checked: [stored])
+
+        var changed = stored
+        changed.username = "ada again"
+        #expect(throws: CredentialVaultError.invalidData) { try CredentialExchangeCodec.validateAccounts([changed, other], checked: [stored]) }
+        #expect(throws: CredentialVaultError.invalidData) { try CredentialExchangeCodec.validateAccounts([other, stored], checked: [other]) }
+    }
+
     @Test func liveBytesAreCappedPerAccountAndInTotal() throws {
         func payload(_ accounts: [CredentialAccount], origins: Set<String> = []) -> CredentialVaultPayload {
             CredentialVaultPayload(revision: 0, accounts: accounts, blockedPasswordOrigins: origins)

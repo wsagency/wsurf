@@ -13,11 +13,17 @@ nonisolated extension CredentialExchangeCodec {
     /// merges it into. The merge adds what that account lacks and replaces nothing: the item's websites that the merge names (and
     /// no others, since a saved password is filled on its credential's websites), its name if the account has none, and the item's
     /// identity when the account has none of its own, so the next import finds it unchanged.
+    ///
+    /// `inputsValidated` says the caller already ran `validateAccounts` on this preview's stored accounts and candidates (`preview`
+    /// does), so a review that plans the same transfer again does not check the whole vault and transfer every time.
     static func apply(
-        _ preview: CredentialImportPreview, decisions: [CredentialImportDecision], duplicates: [UUID: DuplicateMerge] = [:]
+        _ preview: CredentialImportPreview, decisions: [CredentialImportDecision], duplicates: [UUID: DuplicateMerge] = [:],
+        inputsValidated: Bool = false
     ) throws -> [CredentialAccount] {
-        try validateAccounts(preview.base.accounts)
-        try validateAccounts(preview.candidates)
+        if !inputsValidated {
+            try validateAccounts(preview.base.accounts)
+            try validateAccounts(preview.candidates)
+        }
         let conflictByIncoming = Dictionary(uniqueKeysWithValues: preview.conflicts.map { ($0.incoming, $0) })
         let decisionsByIncoming = try validatedDecisions(decisions, for: preview, conflicts: conflictByIncoming)
 
@@ -35,7 +41,8 @@ nonisolated extension CredentialExchangeCodec {
             )
         }
         try recordObservedBases(&result, candidates: preview.candidates)
-        try validateAccounts(result, blockedOrigins: preview.base.blockedPasswordOrigins)
+        // The vault's accounts passed above (or in `preview`); only what this import changed or added is checked one by one.
+        try validateAccounts(result, blockedOrigins: preview.base.blockedPasswordOrigins, checked: preview.base.accounts)
         return result
     }
 
