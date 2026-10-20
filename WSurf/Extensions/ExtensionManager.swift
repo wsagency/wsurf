@@ -38,7 +38,7 @@ extension ExtensionManager {
         if action.presentsPopup {
             _ = present(action, for: id, in: window.browser)
         } else {
-            context.performAction(for: tab)
+            context.performAction(for: actionTab(tab, id: id))
         }
     }
 
@@ -81,8 +81,10 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     /// The application owns window creation; the complete configuration includes all URLs and moved tabs.
     var onOpenWindow: ((WKWebExtension.WindowConfiguration) -> ExtensionWindowAdapter?)?
 
-    private let library: ExtensionLibrary
+    let library: ExtensionLibrary
     let profile: Profile?
+    /// A private window's blocked websites per extension. They last for the private session and are never written.
+    @ObservationIgnored var sessionBlockedHosts: [String: [String]] = [:]
 
     @ObservationIgnored var windows: [ObjectIdentifier: ExtensionWindowAdapter] = [:]
     @ObservationIgnored var windowOrder: [ObjectIdentifier] = []
@@ -360,6 +362,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
             for pattern in webExtension.allRequestedMatchPatterns {
                 context.setPermissionStatus(.grantedExplicitly, for: pattern)
             }
+            applyBlocks(to: context, id: record.id)
 
             try controller.load(context)
             contexts[record.id] = context
@@ -654,6 +657,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
             anchors[key]?[id] = nil
         }
         iconCache[id] = nil
+        sessionBlockedHosts[id] = nil
         setHeldUpdate(nil, id: id)
         Pipeline.log.notice("Extension uninstalled")
     }
@@ -723,7 +727,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         if action.presentsPopup {
             _ = present(action, for: id, in: window.browser)
         } else {
-            context.performAction(for: tab)
+            context.performAction(for: actionTab(tab, id: id))
         }
     }
 

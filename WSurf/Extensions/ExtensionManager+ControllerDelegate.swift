@@ -150,6 +150,7 @@ extension ExtensionManager {
         completionHandler: @escaping (Set<URL>, Date?) -> Void
     ) {
         let name = extensionContext.webExtension.displayName ?? extensionContext.uniqueIdentifier
+        let id = extensionContext.uniqueIdentifier
         guard let window = permissionWindow(for: tab), let nativeWindow = window.nativeWindow else {
             completionHandler([], nil)
             return
@@ -160,7 +161,8 @@ extension ExtensionManager {
                 return
             }
             let granted = await ExtensionConsent.confirmRuntimeURLAccess(name: name, urls: urls, in: nativeWindow)
-            completionHandler(self.owns(window) && granted ? urls : [], nil)
+            completionHandler(self.owns(window) && granted ? self.withoutBlockedWebsites(urls, id: id) : [], nil)
+            self.reapplyBlocks(id: id)
         }
     }
 
@@ -172,6 +174,7 @@ extension ExtensionManager {
         completionHandler: @escaping (Set<WKWebExtension.MatchPattern>, Date?) -> Void
     ) {
         let name = extensionContext.webExtension.displayName ?? extensionContext.uniqueIdentifier
+        let id = extensionContext.uniqueIdentifier
         guard let window = permissionWindow(for: tab), let nativeWindow = window.nativeWindow else {
             completionHandler([], nil)
             return
@@ -187,7 +190,8 @@ extension ExtensionManager {
                 matchPatterns: matchPatterns,
                 in: nativeWindow
             )
-            completionHandler(self.owns(window) && granted ? matchPatterns : [], nil)
+            completionHandler(self.owns(window) && granted ? self.withoutBlockedWebsites(matchPatterns, id: id) : [], nil)
+            self.reapplyBlocks(id: id)
         }
     }
 
