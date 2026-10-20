@@ -810,8 +810,13 @@ extension WKWebView {
     func evaluate(
         _ source: String, asFunction: Bool, arguments: [String: Any] = [:], in frame: WKFrameInfo?, in world: WKContentWorld
     ) async throws -> Any {
-        try await withCheckedThrowingContinuation { continuation in
-            evaluate(source, asFunction: asFunction, arguments: arguments, in: frame, in: world) { continuation.resume(with: $0) }
+        var result: Result<Any, Error>!
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            evaluate(source, asFunction: asFunction, arguments: arguments, in: frame, in: world) {
+                result = $0
+                continuation.resume()
+            }
         }
+        return try result.get()
     }
 }
