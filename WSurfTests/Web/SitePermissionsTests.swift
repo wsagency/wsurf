@@ -174,6 +174,19 @@ struct SitePermissionsStoreTests {
         #expect(reader.assistantAccess(for: "https://b.example.com") == .control)
     }
 
+    /// Resetting a subdomain's page in Settings > Websites drops the whole site's Assistant Access, and the confirmation names
+    /// the site.
+    @Test func resettingASubdomainResetsTheSitesAssistantAccessAndSaysSo() {
+        let store = temporaryStore()
+        store.setAssistantAccess(.deny, for: "https://www.google.com")
+
+        store.setAssistantAccess(nil, for: "https://maps.google.com")
+
+        #expect(store.assistantRecord(for: "https://google.com") == nil)
+        #expect(WebsiteReset.message(for: "https://maps.google.com").hasSuffix("before reading any page on google.com."))
+        #expect(WebsiteReset.message(for: "http://127.0.0.1:8080").hasSuffix("any page on http://127.0.0.1:8080."))
+    }
+
     @Test func theStricterChoiceWins() {
         let order: [AssistantAccessPolicy] = [.deny, .ask, .readOnly, .control]
         for (index, stricter) in order.enumerated() {

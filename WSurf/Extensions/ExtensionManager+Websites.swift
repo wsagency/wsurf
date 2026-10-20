@@ -30,7 +30,7 @@ extension ExtensionManager {
 
     /// The patterns that cover a website and every subdomain of it, written with and without the root dot: WebKit compares
     /// a page's host as written, and `example.com.` is the same website.
-    nonisolated static func websitePatterns(for host: String) -> [WKWebExtension.MatchPattern] {
+    static func websitePatterns(for host: String) -> [WKWebExtension.MatchPattern] {
         let literal = host.contains(":") ? "[\(host)]" : host
         let forms = host.contains(":") ? [literal] : [literal, literal + "."]
         return forms.compactMap { try? WKWebExtension.MatchPattern(string: "*://*.\($0)/*") }

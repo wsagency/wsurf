@@ -5654,9 +5654,6 @@
     "The text in this form was written by AI, not by you. Publishing it puts AI-generated text out under your name." : {
 
     },
-    "The website will ask again to use your camera, microphone, location, or notifications. The assistant will ask again before reading the website." : {
-
-    },
     "The website’s certificate couldn’t be verified, so WSurf stopped before sending anything." : {
       "comment" : "Explanatory sentence on the certificate error page, under its headline. Curly apostrophes."
     },
@@ -6478,6 +6475,9 @@
     },
     "After a week" : {
       "comment" : "Choice in the Archive unused tabs pop-up menu in Settings > General: a background tab closes into the archive once it has gone unused for a week. Sentence case, one short line."
+    },
+    "The website will ask again to use your camera, microphone, location, or notifications. The assistant will ask again before reading any page on %@." : {
+      "comment" : "Message of the confirmation for Reset this website in Settings > Websites. %@ is the whole website the assistant’s access covers, for example google.com when resetting maps.google.com: assistant access is reset for every page of that site."
     }
   },
   "version" : "1.0"
