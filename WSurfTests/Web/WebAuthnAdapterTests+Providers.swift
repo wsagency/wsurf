@@ -464,21 +464,23 @@ extension WebAuthnAdapterTests {
         return trace
     }
 
-    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
-    func aModalRequestLooksTheSameToThePageInEveryVaultStateUntilTheUserChoosesTheSystem(engine: BrowserEngine) async throws {
-        for decision in [WebAuthnDecision.declined, .cancelled, .expired, .handOff] {
-            var traces: [[String]] = []
-            for state in ProfileVault.allCases {
-                traces.append(try await observe(state, engine: engine, answering: decision))
-            }
-            #expect(traces.dropFirst().allSatisfy { $0 == traces[0] }, "\(decision): \(traces)")
-            let first = try #require(traces.first)
-            #expect(first.first == "while open: 0 events, 0 outcomes, steps 1", "nothing reaches the page before the user answers")
-            if decision == .handOff {
-                #expect(first.dropFirst() == ["event: modal - -"], "exactly one hand-off and no error")
-            } else {
-                #expect(first.dropFirst().count == 1 && first.dropFirst().first?.hasPrefix("event: - ") == true, "one refusal, never a hand-off")
-            }
+    /// One case per answer: the comparison is between the vault states for the same answer, and each case opens one realm per
+    /// state. Late in a full run a Chromium realm took about 12 s, so the four answers in one case passed the 120 s limit.
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium], [WebAuthnDecision.declined, .cancelled, .expired, .handOff])
+    func aModalRequestLooksTheSameToThePageInEveryVaultStateUntilTheUserChoosesTheSystem(
+        engine: BrowserEngine, decision: WebAuthnDecision
+    ) async throws {
+        var traces: [[String]] = []
+        for state in ProfileVault.allCases {
+            traces.append(try await observe(state, engine: engine, answering: decision))
+        }
+        #expect(traces.dropFirst().allSatisfy { $0 == traces[0] }, "\(decision): \(traces)")
+        let first = try #require(traces.first)
+        #expect(first.first == "while open: 0 events, 0 outcomes, steps 1", "nothing reaches the page before the user answers")
+        if decision == .handOff {
+            #expect(first.dropFirst() == ["event: modal - -"], "exactly one hand-off and no error")
+        } else {
+            #expect(first.dropFirst().count == 1 && first.dropFirst().first?.hasPrefix("event: - ") == true, "one refusal, never a hand-off")
         }
     }
 
