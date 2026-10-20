@@ -646,6 +646,12 @@ final class BrowserPage: NSView {
         })();
         """
 
+    /// What WebKit stores for `source`: an isolated world's script starts with the `__wsurfSend` relay. A page-world script
+    /// never does; one that needs native registers a handler (`addScriptMessageHandler`), which adds the relay on purpose.
+    private static func stored(_ source: String, in world: WKContentWorld) -> String {
+        world === WKContentWorld.page ? source : bridgeSource + "\n" + source
+    }
+
     static func installBridge(in controller: WKUserContentController, world: WKContentWorld) {
         guard !controller.userScripts.contains(where: {
             ($0.source == bridgeSource || $0.source.hasPrefix(bridgeSource + "\n")) &&
@@ -660,7 +666,7 @@ final class BrowserPage: NSView {
     func installScript(_ source: String, in world: WKContentWorld, injectionTime: WKUserScriptInjectionTime, forMainFrameOnly: Bool) {
         if let webKit {
             let controller = webKit.configuration.userContentController
-            let source = Self.bridgeSource + "\n" + source
+            let source = Self.stored(source, in: world)
             guard !controller.userScripts.contains(where: {
                 $0.source == source && Self.scriptWorlds.object(forKey: $0) === world &&
                 $0.injectionTime == injectionTime && $0.isForMainFrameOnly == forMainFrameOnly
@@ -678,8 +684,8 @@ final class BrowserPage: NSView {
         if let webKit {
             let controller = webKit.configuration.userContentController
             var scripts = controller.userScripts
-            let oldSource = Self.bridgeSource + "\n" + old
-            let newSource = Self.bridgeSource + "\n" + new
+            let oldSource = Self.stored(old, in: world)
+            let newSource = Self.stored(new, in: world)
             guard let index = scripts.firstIndex(where: {
                 $0.source == oldSource && Self.scriptWorlds.object(forKey: $0) === world
             }) else {
@@ -714,7 +720,7 @@ final class BrowserPage: NSView {
     /// that stay are re-added from the same objects.
     func removeScript(_ source: String, in world: WKContentWorld) {
         guard let controller = webKit?.configuration.userContentController else { return }
-        let source = Self.bridgeSource + "\n" + source
+        let source = Self.stored(source, in: world)
         var scripts = controller.userScripts
         guard let index = scripts.firstIndex(where: { $0.source == source && Self.scriptWorlds.object(forKey: $0) === world }) else { return }
         scripts.remove(at: index)
