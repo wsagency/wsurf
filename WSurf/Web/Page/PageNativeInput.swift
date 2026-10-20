@@ -7,6 +7,13 @@ import Foundation
 import WebKit
 
 extension PageDriver {
+    /// Makes `view` the first responder of `window`. Refused for a parked page: it is off screen, and taking focus would move
+    /// the person's keyboard away from the page the window shows. Check before `makeFirstResponder`, which moves focus even
+    /// when the new responder declines it.
+    static func focusForKeyboard(_ view: BrowserPage, in window: NSWindow) -> Bool {
+        !view.isParked && window.makeFirstResponder(view)
+    }
+
     /// Moves the real pointer to the element's center, so CSS `:hover`, pointer and mouse handlers all run as they would for a
     /// person. Needs WSurf to be the active app with a key window and an on-screen tab; it never activates or raises anything.
     static func hover(ref: Int, in view: BrowserPage) async -> String {
@@ -61,7 +68,7 @@ extension PageDriver {
         case .failure(let refusal):
             return refusal.message
         }
-        guard view.window != nil else { return "Keyboard input requires a visible tab. Switch to the page first." }
+        guard view.window != nil, !view.isParked else { return "Keyboard input requires a visible tab. Switch to the page first." }
         let resolved = await resolve(ref: ref, label: "", kinds: #"["field","button","link","checkbox","radio","combobox","select","scrollarea"]"#, in: view)
         let found: Resolved
         switch resolved {
@@ -94,7 +101,7 @@ extension PageDriver {
                 return JSON.stringify({ focused: el.ownerDocument.activeElement === el || el.getRootNode().activeElement === el });
                 """), in: view)
         if let error = ready?["error"] as? String { return error }
-        guard ready?["focused"] as? Bool == true, window.makeFirstResponder(view),
+        guard ready?["focused"] as? Bool == true, focusForKeyboard(view, in: window),
             await validateObservation(in: view, ref: ref)
         else { return "The control could not receive keyboard focus." }
         let documentURL = view.url

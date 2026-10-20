@@ -687,6 +687,8 @@ final class AppCoordinator {
                 message = String(localized: "This tab is using the camera or microphone.")
             case .agentWorking:
                 message = String(localized: "The assistant is working in this tab.")
+            case .externalControl:
+                message = String(localized: "A connected app controls this tab. Take it over first.")
             case .mediaPlayback:
                 message = String(localized: "This tab is playing media.")
             case .visibleInSplit:

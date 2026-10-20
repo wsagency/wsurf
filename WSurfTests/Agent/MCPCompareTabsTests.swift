@@ -334,10 +334,16 @@ struct MCPCompareTabsTests {
         }
     }
 
-    @Test func tabsNotSideBySideOnScreenAreRefused() async throws {
+    @Test func aTabOffScreenIsComparedInItsWindowAndATabInNoWindowIsRefused() async throws {
         try await withRig([("/same", .webKit), ("/same", .webKit)]) { rig in
             try await share(rig)
             rig.browser.dissolveSplit(containing: rig.tabs[0])
+            // Off screen but still in a window: compared where it is, without being shown.
+            let kept = try await compare(rig)
+            #expect(object(kept)["status"]?.stringValue == "ok", "\(text(kept))")
+            #expect(rig.browser.activeTabID == rig.tabs[0].id)
+            // In no window, and this browser has no window to keep it in.
+            rig.windows[1].contentView = nil
             let result = try await compare(rig)
             #expect(result.isError == true)
             #expect(object(result)["status"]?.stringValue == "invalidInput" && text(result).contains("on screen"), "\(text(result))")
@@ -440,9 +446,9 @@ struct MCPCompareTabsTests {
             let chromium = try #require(browser.tabs.first { $0.id.uuidString == report["chromium"]?.stringValue })
             #expect(webKit.page.engine == .webKit && chromium.page.engine == .chromium)
             #expect(report["reused"]?.boolValue == false)
-            // Side by side and on screen, the user's own tab left alone, no site setting written.
-            #expect(browser.activeTab === webKit)
-            #expect(Set(browser.splitPanes?.map(\.id) ?? []) == [webKit.id, chromium.id])
+            // Split side by side but not shown: the user's own tab stays selected, and no site setting is written.
+            #expect(browser.activeTab === user)
+            #expect(Set(browser.splits.split(containing: webKit.id)?.tabs ?? []) == [webKit.id, chromium.id])
             #expect(browser.tabs.contains { $0 === user })
             #expect(browser.sitePermissions.engine(for: SitePermissions.origin(for: url)) == .webKit)
             for tab in [webKit, chromium] {

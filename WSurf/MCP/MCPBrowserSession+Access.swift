@@ -91,7 +91,7 @@ extension MCPBrowserSession {
         if origin != grant.origin, !followsDeveloperSites(grant, to: url), !viaDefault {
             guard await openConsent(clientName, url) else { return failure("Navigation was not approved.") }
         }
-        guard mayProceed(tab, capability: .control), onScreen(tab), webURL(of: tab) == previousURL else {
+        guard mayProceed(tab, capability: .control), isReachable(tab), webURL(of: tab) == previousURL else {
             return failure("Page access changed before navigation.")
         }
         guard browser.sitePermissions.assistantRecord(for: origin) != .deny else { return failure("Assistant access is off for this website.") }
@@ -123,10 +123,10 @@ extension MCPBrowserSession {
             guard browser.sitePermissions.assistantRecord(for: SitePermissions.origin(for: url)) != .deny else {
                 return failure("Assistant access is off for this website.")
             }
-            let tab = browser.newTab(url: url, transition: .agent, engine: engine)
-            openedTabs.insert(tab.id)
+            let tab = openInBackground(url, engine: engine)
             grants[tab.id] = Grant(origin: SitePermissions.origin(for: url), access: access, source: .standing)
-            return success("Opened tab \(tab.id.uuidString).\(opened) Use readPage after it loads.")
+            keepInWindow(tab)
+            return success("Opened tab \(tab.id.uuidString) in the background.\(opened) Use readPage after it loads.")
         }
         guard grants.keys.contains(where: { sharedTab($0).map { permits($0, capability: .control) } ?? false }),
             let url = permittedDestination(raw)
@@ -139,10 +139,18 @@ extension MCPBrowserSession {
         guard browser.sitePermissions.assistantRecord(for: SitePermissions.origin(for: url)) != .deny else {
             return failure("Assistant access is off for this website.")
         }
-        let tab = browser.newTab(url: url, transition: .agent, engine: engine)
-        openedTabs.insert(tab.id)
+        let tab = openInBackground(url, engine: engine)
         grants[tab.id] = Grant(origin: SitePermissions.origin(for: url), access: .control, source: viaDefault ? .appDefault : .sheet)
-        return success("Opened tab \(tab.id.uuidString).\(opened) Use readPage after it loads.")
+        keepInWindow(tab)
+        return success("Opened tab \(tab.id.uuidString) in the background.\(opened) Use readPage after it loads.")
+    }
+
+    /// A tab this connection opens: it never takes the place of the person's tab. In a window with no tab there is nothing to
+    /// replace, so it becomes the tab the window shows.
+    private func openInBackground(_ url: URL, engine: BrowserEngine?) -> BrowserTab {
+        let tab = browser.newTab(url: url, activate: browser.activeTab == nil, transition: .agent, engine: engine)
+        openedTabs.insert(tab.id)
+        return tab
     }
 
     // MARK: Comparing engines
@@ -196,14 +204,15 @@ extension MCPBrowserSession {
             return comparisonOpened(webKit, chromium, reused: true)
         }
         closeComparison()
-        // Opened unseen, split, and only then shown: Chromium does not load until its view is on screen.
-        let webKit = browser.newTab(url: url, activate: false, transition: .agent, engine: .webKit)
-        let chromium = browser.newTab(url: url, activate: false, transition: .agent, engine: .chromium)
+        // Split but not shown: the person keeps their tab, and both pages are kept in the window at one size, so they load
+        // (Chromium needs a window) and can be compared. Selecting the split shows them side by side.
+        let webKit = openInBackground(url, engine: .webKit)
+        let chromium = openInBackground(url, engine: .chromium)
         browser.split(webKit, with: chromium, axis: .sideBySide)
-        browser.activate(webKit)
         grants[webKit.id] = grant
         grants[chromium.id] = grant
-        openedTabs.formUnion([webKit.id, chromium.id])
+        keepInWindow(webKit)
+        keepInWindow(chromium)
         comparison = ComparisonPair(webKit: webKit.id, chromium: chromium.id)
         return comparisonOpened(webKit, chromium, reused: false)
     }
@@ -222,7 +231,7 @@ extension MCPBrowserSession {
         let value: Value = .object([
             "status": "ok", "webkit": .string(webKit.id.uuidString), "chromium": .string(chromium.id.uuidString),
             "reused": .bool(reused),
-            "message": "Both tabs load the page side by side. Call compareTabs with them once it has loaded.",
+            "message": "Both tabs load the page in the background, at one size. Call compareTabs with them once it has loaded.",
         ])
         return CallTool.Result(content: [.text(text: encoded(value), annotations: nil, _meta: nil)], structuredContent: Optional.some(value), isError: false)
     }

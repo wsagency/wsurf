@@ -78,7 +78,7 @@ extension MCPBrowserSession {
             documentURL: url.absoluteString, snapshot: nil,
             validate: { [weak self, weak tab, weak view] in
                 guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
-                return self.mayProceed(tab, capability: .development) && self.onScreen(tab)
+                return self.mayProceed(tab, capability: .development) && self.isReachable(tab)
             })
         let outcome = await PageAutomationGuard.$current.withValue(scope) { () -> Result<PageDriver.ControlTarget, PageDriver.TargetFailure> in
             guard scope.validate(), webURL(of: tab) == url else { return .failure(.init(message: "Page access changed. Read the page again.")) }

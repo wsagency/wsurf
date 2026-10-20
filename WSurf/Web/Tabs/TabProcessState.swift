@@ -12,6 +12,9 @@ final class TabProcessState {
     private(set) var isSharingScreen = false
     private(set) var isAgentWorking = false
     var isExternalAutomationWorking = false
+    /// The MCP connections that hold a grant for this tab, kept by `MCPBrowserSession.grants`. Such a tab shows the AI mark
+    /// and is not unloaded to save memory, so a connection working in the background finds its page as it left it.
+    private(set) var externalControllers: Set<UUID> = []
     private(set) var reclaimState: TabReclaimState = .none
 
     @ObservationIgnored private var editedFormFrames: Set<String> = []
@@ -42,6 +45,9 @@ final class TabProcessState {
         if isAgentWorking || isExternalAutomationWorking {
             return .agentWorking
         }
+        if !externalControllers.isEmpty {
+            return .externalControl
+        }
         if hasMediaPlayback {
             return .mediaPlayback
         }
@@ -50,6 +56,14 @@ final class TabProcessState {
 
     func setAgentWorking(_ isWorking: Bool) {
         isAgentWorking = isWorking
+    }
+
+    func setExternalController(_ connection: UUID, holds: Bool) {
+        if holds {
+            externalControllers.insert(connection)
+        } else {
+            externalControllers.remove(connection)
+        }
     }
 
     func notePageActivity(_ signal: PageActivitySignal) {

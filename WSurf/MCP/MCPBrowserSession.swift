@@ -69,7 +69,9 @@ final class MCPBrowserSession: Identifiable {
     private(set) var isConnected = true
     private(set) var lastTool = ""
     private(set) var completedCalls = 0
-    var grants: [UUID: Grant] = [:]
+    var grants: [UUID: Grant] = [:] {
+        didSet { markControlledTabs(previous: oldValue) }
+    }
     @ObservationIgnored let browser: BrowserModel
     /// The keychain-backed source of standing grants, developer sites and the Developer profile.
     @ObservationIgnored let trust: MCPTrustStore
@@ -81,7 +83,8 @@ final class MCPBrowserSession: Identifiable {
     /// Whether the page shows a password or payment field. A page that does not answer counts as yes.
     @ObservationIgnored var sensitivePageProbe: @MainActor (BrowserPage) async -> Bool = { await PageSensitiveProbe.hasSensitiveField(in: $0) }
     @ObservationIgnored private let actionPolicy = AgentActionPolicy(storage: MCPActionGrantStorage())
-    @ObservationIgnored private let consentWindow: ExtensionWindowAdapter?
+    /// The window this connection is bound to; consent sheets attach to it and off-screen shared tabs are kept in it.
+    @ObservationIgnored let consentWindow: ExtensionWindowAdapter?
     @ObservationIgnored var observations: [UUID: PageObservation] = [:]
     @ObservationIgnored var feedback = MCPActionFeedbackState()
     /// Cleanup index only: the tab owns the lease, this lets disconnect find the tabs this connection holds.
@@ -221,8 +224,9 @@ final class MCPBrowserSession: Identifiable {
         }
         if name == "switchTab" { return switchTab(tab) }
         if name == "closeTab" { return await closeTab(tab) }
-        if capability == .control, !onScreen(tab) {
-            return failure("Use switchTab before controlling this shared tab.")
+        keepInWindow(tab)
+        if capability == .control, !isReachable(tab) {
+            return failure(Self.unreachableRefusal)
         }
         if name == "handleDialog" { return await handleDialog(arguments, tab: tab) }
         if let open = dialogRefusal(for: tab) {
@@ -288,9 +292,19 @@ final class MCPBrowserSession: Identifiable {
         return url
     }
 
+    /// Whether the person sees `tab`: it is the active tab or a pane of the active split.
     func onScreen(_ tab: BrowserTab) -> Bool {
         browser.activeTabID == tab.id || browser.splitPanes?.contains(where: { $0 === tab }) == true
     }
+
+    /// Whether a call may drive `tab` without changing what the person sees: it is on screen, or its page is kept in a window
+    /// out of sight (`keepInWindow`). A page in no window would not load in Chromium and would be throttled in WebKit.
+    func isReachable(_ tab: BrowserTab) -> Bool {
+        onScreen(tab) || tab.liveView?.window != nil
+    }
+
+    nonisolated static let unreachableRefusal =
+        "This shared tab is in the background and WSurf could not keep it in its window. Use switchTab to show it."
 
     func encoded(_ value: Value) -> String {
         (try? JSONEncoder().encode(value)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"

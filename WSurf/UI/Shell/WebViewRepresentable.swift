@@ -58,14 +58,16 @@ enum WebKeyEcho {
 
 @MainActor
 enum WebViewParking {
-    static func park(_ page: BrowserPage) {
-        guard let shelf = page.window?.contentView?.subviews
+    /// Keeps `page` attached to `window` (its own window when nil) without showing it, so it keeps loading and rendering.
+    /// `size` replaces the page's current size. Without a shelf in that window the page is only removed.
+    static func park(_ page: BrowserPage, in window: NSWindow? = nil, size: CGSize? = nil) {
+        guard let shelf = (window ?? page.window)?.contentView?.subviews
             .first(where: { $0 is WebViewParkingShelf })
         else {
             page.removeFromSuperview()
             return
         }
-        let size = page.bounds.size
+        let size = size ?? page.bounds.size
         page.removeFromSuperview()
         page.autoresizingMask = []
         page.frame = NSRect(x: 0, y: 0, width: max(size.width, 1), height: max(size.height, 1))

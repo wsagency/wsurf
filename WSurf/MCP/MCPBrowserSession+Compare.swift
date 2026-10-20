@@ -35,8 +35,10 @@ extension MCPBrowserSession {
         guard mayProceed(tabA, capability: .development), mayProceed(tabB, capability: .development) else {
             return MCPCompareTools.result(.denied, message: "Comparing needs development access to both tabs.")
         }
-        guard onScreen(tabA), onScreen(tabB) else {
-            return MCPCompareTools.result(.invalidInput, message: "Both tabs must be on screen side by side. openComparison opens them that way.")
+        keepInWindow(tabA)
+        keepInWindow(tabB)
+        guard isReachable(tabA), isReachable(tabB) else {
+            return MCPCompareTools.result(.invalidInput, message: "Both tabs must be on screen or kept in this window. openComparison opens them that way.")
         }
         guard tabA.developmentRelation(of: id) != .other, tabB.developmentRelation(of: id) != .other else {
             return MCPCompareTools.result(.ownershipConflict, message: "Another connection is using development tools on one of these tabs. Nothing was compared.")
