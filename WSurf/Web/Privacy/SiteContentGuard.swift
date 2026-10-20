@@ -5,8 +5,9 @@
 import Foundation
 import WebKit
 
-/// WebKit fixes `mediaTypesRequiringUserActionForPlayback` when a web view is
-/// made, so a per-website auto-play answer can only be kept in the page.
+/// A website's auto-play and pop-up answers. WebKit keeps both itself, so nothing runs in its pages: the tab's navigation
+/// delegate sets the auto-play policy for each main-frame document (`apply(_:to:)`) and decides each pop-up as WebKit asks
+/// for its window. Chromium's auto-play setting is browser-wide, so its pages still keep the answer with this script.
 final class SiteContentGuard {
     static let shared = SiteContentGuard()
 
@@ -15,6 +16,42 @@ final class SiteContentGuard {
     @MainActor
     func install(in page: BrowserPage, permissions: SitePermissions, settings: BrowserSettings,
                  onPopupBlocked: @escaping (URL?) -> Void = { _ in }) {
+        guard page.webKit == nil else { return }
+        installPageScript(in: page, permissions: permissions, settings: settings, onPopupBlocked: onPopupBlocked)
+    }
+
+    static func autoplay(for url: URL?, permissions: SitePermissions, settings: BrowserSettings) -> AutoplayPolicy {
+        permissions.autoplay(for: SitePermissions.origin(for: url)) ?? settings.autoplay
+    }
+
+    private static let policySetter = NSSelectorFromString("_setAutoplayPolicy:")
+    private static let quirksSetter = NSSelectorFromString("_setAllowedAutoplayQuirks:")
+
+    /// `_WKWebsiteAutoplayPolicy` and `_WKWebsiteAutoplayQuirk` (SPI on `WKWebpagePreferences`). WebKit enforces the
+    /// policy for every player in every frame of the document, including one never attached to the page. Inherited user
+    /// gestures make any earlier interaction with the page count as starting it by hand, as
+    /// `navigator.userActivation.hasBeenActive` did. "Muted" is WebKit's own: a player that would make a sound waits for
+    /// the person, a muted one plays.
+    static func apply(_ policy: AutoplayPolicy, to preferences: WKWebpagePreferences) {
+        typealias SetInteger = @convention(c) (AnyObject, Selector, Int) -> Void
+        guard preferences.responds(to: policySetter), preferences.responds(to: quirksSetter) else { return }
+        let inheritedUserGestures = 1 << 1
+        let (value, quirks) = switch policy {
+        case .allow:
+            (1, 0)
+        case .silent:
+            (2, inheritedUserGestures)
+        case .block:
+            (3, inheritedUserGestures)
+        }
+        unsafeBitCast(preferences.method(for: policySetter), to: SetInteger.self)(preferences, policySetter, value)
+        unsafeBitCast(preferences.method(for: quirksSetter), to: SetInteger.self)(preferences, quirksSetter, quirks)
+    }
+
+    /// The page-world script Chromium runs. Tests drive it on WebKit too: its JavaScript is the same on both.
+    @MainActor
+    func installPageScript(in page: BrowserPage, permissions: SitePermissions, settings: BrowserSettings,
+                           onPopupBlocked: @escaping (URL?) -> Void) {
         page.installScript(Self.script, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.addScriptMessageHandler(name: Self.handlerName, in: .page) { [permissions, settings] message in
             guard let body = message.body as? [String: Any] else { return }

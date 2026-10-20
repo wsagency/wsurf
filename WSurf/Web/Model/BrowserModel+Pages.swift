@@ -211,7 +211,6 @@ extension BrowserModel {
         let settings = context.settings
         for tab in tabs where tab.isMaterialised {
             settings.apply(to: tab.page)
-            tab.refreshPopupPolicy()
         }
         context.webViewPool.discardIdle()
     }
@@ -237,7 +236,6 @@ extension BrowserModel {
         guard !origin.isEmpty else { return }
         let fallback: PopupPolicy = context.settings.blocksPopups ? .blockAndNotify : .allow
         sitePermissions.setPopups(policy == fallback ? nil : policy, for: origin)
-        tab.refreshPopupPolicy()
     }
 
     // MARK: - The browser's own pages
