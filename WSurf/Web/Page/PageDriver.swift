@@ -268,7 +268,8 @@ enum PageDriver {
                    return JSON.stringify({ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
                    """)
             let suggestion = await evaluateJSON(suggestionScript, in: webView)
-            if selectedFrame == nil, suggestion?["x"] is Double, suggestion?["y"] is Double {
+            // A parked page cannot take the native click (it would move the person's focus), so it gets the DOM click below.
+            if selectedFrame == nil, !webView.isParked, suggestion?["x"] is Double, suggestion?["y"] is Double {
                 guard let capture = try? await computerFrame(in: webView) else {
                     return "Could not inspect “\(found.label)” on the visible page. Capture a new screenshot before trying again."
                 }

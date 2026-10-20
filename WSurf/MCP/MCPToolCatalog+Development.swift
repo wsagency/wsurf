@@ -63,7 +63,8 @@ nonisolated extension MCPToolCatalog {
             description:
                 """
                 Lay the page out at an exact CSS-pixel viewport (the document's innerWidth/innerHeight) and report the measured result. \
-                May exceed the window. Needs development access and a visible tab; undo with resetDevelopment.
+                May exceed the window. Needs development access. A tab in the background may keep its size; the result says. \
+                Undo with resetDevelopment.
                 """,
             parameters: [
                 tab,
@@ -76,7 +77,7 @@ nonisolated extension MCPToolCatalog {
                 """
                 Apply a profile: responsive-phone, responsive-tablet, responsive-desktop (viewport size only) or phone, tablet \
                 (also device pixel ratio, touch and mobile viewport; Chromium only, rejected before any change on WebKit). \
-                Needs development access and a visible tab.
+                Needs development access. A tab in the background may keep its size; the result says.
                 """,
             parameters: [
                 tab, Parameter(name: "profile", type: "string", description: "responsive-phone, responsive-tablet, responsive-desktop, phone, or tablet."),
@@ -97,7 +98,7 @@ nonisolated extension MCPToolCatalog {
                 Start capturing console messages and network request metadata for the tab's current document and the ones after it: \
                 method, sanitized URL (plain parameter names kept; values concealed as a ~tag for a generated token that matches only within one document, otherwise a length class), status, \
                 resource type, media type, size, timing and, for warnings and errors, a stack trace. By default never headers, bodies, cookies \
-                or query values. Nothing earlier is available. Needs development access and a visible tab. \
+                or query values. Nothing earlier is available. Needs development access. \
                 The Developer tier (a paired app on a developer site in the Developer profile) can opt in, for this capture only: \
                 headers and bodies record request and response headers and text bodies (JSON, form, XML, text) of requests to developer sites only, \
                 fullConsole adds stacks and bounded object previews to every console call, and clearQueries shows query values of requests to developer sites. \

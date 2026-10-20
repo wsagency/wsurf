@@ -45,6 +45,31 @@ final class BrowserPage: NSView {
         return CGRect(x: viewport.minX, y: viewport.minY, width: viewport.width, height: max(1, viewport.height - topBarInset))
     }
 
+    /// True while the page waits off screen on its window's parking shelf. It still renders, but it must never take keyboard
+    /// focus: the person may be typing in the page the window shows.
+    var isParked: Bool {
+        superview is WebViewParkingShelf
+    }
+
+    /// Key-value coding finds the private getter `_windowOcclusionDetectionEnabled` and setter `_setWindowOcclusionDetectionEnabled:`
+    /// from this key; the underscored name as a key would match no setter and raise.
+    private static let occlusionKey = "windowOcclusionDetectionEnabled"
+
+    /// WebKit stops painting, pauses animation frames and throttles timers in a page whose window is covered by other apps.
+    /// A tab an external connection controls keeps rendering instead, so its screenshots and waits work with WSurf in the
+    /// background. Private API, used only where the view answers to it. Chromium gets the same from a process-wide switch
+    /// (`ChromiumRuntime.ensureInitialized`).
+    var ignoresWindowOcclusion: Bool {
+        get {
+            guard let webKit, webKit.responds(to: NSSelectorFromString("_windowOcclusionDetectionEnabled")) else { return false }
+            return webKit.value(forKey: Self.occlusionKey) as? Bool == false
+        }
+        set {
+            guard let webKit, webKit.responds(to: NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")) else { return }
+            webKit.setValue(!newValue, forKey: Self.occlusionKey)
+        }
+    }
+
     @objc dynamic var url: URL?
     @objc dynamic var title: String?
     @objc dynamic var isLoading = false

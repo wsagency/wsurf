@@ -163,6 +163,10 @@ uses `PageDriver` through a revocable `PageAutomationGuard`; it does not enter
 one regular window when it connects. Focus changes do not retarget it; closing or
 switching that owner revokes its connections without disrupting another window.
 Consent sheets attach to the originating registered native window.
+A connection drives a shared tab that is not on screen without changing the selection:
+`MCPBrowserSession.keepInWindow` parks its page on the window's shelf, and a parked page never takes keyboard focus.
+`TabProcessState.externalControllers` mirrors each connection's grants for the sidebar's AI mark and keeps those tabs
+loaded; it is a projection, not a second grant store.
 
 MCP enablement and the listener are application-wide. New connections are refused
 while the focused window is private; existing regular-window connections remain

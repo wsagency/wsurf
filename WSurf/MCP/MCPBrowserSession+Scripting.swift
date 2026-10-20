@@ -23,8 +23,8 @@ extension MCPBrowserSession {
         func refuse(_ kind: MCPDevelopmentTools.Kind, _ message: String) -> CallTool.Result {
             MCPDevelopmentTools.result(kind, tabID: tab.id, message: message)
         }
-        // A script can change what the user sees, so the tab must be one they can see.
-        guard onScreen(tab) else { return refuse(.denied, "Use switchTab before running scripts or editing this shared tab.") }
+        // A script runs in a tab the person can find: on screen, or in the background with its AI mark in the sidebar.
+        guard isReachable(tab) else { return refuse(.denied, Self.unreachableRefusal) }
         tab.setExternalAutomationWorking(true)
         defer { tab.setExternalAutomationWorking(false) }
         tab.realizeDeferredSession()
@@ -39,7 +39,7 @@ extension MCPBrowserSession {
             documentURL: url.absoluteString, snapshot: observation?.snapshot,
             validate: { [weak self, weak tab, weak view] in
                 guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
-                return self.mayProceed(tab, capability: .developer) && self.onScreen(tab)
+                return self.mayProceed(tab, capability: .developer) && self.isReachable(tab)
             })
         return await PageAutomationGuard.$current.withValue(guardScope) {
             guard guardScope.validate(), webURL(of: tab) == url else { return refuse(.stale, "Page access changed. Try again.") }

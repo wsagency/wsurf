@@ -21,7 +21,9 @@ nonisolated enum MCPToolCatalog {
         failed requests when diagnostics run) in about 1 KB, not the whole page; a ref stays valid while its \
         document and control are unchanged, so the observationID is optional. Pass result full to get the \
         whole page. Prefer \
-        text over screenshots. Keyboard input needs a visible tab; hover moves the real pointer and needs WSurf active with the tab on screen. \
+        text over screenshots. Shared tabs work in the background: WSurf keeps them in their window out of sight, so you never need \
+        switchTab to control one, and newTab opens behind the user's tab. The user sees an AI mark on every tab you hold and can take it \
+        over or stop you. Keyboard input needs the tab on screen; hover moves the real pointer and needs WSurf active with the tab on screen. \
         Inspection, viewport and diagnostics tools need requestAccess with development set; one connection owns a tab's development state, so call resetDevelopment when done. \
         To check a page in both engines, call openComparison and then compareTabs. \
         Passwords, codes and card fields stay the user's to fill. The one exception is the Developer tier: there typeOnPage and \
@@ -364,13 +366,19 @@ nonisolated enum MCPToolCatalog {
         Entry(
             name: "newTab",
             description:
-                "Ask the user in WSurf to open and share a new webpage. Requires an existing control grant. With engine, the tab runs in that engine "
+                "Ask the user in WSurf to open and share a new webpage. It opens in the background, behind the user's tab. "
+                + "Requires an existing control grant. With engine, the tab runs in that engine "
                 + "whatever the website's setting is; that needs development access.",
             parameters: [
                 url,
                 Parameter(name: "engine", type: "string", description: "webkit or chromium. Omit for the website's own setting.", required: false, choices: ["webkit", "chromium"]),
             ], scope: nil),
-        Entry(name: "switchTab", description: "Make a shared tab visible and active. Does not expand this connection’s access.", parameters: [tab], scope: .control),
+        Entry(
+            name: "switchTab",
+            description:
+                "Show a shared tab in place of the tab the user sees. Not needed to control a tab; use it for keyboard input or when the "
+                + "user should watch. Does not expand this connection’s access.",
+            parameters: [tab], scope: .control),
         Entry(
             name: "closeTab",
             description: "Close a shared, unpinned tab. Requires control access. WSurf can ask the user first; tabs this connection opened close without asking.",

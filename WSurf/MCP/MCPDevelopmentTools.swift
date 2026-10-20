@@ -161,8 +161,8 @@ extension MCPBrowserSession {
 
     func developmentCall(name: String, arguments: [String: Value], tab: BrowserTab) async -> CallTool.Result {
         let mutates = ["setViewport", "emulateDevice", "reloadPage", "startDiagnostics", "emulateMedia", "clearSiteData"].contains(name)
-        if mutates, !onScreen(tab) {
-            return MCPDevelopmentTools.result(.denied, tabID: tab.id, message: "Use switchTab before changing this shared tab.")
+        if mutates, !isReachable(tab) {
+            return MCPDevelopmentTools.result(.denied, tabID: tab.id, message: Self.unreachableRefusal)
         }
         tab.setExternalAutomationWorking(true)
         defer { tab.setExternalAutomationWorking(false) }

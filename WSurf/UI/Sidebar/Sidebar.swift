@@ -472,7 +472,12 @@ struct SidebarFavoriteButton: View {
         .accessibilityLabel(Text(verbatim: tab.title))
         .accessibilityValue(favoriteValue)
         .accessibilityAddTraits(style.isSelected ? .isSelected : [])
+        .overlay {
+            ExternalControlMark(tab: tab, coordinator: coordinator, isCompact: true)
+                .offset(x: 8, y: 8)
+        }
         .contextMenu {
+            ExternalControlMenuItems(tabs: [tab], coordinator: coordinator)
             SidebarLinkMenuItems(tabs: [tab], coordinator: coordinator)
             if !tab.isDeferred {
                 Button {

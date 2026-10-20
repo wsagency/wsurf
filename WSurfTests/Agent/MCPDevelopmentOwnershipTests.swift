@@ -471,8 +471,8 @@ struct MCPDevelopmentOwnershipTests {
         try await requestDevelopment(second)
         #expect(status(try await call(first, "setViewport", tab, phone)) == "ok")
         let outgoing = tab.page
-        try #require(tab.canDiscardWebContent)
-        tab.discardWebContent()
+        #expect(!tab.canDiscardWebContent, "a tab a connection holds is not unloaded to save memory")
+        tab.unloadUntilShown()
         #expect(tab.developmentOwner == nil)
         #expect(tab.developmentRelation(of: first.id) == .none)
         tab.realizeDeferredSession()

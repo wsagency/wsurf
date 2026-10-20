@@ -15,6 +15,8 @@ extension AppCoordinator {
             voiceInput.cancel()
             agentTurns.detachTab(tab.id, inAnchor: anchorID)
             tab.setAgentWorking(false)
+            // A connection stays bound to this window, so a tab that leaves it leaves the connection, with its AI mark.
+            mcpServer.takeOver(tab, in: browser)
             statusMessage = nil
             linkPeek.dismiss()
             if peek.belongs(to: tab.id) {

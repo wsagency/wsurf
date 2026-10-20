@@ -145,6 +145,31 @@ struct MCPVisibilityTests {
         #expect(developer.isControlling)
     }
 
+    // MARK: The tab's AI mark
+
+    @Test func aTabsMarkNamesTheAppsThatHoldItAndWhatTheyMayDo() async throws {
+        let (server, browser, tab) = try await fixture()
+        defer { _ = server }
+        let origin = SitePermissions.origin(for: try server.url())
+        let reader = session(browser, client: "codex-mcp-client")
+        reader.grants[tab.id] = .init(origin: origin, access: .readOnly)
+        #expect(tab.processState.externalControllers == [reader.id], "a read-only share is marked too")
+        #expect(ExternalControlMark.label(for: [reader], tab: tab) == "Codex can read this tab")
+
+        let controller = session(browser)
+        controller.grants[tab.id] = .init(origin: origin, access: .control)
+        #expect(ExternalControlMark.label(for: [controller], tab: tab) == "Claude Code controls this tab")
+        #expect(ExternalControlMark.label(for: [reader, controller], tab: tab) == "2 apps control this tab")
+
+        // The mark stays between calls: only the grant ends it, never the end of a call.
+        tab.setExternalAutomationWorking(true)
+        tab.setExternalAutomationWorking(false)
+        #expect(tab.processState.externalControllers == [reader.id, controller.id])
+        reader.revoke()
+        controller.revoke()
+        #expect(tab.processState.externalControllers.isEmpty)
+    }
+
     @Test func aLeaseKeepsTheBadgeEvenWithoutAGrant() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
@@ -269,6 +294,111 @@ struct MCPVisibilityTests {
         #expect(reconnected.id != firstSession.id)
         #expect(reconnected.grants.isEmpty)
         #expect(!reconnected.isControlling)
+    }
+
+    @Test func takingOverATabEndsOnlyThatTabsAccessAndItsRunningCall() async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html(Self.page)])
+        let directory = "/tmp/wsurf-mcp-takeover-\(UUID().uuidString)"
+        let endpoint = directory + "/browser.sock"
+        let app = try await listeningApp(endpoint)
+        let first = window(in: app)
+        defer {
+            app.mcpServer.stop()
+            first.closeWindow()
+            try? FileManager.default.removeItem(atPath: directory)
+            _ = server
+        }
+        let url = try server.url()
+        let taken = first.browser.newTab(url: url)
+        let kept = first.browser.newTab(url: url)
+        for tab in [taken, kept] {
+            try #require(await PageSettle.untilIdle(tab.page))
+            try #require(await waitUntil { tab.page.mainDocumentID != nil })
+            tab.assistantAccess.persistsAnswers = false
+            tab.assistantAccess.pageChanged(url: url)
+        }
+        app.focus(first)
+        let client = try await connect("Codex", to: endpoint)
+        defer { Task { await client.disconnect() } }
+        let session = try #require(app.mcpServer.sessions.first { $0.isBound(to: first.browser) })
+        let origin = SitePermissions.origin(for: url)
+        session.grants[taken.id] = .init(origin: origin, access: .development)
+        session.grants[kept.id] = .init(origin: origin, access: .control)
+        _ = try await client.callTool(name: "startDiagnostics", arguments: ["tabID": .string(taken.id.uuidString)])
+        try #require(taken.developmentOwner != nil)
+        #expect(app.mcpServer.controllers(of: taken, in: first.browser).map(\.id) == [session.id])
+
+        let running = Task {
+            try? await client.callTool(
+                name: "waitForPage",
+                arguments: ["tabID": .string(taken.id.uuidString), "condition": "text", "value": "never-on-this-page", "timeout": 15])
+        }
+        defer { running.cancel() }
+        try #require(await waitUntil { session.lastTool == "waitForPage" && taken.processState.isExternalAutomationWorking })
+
+        app.mcpServer.takeOver(taken, in: first.browser)
+
+        #expect(session.isConnected, "the connection keeps its other tabs")
+        #expect(session.grants[taken.id] == nil)
+        #expect(session.grants[kept.id] != nil)
+        #expect(taken.developmentOwner == nil, "its lease on the tab is released")
+        #expect(taken.processState.externalControllers.isEmpty, "the tab loses its mark")
+        #expect(kept.processState.externalControllers == [session.id])
+        #expect(app.mcpServer.controllers(of: taken, in: first.browser).isEmpty)
+        #expect(app.mcpServer.controllers(of: kept, in: first.browser).map(\.id) == [session.id])
+        #expect(
+            await waitUntil(timeout: .seconds(5)) {
+                session.activity.entries.contains { $0.event == .tool("waitForPage") }
+            }, "the call on the tab ended at once instead of waiting out its timeout")
+        let (refused, refusedFailed) = try await client.callTool(name: "readPage", arguments: ["tabID": .string(taken.id.uuidString)])
+        #expect(refusedFailed == true)
+        let namesTheRefusal = refused.contains { block in
+            guard case .text(let text, _, _) = block else { return false }
+            return text.contains("not shared")
+        }
+        #expect(namesTheRefusal, "the tab is no longer shared with the connection")
+        let (_, keptFailed) = try await client.callTool(name: "readPage", arguments: ["tabID": .string(kept.id.uuidString)])
+        #expect(keptFailed == false)
+    }
+
+    @Test func stoppingFromATabEndsOnlyTheAppsThatHoldIt() async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html(Self.page)])
+        let directory = "/tmp/wsurf-mcp-tabstop-\(UUID().uuidString)"
+        let endpoint = directory + "/browser.sock"
+        let app = try await listeningApp(endpoint)
+        let first = window(in: app)
+        defer {
+            app.mcpServer.stop()
+            first.closeWindow()
+            try? FileManager.default.removeItem(atPath: directory)
+            _ = server
+        }
+        let url = try server.url()
+        let held = first.browser.newTab(url: url)
+        let other = first.browser.newTab(url: url)
+        app.focus(first)
+        let holder = try await connect("Codex", to: endpoint)
+        let bystander = try await connect("Claude Code", to: endpoint)
+        defer {
+            Task {
+                await holder.disconnect()
+                await bystander.disconnect()
+            }
+        }
+        try #require(await waitUntil { app.mcpServer.sessions(in: first.browser).count == 2 })
+        let sessions = app.mcpServer.sessions(in: first.browser)
+        let origin = SitePermissions.origin(for: url)
+        sessions[0].grants[held.id] = .init(origin: origin, access: .control)
+        sessions[1].grants[other.id] = .init(origin: origin, access: .control)
+
+        #expect(app.mcpServer.stop(controllersOf: held, in: first.browser) == 1)
+
+        #expect(!sessions[0].isConnected)
+        #expect(sessions[1].isConnected, "an app that does not hold the tab keeps working")
+        #expect(app.mcpServer.sessions(in: first.browser).map(\.id) == [sessions[1].id])
+        #expect(held.processState.externalControllers.isEmpty)
+        #expect(other.processState.externalControllers == [sessions[1].id])
+        #expect(sessions[0].activity.entries.contains { $0.event == .stopped }, "Agent Activity records the stop")
     }
 
     @Test func stopOnlyAffectsThatWindowsConnections() async throws {

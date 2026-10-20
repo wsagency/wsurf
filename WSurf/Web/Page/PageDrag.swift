@@ -214,7 +214,7 @@ extension PageDriver {
         if let chromium = view.chromium {
             try await chromium.dragPointer(path: path, allowed: { PageAutomationGuard.allowsExecution })
         } else {
-            guard window.makeFirstResponder(view) else {
+            guard focusForKeyboard(view, in: window) else {
                 throw PageComputerFailure.unavailable
             }
             let points = path.map { CGPoint(x: $0.x * view.pageZoom, y: $0.y * view.pageZoom) }

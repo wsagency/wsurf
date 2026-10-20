@@ -56,7 +56,7 @@ extension MCPBrowserSession {
                 guard let self, let tab, let view, tab.isLive(view, generation: generation) else { return false }
                 return self.mayProceed(tab, capability: capability)
                     && (!(typesSecret || readsAsDeveloper) || self.mayProceed(tab, capability: .developer))
-                    && (capability != .control || self.onScreen(tab))
+                    && (capability != .control || self.isReachable(tab))
             }
         )
         // What a finished action may report: the page may have left the screen (a popup took its place) without the

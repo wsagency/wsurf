@@ -214,7 +214,7 @@ extension PageDriver {
         guard current["signature"] as? String == target["signature"] as? String else { throw PageComputerFailure.stale }
         guard let window = view.window, window.attachedSheet == nil else { throw PageComputerFailure.unavailable }
         if type == "move", !NSApp.isActive || !window.isKeyWindow { throw PageComputerFailure.unavailable }
-        guard window.makeFirstResponder(view) else { throw PageComputerFailure.unavailable }
+        guard focusForKeyboard(view, in: window) else { throw PageComputerFailure.unavailable }
         let acceptedMoves = window.acceptsMouseMovedEvents
         if type == "move" { window.acceptsMouseMovedEvents = true }
         defer { window.acceptsMouseMovedEvents = acceptedMoves }
@@ -361,7 +361,7 @@ extension PageDriver {
                 """), in: view)
             guard result?["ok"] as? Bool == true else { throw PageComputerFailure.unavailable }
         case "type":
-            guard current["editable"] as? Bool == true, window.makeFirstResponder(view), let text = action["text"].string else {
+            guard current["editable"] as? Bool == true, focusForKeyboard(view, in: window), let text = action["text"].string else {
                 throw PageComputerFailure.unavailable
             }
             try await view.insertText(text)
@@ -519,7 +519,7 @@ extension PageDriver {
         if key == "A", flags.contains(.control) {
             flags.remove(.control); flags.insert(.command)
         }
-        guard window.attachedSheet == nil, window.makeFirstResponder(view) else { throw PageComputerFailure.unavailable }
+        guard window.attachedSheet == nil, focusForKeyboard(view, in: window) else { throw PageComputerFailure.unavailable }
         // Complete the native key pair before yielding to the editing fallback.
         for type in [NSEvent.EventType.keyDown, .keyUp] {
             guard PageAutomationGuard.allowsExecution,
