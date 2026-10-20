@@ -187,7 +187,7 @@ struct ExternalControlMenuItems: View {
         let server = coordinator.mcpServer
         let held = tabs.filter { !$0.processState.externalControllers.isEmpty }
         let controllers = held.flatMap { server.controllers(of: $0, in: coordinator.browser) }
-        let apps = Dictionary(grouping: controllers, by: \.id).compactMap(\.value.first)
+        let apps = Dictionary(grouping: controllers, by: \.id).compactMap { $0.value.first }
         if let first = apps.first {
             Button {
                 for tab in held {

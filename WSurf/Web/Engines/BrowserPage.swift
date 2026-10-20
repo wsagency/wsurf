@@ -51,7 +51,9 @@ final class BrowserPage: NSView {
         superview is WebViewParkingShelf
     }
 
-    private static let occlusionKey = "_windowOcclusionDetectionEnabled"
+    /// Key-value coding finds the private getter `_windowOcclusionDetectionEnabled` and setter `_setWindowOcclusionDetectionEnabled:`
+    /// from this key; the underscored name as a key would match no setter and raise.
+    private static let occlusionKey = "windowOcclusionDetectionEnabled"
 
     /// WebKit stops painting, pauses animation frames and throttles timers in a page whose window is covered by other apps.
     /// A tab an external connection controls keeps rendering instead, so its screenshots and waits work with WSurf in the
@@ -59,7 +61,7 @@ final class BrowserPage: NSView {
     /// (`ChromiumRuntime.ensureInitialized`).
     var ignoresWindowOcclusion: Bool {
         get {
-            guard let webKit, webKit.responds(to: NSSelectorFromString(Self.occlusionKey)) else { return false }
+            guard let webKit, webKit.responds(to: NSSelectorFromString("_windowOcclusionDetectionEnabled")) else { return false }
             return webKit.value(forKey: Self.occlusionKey) as? Bool == false
         }
         set {

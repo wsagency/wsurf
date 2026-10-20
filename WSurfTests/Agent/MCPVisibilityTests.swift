@@ -352,10 +352,11 @@ struct MCPVisibilityTests {
             }, "the call on the tab ended at once instead of waiting out its timeout")
         let (refused, refusedFailed) = try await client.callTool(name: "readPage", arguments: ["tabID": .string(taken.id.uuidString)])
         #expect(refusedFailed == true)
-        #expect(refused.contains { block in
+        let namesTheRefusal = refused.contains { block in
             guard case .text(let text, _, _) = block else { return false }
             return text.contains("not shared")
-        })
+        }
+        #expect(namesTheRefusal, "the tab is no longer shared with the connection")
         let (_, keptFailed) = try await client.callTool(name: "readPage", arguments: ["tabID": .string(kept.id.uuidString)])
         #expect(keptFailed == false)
     }
