@@ -75,8 +75,9 @@ versions.
   for a fresh install; existing choices and customizations migrate. Each theme
   remembers Plain or Glass, transparency, and separate light/dark brightness.
   Sliders and colors preview before committing; changing a built-in theme's
-  colors makes a saved copy. Control icons and URL text have independent colors
-  and opacity, and Reset restores the original colors of the variant you edit.
+  colors makes a saved copy, and you can save, rename, duplicate, and delete
+  your own themes. Settings › Appearance also chooses the Dock icon. Control
+  icons and URL text have independent colors and opacity, and Reset restores the original colors of the variant you edit.
   Unreadable text and control-icon colors are adjusted at drawing time without
   replacing their saved values. Controls inside a glass card use solid fills;
   Reduce Transparency or Increase Contrast uses solid stand-ins.
@@ -131,10 +132,14 @@ versions.
   logins already authorized for the site without sending the query to the page.
   When none is saved for the exact site, it can offer logins saved for other
   websites of the same domain, add the website to such a credential after you
-  confirm, and unlock a locked vault from the dropdown.
+  confirm, and unlock a locked vault from the dropdown. Any credential value
+  can be copied. Several credentials can be selected to move to Trash or merge,
+  the last five actions can be undone, and a vault that is not the last can be
+  deleted after you type its name and confirm with its passkey.
   Save payment cards and contact details in Settings › Autofill;
   unlock cards with Touch ID or your Mac password.
 - **Add WebKit extensions:** install from the Chrome Web Store or Firefox Add-ons.
+  An update that asks for more permissions or websites is held until you approve it.
 - Use profiles to keep cookies, history, tabs, permissions, and extensions
   separate. Regular windows of one profile share these services but keep their
   tab selection and assistant task independent. Press ⇧⌘N for a new private
