@@ -135,6 +135,15 @@ enum CommandPaletteProjection {
         return agentOnly && Omnibox.location(for: input) == nil
     }
 
+    /// True for a query that starts spelling "archived tabs" or "show archived tabs". The longer phrase needs more
+    /// than "show " so that a word like "show" alone stays an ordinary search.
+    static func opensArchive(_ query: String) -> Bool {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard query.count >= 3 else { return false }
+        return "archived tabs".hasPrefix(query)
+            || query.count > "show ".count && "show archived tabs".hasPrefix(query)
+    }
+
     static func commandQuery(in query: String) -> String? {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard query.hasPrefix(commandPrefix) else { return nil }
@@ -397,7 +406,7 @@ final class CommandPaletteModel {
         didSet {
             guard interaction.query != oldValue.query, !isPreviewingSelection else { return }
             suggestionPreview.clear()
-            if searchSite == nil {
+            if !isScoped {
                 suggestions.update(
                     for: MentionText.stripped(
                         CommandPaletteProjection.suggestionQuery(for: interaction.query)
@@ -413,6 +422,7 @@ final class CommandPaletteModel {
     private(set) var sections: [OmniboxSection] = []
     private(set) var mentionedTabIDs: [UUID] = []
     private(set) var searchSite: SearchEngine?
+    private(set) var showsArchive = false
     private var isPreviewingSelection = false
     private var suggestionPreview = OmniboxSuggestionPreview()
 
@@ -434,16 +444,47 @@ final class CommandPaletteModel {
         if let searchSite {
             return String(localized: "Search \(searchSite.name)")
         }
+        if showsArchive {
+            return String(localized: "Search archived tabs")
+        }
         return CommandPaletteProjection.placeholder(agentOnly: Omnibox.isAgentOnly(settings: coordinator.context.settings))
     }
 
+    /// Searching one site, or only the archive, replaces the usual results.
+    private var isScoped: Bool {
+        searchSite != nil || showsArchive
+    }
+
+    /// A private window has no archive to offer, whatever its store holds.
+    private var archivedCount: Int {
+        browser.opensPrivately ? 0 : browser.tabArchive.entries.count
+    }
+
     var suggestedSite: SearchEngine? {
-        guard searchSite == nil, mentionedTabIDs.isEmpty else { return nil }
+        guard !isScoped, mentionedTabIDs.isEmpty else { return nil }
         return SiteSearch.match(interaction.query, customEngine: coordinator.context.settings.searchEngine)
+    }
+
+    /// A site name wins over the archive when a query could mean either. A private window has no archive to offer.
+    var suggestsArchive: Bool {
+        !isScoped && mentionedTabIDs.isEmpty && suggestedSite == nil
+            && archivedCount > 0
+            && CommandPaletteProjection.opensArchive(interaction.query)
+    }
+
+    var scopeHint: String? {
+        if let suggestedSite {
+            return String(localized: "Search \(suggestedSite.name)")
+        }
+        return suggestsArchive ? String(localized: "Search archived tabs") : nil
     }
 
     @discardableResult
     func activateSiteSearch() -> Bool {
+        if suggestsArchive {
+            showArchive()
+            return true
+        }
         guard let site = suggestedSite else { return false }
         searchSite = site
         suggestionPreview.clear()
@@ -455,8 +496,9 @@ final class CommandPaletteModel {
 
     @discardableResult
     func removeSearchSite() -> Bool {
-        guard searchSite != nil else { return false }
+        guard isScoped else { return false }
         searchSite = nil
+        showsArchive = false
         suggestionPreview.clear()
         interaction.selection = 0
         suggestions.update(
@@ -508,17 +550,17 @@ final class CommandPaletteModel {
     }
 
     func submit() {
-        guard searchSite == nil || !sections.isEmpty else { return }
+        guard !isScoped || !sections.isEmpty else { return }
         run(at: interaction.selection)
     }
 
     func submitInCurrentTab() {
-        guard searchSite == nil || !sections.isEmpty else { return }
+        guard !isScoped || !sections.isEmpty else { return }
         runAlternate(at: interaction.selection)
     }
 
     func askWhateverIsTyped() {
-        if searchSite != nil {
+        if isScoped {
             submit()
             return
         }
@@ -544,6 +586,19 @@ final class CommandPaletteModel {
         (item.alternate ?? item.run)()
     }
 
+    /// Deletes the row's entry from its store, then rebuilds the list and keeps the selection at the same position.
+    func remove(at index: Int) {
+        let items = sections.flattened
+        guard items.indices.contains(index), let removal = items[index].remove else { return }
+        removal()
+        if let typed = suggestionPreview.query {
+            suggestionPreview.clear()
+            interaction.query = typed
+        }
+        refreshSections()
+        interaction.selection = min(index, max(sections.flattened.count - 1, 0))
+    }
+
     var mentionedTabs: [BrowserTab] {
         mentionedTabIDs.compactMap { id in
             browser.tabs.first { $0.id == id }
@@ -557,7 +612,7 @@ final class CommandPaletteModel {
     }
 
     var contextPages: [AskContextPage] {
-        guard searchSite == nil, CommandPaletteProjection.isAssistantQuery(
+        guard !isScoped, CommandPaletteProjection.isAssistantQuery(
             interaction.query,
             hasMentions: !mentionedTabIDs.isEmpty,
             agentOnly: Omnibox.isAgentOnly(settings: coordinator.context.settings)
@@ -602,6 +657,19 @@ final class CommandPaletteModel {
             interaction.clampSelection(to: sections.flattened.count)
             return
         }
+        if showsArchive {
+            let archive = browser.tabArchive
+            let section = Omnibox.archivedSection(
+                query: interaction.query,
+                entries: archive.entries,
+                excluding: Set(browser.tabs.map(\.urlString)),
+                restore: { [weak self] entry in self?.restore(entry) },
+                remove: { archive.remove($0) }
+            )
+            sections = section.map { [$0] } ?? []
+            interaction.clampSelection(to: sections.flattened.count)
+            return
+        }
         sections = CommandPaletteProjection.sections(
             query: interaction.query,
             agentName: coordinator.agentDisplayName,
@@ -637,6 +705,7 @@ final class CommandPaletteModel {
             isShowingPin: tab?.isShowingPin ?? false,
             isAwayFromPin: tab?.isAwayFromPin ?? false,
             canReopenClosedTab: browser.canReopenClosedTab,
+            archivedCount: archivedCount,
             canSplit: tab != nil && !(split?.isFull ?? false),
             isSplit: coordinator.isSplit,
             canSwapPanes: browser.activeTabID.flatMap { split?.sibling(of: $0) } != nil,
@@ -683,12 +752,31 @@ final class CommandPaletteModel {
         dismiss()
     }
 
+    private func restore(_ entry: TabArchive.Entry) {
+        browser.restore(entry)
+        dismiss()
+    }
+
     private func openNew(_ url: URL) {
         coordinator.openNewTab(url: url)
         dismiss()
     }
 
+    private func showArchive() {
+        guard archivedCount > 0 else { return }
+        showsArchive = true
+        mentionedTabIDs = []
+        suggestionPreview.clear()
+        suggestions.clear()
+        interaction.query = ""
+        refreshSections()
+    }
+
     private func perform(_ action: CommandPaletteAction) {  // swiftlint:disable:this cyclomatic_complexity
+        if action == .showArchivedTabs {
+            showArchive()
+            return
+        }
         dismiss()
         let tab = browser.activeTab
         let page = coordinator.pageCommandTab
@@ -711,6 +799,8 @@ final class CommandPaletteModel {
             coordinator.freeMemory()
         case .reopenTab:
             browser.reopenLastClosedTab()
+        case .showArchivedTabs:
+            break
         case .duplicateTab:
             if let tab {
                 browser.duplicate(tab)

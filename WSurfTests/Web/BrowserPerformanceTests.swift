@@ -76,6 +76,40 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
         }
     }
 
+    /// The ⌘K archive list while a query is typed: the full archive matched and ranked against it, minus the pages that
+    /// are open among 300 tabs. The open set is rebuilt in every run, as the palette does on each keystroke.
+    func testArchivedTabSearchProjection() {
+        MainActor.assumeIsolated {
+            let archive = TabArchive(database: .temporary())
+            archive.add((0..<TabArchive.capacity).map {
+                (title: "Archived page \($0)", url: "https://archive-\($0).example/page")
+            })
+            let tabs = (0..<300).map { index in
+                // Ranking reads metadata only; page loads are unrelated work. The first five tabs show archived pages.
+                let tab = BrowserTab(restoring: true)
+                tab.title = "Open tab \(index)"
+                tab.urlString = index < 5
+                    ? "https://archive-\(index).example/page"
+                    : "https://open-\(index).example/page"
+                return tab
+            }
+            XCTAssertEqual(archive.entries.count, TabArchive.capacity)
+            var section: OmniboxSection?
+
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                section = Omnibox.archivedSection(
+                    query: "archived page 2",
+                    entries: archive.entries,
+                    excluding: Set(tabs.map(\.urlString)),
+                    restore: { _ in }
+                )
+            }
+
+            // Pages 2 and 20 through 29 match; page 2 is open.
+            XCTAssertEqual(section?.items.count, 10)
+        }
+    }
+
     func testCommandPaletteHistoryRanking() {
         MainActor.assumeIsolated {
             let database = AppDatabase.temporary()

@@ -92,6 +92,19 @@ check_average \
   '4096' \
   'Stale tab sweep memory growth' \
   'kB'
+# Provisional budgets: no native run was possible when this test was added. Re-baseline both from a native run.
+check_average \
+  'BrowserPerformanceTests/testArchivedTabSearchProjection()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.050' \
+  '30-entry archive search among 300 open tabs' \
+  's'
+check_average \
+  'BrowserPerformanceTests/testArchivedTabSearchProjection()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Archive search memory growth' \
+  'kB'
 check_average \
   'BrowserPerformanceTests/testCommandPaletteHistoryRanking()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \

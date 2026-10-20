@@ -225,6 +225,11 @@ struct TabArchiveTests {
         #expect(TabArchiveDelay.allCases.map(\.interval) == [43_200, 86_400, 604_800, nil])
     }
 
+    @Test func theDelaysAreNamedForTheSettingsMenu() {
+        #expect(TabArchiveDelay.allCases.map { String(localized: $0.label) }
+            == ["After 12 hours", "After a day", "After a week", "Never"])
+    }
+
     // MARK: - The setting
 
     @Test func archivingIsOffUntilTheDelayIsChosenAndTheChoiceIsKept() throws {
@@ -545,6 +550,98 @@ struct TabArchiveTests {
         model.adopt(database: context.database, sitePermissions: context.sitePermissions, privately: true)
 
         #expect(model.tabArchive.entries.map(\.title) == ["New"])
+    }
+
+    // MARK: - Command palette
+
+    @Test func theArchiveListShowsEveryArchivedTabNewestFirst() throws {
+        let archive = TabArchive(database: .temporary())
+        archive.add([(title: "Older", url: "https://example.test/older")], at: now.addingTimeInterval(-60))
+        archive.add([(title: "Newer", url: "https://example.test/newer")], at: now)
+
+        let section = try #require(Omnibox.archivedSection(query: " ", entries: archive.entries) { _ in })
+
+        #expect(section.title == String(localized: "Archived Tabs"))
+        #expect(section.items.map(\.title) == ["Newer", "Older"])
+    }
+
+    @Test func theArchiveListFiltersAndRestores() throws {
+        let archive = TabArchive(database: .temporary())
+        archive.add([
+            (title: "Quarterly report", url: "https://example.test/report"),
+            (title: "Recipes", url: "https://example.test/recipes"),
+        ], at: now)
+        var restored: TabArchive.Entry?
+
+        let section = try #require(Omnibox.archivedSection(
+            query: "quarterly",
+            entries: archive.entries
+        ) { restored = $0 })
+        section.items.first?.run()
+
+        #expect(section.items.map(\.kind) == [.archived])
+        #expect(section.items.first?.symbol == "archivebox")
+        #expect(restored?.url == "https://example.test/report")
+    }
+
+    @Test func aTypedQueryRanksTheBestMatchAboveANewerOne() throws {
+        let archive = TabArchive(database: .temporary())
+        archive.add([(title: "Recipes", url: "https://example.test/b")], at: now.addingTimeInterval(-60))
+        archive.add([(title: "Notes", url: "https://example.test/recipes")], at: now)
+
+        let all = try #require(Omnibox.archivedSection(query: "", entries: archive.entries) { _ in })
+        let typed = try #require(Omnibox.archivedSection(query: "recipes", entries: archive.entries) { _ in })
+
+        #expect(all.items.map(\.title) == ["Notes", "Recipes"])
+        #expect(typed.items.map(\.title) == ["Recipes", "Notes"])
+    }
+
+    @Test func anArchivedRowNamesTheSiteAndWhenItWasArchived() throws {
+        let archive = TabArchive(database: .temporary())
+        archive.add([(title: "Report", url: "https://example.test/report")], at: Date(timeIntervalSinceNow: -2 * day))
+        let entry = try #require(archive.entries.first)
+
+        let section = try #require(Omnibox.archivedSection(query: "", entries: archive.entries) { _ in })
+
+        let archived = entry.archivedAt.formatted(.relative(presentation: .named, unitsStyle: .wide))
+        #expect(section.items.first?.detail == "example.test · \(archived)")
+        #expect(section.items.first?.iconHost == "example.test")
+    }
+
+    @Test func removingFromTheArchiveListDeletesTheEntry() throws {
+        let archive = TabArchive(database: .temporary())
+        archive.add([(title: "Report", url: "https://example.test/report")], at: now)
+
+        let section = try #require(Omnibox.archivedSection(
+            query: "",
+            entries: archive.entries,
+            restore: { _ in },
+            remove: { archive.remove($0) }
+        ))
+        section.items.first?.remove?()
+
+        #expect(archive.entries.isEmpty)
+    }
+
+    @Test func theArchiveListSkipsPagesThatAreOpen() {
+        let archive = TabArchive(database: .temporary())
+        archive.add([(title: "Report", url: "https://example.test/report")], at: now)
+
+        #expect(Omnibox.archivedSection(
+            query: "",
+            entries: archive.entries,
+            excluding: ["https://example.test/report"]
+        ) { _ in } == nil)
+    }
+
+    @Test func typingTheArchiveNameOffersTabIntoTheArchive() {
+        #expect(CommandPaletteProjection.opensArchive("arc"))
+        #expect(CommandPaletteProjection.opensArchive("Archived Tabs"))
+        #expect(CommandPaletteProjection.opensArchive("show archived tabs"))
+        #expect(CommandPaletteProjection.opensArchive("show arc"))
+        #expect(!CommandPaletteProjection.opensArchive("ar"))
+        #expect(!CommandPaletteProjection.opensArchive("show"))
+        #expect(!CommandPaletteProjection.opensArchive("archive.org"))
     }
 
     // MARK: - What may read it

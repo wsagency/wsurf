@@ -58,6 +58,19 @@ struct SettingsSearchTests {
         #expect(SettingsIndex.all.first { $0.id == "general.paletteOrder" }?.category == .general)
     }
 
+    @Test func theArchiveRowIsFoundByItsOwnWordsAndNamesWhatTheStoreKeeps() throws {
+        let entries = SettingsIndex.all.filter { $0.id == "general.archiveTabs" }
+        let entry = try #require(entries.first)
+
+        #expect(entries.count == 1)
+        #expect(entry.category == .general)
+        #expect(entry.searchableTitle == "Archive unused tabs")
+        #expect(entry.searchableDetail.contains(String(TabArchive.capacity)))
+        for query in ["archive", "unused tabs", "old tabs", "command palette"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "general.archiveTabs" }, "\(query)")
+        }
+    }
+
     @Test func searchMatchesWordsInsideTitles() {
         #expect(SettingsIndex.search("links").contains { $0.id == "general.defaultBrowser" })
     }

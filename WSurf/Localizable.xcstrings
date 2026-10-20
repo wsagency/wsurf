@@ -316,9 +316,6 @@
     "Paused because the provider is rate limited. Your progress is saved; wait, then choose Continue." : {
 
     },
-    "Press Tab to search this site" : {
-      "comment" : "Accessibility hint for the command palette's site search suggestion. Tab is the keyboard key."
-    },
     "Re-pair" : {
       "comment" : "Menu command on a client row that replaces the app’s pairing token with a new one. A verb."
     },
@@ -6448,6 +6445,39 @@
     },
     "Applies to every page on %@." : {
       "comment" : "Caption under Assistant access on a website’s page in Settings > Websites. %@ is the website the choice covers, for example google.com; the choice also covers its subdomains such as maps.google.com. Full sentence."
+    },
+    "Archived Tabs" : {
+      "comment" : "Heading of the ⌘K palette section that lists tabs WSurf closed automatically because they sat unused, and the label of the chip in the palette field while only those tabs are searched. Choosing a row opens the tab again. Plural noun phrase, Title Case."
+    },
+    "Show all results" : {
+      "comment" : "Tooltip and accessibility label of the Archived Tabs chip in the ⌘K palette field. Choosing it leaves the archive and searches everything again. Sentence case."
+    },
+    "Search archived tabs" : {
+      "comment" : "Placeholder and accessibility label of the ⌘K palette field while it searches only archived tabs, and the hint beside the field that offers that scope when the typed text starts to spell “archived tabs”. Search is a verb. Sentence case."
+    },
+    "Press Tab to search" : {
+      "comment" : "Accessibility hint on the scope hint in the ⌘K palette and the address bar, which offers to search one website or the archived tabs. Tab is the keyboard key. Replaces “Press Tab to search this site”."
+    },
+    "Show Archived Tabs" : {
+      "comment" : "Command in the ⌘K palette that switches the palette to searching tabs WSurf archived automatically. Title Case, like a menu command. A caption beside it counts the archived tabs."
+    },
+    "Remove from Archive" : {
+      "comment" : "Tooltip and VoiceOver action on the × button at the right of an archived tab in the ⌘K palette. It deletes that entry from the archive without opening the tab. Verb phrase, Title Case."
+    },
+    "Archive unused tabs" : {
+      "comment" : "Title of the row in Settings > General > Tabs that chooses how long a background tab may sit unused before it closes into the archive, and the same row in Settings search. A pop-up menu completes it: After 12 hours, After a day, After a week, or Never. Sentence case."
+    },
+    "Archived tabs stay searchable from ⌘K. The newest 30 are kept." : {
+      "comment" : "Caption under the Archive unused tabs row in Settings > General, and the description of that row in Settings search. ⌘K is the shortcut for the command palette; keep it as it is. 30 is how many archived tabs WSurf keeps, so keep the number."
+    },
+    "After 12 hours" : {
+      "comment" : "Choice in the Archive unused tabs pop-up menu in Settings > General: a background tab closes into the archive once it has gone unused for 12 hours. Sentence case, one short line."
+    },
+    "After a day" : {
+      "comment" : "Choice in the Archive unused tabs pop-up menu in Settings > General: a background tab closes into the archive once it has gone unused for a day. Sentence case, one short line."
+    },
+    "After a week" : {
+      "comment" : "Choice in the Archive unused tabs pop-up menu in Settings > General: a background tab closes into the archive once it has gone unused for a week. Sentence case, one short line."
     }
   },
   "version" : "1.0"

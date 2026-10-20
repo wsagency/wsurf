@@ -140,6 +140,7 @@ struct CommandPaletteRankingTests {
         #expect(!ids.contains("action-stopLoading"))
         #expect(!ids.contains("action-clearHistory"))
         #expect(!ids.contains("action-exitSplit"))
+        #expect(!ids.contains("action-showArchivedTabs"))
         #expect(ids.contains("action-openStartPage"))
         #expect(ids.contains("action-settings"))
 
@@ -150,6 +151,7 @@ struct CommandPaletteRankingTests {
                 hasActiveTab: true,
                 canGoBack: true,
                 isLoading: true,
+                archivedCount: 2,
                 isSplit: true
             ),
             perform: { _ in }
@@ -158,8 +160,26 @@ struct CommandPaletteRankingTests {
 
         #expect(loadedIDs.isSuperset(of: [
             unloadID, "action-goBack", "action-stopLoading", "action-clearHistory", "action-exitSplit",
+            "action-showArchivedTabs",
         ]))
         #expect(!loadedIDs.contains("action-goForward"))
+    }
+
+    @Test func showArchivedTabsIsFoundByTheWordsForOldTabsAndPerformsItsAction() throws {
+        var performed: [CommandPaletteAction] = []
+        let commands = CommandPaletteCatalog.commands(context: CommandPaletteContext(archivedCount: 2)) {
+            performed.append($0)
+        }
+        let command = try #require(commands.first { $0.id == "action-showArchivedTabs" })
+
+        #expect(command.title == "Show Archived Tabs")
+        #expect(command.symbol == "archivebox")
+        #expect(command.group == .tabs)
+        command.run()
+        #expect(performed == [.showArchivedTabs])
+        for query in ["archive", "archived", "auto archived", "old tabs"] {
+            #expect(CommandPaletteCatalog.matching(query, in: commands).first?.id == "action-showArchivedTabs", "\(query)")
+        }
     }
 
     @Test func reloadIsOfferedOnlyForAPageThatCanReload() {

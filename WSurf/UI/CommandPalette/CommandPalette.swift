@@ -44,7 +44,8 @@ struct CommandPalette: View {
                 onChipsChange: model.mentionsDidChange,
                 onDismiss: model.dismiss,
                 searchSite: model.searchSite,
-                suggestedSite: model.suggestedSite,
+                showsArchive: model.showsArchive,
+                scopeHint: model.scopeHint,
                 onActivateSite: model.activateSiteSearch,
                 onRemoveSite: model.removeSearchSite
             )
@@ -59,7 +60,8 @@ struct CommandPalette: View {
                 maxHeight: layout.maxListHeight,
                 onSelect: model.hoverSuggestion,
                 onRun: model.run,
-                onRunAlternate: model.runAlternate
+                onRunAlternate: model.runAlternate,
+                onRemove: model.remove(at:)
             )
 
             AskContextStrip(pages: model.contextPages)
