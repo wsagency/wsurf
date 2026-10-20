@@ -11,6 +11,11 @@ import Testing
 // Delete Vault: one transaction removes a vault and its linked Trash, needs a fresh assertion of that vault's own passkey, and never
 // touches the other vaults or anything outside the store file.
 
+/// What a vault can hold besides live credentials that keeps it from being deleted without an assertion.
+nonisolated enum VaultNotEmpty: CaseIterable, Sendable {
+    case liveCredential, trashEntry, tombstoneOnly, blockedWebsite
+}
+
 @MainActor
 struct VaultDeleteTests {
     // MARK: Readback
@@ -320,6 +325,122 @@ struct VaultDeleteTests {
         }
     }
 
+    // MARK: A vault that holds nothing
+
+    @Test func anEmptyVaultIsDeletedWithNoAssertion() async throws {
+        let keeper = VaultFixtures.account(username: "grace", origin: "https://b.example")
+        try await VaultStoreFixture.with(accounts: [keeper], historyRows: 1, secondVault: true) { f in
+            let secondID = try #require(f.secondVaultID)
+            let secondTrashID = try #require(f.secondTrashID)
+            let (store, access) = try await f.unlocked(vaultID: secondID)
+            let others = try vaultImage(f, of: [f.vaultID, f.trashID])
+            let registryRevision = try f.storedRegistry().revision
+
+            try await store.deleteEmptyVault(vaultID: secondID, using: access)
+
+            for id in [secondID, secondTrashID] {
+                #expect(try rowCounts(f, of: id) == ["vault": 0, "head": 0, "record": 0, "journal": 0])
+            }
+            #expect(try vaultImage(f, of: [f.vaultID, f.trashID]) == others)
+            let stored = try #require(try f.read { try StoreTables.registry($0) })
+            #expect(stored.revision == registryRevision + 1)
+            #expect(StoreSeal.verifyRegistryMAC(rk: f.registryKey, catalog: stored.catalog, mac: stored.mac))
+            let catalog = try RegistryCatalog.decode(stored.catalog)
+            #expect(Set(catalog.vaults.map(\.vaultID)) == [f.vaultID, f.trashID])
+            #expect(catalog.encode() == (try f.rebuiltRegistry()).encode())
+            await #expect(throws: CredentialVaultError.unauthorized) { _ = try await store.snapshot(vaultID: secondID, using: access) }
+            // The vault that is left still unlocks and verifies.
+            let (remaining, remainingAccess) = try await f.unlocked()
+            #expect(try await remaining.snapshot(vaultID: f.vaultID, using: remainingAccess).accounts.map(\.id) == [keeper.id])
+        }
+    }
+
+    @Test func anEmptyVaultStillNeedsTheUnlock() async throws {
+        try await VaultStoreFixture.with(accounts: [VaultFixtures.account()], secondVault: true) { f in
+            let secondID = try #require(f.secondVaultID)
+            let (store, _) = try await f.unlocked(vaultID: secondID)
+            let image = try storeImage(f)
+
+            // An access that holds no lease on the vault deletes nothing, empty or not.
+            await #expect(throws: CredentialVaultError.unauthorized) {
+                try await store.deleteEmptyVault(vaultID: secondID, using: f.beginAccess())
+            }
+
+            #expect(try storeImage(f) == image)
+        }
+    }
+
+    @Test(arguments: VaultNotEmpty.allCases)
+    func aVaultWithAnythingInItIsNotDeletedWithoutAnAssertion(_ kind: VaultNotEmpty) async throws {
+        let victim = try MoveFixtures.fullAccount()
+        let blocked = kind == .blockedWebsite
+        try await VaultStoreFixture.with(
+            accounts: blocked ? [] : [victim], blockedOrigins: blocked ? ["https://blocked.example"] : [], historyRows: blocked ? 0 : 1,
+            secondVault: true
+        ) { f in
+            try await f.withWallStore { store, access in
+                switch kind {
+                case .liveCredential, .blockedWebsite:
+                    break
+                case .trashEntry:
+                    try await f.deleteAccount(store, access, victim.id)
+                case .tombstoneOnly:
+                    // Purged: no live credential, no Trash entry and no earlier version is left, only the tombstones.
+                    try await f.deleteAccount(store, access, victim.id)
+                    let entry = try f.trashEntry(of: victim.id).row.recordID
+                    _ = try await store.purge(
+                        vaultID: f.vaultID, entryIDs: [entry], emptyAll: false, authorization: f.freshAuthorization, using: access
+                    )
+                    #expect(try f.trashEntryIDs().isEmpty)
+                }
+                let image = try storeImage(f)
+
+                await #expect(throws: CredentialStoreError.vaultNotEmpty) {
+                    try await store.deleteEmptyVault(vaultID: f.vaultID, using: access)
+                }
+
+                #expect(try storeImage(f) == image, "\(kind)")
+                _ = try await store.snapshot(vaultID: f.vaultID, using: access)  // the grant is still good
+                // The two confirmations still delete it.
+                try await store.deleteVault(vaultID: f.vaultID, authorization: f.freshAuthorization, using: access)
+                #expect(try rowCounts(f, of: f.vaultID) == ["vault": 0, "head": 0, "record": 0, "journal": 0])
+            }
+        }
+    }
+
+    @Test func theLastVaultIsNotDeletedEvenWhenItIsEmpty() async throws {
+        try await VaultStoreFixture.with { f in
+            try await f.withWallStore { store, access in
+                let image = try storeImage(f)
+
+                await #expect(throws: CredentialStoreError.lastVault) {
+                    try await store.deleteEmptyVault(vaultID: f.vaultID, using: access)
+                }
+
+                #expect(try storeImage(f) == image)
+            }
+        }
+    }
+
+    /// The deleting transaction is what an owner waits for: a big vault is one bounded transaction, not a long spin.
+    @Test func deletingABigVaultIsOneBoundedTransaction() async throws {
+        try await VaultStoreFixture.with(accounts: MoveFixtures.tinyAccounts(1_500), historyRows: 1_500, secondVault: true) { f in
+            try await f.withWallStore { store, access in
+                let rows = try rowCounts(f, of: f.vaultID)["record"] ?? 0
+                #expect(rows >= 3_000)
+                let clock = ContinuousClock()
+
+                let elapsed = try await clock.measure {
+                    try await store.deleteVault(vaultID: f.vaultID, authorization: f.freshAuthorization, using: access)
+                }
+
+                print("DELETE-VAULT rows=\(rows) seconds=\(elapsed)")
+                #expect(elapsed < .seconds(20), "\(elapsed)")
+                #expect(try rowCounts(f, of: f.vaultID) == ["vault": 0, "head": 0, "record": 0, "journal": 0])
+            }
+        }
+    }
+
     // MARK: Manager
 
     private func withTwoVaults(
@@ -465,6 +586,49 @@ struct VaultDeleteTests {
             #expect(listing.map(\.ordinal) == [1, 2])
             #expect(listing.last?.vaultID == created)
             #expect(created != doomed.vaultID, "only the label comes back; the vault is a new one")
+        }
+    }
+
+    @Test func anEmptyVaultIsDeletedByItsManagerWithNoPrompt() async throws {
+        try await withTwoVaults { profile, passkeys, keeper, doomed in
+            let store = try CredentialManager.store(for: profile)
+            let epoch = try #require(doomed.manager.authorizationEpoch)
+
+            try await doomed.manager.deleteEmptyVault(authorizedEpoch: epoch)
+
+            #expect(passkeys.assertions.isEmpty, "no passkey prompt")
+            #expect(try VaultManagerFixture.rows(of: doomed.vaultID, in: profile).isEmpty)
+            #expect(!doomed.manager.isUnlocked)
+            await #expect(throws: CredentialVaultError.unauthorized) { _ = try await doomed.manager.snapshot() }
+            #expect(CredentialManager.unlockedManagers(for: profile).map(\.vaultID) == [keeper.vaultID])
+            #expect(try await store.listing().map(\.vaultID) == [keeper.vaultID])
+            // Registered nowhere, and the last vault is not offered the same.
+            let replacement = try CredentialManager.forVault(profile, vaultID: doomed.vaultID)
+            #expect(replacement !== doomed.manager)
+            let keeperEpoch = try #require(keeper.manager.authorizationEpoch)
+            await #expect(throws: CredentialStoreError.lastVault) { try await keeper.manager.deleteEmptyVault(authorizedEpoch: keeperEpoch) }
+        }
+    }
+
+    @Test func aVaultWithACredentialRefusesTheShortcutAndAStaleLeaseDeletesNothing() async throws {
+        try await withTwoVaults { profile, passkeys, _, doomed in
+            let epoch = try #require(doomed.manager.authorizationEpoch)
+
+            // A lock, and a re-unlock after it, do not carry the earlier decision.
+            doomed.manager.lock(reason: .manual)
+            await #expect(throws: CredentialVaultError.unauthorized) { try await doomed.manager.deleteEmptyVault(authorizedEpoch: epoch) }
+            try await VaultManagerFixture.unlock(doomed)
+            await #expect(throws: CredentialVaultError.unauthorized) { try await doomed.manager.deleteEmptyVault(authorizedEpoch: epoch) }
+
+            // One credential is something to lose.
+            try await VaultManagerFixture.save([VaultFixtures.account()], in: doomed)
+            let rows = try VaultManagerFixture.rows(of: doomed.vaultID, in: profile)
+            let current = try #require(doomed.manager.authorizationEpoch)
+            await #expect(throws: CredentialStoreError.vaultNotEmpty) { try await doomed.manager.deleteEmptyVault(authorizedEpoch: current) }
+
+            #expect(doomed.manager.isUnlocked, "a refused deletion leaves the vault open")
+            #expect(try VaultManagerFixture.rows(of: doomed.vaultID, in: profile) == rows)
+            #expect(passkeys.assertions.isEmpty)
         }
     }
 }

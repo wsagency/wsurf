@@ -93,6 +93,8 @@ extension CredentialSettingsModel {
             return String(localized: "That vault is no longer listed. Check again.")
         case CredentialStoreError.lastVault:
             return String(localized: "A profile keeps at least one vault. Nothing was deleted.")
+        case CredentialStoreError.vaultNotEmpty:
+            return String(localized: "This vault isn’t empty. Nothing was deleted.")
         default:
             return exchangeMessage(for: error)
         }

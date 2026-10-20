@@ -688,6 +688,22 @@ final class CredentialManager {
                 )
             }
         }
+        retireAfterDeletion()
+    }
+
+    /// Deletes this vault when it holds nothing at all: no credential, no Trash entry, no earlier version, no tombstone, no blocked
+    /// website, as the store reads its rows inside the deleting transaction. There is nothing to lose, so no passkey is asked for; it
+    /// still needs the unlock and the lease the caller decided under, and the last vault is still refused. A vault that holds
+    /// anything throws `vaultNotEmpty` with nothing written.
+    func deleteEmptyVault(authorizedEpoch: UInt64) async throws {
+        let access = try currentAccess()
+        guard access.epoch == authorizedEpoch else { throw CredentialVaultError.unauthorized }
+        try await writing { try await guarded(using: access) { try await store.deleteEmptyVault(vaultID: vaultID, using: access) } }
+        retireAfterDeletion()
+    }
+
+    /// After the store committed the deletion: unregistered, locked, unable to unlock again. Nothing here throws.
+    private func retireAfterDeletion() {
         if Self.managers[profile.id]?[vaultID] === self {
             Self.managers[profile.id]?[vaultID] = nil
         }

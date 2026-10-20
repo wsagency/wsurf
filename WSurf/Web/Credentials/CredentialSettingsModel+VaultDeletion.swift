@@ -65,17 +65,29 @@ extension CredentialSettingsModel {
         return exchange.hasStagedImport(for: manager, owner: owner) ? .importOpen : nil
     }
 
-    /// Shows what deleting the selected vault would remove. Nothing is deleted: the vault must be open, not the last one, and have
-    /// no import of this window under review.
+    /// Deletes the selected vault at once when it holds nothing at all (the store decides, inside the deleting transaction; nothing
+    /// can be lost, so no sheet and no passkey). Otherwise shows what deleting it would remove, and deletes nothing: the vault must
+    /// be open, not the last one, and have no import of this window under review.
     func requestVaultDeletion() async {
         guard vaultDeletionBlock == nil, !isBusy, let epoch = authorizationEpoch else { return }
         deletedVault = nil
-        _ = await perform(epoch: epoch) { manager in
+        var outgoing: (id: UUID, notice: DeletedVault)?
+        var emptied = false
+        let ran = await perform(epoch: epoch) { manager in
             guard let name = try await manager.displayNames().vault, let listing = self.vaults.first(where: { $0.vaultID == manager.vaultID })
             else { throw CredentialVaultError.unauthorized }
-            let counts = try await manager.historyCounts()
             let enrolled = try await self.store?.enrolledPasskeys(of: self.vaults) ?? []
             let elsewhere = Set(enrolled.filter { $0.vault.vaultID != manager.vaultID }.map { $0.unlock.credentialID })
+            let ownPasskey = manager.unlockCredentials.contains { !elsewhere.contains($0.credentialID) }
+            outgoing = (manager.vaultID, DeletedVault(ordinal: listing.ordinal, leavesUnlockPasskey: ownPasskey))
+            do {
+                try await manager.deleteEmptyVault(authorizedEpoch: epoch)
+                emptied = true
+                return
+            } catch CredentialStoreError.vaultNotEmpty {
+                // Something is in it: the two confirmations below.
+            }
+            let counts = try await manager.historyCounts()
             let others = self.vaults.filter { $0.vaultID != manager.vaultID }
             let fallback = self.defaultVaultID == manager.vaultID ? others.min(by: { $0.ordinal < $1.ordinal })?.displayName : nil
             let summaries = self.summaries
@@ -93,9 +105,17 @@ extension CredentialSettingsModel {
                 ),
                 fallback: fallback,
                 preMigrationBackup: listing.ordinal == 1 ? manager.preMigrationBackup : nil,
-                hasOwnUnlockPasskey: manager.unlockCredentials.contains { !elsewhere.contains($0.credentialID) }
+                hasOwnUnlockPasskey: ownPasskey
             )
             try self.update(epoch) { $0.pendingVaultDeletion = pending }
+        }
+        guard let outgoing else { return }
+        var gone = emptied
+        if !gone, !ran {
+            gone = await isGone(outgoing.id)
+        }
+        if gone {
+            await finishVaultDeletion(outgoing.notice)
         }
     }
 
@@ -125,12 +145,24 @@ extension CredentialSettingsModel {
             return false
         }
         var deleted = await perform(epoch: pending.epoch) { try await $0.deleteVault(authorizedEpoch: pending.epoch, in: anchor) }
-        if !deleted, let store, let listing = try? await store.listing(), !listing.contains(where: { $0.vaultID == pending.vaultID }) {
-            deleted = true  // it committed and then reported a failure: the vault is gone either way
+        if !deleted {
+            deleted = await isGone(pending.vaultID)
         }
         guard deleted else { return false }
-        await retry()
-        deletedVault = DeletedVault(ordinal: pending.ordinal, leavesUnlockPasskey: pending.hasOwnUnlockPasskey)
+        await finishVaultDeletion(DeletedVault(ordinal: pending.ordinal, leavesUnlockPasskey: pending.hasOwnUnlockPasskey))
         return true
+    }
+
+    /// The vault is no longer listed: its deletion committed and then reported a failure (closing the database, say), which is still
+    /// a deletion.
+    private func isGone(_ vaultID: UUID) async -> Bool {
+        guard let store, let listing = try? await store.listing() else { return false }
+        return !listing.contains { $0.vaultID == vaultID }
+    }
+
+    /// Lists what is left, opens the default vault (still locked, if it is) and tells which vault went.
+    private func finishVaultDeletion(_ notice: DeletedVault) async {
+        await retry()
+        deletedVault = notice
     }
 }
