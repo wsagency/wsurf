@@ -4,6 +4,7 @@
 import AppKit
 import AuthenticationServices
 import Foundation
+import os
 import WebKit
 
 /// Routes `navigator.credentials` public-key calls from both engines to the native website authenticator.
@@ -176,6 +177,7 @@ enum WebAuthnAdapter {
             var frame = message.frameInfo
             if document.isEmpty {
                 guard !isHandled(by: page) else {
+                    Pipeline.log.notice("webauthn: refused, unidentified document")
                     if body["operation"] as? String == "capabilities" {
                         Task {
                             await deliver(["result": ["provider": "manager", "enabled": false, "canVerifyUser": false]], key: key, page: page, frame: frame)
@@ -191,6 +193,7 @@ enum WebAuthnAdapter {
                 guard let native = PageFrameRegistry.shared.currentMainFrame(
                     matching: message.frameInfo, documentNonce: document, in: page
                 ) else {
+                    Pipeline.log.notice("webauthn: refused, not the current main frame")
                     reject(key, page, message.frameInfo, WebAuthnWire.PageError(
                         name: "NotAllowedError", message: "The request is not allowed by the user agent or the platform."
                     ))
@@ -525,11 +528,14 @@ enum WebAuthnAdapter {
     private static func pageError(_ error: any Error) -> WebAuthnWire.PageError {
         switch error {
         case let error as WebAuthnContextError:
+            // The case name only: the page is told just NotAllowedError, so this is the one record of why.
+            Pipeline.log.notice("webauthn: refused, context \(String(describing: error), privacy: .public)")
             if case .insecureOrigin = error {
                 return WebAuthnWire.PageError(name: "SecurityError", message: "This page cannot use passkeys.")
             }
             return WebAuthnWire.PageError(name: "NotAllowedError", message: "The request is not allowed by the user agent or the platform.")
         case is CredentialVaultError, is CredentialManagerError:
+            Pipeline.log.notice("webauthn: refused, \(String(describing: type(of: error)), privacy: .public)")
             return WebAuthnWire.PageError(name: "NotAllowedError", message: "The request is not allowed by the user agent or the platform.")
         default:
             return WebAuthnWire.pageError(error)

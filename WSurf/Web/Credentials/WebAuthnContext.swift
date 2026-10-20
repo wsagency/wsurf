@@ -84,7 +84,9 @@ extension BrowserPage {
     func credentialContext(for frame: BrowserFrame, operation: WebAuthnOperation) async throws -> WebAuthnContext {
         guard !isClosed else { throw WebAuthnContextError.closedPage }
         guard !isPrivate else { throw WebAuthnContextError.privateProfile }
-        guard !isLoading, frame.hasTrustedSecurityOrigin, !frame.documentID.isEmpty else {
+        // No loading gate: a page asks while its subresources still load (Google does), and a navigation start is already
+        // fenced by the credential generation and the registry's current-document and policy evidence.
+        guard frame.hasTrustedSecurityOrigin, !frame.documentID.isEmpty else {
             throw WebAuthnContextError.staleFrame
         }
         let generation = credentialGeneration
@@ -145,7 +147,7 @@ extension BrowserPage {
             }
             executionContextID = nil
         }
-        guard generation == credentialGeneration, !isLoading, !isClosed else {
+        guard generation == credentialGeneration, !isClosed else {
             throw WebAuthnContextError.staleFrame
         }
         let context = WebAuthnContext(

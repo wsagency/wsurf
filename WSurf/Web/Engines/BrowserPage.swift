@@ -512,7 +512,7 @@ final class BrowserPage: NSView {
         guard context.belongs(to: self) else { throw WebAuthnContextError.staleFrame }
         guard !isClosed else { throw WebAuthnContextError.closedPage }
         guard !isPrivate else { throw WebAuthnContextError.privateProfile }
-        guard !isLoading, context.credentialGeneration == credentialGeneration,
+        guard context.credentialGeneration == credentialGeneration,
               context.profileID == profileID, !context.isPrivate,
               context.frame.documentID == context.frameDocumentID,
               context.frame.securityOrigin == context.originEvidence,
@@ -554,14 +554,14 @@ final class BrowserPage: NSView {
                 context.frame, feature: context.policyFeature, in: self
             ) == true else { throw WebAuthnContextError.policyDenied }
         }
-        guard !isClosed, !isLoading, credentialGeneration == context.credentialGeneration else {
+        guard !isClosed, credentialGeneration == context.credentialGeneration else {
             throw WebAuthnContextError.staleFrame
         }
     }
 
     func validateCredentialContextForDispatch(_ context: WebAuthnContext) throws {
         guard context.belongs(to: self), !isClosed else { throw WebAuthnContextError.closedPage }
-        guard !isPrivate, !isLoading,
+        guard !isPrivate,
               credentialGeneration == context.credentialGeneration,
               context.profileID == profileID, !context.isPrivate,
               context.frame.documentID == context.frameDocumentID,

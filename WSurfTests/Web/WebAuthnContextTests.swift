@@ -641,6 +641,39 @@ struct WebAuthnContextTests {
         }
     }
 
+    /// There is no loading gate (a page may ask while its subresources load). What ends the old document's requests is the
+    /// navigation's start: a context captured before it is stale before anything commits, and on WebKit a new request from
+    /// the old document has no policy evidence while the navigation is pending.
+    @Test(arguments: BrowserEngine.allCases)
+    func aStartedNavigationEndsTheOldDocumentsContextsBeforeItCommits(_ engine: BrowserEngine) async throws {
+        let stalled = ResponseGate()
+        let fixture = try await loadPage(engine: engine, pendingNavigation: stalled)
+        try await withFixture(fixture) {
+            defer { stalled.open() }
+            let frame = try await mainFrame(in: fixture.page)
+            let context = try await fixture.page.credentialContext(for: frame, operation: .get)
+            fixture.page.load(URLRequest(url: try localURL(fixture.server, path: "/stalled")))
+            #expect(await stalled.waitForRequest())
+            var stale = false
+            do {
+                try await context.validate()
+            } catch WebAuthnContextError.staleFrame {
+                stale = true
+            }
+            #expect(stale)
+            #expect(throws: (any Error).self) { try context.validateForDispatch() }
+            if engine == .webKit {
+                var unavailable = false
+                do {
+                    _ = try await fixture.page.credentialContext(for: frame, operation: .get)
+                } catch WebAuthnContextError.policyUnavailable {
+                    unavailable = true
+                }
+                #expect(unavailable)
+            }
+        }
+    }
+
     @Test(arguments: BrowserEngine.allCases)
     func navigationInvalidatesPreviouslyCapturedContext(_ engine: BrowserEngine) async throws {
         let fixture = try await loadPage(engine: engine)

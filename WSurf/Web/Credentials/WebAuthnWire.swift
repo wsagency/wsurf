@@ -79,7 +79,7 @@ nonisolated enum WebAuthnWire {
         }
         let isConditional = operation == .get && mediation == .conditional
         let deadline: ContinuousClock.Instant? = isConditional ? nil : now.advanced(by: .milliseconds(Int64(timeout)))
-        let challenge = try base64URLDecode(options["challenge"], maximum: 1_024)
+        let challenge = try base64URLDecode(options["challenge"], maximum: 64 * 1_024)
         let verification = try enumValue(WebAuthnUserVerification.self, options["userVerification"], default: .preferred)
 
         let parsed: WebAuthnRequestOptions

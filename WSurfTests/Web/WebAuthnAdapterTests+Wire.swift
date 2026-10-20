@@ -25,9 +25,16 @@ extension WebAuthnAdapterTests {
 
         for bad: [String: Any] in [
             ["challenge": "not+base64url"], ["challenge": challenge, "timeout": -1], ["challenge": challenge, "userVerification": "maybe"],
-            ["challenge": WebAuthnWire.base64URL(Data(repeating: 0, count: 1_025))],
+            ["challenge": WebAuthnWire.base64URL(Data(repeating: 0, count: 64 * 1_024 + 1))],
         ] {
             #expect(throws: (any Error).self) { try WebAuthnWire.parse(body(bad)) }
+        }
+        // The page script's own BufferSource limit is the largest challenge native takes.
+        let largest = WebAuthnWire.base64URL(Data(repeating: 0, count: 64 * 1_024))
+        if case .assertion(let options) = try WebAuthnWire.parse(body(["challenge": largest])).request.options {
+            #expect(options.challenge.count == 64 * 1_024)
+        } else {
+            Issue.record("a get request parsed as something else")
         }
         #expect(throws: (any Error).self) { try WebAuthnWire.parse(body(["challenge": challenge], operation: "create", mediation: "conditional")) }
         #expect(throws: (any Error).self) { try WebAuthnWire.parse(["id": "", "operation": "get", "options": ["challenge": challenge]]) }

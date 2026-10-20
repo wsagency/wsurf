@@ -511,6 +511,8 @@ final class ChromiumPage: NSView {
         owner?.estimatedProgress = 0
         if !navigationStarted {
             navigationStarted = true
+            // The old document's passkey requests end where a new main-frame navigation starts, as WebKit's do.
+            owner?.invalidateCredentialContexts()
             owner?.onNavigationStarted?(navigation, url)
         }
     }
