@@ -39,11 +39,17 @@ extension CredentialSettingsModel {
         let known = Set(state.values.map(\.item.id))
         let values = state.values + page.items.filter { !known.contains($0.item.id) }
         let versions = try await Self.versions(current: current, revisions: values)
+        // Values shown unmasked were shown under a Touch ID check of what was loaded then; an older card or document loaded now is
+        // masked again until it is shown with its own check.
+        let addsSensitive = versions.contains { Self.holdsSensitiveItems($0) } && !state.versions.contains { Self.holdsSensitiveItems($0) }
         try update(live.epoch) {
             guard $0.history?.accountID == state.accountID, $0.history?.next == after else { return }
             $0.history?.values = values
             $0.history?.next = page.next
             $0.history?.versions = versions
+            if addsSensitive {
+                $0.history?.revealsSecrets = false
+            }
         }
     }
 
@@ -58,10 +64,14 @@ extension CredentialSettingsModel {
     func revealHistorySecrets() async throws {
         guard let live, let history = live.history else { throw CredentialVaultError.invalidData }
         let (epoch, _) = try await authorizedSnapshot(epoch: live.epoch)
-        if let sensitive = history.versions.first(where: { $0.account.secureItems?.contains { $0.kind.isSensitive } == true }) {
+        if let sensitive = history.versions.first(where: Self.holdsSensitiveItems) {
             try await verifySensitiveItems(of: sensitive.account)
         }
         try update(epoch) { $0.history?.revealsSecrets = true }
+    }
+
+    private static func holdsSensitiveItems(_ version: CredentialVersion) -> Bool {
+        version.account.secureItems?.contains { $0.kind.isSensitive } == true
     }
 
     func hideHistorySecrets() {
@@ -69,10 +79,21 @@ extension CredentialSettingsModel {
         try? update(live.epoch) { $0.history?.revealsSecrets = false }
     }
 
-    /// Puts one part of a version into the draft. Nothing is written until the user chooses Save.
+    /// Puts one part of a version into the draft. Nothing is written until the user chooses Save. Items go through `copyItemsToDraft`.
     func copyToDraft(_ field: CredentialHistoryField, from versionID: UUID?) {
-        guard let version = live?.history?.versions.first(where: { $0.id == versionID }) else { return }
+        guard field != .secureItems, let version = live?.history?.versions.first(where: { $0.id == versionID }) else { return }
         draft?.take(field, from: version.account)
+    }
+
+    /// Puts a version's cards and other items into the draft. A card or an identity document asks for Touch ID first: the editor was
+    /// opened without it when the credential holds none now, and the draft shows and copies what it holds without asking again.
+    func copyItemsToDraft(from versionID: UUID?) async throws {
+        guard let live, let version = live.history?.versions.first(where: { $0.id == versionID }) else { return }
+        try await verifySensitiveItems(of: version.account)
+        guard self.live?.epoch == live.epoch, self.live?.history?.versions.contains(where: { $0.id == versionID }) == true else {
+            throw CredentialVaultError.unauthorized
+        }
+        draft?.take(.secureItems, from: version.account)
     }
 
     /// Closes History and drops what it decrypted; the editor stays open.

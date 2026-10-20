@@ -396,8 +396,9 @@ final class AutofillSuggestions {
         return result
     }
 
+    /// A page with no session of its own fails closed: it is not known to be the person's.
     private func isUnderAssistantControl(_ page: BrowserPage) -> Bool {
-        AutofillSaveCoordinator.shared.session(for: page)?.isUnderAssistantControl() ?? false
+        AutofillSaveCoordinator.shared.session(for: page)?.isUnderAssistantControl() ?? true
     }
 
     /// The vault branch of a card or address fill, like `managerFill`: the item is read again here under the unlock, revision and
@@ -798,6 +799,8 @@ final class AutofillSuggestions {
                     filledUsername = filled.username
                 } else if request.itemRows[id] != nil {
                     prepare = try await self.vaultItemFill(id, request: request, in: page)
+                    // A card's Touch ID sheet can take a while: the page, frame and field are checked again after it.
+                    try await self.validate(request, in: page)
                 } else {
                     // Card and contact values were read before this point; the copy is only read.
                     nonisolated(unsafe) let values = fields

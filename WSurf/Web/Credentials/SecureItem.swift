@@ -162,8 +162,11 @@ nonisolated extension Array where Element == SecureItem {
     func uniting(_ incoming: [SecureItem]) throws -> [SecureItem] {
         var result = self
         var held = Set(try map { try CredentialContent.canonicalJSON($0) })
-        for item in incoming where held.insert(try CredentialContent.canonicalJSON(item)).inserted {
-            result.append(item)
+        for item in incoming {
+            let bytes = try CredentialContent.canonicalJSON(item)
+            if held.insert(bytes).inserted {
+                result.append(item)
+            }
         }
         return result
     }

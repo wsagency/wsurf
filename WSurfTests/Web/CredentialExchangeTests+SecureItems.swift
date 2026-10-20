@@ -506,11 +506,12 @@ extension CredentialExchangeTests {
             basicAuthentication(username: "ada", password: "pw"),
             .generatedPassword(.init(password: SecureItemFixtures.cardNumber)),
         ]
-        credentials += (0..<65).map { _ in sdkCard() }
+        // The custom group is the first item and keeps 256 values; 64 cards follow, so the last one is past the item limit.
         credentials.append(.customFields(.init(label: "Many", fields: manyValues)))
+        credentials += (0..<64).map { _ in sdkCard() }
         let preview = try itemPreview(credentials)
 
-        #expect(preview.omitted.map(\.reason) == [.unsupportedKind, .extraItems, .extraFields])
+        #expect(preview.omitted.map(\.reason) == [.unsupportedKind, .extraFields, .extraItems])
         let texts = preview.omitted.map(\.text).joined(separator: "\n") + String(describing: preview.omitted)
         for secret in [SecureItemFixtures.cardNumber, SecureItemFixtures.cardCode, SecureItemFixtures.wifiPassphrase] {
             #expect(!texts.contains(secret), "a value of an item reached the review")

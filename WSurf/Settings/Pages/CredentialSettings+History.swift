@@ -130,6 +130,12 @@ struct CredentialHistoryPanel: View {
         model.copyToDraft(field, from: model.history?.selected)
     }
 
+    /// Items may ask for Touch ID, so they are copied in a task of their own; a failure shows in the editor's footer.
+    private func useItems() {
+        let selected = model.history?.selected
+        Task { await model.attempt { try await model.copyItemsToDraft(from: selected) } }
+    }
+
     /// `current` is the draft's value (the "Current" line); otherwise the shown version's. A failure shows in the editor's footer. It
     /// has its own task, so a copy never cancels a load of older versions.
     private func copier(_ part: CredentialCopyPart, current: Bool) -> () -> Void {
@@ -263,7 +269,7 @@ struct CredentialHistoryPanel: View {
         let held = from.secureItems ?? []
         return VersionFieldRow(
             title: "Cards and other items", differs: held != (try? draft.account().secureItems ?? []), offersUse: !held.isEmpty,
-            use: { use(.secureItems) }
+            use: useItems
         ) {
             VStack(alignment: .leading, spacing: 6) {
                 if held.isEmpty {

@@ -469,6 +469,8 @@ nonisolated enum CredentialExchangeCodec {
         into candidate: inout CredentialAccount,
         state: inout ImportState
     ) throws {
+        // Past the limit the whole item is named once; nothing else of it is read or named.
+        guard (candidate.secureItems?.count ?? 0) < SecureItem.itemLimit else { throw Skip(reason: .extraItems) }
         try state.budget.add(source.id ?? Data())
         try state.budget.add(source.label ?? "")
         var fields: [SecureItemField] = []
@@ -488,16 +490,16 @@ nonisolated enum CredentialExchangeCodec {
         }
         // An empty title is no title, so an untouched item reads the same in the editor as it was imported.
         var item = SecureItem(kind: source.kind, id: source.id, label: source.label.flatMap { $0.isEmpty ? nil : $0 }, fields: fields)
-        if (item.id?.count ?? 0) > 1_024 || (item.label?.utf8.count ?? 0) > 2_048 {
+        if (item.id?.count ?? 0) > 1_024 {
             item.id = nil
+            omit(.fieldDetailsSimplified, &state)
+        }
+        if (item.label?.utf8.count ?? 0) > 2_048 {
             item.label = nil
             omit(.fieldDetailsSimplified, &state)
         }
         guard !item.fields.isEmpty || item.label != nil else { return }
-        var items = candidate.secureItems ?? []
-        guard items.count < SecureItem.itemLimit else { throw Skip(reason: .extraItems) }
-        items.append(item)
-        candidate.secureItems = items
+        candidate.secureItems = (candidate.secureItems ?? []) + [item]
     }
 
     private static func importBasicAuthentication(

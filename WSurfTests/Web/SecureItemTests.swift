@@ -407,6 +407,21 @@ struct SecureItemTests {
         #expect(try [SecureItem]().uniting([card]) == [card])
     }
 
+    /// Golden digests of tag 6 computed outside the app (a throwaway script over the documented `StoreWriter` bytes: u8 tag, text =
+    /// u32 length + UTF-8, bytes = u32 length + data, opt = u8 0/1 + value, array = u32 count + elements), so the persisted hash of
+    /// items can never drift unnoticed.
+    @Test func theItemsHashIsStable() throws {
+        func hex(_ data: Data) -> String {
+            data.map { String(format: "%02x", $0) }.joined()
+        }
+        #expect(hex(try CredentialContent.hash(.secureItems(Fixtures.account([Fixtures.card()])))) == "62f8c4779f04fe2993d5a1703e9e67916dff58382dd577d7cd8fc0eb595eb986")
+        #expect(
+            hex(try CredentialContent.hash(.secureItems(Fixtures.account([Fixtures.card(), Fixtures.custom()]))))
+                == "5ee78cdcd9d23ce88400aac730457c30ade2e5ff13c0e5aaff766baa219cbbcb"
+        )
+        #expect(hex(try CredentialContent.hash(.secureItems(try rich()))) == "ceb827ad3d3884fd4d50ae6099d6d50c09a21e72ebd309708e8b69d93df19e55")
+    }
+
     // MARK: Merge
 
     private func picks(_ survivor: CredentialAccount) -> MergePicks {

@@ -36,13 +36,15 @@ nonisolated enum VaultItemAutofill {
     /// that does not read is left out rather than refusing the card.
     static func paymentCard(_ item: SecureItem) -> PaymentCard? {
         guard item.kind == .creditCard, let number = item.value("number") else { return nil }
-        let (year, month) = yearMonth(item.value("expiryDate"))
+        var (year, month) = yearMonth(item.value("expiryDate"))
+        if !(month.map { (1...12).contains($0) } ?? true) || !(year.map { (2000...2199).contains($0) } ?? true) {
+            (year, month) = (nil, nil)
+        }
         let code = item.value("verificationNumber")
         let holder = item.value("fullName") ?? ""
         let digits = number.filter(\.isNumber)
         return (try? PaymentCard(number: digits, cardholder: holder, month: month, year: year, securityCode: code))
             ?? (try? PaymentCard(number: digits, cardholder: holder, month: month, year: year))
-            ?? (try? PaymentCard(number: digits, cardholder: holder))
     }
 
     /// The first address and the first name of `account` as one contact, or `nil` when it has neither or the result is not valid.
