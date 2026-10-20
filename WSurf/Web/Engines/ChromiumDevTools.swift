@@ -202,30 +202,6 @@ final class ChromiumDevTools {
         }
     }
 
-    /// Starts `owner`'s capture. Console and exception events need the Runtime domain, which pages can detect, so it is on
-    /// only while a capture runs. A capture whose domain did not start ends here and throws.
-    func startDiagnostics(owner: AnyObject, sink: @escaping (String, [String: Any]) -> Void) async throws {
-        diagnosticsOwner = ObjectIdentifier(owner)
-        diagnosticsSink = sink
-        do {
-            _ = try await command("Runtime.enable")
-        } catch {
-            stopDiagnostics(owner: owner)
-            throw error
-        }
-    }
-
-    /// Ends `owner`'s capture; another capture started since keeps its sink and the domain.
-    func stopDiagnostics(owner: AnyObject) {
-        guard diagnosticsOwner == ObjectIdentifier(owner) else { return }
-        diagnosticsOwner = nil
-        diagnosticsSink = nil
-        Task { [weak self] in
-            guard let self, diagnosticsSink == nil else { return }
-            _ = try? await command("Runtime.disable")
-        }
-    }
-
     func command(
         _ method: String,
         params baseParams: [String: Any] = [:],
@@ -911,5 +887,44 @@ final class ChromiumDevTools {
         guard let data = try? JSONSerialization.data(withJSONObject: string, options: [.fragmentsAllowed]),
               let literal = String(data: data, encoding: .utf8) else { return "\"\"" }
         return literal
+    }
+}
+
+// MARK: Diagnostics
+
+extension ChromiumDevTools {
+    /// Starts `owner`'s capture. Console and exception events need the Runtime domain, which pages can detect, so it is on
+    /// only while a capture runs. A capture whose domain did not start ends here and throws.
+    ///
+    /// Enabling the domain makes Chromium replay the console and exception events stored before it, ahead of its response.
+    /// They happened before the capture, so the sink is attached only once the response is in, and an event stamped
+    /// (milliseconds since the epoch) before the start is dropped as well, for one delivered late.
+    func startDiagnostics(owner: AnyObject, sink: @escaping (String, [String: Any]) -> Void) async throws {
+        diagnosticsOwner = ObjectIdentifier(owner)
+        diagnosticsSink = nil
+        let startedAt = Date().timeIntervalSince1970 * 1000
+        do {
+            _ = try await command("Runtime.enable")
+        } catch {
+            stopDiagnostics(owner: owner)
+            throw error
+        }
+        guard diagnosticsOwner == ObjectIdentifier(owner) else { return }
+        diagnosticsSink = { method, params in
+            if method.hasPrefix("Runtime."), let stamp = params["timestamp"] as? Double, stamp < startedAt { return }
+            sink(method, params)
+        }
+    }
+
+    /// Ends `owner`'s capture; another capture started since keeps its sink and the domain.
+    func stopDiagnostics(owner: AnyObject) {
+        guard diagnosticsOwner == ObjectIdentifier(owner) else { return }
+        diagnosticsOwner = nil
+        diagnosticsSink = nil
+        Task { [weak self] in
+            // The owner, not the sink: a capture that is still enabling the domain has no sink yet.
+            guard let self, diagnosticsOwner == nil else { return }
+            _ = try? await command("Runtime.disable")
+        }
     }
 }
