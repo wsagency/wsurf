@@ -337,7 +337,7 @@ struct ExtensionPageAssetsTests {
     @Test func pagesGetTheExtensionScriptsOnlyWhileAnExtensionIsOn() {
         let pool = BrowserProfileContext(profile: .privateBrowsing()).webViewPool
         var present = false
-        pool.installExtensionController(WKWebExtensionController(), extensionsPresent: { present })
+        pool.installExtensionController(WKWebExtensionController(configuration: .nonPersistent()), extensionsPresent: { present })
         let sources = { (view: WKWebView) in view.configuration.userContentController.userScripts.map(\.source) }
 
         let plain = sources(pool.makeColdView())
