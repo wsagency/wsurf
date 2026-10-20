@@ -137,7 +137,8 @@ private struct CredentialDeleteVaultSheetHost: ViewModifier {
 
     func body(content: Content) -> some View {
         content.sheet(
-            isPresented: Binding(get: { model.pendingVaultDeletion != nil }, set: { if !$0 { model.cancelVaultDeletion() } }),
+            // Down while the deletion runs (see `showsVaultDeletionSheet`); that is not the user cancelling it.
+            isPresented: Binding(get: { model.showsVaultDeletionSheet }, set: { if !$0 && !model.isBusy { model.cancelVaultDeletion() } }),
             onDismiss: {
                 if exportsOnDismiss {
                     exportsOnDismiss = false

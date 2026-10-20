@@ -25,10 +25,17 @@ struct CredentialSettingsVaultDeletionTests {
         }
     }
 
-    /// Selects `vault` and unlocks it with its own passkey.
-    private func open(_ model: CredentialSettingsModel, _ vault: FixtureVault) async {
+    /// Selects `vault` and unlocks it with its own passkey. A vault that holds nothing is deleted without any confirmation, so unless
+    /// `seeded` is false it gets one credential first: the tests of the two confirmations need a vault that has something to lose.
+    private func open(_ model: CredentialSettingsModel, _ vault: FixtureVault, seeded: Bool = true) async {
         await model.select(vaultID: vault.vaultID)
         await model.unlock(in: VaultManagerFixture.anchor())
+        guard seeded else { return }
+        do {
+            _ = try await model.save(VaultFixtures.account(), expectedRevision: model.revision)
+        } catch {
+            Issue.record("the vault could not be seeded: \(error)")
+        }
     }
 
     private func pendingDeletion(name: String = "Household") -> PendingVaultDeletion {
@@ -75,7 +82,7 @@ struct CredentialSettingsVaultDeletionTests {
 
     @Test func theSheetCountsWhatGoesAndConfirmingDeletesAndOpensTheDefaultVault() async throws {
         try await withPage { model, passkeys, vaults, profile in
-            await open(model, vaults[1])
+            await open(model, vaults[1], seeded: false)
             await model.renameVault("Household")
             let full = try MoveFixtures.fullAccount()
             let spare = VaultFixtures.account(username: "grace", origin: "https://b.example")
@@ -139,11 +146,174 @@ struct CredentialSettingsVaultDeletionTests {
             await model.select(vaultID: sharing)
             await model.unlock(in: VaultManagerFixture.anchor())
             #expect(model.isUnlocked && model.selectedVaultID == sharing)
+            _ = try await model.save(VaultFixtures.account(), expectedRevision: model.revision)
 
             await model.requestVaultDeletion()
 
             let pending = try #require(model.pendingVaultDeletion)
             #expect(!pending.hasOwnUnlockPasskey)
+        }
+    }
+
+    // MARK: A vault that holds nothing
+
+    @Test func anEmptyVaultIsDeletedAtOnceWithNoSheetAndNoPasskey() async throws {
+        try await withPage { model, passkeys, vaults, profile in
+            await open(model, vaults[1], seeded: false)
+            await model.renameVault("Household")
+            let asserted = passkeys.assertions.count
+
+            await model.requestVaultDeletion()
+
+            #expect(model.error == nil)
+            #expect(model.pendingVaultDeletion == nil && !model.showsVaultDeletionSheet, "no sheet")
+            #expect(passkeys.assertions.count == asserted, "no passkey prompt")
+            let remaining = try VaultManagerFixture.rows(of: vaults[1].vaultID, in: profile)
+            #expect(remaining.isEmpty)
+            #expect(model.vaults.map(\.vaultID) == [vaults[0].vaultID] && model.selectedVaultID == vaults[0].vaultID)
+            #expect(model.deletedVault == DeletedVault(ordinal: 2, leavesUnlockPasskey: true))
+        }
+    }
+
+    @Test func oneCredentialMakesTheSheetAndBothConfirmationsNecessary() async throws {
+        try await withPage { model, passkeys, vaults, profile in
+            await open(model, vaults[1], seeded: false)
+            _ = try await model.save(VaultFixtures.account(), expectedRevision: model.revision)
+            let asserted = passkeys.assertions.count
+            let rows = try VaultManagerFixture.rows(of: vaults[1].vaultID, in: profile)
+
+            await model.requestVaultDeletion()
+
+            let pending = try #require(model.pendingVaultDeletion)
+            #expect(model.showsVaultDeletionSheet && pending.counts.credentials == 1)
+            #expect(passkeys.assertions.count == asserted && model.deletedVault == nil && model.vaults.count == 2)
+            #expect(try VaultManagerFixture.rows(of: vaults[1].vaultID, in: profile) == rows)
+
+            #expect(await model.confirmVaultDeletion(typedName: pending.name, in: VaultManagerFixture.anchor()))
+            #expect(passkeys.assertions.count == asserted + 1, "and then the passkey")
+            #expect(try VaultManagerFixture.rows(of: vaults[1].vaultID, in: profile).isEmpty)
+        }
+    }
+
+    @Test func aCredentialOnlyInTrashStillNeedsBothConfirmations() async throws {
+        try await withPage { model, passkeys, vaults, _ in
+            await open(model, vaults[1], seeded: false)
+            let account = VaultFixtures.account()
+            _ = try await model.save(account, expectedRevision: model.revision)
+            _ = try await model.remove(accountID: account.id, expectedRevision: model.revision)
+            let asserted = passkeys.assertions.count
+
+            await model.requestVaultDeletion()
+
+            let pending = try #require(model.pendingVaultDeletion)
+            #expect(pending.counts.credentials == 0 && pending.counts.inTrash == 1, "nothing live, but the Trash is not empty")
+            #expect(passkeys.assertions.count == asserted && model.vaults.count == 2 && model.deletedVault == nil)
+        }
+    }
+
+    @Test func aVaultWhoseTrashWasPurgedIsDeletedAtOnce() async throws {
+        try await withPage { model, passkeys, vaults, profile in
+            await open(model, vaults[1], seeded: false)
+            let account = VaultFixtures.account()
+            _ = try await model.save(account, expectedRevision: model.revision)
+            _ = try await model.remove(accountID: account.id, expectedRevision: model.revision)
+            // Emptying the Trash is itself a passkey prompt; it leaves tombstones, which the sheet does not count.
+            let manager = try #require(model.manager)
+            _ = try await manager.purge(entryIDs: [], emptyAll: true, in: VaultManagerFixture.anchor())
+            let asserted = passkeys.assertions.count
+
+            await model.requestVaultDeletion()
+
+            #expect(model.pendingVaultDeletion == nil && !model.showsVaultDeletionSheet, "the sheet would have shown only zeros")
+            #expect(passkeys.assertions.count == asserted)
+            let remaining = try VaultManagerFixture.rows(of: vaults[1].vaultID, in: profile)
+            #expect(remaining.isEmpty)
+            #expect(model.vaults.map(\.vaultID) == [vaults[0].vaultID] && model.deletedVault?.ordinal == 2)
+        }
+    }
+
+    @Test func aVaultWithOnlyAnExcludedSiteShowsTheSheetWithThatCount() async throws {
+        try await withPage { model, passkeys, vaults, _ in
+            await open(model, vaults[1], seeded: false)
+            let manager = try #require(model.manager)
+            let epoch = try #require(manager.authorizationEpoch)
+            let revision = try await manager.snapshot().revision
+            // Written behind the page's back: the page still thinks nothing is excluded.
+            _ = try await manager.updatePasswordSavePolicy(["https://blocked.example"], expectedRevision: revision, authorizedEpoch: epoch)
+            let asserted = passkeys.assertions.count
+
+            await model.requestVaultDeletion()
+
+            let pending = try #require(model.pendingVaultDeletion)
+            #expect(pending.counts.excludedSites == 1 && pending.counts.credentials == 0 && pending.counts.inTrash == 0)
+            #expect(pending.counts.earlierVersions == 0, "the one count that is not zero is the excluded site")
+            #expect(passkeys.assertions.count == asserted && model.vaults.count == 2 && model.deletedVault == nil)
+        }
+    }
+
+    @Test func theSheetCountsWhatWasSavedSinceThePageLoaded() async throws {
+        try await withPage { model, passkeys, vaults, _ in
+            await open(model, vaults[1], seeded: false)
+            let manager = try #require(model.manager)
+            let epoch = try #require(manager.authorizationEpoch)
+            let revision = try await manager.snapshot().revision
+            // An autofill save lands while the page is open: the page's own list does not know it yet.
+            _ = try await manager.commit([VaultFixtures.account()], expectedRevision: revision, authorizedEpoch: epoch)
+            #expect(model.summaries.isEmpty)
+            let asserted = passkeys.assertions.count
+
+            await model.requestVaultDeletion()
+
+            let pending = try #require(model.pendingVaultDeletion)
+            #expect(pending.counts.credentials == 1, "never a sheet that shows only zeros")
+            #expect(passkeys.assertions.count == asserted && model.vaults.count == 2)
+        }
+    }
+
+    @Test func anOpenImportReviewStillBlocksAnEmptyVault() async throws {
+        let exchange = CredentialExchangeCoordinator()
+        try await withPage(exchange: exchange) { model, _, vaults, profile in
+            await open(model, vaults[1], seeded: false)
+            let csv = CredentialCSV.encode([
+                ["Title", "URL", "Username", "Password", "Notes", "OTPAuth"],
+                ["Example", "https://example.test/login", "ada", "hunter2-correct", "", ""],
+            ])
+            try await exchange.beginCSVImport(csv, into: try #require(model.manager), owner: model.owner) { _ in }
+            let rows = try VaultManagerFixture.rows(of: vaults[1].vaultID, in: profile)
+
+            await model.requestVaultDeletion()
+
+            #expect(model.vaultDeletionBlock == .importOpen && model.deletedVault == nil && model.vaults.count == 2)
+            #expect(try VaultManagerFixture.rows(of: vaults[1].vaultID, in: profile) == rows)
+            model.cancelImport()
+        }
+    }
+
+    // MARK: The passkey prompt
+
+    /// The system's passkey prompt is a sheet of the window, and a window with a sheet already attached shows no second one. So the
+    /// delete sheet must be down while the prompt is open, or the prompt waits for the sheet and the sheet for the prompt.
+    @Test func theSheetIsDownWhileThePasskeyPromptIsOpenAndComesBackIfItWasDeclined() async throws {
+        try await withPage { model, passkeys, vaults, _ in
+            await open(model, vaults[1])
+            await model.requestVaultDeletion()
+            let pending = try #require(model.pendingVaultDeletion)
+            #expect(model.showsVaultDeletionSheet)
+
+            var shownDuringPrompt: Bool?
+            passkeys.beforeAssert = {
+                shownDuringPrompt = model.showsVaultDeletionSheet
+                throw PasskeyUnlockError.appCancelled
+            }
+            #expect(await model.confirmVaultDeletion(typedName: pending.name, in: VaultManagerFixture.anchor()) == false)
+            #expect(shownDuringPrompt == false, "the sheet was still up when the prompt opened")
+            #expect(model.showsVaultDeletionSheet, "a declined prompt brings the sheet back")
+
+            passkeys.beforeAssert = { shownDuringPrompt = model.showsVaultDeletionSheet }
+            shownDuringPrompt = nil
+            #expect(await model.confirmVaultDeletion(typedName: pending.name, in: VaultManagerFixture.anchor()))
+            #expect(shownDuringPrompt == false)
+            #expect(!model.showsVaultDeletionSheet && model.pendingVaultDeletion == nil)
         }
     }
 
