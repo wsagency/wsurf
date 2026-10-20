@@ -12,6 +12,11 @@ struct ThemeGallery: View {
     let mode: AppearanceMode
     let adjustments: [String: ThemeAdjustment]
     let onSelect: (String) -> Void
+    /// False once the saved themes are at their limit.
+    var canDuplicate = true
+    var onDuplicate: (ThemeDefinition) -> Void = { _ in }
+    var onRename: (ThemeDefinition) -> Void = { _ in }
+    var onDelete: (ThemeDefinition) -> Void = { _ in }
 
     var body: some View {
         LazyVGrid(columns: AppearanceThumbnailMetrics.columns, spacing: AppearanceThumbnailMetrics.spacing) {
@@ -23,6 +28,14 @@ struct ThemeGallery: View {
                     isSelected: theme.id == selection
                 ) {
                     onSelect(theme.id)
+                }
+                .contextMenu {
+                    Button("Duplicate") { onDuplicate(theme) }
+                        .disabled(!canDuplicate)
+                    if !ThemeCatalog.isBuiltIn(theme.id) {
+                        Button("Rename…") { onRename(theme) }
+                        Button("Delete…", role: .destructive) { onDelete(theme) }
+                    }
                 }
             }
         }

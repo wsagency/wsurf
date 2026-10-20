@@ -34,7 +34,7 @@ extension BrowserSettings {
         get { globalValue(\.themeID, storage: storedThemeID) }
         set {
             setGlobal(\BrowserSettings.themeID, storage: \BrowserSettings.storedThemeID, value: newValue,
-                      key: Key.themeID, didChange: {
+                      key: Key.themeID, defersWrite: true, didChange: {
                           $0.themePreview = nil
                           $0.refreshTheme()
                       })

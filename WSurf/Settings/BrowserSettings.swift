@@ -36,6 +36,7 @@ final class BrowserSettings {
         static let userThemes = "appearance.themes.user"
         static let themeAdjustments = "appearance.themes.adjustments"
         static let themesVersion = "appearance.themes.version"
+        static let dockIcon = "appearance.dockIcon"
         static let sleepsInactiveTabs = "tabs.sleep"
         static let sleepAfterMinutes = "tabs.sleepAfterMinutes"
         static let archiveTabsAfter = "tabs.archive"
@@ -88,7 +89,7 @@ final class BrowserSettings {
 
     @ObservationIgnored private let appDefaults: UserDefaults
     @ObservationIgnored private let sessionDefaults: UserDefaults
-    @ObservationIgnored private let appliesAppearanceGlobally: Bool
+    @ObservationIgnored let appliesAppearanceGlobally: Bool
     @ObservationIgnored private var applicationSettings: BrowserSettings?
     var globalSettings: BrowserSettings {
         applicationSettings ?? self
@@ -97,6 +98,12 @@ final class BrowserSettings {
     @ObservationIgnored var storedThemeID: String?
     @ObservationIgnored var storedUserThemes: [ThemeDefinition]?
     @ObservationIgnored var storedThemeAdjustments: [String: ThemeAdjustment]?
+    @ObservationIgnored var storedDockIcon: DockIconChoice?
+    /// Where the Dock icon goes. Tests replace it, so they never touch the real Dock.
+    @ObservationIgnored var showsDockIcon: (NSImage?) -> Void = { DockIconChoice.show($0) }
+    /// Writes that wait for the next turn of the main run loop, by key. See `writeSoon`.
+    @ObservationIgnored var pendingWrites: [String: Any] = [:]
+    @ObservationIgnored var flushTask: Task<Void, Never>?
     /// The resolved colors of the selected theme, rebuilt after the theme, a saved theme or an adjustment changes.
     @ObservationIgnored var themeCache: ResolvedTheme?
     var themePreview: ThemePreview?
@@ -144,7 +151,7 @@ final class BrowserSettings {
         Self.sessionKeySet.contains(key) ? sessionDefaults : appDefaults
     }
 
-    private func write(_ value: Any?, forKey key: String) {
+    func write(_ value: Any?, forKey key: String) {
         store(for: key).set(value, forKey: key)
     }
 
@@ -188,6 +195,7 @@ final class BrowserSettings {
         value: Value,
         key: String,
         encode: (Value) -> Any? = { $0 },
+        defersWrite: Bool = false,
         didChange: (BrowserSettings) -> Void = { _ in }
     ) {
         if let applicationSettings {
@@ -200,7 +208,11 @@ final class BrowserSettings {
         withMutation(keyPath: keyPath) {
             self[keyPath: storage] = value
             if let encoded = encode(value) {
-                write(encoded, forKey: key)
+                if defersWrite {
+                    writeSoon(encoded, forKey: key)
+                } else {
+                    write(encoded, forKey: key)
+                }
             }
             didChange(self)
         }
@@ -645,6 +657,9 @@ final class BrowserSettings {
         self.sessionDefaults = session
         self.appliesAppearanceGlobally = appliesAppearanceGlobally
         self.applicationSettings = application
+        // Reading the defaults now must see every theme choice that another settings object has not written yet.
+        BrowserSettings.flushAllPendingWrites()
+        _ = BrowserSettings.flushObservers
         func pick(_ key: String) -> UserDefaults {
             Self.sessionKeySet.contains(key) ? session : defaults
         }
@@ -677,6 +692,7 @@ final class BrowserSettings {
             storedThemeID = themes.themeID
             storedUserThemes = Self.normalized(themes.userThemes)
             storedThemeAdjustments = themes.adjustments.mapValues { $0.bounded() }
+            storedDockIcon = string(Key.dockIcon).flatMap(DockIconChoice.init(rawValue:)) ?? .standard
             let legacyLoomStyle = string(Key.loomStyle)
             if let storedWebsiteTint = object(Key.websiteTint) as? Bool {
                 storedMatchesWebsiteColor = storedWebsiteTint
@@ -766,6 +782,10 @@ final class BrowserSettings {
         }
     }
 
+    isolated deinit {
+        flushPendingWrites()
+    }
+
     // MARK: - Applying
 
     var forcesDarkAppearance = false {
@@ -791,6 +811,7 @@ final class BrowserSettings {
         colorMode = .system
         themeID = ThemeCatalog.defaultID
         themeAdjustments = [:]
+        dockIcon = .standard
         matchesWebsiteColor = true
         sidebarFontFamily = ""
         sidebarFontSize = 12

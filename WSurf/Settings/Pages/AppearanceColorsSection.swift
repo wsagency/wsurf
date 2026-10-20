@@ -10,15 +10,25 @@ struct AppearanceColorsSection: View {
     @State private var isExpanded = false
     @State private var isEditing = false
 
+    private var introduction: LocalizedStringResource {
+        ThemeCatalog.isBuiltIn(settings.selectedTheme.id)
+            ? "Built-in themes don’t change. Your first edit makes a copy you can rename."
+            : "Changes are saved to this theme as you make them."
+    }
+
     var body: some View {
         SettingsCard {
             DisclosureGroup("Colors", isExpanded: $isExpanded) {
-                Text("Built-in themes don’t change. Your first edit makes a copy you can rename.")
+                Text(introduction)
                     .font(Theme.Font.label)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 DetailRow(title: "Accent color") {
                     paletteColor(\.accent, label: "Accent color")
+                }
+                RowSeparator()
+                DetailRow(title: "Assistant color", caption: "Marks assistant activity. Follows the accent color until you choose one.") {
+                    paletteColor(\.assistant, label: "Assistant color")
                 }
                 RowSeparator()
                 DetailRow(title: "Tab text") {

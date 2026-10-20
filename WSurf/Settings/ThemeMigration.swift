@@ -168,6 +168,13 @@ enum ThemeMigration {
 }
 
 enum ThemeNames {
+    /// True when `name` has something in it and fits `ThemeDefinition.nameLimit` once trimmed. The theme settings
+    /// would otherwise fall back to a default name or cut the name short.
+    static func isAcceptable(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed.count <= ThemeDefinition.nameLimit
+    }
+
     /// `name` trimmed to the limit and made different from every name in `taken`, ignoring case.
     static func unique(_ name: String, among taken: [String]) -> String {
         let used = Set(taken.map { $0.lowercased() })
