@@ -54,9 +54,9 @@ extension BrowserSettings {
         // A tab decides each pop-up as WebKit asks for its window, so WebKit hands them all over. A WebKit that cannot say
         // who started one keeps its own blocker for the setting.
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = TabNavigationDelegate.decidesPopUps || !blocksPopups
-        // A tab's navigations replace this with the website's own answer (`SiteContentGuard.apply`); a document no
-        // navigation decision reaches, or a WebKit without that hook, keeps the setting.
-        configuration.mediaTypesRequiringUserActionForPlayback = autoplay.mediaTypes
+        // A tab's navigations set the website's own answer (`SiteContentGuard.apply`), so the view itself asks nothing; a
+        // website's Allow under a global Never did not play otherwise. A WebKit without that hook keeps the setting.
+        configuration.mediaTypesRequiringUserActionForPlayback = SiteContentGuard.decidesAutoplay ? [] : autoplay.mediaTypes
         configuration.preferences.isElementFullscreenEnabled = true
         // `isInspectable` only lets an external inspector attach. This private
         // preference enables the page's own Inspect Element item.

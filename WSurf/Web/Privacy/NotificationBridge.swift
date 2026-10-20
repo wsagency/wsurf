@@ -41,7 +41,7 @@ final class NotificationBridge: NSObject {
     nonisolated static let scriptSource = """
         (function () {
           var Custom = CustomEvent, dispatch = EventTarget.prototype.dispatchEvent;
-          var stringify = JSON.stringify, parse = JSON.parse;
+          var stringify = JSON.stringify, parse = JSON.parse, later = setTimeout;
           var post = function (m) { dispatch.call(document, new Custom('wsurfnotify', { detail: stringify(m) })); };
           var nextId = 1;
           var permission = 'default';
@@ -84,7 +84,9 @@ final class NotificationBridge: NSObject {
               if (f) { f(value); }
             }
           });
-          post({ type: 'hello', id: 0 });
+          // After every document-start script has run: WebKit does not order those of different worlds, so the relay may
+          // not be listening yet.
+          later(function () { post({ type: 'hello', id: 0 }); }, 0);
         })();
         """
 

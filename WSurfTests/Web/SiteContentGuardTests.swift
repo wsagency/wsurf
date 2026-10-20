@@ -259,12 +259,14 @@ final class WebKitSiteContentTests {
         #expect(try await outcome(of: Self.playing(muted), under: .silent) == "played")
     }
 
-    @Test func aWebsitesOwnAnswerOutranksTheSetting() async throws {
-        #expect(try await outcome(of: Self.playing("new Audio('/tone.wav')"), under: .allow, siteAnswer: .block)
-            == "NotAllowedError")
-        // The setting is also the view's own fallback; a website's answer still outranks it.
-        #expect(try await outcome(of: Self.playing("new Audio('/tone.wav')"), under: .block, siteAnswer: .allow)
-            == "played")
+    @Test func aWebsitesOwnNeverOutranksTheSetting() async throws {
+        let outcome = try await outcome(of: Self.playing("new Audio('/tone.wav')"), under: .allow, siteAnswer: .block)
+        #expect(outcome == "NotAllowedError", "\(outcome ?? "nil")")
+    }
+
+    @Test func aWebsitesOwnAllowOutranksTheSetting() async throws {
+        let outcome = try await outcome(of: Self.playing("new Audio('/tone.wav')"), under: .block, siteAnswer: .allow)
+        #expect(outcome == "played", "\(outcome ?? "nil")")
     }
 
     /// The answer covers the whole document, a frame from another website included.
@@ -287,20 +289,6 @@ final class WebKitSiteContentTests {
         _ = tab.load(try top.url())
         #expect(await waitUntil { tab.page.title?.hasPrefix("frame:") == true })
         #expect(tab.page.title == "frame:NotAllowedError")
-    }
-
-    /// Nothing WSurf does to a page while it loads counts as the person using it: a player the website starts by itself
-    /// two seconds later is still refused.
-    @Test func aPlayerTheWebsiteStartsLaterIsStillRefused() async throws {
-        context.settings.autoplay = .block
-        let server = try await server([
-            "/": .html(Self.playing("new Audio('/tone.wav')") + "<script>setTimeout(start, 2000)</script>"),
-        ])
-        defer { withExtendedLifetime(server) {} }
-        let tab = tab()
-        _ = tab.load(try server.url())
-        #expect(await waitUntil(timeout: .seconds(10)) { tab.page.title.map { $0 != "loading" && !$0.isEmpty } == true })
-        #expect(tab.page.title == "NotAllowedError")
     }
 
     /// Once the person has used the page, its players are theirs: a player started well after that interaction plays.

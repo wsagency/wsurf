@@ -121,7 +121,11 @@ final class PageFootprintTests {
         ])
         defer { withExtendedLifetime(top) {} }
 
-        let site = try top.url()
+        // Another origin on the same site: Chromium keeps it in the page's own renderer, where the engine's frame list
+        // (and so this probe) reaches it. A frame from another site gets its own process.
+        var topComponents = try #require(URLComponents(url: try top.url(), resolvingAgainstBaseURL: false))
+        topComponents.host = "localhost"
+        let site = try #require(topComponents.url)
         let context = BrowserProfileContext(profile: .privateBrowsing())
         let tab = try tab(engine, for: site, in: context)
         defer {

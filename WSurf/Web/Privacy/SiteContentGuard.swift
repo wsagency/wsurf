@@ -27,6 +27,9 @@ final class SiteContentGuard {
 
     private static let policySetter = NSSelectorFromString("_setAutoplayPolicy:")
     private static let quirksSetter = NSSelectorFromString("_setAllowedAutoplayQuirks:")
+    /// Whether this WebKit takes a website's answer per navigation (`apply(_:to:)`).
+    static let decidesAutoplay = WKWebpagePreferences.instancesRespond(to: policySetter)
+        && WKWebpagePreferences.instancesRespond(to: quirksSetter)
 
     /// `_WKWebsiteAutoplayPolicy` and `_WKWebsiteAutoplayQuirk` (SPI on `WKWebpagePreferences`). WebKit enforces the
     /// policy for every player in every frame of the document, including one never attached to the page. Inherited user
@@ -35,7 +38,7 @@ final class SiteContentGuard {
     /// the person, a muted one plays.
     static func apply(_ policy: AutoplayPolicy, to preferences: WKWebpagePreferences) {
         typealias SetInteger = @convention(c) (AnyObject, Selector, Int) -> Void
-        guard preferences.responds(to: policySetter), preferences.responds(to: quirksSetter) else { return }
+        guard decidesAutoplay else { return }
         let inheritedUserGestures = 1 << 1
         let (value, quirks) = switch policy {
         case .allow:

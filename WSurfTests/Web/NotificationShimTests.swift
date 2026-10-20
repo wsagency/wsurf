@@ -55,7 +55,7 @@ struct NotificationShimTests {
 
     /// What native says, through the relay, to the frame that spoke.
     private func answer(_ answer: [String: Any], to page: BrowserPage, _ sink: Sink) async {
-        guard let frame = sink.frame else {
+        guard await waitUntil({ sink.frame != nil }), let frame = sink.frame else {
             Issue.record("the shim never spoke")
             return
         }
@@ -74,6 +74,7 @@ struct NotificationShimTests {
     @Test func theShimAnnouncesItselfAsSoonAsItIsInstalled() async {
         let (webView, sink) = await armed()
 
+        #expect(await waitUntil { !self.posted(sink).isEmpty })
         let messages = posted(sink)
 
         #expect(messages.first?["type"] as? String == "hello")
