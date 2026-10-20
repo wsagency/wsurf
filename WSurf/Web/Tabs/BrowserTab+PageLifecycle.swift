@@ -286,6 +286,7 @@ extension BrowserTab {
         ContactAutofill.shared.install(in: view)
         PasswordAutofill.shared.install(in: view)
         WebAuthnAdapter.install(in: view)
+        autofillSave.isUnderAssistantControl = { [weak self] in self?.isUnderAssistantControl ?? false }
         AutofillSaveCoordinator.shared.install(in: view, session: autofillSave)
         InputHistoryCapture.shared.install(in: view) { [weak self] in self?.isUnderAssistantControl ?? false }
         installPageObservations(for: view)

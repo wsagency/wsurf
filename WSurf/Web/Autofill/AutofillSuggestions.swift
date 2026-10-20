@@ -43,6 +43,13 @@ final class AutofillSuggestions {
         var grants: [UUID: Grant] = [:]
         /// What the panel returns (a fresh id per row) -> the owning vault and its account. Two vaults may hold the same account id.
         var rows: [UUID: (vaultID: UUID, accountID: UUID)] = [:]
+        /// A card or address row of the credentials vault -> its vault, credential and item (`VaultItemAutofill`).
+        struct ItemRow {
+            let vaultID: UUID
+            let accountID: UUID
+            let item: Int
+        }
+        var itemRows: [UUID: ItemRow] = [:]
         /// Rows that list an account of a sibling website (`CredentialAccountSelection.siblings`), not of the page's origin.
         var siblingRows: Set<UUID> = []
         /// The rows behind "Check other logins": titles and websites only. No secret is read until one of them is chosen.
@@ -91,6 +98,9 @@ final class AutofillSuggestions {
     /// Per profile, changes whenever its vault access ends (lock, profile switch, retire): an unlock the dropdown asked for before
     /// that never goes ahead.
     private var accessGenerations: [UUID: UInt64] = [:]
+    /// Fresh device-owner authentication before a card from the credentials vault fills a page, as a card saved in Keychain asks for
+    /// it. Returns only on success. A seam so a test decides the answer.
+    var verifyUser: @MainActor (String) async throws -> Void = { try await NativeWebAuthnInteraction().verifyUser(reason: $0, until: nil) }
 
     private init() {}
 
@@ -223,6 +233,9 @@ final class AutofillSuggestions {
             }.value
         }
         var rows = records ?? []
+        if kind != .password {
+            rows += await vaultItemSuggestions(for: request, presentation: id)
+        }
         if kind == .password, request.isWebAuthnField,
            let passkey = Self.passkeyRow(origin: origin, in: page, frame: request.frame) {
             request.actions[passkey.id] = .passkey
@@ -342,6 +355,84 @@ final class AutofillSuggestions {
         let rowID = UUID()
         request.actions[rowID] = .siblings
         return [AutofillSuggestion(id: rowID, title: String(localized: "Check other logins for *.\(site)"), detail: "", origin: origin)]
+    }
+
+    /// Cards or addresses of the profile's unlocked vaults, after the ones saved in Keychain: titles only (a card's network and last
+    /// four digits), each row mapped to its vault, credential and item. A locked vault is never read, nothing is offered to unlock
+    /// one, and a tab the assistant or a connected app controls gets none, so no agent can have one filled into a page it reads.
+    private func vaultItemSuggestions(for request: Request, presentation: UUID) async -> [AutofillSuggestion] {
+        let context = request.context
+        request.grants = [:]; request.itemRows = [:]
+        guard !context.profile.isPrivate, request.page.context === context, request.kind != .password,
+              !isUnderAssistantControl(request.page) else { return [] }
+        let listing = (try? await CredentialManager.store(for: context.profile).listing()) ?? []
+        let unlocked = CredentialManager.unlockedManagers(for: context.profile)
+        var result: [AutofillSuggestion] = []
+        for vault in listing.sorted(by: { $0.ordinal < $1.ordinal }) {
+            guard let manager = unlocked.first(where: { $0.vaultID == vault.vaultID }), let epoch = manager.authorizationEpoch,
+                  let snapshot = try? await manager.snapshot(), manager.authorizationEpoch == epoch else { continue }
+            guard request.page.context === context, presentation == presentationID,
+                  requests[ObjectIdentifier(request.page)] === request else { return [] }
+            request.grants[manager.vaultID] = Request.Grant(epoch: epoch, revision: snapshot.revision)
+            func row(accountID: UUID, item: Int) -> UUID {
+                let rowID = UUID()
+                request.itemRows[rowID] = Request.ItemRow(vaultID: manager.vaultID, accountID: accountID, item: item)
+                return rowID
+            }
+            if request.kind == .card {
+                for offer in VaultItemAutofill.cards(in: snapshot.accounts) {
+                    var card = offer.value
+                    card.id = row(accountID: offer.accountID, item: offer.item)
+                    result.append(AutofillSuggestion(.card(card)))
+                }
+            } else {
+                for offer in VaultItemAutofill.contacts(in: snapshot.accounts) {
+                    var contact = offer.value
+                    contact.id = row(accountID: offer.accountID, item: offer.item)
+                    result.append(AutofillSuggestion(.contact(contact)))
+                }
+            }
+        }
+        return result
+    }
+
+    private func isUnderAssistantControl(_ page: BrowserPage) -> Bool {
+        AutofillSaveCoordinator.shared.session(for: page)?.isUnderAssistantControl() ?? false
+    }
+
+    /// The vault branch of a card or address fill, like `managerFill`: the item is read again here under the unlock, revision and
+    /// write generation its row was shown under, a card asks for Touch ID, and the returned closure delivers only if all of that and
+    /// the request's native authority still hold at the engine's dispatch boundary.
+    private func vaultItemFill(_ id: UUID, request: Request, in page: BrowserPage) async throws -> @MainActor @Sendable () throws -> [String: Any] {
+        guard let row = request.itemRows[id], let manager = manager(for: request, vault: row.vaultID), let grant = request.grants[row.vaultID],
+              let generation = manager.stableGeneration, !isUnderAssistantControl(page) else { throw ContactAutofillError.changedPage }
+        let snapshot = try await manager.snapshot()
+        guard manager.authorizationEpoch == grant.epoch, manager.stableGeneration == generation, snapshot.vaultID == row.vaultID,
+              snapshot.revision == grant.revision, let account = snapshot.accounts.first(where: { $0.id == row.accountID }),
+              let items = account.secureItems, items.indices.contains(row.item) else { throw ContactAutofillError.changedPage }
+        let fields: [String: Any]
+        switch request.kind {
+        case .card:
+            guard let card = VaultItemAutofill.paymentCard(items[row.item]), !card.isExpired() else { throw PaymentCardError.noField }
+            try await verifyUser(String(localized: "fill your saved payment card"))
+            fields = ["number": card.number, "cardholder": card.cardholder, "securityCode": card.securityCode ?? "", "month": card.month ?? 0, "year": card.year ?? 0]
+        case .contact:
+            guard let contact = VaultItemAutofill.contact(of: account) else { throw ContactAutofillError.noField }
+            fields = contact.fields
+        case .password:
+            throw ContactAutofillError.changedPage
+        }
+        nonisolated(unsafe) let values = fields
+        let epoch = grant.epoch
+        return { [weak self, weak page] in
+            guard let self, let page else { throw ContactAutofillError.changedPage }
+            try self.requireAuthority(request, in: page)
+            guard self.manager(for: request, vault: row.vaultID) === manager, manager.stableGeneration == generation,
+                  manager.authorizationEpoch == epoch, !self.isUnderAssistantControl(page) else {
+                throw ContactAutofillError.changedPage
+            }
+            return Self.fillArguments(request, fields: values)
+        }
     }
 
     /// What may be delivered for the row `rowID` now: the account must still exist in the vault that owns the row, still be
@@ -691,17 +782,10 @@ final class AutofillSuggestions {
             guard let self, let page else { return }
             do {
                 try await self.validate(request, in: page)
+                // A login, or a card or address of the credentials vault, is not read here: it is read after the final checks below.
                 var fields: [String: Any] = [:]
-                switch request.kind {
-                case .password:
-                    // The vault is not touched here; it is read after the final checks below.
-                    break
-                case .card:
-                    guard let card = try await AutofillVaults.cards(for: request.context.profile.id).cards().first(where: { $0.id == id }), !card.isExpired() else { throw PaymentCardError.noField }
-                    fields = ["number": card.number, "cardholder": card.cardholder, "securityCode": card.securityCode ?? "", "month": card.month ?? 0, "year": card.year ?? 0]
-                case .contact:
-                    guard let contact = try await AutofillVaults.contacts(for: request.context.profile.id).records().first(where: { $0.id == id }) else { throw ContactAutofillError.noField }
-                    fields = contact.fields
+                if request.kind != .password, request.itemRows[id] == nil {
+                    fields = try await self.keychainFields(id, request: request)
                 }
                 try await self.validate(request, in: page)
                 // One transport for every fill: the page call's arguments are produced by the engine at its true dispatch
@@ -712,6 +796,8 @@ final class AutofillSuggestions {
                     let filled = try await self.managerFill(id, request: request, in: page)
                     prepare = filled.prepare
                     filledUsername = filled.username
+                } else if request.itemRows[id] != nil {
+                    prepare = try await self.vaultItemFill(id, request: request, in: page)
                 } else {
                     // Card and contact values were read before this point; the copy is only read.
                     nonisolated(unsafe) let values = fields
@@ -766,6 +852,21 @@ final class AutofillSuggestions {
         }
     }
 
+    /// A card or contact saved in Keychain (the stores of the Autofill settings), read before `fill`'s final checks. The card store asks
+    /// for Touch ID itself.
+    private func keychainFields(_ id: UUID, request: Request) async throws -> [String: Any] {
+        switch request.kind {
+        case .password:
+            return [:]
+        case .card:
+            guard let card = try await AutofillVaults.cards(for: request.context.profile.id).cards().first(where: { $0.id == id }), !card.isExpired() else { throw PaymentCardError.noField }
+            return ["number": card.number, "cardholder": card.cardholder, "securityCode": card.securityCode ?? "", "month": card.month ?? 0, "year": card.year ?? 0]
+        case .contact:
+            guard let contact = try await AutofillVaults.contacts(for: request.context.profile.id).records().first(where: { $0.id == id }) else { throw ContactAutofillError.noField }
+            return contact.fields
+        }
+    }
+
     /// The encrypted-store branch of a fill: the vault answer is read here, last, and is valid for one unlock, revision and
     /// write generation. The returned closure delivers whatever is computed from it only if all of that, and the request's
     /// native authority, still hold at the engine's dispatch boundary. Secrets and the fresh TOTP are materialised there, in
@@ -809,7 +910,7 @@ final class AutofillSuggestions {
         switch error {
         case AutofillVaultError.keychain(let status), PaymentCardError.keychain(let status):
             status == errSecUserCanceled || status == errSecAuthFailed
-        case CredentialVaultError.unauthorized, CredentialVaultError.expired:
+        case CredentialVaultError.unauthorized, CredentialVaultError.expired, WebsiteAuthenticatorError.notAllowed:
             true
         default:
             false
