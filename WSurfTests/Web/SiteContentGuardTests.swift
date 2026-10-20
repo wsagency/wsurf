@@ -9,8 +9,8 @@ import WebKit
 @testable import WSurf
 
 @MainActor
-/// The auto-play and pop-up answers. The page script is what Chromium runs; its JavaScript is engine-neutral, so these
-/// cases drive it on WebKit. On WebKit itself the answers are WebKit's own (`WebKitSiteContentTests`).
+/// The auto-play answer as Chromium keeps it, with a script in WSurf's isolated world; its JavaScript is engine-neutral, so
+/// these cases drive it on WebKit, in that world. On WebKit itself both answers are WebKit's own (`WebKitSiteContentTests`).
 @Suite(.serialized, .boundedWebViews)
 final class SiteContentGuardTests {
     private let defaultsName = "SiteContentGuardTests-" + UUID().uuidString
@@ -22,11 +22,6 @@ final class SiteContentGuardTests {
 
     deinit {
         UserDefaults.standard.removePersistentDomain(forName: defaultsName)
-    }
-
-    private final class Reports {
-        var count = 0
-        var url: URL?
     }
 
     private func temporaryPermissions() -> SitePermissions {
@@ -42,17 +37,14 @@ final class SiteContentGuardTests {
         </body></html>
         """
 
-    private func page(permissions: SitePermissions, reports: Reports? = nil, at address: URL? = nil) async -> BrowserPage {
+    private func page(permissions: SitePermissions, at address: URL? = nil) async -> BrowserPage {
         let configuration = WebViewPool.makeConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let view = BrowserPage(webKit: TabWebView(
             frame: NSRect(x: 0, y: 0, width: 800, height: 600),
             configuration: configuration
         ), context: BrowserProfileContext(profile: .privateBrowsing()))
-        SiteContentGuard.shared.installPageScript(in: view, permissions: permissions, settings: settings) {
-            reports?.url = $0
-            reports?.count += 1
-        }
+        SiteContentGuard.shared.installScript(in: view, permissions: permissions, settings: settings)
         if let address {
             view.load(URLRequest(url: address))
         } else {
@@ -61,8 +53,8 @@ final class SiteContentGuardTests {
         #expect(await PageSettle.untilIdle(view, timeout: .seconds(30)))
         #expect(
             await waitUntil {
-                let settled = try? await view.evaluateJavaScript(
-                    "!!(window.__wsurfSiteGuard && window.__wsurfSiteGuard.autoplay)"
+                let settled = try? await self.run(
+                    "!!(window.__wsurfSiteGuard && window.__wsurfSiteGuard.autoplay)", in: view
                 )
                 return (settled as? NSNumber)?.boolValue == true
             },
@@ -71,10 +63,15 @@ final class SiteContentGuardTests {
         return view
     }
 
+    /// Runs `script` in the guard's own world: it sees the page's DOM, and the guard sees what is replaced there.
+    private func run(_ script: String, in view: BrowserPage) async throws -> Any {
+        try await view.evaluateJavaScript(script, in: nil, contentWorld: BrowserPage.servicesWorld)
+    }
+
     /// `pause` is replaced rather than watched: a player with no source throws
     /// on the real call, and the count is what the test is asking about.
     private func play(in view: BrowserPage, startedByHand: Bool = false) async {
-        _ = try? await view.evaluateJavaScript(
+        _ = try? await run(
             """
             (() => {
               Object.defineProperty(navigator, 'userActivation', {
@@ -87,12 +84,12 @@ final class SiteContentGuardTests {
               video.dispatchEvent(new Event('play'));
               return true;
             })()
-            """
+            """, in: view
         )
     }
 
     private func pauses(in view: BrowserPage) async -> Int {
-        let count = try? await view.evaluateJavaScript("window.__pauses")
+        let count = try? await run("window.__pauses", in: view)
         return (count as? NSNumber)?.intValue ?? -1
     }
 
@@ -144,45 +141,6 @@ final class SiteContentGuardTests {
         #expect(await pauses(in: view) == 0)
     }
 
-    /// A player made with `createElement` or `new Audio()` and never attached to the page
-    /// fires no `play` event the document can hear.
-    @Test func aPlayerKeptOffThePageIsStoppedToo() async {
-        settings.autoplay = .block
-
-        let view = await page(permissions: temporaryPermissions())
-        await playOffThePage(in: view)
-
-        #expect(await waitUntil { await self.pauses(in: view) == 1 })
-    }
-
-    @Test func aPlayerKeptOffThePageThatThePersonStartedPlays() async {
-        settings.autoplay = .block
-
-        let view = await page(permissions: temporaryPermissions())
-        await playOffThePage(in: view, startedByHand: true)
-
-        try? await Task.sleep(for: .milliseconds(300))
-        #expect(await pauses(in: view) == 0)
-    }
-
-    private func playOffThePage(in view: BrowserPage, startedByHand: Bool = false) async {
-        _ = try? await view.evaluateJavaScript(
-            """
-            (() => {
-              Object.defineProperty(navigator, 'userActivation', {
-                configurable: true,
-                get() { return { hasBeenActive: \(startedByHand), isActive: \(startedByHand) }; }
-              });
-              const audio = document.createElement('audio');
-              window.__pauses = 0;
-              audio.pause = () => { window.__pauses += 1; };
-              audio.play().catch(() => {});
-              return true;
-            })()
-            """
-        )
-    }
-
     /// A website's own answer outranks the setting every other website is under.
     @Test func aWebsiteWithItsOwnAnswerIsNotUnderTheSetting() async throws {
         settings.autoplay = .allow
@@ -196,32 +154,6 @@ final class SiteContentGuardTests {
         await play(in: view)
 
         #expect(await pauses(in: view) == 1)
-    }
-
-    // MARK: - Pop-ups
-
-    @Test func aBlockedPopUpIsReportedWithTheAddressItWanted() async {
-        settings.blocksPopups = true
-
-        let reports = Reports()
-        let view = await page(permissions: temporaryPermissions(), reports: reports)
-
-        _ = try? await view.evaluateJavaScript("window.open('https://example.com/popup'); true")
-
-        #expect(await waitUntil { reports.count > 0 })
-        #expect(reports.url == URL(string: "https://example.com/popup"))
-    }
-
-    @Test func aWebsiteAllowedItsPopUpsReportsNothing() async throws {
-        settings.blocksPopups = false
-
-        let reports = Reports()
-        let view = await page(permissions: temporaryPermissions(), reports: reports)
-
-        _ = try? await view.evaluateJavaScript("window.open('https://example.com/popup'); true")
-        try await view.finishPendingPageMessages()
-
-        #expect(reports.count == 0, "nothing was blocked, so there is nothing to say")
     }
 }
 

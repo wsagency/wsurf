@@ -15,9 +15,9 @@ enum PageStandInRelay {
     static func install(
         _ standIn: String, name: String, in page: BrowserPage, handler: @escaping (BrowserScriptMessage) -> Void
     ) {
-        page.installScript(relay(name), in: page.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        page.installScript(relay(name), in: BrowserPage.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         page.installScript(standIn, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        page.addScriptMessageHandler(name: name, in: page.servicesWorld, handler: handler)
+        page.addScriptMessageHandler(name: name, in: BrowserPage.servicesWorld, handler: handler)
     }
 
     /// Hands `answer` to the stand-in in `frame`.
@@ -26,7 +26,7 @@ enum PageStandInRelay {
               let detail = String(data: data, encoding: .utf8) else { return }
         _ = try? await page.callAsyncJavaScript(
             "document.dispatchEvent(new CustomEvent(type, {detail}));",
-            arguments: ["type": name + "-answer", "detail": detail], in: frame, contentWorld: page.servicesWorld
+            arguments: ["type": name + "-answer", "detail": detail], in: frame, contentWorld: BrowserPage.servicesWorld
         )
     }
 

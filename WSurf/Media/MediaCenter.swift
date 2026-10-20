@@ -76,8 +76,8 @@ final class MediaCenter {
 
     @MainActor
     func install(in page: BrowserPage) {
-        page.installScript(MediaScript.source, in: page.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        page.addScriptMessageHandler(name: Self.frameScriptHandlerName, in: page.servicesWorld) { [weak self] message in
+        page.installScript(MediaScript.source, in: BrowserPage.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        page.addScriptMessageHandler(name: Self.frameScriptHandlerName, in: BrowserPage.servicesWorld) { [weak self] message in
             guard let body = message.body as? String else { return }
             self?.receiveScriptMessage(body, from: message.page, isMainFrame: message.frameInfo.isMainFrame)
         }
@@ -383,7 +383,7 @@ final class MediaCenter {
             Array.prototype.forEach.call(document.querySelectorAll('iframe'), function (f) {
               try { f.contentWindow.postMessage(\(escaped), '*'); } catch (e) {}
             });
-            """, in: nil, contentWorld: page.servicesWorld)
+            """, in: nil, contentWorld: BrowserPage.servicesWorld)
         }
     }
 

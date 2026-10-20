@@ -8,9 +8,9 @@ import WebKit
 
 @testable import WSurf
 
-/// What a WebKit page, and a frame from another website inside it, can see of WSurf. Challenge pages compare built-ins
-/// with `[native code]` and look for globals and `window.webkit`; a frame sees nothing of WSurf at all, and the main frame
-/// only the features that have no other way in.
+/// What a page, and a frame from another website inside it, can see of WSurf on either engine. Challenge pages compare
+/// built-ins with `[native code]` and look for globals and `window.webkit`; a frame sees nothing of WSurf at all, and the
+/// main frame only the features that have no other way in.
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 final class PageFootprintTests {
@@ -75,19 +75,25 @@ final class PageFootprintTests {
         return try JSONDecoder().decode(Report.self, from: Data(json.utf8))
     }
 
-    /// The tab the app makes: the window's own page scripts (media, location, notifications) and the tab's.
-    private func tab(_ context: BrowserProfileContext) -> BrowserTab {
+    /// The tab the app makes on `engine` for `site`: the window's own page scripts (media, location, notifications) and the
+    /// tab's, through the production adoption path.
+    private func tab(_ engine: BrowserEngine, for site: URL, in context: BrowserProfileContext) throws -> BrowserTab {
         let media = MediaCenter()
         context.webViewPool.configurePage = { page in
             media.install(in: page)
             GeolocationBridge.shared.install(in: page)
             NotificationBridge.shared.install(in: page)
         }
-        let configuration = WebViewPool.makeConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
-        context.settings.apply(to: configuration)
-        let webView = TabWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
-        let tab = BrowserTab(adopting: webView, opensBlank: false, privately: true, context: context)
+        // The tab sends a site to the engine it is set to.
+        context.sitePermissions.setEngine(engine, for: SitePermissions.origin(for: site))
+        let tab = BrowserTab(opensBlank: false, privately: true, context: context)
+        switch engine {
+        case .webKit:
+            tab.adopt(BrowserPage(webKit: context.webViewPool.acquire(), context: context))
+        case .chromium:
+            try ChromiumRuntime.shared.ensureInitialized()
+            tab.adopt(BrowserPage(chromium: ChromiumPage(context: context)))
+        }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -97,7 +103,8 @@ final class PageFootprintTests {
         return tab
     }
 
-    @Test func aPageAndAnotherWebsitesFrameSeeNoTraceOfWSurf() async throws {
+    @Test(arguments: BrowserEngine.allCases)
+    func aPageAndAnotherWebsitesFrameSeeNoTraceOfWSurf(_ engine: BrowserEngine) async throws {
         let framed = try await HTTPFixtureServer.start(routes: [
             "/": .html("<!doctype html><title>Challenge</title><video></video><script>void 0</script>"),
         ])
@@ -114,10 +121,14 @@ final class PageFootprintTests {
         ])
         defer { withExtendedLifetime(top) {} }
 
+        let site = try top.url()
         let context = BrowserProfileContext(profile: .privateBrowsing())
-        let tab = tab(context)
-        defer { context.webViewPool.configurePage = nil }
-        _ = tab.load(try top.url())
+        let tab = try tab(engine, for: site, in: context)
+        defer {
+            context.webViewPool.configurePage = nil
+            tab.detach()
+        }
+        _ = tab.load(site)
         try #require(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
         try #require(await waitUntil {
             await PageFrameRegistry.shared.targets(in: tab.page).contains { $0.url.port == childPort }
@@ -125,7 +136,9 @@ final class PageFootprintTests {
         let child = try #require(await PageFrameRegistry.shared.targets(in: tab.page).first { $0.url.port == childPort })
 
         let frame = try await report(tab.page, in: child.frame)
-        #expect(frame == Report(wrapped: [], keys: [], webkit: "undefined", navigator: []))
+        // Chromium: also needs ChromiumDevTools to expose `__wsurfSend` only to worlds with a message handler (Chromium
+        // session); a page-world script must not bring it into every frame.
+        #expect(frame == Report(wrapped: [], keys: [], webkit: "undefined", navigator: []), "\(engine)")
 
         let main = try await report(tab.page, in: nil)
         #expect(Set(main.wrapped).isSubset(of: Self.mainFrameExceptions), "\(main.wrapped)")

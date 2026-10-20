@@ -22,13 +22,13 @@ final class PageActivityMonitor {
     private static let handlerName = "wsurfPageActivity"
     private static let maximumTokenLength = 100
 
-    /// Installs through the owning page so Chromium receives the same callback. WebKit reports screen sharing natively
-    /// (`DisplayCaptureObservation`), so its pages keep their own `getDisplayMedia`.
+    /// Installs through the owning page so Chromium receives the same callback. Edited forms only: screen sharing comes from
+    /// the engines themselves (WebKit's `DisplayCaptureObservation`, Chromium's media access report), so pages keep their
+    /// own `getDisplayMedia`.
     @MainActor
     func install(in page: BrowserPage, onActivity: @escaping (PageActivitySignal) -> Void) {
-        let script = page.webKit == nil ? Self.wrappingDisplayMedia : Self.script
-        page.installScript(script, in: page.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        page.addScriptMessageHandler(name: Self.handlerName, in: page.servicesWorld) { message in
+        page.installScript(Self.script, in: BrowserPage.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        page.addScriptMessageHandler(name: Self.handlerName, in: BrowserPage.servicesWorld) { message in
             guard let body = message.body as? [String: Any],
                   let rawKind = body["kind"] as? String,
                   let kind = PageActivityKind(rawValue: rawKind),
@@ -40,14 +40,9 @@ final class PageActivityMonitor {
         }
     }
 
-    private static let wrappingDisplayMedia = script.replacingOccurrences(
-        of: "const wrapsDisplayMedia = false;", with: "const wrapsDisplayMedia = true;"
-    )
-
     private static let script = #"""
     (() => {
       if (window.__wsurfPageActivity) return;
-      const wrapsDisplayMedia = false;
 
       const send = globalThis.__wsurfSend;
       if (typeof send !== 'function') return;
@@ -57,8 +52,6 @@ final class PageActivityMonitor {
       const baselines = new WeakMap();
       const dirtyControls = new Set();
       let reportedDirty = false;
-      let reportedShare = false;
-      const displayTracks = new Set();
 
       const post = (kind, active) => {
         try { send('wsurfPageActivity', { kind, token, active: Boolean(active) }); }
@@ -132,43 +125,8 @@ final class PageActivityMonitor {
         });
       }, true);
 
-      const reportShare = () => {
-        for (const track of displayTracks) {
-          if (track.readyState === 'ended') displayTracks.delete(track);
-        }
-        const active = displayTracks.size > 0;
-        if (active === reportedShare) return;
-        reportedShare = active;
-        post('screenShare', active);
-      };
-
-      const mediaDevices = navigator.mediaDevices;
-      const originalDisplayMedia = mediaDevices?.getDisplayMedia;
-      if (wrapsDisplayMedia && typeof originalDisplayMedia === 'function') {
-        try {
-          mediaDevices.getDisplayMedia = async function (...args) {
-            const stream = await originalDisplayMedia.apply(this, args);
-            for (const track of stream.getVideoTracks()) {
-              displayTracks.add(track);
-              track.addEventListener('ended', () => {
-                displayTracks.delete(track);
-                reportShare();
-              }, { once: true });
-            }
-            reportShare();
-            return stream;
-          };
-        } catch (_) {}
-      }
-
-      addEventListener('pagehide', () => {
-        post('editedForm', false);
-        post('screenShare', false);
-      });
-      addEventListener('pageshow', () => {
-        post('editedForm', dirtyControls.size > 0);
-        reportShare();
-      });
+      addEventListener('pagehide', () => post('editedForm', false));
+      addEventListener('pageshow', () => post('editedForm', dirtyControls.size > 0));
 
       window.__wsurfPageActivity = true;
     })();
@@ -212,8 +170,8 @@ final class ScrollPositionMonitor {
     private static let handlerName = "wsurfScrollPosition"
     @MainActor
     func install(in page: BrowserPage, onScroll: @escaping (Double, URL?) -> Void) {
-        page.installScript(Self.script, in: page.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        page.addScriptMessageHandler(name: Self.handlerName, in: page.servicesWorld) { message in
+        page.installScript(Self.script, in: BrowserPage.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        page.addScriptMessageHandler(name: Self.handlerName, in: BrowserPage.servicesWorld) { message in
             guard message.frameInfo.isMainFrame,
                   let y = (message.body as? NSNumber)?.doubleValue,
                   y.isFinite, y >= 0 else { return }

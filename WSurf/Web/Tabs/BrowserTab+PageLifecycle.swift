@@ -266,9 +266,7 @@ extension BrowserTab {
             PageClickWatcher.shared.onClick?(view, point)
         }
         PullToRefreshMonitor.install(in: view)
-        SiteContentGuard.shared.install(in: view, permissions: sitePermissions, settings: context.settings) { [weak self] url in
-            self?.popups.note(url)
-        }
+        SiteContentGuard.shared.install(in: view, permissions: sitePermissions, settings: context.settings)
         PaymentCardAutofill.shared.install(in: view)
         ContactAutofill.shared.install(in: view)
         PasswordAutofill.shared.install(in: view)

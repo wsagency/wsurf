@@ -7,17 +7,18 @@ import WebKit
 
 /// A website's auto-play and pop-up answers. WebKit keeps both itself, so nothing runs in its pages: the tab's navigation
 /// delegate sets the auto-play policy for each main-frame document (`apply(_:to:)`) and decides each pop-up as WebKit asks
-/// for its window. Chromium's auto-play setting is browser-wide, so its pages still keep the answer with this script.
+/// for its window. Chromium decides pop-ups natively too (`on_before_popup`), but its auto-play setting is browser-wide, so
+/// a script in WSurf's isolated world stops a player attached to the page that the website starts by itself. A player
+/// never attached to the page is the browser-wide setting's alone there.
 final class SiteContentGuard {
     static let shared = SiteContentGuard()
 
     private static let handlerName = "wsurfSiteGuard"
 
     @MainActor
-    func install(in page: BrowserPage, permissions: SitePermissions, settings: BrowserSettings,
-                 onPopupBlocked: @escaping (URL?) -> Void = { _ in }) {
+    func install(in page: BrowserPage, permissions: SitePermissions, settings: BrowserSettings) {
         guard page.webKit == nil else { return }
-        installPageScript(in: page, permissions: permissions, settings: settings, onPopupBlocked: onPopupBlocked)
+        installScript(in: page, permissions: permissions, settings: settings)
     }
 
     static func autoplay(for url: URL?, permissions: SitePermissions, settings: BrowserSettings) -> AutoplayPolicy {
@@ -48,26 +49,18 @@ final class SiteContentGuard {
         unsafeBitCast(preferences.method(for: quirksSetter), to: SetInteger.self)(preferences, quirksSetter, quirks)
     }
 
-    /// The page-world script Chromium runs. Tests drive it on WebKit too: its JavaScript is the same on both.
+    /// The script Chromium runs. Tests drive it on WebKit too: its JavaScript is the same on both.
     @MainActor
-    func installPageScript(in page: BrowserPage, permissions: SitePermissions, settings: BrowserSettings,
-                           onPopupBlocked: @escaping (URL?) -> Void) {
-        page.installScript(Self.script, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        page.addScriptMessageHandler(name: Self.handlerName, in: .page) { [permissions, settings] message in
-            guard let body = message.body as? [String: Any] else { return }
-            if let blocked = body["blocked"] as? String {
-                onPopupBlocked(URL(string: blocked))
-                return
-            }
+    func installScript(in page: BrowserPage, permissions: SitePermissions, settings: BrowserSettings) {
+        page.installScript(Self.script, in: BrowserPage.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        page.addScriptMessageHandler(name: Self.handlerName, in: BrowserPage.servicesWorld) { [permissions, settings] message in
             let origin = SitePermissions.origin(for: message.page.url ?? message.frameInfo.request.url)
             let autoplay = permissions.autoplay(for: origin) ?? settings.autoplay
-            let popups = permissions.popups(for: origin)
-                ?? (settings.blocksPopups ? PopupPolicy.blockAndNotify : .allow)
-            let payload = ["autoplay": autoplay.rawValue, "popups": popups.rawValue]
             Task { @MainActor in
                 _ = try? await message.page.callAsyncJavaScript(
                     "globalThis.__wsurfSiteGuard?.applyPolicy(policy);",
-                    arguments: ["policy": payload], in: message.frameInfo, contentWorld: .page
+                    arguments: ["policy": ["autoplay": autoplay.rawValue]], in: message.frameInfo,
+                    contentWorld: BrowserPage.servicesWorld
                 )
             }
         }
@@ -80,7 +73,7 @@ final class SiteContentGuard {
       const send = globalThis.__wsurfSend;
       if (typeof send !== 'function') return;
 
-      const state = { autoplay: null, popups: null, held: new Set() };
+      const state = { autoplay: null, held: new Set() };
       window.__wsurfSiteGuard = state;
 
       let touched = false;
@@ -111,18 +104,6 @@ final class SiteContentGuard {
         }
       };
       document.addEventListener('play', guard, true);
-      // A player never attached to the page fires no `play` the document can hear.
-      const watched = new WeakSet();
-      const nativePlay = HTMLMediaElement.prototype.play;
-      HTMLMediaElement.prototype.play = function () {
-        if (!this.isConnected && !watched.has(this)) {
-          watched.add(this);
-          this.addEventListener('play', (event) => {
-            if (!this.isConnected) guard(event);
-          });
-        }
-        return nativePlay.apply(this, arguments);
-      };
 
       const release = () => {
         for (const media of state.held) {
@@ -134,23 +115,8 @@ final class SiteContentGuard {
         state.held.clear();
       };
 
-      const opener = window.open;
-      window.open = function (...args) {
-        const opened = opener.apply(window, args);
-        if (!opened && state.popups === 'blockAndNotify') {
-          try {
-            const wanted = args[0] === undefined ? '' : String(args[0]);
-            send('wsurfSiteGuard', { blocked: new URL(wanted, location.href).href });
-          } catch (_) {
-            try { send('wsurfSiteGuard', { blocked: '' }); } catch (_) {}
-        }
-        }
-        return opened;
-      };
-
       state.applyPolicy = (answer) => {
         state.autoplay = answer && answer.autoplay ? answer.autoplay : 'block';
-        state.popups = answer && answer.popups ? answer.popups : 'allow';
         release();
       };
       send('wsurfSiteGuard', { ask: 'policy' });
