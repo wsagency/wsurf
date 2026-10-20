@@ -244,9 +244,10 @@ final class SitePermissions {
         defaults[permission] ?? .ask
     }
 
-    /// The website's own choice, including an explicit Ask. `nil` means it follows the default.
+    /// The website's own choice, including an explicit Ask. `nil` means it follows the default. One choice covers the
+    /// whole website (`site(for:)`), so a subdomain answers with the record of the site it belongs to.
     func assistantRecord(for origin: String) -> AssistantAccessPolicy? {
-        assistantRecords[normalize(origin)]
+        assistantRecords[Self.site(for: normalize(origin))]
     }
 
     func assistantAccess(for origin: String) -> AssistantAccessPolicy {
@@ -379,9 +380,10 @@ final class SitePermissions {
     /// Settings > Websites), so every tab's live assistant state is re-evaluated against the store.
     var onAssistantAccessChanged: (() -> Void)?
 
-    /// `nil` removes the record, so the website follows the default again. Ask is a record like any other.
+    /// `nil` removes the record, so the website follows the default again. Ask is a record like any other. The record is
+    /// kept for the whole website the origin belongs to.
     func setAssistantAccess(_ policy: AssistantAccessPolicy?, for origin: String) {
-        let origin = normalize(origin)
+        let origin = Self.site(for: normalize(origin))
         guard !origin.isEmpty else { return }
         assistantRecords[origin] = policy
         scheduleSave()
@@ -485,6 +487,34 @@ final class SitePermissions {
             return "\(scheme)://\(host)"
         }
         return "\(scheme)://\(host):\(port)"
+    }
+
+    /// The website an origin belongs to: its registrable domain under the public suffix list, with the origin's scheme and
+    /// port. A host the list cannot reduce keeps its own origin: an IP address, `localhost`, or a name that is itself a
+    /// suffix. Names under a private-section suffix such as `github.io` stay separate sites.
+    nonisolated static func site(for origin: String) -> String {
+        guard let components = URLComponents(string: origin), let scheme = components.scheme,
+              let host = components.host, let domain = RelyingPartyPolicy.registrableDomain(of: host)
+        else { return origin }
+        return components.port.map { "\(scheme)://\(domain):\($0)" } ?? "\(scheme)://\(domain)"
+    }
+
+    /// The stricter of two choices for one website: No Access, then Ask (a stored choice that holds against a more open
+    /// default), then Read Only, then Allow Control.
+    nonisolated static func stricter(_ first: AssistantAccessPolicy, _ second: AssistantAccessPolicy) -> AssistantAccessPolicy {
+        func openness(_ policy: AssistantAccessPolicy) -> Int {
+            switch policy {
+            case .deny:
+                0
+            case .ask:
+                1
+            case .readOnly:
+                2
+            case .control:
+                3
+            }
+        }
+        return openness(first) <= openness(second) ? first : second
     }
 
     nonisolated static func webOrigin(for url: URL?) -> String {
@@ -665,10 +695,12 @@ final class SitePermissions {
             records[origin, default: [:]].merge(policies) { existing, _ in existing }
         }
         defaults = snapshot.defaults
+        // Records saved per origin fold into their website. Where two disagree, the stricter one wins, so folding never
+        // gives the assistant more access than the person chose for any page of the site.
         for (key, policy) in snapshot.assistantAccess {
-            let origin = normalize(key)
-            guard !origin.isEmpty, assistantRecords[origin] == nil else { continue }
-            assistantRecords[origin] = policy
+            let site = Self.site(for: normalize(key))
+            guard !site.isEmpty else { continue }
+            assistantRecords[site] = assistantRecords[site].map { Self.stricter($0, policy) } ?? policy
         }
         if let stored = snapshot.assistantDefault, stored != .deny {
             assistantDefault = stored

@@ -84,6 +84,26 @@ struct MCPDefaultAccessPolicyTests {
         #expect(!MCPDefaultAccess.opens(Self.shop, client: client, in: browser, trust: trust))
     }
 
+    /// A website's own choice covers all of it: a stricter one saved on one subdomain keeps a paired app from opening any
+    /// other page of the site under the default, and a different site is unaffected.
+    @Test func aWebsiteChoiceCoversItsSubdomains() throws {
+        let setup = try makeSetup()
+        let cart = URL(string: "https://shop.example.com/cart")!
+        #expect(setup.opens(cart))
+
+        setup.permissions.setAssistantAccess(.readOnly, for: "https://www.example.com")
+        #expect(!setup.opens(cart))
+        #expect(!setup.opens(URL(string: "https://example.com/")!))
+        #expect(setup.opens(URL(string: "https://example.org/")!))
+
+        setup.permissions.setAssistantAccess(.control, for: "https://blog.example.com")
+        #expect(setup.opens(cart))
+        // A private-section host is a site of its own.
+        setup.permissions.setAssistantAccess(.deny, for: "https://alice.github.io")
+        #expect(setup.opens(URL(string: "https://bob.github.io/")!))
+        #expect(!setup.opens(URL(string: "https://docs.alice.github.io/")!))
+    }
+
     @Test func anUnreadableKeychainTurnsItOff() throws {
         let on = try makeSetup()
         #expect(on.opens())

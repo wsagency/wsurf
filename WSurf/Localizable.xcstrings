@@ -6439,6 +6439,15 @@
     },
     "• Allow Developer: also types test passwords it gives itself, and acts without asking before purchases, sending, and deleting. Only on developer sites in your Developer profile." : {
       "comment" : "Line in the access sheet that explains the Allow Developer button. It follows the lines for the other buttons."
+    },
+    "This includes %@ and other pages on %@." : {
+      "comment" : "Last paragraph of the Allow Assistant question, shown when the page is on a subdomain. The first %@ is the page’s host, for example maps.google.com; the second is the website the answer covers, for example google.com. The answer applies to every page of that website."
+    },
+    "This applies to every page on %@." : {
+      "comment" : "Last paragraph of the Allow Assistant question. %@ is the website the answer covers, for example google.com, including its subdomains."
+    },
+    "Applies to every page on %@." : {
+      "comment" : "Caption under Assistant access on a website’s page in Settings > Websites. %@ is the website the choice covers, for example google.com; the choice also covers its subdomains such as maps.google.com. Full sentence."
     }
   },
   "version" : "1.0"

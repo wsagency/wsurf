@@ -108,6 +108,42 @@ struct TabAssistantAccessCenterTests {
         #expect(center.sessionPolicy == nil)
     }
 
+    @Test func aPrivateAnswerCoversTheWholeSite() async {
+        let (center, store) = makeCenter(privately: true)
+        center.pageChanged(url: URL(string: "https://www.example.com/"))
+        await withDecision({ _, _ in .control }) {
+            #expect(await center.authorize(.control))
+        }
+
+        center.pageChanged(url: URL(string: "https://shop.example.com/cart"))
+        #expect(center.origin == "https://shop.example.com")
+        #expect(center.site == "https://example.com")
+        #expect(center.effectivePolicy == .control)
+        #expect(store.assistantOrigins.isEmpty)
+
+        center.pageChanged(url: URL(string: "https://example.org/"))
+        #expect(center.sessionPolicy == nil)
+    }
+
+    @Test func aSubdomainUsesTheChoiceSavedForItsSite() async {
+        let (center, store) = makeCenter()
+        store.setAssistantAccess(.deny, for: "https://www.example.com")
+        center.pageChanged(url: URL(string: "https://maps.example.com/"))
+
+        #expect(center.explicitPolicy == .deny)
+        #expect(center.decision(for: .read) == .deny)
+        #expect(center.denialMessage(for: .read).contains("example.com"))
+    }
+
+    @Test func thePromptSaysTheAnswerCoversTheWholeSite() {
+        let other = TabAssistantAccessCenter.coverage(origin: "https://maps.google.com", site: "https://google.com")
+        #expect(other == "This includes maps.google.com and other pages on google.com.")
+        #expect(TabAssistantAccessCenter.coverage(origin: "https://www.google.com", site: "https://google.com")
+            == "This applies to every page on google.com.")
+        #expect(TabAssistantAccessCenter.coverage(origin: "https://google.com", site: "https://google.com")
+            == "This applies to every page on google.com.")
+    }
+
     @Test func clearingSiteDataDropsAPrivateSessionAnswer() async {
         let (center, _) = makeCenter(privately: true)
         await withDecision({ _, _ in .readOnly }) {

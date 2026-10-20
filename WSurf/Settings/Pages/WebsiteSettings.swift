@@ -384,7 +384,10 @@ private struct SiteDetailPage: View {
             }
             .settingsAnchor("websites.engine")
             RowSeparator()
-            DetailRow(title: "Assistant access") {
+            DetailRow(
+                title: "Assistant access",
+                caption: "Applies to every page on \(SitePermissions.displayName(for: SitePermissions.site(for: origin)))."
+            ) {
                 SettingsMenu(
                     options: assistantAccessOptions,
                     selection: Binding(

@@ -89,6 +89,68 @@ struct SitePermissionsStoreTests {
         #expect(store.assistantOrigins == ["https://example.com", "https://example.com:8443"])
     }
 
+    @Test func assistantAccessCoversTheWholeSite() {
+        let store = temporaryStore()
+        store.setAssistantAccess(.deny, for: "https://www.google.com")
+
+        #expect(store.assistantAccess(for: "https://maps.google.com") == .deny)
+        #expect(store.assistantAccess(for: "https://google.com") == .deny)
+        #expect(store.assistantRecord(for: "https://google.co.uk") == nil)
+        #expect(store.assistantAccess(for: "http://google.com") == .ask)
+        #expect(store.assistantOrigins == ["https://google.com"])
+
+        store.setAssistantAccess(nil, for: "https://mail.google.com")
+        #expect(store.assistantRecord(for: "https://maps.google.com") == nil)
+    }
+
+    /// Names under a private-section suffix belong to different people, so each is its own website.
+    @Test func assistantAccessKeepsHostedSitesApart() {
+        let store = temporaryStore()
+        store.setAssistantAccess(.control, for: "https://alice.github.io")
+
+        #expect(store.assistantAccess(for: "https://docs.alice.github.io") == .control)
+        #expect(store.assistantRecord(for: "https://bob.github.io") == nil)
+        #expect(store.assistantRecord(for: "https://github.io") == nil)
+        #expect(store.assistantRecord(for: "http://127.0.0.1:8080") == nil)
+        #expect(store.assistantOrigins == ["https://alice.github.io"])
+    }
+
+    /// Records saved per origin before this change fold into their website, and the stricter answer wins. Ask is a stored
+    /// choice that holds against a more open default, so it is stricter than Read Only and Allow Control.
+    @Test func savedOriginsFoldIntoTheirSiteWithTheStricterAnswer() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SitePermissionsFold-\(UUID().uuidString).json")
+        let json = """
+            {"assistantDefault":"control","assistantAccess":{\
+            "https://maps.google.com":"control","https://www.google.com":"readOnly","https://mail.google.com":"deny",\
+            "https://news.ycombinator.com":"control",\
+            "https://shop.example.com":"control","https://www.example.com":"ask","https://blog.example.com":"readOnly",\
+            "https://alice.github.io":"deny","https://bob.github.io":"control"}}
+            """
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        let store = SitePermissions(storageURL: url)
+
+        #expect(store.assistantAccess(for: "https://maps.google.com") == .deny)
+        #expect(store.assistantAccess(for: "https://ycombinator.com") == .control)
+        #expect(store.assistantRecord(for: "https://shop.example.com") == .ask)
+        #expect(store.assistantAccess(for: "https://shop.example.com") == .ask)
+        #expect(store.assistantAccess(for: "https://bob.github.io") == .control)
+        #expect(store.assistantAccess(for: "https://alice.github.io") == .deny)
+        #expect(store.assistantOrigins == [
+            "https://alice.github.io", "https://bob.github.io", "https://example.com", "https://google.com", "https://ycombinator.com",
+        ])
+    }
+
+    @Test func theStricterChoiceWins() {
+        let order: [AssistantAccessPolicy] = [.deny, .ask, .readOnly, .control]
+        for (index, stricter) in order.enumerated() {
+            for looser in order[index...] {
+                #expect(SitePermissions.stricter(stricter, looser) == stricter)
+                #expect(SitePermissions.stricter(looser, stricter) == stricter)
+            }
+        }
+    }
+
     @Test func useDefaultForgetsAssistantAccess() {
         let store = temporaryStore()
         store.setAssistantAccess(.deny, for: "https://example.com")
