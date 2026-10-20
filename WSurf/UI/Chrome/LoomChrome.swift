@@ -20,8 +20,12 @@ enum LoomChrome {
         Theme.topBarHeight
     }
 
+    /// The page's corner, scaled by the theme's corner rounding. The side panel and split panes follow it.
     static var canvasRadius: CGFloat {
-        Theme.Radius.nested(in: Theme.Radius.window, inset: canvasInset)
+        let window = Theme.Radius.window
+        return BrowserSettings.application.chromeShape.pageRadius(
+            Theme.Radius.nested(in: window, inset: canvasInset), window: window
+        )
     }
 
     static var canvasShape: RoundedRectangle {
@@ -373,18 +377,35 @@ struct LoomPageCanvas<Content: View>: View {
         self.content = content()
     }
 
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.displayScale) private var displayScale
+
     var body: some View {
         let shape = LoomChrome.canvasShape
+        let frame = BrowserSettings.application.chromeShape.pageFrame(contrast: contrast)
+        let hasShadow = frame == .standard
 
+        // The clip and the shadow stay in place for every edge, with values that draw nothing, so changing the edge
+        // never changes the identity of the web view inside.
         content
             .background {
                 LoomPanelFill(shape: shape, isVisible: showsPanelFill)
             }
             .clipShape(shape)
+            .overlay {
+                if frame == .hairline {
+                    shape
+                        .strokeBorder(
+                            Theme.chrome(GlassPolicy.borderOpacity(contrast: contrast)),
+                            lineWidth: contrast == .increased ? 1 : 1 / displayScale
+                        )
+                        .allowsHitTesting(false)
+                }
+            }
             .shadow(
-                color: .black.opacity(0.18),
-                radius: 12,
-                y: 4
+                color: .black.opacity(hasShadow ? 0.18 : 0),
+                radius: hasShadow ? 12 : 0,
+                y: hasShadow ? 4 : 0
             )
             .padding(.top, LoomChrome.canvasTop)
             .padding(.leading, LoomChrome.canvasInset)

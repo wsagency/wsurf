@@ -76,7 +76,7 @@ struct SidebarTabRow: View {
     }
 
     private var radius: CGFloat {
-        depth == 0 ? Theme.Radius.hover : FolderSection.rowRadius(depth: depth - 1)
+        depth == 0 ? Theme.Radius.row : FolderSection.rowRadius(depth: depth - 1)
     }
 
     private var returnHelp: String {
@@ -156,12 +156,13 @@ struct SidebarTabRow: View {
     }
 
     @ViewBuilder private var leadingIcon: some View {
+        let colorsFavicon = BrowserSettings.application.chromeShape.colorsFavicons
         if sidebarStyle == .full {
-            TabIcon(tab: tab, tint: textColor)
+            TabIcon(tab: tab, tint: textColor, colorsFavicon: colorsFavicon)
                 .frame(width: SidebarMetrics.rowIconSize)
                 .sidebarNewMark(ink)
         } else {
-            TabIcon(tab: tab, tint: textColor)
+            TabIcon(tab: tab, tint: textColor, colorsFavicon: colorsFavicon)
                 .sidebarNewMark(ink)
         }
     }
@@ -426,8 +427,8 @@ struct PinReturnSegment: View {
         .sidebarHoverFill(
             isHovering: hovering,
             in: UnevenRoundedRectangle(
-                topLeadingRadius: Theme.Radius.hover,
-                bottomLeadingRadius: Theme.Radius.hover
+                topLeadingRadius: Theme.Radius.row,
+                bottomLeadingRadius: Theme.Radius.row
             )
         )
         .onHover { over in
@@ -589,6 +590,17 @@ struct TabIcon: View {
     var size: CGFloat = SidebarMetrics.rowIconSize
     var tint: Color?
     var loadingColor: Color = .secondary
+    /// A loaded tab shows its favicon's own colors instead of `tint`. Unloaded tabs and symbols keep the tint, so
+    /// loaded and unloaded tabs stay apart.
+    var colorsFavicon = false
+
+    /// nil draws the favicon in its own colors.
+    var faviconTint: Color? {
+        if colorsFavicon, !tab.isDeferred {
+            return nil
+        }
+        return tint ?? (tab.isDeferred ? .secondary : nil)
+    }
 
     var body: some View {
         Group {
@@ -604,7 +616,7 @@ struct TabIcon: View {
                     .font(.system(size: size * 0.66, weight: .medium))
                     .foregroundStyle(tint ?? .secondary)
             } else if let favicon = tab.favicon {
-                FaviconImage(image: favicon, tint: tint ?? (tab.isDeferred ? .secondary : nil))
+                FaviconImage(image: favicon, tint: faviconTint)
                     .frame(width: size - 1, height: size - 1)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.tight, style: .continuous))
             } else {

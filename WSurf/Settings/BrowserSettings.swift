@@ -108,6 +108,8 @@ final class BrowserSettings {
     @ObservationIgnored var themeCache: ResolvedTheme?
     var themePreview: ThemePreview?
     var sidebarInk = ThemeSidebarInk()
+    /// The page edge, row edges, corner rounding and favicon style of the shown theme. See `ThemeShape`.
+    var chromeShape = ThemeShape()
     @ObservationIgnored private var storedSidebarFontFamily: String?
     @ObservationIgnored private var storedSidebarFontSize: Double?
     @ObservationIgnored private var storedSidebarFontWeight: SidebarFontWeight?

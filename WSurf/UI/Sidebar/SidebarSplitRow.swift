@@ -63,7 +63,7 @@ struct SidebarSplitRow: View {
     }
 
     private var radius: CGFloat {
-        depth == 0 ? Theme.Radius.hover : FolderSection.rowRadius(depth: depth - 1)
+        depth == 0 ? Theme.Radius.row : FolderSection.rowRadius(depth: depth - 1)
     }
 
     private var shape: TabSplit {
@@ -295,7 +295,7 @@ private struct SplitRowCell: View {
                     browser.returnToPin(tab)
                 }
             } else {
-                TabIcon(tab: tab, tint: ink.text)
+                TabIcon(tab: tab, tint: ink.text, colorsFavicon: BrowserSettings.application.chromeShape.colorsFavicons)
                     .sidebarNewMark(ink)
                     .sidebarRowName(tab.title, style: style, isIconOnly: !showsTitle)
                     .overlay(alignment: .bottomTrailing) {

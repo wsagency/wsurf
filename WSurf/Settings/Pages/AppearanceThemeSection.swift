@@ -35,7 +35,7 @@ struct AppearanceThemeSection: View {
 
     private var saveCaption: LocalizedStringResource {
         settings.canSaveAnotherTheme
-            ? "Keeps this theme’s colors, material, transparency and brightness under a name you choose."
+            ? "Keeps this theme’s colors, material, transparency, brightness and layout under a name you choose."
             : "You have saved \(BrowserSettings.userThemeLimit) themes, the most WSurf keeps. Delete one to save another."
     }
 

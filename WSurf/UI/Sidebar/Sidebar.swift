@@ -459,7 +459,7 @@ struct SidebarFavoriteButton: View {
                 .sidebarNewMark(ink)
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
-                .sidebarInverse(ink, in: RoundedRectangle(cornerRadius: Theme.Radius.hover, style: .continuous))
+                .sidebarInverse(ink, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
                 .sidebarRowSelectionEffect(
                     isSelected: style.emphasis == .lit,
                     isHovering: hovering && style.emphasis != .current
