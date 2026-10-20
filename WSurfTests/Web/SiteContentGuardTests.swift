@@ -301,13 +301,13 @@ final class WebKitSiteContentTests {
         tab.onNewWindow = { _, _ in }
         _ = tab.load(try server.url())
         #expect(await waitUntil { tab.page.title == "ready" })
-        // Script run by native counts as the person's click, so the window opens.
+        // The person's click, replayed, so the window opens.
         _ = try await tab.page.evaluateJavaScript("""
             const popup = window.open('');
             setTimeout(() => new popup.Audio(new URL('/tone.wav', location.href).href).play()
               .then(() => { document.title = 'played'; }, error => { document.title = error.name; }), 1500);
             true
-            """)
+            """, in: nil, contentWorld: .page, userGesture: true)
         #expect(await waitUntil(timeout: .seconds(10)) { tab.page.title != "ready" })
         #expect(tab.page.title == "NotAllowedError")
     }
@@ -323,10 +323,110 @@ final class WebKitSiteContentTests {
         let tab = tab()
         _ = tab.load(try server.url())
         #expect(await waitUntil { tab.page.title == "ready" })
-        // Script run by native counts as the person's interaction; the player starts outside any gesture.
-        _ = try await tab.page.evaluateJavaScript("later(); true")
+        // The person's click, replayed; the player starts outside any gesture.
+        _ = try await tab.page.evaluateJavaScript("later(); true", in: nil, contentWorld: .page, userGesture: true)
         #expect(await waitUntil(timeout: .seconds(10)) { tab.page.title != "ready" })
         #expect(tab.page.title == "played")
+    }
+
+    // MARK: - WSurf's own calls are not the person's
+
+    /// The tab with the window's own page scripts too (media, location, notifications), whose answers reach the page.
+    private func tabWithBridges() -> BrowserTab {
+        let media = MediaCenter()
+        context.webViewPool.configurePage = { page in
+            media.install(in: page)
+            GeolocationBridge.shared.install(in: page)
+            NotificationBridge.shared.install(in: page)
+        }
+        let tab = tab()
+        context.webViewPool.configurePage = nil
+        NotificationBridge.shared.tabResolver = { [weak tab] page in tab?.page === page ? tab : nil }
+        GeolocationBridge.shared.tabResolver = NotificationBridge.shared.tabResolver
+        return tab
+    }
+
+    private func resetBridges() {
+        NotificationBridge.shared.tabResolver = nil
+        GeolocationBridge.shared.tabResolver = nil
+    }
+
+    /// The notification stand-in hears from native as each page loads. That answer is WSurf's, not the person's: a player the
+    /// website starts after it is still refused.
+    @Test(arguments: [AutoplayPolicy.block, .silent])
+    func aPlayerStartedAfterWSurfAnsweredThePageIsStillRefused(_ policy: AutoplayPolicy) async throws {
+        defer { resetBridges() }
+        context.settings.autoplay = policy
+        let server = try await server([
+            "/": .html(Self.playing("new Audio('/tone.wav')") + """
+                <script>
+                const answered = setInterval(() => {
+                  if (Notification.permission !== 'granted') return;
+                  clearInterval(answered);
+                  setTimeout(start, 1500);
+                }, 20);
+                </script>
+                """),
+        ])
+        defer { withExtendedLifetime(server) {} }
+        let url = try server.url()
+        permissions.set(.allow, for: SitePermissions.origin(for: url), .notifications)
+        let tab = tabWithBridges()
+        _ = tab.load(url)
+        #expect(await waitUntil(timeout: .seconds(10)) { tab.page.title.map { $0 != "loading" && !$0.isEmpty } == true })
+        #expect(tab.page.title == "NotAllowedError", "\(policy)")
+    }
+
+    /// A page can ask the notification stand-in for an answer whenever it likes. Hearing it is no click: a pop-up opened from
+    /// the answer is blocked.
+    @Test(arguments: [true, false])
+    func anAnswerThePageAskedForOpensNoPopUp(notifies: Bool) async throws {
+        defer { resetBridges() }
+        context.settings.blocksPopups = notifies
+        let server = try await server([
+            "/": .html("""
+                <!doctype html><title>loading</title><script>
+                document.addEventListener('wsurfnotify-answer', () => {
+                  window.open('/popup');
+                  document.title = 'answered';
+                });
+                setTimeout(() => document.dispatchEvent(new CustomEvent('wsurfnotify',
+                  { detail: JSON.stringify({ type: 'hello', id: 0 }) })), 100);
+                </script>
+                """),
+        ])
+        defer { withExtendedLifetime(server) {} }
+        let url = try server.url()
+        if !notifies {
+            permissions.setPopups(.block, for: SitePermissions.origin(for: url))
+        }
+        let tab = tabWithBridges()
+        var opened = 0
+        tab.onNewWindow = { _, _ in opened += 1 }
+        _ = tab.load(url)
+        #expect(await waitUntil { tab.page.title == "answered" })
+        #expect(opened == 0)
+        #expect(tab.popups.blocked == (notifies ? try server.url("/popup") : nil))
+    }
+
+    /// A page's own Cmd-click is a plain click: it opens no tab of its own accord.
+    @Test func aScriptedCommandClickOpensNoTab() async throws {
+        let server = try await server([
+            "/": .html("""
+                <!doctype html><title>start</title><a href="/next">Next</a><script>
+                document.querySelector('a').dispatchEvent(
+                  new MouseEvent('click', { metaKey: true, bubbles: true, cancelable: true }));
+                </script>
+                """),
+            "/next": .html("<!doctype html><title>next</title>"),
+        ])
+        defer { withExtendedLifetime(server) {} }
+        let tab = tab()
+        var newTabs = 0
+        tab.onOpenInNewTab = { _, _ in newTabs += 1 }
+        _ = tab.load(try server.url())
+        #expect(await waitUntil { tab.page.title == "next" })
+        #expect(newTabs == 0)
     }
 
     // MARK: - Pop-ups
@@ -383,8 +483,8 @@ final class WebKitSiteContentTests {
     @Test func aPopUpThePersonStartedOpens() async throws {
         let (tab, opened, server) = try await popUpTab("<!doctype html><title>done</title>", blocksPopups: true)
         defer { withExtendedLifetime(server) {} }
-        // Script run by native counts as the person's click.
-        _ = try await tab.page.evaluateJavaScript("window.open('/next'); true")
+        // The person's click, replayed.
+        _ = try await tab.page.evaluateJavaScript("window.open('/next'); true", in: nil, contentWorld: .page, userGesture: true)
         #expect(await waitUntil { opened.count == 1 })
         #expect(tab.popups.blocked == nil)
     }

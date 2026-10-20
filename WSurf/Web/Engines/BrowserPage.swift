@@ -349,7 +349,11 @@ final class BrowserPage: NSView {
     private(set) var evaluations = 0
     private(set) var asyncCalls = 0
 
-    func evaluateJavaScript(_ script: String, in frame: BrowserFrame?, contentWorld: WKContentWorld) async throws -> Any {
+    /// Without a user gesture on WebKit (`WKWebView.evaluate`); `userGesture` replays a person's action. Chromium decides in
+    /// its own engine code.
+    func evaluateJavaScript(
+        _ script: String, in frame: BrowserFrame?, contentWorld: WKContentWorld, userGesture: Bool = false
+    ) async throws -> Any {
         evaluations += 1
         guard !closed else { throw ChromiumError.closed }
         if let webKit {
@@ -367,7 +371,7 @@ final class BrowserPage: NSView {
                             throw ChromiumError.staleFrame
                         }
                     }
-                    webKit.evaluateJavaScript(script, in: frame?.webKit, in: contentWorld, completionHandler: {
+                    webKit.evaluate(script, asFunction: false, userGesture: userGesture, in: frame?.webKit, in: contentWorld, completionHandler: {
                         result = $0
                         continuation.resume()
                     })
@@ -383,7 +387,10 @@ final class BrowserPage: NSView {
         return try await chromium.devTools.evaluate(script, in: frame, world: contentWorld)
     }
 
-    func callAsyncJavaScript(_ body: String, arguments: [String: Any] = [:], in frame: BrowserFrame?, contentWorld: WKContentWorld) async throws -> Any {
+    func callAsyncJavaScript(
+        _ body: String, arguments: [String: Any] = [:], in frame: BrowserFrame?, contentWorld: WKContentWorld,
+        userGesture: Bool = false
+    ) async throws -> Any {
         asyncCalls += 1
         guard !closed else { throw ChromiumError.closed }
         if let webKit {
@@ -401,7 +408,8 @@ final class BrowserPage: NSView {
                             throw ChromiumError.staleFrame
                         }
                     }
-                    webKit.callAsyncJavaScript(body, arguments: arguments, in: frame?.webKit, in: contentWorld, completionHandler: {
+                    webKit.evaluate(body, asFunction: true, arguments: arguments, userGesture: userGesture,
+                                    in: frame?.webKit, in: contentWorld, completionHandler: {
                         result = $0
                         continuation.resume()
                     })
@@ -497,7 +505,7 @@ final class BrowserPage: NSView {
             try dispatchCheck()
             var result: Result<Any, Error>!
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                webKit.callAsyncJavaScript(body, arguments: arguments, in: frame?.webKit, in: contentWorld, completionHandler: {
+                webKit.evaluate(body, asFunction: true, arguments: arguments, in: frame?.webKit, in: contentWorld, completionHandler: {
                     result = $0
                     continuation.resume()
                 })
@@ -762,5 +770,48 @@ final class BrowserPage: NSView {
         }
         await chromium?.close()
         removeFromSuperview()
+    }
+}
+
+extension WKWebView {
+    private static let evaluation = NSSelectorFromString(
+        "_evaluateJavaScript:asAsyncFunction:withSourceURL:withArguments:forceUserGesture:inFrame:inWorld:completionHandler:"
+    )
+
+    /// Runs `source` (an async function body when `asFunction`) without the user gesture WebKit's public script calls grant:
+    /// with it, a page WSurf merely reads or answers could open pop-ups, start sound and pass `navigator.userActivation` as
+    /// if the person had acted. `userGesture` is only for replaying a person's own action. Uses WebKit's evaluation entry
+    /// point (internal, guarded); a WebKit without it keeps the public calls, gesture and all.
+    func evaluate(
+        _ source: String, asFunction: Bool, arguments: [String: Any] = [:], userGesture: Bool = false,
+        in frame: WKFrameInfo?, in world: WKContentWorld,
+        completionHandler: @escaping @MainActor (Result<Any, Error>) -> Void
+    ) {
+        typealias Evaluate = @convention(c) (
+            AnyObject, Selector, NSString, ObjCBool, NSURL?, NSDictionary?, ObjCBool, WKFrameInfo?, WKContentWorld,
+            @escaping @convention(block) (Any?, Error?) -> Void
+        ) -> Void
+        guard !userGesture, responds(to: Self.evaluation) else {
+            if asFunction {
+                callAsyncJavaScript(source, arguments: arguments, in: frame, in: world, completionHandler: completionHandler)
+            } else {
+                evaluateJavaScript(source, in: frame, in: world, completionHandler: completionHandler)
+            }
+            return
+        }
+        unsafeBitCast(method(for: Self.evaluation), to: Evaluate.self)(
+            self, Self.evaluation, source as NSString, ObjCBool(asFunction), nil,
+            asFunction ? arguments as NSDictionary : nil, false, frame, world
+        ) { value, error in
+            MainActor.assumeIsolated { completionHandler(error.map { .failure($0) } ?? .success(value as Any)) }
+        }
+    }
+
+    func evaluate(
+        _ source: String, asFunction: Bool, arguments: [String: Any] = [:], in frame: WKFrameInfo?, in world: WKContentWorld
+    ) async throws -> Any {
+        try await withCheckedThrowingContinuation { continuation in
+            evaluate(source, asFunction: asFunction, arguments: arguments, in: frame, in: world) { continuation.resume(with: $0) }
+        }
     }
 }

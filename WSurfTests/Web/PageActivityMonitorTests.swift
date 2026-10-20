@@ -85,6 +85,42 @@ struct PageActivityMonitorTests {
         #expect(!tab.hasEditedForm)
     }
 
+    /// Chromium tells WSurf it granted a screen share and never that the share ended: the tab stays protected for the rest
+    /// of the document.
+    @Test func aScreenShareChromiumGrantedProtectsTheTabUntilItLeaves() async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/call": .html("<!doctype html><title>Call</title>"),
+            "/after": .html("<!doctype html><title>After</title>"),
+        ])
+        defer { withExtendedLifetime(server) {} }
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let call = try server.url("/call")
+        context.sitePermissions.setEngine(.chromium, for: SitePermissions.origin(for: call))
+        let tab = BrowserTab(opensBlank: false, privately: true, context: context)
+        try ChromiumRuntime.shared.ensureInitialized()
+        tab.adopt(BrowserPage(chromium: ChromiumPage(context: context)))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = tab.page
+        window.orderBack(nil)
+        defer {
+            tab.detach()
+            window.close()
+        }
+        _ = tab.load(call)
+        #expect(await waitUntil { tab.page.url?.path == "/call" && !tab.page.isLoading })
+        #expect(!tab.processState.isSharingScreen)
+
+        try #require(tab.page.chromium).displayCaptureStarted?()
+        #expect(tab.processState.isSharingScreen)
+        #expect(!tab.canDiscardWebContent)
+
+        _ = tab.load(try server.url("/after"))
+        #expect(await waitUntil { tab.page.url?.path == "/after" && !tab.page.isLoading })
+        #expect(!tab.processState.isSharingScreen, "a new document is not sharing")
+    }
+
     /// Stands in for WebKit's own display capture state, which only a real screen share (and its TCC prompt) can set.
     private final class CapturingWebView: WKWebView {
         var state = WKMediaCaptureState.none

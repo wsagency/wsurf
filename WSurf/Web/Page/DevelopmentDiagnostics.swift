@@ -425,8 +425,9 @@ final class DevelopmentDiagnostics {
     private func awaitRegistration(on page: BrowserPage) {
         guard let webKit = page.webKit else { return }
         Task { [weak self, weak webKit] in
-            let ready = try? await webKit?.callAsyncJavaScript(
-                "return (await globalThis.\(PageFrameRegistry.readyName)) === true;", in: nil, contentWorld: PageAutomationGuard.world)
+            let ready = try? await webKit?.evaluate(
+                "return (await globalThis.\(PageFrameRegistry.readyName)) === true;", asFunction: true, in: nil,
+                in: PageAutomationGuard.world)
             guard let self, !stopped, ready as? Bool == true, self.page?.mainDocumentID != nil else { return }
             documentMayHaveChanged()
         }
@@ -463,11 +464,11 @@ final class DevelopmentDiagnostics {
     /// Native-owned housekeeping, not agent automation: it goes straight to the web view so the task-local automation guard
     /// of whoever happened to trigger it can neither block an install nor leave a hook behind.
     private func run(_ script: String, in world: WKContentWorld, on webKit: WKWebView) async -> Bool {
-        (try? await webKit.evaluateJavaScript(script, in: nil, contentWorld: world)) as? Bool == true
+        (try? await webKit.evaluate(script, asFunction: false, in: nil, in: world)) as? Bool == true
     }
 
     private static func tearDown(_ event: String, in webKit: WKWebView) {
-        webKit.evaluateJavaScript(PageDiagnosticsHook.off(event: event), in: nil, in: PageAutomationGuard.world, completionHandler: nil)
+        webKit.evaluate(PageDiagnosticsHook.off(event: event), asFunction: false, in: nil, in: PageAutomationGuard.world) { _ in }
     }
 
     private func receive(message: BrowserScriptMessage) {

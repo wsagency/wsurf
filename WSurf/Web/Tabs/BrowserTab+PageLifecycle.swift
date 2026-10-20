@@ -324,6 +324,12 @@ extension BrowserTab {
         }
     }
 
+    /// Chromium never reports a screen share ending, so one protects the tab for the rest of the document.
+    func noteChromiumDisplayCapture(in view: BrowserPage?) {
+        guard let view, liveView === view else { return }
+        notePageActivity(PageActivitySignal(kind: .screenShare, token: "chromium-display-capture", isActive: true))
+    }
+
     private func installPermissionCallbacks(for view: BrowserPage) {
         permissions.onRevoke = { [weak self, weak view] permission in
             guard let self, let view else { return }
@@ -414,6 +420,7 @@ extension BrowserTab {
             permissions.setLive(.camera, camera)
             permissions.setLive(.microphone, microphone)
         }
+        chromium.displayCaptureStarted = { [weak self, weak view] in self?.noteChromiumDisplayCapture(in: view) }
         chromium.downloadDecision = { [weak self, weak view] download, name, completion in
             guard let self, let view, self.liveView === view, let handler = onChromiumDownload else {
                 completion(.deny)

@@ -52,16 +52,19 @@ final class PageFootprintTests {
         })()
         """
 
-    /// The main frame's documented exceptions: vault passkeys (until the owner's entitlement decision), and the
-    /// notification and location stand-ins for APIs WebKit gives an embedding app no other way to provide.
-    private static let mainFrameExceptions: Set<String> = [
+    /// Vault passkeys (until the owner's entitlement decision): the main frame on both engines, and on Chromium, whose vault
+    /// serves a verified frame, every frame.
+    private static let passkeyExceptions: Set<String> = [
         "navigator.credentials.get", "navigator.credentials.create",
         "PublicKeyCredential.isConditionalMediationAvailable",
         "PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable",
         "PublicKeyCredential.getClientCapabilities", "PublicKeyCredential.signalUnknownCredential",
         "PublicKeyCredential.signalAllAcceptedCredentials", "PublicKeyCredential.signalCurrentUserDetails",
-        "Notification", "navigator.geolocation.getCurrentPosition",
     ]
+
+    /// The main frame's documented exceptions: vault passkeys, and the notification and location stand-ins for APIs WebKit
+    /// gives an embedding app no other way to provide.
+    private static let mainFrameExceptions = passkeyExceptions.union(["Notification", "navigator.geolocation.getCurrentPosition"])
 
     private var window: NSWindow?
 
@@ -140,9 +143,11 @@ final class PageFootprintTests {
         let child = try #require(await PageFrameRegistry.shared.targets(in: tab.page).first { $0.url.port == childPort })
 
         let frame = try await report(tab.page, in: child.frame)
-        // Chromium: also needs ChromiumDevTools to expose `__wsurfSend` only to worlds with a message handler (Chromium
-        // session); a page-world script must not bring it into every frame.
-        #expect(frame == Report(wrapped: [], keys: [], webkit: "undefined", navigator: []), "\(engine)")
+        #expect(Set(frame.wrapped).isSubset(of: engine == .chromium ? Self.passkeyExceptions : []), "\(frame.wrapped)")
+        // Chromium: also needs ChromiumDevTools to expose `__wsurfSend` only to worlds with a message handler (the
+        // Chromium branch's isolated bindings); a page-world script must not bring it into every frame.
+        #expect(frame.keys.isEmpty, "\(engine): \(frame.keys)")
+        #expect(frame.webkit == "undefined" && frame.navigator.isEmpty, "\(engine)")
 
         let main = try await report(tab.page, in: nil)
         #expect(Set(main.wrapped).isSubset(of: Self.mainFrameExceptions), "\(main.wrapped)")

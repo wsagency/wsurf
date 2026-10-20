@@ -56,11 +56,13 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             decisionHandler(.cancel)
             return
         }
+        // A modifier is the person's only when they clicked: a page's own synthetic Cmd-click is a plain click.
         if let tab, let onOpenInNewTab = tab.onOpenInNewTab,
            navigationAction.navigationType == .linkActivated,
            navigationAction.modifierFlags.contains(.command)
                || navigationAction.buttonNumber == Self.middleButton,
            navigationAction.targetFrame?.isMainFrame != false,
+           Self.isUserInitiated(navigationAction),
            let url = navigationAction.request.url {
             decisionHandler(.cancel)
             onOpenInNewTab(url, navigationAction.modifierFlags.contains(.shift))
@@ -70,6 +72,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
            navigationAction.navigationType == .linkActivated,
            navigationAction.modifierFlags == .shift,
            navigationAction.targetFrame?.isMainFrame != false,
+           Self.isUserInitiated(navigationAction),
            let url = navigationAction.request.url {
             decisionHandler(.cancel)
             onOpenInPeek(url, Self.pointer(in: webView))
