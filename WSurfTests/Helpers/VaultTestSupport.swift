@@ -18,7 +18,8 @@ nonisolated struct VaultTestEnvironment: @unchecked Sendable {
     static func make() throws -> VaultTestEnvironment {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let suiteName = UUID().uuidString
+        // An absolute path keeps the domain's plist in the temporary folder rather than the user's ~/Library/Preferences.
+        let suiteName = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
         return VaultTestEnvironment(
             directory: directory,
             defaults: UserDefaults(suiteName: suiteName)!,
@@ -30,6 +31,7 @@ nonisolated struct VaultTestEnvironment: @unchecked Sendable {
 
     func cleanUp() {
         defaults.removePersistentDomain(forName: suiteName)
+        try? FileManager.default.removeItem(atPath: suiteName + ".plist")
         try? FileManager.default.removeItem(at: directory)
     }
 }
