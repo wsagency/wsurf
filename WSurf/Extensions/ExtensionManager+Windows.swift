@@ -30,7 +30,7 @@ extension ExtensionManager {
 
     func action(for id: String, in browser: BrowserModel? = nil) -> WKWebExtension.Action? {
         guard let window = registeredWindow(in: browser), let context = contexts[id] else { return nil }
-        return context.action(for: window.browser?.activeTab.map { adapter(for: $0) })
+        return context.action(for: actionTab(window.browser?.activeTab.map { adapter(for: $0) }, id: id))
     }
 
     @discardableResult

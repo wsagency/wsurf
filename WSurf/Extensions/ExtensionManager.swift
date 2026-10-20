@@ -9,8 +9,7 @@ import WebKit
 extension ExtensionManager {
     func action(for id: String, inWindow window: ExtensionWindowAdapter) -> WKWebExtension.Action? {
         guard owns(window), let context = contexts[id] else { return nil }
-        let tab = window.browser?.activeTab.map { adapter(for: $0) }
-        return context.action(for: tab)
+        return context.action(for: actionTab(window.browser?.activeTab.map { adapter(for: $0) }, id: id))
     }
 
     func registerAnchor(_ view: NSView?, for id: String, inWindow window: ExtensionWindowAdapter) {
@@ -26,7 +25,7 @@ extension ExtensionManager {
     func performAction(for id: String, inWindow window: ExtensionWindowAdapter) {
         guard owns(window), let context = contexts[id] else { return }
         let tab = window.browser?.activeTab.map { adapter(for: $0) }
-        guard let action = context.action(for: tab) else { return }
+        guard !blocksAction(of: id, for: tab), let action = context.action(for: tab) else { return }
         if let popover = presentedPopup, presentedPopupWindow === window,
            presentedPopupID == id, popover.isShown {
             popover.performClose(nil)
@@ -38,7 +37,7 @@ extension ExtensionManager {
         if action.presentsPopup {
             _ = present(action, for: id, in: window.browser)
         } else {
-            context.performAction(for: actionTab(tab, id: id))
+            context.performAction(for: tab)
         }
     }
 
@@ -714,7 +713,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     func performAction(for id: String, in browser: BrowserModel? = nil) {
         guard let window = registeredWindow(in: browser), let context = contexts[id] else { return }
         let tab = window.browser?.activeTab.map { adapter(for: $0) }
-        guard let action = context.action(for: tab) else { return }
+        guard !blocksAction(of: id, for: tab), let action = context.action(for: tab) else { return }
 
         if let popover = presentedPopup, presentedPopupWindow === window,
            presentedPopupID == id, popover.isShown {
@@ -727,7 +726,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         if action.presentsPopup {
             _ = present(action, for: id, in: window.browser)
         } else {
-            context.performAction(for: actionTab(tab, id: id))
+            context.performAction(for: tab)
         }
     }
 
@@ -814,7 +813,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         let tab = owner.activeTab.map { adapter(for: $0) }
         let menu = NSMenu()
 
-        for item in context.action(for: tab)?.menuItems ?? [] {
+        for item in blocksAction(of: id, for: tab) ? [] : context.action(for: tab)?.menuItems ?? [] {
             item.menu?.removeItem(item)
             menu.addItem(item)
         }

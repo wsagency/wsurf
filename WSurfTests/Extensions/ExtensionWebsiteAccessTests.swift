@@ -68,9 +68,17 @@ struct ExtensionWebsiteAccessTests {
         for address in ["https://example.com/", "http://192.168.1.1/", "http://[::1]:8080/"] {
             let url = try #require(URL(string: address))
             let host = try #require(ExtensionManager.website(of: url))
-            let pattern = try #require(ExtensionManager.websitePattern(for: host), "\(host)")
-            #expect(pattern.matches(url))
+            let patterns = ExtensionManager.websitePatterns(for: host)
+            #expect(patterns.contains { $0.matches(url) }, "\(host)")
         }
+    }
+
+    @Test func hostsAreNormalizedWithoutCaseRootDotOrWWW() {
+        #expect(ExtensionManager.normalizedHost("Example.COM.") == "example.com")
+        #expect(ExtensionManager.normalizedHost("www.example.com..") == "example.com")
+        #expect(ExtensionManager.normalizedHost(".") == nil)
+        #expect(ExtensionManager.website(of: URL(string: "https://Sub.Example.com./")) == "sub.example.com")
+        #expect(ExtensionManager.websitePatterns(for: "example.com").map(\.string) == ["*://*.example.com/*", "*://*.example.com./*"])
     }
 
     @Test func aBlockCoversSubdomainsOnADotBoundary() {
@@ -203,11 +211,31 @@ struct ExtensionWebsiteAccessTests {
         #expect(kept == ["*://*.example.org/*", "<all_urls>"])
 
         // A grant that reached the context anyway is denied again.
-        let pattern = try #require(ExtensionManager.websitePattern(for: "example.com"))
-        context.setPermissionStatus(.grantedExplicitly, for: pattern)
+        for pattern in ExtensionManager.websitePatterns(for: "example.com") {
+            context.setPermissionStatus(.grantedExplicitly, for: pattern)
+        }
         manager.reapplyBlocks(id: id)
         #expect(context.permissionStatus(for: blocked) == .deniedExplicitly)
         #expect(context.permissionStatus(for: other) == .grantedImplicitly)
+    }
+
+    /// The root-dot spelling of a host is the same website and does not escape the block.
+    @Test func aTrailingDotDoesNotEscapeABlock() async throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let id = "website-access-root-dot"
+        let (manager, browser, context) = try await startedManager(id: id, in: directory)
+        defer { finish(manager, browser) }
+
+        manager.setAllowed(false, on: "Example.COM.", id: id)
+
+        #expect(manager.blockedHosts(id: id) == ["example.com"])
+        for address in ["https://example.com./", "https://sub.example.com./", "https://example.com/", "https://sub.example.com/"] {
+            let url = try #require(URL(string: address))
+            #expect(manager.isBlocked(id: id, on: url), "\(address)")
+            #expect(context.permissionStatus(for: url) == .deniedExplicitly, "\(address)")
+        }
+        #expect(context.permissionStatus(for: try #require(URL(string: "https://example.org./"))) == .grantedImplicitly)
     }
 
     @Test func aBlockedWebsiteStaysBlockedAfterRelaunch() async throws {
@@ -284,6 +312,59 @@ struct ExtensionWebsiteAccessTests {
         // Running the extension's action for a tab on the blocked website hands it no tab, so no activeTab grant.
         #expect(manager.actionTab(manager.adapter(for: blocked), id: id) == nil)
         #expect(manager.actionTab(manager.adapter(for: otherSite), id: id) != nil)
+    }
+
+    /// On a blocked website the toolbar button neither opens the popup nor shows the extension's menu items, so a click cannot
+    /// act on the page. The same steps on an allowed website show both, so the checks are not vacuous.
+    @Test(.boundedWebViews) func aBlockedWebsiteGetsNoPopupAndNoMenuItems() async throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let id = "website-access-action"
+        let shared = library(directory)
+        let package = shared.packageURL(for: id)
+        try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+        let manifest: [String: Any] = [
+            "manifest_version": 2, "name": "Acts here", "version": "1.0",
+            "permissions": ["contextMenus", "<all_urls>"],
+            "background": ["scripts": ["background.js"], "persistent": true],
+            "browser_action": ["default_popup": "popup.html"],
+        ]
+        try JSONSerialization.data(withJSONObject: manifest).write(to: package.appendingPathComponent("manifest.json"))
+        try "chrome.contextMenus.create({id: 'act', title: 'Act here', contexts: ['browser_action']});"
+            .write(to: package.appendingPathComponent("background.js"), atomically: true, encoding: .utf8)
+        try "<!doctype html><title>Popup</title><p>Popup</p>"
+            .write(to: package.appendingPathComponent("popup.html"), atomically: true, encoding: .utf8)
+        shared.recordInstall(id: id)
+
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html(Self.countingPage)])
+        let browser = BrowserModel(database: .temporary())
+        let manager = ExtensionManager(profile: .original(), dataStore: browser.context.dataStore, library: shared)
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 320, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let windowAdapter = manager.register(browser: browser, window: window)
+        let anchor = NSView(frame: CGRect(x: 20, y: 20, width: 30, height: 30))
+        window.contentView?.addSubview(anchor)
+        window.orderFront(nil)
+        defer {
+            manager.action(for: id, inWindow: windowAdapter)?.closePopup()
+            window.close()
+            finish(manager, browser)
+        }
+        await manager.start()
+        manager.registerAnchor(anchor, for: id, inWindow: windowAdapter)
+        _ = await openPage(try server.url(), in: browser)
+        let menuTitles = { manager.contextMenu(for: id, inWindow: windowAdapter)?.items.map(\.title) ?? [] }
+        #expect(await waitUntil { menuTitles().contains("Act here") })
+
+        manager.setAllowed(false, on: "127.0.0.1", id: id)
+        #expect(!menuTitles().contains("Act here"))
+        manager.performAction(for: id, inWindow: windowAdapter)
+        #expect(manager.action(for: id, inWindow: windowAdapter)?.popupPopover?.isShown != true)
+
+        manager.setAllowed(true, on: "127.0.0.1", id: id)
+        #expect(await waitUntil { menuTitles().contains("Act here") })
+        manager.performAction(for: id, inWindow: windowAdapter)
+        #expect(await waitUntil { manager.action(for: id, inWindow: windowAdapter)?.popupPopover?.isShown == true })
     }
 
     /// Extensions run only in WebKit: a Chromium tab gives the extension no page, and blocking never reloads it.

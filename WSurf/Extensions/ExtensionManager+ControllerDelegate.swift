@@ -209,14 +209,16 @@ extension ExtensionManager {
         for context: WKWebExtensionContext,
         completionHandler: @escaping ((any Error)?) -> Void
     ) {
+        let id = context.uniqueIdentifier
         if let tab = action.associatedTab as? ExtensionTabAdapter {
             guard let browser = tab.browser, let window = tab.windowAdapter,
-                  window.browser === browser, owns(window),
-                  present(action, for: context.uniqueIdentifier, in: browser) else {
+                  window.browser === browser, owns(window), !blocksAction(of: id, for: tab),
+                  present(action, for: id, in: browser) else {
                 completionHandler(ExtensionWindowError.unavailable)
                 return
             }
-        } else if !present(action, for: context.uniqueIdentifier, in: nil) {
+        } else if blocksAction(of: id, for: preferredWindowAdapter?.browser?.activeTab.map { adapter(for: $0) })
+            || !present(action, for: id, in: nil) {
             completionHandler(ExtensionWindowError.unavailable)
             return
         }

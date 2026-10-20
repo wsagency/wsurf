@@ -9,20 +9,31 @@ import WebKit
 /// grant, including `<all_urls>`. Blocks are kept per profile and per extension in `profiles.json`; a private window keeps
 /// them in memory for its session. Extensions run only in WebKit tabs, so a Chromium tab has nothing to enforce.
 extension ExtensionManager {
-    /// The website a page belongs to for blocking: its host, lower case, without one leading `www.`. HTTP(S) only.
+    /// The website a page belongs to for blocking: its host, lower case, without trailing dots or one leading `www.`.
+    /// HTTP(S) only.
     nonisolated static func website(of url: URL?) -> String? {
-        guard let url, url.scheme == "https" || url.scheme == "http",
-              var host = url.host(percentEncoded: false)?.lowercased(), !host.isEmpty else { return nil }
+        guard let url, url.scheme == "https" || url.scheme == "http" else { return nil }
+        return normalizedHost(url.host(percentEncoded: false) ?? "")
+    }
+
+    /// `Example.com.` and `www.example.com` are the website `example.com`. Nil for an empty host.
+    nonisolated static func normalizedHost(_ host: String) -> String? {
+        var host = host.lowercased()
+        while host.hasSuffix(".") {
+            host.removeLast()
+        }
         if host.hasPrefix("www.") {
             host.removeFirst(4)
         }
-        return host
+        return host.isEmpty ? nil : host
     }
 
-    /// The pattern that covers a website and every subdomain of it.
-    nonisolated static func websitePattern(for host: String) -> WKWebExtension.MatchPattern? {
+    /// The patterns that cover a website and every subdomain of it, written with and without the root dot: WebKit compares
+    /// a page's host as written, and `example.com.` is the same website.
+    nonisolated static func websitePatterns(for host: String) -> [WKWebExtension.MatchPattern] {
         let literal = host.contains(":") ? "[\(host)]" : host
-        return try? WKWebExtension.MatchPattern(string: "*://*.\(literal)/*")
+        let forms = host.contains(":") ? [literal] : [literal, literal + "."]
+        return forms.compactMap { try? WKWebExtension.MatchPattern(string: "*://*.\($0)/*") }
     }
 
     /// A block on `blocked` covers that host and its subdomains, on a dot boundary: not `notexample.com` for `example.com`.
@@ -31,7 +42,8 @@ extension ExtensionManager {
     }
 
     func blockedHosts(id: String) -> [String] {
-        profile?.isPrivate == true ? sessionBlockedHosts[id] ?? [] : library.blockedHosts(for: id)
+        let stored = profile?.isPrivate == true ? sessionBlockedHosts[id] ?? [] : library.blockedHosts(for: id)
+        return stored.compactMap(Self.normalizedHost)
     }
 
     func blockingHost(id: String, for host: String) -> String? {
@@ -49,16 +61,20 @@ extension ExtensionManager {
     /// Denies every blocked website in `context`. Runs when the extension loads, after an unblock re-grants what it asked for,
     /// and after any runtime grant, so nothing granted later can lift a block.
     func applyBlocks(to context: WKWebExtensionContext, id: String) {
-        for host in blockedHosts(id: id) {
-            if let pattern = Self.websitePattern(for: host) {
-                context.setPermissionStatus(.deniedExplicitly, for: pattern)
-            }
+        for pattern in blockedHosts(id: id).flatMap(Self.websitePatterns(for:)) {
+            context.setPermissionStatus(.deniedExplicitly, for: pattern)
         }
     }
 
-    /// The tab an action runs for. Running an action for a tab grants activeTab on its page, so a blocked website gets none.
+    /// Whether `tab` is on a website `id` is blocked on. The extension's toolbar action then neither runs nor opens its popup
+    /// there, and its menu items are left out, so a click cannot act on the page or grant activeTab for it.
+    func blocksAction(of id: String, for tab: ExtensionTabAdapter?) -> Bool {
+        isBlocked(id: id, on: tab?.tab.flatMap { URL(string: $0.urlString) })
+    }
+
+    /// The tab an action is bound to: none on a blocked website.
     func actionTab(_ tab: ExtensionTabAdapter?, id: String) -> ExtensionTabAdapter? {
-        isBlocked(id: id, on: tab?.tab.flatMap { URL(string: $0.urlString) }) ? nil : tab
+        blocksAction(of: id, for: tab) ? nil : tab
     }
 
     /// Re-applies the blocks after the controller recorded a runtime grant.
@@ -77,18 +93,14 @@ extension ExtensionManager {
         patterns.filter { pattern in
             guard let host = pattern.host, !pattern.matchesAllHosts else { return true }
             let bare = host.hasPrefix("*.") ? String(host.dropFirst(2)) : host
-            return blockingHost(id: id, for: bare.lowercased()) == nil
+            return Self.normalizedHost(bare).map { blockingHost(id: id, for: $0) == nil } ?? true
         }
     }
 
     /// Blocks or allows the extension on `host` and its subdomains, then reloads the WebKit tabs on that website in every window
     /// of this profile, so a content script that already ran is gone or comes back.
     func setAllowed(_ allowed: Bool, on host: String, id: String) {
-        var host = host.lowercased()
-        if host.hasPrefix("www.") {
-            host.removeFirst(4)
-        }
-        guard !host.isEmpty else { return }
+        guard let host = Self.normalizedHost(host) else { return }
         if profile?.isPrivate == true {
             var hosts = sessionBlockedHosts[id] ?? []
             hosts.removeAll { $0 == host }
@@ -100,16 +112,16 @@ extension ExtensionManager {
         } else {
             library.setBlocked(!allowed, host: host, id: id)
         }
-        if let context = contexts[id], let pattern = Self.websitePattern(for: host) {
+        if let context = contexts[id] {
+            for pattern in Self.websitePatterns(for: host) {
+                context.setPermissionStatus(allowed ? .unknown : .deniedExplicitly, for: pattern)
+            }
             if allowed {
-                context.setPermissionStatus(.unknown, for: pattern)
                 for requested in context.webExtension.allRequestedMatchPatterns {
                     context.setPermissionStatus(.grantedExplicitly, for: requested)
                 }
                 // The re-grant may have covered another block; deny those again.
                 applyBlocks(to: context, id: id)
-            } else {
-                context.setPermissionStatus(.deniedExplicitly, for: pattern)
             }
         }
         for tab in windowAdapters.compactMap(\.browser).flatMap(\.tabs)
