@@ -236,15 +236,8 @@ nonisolated extension CredentialExchangeCodec {
     }
 
     private static func makeField(_ value: String, metadata: CredentialEditableFieldMetadata) -> ASImportableEditableField {
-        let fieldType: ASImportableEditableField.FieldType
-        switch metadata.fieldType {
-        case .string:
-            fieldType = .string
-        case .concealedString:
-            fieldType = .concealedString
-        case .email:
-            fieldType = .email
-        }
+        // The raw values are the SDK's own (`CredentialEditableFieldType`), so every type a field was imported with goes back out.
+        let fieldType = ASImportableEditableField.FieldType(rawValue: metadata.fieldType.rawValue) ?? .string
         return ASImportableEditableField(id: metadata.id, fieldType: fieldType, value: value, label: metadata.label)
     }
 

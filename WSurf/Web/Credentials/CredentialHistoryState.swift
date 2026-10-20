@@ -41,7 +41,7 @@ nonisolated struct PendingPurge: Equatable, Sendable {
 nonisolated extension RecordSubject {
     /// Earlier versions restore only these. A passkey is never rolled back to an older key.
     var restoresFromEarlierVersions: Bool {
-        self == .password || self == .totp || self == .note || self == .metadata
+        self == .password || self == .totp || self == .note || self == .secureItem || self == .metadata
     }
 }
 

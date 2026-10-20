@@ -3,10 +3,19 @@
 
 import Foundation
 
+/// The raw values are the Credential Exchange field types and the persisted format. Logins and notes keep only the first three;
+/// the values of a `SecureItem` keep any of them.
 nonisolated enum CredentialEditableFieldType: String, Codable, Sendable {
     case string
     case concealedString
     case email
+    case number
+    case boolean
+    case date
+    case yearMonth
+    case wifiNetworkSecurityType
+    case countryCode
+    case subdivisionCode
 }
 
 nonisolated struct CredentialEditableFieldMetadata: Codable, Sendable, Equatable {
@@ -67,6 +76,7 @@ nonisolated extension CredentialAccount {
         var result = self
         result.passwordBase = old.passwordBase
         result.totpBase = old.totpBase
+        result.secureItemsBase = old.secureItemsBase
         result.mergedFrom = mergedFrom?.map { link in
             var restored = link
             if let before = old.mergedFrom?.first(where: { $0.identity == link.identity }) {
@@ -126,6 +136,9 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
     /// Free-text notes, in order. `nil` means none: an empty array is never stored. Notes can hold secrets, so they live in
     /// their own encrypted part with their own history, never in `exchangeMetadata`.
     var notes: [CredentialNote]?
+    /// Cards, addresses, Wi-Fi networks, keys and the other `SecureItemKind`s, in order. `nil` means none: an empty array is never
+    /// stored. Like notes, they are one encrypted part with their own history.
+    var secureItems: [SecureItem]?
     var exchangeAccountID: Data?
     var exchangeItemID: Data?
     var exchangeMetadata: Data?
@@ -137,11 +150,13 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
     var totpEvents: CredentialEvents?
     var passwordBase: ExchangeBase?
     var totpBase: ExchangeBase?
+    /// What the other app last sent for this credential's items (`secureItems`), like `totpBase` for its code.
+    var secureItemsBase: ExchangeBase?
     /// The other app's items that were merged into this credential. `nil` means none: an empty array is never stored.
     var mergedFrom: [MergedItemLink]?
 
     func validate() throws {
-        guard !username.isEmpty || password != nil || !passkeys.isEmpty || totp != nil || notes != nil,
+        guard !username.isEmpty || password != nil || !passkeys.isEmpty || totp != nil || notes != nil || secureItems != nil,
               username.utf8.count <= CredentialVaultLimits.payloadBytes,
               (displayName?.utf8.count ?? 0) <= CredentialVaultLimits.payloadBytes,
               (password?.utf8.count ?? 0) <= 4_096,
@@ -180,6 +195,12 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
             guard !notes.isEmpty, notes.count <= CredentialAccount.noteLimit else { throw CredentialVaultError.invalidData }
             for note in notes {
                 try note.validate()
+            }
+        }
+        if let secureItems {
+            guard !secureItems.isEmpty, secureItems.count <= SecureItem.itemLimit else { throw CredentialVaultError.invalidData }
+            for item in secureItems {
+                try item.validate()
             }
         }
         try passwordEvents?.validate()

@@ -72,7 +72,7 @@ nonisolated enum RecordKind: UInt8, Sendable {
 }
 
 nonisolated enum RecordSubject: UInt8, Codable, Sendable {
-    case account = 1, password, totp, passkey, metadata, note
+    case account = 1, password, totp, passkey, metadata, note, secureItem
 
     var sqlName: String {
         switch self {
@@ -88,6 +88,8 @@ nonisolated enum RecordSubject: UInt8, Codable, Sendable {
             "metadata"
         case .note:
             "note"
+        case .secureItem:
+            "secureItem"
         }
     }
 
@@ -105,6 +107,8 @@ nonisolated enum RecordSubject: UInt8, Codable, Sendable {
             self = .metadata
         case "note":
             self = .note
+        case "secureItem":
+            self = .secureItem
         default:
             return nil
         }

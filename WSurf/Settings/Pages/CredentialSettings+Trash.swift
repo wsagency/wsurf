@@ -18,6 +18,8 @@ extension RecordSubject {
             "Details"
         case .note:
             "Notes"
+        case .secureItem:
+            "Cards and other items"
         }
     }
 }

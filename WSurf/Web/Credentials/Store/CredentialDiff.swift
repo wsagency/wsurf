@@ -121,9 +121,10 @@ nonisolated enum CredentialDiff {
             let passwordChanged = try comparePassword(old, new)
             let totpChanged = try compareTOTP(old, new)
             let notesChanged = try compareNotes(old, new)
+            let itemsChanged = try compareSecureItems(old, new)
             let metadataChanged = try compareMetadata(old, new)
             let passkeysChanged = try comparePasskeys(old, new)
-            if passwordChanged || totpChanged || notesChanged || metadataChanged || passkeysChanged {
+            if passwordChanged || totpChanged || notesChanged || itemsChanged || metadataChanged || passkeysChanged {
                 semantic = true
                 setsModifiedAt.insert(new.id)
             }
@@ -175,6 +176,19 @@ nonisolated enum CredentialDiff {
                 removals.append(delete)
             } else if let previous = old.notes {
                 revisions.append(RevisionDraft(ownerID: old.id, subject: .note, superseded: try CredentialContent.canonicalJSON(previous)))
+            }
+            return true
+        }
+
+        /// Items follow the notes rule: any change supersedes the whole earlier list, and only an explicit delete of the items
+        /// (`RemovalScope.credential(subject: .secureItem)`) moves them to the Trash.
+        private mutating func compareSecureItems(_ old: CredentialAccount, _ new: CredentialAccount) throws -> Bool {
+            guard try CredentialContent.hash(.secureItems(old)) != CredentialContent.hash(.secureItems(new)) else { return false }
+            let delete = RemovalScope.credential(ownerID: old.id, subject: .secureItem, passkeyID: nil)
+            if new.secureItems == nil, removing == delete {
+                removals.append(delete)
+            } else if let previous = old.secureItems {
+                revisions.append(RevisionDraft(ownerID: old.id, subject: .secureItem, superseded: try CredentialContent.canonicalJSON(previous)))
             }
             return true
         }

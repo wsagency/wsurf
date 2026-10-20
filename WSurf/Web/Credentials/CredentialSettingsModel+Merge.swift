@@ -37,6 +37,8 @@ extension CredentialMergeError {
             String(localized: "The merged credential would have more than \(CredentialAccount.websiteLimit) websites. Remove some websites first.")
         case .noteLimit:
             String(localized: "The merged credential would have more than \(CredentialAccount.noteLimit) notes. Remove some notes first.")
+        case .itemLimit:
+            String(localized: "The merged credential would have more than \(SecureItem.itemLimit) cards and other items. Remove some first.")
         case .linkLimit:
             String(localized: "Too many credentials were already merged into one of these. Keep a different credential instead.")
         }

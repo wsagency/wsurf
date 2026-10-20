@@ -94,6 +94,8 @@ extension ProfileVaultStore {
                 result.totp = nil
             case .note:
                 result.notes = nil
+            case .secureItem:
+                result.secureItems = nil
             case .passkey:
                 let passkey = try Self.decode(WebsitePasskey.self, from: value)
                 result.passkeys.removeAll { $0.id == passkey.id }

@@ -224,6 +224,9 @@ extension ProfileVaultStore {
             case .note:
                 guard account.notes != nil else { throw CredentialVaultError.invalidData }
                 account.notes = nil
+            case .secureItem:
+                guard account.secureItems != nil else { throw CredentialVaultError.invalidData }
+                account.secureItems = nil
             case .passkey:
                 guard let passkeyID, account.passkeys.contains(where: { $0.id == passkeyID }) else { throw CredentialVaultError.invalidData }
                 account.passkeys.removeAll { $0.id == passkeyID }
@@ -231,7 +234,8 @@ extension ProfileVaultStore {
             case .account, .metadata:
                 throw CredentialVaultError.invalidData
             }
-            if account.username.isEmpty, account.password == nil, account.passkeys.isEmpty, account.totp == nil, account.notes == nil {
+            if account.username.isEmpty, account.password == nil, account.passkeys.isEmpty, account.totp == nil, account.notes == nil,
+               account.secureItems == nil {
                 return Proposal(accounts: old.filter { $0.id != ownerID }, requires: .account(ownerID))
             }
             var accounts = old
