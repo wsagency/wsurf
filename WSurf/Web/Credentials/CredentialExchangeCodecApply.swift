@@ -114,6 +114,9 @@ nonisolated extension CredentialExchangeCodec {
         let incomingIdentities = Set(preview.candidates.flatMap(identities(in:)))
         let baseIdentities = Set(preview.base.accounts.flatMap(identities(in:)))
         let baseAccountIDs = Set(preview.base.accounts.map(\.id))
+        // Built once, and only if a passkey is added: checking each added passkey used to index the vault and search the items again.
+        lazy var candidatesByID = Dictionary(preview.candidates.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        lazy var stored = ImportDestinationView(accounts: preview.base.accounts, removed: RemovedIdentifiers(items: []))
         var decisionsByIncoming: [CredentialIdentity: CredentialImportDecision] = [:]
         for decision in decisions {
             let incoming = incomingIdentity(of: decision)
@@ -126,7 +129,10 @@ nonisolated extension CredentialExchangeCodec {
                 break
             case let .add(_, targetAccountID):
                 guard targetAccountID.map(baseAccountIDs.contains) ?? true else { throw CredentialVaultError.invalidData }
-                try rejectStoredPasskeyWrite(incoming, in: preview)
+                if case let .passkey(owner, _) = incoming {
+                    guard let candidate = candidatesByID[owner] else { throw CredentialVaultError.invalidData }
+                    try rejectStoredPasskeyWrite(incoming, of: candidate, stored: stored)
+                }
             case let .replace(_, target):
                 // A passkey is never replaced: its cryptographic identity is fixed (§13.3).
                 if case .passkey = incoming {

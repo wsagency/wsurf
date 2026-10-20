@@ -172,4 +172,28 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
             finish { await fixture.cleanup() }
         }
     }
+
+    // MARK: Import review
+
+    /// The merge sheet of 20 imported passkeys, each listing the 20,000 saved credentials it can join (none holds its credential
+    /// ID). Each list is one pass over the vault; the item, the stored credential IDs and the titles are looked up.
+    func testListingMergeTargetsForPasskeysAmongTwentyThousandCredentials() {
+        MainActor.assumeIsolated {
+            let fixture = Fixture()
+            finish {
+                try await fixture.makeVault()
+                try await fixture.stage(try ExchangeScale.transfer(items: 2_000, passkeyEvery: 1, totpEvery: nil))
+            }
+            guard let review = fixture.review else { return XCTFail("The 2,000-item transfer was not staged.") }
+            let passkeys = Array(review.candidates.flatMap(\.records).filter { $0.kind == .passkey }.prefix(20))
+            XCTAssertEqual(passkeys.count, 20)
+            XCTAssertEqual(passkeys.first.map { fixture.coordinator.mergeTargets(for: $0.incoming, owner: fixture.owner).count }, Self.count)
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions()) {
+                for record in passkeys {
+                    _ = fixture.coordinator.mergeTargets(for: record.incoming, owner: fixture.owner)
+                }
+            }
+            finish { await fixture.cleanup() }
+        }
+    }
 }

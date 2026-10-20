@@ -246,10 +246,9 @@ nonisolated extension CredentialExchangeCodec {
     /// `apply` never writes a passkey whose credential ID and relying party are already stored, whatever its key
     /// material: an equivalent copy would duplicate the cryptographic identity, a different one would fork it. Only
     /// `.keep` is valid for such a passkey.
-    static func rejectStoredPasskeyWrite(_ incoming: CredentialIdentity, in preview: CredentialImportPreview) throws {
+    static func rejectStoredPasskeyWrite(_ incoming: CredentialIdentity, of candidate: CredentialAccount, stored: ImportDestinationView) throws {
         guard case .passkey = incoming else { return }
-        let stored = ImportDestinationView(accounts: preview.base.accounts, removed: RemovedIdentifiers(items: []))
-        guard try classify(incoming, in: preview, destination: stored) == .new else {
+        guard try classify(incoming, of: candidate, destination: stored) == .new else {
             throw CredentialVaultError.invalidData
         }
     }

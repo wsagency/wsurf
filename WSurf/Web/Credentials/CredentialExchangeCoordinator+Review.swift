@@ -271,7 +271,18 @@ extension CredentialExchangeCoordinator {
             }
         }
 
-        /// The stored credential `target` for a merge, if `incoming` can go into it (the same rule as `targets(for:in:)`).
+        /// The saved credentials `incoming` can be merged into, in vault order. The item, its passkey's credential ID and every title
+        /// are looked up in what staging indexed; only the `accepts` rule passes over the vault.
+        func targets(for incoming: CredentialIdentity) -> [CredentialImportReview.Target] {
+            guard let at = position[CredentialExchangeCoordinator.accountID(incoming)] else { return [] }
+            let source = preview.candidates[at]
+            let passkeyIDIsStored = lookup.holdsStoredCredentialID(incoming)
+            return preview.base.accounts
+                .filter { CredentialExchangeCoordinator.accepts(incoming, source: source, into: $0, passkeyIDIsStored: passkeyIDIsStored) }
+                .map { CredentialImportReview.Target(accountID: $0.id, title: storedTitles[$0.id] ?? "", allowedOrigins: $0.origins) }
+        }
+
+        /// The stored credential `target` for a merge, if `incoming` can go into it (the same rule as `targets(for:)`).
         func canMerge(_ incoming: CredentialIdentity, into target: UUID, canAddSeparately: Bool) -> Bool {
             guard let account = stored[target], let source = position[CredentialExchangeCoordinator.accountID(incoming)] else { return false }
             return CredentialExchangeCoordinator.accepts(

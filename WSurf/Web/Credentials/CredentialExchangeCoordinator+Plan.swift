@@ -25,23 +25,6 @@ extension CredentialExchangeCoordinator {
         }
     }
 
-    static func targets(
-        for incoming: CredentialIdentity,
-        in preview: CredentialImportPreview
-    ) -> [CredentialImportReview.Target] {
-        guard let source = preview.candidates.first(where: { $0.id == accountID(incoming) }) else { return [] }
-        let passkeyIDIsStored = credentialIDIsStored(incoming, in: preview)
-        return preview.base.accounts
-            .filter { accepts(incoming, source: source, into: $0, passkeyIDIsStored: passkeyIDIsStored) }
-            .map { account in
-                CredentialImportReview.Target(
-                    accountID: account.id,
-                    title: CredentialSummary(account).title,
-                    allowedOrigins: account.origins
-                )
-            }
-    }
-
     /// Whether `incoming`, a credential of `source`, can be merged into the stored `account`: the account doesn't already hold that
     /// kind of credential, and nothing of the exporter's item would be lost.
     static func accepts(
@@ -59,14 +42,6 @@ extension CredentialExchangeCoordinator {
             // Notes are appended to what the account already holds.
             return true
         }
-    }
-
-    /// Whether `incoming` is a passkey whose credential ID is already held by a stored passkey.
-    static func credentialIDIsStored(_ incoming: CredentialIdentity, in preview: CredentialImportPreview) -> Bool {
-        guard case let .passkey(accountID, passkeyID) = incoming,
-              let value = preview.candidates.first(where: { $0.id == accountID })?.passkeys.first(where: { $0.id == passkeyID })
-        else { return false }
-        return preview.base.accounts.contains { $0.passkeys.contains { $0.credentialID == value.credentialID } }
     }
 
     /// Whether another incoming credential is already set to replace the stored credential `target`.
