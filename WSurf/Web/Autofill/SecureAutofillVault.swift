@@ -145,12 +145,7 @@ actor SecureAutofillVault<Record: Codable & Identifiable & Sendable> where Recor
         saveCandidates: (@Sendable ([Record]) -> [AutofillSaveCandidate])? = nil
     ) {
         self.profileID = profileID
-        var namespace = "io.wsagency.wsurf.autofill"
-        if AppDatabase.isRunningTests { namespace += ".tests.\(ProcessInfo.processInfo.processIdentifier)" }
-        #if DEBUG
-        if StageMode.isActive { namespace += ".stage" }
-        #endif
-        service = "\(namespace).\(kind).\(profileID.uuidString)"
+        service = "\(AutofillVaults.serviceNamespace()).\(kind).\(profileID.uuidString)"
         self.reason = reason
         self.storage = storage
         self.saveKind = saveKind
@@ -220,6 +215,17 @@ actor SecureAutofillVault<Record: Codable & Identifiable & Sendable> where Recor
 }
 
 enum AutofillVaults {
+    /// The prefix of every autofill Keychain service. Tests and stage runs get their own, so they never share items with the
+    /// installed app.
+    nonisolated static func serviceNamespace() -> String {
+        var namespace = "io.wsagency.wsurf.autofill"
+        if AppDatabase.isRunningTests { namespace += ".tests.\(ProcessInfo.processInfo.processIdentifier)" }
+        #if DEBUG
+        if StageMode.isActive { namespace += ".stage" }
+        #endif
+        return namespace
+    }
+
     private static var cards: [UUID: PaymentCardVault] = [:]
 
     static func cards(for id: UUID) -> PaymentCardVault {

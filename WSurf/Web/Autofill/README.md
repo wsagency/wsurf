@@ -163,6 +163,34 @@ exercised end to end:
   The vault's own unlock passkey (relying party wsurf.app) is a separate
   native ceremony and is not part of this.
 
+## Input History
+
+Input History (`WSurf/Web/InputHistory`, Settings › Autofill › Input History)
+keeps what the person typed so a password that was never saved can be found
+again. It is off by default. Source behavior:
+
+- The recorder script runs in the `WSurfAutofill` world, counts only trusted
+  input, and sends a field's last typed value on blur, Enter, submit, page hide
+  or 1.5 s idle. Native code checks each message again: profile, switch,
+  session owner, frame origin, exclusions, kind, sizes and card numbers.
+- Never recorded: private profiles, excluded hosts and their subdomains, card,
+  security code, expiry and one-time-code fields, Luhn-valid numbers,
+  `contenteditable`, values set by script or autofill, and any tab while the
+  assistant or a connected app controls it (`BrowserTab.isUnderAssistantControl`).
+- Each entry is one file sealed with HPKE to a per-profile public key, so
+  recording never prompts and cannot read back. The private key needs Touch ID
+  or the Mac password. Files are excluded from backup and never synced; both
+  keys are deleted when the store empties.
+- The list decrypts only on Show Entries, masks passwords until one row is
+  revealed, copies with the concealed pasteboard type for 60 s, and locks two
+  minutes after the page closes or on any vault lock event.
+- Save as Credential uses the save offer's backend (`CredentialRouting`,
+  `CredentialAccountSelection.savePlan` and `commitSave`). The vault is chosen
+  and unlocked on the click; nothing is written until the person confirms, and
+  a vault that changed since writes nothing and shows the new plan once.
+- No code under `WSurf/MCP`, `WSurf/Agent` or `WSurf/Web/Assistant` names it
+  (`InputHistoryIsolationTests`).
+
 ## Limits and validation
 
 Completion signals are heuristics, not proof that a server accepted a password

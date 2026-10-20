@@ -287,6 +287,7 @@ extension BrowserTab {
         PasswordAutofill.shared.install(in: view)
         WebAuthnAdapter.install(in: view)
         AutofillSaveCoordinator.shared.install(in: view, session: autofillSave)
+        InputHistoryCapture.shared.install(in: view) { [weak self] in self?.isUnderAssistantControl ?? false }
         installPageObservations(for: view)
         installPermissionCallbacks(for: view)
         permissions.pageChanged(url: view.url ?? (urlString.isEmpty ? nil : URL(string: urlString)))
