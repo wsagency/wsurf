@@ -126,6 +126,23 @@ Native detach, replacement, non-aborted load failure, termination and close inva
 CEF frame IDs are not DevTools frame IDs. Ordinary JavaScript and permission
 operations retain their asynchronous live-document checks.
 
+## Page translation
+
+Each `BrowserTab` owns a `PageTranslation`. After a finished load in a regular
+window, the tab reads a sample of the page in the `WSurfTranslate` content world,
+detects its language with NaturalLanguage and offers the person's preferred
+languages that the page is not in. A private window's page is read only after the
+person chooses Translate Page. The target and the always-translated languages are
+per-profile settings.
+
+`PageTranslationScript` works through `BrowserPage`, so WebKit and Chromium behave
+alike. It groups each block's text nodes and hands blocks out nearest the viewport
+first, ranking again only after the viewport moves or content arrives. The Swift
+loop translates a batch with one on-device `TranslationSession`, keeps markup by
+sending a block's segments as one attributed request, and writes the batch back in
+one call. Show Original restores only text the page did not change itself. A new
+document, a new engine page or a closed tab ends the run.
+
 ## Agent trust boundaries
 
 The model is not a security boundary. Page text is untrusted, even when the

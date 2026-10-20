@@ -113,3 +113,11 @@ your report.
   track and artist names to lrclib.net, only while the setting is on and never
   for a private tab. A lookup from a private tab, or one made while the setting
   is off, is a defect.
+- Page translation (`WSurf/Web/Translation`). Page text is detected and
+  translated only on this Mac, with NaturalLanguage and Apple's on-device
+  Translation models; missing languages come through the system's download
+  sheet. A private window's page is not read until the person asks for a
+  translation. The translator runs in its own content world and adds no
+  assistant or MCP access. Page text reaching a network service, or a private
+  page being read without that request, is a defect. The page can see its own
+  translated text, as with any in-page translation.
