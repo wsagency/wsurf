@@ -1460,6 +1460,9 @@
     "Always ask the assistant" : {
       "comment" : "Title of the Settings switch that sends anything you type in the address bar to the assistant instead of the search engine. \"Always\" is about typed questions only — a link or a web address still opens as usual, which the caption underneath says. The feature is called the assistant throughout, never \"AI\". Sentence case, no final full stop."
     },
+    "Always Translate %@" : {
+      "comment" : "Toggle in the address bar's translate menu. Translates pages in this language automatically in this profile. %@ is a language name, such as Japanese."
+    },
     "An HTML file from another browser." : {
       "comment" : "Caption under the Bookmarks row on the last onboarding screen. It names the file the user picks. It must stay on one line, so it is shorter than its twin on the General settings page."
     },
@@ -3826,6 +3829,9 @@
     "Not specified" : {
 
     },
+    "Not translated" : {
+      "comment" : "Accessibility value of the translate control when the page shows its original text."
+    },
     "Nothing is playing" : {
       "comment" : "Title of the empty state in the lyrics view when the media player holds no track. Sentence case with no final full stop."
     },
@@ -4048,6 +4054,9 @@
     "Page Down" : {
       "comment" : "Legend printed on a key cap in the shortcut recorder in Settings, where the user records the key that activates the assistant. Use the word your language's Apple keyboards print on that key; the cap is only a few characters wide. This one is the Page Down navigation key."
     },
+    "Page translated to %@" : {
+      "comment" : "VoiceOver announcement after the shown page's text was translated. %@ is a language name."
+    },
     "Page Up" : {
       "comment" : "Legend printed on a key cap in the shortcut recorder in Settings, where the user records the key that activates the assistant. Use the word your language's Apple keyboards print on that key; the cap is only a few characters wide. This one is the Page Up navigation key."
     },
@@ -4203,6 +4212,9 @@
     },
     "posts or sends something in your name" : {
       "comment" : "Clause that completes the sentence This … and usually can’t be undone. in the dialog asking the user to approve an action the assistant wants to take. Lowercase, third person singular; the implied subject is the action, and in your name means as though the user had done it."
+    },
+    "Preferred Languages…" : {
+      "comment" : "Item in the translate menu that opens the Language & Region settings, where the person lists the languages they read."
     },
     "Preparing attachments…" : {
 
@@ -5079,6 +5091,9 @@
     "Show or hide the list of tabs." : {
       "comment" : "Description of the Show sidebar switch, shown only in the Settings search results. The list of tabs is the sidebar down the side of the window. Imperative pair with a final full stop."
     },
+    "Show Original" : {
+      "comment" : "Menu command that removes a page translation and shows the page's original text. Title Case."
+    },
     "Show password" : {
 
     },
@@ -5108,6 +5123,9 @@
     },
     "Show what went wrong" : {
       "comment" : "Tooltip on the warning button beside an extension that reported problems; pressing it opens a panel listing them. Show is a verb."
+    },
+    "Showing the original page" : {
+      "comment" : "VoiceOver announcement after a translation is removed and the page's original text is back."
     },
     "Side by side" : {
 
@@ -5827,6 +5845,21 @@
     },
     "trackers allowed" : {
       "comment" : "Fragment in the one-line summary under a website, meaning tracker blocking is switched off there. Lower case: joined with other fragments."
+    },
+    "Translate Page" : {
+      "comment" : "Menu command in View and help/accessibility label of the address bar's translate control. Translates the current page on this Mac. Title Case."
+    },
+    "Translate to %@" : {
+      "comment" : "Item in the address bar's translate menu. %@ is a language name, such as English."
+    },
+    "Translated to %@" : {
+      "comment" : "Accessibility value of the translate control when the page is translated. %@ is a language name."
+    },
+    "Translating to %@" : {
+      "comment" : "Accessibility value of the translate control while a translation runs. %@ is a language name."
+    },
+    "Translation Unavailable" : {
+      "comment" : "Brief notice when a page can't be translated, for example because it is already in that language or the language isn't installed."
     },
     "Transparency" : {
 

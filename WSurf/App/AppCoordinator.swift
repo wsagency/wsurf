@@ -107,6 +107,7 @@ final class AppCoordinator {
     let tabPreview = TabPreviewModel()
     let linkPeek = LinkPeek()
     let peek = PeekPanel()
+    let translationDownloads = TranslationDownloads()
     let sidebarDrag = SidebarDragModel()
     var settings: BrowserSettings {
         context.settings

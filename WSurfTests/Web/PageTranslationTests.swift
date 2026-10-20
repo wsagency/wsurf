@@ -4,6 +4,7 @@
 
 import Foundation
 import Testing
+import Translation
 
 @testable import WSurf
 
@@ -202,5 +203,129 @@ struct PageTranslationTests {
         let reset = BrowserSettings(defaults: app, sessionDefaults: work)
         #expect(reset.translationTargetID.isEmpty)
         #expect(!reset.alwaysTranslates(japanese))
+    }
+
+    // MARK: - Downloads
+
+    @Test func requestsForTheSamePairShareOneDownload() async {
+        let downloads = TranslationDownloads()
+        let japanese = Locale.Language(identifier: "ja")
+        let english = Locale.Language(identifier: "en")
+        let first = Task { await downloads.prepare(.fast, from: japanese, to: english) }
+        let second = Task { await downloads.prepare(.fast, from: japanese, to: english) }
+        let asked = await waitUntil { downloads.configuration != nil }
+        #expect(asked)
+        await Task.yield()
+
+        await downloads.run { true }
+        let results = (await first.value, await second.value)
+        #expect(results == (true, true))
+        #expect(downloads.configuration == nil)
+    }
+
+    @Test func aDeclinedDownloadIsOfferedAgainOnTheNextRequest() async {
+        let downloads = TranslationDownloads()
+        let russian = Locale.Language(identifier: "ru")
+        let ukrainian = Locale.Language(identifier: "uk")
+        let first = Task { await downloads.prepare(.fast, from: russian, to: ukrainian) }
+        let asked = await waitUntil { downloads.configuration != nil }
+        #expect(asked)
+        await downloads.run { false }
+        #expect(await first.value == false)
+
+        let again = Task { await downloads.prepare(.fast, from: russian, to: ukrainian) }
+        #expect(await waitUntil { downloads.configuration != nil })
+        await downloads.run { true }
+        #expect(await again.value)
+    }
+
+    @Test func aDifferentPairReplacesTheWaitingDownload() async {
+        let downloads = TranslationDownloads()
+        let english = Locale.Language(identifier: "en")
+        let ukrainian = Task { await downloads.prepare(.fast, from: Locale.Language(identifier: "ja"), to: Locale.Language(identifier: "uk")) }
+        let asked = await waitUntil { downloads.configuration != nil }
+        #expect(asked)
+        let german = Task { await downloads.prepare(.fast, from: Locale.Language(identifier: "de"), to: english) }
+
+        #expect(await ukrainian.value == false)
+        #expect(downloads.configuration?.source.map(TranslationLanguage.key) == "de")
+        await downloads.run { true }
+        #expect(await german.value)
+    }
+
+    @Test func aCancelledDownloadEndsTheWaitButIsOfferedAgain() async {
+        let downloads = TranslationDownloads()
+        let russian = Locale.Language(identifier: "ru")
+        let ukrainian = Locale.Language(identifier: "uk")
+        let first = Task { await downloads.prepare(.fast, from: russian, to: ukrainian) }
+        #expect(await waitUntil { downloads.configuration != nil })
+        let host = Task {
+            await downloads.run {
+                try? await Task.sleep(for: .seconds(30))
+                return false
+            }
+        }
+        host.cancel()
+        await host.value
+        #expect(await first.value == false)
+
+        let again = Task { await downloads.prepare(.fast, from: russian, to: ukrainian) }
+        #expect(await waitUntil(timeout: .seconds(5)) { downloads.configuration != nil })
+        await downloads.run { true }
+        #expect(await again.value)
+    }
+
+    @Test func aHostThatGoesAwayEndsTheWaitButIsOfferedAgain() async {
+        let downloads = TranslationDownloads()
+        let japanese = Locale.Language(identifier: "ja")
+        let english = Locale.Language(identifier: "en")
+        let first = Task { await downloads.prepare(.fast, from: japanese, to: english) }
+        #expect(await waitUntil { downloads.configuration != nil })
+
+        downloads.abandon()
+
+        #expect(await first.value == false)
+        #expect(downloads.configuration == nil)
+        let again = Task { await downloads.prepare(.fast, from: japanese, to: english) }
+        #expect(await waitUntil(timeout: .seconds(5)) { downloads.configuration != nil })
+        await downloads.run { true }
+        #expect(await again.value)
+    }
+
+    // MARK: - Announcements
+
+    @Test func theShownTabAnnouncesItsTranslationAndItsOriginal() {
+        let id = UUID()
+        let english = Locale.Language(identifier: "en")
+        let translating = TranslationAnnouncement.State(tabID: id, phase: .translating, target: english)
+        let translated = TranslationAnnouncement.State(tabID: id, phase: .translated, target: english)
+        let original = TranslationAnnouncement.State(tabID: id, phase: .original, target: nil)
+
+        #expect(TranslationAnnouncement.text(from: translating, to: translated) == "Page translated to \(TranslationLanguage.name(english))")
+        #expect(TranslationAnnouncement.text(from: translated, to: original) == "Showing the original page")
+        #expect(TranslationAnnouncement.text(from: original, to: translating) == nil)
+        #expect(TranslationAnnouncement.text(from: original, to: original) == nil)
+    }
+
+    @Test func bringingAnotherTabForwardAnnouncesNothing() {
+        let english = Locale.Language(identifier: "en")
+        let original = TranslationAnnouncement.State(tabID: UUID(), phase: .original, target: nil)
+        let translated = TranslationAnnouncement.State(tabID: UUID(), phase: .translated, target: english)
+        let none = TranslationAnnouncement.State(tabID: nil, phase: .original, target: nil)
+
+        #expect(TranslationAnnouncement.text(from: original, to: translated) == nil)
+        #expect(TranslationAnnouncement.text(from: translated, to: none) == nil)
+    }
+
+    @Test func theControlValueNamesTheState() {
+        let translation = PageTranslation()
+        let english = Locale.Language(identifier: "en")
+        #expect(TranslationAnnouncement.value(for: translation) == "Not translated")
+
+        _ = translation.begin(to: english)
+        #expect(TranslationAnnouncement.value(for: translation) == "Translating to \(TranslationLanguage.name(english))")
+
+        translation.showOriginal(in: nil)
+        #expect(TranslationAnnouncement.value(for: translation) == "Not translated")
     }
 }
