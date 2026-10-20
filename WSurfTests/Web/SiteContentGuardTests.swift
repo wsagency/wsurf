@@ -323,7 +323,7 @@ final class WebKitSiteContentTests {
 
     @Test func aWebsiteToldMutedPlaysOnlyWithoutSound() async throws {
         #expect(try await outcome(of: Self.playing("new Audio('/tone.wav')"), under: .silent) == "NotAllowedError")
-        let muted = "Object.assign(document.body.appendChild(document.createElement('video')), {muted: true, src: '/tone.wav'})"
+        let muted = "Object.assign(document.createElement('video'), {muted: true, src: '/tone.wav'})"
         #expect(try await outcome(of: Self.playing(muted), under: .silent) == "played")
     }
 
@@ -412,7 +412,7 @@ final class WebKitSiteContentTests {
 
     private static let openingByItself = """
         <!doctype html><script>
-        window.open('https://example.com/popup');
+        window.open('/popup');
         document.title = Function.prototype.toString.call(window.open).includes('[native code]') ? 'done' : 'wrapped';
         </script>
         """
@@ -421,7 +421,7 @@ final class WebKitSiteContentTests {
         let (tab, opened, server) = try await popUpTab(Self.openingByItself, blocksPopups: true)
         defer { withExtendedLifetime(server) {} }
         #expect(opened.count == 0)
-        #expect(tab.popups.blocked == URL(string: "https://example.com/popup"))
+        #expect(tab.popups.blocked == (try server.url("/popup")))
     }
 
     @Test func aWebsiteToldBlockSaysNothing() async throws {
