@@ -63,7 +63,8 @@ final class InputHistoryCaptureRig {
     /// `formModel` installs the form model before the capture, as the tab does, so a real document can run the script.
     init(
         recording: Bool = true, ownsSession: Bool = true, historyOwnsSession: Bool = true, privately: Bool = false,
-        formModel: Bool = false, capture shared: InputHistoryCapture? = nil, privateKeys: (any AutofillSecureStorage)? = nil
+        formModel: Bool = false, capture shared: InputHistoryCapture? = nil, privateKeys: (any AutofillSecureStorage)? = nil,
+        control: @escaping @MainActor () -> Bool = { false }
     ) {
         let harness = InputHistoryHarness(ownsSession: historyOwnsSession, privateKeys: privateKeys)
         let profile: Profile = privately ? .privateBrowsing() : harness.makeProfile()
@@ -79,7 +80,7 @@ final class InputHistoryCaptureRig {
         if formModel {
             page.installScript(AutofillFormScript.source, in: AutofillPage.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         }
-        capture.install(in: page)
+        capture.install(in: page, isUnderAssistantControl: control)
         self.harness = harness
         self.profile = profile
         self.context = context
@@ -491,6 +492,57 @@ struct InputHistoryCaptureTests {
             rig.commit()
             let found18 = try await rig.entries()
             #expect(found18.count == 1)
+        }
+    }
+
+    // MARK: - Assistant control
+
+    /// A tab that is only a source of the control state. The page the rig sends from has no tab of its own.
+    private func withTab(_ body: @MainActor (BrowserTab) async throws -> Void) async throws {
+        let tab = BrowserTab(opensBlank: false, context: BrowserProfileContext(profile: .privateBrowsing()))
+        try await body(tab)
+    }
+
+    private func control(_ on: Bool, by controller: String, _ tab: BrowserTab) {
+        if controller == "assistant" {
+            tab.setAgentWorking(on)
+        } else {
+            tab.setExternalAutomationWorking(on)
+        }
+    }
+
+    @Test(arguments: ["assistant", "connected app"])
+    func typingInATabTheAssistantControlsIsNotRecorded(controller: String) async throws {
+        try await withTab { tab in
+            let rig = InputHistoryCaptureRig(control: { tab.isUnderAssistantControl })
+            rig.ready()
+            control(true, by: controller, tab)
+            #expect(tab.isUnderAssistantControl)
+            rig.commit("agent-typed-secret", field: "1")
+            rig.commit("", field: "2", cleared: true)
+            let during = try await rig.entries()
+            #expect(during.isEmpty)
+
+            // When the control ends the person's typing counts again.
+            control(false, by: controller, tab)
+            #expect(!tab.isUnderAssistantControl)
+            rig.commit(field: "3")
+            let after = try await rig.entries()
+            #expect(after.map(\.payload.value) == [InputHistoryCaptureRig.secret])
+            await rig.tearDown()
+        }
+    }
+
+    @Test func aTabWithNoControlIsNotUnderAssistantControl() async throws {
+        try await withTab { tab in
+            #expect(!tab.isUnderAssistantControl)
+            tab.setAgentWorking(true)
+            tab.setExternalAutomationWorking(true)
+            #expect(tab.isUnderAssistantControl)
+            tab.setAgentWorking(false)
+            #expect(tab.isUnderAssistantControl, "a call of a connected app still works on the tab")
+            tab.setExternalAutomationWorking(false)
+            #expect(!tab.isUnderAssistantControl)
         }
     }
 

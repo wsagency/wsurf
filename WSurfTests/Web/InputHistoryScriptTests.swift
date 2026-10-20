@@ -392,9 +392,10 @@ struct InputHistoryScriptTests {
 @MainActor
 struct InputHistoryPipelineTests {
     private func withRig(
-        recording: Bool, capture shared: InputHistoryCapture? = nil, _ body: (InputHistoryCaptureRig) async throws -> Void
+        recording: Bool, capture shared: InputHistoryCapture? = nil, control: @escaping @MainActor () -> Bool = { false },
+        _ body: (InputHistoryCaptureRig) async throws -> Void
     ) async throws {
-        let rig = InputHistoryCaptureRig(recording: recording, formModel: true, capture: shared)
+        let rig = InputHistoryCaptureRig(recording: recording, formModel: true, capture: shared, control: control)
         do {
             try await body(rig)
         } catch {
@@ -410,8 +411,9 @@ struct InputHistoryPipelineTests {
         ) as? Bool
     }
 
-    private func type(_ rig: InputHistoryCaptureRig, _ call: String) async throws {
-        _ = try await rig.page.callAsyncJavaScript(
+    @discardableResult
+    private func type(_ rig: InputHistoryCaptureRig, _ call: String) async throws -> Any? {
+        try await rig.page.callAsyncJavaScript(
             "const field = id => document.getElementById(id); return globalThis.__wsurfInputHistory.__test.\(call);",
             arguments: [:], in: nil, contentWorld: AutofillPage.world
         )
@@ -517,6 +519,42 @@ struct InputHistoryPipelineTests {
             rig.context.settings.recordsInputHistory = false
             rig.capture.refreshPolicy()
             #expect(try await becomes(false, in: rig))
+        }
+    }
+
+    @Test(.boundedWebViews, arguments: ["assistant", "connected app"])
+    func controlOfTheTabSwitchesTheScriptOffAndDropsWhatWasWaiting(controller: String) async throws {
+        let tab = BrowserTab(opensBlank: false, context: BrowserProfileContext(profile: .privateBrowsing()))
+        func control(_ on: Bool) {
+            if controller == "assistant" {
+                tab.setAgentWorking(on)
+            } else {
+                tab.setExternalAutomationWorking(on)
+            }
+        }
+        try await withRig(recording: true, control: { tab.isUnderAssistantControl }) { rig in
+            try await open(rig)
+            #expect(try await becomes(true, in: rig))
+            try await type(rig, "idle(600000)")
+
+            // Typed before the control began and not yet sent: it is dropped, not sent when the call is over.
+            try await type(rig, "edit(field('password'), 'dummy-before-control')")
+            control(true)
+            #expect(try await becomes(false, in: rig))
+            #expect(try await type(rig, "pending()") as? Int == 0)
+            try await type(rig, "edit(field('password'), 'dummy-agent-typed')")
+            try await type(rig, "blur(field('password'))")
+            control(false)
+            #expect(try await becomes(true, in: rig))
+            let during = try await rig.entries()
+            #expect(during.isEmpty)
+
+            // The person's own typing is recorded again once the control has ended.
+            try await type(rig, "edit(field('password'), 'dummy-own-typing')")
+            try await type(rig, "blur(field('password'))")
+            #expect(try await waitUntil { try await rig.entries().count == 1 })
+            let entries = try await rig.entries()
+            #expect(entries.map(\.payload.value) == ["dummy-own-typing"])
         }
     }
 
