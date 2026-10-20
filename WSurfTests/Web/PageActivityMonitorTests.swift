@@ -85,4 +85,46 @@ struct PageActivityMonitorTests {
         #expect(!tab.hasEditedForm)
     }
 
+    /// Stands in for WebKit's own display capture state, which only a real screen share (and its TCC prompt) can set.
+    private final class CapturingWebView: WKWebView {
+        var state = WKMediaCaptureState.none
+
+        @objc(_displayCaptureState) var displayCaptureState: Int {
+            state.rawValue
+        }
+
+        func report(_ next: WKMediaCaptureState) {
+            willChangeValue(forKey: "_displayCaptureState")
+            state = next
+            didChangeValue(forKey: "_displayCaptureState")
+        }
+    }
+
+    /// WebKit pages keep their own `getDisplayMedia`: the tab learns about screen sharing from WebKit instead.
+    @Test func webKitsDisplayCaptureStateProtectsTheTab() async throws {
+        let configuration = interactiveWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = CapturingWebView(frame: NSRect(x: 0, y: 0, width: 500, height: 400), configuration: configuration)
+        let tab = BrowserTab(adopting: webView, opensBlank: false)
+        tab.loadHTML("<!doctype html><p>Call</p>", baseURL: URL(string: "https://example.com/call"))
+        #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
+        let displayMedia = try await tab.page.evaluateJavaScript("""
+            (() => {
+              const open = navigator.mediaDevices?.getDisplayMedia;
+              return typeof open === 'function' ? String(Function.prototype.toString.call(open).includes('[native code]')) : typeof open;
+            })()
+            """)
+        #expect(displayMedia as? String == "true")
+        #expect(!tab.processState.isSharingScreen)
+
+        webView.report(.active)
+        #expect(tab.processState.isSharingScreen)
+        #expect(!tab.canDiscardWebContent)
+
+        webView.report(.muted)
+        #expect(tab.processState.isSharingScreen, "a paused share is still a share")
+
+        webView.report(.none)
+        #expect(!tab.processState.isSharingScreen)
+    }
 }

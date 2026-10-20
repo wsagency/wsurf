@@ -102,6 +102,14 @@ final class BrowserPage: NSView {
         closed || chromium?.isClosed == true
     }
 
+    /// Where WSurf's own DOM-only page scripts and their message handlers live: an isolated world on WebKit, so the page
+    /// sees none of their globals, wrappers or `window.webkit`. Chromium keeps the page world until its engine work moves
+    /// its bindings.
+    static let servicesWorld = WKContentWorld.world(name: "WSurfServices")
+    var servicesWorld: WKContentWorld {
+        webKit == nil ? .page : Self.servicesWorld
+    }
+
     init(webKit: WKWebView, context: BrowserProfileContext) {
         engine = .webKit
         self.webKit = webKit

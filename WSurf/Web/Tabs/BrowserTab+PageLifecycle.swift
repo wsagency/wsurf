@@ -319,6 +319,11 @@ extension BrowserTab {
         microphoneObservation = native.observe(\.microphoneCaptureState, options: [.new, .initial]) { [weak self] view, _ in
             MainActor.assumeIsolated { self?.permissions.setLive(.microphone, view.microphoneCaptureState != .none) }
         }
+        displayCaptureObservation = DisplayCaptureObservation(native) { [weak self] isSharing in
+            self?.notePageActivity(PageActivitySignal(
+                kind: .screenShare, token: DisplayCaptureObservation.token, isActive: isSharing
+            ))
+        }
     }
 
     private func installPermissionCallbacks(for view: BrowserPage) {

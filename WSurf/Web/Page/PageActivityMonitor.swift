@@ -22,11 +22,13 @@ final class PageActivityMonitor {
     private static let handlerName = "wsurfPageActivity"
     private static let maximumTokenLength = 100
 
-    /// Installs through the owning page so Chromium receives the same callback.
+    /// Installs through the owning page so Chromium receives the same callback. WebKit reports screen sharing natively
+    /// (`DisplayCaptureObservation`), so its pages keep their own `getDisplayMedia`.
     @MainActor
     func install(in page: BrowserPage, onActivity: @escaping (PageActivitySignal) -> Void) {
-        page.installScript(Self.script, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        page.addScriptMessageHandler(name: Self.handlerName, in: .page) { message in
+        let script = page.webKit == nil ? Self.wrappingDisplayMedia : Self.script
+        page.installScript(script, in: page.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        page.addScriptMessageHandler(name: Self.handlerName, in: page.servicesWorld) { message in
             guard let body = message.body as? [String: Any],
                   let rawKind = body["kind"] as? String,
                   let kind = PageActivityKind(rawValue: rawKind),
@@ -38,9 +40,14 @@ final class PageActivityMonitor {
         }
     }
 
+    private static let wrappingDisplayMedia = script.replacingOccurrences(
+        of: "const wrapsDisplayMedia = false;", with: "const wrapsDisplayMedia = true;"
+    )
+
     private static let script = #"""
     (() => {
       if (window.__wsurfPageActivity) return;
+      const wrapsDisplayMedia = false;
 
       const send = globalThis.__wsurfSend;
       if (typeof send !== 'function') return;
@@ -137,7 +144,7 @@ final class PageActivityMonitor {
 
       const mediaDevices = navigator.mediaDevices;
       const originalDisplayMedia = mediaDevices?.getDisplayMedia;
-      if (typeof originalDisplayMedia === 'function') {
+      if (wrapsDisplayMedia && typeof originalDisplayMedia === 'function') {
         try {
           mediaDevices.getDisplayMedia = async function (...args) {
             const stream = await originalDisplayMedia.apply(this, args);
@@ -168,14 +175,45 @@ final class PageActivityMonitor {
     """#
 }
 
+/// WebKit's own report that a page captures the screen (`_displayCaptureState`, SPI, key-value observable), so sharing
+/// protects the tab without wrapping `getDisplayMedia` in the page. Nil where WebKit does not offer it.
+final class DisplayCaptureObservation: NSObject {
+    static let token = "webkit-display-capture"
+    private static let key = "_displayCaptureState"
+    private let webView: WKWebView
+    private let onChange: (Bool) -> Void
+
+    init?(_ webView: WKWebView, onChange: @escaping (Bool) -> Void) {
+        guard webView.responds(to: NSSelectorFromString(Self.key)) else { return nil }
+        self.webView = webView
+        self.onChange = onChange
+        super.init()
+        webView.addObserver(self, forKeyPath: Self.key, options: [.initial, .new], context: nil)
+    }
+
+    isolated deinit {
+        webView.removeObserver(self, forKeyPath: Self.key)
+    }
+
+    // The key is SPI, so there is no key path for the block-based API.
+    // swiftlint:disable:next block_based_kvo
+    nonisolated override func observeValue(
+        forKeyPath keyPath: String?, of object: Any?,
+        change: [NSKeyValueChangeKey: Any]?, context: UnsafeMutableRawPointer?
+    ) {
+        let state = (change?[.newKey] as? NSNumber)?.intValue ?? WKMediaCaptureState.none.rawValue
+        MainActor.assumeIsolated { onChange(state != WKMediaCaptureState.none.rawValue) }
+    }
+}
+
 final class ScrollPositionMonitor {
     static let shared = ScrollPositionMonitor()
 
     private static let handlerName = "wsurfScrollPosition"
     @MainActor
     func install(in page: BrowserPage, onScroll: @escaping (Double, URL?) -> Void) {
-        page.installScript(Self.script, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        page.addScriptMessageHandler(name: Self.handlerName, in: .page) { message in
+        page.installScript(Self.script, in: page.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        page.addScriptMessageHandler(name: Self.handlerName, in: page.servicesWorld) { message in
             guard message.frameInfo.isMainFrame,
                   let y = (message.body as? NSNumber)?.doubleValue,
                   y.isFinite, y >= 0 else { return }

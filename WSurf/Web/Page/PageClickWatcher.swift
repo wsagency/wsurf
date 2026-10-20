@@ -14,8 +14,8 @@ final class PageClickWatcher {
 
     @MainActor
     func install(in page: BrowserPage, onClick: @escaping (CGPoint) -> Void) {
-        page.installScript(Self.script, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        page.addScriptMessageHandler(name: Self.handlerName, in: .page) { [weak page] message in
+        page.installScript(Self.script, in: page.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        page.addScriptMessageHandler(name: Self.handlerName, in: page.servicesWorld) { [weak page] message in
             guard let page,
                   let point = message.body as? [Double], point.count == 2 else { return }
             let zoom = page.pageZoom
