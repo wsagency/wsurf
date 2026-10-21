@@ -44,6 +44,9 @@ nonisolated struct Proposal {
     /// transaction is neither compared nor checked again; one that is not is compared on its bytes, so naming too few still writes
     /// every change. `nil` compares every account with its stored row on its bytes.
     var changing: Set<UUID>?
+    /// A merge's absorbed accounts, each mapped to the account it was merged into: their passwords and codes stay in that
+    /// account's History (`CommitTransaction.carriedRevisions`).
+    var merging: [UUID: UUID] = [:]
 }
 
 /// `entry == nil` means nothing was written (a true no-op).
@@ -65,12 +68,13 @@ private nonisolated struct LedgerRequired: Error {}
 /// per-account and restore paths all route through it).
 extension ProfileVaultStore {
     /// `changing` names the accounts the caller edited in `accounts` (`Proposal.changing`); `nil` compares every account on its bytes.
+    /// `merging` maps each account a merge takes away to the one it was merged into (`Proposal.merging`).
     func commit(
         vaultID: UUID, _ accounts: [CredentialAccount], expectedRevision: UInt64, cause: String?, changing: Set<UUID>? = nil,
-        using access: VaultAccess
+        merging: [UUID: UUID] = [:], using access: VaultAccess
     ) async throws -> VaultCommitReceipt {
         let intent = CommitIntent(vaultID: vaultID, access: access, expectedRevision: expectedRevision, cause: cause, isCommit: true)
-        return try await perform(intent) { _ in Proposal(accounts: accounts, requires: nil, changing: changing) }
+        return try await perform(intent) { _ in Proposal(accounts: accounts, requires: nil, changing: changing, merging: merging) }
     }
 
     func delete(vaultID: UUID, scope: RemovalScope, expectedRevision: UInt64, using access: VaultAccess) async throws -> VaultCommitReceipt {
@@ -192,7 +196,8 @@ extension ProfileVaultStore {
             guard ledgerAttached else { throw LedgerRequired() }
             try transaction.verifyHistories()
         }
-        try transaction.write(plan, proposed: proposal.accounts, cause: intent.cause)
+        let carried = try transaction.carriedRevisions(proposal.merging, plan: plan, proposed: proposal.accounts)
+        try transaction.write(plan, proposed: proposal.accounts, cause: intent.cause, carried: carried)
         return try transaction.finish()
     }
 
@@ -393,12 +398,15 @@ nonisolated final class CommitTransaction {
     }
 
     /// §7/§11 write of one plan: the touched live rows, a revision row per superseded value, one MOVE per removal. No heads and no
-    /// registry yet (`finish`). `proposed` carries the new content of every touched account.
-    func write(_ plan: CredentialChangePlan, proposed: [CredentialAccount], cause: String?) throws {
+    /// registry yet (`finish`). `proposed` carries the new content of every touched account; `carried` are a merge's extra History rows.
+    func write(_ plan: CredentialChangePlan, proposed: [CredentialAccount], cause: String?, carried: [CarriedRevision] = []) throws {
         for account in proposed where plan.touched.contains(account.id) {
             try putLive(account, stampsModifiedAt: plan.setsModifiedAt.contains(account.id))
         }
-        try writeRevisions(plan.revisions, cause: cause)
+        let superseded = plan.revisions.map {
+            CarriedRevision(ownerID: $0.ownerID, subject: $0.subject, body: RevisionBody(recordedAt: wall, cause: cause, value: $0.superseded))
+        }
+        try writeRevisions(superseded + carried)
         for scope in plan.removals {
             try move(scope)
         }
@@ -419,13 +427,13 @@ nonisolated final class CommitTransaction {
         live[account.id] = LiveEntry(recordID: account.id, version: version, digest: StoreSeal.digest(sealed))
     }
 
-    private func writeRevisions(_ drafts: [RevisionDraft], cause: String?) throws {
+    private func writeRevisions(_ rows: [CarriedRevision]) throws {
         var group = JournalGroup(transfer: nil)
-        for draft in drafts {
+        for row in rows {
             try Task.checkCancellation()
-            let plaintext = try CredentialContent.canonicalJSON(RevisionBody(recordedAt: wall, cause: cause, value: draft.superseded))
+            let plaintext = try CredentialContent.canonicalJSON(row.body)
             let aad = RowAAD(
-                ids: ids, vaultID: source.vaultID, recordID: UUID(), kind: .revision, ownerID: draft.ownerID, subject: draft.subject, version: 1
+                ids: ids, vaultID: source.vaultID, recordID: UUID(), kind: .revision, ownerID: row.ownerID, subject: row.subject, version: 1
             )
             let op = try insertHistory(plaintext, aad: aad, key: source.key)
             source.counts.revision += 1

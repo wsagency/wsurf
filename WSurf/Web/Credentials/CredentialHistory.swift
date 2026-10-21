@@ -11,6 +11,8 @@ nonisolated enum CredentialChangeCause {
     static let `import` = "import"
     /// Written by the merge of two saved credentials (Credential Manager v3, PR E).
     static let merge = "merge"
+    /// A password or code a merge kept in the merged credential's History from a credential it merged away.
+    static let mergedFrom = "merged-from"
     /// Written when the person adds the page's website to a credential from an autofill offer.
     static let addWebsite = "add-website"
     /// Written by Undo (and Redo), which puts back what an earlier action of the same page changed.
@@ -24,6 +26,8 @@ nonisolated enum CredentialChangeCause {
             String(localized: "Changed by an import")
         case Self.merge:
             String(localized: "Changed by a merge")
+        case Self.mergedFrom:
+            String(localized: "Kept from a merged credential")
         case Self.addWebsite:
             String(localized: "Website added from autofill")
         case Self.undo:

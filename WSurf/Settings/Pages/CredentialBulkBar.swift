@@ -3,8 +3,8 @@
 
 import SwiftUI
 
-/// Above the list while credentials are selected: what the selection can do. Move to Trash needs no confirmation (the Trash keeps
-/// everything, and the notice offers Undo); Merge… opens the merge sheet to review the choice first.
+/// Above the list while credentials are selected or the list is in selection mode: what the selection can do. Move to Trash needs no
+/// confirmation (the Trash keeps everything, and the notice offers Undo); Merge… opens the merge sheet to review the choice first.
 struct CredentialBulkBar: View {
     let model: CredentialSettingsModel
     let selection: CredentialSelection
@@ -16,8 +16,8 @@ struct CredentialBulkBar: View {
     @ViewBuilder
     var body: some View {
         // The list never reads the selection; this bar does, so only it follows a change.
-        if !selection.isEmpty {
-            bar(selection.targets)
+        if selection.showsCheckboxes {
+            bar(selection.selectedInOrder)
         }
     }
 
@@ -38,22 +38,33 @@ struct CredentialBulkBar: View {
     }
 
     private func count(_ number: Int) -> some View {
-        Text("\(number.formatted()) selected")
-            .font(Theme.Font.label)
-            .foregroundStyle(.secondary)
-            .accessibilityAddTraits(.isHeader)
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(number.formatted()) selected")
+                .accessibilityAddTraits(.isHeader)
+            if number < 2 {
+                Text("Select two or more to merge them.")
+            }
+        }
+        .font(Theme.Font.label)
+        .foregroundStyle(.secondary)
     }
 
     @ViewBuilder
     private func buttons(_ ids: [UUID], canMerge: Bool) -> some View {
         Button("Move to Trash") { moveToTrash(ids) }
             .accessibilityLabel("Move \(ids.count) credentials to Trash")
-            .disabled(model.isBusy)
+            .disabled(model.isBusy || ids.isEmpty)
         Button("Merge…") { merge(ids) }
+            .accessibilityLabel("Merge \(ids.count) credentials")
             .disabled(model.isBusy || !canMerge)
             .help(canMerge ? "" : mergeRefusal(ids.count))
         Button("Select All (\(visibleCount.formatted()))") { selection.selectAll() }
-        Button("Deselect All") { selection.clear() }
+        // Both end selection mode and deselect everything; "Done" reads better once Select started the mode.
+        if selection.isSelecting {
+            Button("Done") { selection.clear() }
+        } else {
+            Button("Deselect All") { selection.clear() }
+        }
     }
 
     /// Why Merge… is off, in the sentences the merge sheet uses.

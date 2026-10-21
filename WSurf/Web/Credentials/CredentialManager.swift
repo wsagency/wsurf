@@ -566,12 +566,15 @@ final class CredentialManager {
     /// same main-actor segment that captures it, before any write starts, so a lock and re-unlock that landed after the
     /// decision (for example while a task was queued) can never carry the write into the newer lease. `changing` names the accounts
     /// the caller edited, so the store does not encode the other 20,000 to find them; `nil` compares every account on its bytes.
+    /// `merging` maps each account a merge takes away to the one it was merged into, whose History keeps its passwords and codes.
     func commit(
-        _ accounts: [CredentialAccount], expectedRevision: UInt64, authorizedEpoch: UInt64, cause: String? = nil, changing: Set<UUID>? = nil
+        _ accounts: [CredentialAccount], expectedRevision: UInt64, authorizedEpoch: UInt64, cause: String? = nil, changing: Set<UUID>? = nil,
+        merging: [UUID: UUID] = [:]
     ) async throws -> VaultCommitReceipt {
         try await authorizedWrite(epoch: authorizedEpoch) { access in
             try await store.commit(
-                vaultID: vaultID, accounts, expectedRevision: expectedRevision, cause: cause, changing: changing, using: access
+                vaultID: vaultID, accounts, expectedRevision: expectedRevision, cause: cause, changing: changing, merging: merging,
+                using: access
             )
         }
     }

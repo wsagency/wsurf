@@ -58,6 +58,8 @@ final class CredentialSettingsModel {
     /// Fresh device-owner authentication (Touch ID or the Mac password) before a card's or an ID document's hidden values are shown,
     /// copied or opened in the editor. Returns only on success. A seam so a test decides the answer; internal for the extensions.
     @ObservationIgnored let verifyUser: @MainActor (String) async throws -> Void
+    /// Opens an address in a new tab of the window that shows this page (`openWebsite`); `nil` where there is none, such as a test.
+    @ObservationIgnored var websiteOpener: (@MainActor (URL) -> Void)?
     @ObservationIgnored private var noticeGeneration = 0
     /// What the last copy or list action did, for a moment ("Password Copied", "Moved 3 credentials to Trash."): the name of the
     /// part or a count, never a value.

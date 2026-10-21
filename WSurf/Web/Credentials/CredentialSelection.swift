@@ -18,6 +18,9 @@ final class CredentialSelection {
     private(set) var cursor: UUID?
     /// Where a range from the keyboard or a shift-click starts.
     private(set) var anchor: UUID?
+    /// Selection mode, started by Select in a row's menu: every row shows a checkbox and a plain click toggles a row. It ends with
+    /// `clear` (Done, Escape, a finished action) and `reset`.
+    private(set) var isSelecting = false
     /// True while the list receives the keyboard: a row was clicked, or the search field handed it over.
     private(set) var ownsKeyboard = false
     /// Changes when the list should take the keyboard, so the key catcher becomes first responder again.
@@ -30,6 +33,16 @@ final class CredentialSelection {
 
     var isEmpty: Bool {
         selected.isEmpty
+    }
+
+    /// Rows show a checkbox in selection mode and whenever something is selected.
+    var showsCheckboxes: Bool {
+        isSelecting || !selected.isEmpty
+    }
+
+    /// The selected rows in list order; empty when nothing is selected (unlike `targets`, never the cursor row).
+    var selectedInOrder: [UUID] {
+        selected.isEmpty ? [] : order.filter { selected.contains($0) }
     }
 
     /// What an action acts on, in list order: the selection, else the cursor row.
@@ -60,6 +73,7 @@ final class CredentialSelection {
     /// Back to nothing, for another vault, a lock or another list.
     func reset() {
         selected = []
+        isSelecting = false
         cursor = nil
         anchor = nil
         ownsKeyboard = false
@@ -99,20 +113,38 @@ final class CredentialSelection {
         selected = Set(order)
     }
 
-    /// Deselects everything. The cursor stays.
+    /// Deselects everything and ends selection mode. The cursor stays.
     func clear() {
         if !selected.isEmpty {
             selected = []
         }
+        if isSelecting {
+            isSelecting = false
+        }
         anchor = cursor
+    }
+
+    /// Select in a row's menu: selection mode, with that row selected and the keyboard on the list.
+    func beginSelecting(with id: UUID?) {
+        isSelecting = true
+        if let id, position[id] != nil {
+            selected.insert(id)
+            cursor = id
+            anchor = id
+        }
+        takeKeyboard()
     }
 
     // MARK: Mouse
 
-    /// A plain click: the row gets the cursor and the keyboard. It selects nothing.
+    /// A plain click: the row gets the cursor and the keyboard. It selects nothing, except in selection mode, where it toggles the row.
     func click(_ id: UUID) {
-        cursor = id
-        anchor = id
+        if isSelecting {
+            toggle(id)
+        } else {
+            cursor = id
+            anchor = id
+        }
         takeKeyboard()
     }
 
@@ -174,5 +206,45 @@ final class CredentialSelection {
     func place(cursor id: UUID?) {
         cursor = id
         anchor = id
+    }
+}
+
+// MARK: - Row menu
+
+/// One entry of a credential row's right-click menu. Pure, so which entries a row offers, and on which credentials, is tested without
+/// a view.
+nonisolated enum CredentialRowMenuItem: Hashable, Sendable {
+    case openWebsite(URL)
+    case copyUsername
+    case copyPassword
+    case edit
+    /// The credentials it merges: the selection when the row is part of it, else the row alone (its suggestion, or Select to pick more).
+    case merge([UUID])
+    case moveToTrash([UUID])
+    case select
+    case deselect
+}
+
+extension CredentialSelection {
+    /// What a row's menu acts on: the selection when the row is one of two or more selected rows, else the row alone.
+    func menuTargets(for id: UUID) -> [UUID] {
+        selected.count > 1 && selected.contains(id) ? selectedInOrder : [id]
+    }
+
+    /// The entries of `summary`'s right-click menu, in order.
+    func menu(for summary: CredentialSummary) -> [CredentialRowMenuItem] {
+        var items: [CredentialRowMenuItem] = []
+        if let website = summary.website {
+            items.append(.openWebsite(website))
+        }
+        if summary.usernameIsConcealed || summary.username != nil {
+            items.append(.copyUsername)
+        }
+        if summary.hasPassword {
+            items.append(.copyPassword)
+        }
+        let targets = menuTargets(for: summary.id)
+        items += [.edit, .merge(targets), .moveToTrash(targets), selected.contains(summary.id) ? .deselect : .select]
+        return items
     }
 }

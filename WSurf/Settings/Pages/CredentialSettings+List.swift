@@ -187,7 +187,7 @@ struct CredentialListView<Switcher: View>: View {
             CredentialPageNotice(model: model, undo: { run { await model.undo() } })
             CredentialBulkBar(
                 model: model, selection: selection, visibleCount: visibleCount,
-                moveToTrash: trash, merge: { merge.route = .review($0) }
+                moveToTrash: trash, merge: startMerge
             )
             // A vault holds thousands of credentials: the list is lazy, so only the rows on screen are built and laid out.
             SettingsSection(
@@ -228,10 +228,7 @@ struct CredentialListView<Switcher: View>: View {
         }
         .sheet(isPresented: Binding(get: { merge.route != nil }, set: { if !$0 { merge.route = nil } })) {
             if let route = merge.route {
-                CredentialMergeFlow(
-                    model: model, merge: merge, matches: { CredentialListFilter.visible(model.summaries, query: $0, filter: .all) },
-                    route: route, close: { merge.route = nil }
-                )
+                CredentialMergeFlow(model: model, merge: merge, route: route, close: { merge.route = nil })
             }
         }
     }
@@ -247,12 +244,24 @@ struct CredentialListView<Switcher: View>: View {
 
     private func row(_ summary: CredentialSummary) -> some View {
         CredentialRow(
-            model: model, summary: summary, selection: selection, run: run,
-            remove: { trash([summary.id]) },
+            model: model, summary: summary, selection: selection, run: run, trash: trash, merge: startMerge,
             open: { open(summary.id) },
-            history: { run { try await model.openHistory(accountID: summary.id) } },
-            mergeWith: { merge.route = .pick(summary.id) }
+            history: { run { try await model.openHistory(accountID: summary.id) } }
         )
+    }
+
+    /// Merge… from a row or the bar. Two or more credentials open the review. One opens its merge suggestion, else starts selection
+    /// mode with it selected, so the others are picked in the list itself.
+    private func startMerge(_ ids: [UUID]) {
+        if ids.count > 1 {
+            merge.route = .review(ids)
+        } else if let id = ids.first {
+            if let suggested = merge.index?.suggestions(containing: id).first?.ids {
+                merge.route = .review(suggested)
+            } else {
+                selection.beginSelecting(with: id)
+            }
+        }
     }
 
     /// Opens the editor on a credential; the cursor stays on its row for when the editor closes.

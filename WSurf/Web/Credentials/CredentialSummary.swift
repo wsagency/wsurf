@@ -45,6 +45,8 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
     /// The hidden values of its items that the row's menu offers to copy, by name.
     let hiddenItemFields: [SecureFieldReference]
     let passkeys: [PasskeySummary]
+    /// What "Open Website" opens: the first login address, else the first website, else the first passkey's site. Always HTTPS.
+    let website: URL?
     let dates: CredentialDates
     /// What a search looks in, built once here so a keystroke never rebuilds it: the title, the username (unless concealed) and
     /// every website's host, folded so a search ignores case and accents. Never a password, note, code seed or passkey key.
@@ -76,6 +78,8 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
             }
         }
         passkeys = account.passkeys.map { PasskeySummary($0) }
+        website = account.loginURLs.first ?? account.origins.first.flatMap(URL.init(string:))
+            ?? account.passkeys.first.flatMap { URL(string: "https://\($0.rpID)") }
         dates = CredentialDates(account)
         let title = Self.title(displayName: account.displayName, origins: account.origins, username: visibleUsername, items: itemTitles)
         let hosts = account.origins.compactMap { URL(string: $0)?.host }
@@ -95,7 +99,7 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
               lhs.displayName == rhs.displayName, lhs.origins == rhs.origins, lhs.hasPassword == rhs.hasPassword,
               lhs.hasLogin == rhs.hasLogin, lhs.hasTOTP == rhs.hasTOTP, lhs.hasNotes == rhs.hasNotes,
               lhs.itemKinds == rhs.itemKinds, lhs.itemTitles == rhs.itemTitles, lhs.hasSensitiveItems == rhs.hasSensitiveItems,
-              lhs.hiddenItemFields == rhs.hiddenItemFields else { return false }
+              lhs.hiddenItemFields == rhs.hiddenItemFields, lhs.website == rhs.website else { return false }
         return lhs.passkeys == rhs.passkeys
     }
 
