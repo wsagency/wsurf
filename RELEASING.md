@@ -323,6 +323,14 @@ Release requirements:
   build number that goes down stops every installed copy from updating. Do not
   change a version by hand in the Xcode project. The values in the Xcode project
   apply only to local builds.
+- **Every candidate build has its own build number and changelog section.** A
+  candidate is a local signed build, so it carries the Xcode project's values;
+  this is the one place they change by hand. Each candidate build increments
+  `CURRENT_PROJECT_VERSION` (and sets `MARKETING_VERSION` when the version
+  changes) and adds its own `## <version> (build <n>) — <date>` section at the
+  top of `CHANGELOG.md`. `Tools/check-changelog.sh` runs in the candidate gate
+  and fails without that section. The release workflow still finds the section
+  by its `## <version>` prefix.
 - **The release body supplies the “What’s New” sheet.** The workflow makes the
   body from two parts. `CHANGELOG.md` is optional: make it only when a release
   needs notes of its own. If it contains a `## 1.1` section, that section comes

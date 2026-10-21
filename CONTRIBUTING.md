@@ -28,6 +28,9 @@ merged into `main` through a PR and wait for CI to pass on that commit. Never
 deploy a feature branch or an uncommitted working tree. Release tags must point
 to commits on `main`. See [Releasing](RELEASING.md) for the existing release and
 preview gates.
+Every candidate build increments `CURRENT_PROJECT_VERSION` and adds its own
+`## <version> (build <n>) — <date>` section to `CHANGELOG.md`;
+`Tools/check-changelog.sh` runs in the candidate gate.
 
 ## Set up the project
 

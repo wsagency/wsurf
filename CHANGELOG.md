@@ -5,15 +5,60 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
-## WSurf
+## 0.1.1 (build 2) — 2026-10-21
 
+Everything since 0.1.0 (build 1), the installed candidate 6.2. None of the screens and prompts below has been checked by hand.
+
+### Browsing
+
+- Translate a page on this Mac with Apple’s on-device translation, in WebKit and Chromium tabs. The address bar offers it when a page isn’t in a language you read; View › Translate Page works too. Show Original brings the page back, and Always Translate a language is remembered per profile. Private windows translate only when you ask. Tabs the assistant or a connected app controls are never translated automatically.
+- View › Show Reader (⌥⌘R) shows the article without the page around it, with its reading time, and links open in a new tab. Text size, font and a Sepia look are kept for every tab and window; zoom changes the text size, and Print and Find work on the article. Not yet: Translate Page still translates the hidden page, and Find shows no match count in Reader.
+- Settings › General › Archive unused tabs can close tabs left unused for 12 hours, a day or a week (Never by default). The newest 30 archived tabs stay searchable in ⌘K: Show Archived Tabs, or type “arc” and press Tab, then restore a tab next to the current one or remove it.
 - Pages see far less of WSurf: its own page helpers run out of the page’s reach in WebKit and Chromium, and WebKit keeps each website’s pop-up and auto-play answers itself, so built-ins such as `window.open` stay the browser’s own. What remains in a page is the passkey, notification and location support.
+- Chromium tabs no longer show pages the traces of DevTools automation that bot checks flag, and keep the engine’s own client hints.
+- Google sign-in always opens in WebKit, since Google refuses sign-in from embedded Chromium, and the redirect back to a service set to Chromium keeps the sign-in. The engine choice for Google sign-in says so.
+- Back in a Chromium tab no longer loses the page you came from when the page adds a history entry right after loading.
 - Auto-play “Muted” now works like Safari’s “Stop Media with Sound”: a video that would start with sound waits for you; muted videos still play.
 - Pop-ups a page opens by itself, including from a scripted Cmd-click, are blocked like any other pop-up you didn’t open. A blocked pop-up with no address is blocked without a notice.
+- The tracker count, and the tracker blocker in Chromium tabs, count only trackers from other websites; a website’s own subdomains are no longer counted or blocked as trackers.
 - After you switch on an extension, tabs opened from then on get its page script fixes; tabs already open get them once reopened.
 - A screen share in a Chromium tab keeps that tab from being unloaded.
-- Translate a page on this Mac with Apple’s on-device translation, in WebKit and Chromium tabs. The address bar offers it when a page isn’t in a language you read; View › Translate Page works too. Show Original brings the page back, and Always Translate a language is remembered per profile. Private windows translate only when you ask. Tabs the assistant or a connected app controls are never translated automatically.
+- WebKit tabs and pop-ups report their window’s outer size and position, as Safari’s do. Pages that read them, such as Hetzner’s proof-of-work login check, no longer see a window of size 0. A Chromium sign-in loop on the same page may also be Hetzner’s rate limit from the earlier attempts.
 - In a Chromium tab, a script run in the page’s own world inside a subframe must be a single expression; a list of statements is rejected. The main frame and WSurf’s own scripts are not affected.
+- Groundwork with no screen yet: an extension can be blocked on a website (WebKit tabs only), which also stops its button, popup and menu items there.
+
+### Passwords, passkeys and autofill
+
+- Credential Manager also keeps cards, addresses, names, Wi-Fi networks, API and SSH keys, identity documents and custom fields, alone or next to a login. They come in with a transfer, show in the list with Cards, Addresses, IDs and Other filters, and can be edited and copied. Showing or copying a card’s or an ID document’s hidden values, opening its editor, or showing a History that held one asks for Touch ID or your Mac password. Web forms can fill the vault’s addresses, and its cards after Touch ID, never in a tab the assistant or a connected app controls. Not yet: exporting these items, and saving a card or address typed on a page into the vault (it still goes to the old store).
+- Large vaults are faster: with 20,000 credentials, editing one, saving the editor, listing where an imported passkey can be merged and choosing a merge in a full import review no longer check the whole vault again each time. A credential saved by an older build that today’s rules refuse no longer blocks edits to other credentials; edits to it are still refused.
+- A page can ask for a passkey while it is still loading; before, such a request was refused until the page had finished loading. A request made after a replaced navigation or a download is served as well, challenges up to 64 KiB are accepted, and a refused request writes its reason to the log (the kind of error only, no data). This is the fix aimed at Google’s passkey sign-in; it has not been tried against Gmail by hand.
+- The Delete Vault sheet now comes down while the system passkey prompt is open and returns if you decline it, so the prompt is no longer left waiting behind it (not tried with the real prompt). A vault that the sheet would show as all zeros, with no credentials, no Trash and no history, is deleted with one click and no confirmation; unlocking is still required. Excluded sites (Never for This Site) count, and the sheet now lists them.
+- Input History (Settings › Autofill › Input History), off by default:
+  - With Remember what I type on, text you type on websites, including passwords, is kept encrypted on this Mac for 30 minutes, 2 hours, 1 day, 1 week or until you delete it. It is never synced. Turning it on asks first; turning it off deletes everything.
+  - Not recorded: private windows, excluded websites and their subdomains, card numbers, security codes, one-time codes, rich text editors, values a page script or autofill put into a field, and any tab while the assistant or a connected app works in it.
+  - The entries open only with Touch ID or your Mac password, and lock two minutes after the page closes or with any vault lock. Passwords stay masked until you reveal one. Copy marks the clipboard concealed and clears it after a minute.
+  - Save as Credential saves a password entry into Credential Manager only after you confirm the username and what it changes.
+  - The assistant and connected apps have no way to read it.
+  - Not in this pass: the address-bar icon, pasted images and uploaded file names.
+
+### Assistant and MCP
+
+- Connected apps work in background tabs without taking your tab or keyboard focus, and every tab an app holds shows an AI mark with Take Over and Stop.
+- The assistant’s website access applies to the whole website: the prompt names it (“Allow Assistant on google.com?”) and says it covers every page on it. An earlier Read Only or Allow Control answer for one page is not widened; the assistant asks again. Settings › Websites › Reset on any page of a website resets its assistant access, and says so. Sharing grants for connected apps still apply to one origin.
+- Recent tasks on the start page leave out tasks without a question you typed, such as continued or resumed ones.
+- Groundwork with no screen yet: a per-profile store for short notes the assistant keeps about you. Nothing writes or uses it yet; it is off by default, private windows have none, and connected apps cannot read it.
+
+### Appearance
+
+- Settings › Appearance › Layout sets a theme’s page edge and tab and folder edges (Standard, Thin edge or None), corner rounding from square to 150 %, and tab icons in Monochrome or Color. Built-in themes look as before until you change it; Increase Contrast keeps an edge.
+
+### Fixes
+
+- In Chromium tabs, WSurf’s own scripts no longer count as a click, so they cannot open pop-ups or start sound. Connected apps’ clicks and typing and WSurf’s media controls still do.
+- Test runs keep their preference files in a test folder instead of `~/Library/Preferences`, and the command palette and sidebar row tests close the windows they open.
+
+## 0.1.0 (build 1)
+
 - Credential Manager no longer freezes after unlocking a vault with thousands of credentials; long lists draw only the rows on screen.
 - MCP for development and QA:
   - Paired apps connect with revocable tokens.
@@ -25,7 +70,6 @@ release notes will be added above this provenance record.
   - Compare a page in WebKit and Chromium.
   - Media emulation, and clearing one site’s data.
 - A badge in the window shows which app controls it, with a Stop button.
-- Connected apps work in background tabs without taking your tab or keyboard focus, and every tab an app holds shows an AI mark with Take Over and Stop.
 - Paired apps can follow a default website access level instead of asking before every new website.
 - WSurf asks before the assistant or a connected app closes a tab. Pinned tabs are never closed.
 - Back in a new Chromium tab no longer returns to the empty startup page.
@@ -77,25 +121,16 @@ These changes describe the current candidate source, not a published release.
 - A username-only step, a lone email or user ID field before the password, is offered logins and its username is captured for saving. Trade-off: a lone email field without newsletter, subscribe, search or coupon wording now gets the login dropdown instead of contact fill when logins exist for the site.
 
 - A passkey starts only from the dropdown. Clicking, Return or Down Arrow in a field that offers one no longer starts it, and Return reaches the page. While the page has a passkey request pending, the dropdown shows Use a Passkey…, in every vault state. A passkey request that arrives while the previous one is being cancelled now waits for it instead of failing. Typing in the dropdown's search that matches no login ends up in the field. This is meant for Google's sign-in; it has not been tried against Gmail by hand. The row needs password filling to be on, and a field marked `email webauthn` without a `username` token gets none.
-- A page can ask for a passkey while it is still loading; before, such a request was refused until the page had finished loading. A request made after a replaced navigation or a download is served as well, challenges up to 64 KiB are accepted, and a refused request writes its reason to the log (the kind of error only, no data). This is the fix aimed at Google's passkey sign-in; it has not been tried against Gmail by hand.
 - A fill the page accepted is no longer reported as Couldn't Fill Saved Details, and the credential you just filled is remembered, so submitting the sign-in no longer offers to save a copy of it.
 - Settings › Vaults has Delete Vault… for an unlocked vault when the profile has more than one vault and no import is under review. The sheet shows what the vault holds and offers Export…; deleting needs the vault's name typed and then its passkey. The vault and its Trash go in one step and the other vaults keep working. Website passkeys saved in it stop working, and copies outside the store, such as backups, are not touched.
-- The Delete Vault sheet now comes down while the system passkey prompt is open and returns if you decline it, so the prompt is no longer left waiting behind it (not tried with the real prompt). A vault that the sheet would show as all zeros, with no credentials, no Trash and no history, is deleted with one click and no confirmation; unlocking is still required. Excluded sites (Never for This Site) count, and the sheet now lists them.
 - Settings › Appearance can save the selected theme under your own name, with its colors, Plain or Glass, transparency and brightness. Saved themes can be renamed, duplicated and deleted, and editing one previews live and saves in place. The Dock icon can be Default, Light, Dark or Mono while WSurf runs; Finder and Applications keep the standard icon. A theme choice is now written to settings right after the click instead of during it, which keeps theme switching inside its time budget.
 - An extension update that asks for more permissions or websites than the installed version is held and the old version keeps running. The extension shows Update needs approval, and a manual check lists only the added access before installing.
-- WebKit tabs and pop-ups report their window's outer size and position, as Safari's do. Pages that read them, such as Hetzner's proof-of-work login check, no longer see a window of size 0. A Chromium sign-in loop on the same page may also be Hetzner's rate limit from the earlier attempts.
 - Groundwork with no screen or setting yet: a tab archive that can close tabs left unused for 12 hours, a day or a week (the setting is Never and nothing in Settings changes it), Reader article extraction in WebKit and Chromium with Mozilla Readability 0.6.0, and the core of page watches, up to twenty with paced checks. Nothing in the app starts Reader or a watch.
 - The assistant's tab group for a conversation is called an anchor in the code. Nothing you see changes.
 
 Each branch above passed its own targeted native gate on the Pro before it was merged; the assembled candidate's gates are recorded separately. None of the screens and prompts above has been checked by hand.
 
-Input History (Settings › Autofill › Input History) is included on `feature/input-history-c63-20261020`, off by default:
-- With Remember what I type on, text you type on websites, including passwords, is kept encrypted on this Mac for 30 minutes, 2 hours, 1 day, 1 week or until you delete it. It is never synced. Turning it on asks first; turning it off deletes everything.
-- Not recorded: private windows, excluded websites and their subdomains, card numbers, security codes, one-time codes, rich text editors, values a page script or autofill put into a field, and any tab while the assistant or a connected app works in it.
-- The entries open only with Touch ID or your Mac password, and lock two minutes after the page closes or with any vault lock. Passwords stay masked until you reveal one. Copy marks the clipboard concealed and clears it after a minute.
-- Save as Credential saves a password entry into Credential Manager only after you confirm the username and what it changes.
-- The assistant and connected apps have no way to read it.
-- Not in this pass: the address-bar icon, pasted images and uploaded file names. Its native gate has not run yet.
+Input History is not included in this candidate. No new recorder or unfinished UI is exposed.
 
 Early verification at `83f89f0`, before the G/B overlays: isolated native Debug ARM64 build and identity guard passed; all 20 affected suites passed (245 test definitions, 350 executions, no failures or skips). The 3,000-credential layout measured 0.121752 seconds and 1,661.338 kB average growth, below the existing 0.300-second and 4,096-kB budgets. SwiftLint 0.65.1 passed. Separately reviewed executor evidence covers G (13 definitions / 17 executions) and corrected B v2 (208 definitions / 250 executions plus ten scoped performance budgets), not the assembled candidate. B's 80-switch mean was 0.0149294858 seconds under the unchanged 0.015-second limit, with two individual samples above it. Final assembled-source full-suite, coverage and all 24 performance checks are pending. Native keyboard/IME and Chromium fill-dropdown acceptance, real passkey and credential exchange, Stage, live private/accessibility/multiwindow visuals and GPU behavior remain unverified.
 
