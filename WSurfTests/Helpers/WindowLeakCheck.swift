@@ -19,20 +19,8 @@ final class WindowLeakCheck {
 
     /// Tracked windows the app still holds. Zero is the baseline before any fixture ran.
     var live: Int {
-        liveWindows.count
-    }
-
-    /// What a failure needs to find the holder: each live window's class, whether it is still on screen, and whether it
-    /// still has a delegate and content.
-    var liveDescription: String {
-        liveWindows.map { window in
-            "\(type(of: window)) (on screen \(window.isVisible), delegate \(window.delegate != nil), content \(window.contentView != nil))"
-        }.joined(separator: ", ")
-    }
-
-    private var liveWindows: [NSWindow] {
         let windows = NSApp.windows
-        return tracked.compactMap { $0() }.filter { window in windows.contains { $0 === window } }
+        return tracked.compactMap { $0() }.filter { window in windows.contains { $0 === window } }.count
     }
 }
 

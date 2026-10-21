@@ -279,18 +279,8 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         isVisible = false
         publish()
-        if let coordinator {
-            coordinator.windowDidClose()
-            // A quit closes windows without closing their coordinators, which keep everything for the saved session.
-            guard coordinator.isClosed else { return }
-        }
-        // A closed coordinator never shows this window again (it would make a new host). Detach what the window holds, so
-        // nothing in its SwiftUI tree, first responder or toolbar keeps the closed window alive, and the window stops
-        // keeping the coordinator that BrowserRootView holds.
-        guard let window else { return }
-        window.makeFirstResponder(nil)
-        window.contentView = nil
-        window.toolbar = nil
+        guard let coordinator else { return }
+        coordinator.windowDidClose()
     }
 
     func windowWillMiniaturize(_ notification: Notification) {
