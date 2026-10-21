@@ -43,6 +43,11 @@ final class AnyLanguageModelAgent: AgentRunner {
     let toolkit: AgentToolkit
     let retrySleep: @Sendable (Double) async throws -> Void
     let log: ConversationLog
+    /// The model that writes notes about the person: the on-device model in the app, and never the chat model, which may be a
+    /// cloud provider. Nil (tests, unless one sets it) or returning nil means no notes are written.
+    let factModel: (() -> (any LanguageModel)?)?
+    /// What the person said in the last finished task, kept until the turn model asks for it to be noted.
+    var pendingFacts: (taskID: UUID, said: String)?
 
     var sessions: [UUID: LanguageModelSession] = [:]
     var discardedTabIDs = RecentIDs()
@@ -64,7 +69,8 @@ final class AnyLanguageModelAgent: AgentRunner {
         enabledToolIDs: Set<String>? = nil,
         retrySleep: @escaping @Sendable (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) },
         toolkit: AgentToolkit,
-        log: ConversationLog
+        log: ConversationLog,
+        factModel: (() -> (any LanguageModel)?)? = nil
     ) {
         self.name = name
         self.modelID = AgentDiagnosticPrivacy.model(modelID)
@@ -82,6 +88,14 @@ final class AnyLanguageModelAgent: AgentRunner {
         self.toolkit = toolkit
         self.retrySleep = retrySleep
         self.log = log
+        self.factModel = factModel
+    }
+
+    func rememberFacts(fromTask taskID: UUID) async {
+        guard let pending = pendingFacts, pending.taskID == taskID else { return }
+        pendingFacts = nil
+        guard !Task.isCancelled, let model = factModel?() else { return }
+        await toolkit.writeFacts(from: pending.said, using: model)
     }
 
     func prepare() {

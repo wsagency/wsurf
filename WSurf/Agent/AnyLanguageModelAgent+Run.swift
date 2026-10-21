@@ -121,6 +121,8 @@ extension AnyLanguageModelAgent {
         toolkit.finishTask(task)
         reply.setActivity(nil)
         reply.endStream()
+        let said = ([AgentToolkit.userText(of: utterance)] + state.answers).filter { !$0.isEmpty }.joined(separator: "\n")
+        pendingFacts = Task.isCancelled || said.isEmpty ? nil : (taskID: task.id, said: said)
     }
 
     private func runLoop(_ state: RunState, callbacks: RunCallbacks) async throws {
@@ -350,6 +352,7 @@ extension AnyLanguageModelAgent {
             let text = Self.text(in: output.segments)
             if call.toolName == "askUser", !failed, !text.isEmpty {
                 state.checkpoint.userAnswers.append(text)
+                state.answers += AgentToolkit.answers(in: text)
             }
             callbacks.save()
             let progress = inspectProgress(state.monitor.observe(
@@ -389,6 +392,8 @@ extension AnyLanguageModelAgent {
         var responsePrefix = 0
         var verificationRounds = 0
         var providerRetries = 0
+        /// The person's answers to askUser in this run, for the note writer.
+        var answers: [String] = []
 
         init(agent: AnyLanguageModelAgent, utterance: String, task: AgentTaskContext, reply: AgentReplyModel) {
             self.task = task
@@ -402,7 +407,7 @@ extension AnyLanguageModelAgent {
             session = agent.session(for: task.anchorID)
             policy = agent.executionPolicy ?? .current
             monitor = AgentProgressMonitor(policy: policy)
-            prompt = task.isContinuation ? AnyLanguageModelAgent.continuationPrompt : AssistantAttachment.prompt(
+            prompt = task.isContinuation ? AnyLanguageModelAgent.continuationPrompt : agent.toolkit.rememberedContext() + AssistantAttachment.prompt(
                 utterance, attachments: task.attachments, textOnly: task.attachmentTextOnly || !agent.acceptsImages
             )
             images = AttachmentRequest.images(task.attachments, textOnly: task.attachmentTextOnly || !agent.acceptsImages)

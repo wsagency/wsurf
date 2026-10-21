@@ -991,4 +991,9 @@ extension AgentToolkit {
             browser.setAgentWorking(false, inAnchor: anchorID)
         }
     }
+
+    /// The profile's notes about the person, nil in a private window. Only the in-app assistant reads them.
+    var assistantFacts: AssistantFacts? {
+        browser.context.assistantFacts
+    }
 }
