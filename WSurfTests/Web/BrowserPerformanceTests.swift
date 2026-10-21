@@ -300,7 +300,8 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
     /// The crowded sidebar under a theme that moves every layout knob: thin row edges instead of glass on the marked
     /// rows, square corners, color favicons on every loaded row, and the spacing extremes (largest icons, least
     /// padding and margin, a flush page). The knobs are a preview of the app-wide theme, so nothing is written to the
-    /// test host's defaults.
+    /// test host's defaults. Its memory samples spiked in an aged host, so it warms up first and each run releases
+    /// everything it built; the footprint after each run is printed to tell retained growth from a transient spike.
     func testLayingOutACrowdedSidebarWithEveryLayoutOption() throws {
         try MainActor.assumeIsolated {
             let settings = BrowserSettings.application
@@ -357,17 +358,45 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             .environment(\.colorScheme, .dark)
             .environment(\.windowColorScheme, .dark)
 
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
-                let host = NSHostingView(rootView: rows)
-                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 220, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
-                window.isReleasedWhenClosed = false
-                window.contentView = host
-                host.layoutSubtreeIfNeeded()
-                host.displayIfNeeded()
-                window.close()
+            // Each run frees what it built before it ends, so a window, its backing store and the rows' graph from one
+            // run never land in another run's memory sample.
+            @MainActor func layOut() {
+                autoreleasepool {
+                    let host = NSHostingView(rootView: rows)
+                    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 220, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
+                    window.isReleasedWhenClosed = false
+                    window.contentView = host
+                    host.layoutSubtreeIfNeeded()
+                    host.displayIfNeeded()
+                    window.contentView = nil
+                    window.close()
+                }
             }
+            // Two unmeasured runs fill the caches every layout knob touches once: the favicon at 24 pt, text layout,
+            // the inverse and edge colors of each row style.
+            layOut()
+            layOut()
+
+            var footprints: [UInt64] = []
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                layOut()
+                footprints.append(Self.physicalFootprint())
+            }
+            // Growth from run to run is retained memory; a single high sample that the next run gives back is not.
+            print("Layout option sidebar footprint after each run (kB): \(footprints.map { $0 / 1_024 })")
             browser.cancelPendingSave()
         }
+    }
+
+    /// The test host's physical footprint, the figure XCTMemoryMetric samples.
+    private static func physicalFootprint() -> UInt64 {
+        var usage = rusage_info_current()
+        let result = withUnsafeMutablePointer(to: &usage) { pointer in
+            pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+                proc_pid_rusage(getpid(), RUSAGE_INFO_CURRENT, $0)
+            }
+        }
+        return result == 0 ? usage.ri_phys_footprint : 0
     }
 
     /// What a 300-row sidebar asks the theme for while it draws: the loaded and unloaded text, the accent, and the
