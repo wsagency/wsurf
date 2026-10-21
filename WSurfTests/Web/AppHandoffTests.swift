@@ -330,8 +330,10 @@ struct AppHandoffTests {
         let chromium = try #require(tab.page.chromium)
         let frames = try await chromium.devTools.frames()
         let sourceFrame = try #require(frames.first { $0.request.url == frameURL })
-        // A subframe's page world takes an expression only, not a statement list.
-        _ = try await chromium.devTools.evaluate("(window.postMessage('handoff', '*'), true)", in: sourceFrame, world: .page)
+        // A subframe's page world takes an expression only, not a statement list. The person's click is replayed (`userGesture`):
+        // the frame navigates the top page, which Chromium blocks without activation.
+        _ = try await chromium.devTools.evaluate(
+            "(window.postMessage('handoff', '*'), true)", in: sourceFrame, world: .page, userGesture: true)
         try #require(await waitUntil { steps[0].requestCount == 1 })
         tab.load(pendingURL)
         try #require(await waitUntil { response.requestCount == 1 })
@@ -471,7 +473,8 @@ struct AppHandoffTests {
                 try await activateOpaqueFrameLink(in: tab)
             } else {
                 _ = try await chromium.devTools.evaluate(
-                    "document.querySelector('iframe').contentWindow.postMessage('handoff', '*'); true", in: nil, world: .page)
+                    "document.querySelector('iframe').contentWindow.postMessage('handoff', '*'); true", in: nil, world: .page,
+                    userGesture: true)
             }
         }
         for expectedPrompts in 1...2 {
@@ -713,7 +716,8 @@ struct AppHandoffTests {
         let chromium = try #require(tab.page.chromium)
         let frames = try await chromium.devTools.frames()
         let sourceFrame = try #require(frames.first { $0.request.url == frameURL })
-        _ = try await chromium.devTools.evaluate("(window.postMessage('go', '*'), true)", in: sourceFrame, world: .page)
+        _ = try await chromium.devTools.evaluate(
+            "(window.postMessage('go', '*'), true)", in: sourceFrame, world: .page, userGesture: true)
         if suspendedAtPresenter {
             try #require(await waitUntil { presenterEntered })
         } else {
