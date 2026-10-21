@@ -5,6 +5,23 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.1 (build 3) — 2026-10-21
+
+Everything since 0.1.1 (build 2), the installed candidate. None of the screens and prompts below has been checked by hand.
+
+### Passwords, passkeys and autofill
+
+- GitHub passkey sign-in works in WebKit tabs.
+- A passkey asked for right after you unlock the vault no longer fails silently.
+- On WebKit, a sign-in that needs a hardware key, a phone or an iCloud passkey that is not in the vault offers “Continue in Chromium”, which opens the page in a Chromium tab of the same profile.
+- Imported Apple passkeys report as synced.
+- When a website has several passkeys, none is preselected.
+
+### Fixes
+
+- Credentials no longer shows “Locked” for a moment when the vault is open.
+- About WSurf and Settings › About show the candidate label and commit under the version. Builds without a candidate label show nothing.
+
 ## 0.1.1 (build 2) — 2026-10-21
 
 Everything since 0.1.0 (build 1), the installed candidate 6.2. None of the screens and prompts below has been checked by hand.
