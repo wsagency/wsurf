@@ -610,6 +610,8 @@ extension WebsiteAuthenticator {
                 account.passkeys.isEmpty ? nil : String(localized: "\(account.passkeys.count) passkey(s)"),
                 account.password == nil ? nil : String(localized: "password"),
                 account.totp == nil ? nil : String(localized: "verification code"),
+                account.notes == nil ? nil : String(localized: "notes"),
+                account.secureItems == nil ? nil : String(localized: "cards and other items"),
             ].compactMap { $0 }
             return (account.id, label(account), ([account.username.displaySafe] + kinds).filter { !$0.isEmpty }.joined(separator: " · "))
         })

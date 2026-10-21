@@ -35,8 +35,9 @@ nonisolated extension CredentialExchangeCodec {
 
             let basic = chosen.password ? exportBasicAuthentication(account) : nil
             let notes = chosen.notes ? account.notes ?? [] : []
+            let items = chosen.secureItems ? account.secureItems ?? [] : []
             let selectedCredentialCount = chosen.passkeyIDs.count + (basic == nil ? 0 : 1) +
-                (chosen.totp && account.totp != nil ? 1 : 0) + notes.count
+                (chosen.totp && account.totp != nil ? 1 : 0) + notes.count + items.count
             guard selectedCredentialCount <= CredentialVaultLimits.credentials - totalCredentials else {
                 throw CredentialVaultError.oversized
             }
@@ -64,6 +65,7 @@ nonisolated extension CredentialExchangeCodec {
                 )))
             }
             credentials += notes.map { .note(exportNote($0)) }
+            credentials += try items.map(exportSecureItem)
             guard !credentials.isEmpty else { continue }
             totalItems += 1
             guard totalItems <= CredentialVaultLimits.accounts else { throw CredentialVaultError.oversized }
@@ -181,6 +183,9 @@ nonisolated extension CredentialExchangeCodec {
         for passkey in account.passkeys where chosen.passkeyIDs.contains(passkey.id) {
             parts.append((passkey.base, .passkey(passkey)))
         }
+        if chosen.secureItems, account.secureItems != nil {
+            parts.append((account.secureItemsBase, .secureItems(account)))
+        }
         return try parts.allSatisfy { base, part in
             guard let base else { return false }
             return try CredentialContent.hash(part) == base.contentHash
@@ -235,7 +240,7 @@ nonisolated extension CredentialExchangeCodec {
         return ASImportableCredential.Note(content: field)
     }
 
-    private static func makeField(_ value: String, metadata: CredentialEditableFieldMetadata) -> ASImportableEditableField {
+    static func makeField(_ value: String, metadata: CredentialEditableFieldMetadata) -> ASImportableEditableField {
         // Every type a field was imported with goes back out as it came in, a concealed one included.
         ASImportableEditableField(id: metadata.id, fieldType: metadata.fieldType.exchangeType, value: value, label: metadata.label)
     }
