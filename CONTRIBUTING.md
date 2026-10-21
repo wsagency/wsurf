@@ -242,6 +242,51 @@ Tests get their own support directory, so a test can create profiles, write
 permissions or fill the download list without reaching the files of an installed
 copy.
 
+### Parallel and serial tests
+
+Three more plans at the repository root split the full suite so that part of it
+can run in parallel test-host clones:
+
+- `WSurf-Parallel.xctestplan` selects the Swift Testing suites that are safe in
+  parallel clones. It runs with `-parallel-testing-enabled YES` and six workers.
+- `WSurf-Performance.xctestplan` selects the budgeted suites: the classes that
+  `Tools/check-performance.sh` reads and every `*PerformanceTests` suite. It runs
+  alone, after the others, so the measurements see a quiet machine.
+- `WSurf-Serial.xctestplan` skips exactly the suites of the other two plans, so
+  it runs everything else serially, as the full suite ran before.
+
+The plans are not in the `WSurf` scheme, because more plans there would make
+`build-for-testing` write more than the one `.xctestrun` that CI and
+`Tools/check-built-identity.py` accept. Run a plan against that `.xctestrun` with
+the arguments that `python3 -I Tools/check-test-partition.py --args <plan>`
+prints, one per line; they include the four OCR exclusions. CI still runs the
+whole suite serially.
+
+**A new suite is serial by default.** Do not list it anywhere: the serial plan
+runs every suite that the other plans do not select. Move a suite to the parallel
+plan only when it is a Swift Testing suite (XCTest classes stay serial) and none
+of its tests, or the helpers they call:
+
+- opens a window, hosts a view, or uses the pasteboard, the screen or other
+  system UI;
+- creates a `WKWebView`, a Chromium page, a `BrowserTab`, `BrowserPage` or
+  `BrowserModel`, or starts an `HTTPFixtureServer`;
+- reaches the MCP socket, the network or the real Keychain;
+- writes the standard defaults domain (use `AppDatabase.defaultsSuite(_:)`) or a
+  fixed path (use a directory named with a UUID);
+- changes a process-wide singleton, a static stub or another shared value;
+- asserts a wall-clock upper bound or waits for another task with a sleep.
+
+Then add the name, in sorted order, to `selectedTests` in
+`WSurf-Parallel.xctestplan` and to `skippedTests` in `WSurf-Serial.xctestplan`,
+and run `python3 -I Tools/check-test-partition.py`. It fails when a plan names
+something that is not a suite, when the serial plan's list differs from the
+other two, when the performance plan misses a budgeted suite, and when a parallel
+suite's own source names a window, engine, socket, Keychain, shared-defaults,
+singleton or timing marker. It does not follow helpers in other files, so review
+those yourself. The cases of a parallel suite also run at the same time as each
+other: add `.serialized` when they share state.
+
 ## Keep copy and design consistent
 
 - Use the shortest familiar label that is unambiguous.
