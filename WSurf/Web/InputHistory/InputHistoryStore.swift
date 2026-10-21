@@ -11,6 +11,9 @@ import LocalAuthentication
 //   prompts and nothing on that path can open an entry. Opening needs the private key, which asks for Touch ID or the Mac password.
 // - A file name carries what purging needs (`<expiry>-<created>-<uuid>.wih`), so expiry never reads or decrypts anything.
 // - When the last entry goes, both keys go with it. Ciphertext that survives on the disk can no longer be read.
+// - Once a vault keeps Input History, the private key is stored sealed to an inbox key that only that vault's Input History key
+//   opens (`Binding`). Recording still needs only the public key, so it goes on while the vault is locked; opening needs the vault
+//   unlocked as well as Touch ID or the Mac password. The entries themselves are never encrypted again.
 // - Nothing here logs, and no plaintext reaches the disk, the Keychain or user defaults.
 
 nonisolated enum InputHistoryRetention: String, CaseIterable, Sendable {
@@ -62,6 +65,17 @@ nonisolated enum InputHistoryError: Error, Equatable {
     case tooLarge
     /// The key pair could not open its own entries. Everything was deleted so the next entry starts a new pair.
     case keysUnusable
+    /// The vault Input History is kept with is locked. Its entries open once it is unlocked; recording goes on meanwhile.
+    case vaultLocked
+    /// The vault Input History was kept with was deleted, so nothing it kept could be opened again. Everything was deleted.
+    case vaultDeleted
+}
+
+/// Input History's key for one vault: HKDF-SHA256 of the vault's key, bound to the profile and the vault
+/// (`ProfileVaultStore.inputHistoryKey`). It is never the vault's key, and only an unlocked vault gives it.
+nonisolated struct InputHistoryVaultKey: Sendable {
+    let vaultID: UUID
+    let key: SymmetricKey
 }
 
 nonisolated struct InputHistoryStatus: Sendable, Equatable {
@@ -126,7 +140,11 @@ nonisolated struct InputHistoryEntry: Identifiable, Sendable, Equatable {
 actor InputHistoryStore {
     private nonisolated static let fileExtension = "wih"
     private nonisolated static let version: UInt8 = 1
+    /// The version byte of a private key kept with a vault, and of the binding that keeps it.
+    private nonisolated static let keptVersion: UInt8 = 2
     private nonisolated static let encapsulatedKeyLength = 32
+    /// A private key stored as it is: today's key, which Touch ID or the Mac password alone opens.
+    private nonisolated static let rawKeyLength = 32
 
     private nonisolated static var suite: HPKE.Ciphersuite {
         .Curve25519_SHA256_ChachaPoly
@@ -166,6 +184,26 @@ actor InputHistoryStore {
         }
     }
 
+    /// What keeps Input History with a vault: `0x02 | vault id (36 ASCII bytes) | inbox public key (32) | AES-GCM(inbox private key)`
+    /// under the vault's Input History key, the header authenticated. A `whenUnlocked` item, so recording reads it without a prompt.
+    private nonisolated struct Binding {
+        static let headerLength = 1 + 36 + 32
+
+        let vaultID: UUID
+        let inbox: Curve25519.KeyAgreement.PublicKey
+        let stored: Data
+
+        init?(_ stored: Data) {
+            guard stored.count > Self.headerLength, stored.first == InputHistoryStore.keptVersion,
+                  let vaultID = UUID(uuidString: String(decoding: stored.dropFirst().prefix(36), as: UTF8.self)),
+                  let inbox = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: stored.dropFirst(37).prefix(32))
+            else { return nil }
+            self.vaultID = vaultID
+            self.inbox = inbox
+            self.stored = stored
+        }
+    }
+
     nonisolated let profileID: UUID
     /// The Keychain service of both keys. The two items differ in their account.
     nonisolated let service: String
@@ -175,6 +213,8 @@ actor InputHistoryStore {
     private let ownsSession: Bool
     private let now: @Sendable () -> Date
     private let info: Data
+    /// The HPKE info of a private key kept with a vault.
+    private let keptInfo: Data
     /// Coalescing key to entry identity, so the next commit of a field replaces its entry. Memory only: the keys name the fields
     /// of one page load and mean nothing after it.
     private var identities: [String: String] = [:]
@@ -197,6 +237,12 @@ actor InputHistoryStore {
         self.now = now
         service = "\(AutofillVaults.serviceNamespace()).input-history.\(profileID.uuidString)"
         info = Data("wsurf.input-history.v1|\(profileID.uuidString)".utf8)
+        keptInfo = Data("wsurf.input-history.v2|\(profileID.uuidString)".utf8)
+    }
+
+    /// The binding's Keychain service: next to the public key, in the same `whenUnlocked` storage.
+    private var bindingService: String {
+        "\(service).vault"
     }
 
     // MARK: - Recording
@@ -212,7 +258,7 @@ actor InputHistoryStore {
         let identity = "\(created)-\(UUID().uuidString)"
         let expiry = retention.milliseconds.map { String(created + $0) } ?? "never"
         let url = directory.appendingPathComponent("\(expiry)-\(identity).\(Self.fileExtension)")
-        try write(seal(JSONEncoder().encode(payload), to: publicKey, identity: identity), to: url)
+        try write(seal(JSONEncoder().encode(payload), to: publicKey, info: info, aad: Data(identity.utf8), version: Self.version), to: url)
 
         var live = settle()
         if let previous = identities.updateValue(identity, forKey: key) {
@@ -253,18 +299,30 @@ actor InputHistoryStore {
         purge().count
     }
 
-    /// Decrypts every entry, newest first. Reading the private key is what asks for Touch ID or the Mac password.
-    func unlock(reason: String) throws -> [InputHistoryEntry] {
+    /// Decrypts every entry, newest first. Reading the private key is what asks for Touch ID or the Mac password. A key kept with a
+    /// vault opens only with that vault's key (`vault`), which only an unlocked vault gives. Today's key is moved under `vault`
+    /// once, here (`moveKey`); without a vault it keeps opening as before.
+    func unlock(reason: String, vault: InputHistoryVaultKey? = nil) throws -> [InputHistoryEntry] {
         guard profileID != Profile.privateID else { throw InputHistoryError.privateBrowsing }
         let live = settle()
         guard !live.isEmpty else { return [] }
+        let binding = try binding()
+        if let binding, binding.vaultID != vault?.vaultID {
+            throw InputHistoryError.vaultLocked
+        }
+        // A broken binding opens nothing: a kept private key then fails below, and today's key is moved under a new binding.
+        let inbox = binding.flatMap { binding in vault.flatMap { try? self.inbox(for: $0, binding: binding) } }
         let context = LAContext()
         context.localizedReason = reason
         guard let secret = try privateKeys.read(service: service, context: context),
-              let privateKey = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: secret),
-              try publicKeys.read(service: service, context: context) == privateKey.publicKey.rawRepresentation
+              let publicKey = try publicKeys.read(service: service, context: context),
+              let privateKey = try? release(secret, publicKey: publicKey, inbox: inbox),
+              publicKey == privateKey.publicKey.rawRepresentation
         else {
             throw resetUnusableKeys()
+        }
+        if secret.count == Self.rawKeyLength, let vault, ownsSession {
+            moveKey(privateKey, to: vault, inbox: inbox, context: context)
         }
 
         var entries: [InputHistoryEntry] = []
@@ -277,7 +335,7 @@ actor InputHistoryStore {
             }
             guard let body = try? Data(contentsOf: item.url) else { continue }
             // A body that does not open under this name was moved here or damaged. It can never be shown.
-            guard let plaintext = try? open(body, identity: item.identity, with: privateKey),
+            guard let plaintext = try? open(body, with: privateKey, info: info, aad: Data(item.identity.utf8), version: Self.version),
                   let payload = try? JSONDecoder().decode(InputHistoryPayload.self, from: plaintext)
             else {
                 removed = remove(item) || removed
@@ -316,9 +374,9 @@ actor InputHistoryStore {
         return InputHistoryStatus(count: 0, nextExpiry: nil)
     }
 
-    /// `clear` for a profile that is being removed: also allowed in a second copy of the app.
+    /// `clear` for a profile that is being removed, binding included: also allowed in a second copy of the app.
     func erase() throws {
-        try wipe()
+        try wipe(includingBinding: true)
     }
 
     /// Moves every entry to the expiry the new retention gives it, measured from its creation, then purges.
@@ -342,9 +400,92 @@ actor InputHistoryStore {
         return result
     }
 
+    // MARK: - Vault
+
+    /// The vault Input History is kept with, read without a prompt. Nil while none keeps it: then today's key opens it.
+    func boundVault() throws -> UUID? {
+        try binding()?.vaultID
+    }
+
+    /// How many entries are kept with `vaultID`, without a prompt: Delete Vault names them, since they go with it.
+    func count(keptWith vaultID: UUID) -> Int {
+        (try? binding())?.vaultID == vaultID ? settle().count : 0
+    }
+
+    /// The vault was deleted. When it kept Input History, nothing kept with it can be opened again: the entries, both keys and the
+    /// binding go now, so the next entry starts a pair of today's kind instead of one nobody can open. Any other vault changes nothing.
+    func vaultDeleted(_ vaultID: UUID) throws -> InputHistoryStatus {
+        guard ownsSession, try binding()?.vaultID == vaultID else { return status(settle()) }
+        try wipe(includingBinding: true)
+        return InputHistoryStatus(count: 0, nextExpiry: nil)
+    }
+
+    private func binding() throws -> Binding? {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        return try publicKeys.read(service: bindingService, context: context).flatMap(Binding.init)
+    }
+
+    /// The inbox key `vault` opens: the bound one, or a new one bound to `vault` when `binding` is nil.
+    private func inbox(for vault: InputHistoryVaultKey, binding: Binding?) throws -> Curve25519.KeyAgreement.PrivateKey {
+        if let binding {
+            guard binding.vaultID == vault.vaultID else { throw InputHistoryError.vaultLocked }
+            let box = try AES.GCM.SealedBox(combined: binding.stored.dropFirst(Binding.headerLength))
+            let raw = try AES.GCM.open(box, using: vault.key, authenticating: binding.stored.prefix(Binding.headerLength))
+            return try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: raw)
+        }
+        let inbox = Curve25519.KeyAgreement.PrivateKey()
+        let header = Data([Self.keptVersion]) + Data(vault.vaultID.uuidString.utf8) + inbox.publicKey.rawRepresentation
+        guard let sealed = try AES.GCM.seal(inbox.rawRepresentation, using: vault.key, authenticating: header).combined else {
+            throw InputHistoryError.invalid
+        }
+        try publicKeys.write(header + sealed, service: bindingService, context: LAContext())
+        return inbox
+    }
+
+    /// The private key as it is stored: raw without an inbox, else `0x02 | encapsulated key | HPKE(private key)` sealed to the inbox
+    /// key, its own public key authenticated.
+    private func keep(_ key: Curve25519.KeyAgreement.PrivateKey, for inbox: Curve25519.KeyAgreement.PublicKey?) throws -> Data {
+        guard let inbox else { return key.rawRepresentation }
+        return try seal(key.rawRepresentation, to: inbox, info: keptInfo, aad: key.publicKey.rawRepresentation, version: Self.keptVersion)
+    }
+
+    /// `keep` undone: today's raw key as it is, a kept one opened with the inbox key.
+    private func release(_ stored: Data, publicKey: Data, inbox: Curve25519.KeyAgreement.PrivateKey?) throws -> Curve25519.KeyAgreement.PrivateKey {
+        if stored.count == Self.rawKeyLength {
+            return try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: stored)
+        }
+        guard let inbox else { throw InputHistoryError.keysUnusable }
+        return try Curve25519.KeyAgreement.PrivateKey(
+            rawRepresentation: open(stored, with: inbox, info: keptInfo, aad: publicKey, version: Self.keptVersion)
+        )
+    }
+
+    /// Moves today's key under `vault`, once: the profile has a vault now and it was unlocked for this opening. The kept form is
+    /// opened before it is written and read back after; if either check fails the raw key is written back, so no entry is lost and
+    /// the next opening tries again. The entries are not encrypted again.
+    private func moveKey(
+        _ key: Curve25519.KeyAgreement.PrivateKey, to vault: InputHistoryVaultKey, inbox: Curve25519.KeyAgreement.PrivateKey?, context: LAContext
+    ) {
+        let publicKey = key.publicKey.rawRepresentation
+        guard let inbox = try? inbox ?? self.inbox(for: vault, binding: nil),
+              let kept = try? keep(key, for: inbox.publicKey),
+              (try? release(kept, publicKey: publicKey, inbox: inbox).rawRepresentation) == key.rawRepresentation
+        else { return }
+        do {
+            try privateKeys.write(kept, service: service, context: context)
+            guard let back = try privateKeys.read(service: service, context: context),
+                  (try? release(back, publicKey: publicKey, inbox: inbox).rawRepresentation) == key.rawRepresentation
+            else { throw InputHistoryError.invalid }
+        } catch {
+            try? privateKeys.write(key.rawRepresentation, service: service, context: context)
+        }
+    }
+
     // MARK: - Keys
 
-    /// The public key, made on the first call. It checks that the private key still exists but never reads it.
+    /// The public key, made on the first call. It checks that the private key still exists but never reads it. Once a vault keeps
+    /// Input History, a new private key is stored sealed to its inbox key, which needs no vault and no prompt.
     private func keyForRecording() throws -> Curve25519.KeyAgreement.PublicKey {
         let context = LAContext()
         context.interactionNotAllowed = true
@@ -358,14 +499,15 @@ actor InputHistoryStore {
             try wipe()
         }
         let privateKey = Curve25519.KeyAgreement.PrivateKey()
-        try privateKeys.write(privateKey.rawRepresentation, service: service, context: LAContext())
+        try privateKeys.write(keep(privateKey, for: binding()?.inbox), service: service, context: LAContext())
         try publicKeys.write(privateKey.publicKey.rawRepresentation, service: service, context: LAContext())
         return privateKey.publicKey
     }
 
+    /// The binding goes too: a broken one would keep sealing new keys nobody can open.
     private func resetUnusableKeys() -> InputHistoryError {
         if ownsSession {
-            try? wipe()
+            try? wipe(includingBinding: true)
         }
         return .keysUnusable
     }
@@ -378,23 +520,24 @@ actor InputHistoryStore {
 
     // MARK: - Encryption
 
-    /// `0x01 | encapsulated key (32 bytes) | ciphertext`. The identity is authenticated, so a body moved to another name does not open.
-    private func seal(_ plaintext: Data, to key: Curve25519.KeyAgreement.PublicKey, identity: String) throws -> Data {
+    /// `version | encapsulated key (32 bytes) | ciphertext`, with `aad` authenticated: an entry's identity, so a body moved to another
+    /// name does not open, or a kept private key's own public key.
+    private func seal(_ plaintext: Data, to key: Curve25519.KeyAgreement.PublicKey, info: Data, aad: Data, version: UInt8) throws -> Data {
         var sender = try HPKE.Sender(recipientKey: key, ciphersuite: Self.suite, info: info)
-        let ciphertext = try sender.seal(plaintext, authenticating: Data(identity.utf8))
-        return Data([Self.version]) + sender.encapsulatedKey + ciphertext
+        let ciphertext = try sender.seal(plaintext, authenticating: aad)
+        return Data([version]) + sender.encapsulatedKey + ciphertext
     }
 
-    private func open(_ body: Data, identity: String, with key: Curve25519.KeyAgreement.PrivateKey) throws -> Data {
+    private func open(_ body: Data, with key: Curve25519.KeyAgreement.PrivateKey, info: Data, aad: Data, version: UInt8) throws -> Data {
         let header = 1 + Self.encapsulatedKeyLength
-        guard body.count > header, body.first == Self.version else { throw InputHistoryError.invalid }
+        guard body.count > header, body.first == version else { throw InputHistoryError.invalid }
         var recipient = try HPKE.Recipient(
             privateKey: key,
             ciphersuite: Self.suite,
             info: info,
             encapsulatedKey: body.dropFirst().prefix(Self.encapsulatedKeyLength)
         )
-        return try recipient.open(body.dropFirst(header), authenticating: Data(identity.utf8))
+        return try recipient.open(body.dropFirst(header), authenticating: aad)
     }
 
     // MARK: - Files
@@ -465,7 +608,9 @@ actor InputHistoryStore {
         return live
     }
 
-    private func wipe() throws {
+    /// Entries and both keys. The binding stays unless `includingBinding`: it holds no entry, and keeps what is recorded next sealed
+    /// for the vault.
+    private func wipe(includingBinding: Bool = false) throws {
         identities = [:]
         guard profileID != Profile.privateID else { return }
         var failure: (any Error)?
@@ -478,6 +623,13 @@ actor InputHistoryStore {
             try publicKeys.erase(service: service)
         } catch {
             failure = failure ?? error
+        }
+        if includingBinding {
+            do {
+                try publicKeys.erase(service: bindingService)
+            } catch {
+                failure = failure ?? error
+            }
         }
         do {
             if FileManager.default.fileExists(atPath: directory.path) {

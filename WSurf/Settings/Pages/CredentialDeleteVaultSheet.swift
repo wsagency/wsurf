@@ -40,6 +40,12 @@ struct CredentialDeleteVaultSheet: View {
                 countRow("Items in Trash", pending.counts.inTrash)
                 countRow("Earlier versions", pending.counts.earlierVersions)
                 countRow("Excluded sites", pending.counts.excludedSites)
+                if pending.counts.inputHistory > 0 {
+                    countRow("Input History entries", pending.counts.inputHistory)
+                }
+            }
+            if pending.counts.inputHistory > 0 {
+                note("Input History is kept with this vault, so what it recorded is deleted too.")
             }
             if pending.counts.passkeys > 0 {
                 note("""
