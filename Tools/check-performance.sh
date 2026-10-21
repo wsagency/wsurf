@@ -92,11 +92,11 @@ check_average \
   '4096' \
   'Stale tab sweep memory growth' \
   'kB'
-# Provisional budgets: no native run was possible when this test was added. Re-baseline both from a native run.
+# Five-sample Pro means in the app test host (2026-10-21): 0.000360 s, 0 kB. Budgets are twice the mean (memory at least 4096 kB).
 check_average \
   'BrowserPerformanceTests/testArchivedTabSearchProjection()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.050' \
+  '0.00072' \
   '30-entry archive search among 300 open tabs' \
   's'
 check_average \
@@ -164,6 +164,19 @@ check_average \
   'com.apple.dt.XCTMetric_Memory.physical' \
   '8192' \
   'Crowded sidebar layout memory growth' \
+  'kB'
+# Five-sample Pro means (2026-10-21): 0.833475 s, 3509.45 kB. Budgets are twice the mean.
+check_average \
+  'BrowserPerformanceTests/testLayingOutACrowdedSidebarWithEveryLayoutOption()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '1.667' \
+  '300-row sidebar layout with every layout option' \
+  's'
+check_average \
+  'BrowserPerformanceTests/testLayingOutACrowdedSidebarWithEveryLayoutOption()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '7019' \
+  'Layout option sidebar memory growth' \
   'kB'
 check_average \
   'CredentialListPerformanceTests/testLayingOutThreeThousandCredentials()' \
@@ -254,4 +267,56 @@ check_average \
   'com.apple.dt.XCTMetric_Memory.physical' \
   '4096' \
   'Page watch scheduling memory growth' \
+  'kB'
+
+# Large vault (20,000 credentials, 25,000 for the merge case). Five-sample Pro means in the app test host (2026-10-21):
+# edit 1.0926 s / -930.6 kB, whole-vault save 1.231078 s / 5292.04 kB, passkey merge targets 0.676352 s / -1821.9 kB,
+# merge choice in a full review 0.7291 s / -5665.6 kB. Budgets are twice the mean (memory at least 4096 kB).
+check_average \
+  'VaultScalePerformanceTests/testEditingOneOfTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '2.186' \
+  'One saved edit of 20,000 credentials' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testEditingOneOfTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'One saved edit of 20,000 credentials memory growth' \
+  'kB'
+check_average \
+  'VaultScalePerformanceTests/testSavingOneEditOfTwentyThousandCredentialsAsAWholeVault()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '2.463' \
+  'One edit of 20,000 credentials saved as a whole vault' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testSavingOneEditOfTwentyThousandCredentialsAsAWholeVault()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '10585' \
+  'One edit of 20,000 credentials saved as a whole vault memory growth' \
+  'kB'
+check_average \
+  'VaultScalePerformanceTests/testListingMergeTargetsForPasskeysAmongTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '1.353' \
+  'Merge targets of 20 passkeys among 20,000 credentials' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testListingMergeTargetsForPasskeysAmongTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Merge targets of 20 passkeys among 20,000 credentials memory growth' \
+  'kB'
+check_average \
+  'VaultScalePerformanceTests/testChoosingAMergeInAReviewThatFillsTheVault()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '1.459' \
+  'One merge choice in a review that fills a 25,000-credential vault' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testChoosingAMergeInAReviewThatFillsTheVault()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'One merge choice in a review that fills a 25,000-credential vault memory growth' \
   'kB'
