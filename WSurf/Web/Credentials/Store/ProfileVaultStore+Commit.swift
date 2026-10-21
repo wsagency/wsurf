@@ -40,9 +40,9 @@ nonisolated struct Proposal {
     let requires: RemovalScope?
     /// The account an explicit earlier-revision restore applies to: its changes are revisions, never removals (see `CredentialDiff.plan`).
     var restoring: UUID?
-    /// The live accounts this write can have changed. Every other account of `accounts` is the value read in this transaction, by
-    /// construction of the caller, so it is neither compared nor checked again. `nil` (a caller that passes a whole payload) compares
-    /// every account with its stored row.
+    /// The live accounts this write can have changed. Every other account of `accounts` that is `==` the value read in this
+    /// transaction is neither compared nor checked again; one that is not is compared on its bytes, so naming too few still writes
+    /// every change. `nil` compares every account with its stored row on its bytes.
     var changing: Set<UUID>?
 }
 
@@ -64,11 +64,13 @@ private nonisolated struct LedgerRequired: Error {}
 /// heads, rewrite the registry. `CommitTransaction.write` is the one internal write contract (`commit`, `delete`, and later the
 /// per-account and restore paths all route through it).
 extension ProfileVaultStore {
+    /// `changing` names the accounts the caller edited in `accounts` (`Proposal.changing`); `nil` compares every account on its bytes.
     func commit(
-        vaultID: UUID, _ accounts: [CredentialAccount], expectedRevision: UInt64, cause: String?, using access: VaultAccess
+        vaultID: UUID, _ accounts: [CredentialAccount], expectedRevision: UInt64, cause: String?, changing: Set<UUID>? = nil,
+        using access: VaultAccess
     ) async throws -> VaultCommitReceipt {
         let intent = CommitIntent(vaultID: vaultID, access: access, expectedRevision: expectedRevision, cause: cause, isCommit: true)
-        return try await perform(intent) { _ in Proposal(accounts: accounts, requires: nil) }
+        return try await perform(intent) { _ in Proposal(accounts: accounts, requires: nil, changing: changing) }
     }
 
     func delete(vaultID: UUID, scope: RemovalScope, expectedRevision: UInt64, using access: VaultAccess) async throws -> VaultCommitReceipt {
@@ -169,7 +171,9 @@ extension ProfileVaultStore {
         let intent = request.intent
         let unchanged = try transaction.unchanged(in: proposal)
         if intent.isCommit {
-            try validate(proposal.accounts, blockedOrigins: transaction.opened.head.blockedOrigins, unchanged: unchanged)
+            // An unchanged account stays as stored, so the limits count the stored value (`==` does not see a respelling).
+            let live = proposal.accounts.map { unchanged.contains($0.id) ? transaction.decoded[$0.id]?.account ?? $0 : $0 }
+            try validate(live, blockedOrigins: transaction.opened.head.blockedOrigins, unchanged: unchanged)
         }
         // §11.1: the plan is classified on the complete payload bytes, never on `==`.
         let plan = try CredentialDiff.plan(
@@ -363,9 +367,11 @@ nonisolated final class CommitTransaction {
         self.previous = previous
     }
 
-    /// The proposed accounts that are byte for byte their stored rows, which the plan and the checks then skip: outside
-    /// `proposal.changing` by construction, otherwise when the account's canonical JSON has the stored plaintext's digest. An id
-    /// the proposal repeats is never in it, so the checks that refuse a repeat still see every copy.
+    /// The proposed accounts that are their stored rows, which the plan and the checks then skip. One `proposal.changing` names is
+    /// never in it (the plan compares its bytes). One outside a named set is in it when `==` the value read here: the caller's copy
+    /// of that value, so one pointer or buffer compare per field, never an encode. Anything else (no set named, or a copy that is not
+    /// `==`) is in it when its canonical JSON has the stored plaintext's digest. An id the proposal repeats is never in it, so the
+    /// checks that refuse a repeat still see every copy.
     func unchanged(in proposal: Proposal) throws -> Set<UUID> {
         var seen = Set<UUID>(minimumCapacity: proposal.accounts.count)
         var repeated = Set<UUID>()
@@ -374,11 +380,11 @@ nonisolated final class CommitTransaction {
         }
         var unchanged = Set<UUID>(minimumCapacity: proposal.accounts.count)
         for account in proposal.accounts where !repeated.contains(account.id) {
-            guard let stored = decoded[account.id] else { continue }
-            if let changing = proposal.changing {
-                if !changing.contains(account.id) {
-                    unchanged.insert(account.id)
-                }
+            guard let stored = decoded[account.id], proposal.changing?.contains(account.id) != true else { continue }
+            // `==` is canonical equivalence, so it only ever skips an account the caller did not name: a byte-only respelling there
+            // keeps the stored bytes. A named account, or every account when none is named, is compared on its bytes.
+            if proposal.changing != nil, account == stored.account {
+                unchanged.insert(account.id)
             } else if try StoreSeal.digest(CredentialContent.canonicalJSON(account)) == stored.plaintextDigest {
                 unchanged.insert(account.id)
             }

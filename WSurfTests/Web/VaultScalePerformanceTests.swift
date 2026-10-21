@@ -9,7 +9,8 @@ import XCTest
 @testable import WSurf
 
 // A vault of 20,000 synthetic credentials (every tenth with a passkey) behind the real manager and store: one saved edit, through
-// the per-account write and through the whole-vault commit. Nothing here is real data. The vault limit is 25,000; the owner's report
+// the per-account write, the whole-vault commit and each caller of it, plus one undo and one restore from the Trash. Nothing here is
+// real data. The vault limit is 25,000; the owner's report
 // was 5.1 s for one edit at 20,000. `Tools/check-performance.sh` holds the measured steps to budgets set from the Pro's samples.
 nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Sendable {
     static let count = 20_000
@@ -39,6 +40,9 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
         /// The write the next measured step makes, prepared outside the measurement.
         var nextWrite: AccountWrite?
         var nextPayload: (accounts: [CredentialAccount], revision: UInt64)?
+        var nextSave: (login: SavedPassword, accountID: UUID, snapshot: StoreSnapshot)?
+        var nextEntry: (id: UUID, revision: UInt64)?
+        var model: CredentialSettingsModel?
 
         /// An unlocked vault holding `storedAccounts()`.
         func makeVault() async throws {
@@ -65,6 +69,7 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
         }
 
         func cleanup() async {
+            model = nil
             if let manager = vault?.manager {
                 coordinator.cancelImport(for: manager, owner: owner)
             }
@@ -98,6 +103,34 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
             options.invocationOptions = [.manuallyStart, .manuallyStop]
         }
         return options
+    }
+
+    /// Measures `step` alone against a fresh 20,000-credential vault. `prepare` (the caller's own reads, given the pass number) runs
+    /// before each measured step, outside the measurement; `check` runs once on the vault after the last pass.
+    @MainActor
+    func measureWrite(
+        prepare: @escaping @MainActor (Fixture, CredentialManager, Int) async throws -> Void,
+        step: @escaping @MainActor (Fixture, CredentialManager) async throws -> Void,
+        check: @escaping @MainActor (StoreSnapshot, Int) throws -> Void
+    ) {
+        let fixture = Fixture()
+        finish { try await fixture.makeVault() }
+        guard let manager = fixture.vault?.manager else { return XCTFail("The 20,000-credential vault was not made.") }
+        var passes = 0
+        measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions(manual: true)) {
+            passes += 1
+            let pass = passes
+            finish { try await prepare(fixture, manager, pass) }
+            startMeasuring()
+            finish { try await step(fixture, manager) }
+            stopMeasuring()
+        }
+        let last = passes
+        finish {
+            let snapshot = try await manager.snapshot()
+            try check(snapshot, last)
+        }
+        finish { await fixture.cleanup() }
     }
 
     // MARK: Edits
@@ -137,8 +170,8 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
         }
     }
 
-    /// The same edit through the whole-vault commit the credential editor, the autofill save and the passkey sign-in use: the
-    /// caller hands back every account, so the store compares each with its stored row once.
+    /// The same edit through the whole-vault commit with no account named, the store's fallback: it compares each account with its
+    /// stored row once. Every caller in the app names the accounts it edited (the tests below).
     func testSavingOneEditOfTwentyThousandCredentialsAsAWholeVault() {
         MainActor.assumeIsolated {
             let fixture = Fixture()
@@ -170,6 +203,124 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
                 XCTAssertEqual(snapshot.accounts.first?.password, last)
             }
             finish { await fixture.cleanup() }
+        }
+    }
+
+    /// The credential editor's save (`CredentialSettingsModel.save`): it reads the vault, puts the edited account in and commits the
+    /// whole vault naming that account, so one account is compared on its bytes and the other 19,999 by `==`.
+    func testSavingOneEditInTheCredentialEditorAmongTwentyThousandCredentials() {
+        MainActor.assumeIsolated {
+            measureWrite { fixture, manager, pass in
+                if fixture.model == nil {
+                    let profile = try XCTUnwrap(fixture.profile)
+                    fixture.model = CredentialSettingsModel(profile: profile, exchange: fixture.coordinator, manager: manager)
+                }
+                let snapshot = try await manager.snapshot()
+                var edited = try XCTUnwrap(snapshot.accounts.first)
+                edited.password = "edited-\(pass)"
+                fixture.nextPayload = ([edited], snapshot.revision)
+            } step: { fixture, _ in
+                let payload = try XCTUnwrap(fixture.nextPayload)
+                let model = try XCTUnwrap(fixture.model)
+                _ = try await model.save(try XCTUnwrap(payload.accounts.first), expectedRevision: payload.revision)
+            } check: { snapshot, last in
+                XCTAssertEqual(snapshot.accounts.count, Self.count)
+                XCTAssertEqual(snapshot.accounts.first?.password, "edited-\(last)")
+            }
+        }
+    }
+
+    /// The autofill save of a new password for the credential it offered (`CredentialAccountSelection.commitSave`), naming it.
+    func testSavingAnAutofilledPasswordAmongTwentyThousandCredentials() {
+        MainActor.assumeIsolated {
+            measureWrite { fixture, manager, pass in
+                let snapshot = try await manager.snapshot()
+                let account = try XCTUnwrap(snapshot.accounts.first)
+                let origin = try XCTUnwrap(account.origins.first)
+                let login = try SavedPassword(website: origin, username: account.username, password: "autofilled-\(pass)")
+                fixture.nextSave = (login, account.id, snapshot)
+            } step: { fixture, manager in
+                let save = try XCTUnwrap(fixture.nextSave)
+                let outcome = try await CredentialAccountSelection.commitSave(
+                    save.login, origin: save.login.origin, offered: .update(save.accountID), loginURL: nil, snapshot: save.snapshot,
+                    manager: manager, epoch: try XCTUnwrap(manager.authorizationEpoch)
+                )
+                XCTAssertEqual(outcome, .saved)
+            } check: { snapshot, last in
+                XCTAssertEqual(snapshot.accounts.count, Self.count)
+                XCTAssertEqual(snapshot.accounts.first?.password, "autofilled-\(last)")
+            }
+        }
+    }
+
+    /// A passkey sign-in's write (`WebsiteAuthenticatorCeremony` without the prompts around it): the signed passkey's
+    /// `lastSignedAt` advances and the whole vault is committed naming its account.
+    func testSigningInWithAPasskeyAmongTwentyThousandCredentials() {
+        MainActor.assumeIsolated {
+            let start = Date(timeIntervalSinceReferenceDate: 800_000_000)
+            measureWrite { fixture, manager, pass in
+                let snapshot = try await manager.snapshot()
+                var accounts = snapshot.accounts
+                let index = try XCTUnwrap(accounts.firstIndex { !$0.passkeys.isEmpty })
+                accounts[index].passkeys[0].lastSignedAt = start.addingTimeInterval(Double(pass))
+                fixture.nextPayload = (accounts, snapshot.revision)
+            } step: { fixture, manager in
+                let payload = try XCTUnwrap(fixture.nextPayload)
+                let signed = try XCTUnwrap(payload.accounts.first { !$0.passkeys.isEmpty }).id
+                _ = try await manager.commit(
+                    payload.accounts, expectedRevision: payload.revision, authorizedEpoch: try XCTUnwrap(manager.authorizationEpoch),
+                    changing: [signed]
+                )
+            } check: { snapshot, last in
+                XCTAssertEqual(snapshot.accounts.count, Self.count)
+                XCTAssertEqual(snapshot.accounts.first { !$0.passkeys.isEmpty }?.passkeys.first?.lastSignedAt, start.addingTimeInterval(Double(last)))
+            }
+        }
+    }
+
+    // MARK: Undo and the Trash
+
+    /// Undo of one edit (`CredentialManager.undo`): the account gets its earlier password back, bound to the stamp read after the edit.
+    func testUndoingOneEditAmongTwentyThousandCredentials() {
+        MainActor.assumeIsolated {
+            measureWrite { fixture, manager, pass in
+                let snapshot = try await manager.snapshot()
+                var account = try XCTUnwrap(snapshot.accounts.first)
+                account.password = "undone-\(pass)"
+                let stamp = try XCTUnwrap(snapshot.stamps[account.id])
+                fixture.nextWrite = AccountWrite(accountID: account.id, expected: .stamp(stamp), replacement: account)
+            } step: { fixture, manager in
+                let write = try XCTUnwrap(fixture.nextWrite)
+                _ = try await manager.undo(
+                    writes: [write], returning: [], removing: [:], authorizedEpoch: try XCTUnwrap(manager.authorizationEpoch)
+                )
+            } check: { snapshot, last in
+                XCTAssertEqual(snapshot.accounts.count, Self.count)
+                XCTAssertEqual(snapshot.accounts.first?.password, "undone-\(last)")
+            }
+        }
+    }
+
+    /// One deleted credential restored from the Trash (`CredentialManager.undelete`). The delete and the read of its Trash entry
+    /// are the caller's and stay outside the measurement.
+    func testRestoringOneOfTwentyThousandCredentialsFromTheTrash() {
+        MainActor.assumeIsolated {
+            measureWrite { fixture, manager, pass in
+                let epoch = try XCTUnwrap(manager.authorizationEpoch)
+                let snapshot = try await manager.snapshot()
+                let id = fixture.accounts[pass].id
+                let deleted = try await manager.delete(.account(id), expectedRevision: snapshot.revision, authorizedEpoch: epoch)
+                let page = try await manager.trashPage(after: nil)
+                let entry = try XCTUnwrap(page.items.first { $0.ownerID == id })
+                fixture.nextEntry = (entry.id, deleted.revision)
+            } step: { fixture, manager in
+                let entry = try XCTUnwrap(fixture.nextEntry)
+                _ = try await manager.undelete(
+                    entryID: entry.id, expectedRevision: entry.revision, authorizedEpoch: try XCTUnwrap(manager.authorizationEpoch)
+                )
+            } check: { snapshot, _ in
+                XCTAssertEqual(snapshot.accounts.count, Self.count)
+            }
         }
     }
 

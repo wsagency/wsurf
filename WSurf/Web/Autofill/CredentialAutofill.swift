@@ -249,7 +249,10 @@ nonisolated enum CredentialAccountSelection {
         guard plan != .unchanged else { return .unchanged }
         guard plan == offered else { return .needsReview }
         let accounts = try applying(plan, login: login, origin: origin, loginURL: loginURL, to: snapshot.accounts)
-        _ = try await manager.commit(accounts, expectedRevision: snapshot.revision, authorizedEpoch: epoch)
+        // Only the offered account changes; a new one is not stored yet.
+        _ = try await manager.commit(
+            accounts, expectedRevision: snapshot.revision, authorizedEpoch: epoch, changing: Set([selected].compactMap { $0 })
+        )
         return .saved
     }
 

@@ -168,8 +168,10 @@ extension WebsiteAuthenticator {
         // Cancellation up to the vault's own pre-write check stops the commit with nothing saved; a write that already
         // landed still returns its receipt, so the outcome reported is always the one on disk.
         try Task.checkCancellation()
-        let revision = current.revision, epoch = bound.epoch
-        let commit = Task { @MainActor in try await manager.commit(accounts, expectedRevision: revision, authorizedEpoch: epoch) }
+        let revision = current.revision, epoch = bound.epoch, changed = registration.account.id
+        let commit = Task { @MainActor in
+            try await manager.commit(accounts, expectedRevision: revision, authorizedEpoch: epoch, changing: [changed])
+        }
         let receipt: VaultCommitReceipt
         do {
             receipt = try await withTaskCancellationHandler { try await commit.value } onCancel: { commit.cancel() }
@@ -348,7 +350,9 @@ extension WebsiteAuthenticator {
         try Task.checkCancellation()
         try validateDeadline(request)
         let commit = Task { @MainActor in
-            try await manager.commit(updatedAccounts, expectedRevision: current.revision, authorizedEpoch: bound.epoch)
+            try await manager.commit(
+                updatedAccounts, expectedRevision: current.revision, authorizedEpoch: bound.epoch, changing: [account.id]
+            )
         }
         let receipt: VaultCommitReceipt
         do {

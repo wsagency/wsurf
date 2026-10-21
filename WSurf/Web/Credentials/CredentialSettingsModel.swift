@@ -517,14 +517,16 @@ final class CredentialSettingsModel {
         } else {
             accounts.append(account)
         }
-        return try await write(accounts, expectedRevision: expectedRevision, epoch: epoch)
+        return try await write(accounts, expectedRevision: expectedRevision, epoch: epoch, changing: [account.id])
     }
 
     func remove(accountID: UUID, expectedRevision: UInt64, epoch bound: UInt64? = nil) async throws -> VaultCommitReceipt {
         let (epoch, snapshot) = try await authorizedSnapshot(epoch: bound)
         guard snapshot.revision == expectedRevision else { throw CredentialVaultError.staleRevision }
         guard snapshot.accounts.contains(where: { $0.id == accountID }) else { throw CredentialVaultError.invalidData }
-        return try await write(snapshot.accounts.filter { $0.id != accountID }, expectedRevision: expectedRevision, epoch: epoch)
+        return try await write(
+            snapshot.accounts.filter { $0.id != accountID }, expectedRevision: expectedRevision, epoch: epoch, changing: [accountID]
+        )
     }
 
     // MARK: Reveal and copy
@@ -840,11 +842,14 @@ final class CredentialSettingsModel {
 
     /// Nothing throws once the vault has committed: the receipt reflects what is on disk, and a lock that
     /// landed meanwhile has already dropped the session.
-    private func write(_ accounts: [CredentialAccount], expectedRevision: UInt64, epoch: UInt64) async throws -> VaultCommitReceipt {
+    /// `changing` names the accounts the caller replaced in `accounts`; every other one is the snapshot's own.
+    private func write(
+        _ accounts: [CredentialAccount], expectedRevision: UInt64, epoch: UInt64, changing: Set<UUID>
+    ) async throws -> VaultCommitReceipt {
         guard let manager, manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
         // Last point before the durable write: a cancelled task or a changed authorization never commits.
         try Task.checkCancellation()
-        let receipt = try await manager.commit(accounts, expectedRevision: expectedRevision, authorizedEpoch: epoch)
+        let receipt = try await manager.commit(accounts, expectedRevision: expectedRevision, authorizedEpoch: epoch, changing: changing)
         try? update(epoch) { $0.committed(accounts, revision: receipt.revision) }
         return receipt
     }
