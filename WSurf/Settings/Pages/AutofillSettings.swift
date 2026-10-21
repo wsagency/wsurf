@@ -32,7 +32,10 @@ struct AutofillSettings: View {
                 SubPageHeader(backTitle: "Autofill", onBack: { self.destination = nil }) {}
                 switch destination {
                 case .credentials:
-                    CredentialSettings(profile: coordinator.context.profile)
+                    CredentialSettings(profile: coordinator.context.profile) { url in
+                        // The window this page is in: the same profile, so a private window never opens a normal one.
+                        coordinator.browser.newTab(url: url, activate: true, after: coordinator.browser.activeTab)
+                    }
                 case .cards:
                     PaymentCardSettings(context: coordinator.context)
                 case .contacts:

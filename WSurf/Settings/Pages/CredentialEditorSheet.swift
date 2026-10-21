@@ -211,6 +211,27 @@ struct CredentialEditorSheet: View {
         }
     }
 
+    /// One entry per address that would save, to open it in a new tab without leaving the editor.
+    @ViewBuilder
+    private var websiteOpenMenu: some View {
+        let addresses = (model.draft.map(CredentialCopyParts.websiteLines(of:)) ?? []).compactMap {
+            WebsiteFieldEditing.url(for: $0, kind: .websites)
+        }
+        if !addresses.isEmpty {
+            Menu {
+                ForEach(Array(addresses.enumerated()), id: \.offset) { _, address in
+                    Button { model.openWebsite(address) } label: { Text(verbatim: address.absoluteString) }
+                }
+            } label: {
+                Image(systemName: "arrow.up.forward.square").accessibilityLabel("Open website in a new tab")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Open Website in a New Tab")
+        }
+    }
+
     private func discard() {
         model.error = nil
         model.cancelEditing()
@@ -257,17 +278,20 @@ struct CredentialEditorSheet: View {
     private var websites: some View {
         section("Websites") {
             WebsiteListField(
-                kind: .websites, label: "Websites (one HTTPS address per line)", lineLimit: 2...6, text: text(\.websites)
+                kind: .websites, label: "Websites (one HTTPS address per line)", lineLimit: 2...6, text: text(\.websites),
+                openAddress: { model.openWebsite($0) }
             )
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                caption("One HTTPS address per line. Passwords and codes fill only on these websites.")
+                caption("One HTTPS address per line. Passwords and codes fill only on these websites. Command-click an address to open it.")
                 Spacer(minLength: 0)
+                websiteOpenMenu
                 websiteCopyMenu
             }
             DisclosureGroup("Other HTTPS origins", isExpanded: $showsOtherOrigins) {
                 VStack(alignment: .leading, spacing: 6) {
                     WebsiteListField(
-                        kind: .extraOrigins, label: "Other HTTPS origins (one per line)", lineLimit: 1...4, text: text(\.extraOrigins)
+                        kind: .extraOrigins, label: "Other HTTPS origins (one per line)", lineLimit: 1...4, text: text(\.extraOrigins),
+                        openAddress: { model.openWebsite($0) }
                     )
                     caption("More sites where this credential fills, one per line.")
                 }

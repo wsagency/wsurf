@@ -22,8 +22,11 @@ struct CredentialSettings: View {
     @State private var work: Task<Void, Never>?
     @State private var exportContext: CredentialExportContext?
 
-    init(profile: Profile) {
-        self.init(model: CredentialSettingsModel(profile: profile))
+    /// `openWebsite` opens an address in a new tab of the window that shows this page.
+    init(profile: Profile, openWebsite: @escaping @MainActor (URL) -> Void) {
+        let model = CredentialSettingsModel(profile: profile)
+        model.websiteOpener = openWebsite
+        self.init(model: model)
     }
 
     /// Test seam: a page over a model that already has its own manager, and the list state and selection a test can drive.
@@ -547,6 +550,15 @@ struct CredentialRow: View {
             SiteRow(host: host, summary: detail.isEmpty ? nil : detail, caption: summary.dates.caption(style: .list)) {
                 HStack(spacing: 8) {
                     actions
+                    if let website = summary.website {
+                        Button {
+                            model.openWebsite(website)
+                        } label: {
+                            Image(systemName: "arrow.up.forward.square")
+                        }
+                        .help("Open Website in a New Tab")
+                        .accessibilityLabel("Open website of \(summary.title) in a new tab")
+                    }
                     Button("Edit…", action: open)
                         .disabled(model.isBusy)
                     Button("Remove", role: .destructive, action: remove)

@@ -11,6 +11,8 @@ struct WebsiteListField: NSViewRepresentable {
     let label: LocalizedStringResource
     let lineLimit: ClosedRange<Int>
     @Binding var text: String
+    /// Opens an address the user Command-clicks; `nil` leaves every click to editing.
+    var openAddress: ((URL) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -19,6 +21,7 @@ struct WebsiteListField: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let textView = WebsiteTextView(kind: kind)
         textView.delegate = context.coordinator
+        textView.openAddress = openAddress
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = .width
@@ -36,6 +39,7 @@ struct WebsiteListField: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.text = $text
+        (scrollView.documentView as? WebsiteTextView)?.openAddress = openAddress
         // The view owns the text while the user edits, and an input method owns it while it composes.
         guard let textView = scrollView.documentView as? WebsiteTextView,
               !textView.hasMarkedText(), textView.string != text else { return }
@@ -69,6 +73,8 @@ struct WebsiteListField: NSViewRepresentable {
 final class WebsiteTextView: NSTextView {
     private let kind: WebsiteFieldEditing.Kind
     private let storage = NSTextStorage()
+    /// Opens the address under a Command-click. A plain click always edits.
+    var openAddress: ((URL) -> Void)?
 
     init(kind: WebsiteFieldEditing.Kind) {
         self.kind = kind
@@ -98,7 +104,7 @@ final class WebsiteTextView: NSTextView {
     }
 
     /// Styles the lines that save would accept like links. Only attributes change, so the undo stack is untouched.
-    /// The text carries no `.link` attribute: a click edits, and AppKit never has a link to open.
+    /// The text carries no `.link` attribute: a click edits, and only a Command-click opens the address (`mouseDown`).
     func refreshStyling() {
         guard let storage = textStorage else { return }
         let whole = NSRange(location: 0, length: storage.length)
@@ -123,6 +129,30 @@ final class WebsiteTextView: NSTextView {
         if !hasMarkedText() {
             refreshStyling()
         }
+    }
+
+    // MARK: Command-click
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command), let openAddress, let address = address(at: convert(event.locationInWindow, from: nil)) {
+            openAddress(address)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    /// The address whose text is under `point`, when its line is one save would accept; `nil` past the end of a line.
+    private func address(at point: NSPoint) -> URL? {
+        guard let layoutManager, let textContainer else { return nil }
+        let location = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        let glyph = layoutManager.glyphIndex(for: location, in: textContainer)
+        guard glyph < layoutManager.numberOfGlyphs,
+              layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainer).contains(location) else {
+            return nil
+        }
+        let text = string as NSString
+        let line = text.lineRange(for: NSRange(location: layoutManager.characterIndexForGlyph(at: glyph), length: 0))
+        return WebsiteFieldEditing.url(for: text.substring(with: line).trimmingCharacters(in: .whitespacesAndNewlines), kind: kind)
     }
 
     // MARK: Keys
