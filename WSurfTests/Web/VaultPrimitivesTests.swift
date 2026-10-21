@@ -150,6 +150,7 @@ struct VaultPrimitivesTests {
         let kinds: [(RecordKind, String, UInt8)] = [(.account, "account", 1), (.revision, "revision", 2), (.trashEntry, "trashEntry", 3), (.tombstone, "tombstone", 4)]
         let subjects: [(RecordSubject, String, UInt8)] = [
             (.account, "account", 1), (.password, "password", 2), (.totp, "totp", 3), (.passkey, "passkey", 4), (.metadata, "metadata", 5),
+            (.note, "note", 6), (.secureItem, "secureItem", 7),
         ]
         for (value, name, tag) in roles {
             #expect(value.sqlName == name && value.rawValue == tag && VaultRole(sqlName: name) == value)

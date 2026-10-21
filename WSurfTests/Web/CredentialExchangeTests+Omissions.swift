@@ -14,38 +14,12 @@ extension CredentialExchangeTests {
     typealias Kind = CredentialExchangeError.CredentialKind
     typealias Omission = CredentialImportOmission
 
-    private func field(_ value: String, type: ASImportableEditableField.FieldType = .concealedString) -> ASImportableEditableField {
-        ASImportableEditableField(id: Data([0x51]), fieldType: type, value: value)
-    }
-
-    /// One credential of every kind WSurf does not store, each carrying `secret` so a leak into the review would show.
+    /// One credential of every kind WSurf still does not store, each carrying `secret` so a leak into the review would show. The
+    /// rest (cards, addresses, names, Wi-Fi, keys, documents and custom fields) are kept as items: `CredentialExchangeTests+SecureItems`.
     private func unsupportedCredentials(_ secret: String) -> [(credential: ASImportableCredential, kind: Kind)] {
-        let value = field(secret)
-        return [
-            (.address(.init(streetAddress: value, postalCode: nil, city: nil, territory: nil, country: nil, telephone: nil)), .address),
-            (.apiKey(.init(key: value, userName: nil, keyType: nil, url: nil, validFrom: nil, expiryDate: nil)), .apiKey),
-            (.creditCard(.init(number: value, fullName: nil, cardType: nil, verificationNumber: nil, pin: nil, expiryDate: nil, validFrom: nil)), .creditCard),
-            (.customFields(.init(fields: [value])), .customFields),
-            (.driversLicense(.init(
-                fullName: value, birthDate: nil, issueDate: nil, expiryDate: nil, issuingAuthority: nil, territory: nil, country: nil,
-                licenseNumber: nil, licenseClass: nil
-            )), .driversLicense),
+        [
             (.generatedPassword(.init(password: secret)), .generatedPassword),
-            (.identityDocument(.init(
-                issuingCountry: nil, documentNumber: value, identificationNumber: nil, nationality: nil, fullName: nil, birthDate: nil,
-                birthPlace: nil, sex: nil, issueDate: nil, expiryDate: nil, issuingAuthority: nil
-            )), .identityDocument),
             (.itemReference(.init(reference: ASImportableLinkedItem(item: Data([0x52]), account: nil))), .itemReference),
-            (.passport(.init(
-                issuingCountry: nil, passportType: nil, passportNumber: value, nationalIdentificationNumber: nil, nationality: nil,
-                fullName: nil, birthDate: nil, birthPlace: nil, sex: nil, issueDate: nil, expiryDate: nil, issuingAuthority: nil
-            )), .passport),
-            (.personName(.init(
-                title: nil, given: value, givenInformal: nil, given2: nil, surnamePrefix: nil, surname: nil, surname2: nil,
-                credentials: nil, generation: nil
-            )), .personName),
-            (.sshKey(.init(keyType: "ssh-ed25519", privateKey: Data(secret.utf8), keyComment: nil, creationDate: nil, expiryDate: nil, keyGenerationSource: nil)), .sshKey),
-            (.wifi(.init(ssid: field("network", type: .string), networkSecurityType: nil, passphrase: value)), .wifi),
         ]
     }
 
@@ -76,7 +50,7 @@ extension CredentialExchangeTests {
     @Test func unsupportedKindsAreOmittedAndDisclosed() throws {
         let secret = "must-not-appear-in-the-review"
         let cases = unsupportedCredentials(secret)
-        #expect(cases.count == 12, "every kind WSurf does not store yet")
+        #expect(cases.count == 2, "every kind WSurf still does not store: the rest are kept as items")
         for (credential, kind) in cases {
             let preview = try imported([basicAuthentication(username: "ada", password: "pw"), credential])
 
@@ -120,11 +94,11 @@ extension CredentialExchangeTests {
     }
 
     @Test func anItemWithNothingToKeepIsSkippedAndNamed() throws {
-        let preview = try imported([.wifi(.init(ssid: field("network", type: .string), networkSecurityType: nil, passphrase: field("pw")))])
+        let preview = try imported([.generatedPassword(.init(password: "pw"))])
 
         #expect(preview.candidates.isEmpty)
         #expect(preview.omitted == [
-            omission(.wifi, .unsupportedKind, credential: 0),
+            omission(.generatedPassword, .unsupportedKind, credential: 0),
             omission(nil, .nothingToKeep),
         ])
 

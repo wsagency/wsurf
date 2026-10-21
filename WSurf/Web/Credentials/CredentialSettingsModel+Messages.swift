@@ -66,6 +66,8 @@ extension CredentialSettingsModel {
         case PasskeyUnlockError.failed(let domain, let code)
             where domain == ASAuthorizationError.errorDomain && code == ASAuthorizationError.Code.canceled.rawValue:
             return nil
+        case WebsiteAuthenticatorError.notAllowed:
+            return String(localized: "Authentication didn’t finish. Nothing was shown or copied.")
         case PasskeyUnlockError.unsupportedPRF:
             return String(localized: "That passkey can’t protect the vault. Choose a passkey provider that supports the PRF extension.")
         case is CancellationError:

@@ -79,6 +79,14 @@ extension CredentialListFilter {
             "Verification codes"
         case .notes:
             "Notes"
+        case .cards:
+            "Cards"
+        case .addresses:
+            "Addresses"
+        case .documents:
+            "IDs"
+        case .otherItems:
+            "Other"
         }
     }
 }
@@ -309,7 +317,7 @@ struct CredentialListView<Switcher: View>: View {
             HStack(spacing: 10) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        ForEach(CredentialListFilter.allCases, id: \.self) { kind in
+                        ForEach(CredentialListFilter.allCases.filter(showsChip), id: \.self) { kind in
                             chip(kind)
                         }
                         Toggle("By Site", isOn: $list.bySite)
@@ -364,6 +372,11 @@ struct CredentialListView<Switcher: View>: View {
                 }
             }
         }
+    }
+
+    /// An item kind's chip is shown while some credential holds one, or while it is the filter in use.
+    private func showsChip(_ kind: CredentialListFilter) -> Bool {
+        !kind.isItemKind || list.filter == kind || (list.counts?[kind] ?? 0) > 0
     }
 
     private func chip(_ kind: CredentialListFilter) -> some View {

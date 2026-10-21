@@ -83,17 +83,17 @@ extension CredentialExchangeCoordinator {
                     )
                     choices[incoming] = choice
                 }
-                // A note nobody decided follows its login, a Skip included. Keeping the saved login because it didn't change is not
-                // a Skip: a note the saved credential doesn't hold yet still belongs in it.
-                if let note = identities.first(where: { if case .note = $0 { true } else { false } }),
-                   let lead = CredentialExchangeCodec.leadIdentity(of: candidate), choices[lead] == .skip,
-                   choices[note] == nil, existingByIncoming[note] == nil, !mustDecide.contains(note),
-                   CredentialImportDefaults.isAdditive(classes[note]) {
+                // Notes and items nobody decided follow their login, a Skip included. Keeping the saved login because it didn't
+                // change is not a Skip: a note or an item the saved credential doesn't hold yet still belongs in it.
+                for follower in identities where follower.followsLogin {
+                    guard let lead = CredentialExchangeCodec.leadIdentity(of: candidate), choices[lead] == .skip,
+                          choices[follower] == nil, existingByIncoming[follower] == nil, !mustDecide.contains(follower),
+                          CredentialImportDefaults.isAdditive(classes[follower]) else { continue }
                     if let linked = lookup.linkedAccountID(for: candidate) {
-                        choices[note] = .merge(into: linked)
+                        choices[follower] = .merge(into: linked)
                     } else {
-                        // No saved credential holds this item, so there is nowhere for the note to go but with the login the user
-                        // would be skipping: that one is the user's call, and nothing is dropped by default.
+                        // No saved credential holds this item, so there is nowhere for it to go but with the login the user would be
+                        // skipping: that one is the user's call, and nothing is dropped by default.
                         choices[lead] = nil
                     }
                 }
@@ -198,6 +198,8 @@ extension CredentialExchangeCoordinator {
                 .totp
             case .note:
                 .note
+            case .secureItems:
+                .secureItems
             }
         }
 
@@ -239,9 +241,9 @@ extension CredentialExchangeCoordinator {
             return CredentialExchangeCoordinator.identities(in: candidate).map { incoming in
                 let existing = existingByIncoming[incoming]
                 let choice = choices[incoming]
-                // A note nobody decided goes where its item's lead credential goes (`CredentialExchangeCodec.apply`).
+                // A note or an item nobody decided goes where its item's lead credential goes (`CredentialExchangeCodec.apply`).
                 var placement = (existing: existing, choice: choice)
-                if case .note = incoming, existing == nil, choice == nil, !mustDecide.contains(incoming),
+                if incoming.followsLogin, existing == nil, choice == nil, !mustDecide.contains(incoming),
                    let lead = CredentialExchangeCodec.leadIdentity(of: candidate) {
                     placement = (existingByIncoming[lead], choices[lead])
                 }
@@ -467,9 +469,10 @@ extension CredentialExchangeCoordinator {
         case .skip:
             return all(.skip, of: records)
         case .keepSaved:
-            // What the saved credential doesn't hold yet (a note) is not a conflict, and keeping the saved version doesn't leave it out.
+            // What the saved credential doesn't hold yet (a note, an item) is not a conflict, and keeping the saved version doesn't
+            // leave it out.
             let additions: [Change] = linked.map { target in
-                records.filter { $0.kind == .note && !$0.needsChoice && CredentialImportDefaults.isAdditive($0.classification) }
+                records.filter { $0.incoming.followsLogin && !$0.needsChoice && CredentialImportDefaults.isAdditive($0.classification) }
                     .map { record -> Change in (record.incoming, .merge(into: target)) }
             } ?? []
             return all(.skip, of: conflicts) + additions

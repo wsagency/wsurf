@@ -16,6 +16,11 @@ nonisolated extension CredentialImportReview {
             /// Notes saved here that the other app's copy does not have.
             case notesAdded(Int)
             case notesRemoved
+            /// The cards and other items differ from the transfer's copy.
+            case itemsChanged
+            /// Items saved here that the other app's copy does not have.
+            case itemsAdded(Int)
+            case itemsRemoved
             case merged
             case movedToTrash(Record.Kind)
             /// Removed from Trash for good: the vault keeps only that it was removed, and when.
@@ -154,6 +159,8 @@ nonisolated enum CredentialImportReport {
                     }
                 case .totp:
                     found.add(.verificationCode, history.latest[.totp])
+                case .secureItems:
+                    found.add(.itemsChanged, history.latest[.secureItem])
                 case .passkey, .note:
                     break
                 }
@@ -178,6 +185,13 @@ nonisolated enum CredentialImportReport {
                 found.add(.notesAdded(notes.count), history.latest[.note])
             } else if let date = history.latest[.note] {
                 found.add(.notesRemoved, date)
+            }
+        }
+        if candidate.secureItems == nil {
+            if let items = saved.secureItems {
+                found.add(.itemsAdded(items.count), history.latest[.secureItem])
+            } else if let date = history.latest[.secureItem] {
+                found.add(.itemsRemoved, date)
             }
         }
         if let date = history.mergedAt {
@@ -211,6 +225,8 @@ nonisolated enum CredentialImportReport {
             .totp
         case .note:
             .note
+        case .secureItems:
+            .secureItems
         }
     }
 

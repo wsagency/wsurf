@@ -64,6 +64,14 @@ vault when there are several), then looks up the same field again. A lock,
 profile switch or a new field while the vault choice is open unlocks nothing.
 The unlock starts the vault's own lease and never extends one.
 
+A card or address field also lists the cards and addresses of the profile's unlocked credential vaults, after the ones saved in
+Settings › Autofill. A row shows only a card's network and last four digits, or a contact's title; the credential's item is read
+again on the pick under the same unlock, revision and write generation, and a card fills only after Touch ID or the Mac password,
+as a card saved in Keychain does. A locked vault is never read and offers no unlock row here. A credential's first address and
+first name fill as one contact; a card whose number fails the card check, or that has expired, is not offered. No vault card or
+address is offered in a tab the assistant or a connected app controls (`BrowserTab.isUnderAssistantControl`), so none is filled
+into a page an agent reads. Saving a typed card or address still writes to the Autofill settings' own stores.
+
 A field whose autocomplete includes `webauthn` also gets "Use a Passkey…" while
 its document has a pending conditional passkey request, whatever the vault
 holds, whether it is locked, or whether there is one. Only choosing that row

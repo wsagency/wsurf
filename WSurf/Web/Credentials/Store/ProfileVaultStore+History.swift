@@ -405,6 +405,12 @@ extension ProfileVaultStore {
             }
             // Notes have no username of their own either: they belong to the owner.
             return otherAccountBlock(itemIDs: [body.exchangeItemID], username: owner.username)
+        case .secureItem:
+            _ = try Self.decode([SecureItem].self, from: value)
+            if owner.secureItems != nil {
+                return .slotOccupied(.secureItem)
+            }
+            return otherAccountBlock(itemIDs: [body.exchangeItemID], username: owner.username)
         case .passkey:
             let passkey = try Self.decode(WebsitePasskey.self, from: value)
             if let block = try passkeyBlock([passkey], among: accounts) {
@@ -499,6 +505,8 @@ extension ProfileVaultStore {
             owner.totp = try decode(TOTPGenerator.self, from: value)
         case .note:
             owner.notes = try decode([CredentialNote].self, from: value)
+        case .secureItem:
+            owner.secureItems = try decode([SecureItem].self, from: value)
         case .passkey:
             owner.passkeys.append(try decode(WebsitePasskey.self, from: value))
         case .account, .metadata:
@@ -523,6 +531,8 @@ extension ProfileVaultStore {
             account.totp = try decode(TOTPGenerator.self, from: value)
         case .note:
             account.notes = try decode([CredentialNote].self, from: value)
+        case .secureItem:
+            account.secureItems = try decode([SecureItem].self, from: value)
         case .metadata:
             let details = try decode(MetadataProjection.self, from: value)
             account.displayName = details.displayName

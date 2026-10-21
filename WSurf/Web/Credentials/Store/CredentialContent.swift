@@ -40,6 +40,7 @@ nonisolated enum CredentialPart: Equatable, Sendable {
     case passkey(WebsitePasskey)
     case metadata(CredentialAccount)
     case note(CredentialAccount)
+    case secureItems(CredentialAccount)
 }
 
 /// §12.3 content hash: SHA-256 over `StoreWriter` bytes (u8 part tag, then the fields in a fixed order). No JSON is hashed.
@@ -94,6 +95,22 @@ nonisolated enum CredentialContent {
                 writer.array(notes) { writer, note in
                     writer.text(note.text)
                     writer.optional(note.field, writeField)
+                }
+            }
+        case let .secureItems(account):
+            // Tag 6. Every item in order: its kind, the custom-fields id and title, then each value with its member name and field
+            // description. An account without items writes only the absent tag.
+            writer.u8(6)
+            writer.optional(account.secureItems) { writer, items in
+                writer.array(items) { writer, item in
+                    writer.text(item.kind.rawValue)
+                    writer.optional(item.id) { $0.bytes($1) }
+                    writer.optional(item.label) { $0.text($1) }
+                    writer.array(item.fields) { writer, field in
+                        writer.text(field.name)
+                        writer.text(field.value)
+                        writer.optional(field.field, writeField)
+                    }
                 }
             }
         }

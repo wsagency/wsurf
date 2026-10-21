@@ -18,7 +18,7 @@ extension CredentialExchangeCoordinator {
 
     nonisolated static func accountID(_ identity: CredentialIdentity) -> UUID {
         switch identity {
-        case let .password(id), let .totp(id), let .note(id):
+        case let .password(id), let .totp(id), let .note(id), let .secureItems(id):
             id
         case let .passkey(id, _):
             id
@@ -38,8 +38,8 @@ extension CredentialExchangeCoordinator {
             return !passkeyIDIsStored
         case .totp:
             return account.totp == nil
-        case .note:
-            // Notes are appended to what the account already holds.
+        case .note, .secureItems:
+            // Notes and items are appended to what the account already holds.
             return true
         }
     }

@@ -115,6 +115,19 @@ nonisolated extension CredentialExchangeCodec {
                 identicalWithoutBaseIsUnchanged: true,
                 isHeld: notesAreHeld
             )
+        case .secureItems:
+            // Items keep an observed base like a code, so a change made here is told from one made in the other app. Items the
+            // saved credential already holds (added here, or merged into it) are unchanged.
+            return try classifyLogin(
+                candidate,
+                destination: destination,
+                hasPart: { $0.secureItems != nil },
+                hash: { try CredentialContent.hash(.secureItems($0)) },
+                base: \.secureItemsBase,
+                linkBase: { _ in nil },
+                identicalWithoutBaseIsUnchanged: true,
+                isHeld: secureItemsAreHeld
+            )
         case let .passkey(_, passkeyID):
             guard let passkey = candidate.passkeys.first(where: { $0.id == passkeyID }) else {
                 throw CredentialVaultError.invalidData
@@ -125,7 +138,7 @@ nonisolated extension CredentialExchangeCodec {
 
     private static func owner(of identity: CredentialIdentity) -> UUID {
         switch identity {
-        case let .password(accountID), let .totp(accountID), let .note(accountID):
+        case let .password(accountID), let .totp(accountID), let .note(accountID), let .secureItems(accountID):
             accountID
         case let .passkey(accountID, _):
             accountID
@@ -137,7 +150,7 @@ nonisolated extension CredentialExchangeCodec {
         return candidate
     }
 
-    /// Password, TOTP and notes: an exchange id is a hint, so a match counts only with a bound pairing. Notes keep no observed
+    /// Password, TOTP, notes and items: an exchange id is a hint, so a match counts only with a bound pairing. Notes keep no observed
     /// base, so notes the saved credential already holds (`isHeld`: a note added here, or the notes of items merged into it) are
     /// unchanged, and any other difference has no common base.
     ///
@@ -210,7 +223,8 @@ nonisolated extension CredentialExchangeCodec {
     /// An accepted pairing (§13.2a): some credential of `account` was observed from this exact remote item, or `merged`, the item
     /// that was merged into it, records what was.
     private static func isBound(_ account: CredentialAccount, to itemID: Data, merged: MergedItemLink?) -> Bool {
-        let bases = [account.passwordBase, account.totpBase] + account.passkeys.map(\.base) + [merged?.passwordBase, merged?.totpBase]
+        let bases = [account.passwordBase, account.totpBase, account.secureItemsBase] + account.passkeys.map(\.base)
+            + [merged?.passwordBase, merged?.totpBase]
         return bases.contains { $0?.itemID == itemID }
     }
 

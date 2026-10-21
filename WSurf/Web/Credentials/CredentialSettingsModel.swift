@@ -49,6 +49,9 @@ final class CredentialSettingsModel {
     /// How long a copy confirmation stays, and how long one that offers Undo does; seams so a test does not wait for the real time.
     @ObservationIgnored private let noticeDuration: Duration
     @ObservationIgnored private let undoNoticeDuration: Duration
+    /// Fresh device-owner authentication (Touch ID or the Mac password) before a card's or an ID document's hidden values are shown,
+    /// copied or opened in the editor. Returns only on success. A seam so a test decides the answer; internal for the extensions.
+    @ObservationIgnored let verifyUser: @MainActor (String) async throws -> Void
     @ObservationIgnored private var noticeGeneration = 0
     /// What the last copy or list action did, for a moment ("Password Copied", "Moved 3 credentials to Trash."): the name of the
     /// part or a count, never a value.
@@ -84,9 +87,11 @@ final class CredentialSettingsModel {
         manager: CredentialManager? = nil,
         native: VaultNativeUnlock? = nil,
         noticeDuration: Duration = .seconds(1.6),
-        undoNoticeDuration: Duration = .seconds(4)
+        undoNoticeDuration: Duration = .seconds(4),
+        verifyUser: @escaping @MainActor (String) async throws -> Void = { try await NativeWebAuthnInteraction().verifyUser(reason: $0, until: nil) }
     ) {
         self.profile = profile
+        self.verifyUser = verifyUser
         self.exchange = exchange
         self.pasteboard = pasteboard
         self.noticeDuration = noticeDuration
@@ -420,6 +425,7 @@ final class CredentialSettingsModel {
                 throw CredentialVaultError.invalidData
             }
             existing = account
+            try await verifySensitiveItems(of: account)
         }
         let draft = CredentialDraft(editing: existing, revision: snapshot.revision)
         try update(epoch) {

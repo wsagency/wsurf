@@ -20,6 +20,8 @@ nonisolated enum CredentialCopyPart: Equatable, Sendable {
     case codeLabel
     case passkeyUser(UUID)
     case passkeyWebsite(UUID)
+    /// One value of one of the credential's cards, addresses or other items, by position.
+    case secureField(item: Int, field: Int)
 
     /// The brief confirmation after the copy landed. Title Case, like the app's other short notices.
     var copiedNotice: LocalizedStringResource {
@@ -36,7 +38,7 @@ nonisolated enum CredentialCopyPart: Equatable, Sendable {
             "Note Copied"
         case .code:
             "Verification Code Copied"
-        case .codeLabel:
+        case .codeLabel, .secureField:
             "Copied"
         }
     }
@@ -79,6 +81,7 @@ struct CredentialCopyParts {
     private let generator: TOTPGenerator?
     private let codeLabel: String
     private let passkeys: [PasskeySummary]
+    private let items: [SecureItem]
 
     init(_ account: CredentialAccount, allowsCode: Bool = true) {
         name = account.displayName
@@ -90,6 +93,7 @@ struct CredentialCopyParts {
         generator = allowsCode ? account.totp : nil
         codeLabel = account.totp?.accountLabel ?? ""
         passkeys = account.passkeys.map { PasskeySummary($0) }
+        items = account.secureItems ?? []
     }
 
     init(_ draft: CredentialDraft) {
@@ -102,6 +106,15 @@ struct CredentialCopyParts {
         generator = draft.totp
         codeLabel = draft.totp?.accountLabel ?? ""
         passkeys = draft.passkeySummaries
+        items = draft.secureItems
+    }
+
+    /// Whether `part` is a hidden value of a card or an identity document, which needs Touch ID before it leaves the vault.
+    func isSensitive(_ part: CredentialCopyPart) -> Bool {
+        guard case let .secureField(index, position) = part, items.indices.contains(index),
+              items[index].fields.indices.contains(position) else { return false }
+        let item = items[index]
+        return item.kind.isSensitive && item.isConcealed(item.fields[position])
     }
 
     /// The editor's website lines in the order `CredentialCopyPart.website` counts them.
@@ -134,6 +147,10 @@ struct CredentialCopyParts {
             return try value(passkeys.first { $0.id == id }?.userName)
         case .passkeyWebsite(let id):
             return try value(passkeys.first { $0.id == id }?.rpID)
+        case let .secureField(index, position):
+            guard items.indices.contains(index), items[index].fields.indices.contains(position) else { throw CredentialVaultError.invalidData }
+            let item = items[index]
+            return try value(item.fields[position].value, secret: item.isConcealed(item.fields[position]))
         }
     }
 

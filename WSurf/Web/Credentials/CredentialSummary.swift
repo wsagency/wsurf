@@ -36,6 +36,14 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
     let hasLogin: Bool
     let hasTOTP: Bool
     let hasNotes: Bool
+    /// The kinds of the credential's cards, addresses and other items, in order, each once.
+    let itemKinds: [SecureItemKind]
+    /// What each item is called (`SecureItem.title`): a card's network and last four digits, else its kind. Never another value.
+    let itemTitles: [String]
+    /// It holds a card or an identity document: showing or copying their hidden values, and editing it, needs Touch ID.
+    let hasSensitiveItems: Bool
+    /// The hidden values of its items that the row's menu offers to copy, by name.
+    let hiddenItemFields: [SecureFieldReference]
     let passkeys: [PasskeySummary]
     let dates: CredentialDates
     /// What a search looks in, built once here so a keystroke never rebuilds it: the title, the username (unless concealed) and
@@ -54,11 +62,24 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
         hasLogin = account.password != nil || account.basicAuthenticationMetadata != nil || !account.username.isEmpty
         hasTOTP = account.totp != nil
         hasNotes = account.notes != nil
+        let items = account.secureItems ?? []
+        var kinds: [SecureItemKind] = []
+        for item in items where !kinds.contains(item.kind) {
+            kinds.append(item.kind)
+        }
+        itemKinds = kinds
+        itemTitles = items.map(\.title)
+        hasSensitiveItems = kinds.contains { $0.isSensitive }
+        hiddenItemFields = items.enumerated().flatMap { index, item -> [SecureFieldReference] in
+            item.fields.enumerated().compactMap { position, field -> SecureFieldReference? in
+                item.isConcealed(field) ? SecureFieldReference(item: index, field: position, label: item.label(of: field)) : nil
+            }
+        }
         passkeys = account.passkeys.map { PasskeySummary($0) }
         dates = CredentialDates(account)
-        let title = Self.title(displayName: account.displayName, origins: account.origins, username: visibleUsername)
+        let title = Self.title(displayName: account.displayName, origins: account.origins, username: visibleUsername, items: itemTitles)
         let hosts = account.origins.compactMap { URL(string: $0)?.host }
-        searchKey = Self.folded(([title] + [visibleUsername].compactMap { $0 } + hosts).joined(separator: "\n"))
+        searchKey = Self.folded(([title] + [visibleUsername].compactMap { $0 } + hosts + itemTitles).joined(separator: "\n"))
     }
 
     /// Case and accents do not matter to a search: the key and the query both go through this.
@@ -72,20 +93,22 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
     static func == (lhs: Self, rhs: Self) -> Bool {
         guard lhs.id == rhs.id, lhs.username == rhs.username, lhs.usernameIsConcealed == rhs.usernameIsConcealed,
               lhs.displayName == rhs.displayName, lhs.origins == rhs.origins, lhs.hasPassword == rhs.hasPassword,
-              lhs.hasLogin == rhs.hasLogin, lhs.hasTOTP == rhs.hasTOTP, lhs.hasNotes == rhs.hasNotes else { return false }
+              lhs.hasLogin == rhs.hasLogin, lhs.hasTOTP == rhs.hasTOTP, lhs.hasNotes == rhs.hasNotes,
+              lhs.itemKinds == rhs.itemKinds, lhs.itemTitles == rhs.itemTitles, lhs.hasSensitiveItems == rhs.hasSensitiveItems,
+              lhs.hiddenItemFields == rhs.hiddenItemFields else { return false }
         return lhs.passkeys == rhs.passkeys
     }
 
     /// What a row, a removal prompt or an import review calls this credential. An empty imported title counts as none.
     var title: String {
-        Self.title(displayName: displayName, origins: origins, username: username)
+        Self.title(displayName: displayName, origins: origins, username: username, items: itemTitles)
     }
 
-    private static func title(displayName: String?, origins: [String], username: String?) -> String {
+    private static func title(displayName: String?, origins: [String], username: String?, items: [String]) -> String {
         if let displayName, !displayName.isEmpty {
             return displayName
         }
-        return origins.lazy.compactMap { URL(string: $0)?.host }.first ?? username ?? String(localized: "Credential")
+        return origins.lazy.compactMap { URL(string: $0)?.host }.first ?? username ?? items.first ?? String(localized: "Credential")
     }
 }
 

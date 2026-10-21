@@ -76,6 +76,9 @@ final class AutofillSaveSession: NSObject {
     }
     @ObservationIgnored var username: UsernameStep?
     @ObservationIgnored let submissions = AutofillSubmissionTracker()
+    /// Whether the assistant or a connected app controls the tab right now (`BrowserTab.isUnderAssistantControl`). The fill panel
+    /// then offers no card or address of the credentials vault, so none is ever filled into a page an agent reads.
+    @ObservationIgnored var isUnderAssistantControl: @MainActor () -> Bool = { false }
 
     var current: Offer? {
         offers.first

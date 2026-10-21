@@ -5,8 +5,8 @@ import AppKit
 import Foundation
 
 /// Copying a credential's values to the clipboard from the list, the editor and History. Every copy reads the vault under the
-/// current unlock first, like every Show: no prompt is added, a locked vault or a stale authorization copies nothing, and a
-/// secret goes out with the concealed marker (`deliver`).
+/// current unlock first, like every Show: a locked vault or a stale authorization copies nothing, and a secret goes out with the
+/// concealed marker (`deliver`). Only a hidden value of a card or an identity document adds a prompt (Touch ID).
 extension CredentialSettingsModel {
     /// Puts one part of a credential on the clipboard. A draft or a History version copies only while the session it was read in
     /// is the current one. A History version never yields a verification code: its setup key stays out of the clipboard.
@@ -26,6 +26,12 @@ extension CredentialSettingsModel {
         }
         let (epoch, snapshot) = try await authorizedSnapshot(epoch: bound)
         let parts = try copyParts(of: source, in: snapshot, epoch: epoch)
+        // A card's or an ID document's hidden value asks for Touch ID on every copy from the list or History. The editor was opened
+        // with that authentication (`beginEditing`), so its own copies don't ask again.
+        if source != .draft, parts.isSensitive(part) {
+            try await verifyUser(String(localized: "copy a saved card or document detail"))
+            try Task.checkCancellation()
+        }
         try deliver(epoch: epoch, notice: part.copiedNotice) { try parts.value(of: part, now: now) }
     }
 

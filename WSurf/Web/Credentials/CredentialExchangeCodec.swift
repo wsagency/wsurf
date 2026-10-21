@@ -9,6 +9,8 @@ nonisolated enum CredentialIdentity: Hashable, Sendable {
     case passkey(accountID: UUID, passkeyID: UUID)
     case totp(accountID: UUID)
     case note(accountID: UUID)
+    /// The credential's cards, addresses and other items, as one part (like its notes).
+    case secureItems(accountID: UUID)
 }
 
 nonisolated struct CredentialImportConflict: Sendable {
@@ -341,9 +343,10 @@ nonisolated enum CredentialExchangeCodec {
         state.omittedItems.append(state.itemCandidateID)
     }
 
-    /// Whether `account` holds anything WSurf can keep: a login, a passkey, a code or a note.
+    /// Whether `account` holds anything WSurf can keep: a login, a passkey, a code, a note or an item.
     private static func hasContent(_ account: CredentialAccount) -> Bool {
         !account.username.isEmpty || account.password != nil || !account.passkeys.isEmpty || account.totp != nil || account.notes != nil
+            || account.secureItems != nil
     }
 
     private static func importItem(
@@ -452,9 +455,51 @@ nonisolated enum CredentialExchangeCodec {
         case let .note(value):
             try importNote(value, into: &candidate, state: &state)
         default:
-            // Addresses, cards, keys, Wi-Fi and every kind added later: named in the review, not stored yet.
-            throw Skip(reason: .unsupportedKind)
+            // Cards, addresses, names, Wi-Fi, keys, documents and custom fields are kept as items. A generated password, a link to
+            // another item and every kind added later are named in the review, not stored.
+            guard let source = secureItemSource(credential) else { throw Skip(reason: .unsupportedKind) }
+            try importSecureItem(source, into: &candidate, state: &state)
         }
+    }
+
+    /// An item keeps every value in the order the exporter sent it, with its exact field type, id and label. An empty value holds
+    /// nothing, and an item left with nothing is not kept. Past the limits the first items and values are kept and the rest named.
+    private static func importSecureItem(
+        _ source: SecureItemSource,
+        into candidate: inout CredentialAccount,
+        state: inout ImportState
+    ) throws {
+        // Past the limit the whole item is named once; nothing else of it is read or named.
+        guard (candidate.secureItems?.count ?? 0) < SecureItem.itemLimit else { throw Skip(reason: .extraItems) }
+        try state.budget.add(source.id ?? Data())
+        try state.budget.add(source.label ?? "")
+        var fields: [SecureItemField] = []
+        for (name, value) in source.plain where !value.isEmpty {
+            try state.budget.add(value)
+            fields.append(SecureItemField(name: name, value: value, field: nil))
+        }
+        for (name, field) in source.fields {
+            let imported = try importField(field, state: &state, keepsType: true)
+            if !imported.value.isEmpty {
+                fields.append(SecureItemField(name: name, value: imported.value, field: imported.metadata))
+            }
+        }
+        if fields.count > SecureItem.fieldLimit {
+            fields.removeSubrange(SecureItem.fieldLimit...)
+            omit(.extraFields, &state)
+        }
+        // An empty title is no title, so an untouched item reads the same in the editor as it was imported.
+        var item = SecureItem(kind: source.kind, id: source.id, label: source.label.flatMap { $0.isEmpty ? nil : $0 }, fields: fields)
+        if (item.id?.count ?? 0) > 1_024 {
+            item.id = nil
+            omit(.fieldDetailsSimplified, &state)
+        }
+        if (item.label?.utf8.count ?? 0) > 2_048 {
+            item.label = nil
+            omit(.fieldDetailsSimplified, &state)
+        }
+        guard !item.fields.isEmpty || item.label != nil else { return }
+        candidate.secureItems = (candidate.secureItems ?? []) + [item]
     }
 
     private static func importBasicAuthentication(
@@ -629,11 +674,12 @@ nonisolated enum CredentialExchangeCodec {
         )
     }
 
-    /// A field of a type WSurf has no use for (a number, a date, ...) is kept as plain text, and one whose id or label is over the
-    /// limit keeps its value without that description. Either way the field is named, since it will export as it is kept.
+    /// A field of a login or a note of a type WSurf has no use for there (a number, a date, ...) is kept as plain text, and one whose
+    /// id or label is over the limit keeps its value without that description. Either way the field is named, since it will export as it is kept.
     private static func importField(
         _ field: ASImportableEditableField,
-        state: inout ImportState
+        state: inout ImportState,
+        keepsType: Bool = false
     ) throws -> (value: String, metadata: CredentialEditableFieldMetadata) {
         try state.budget.add(field.value)
         try state.budget.add(field.id ?? Data())
@@ -648,8 +694,13 @@ nonisolated enum CredentialExchangeCodec {
         case .email:
             fieldType = .email
         default:
-            fieldType = .string
-            simplified = true
+            // An item's value keeps any type WSurf knows (the raw values are the SDK's); a login or a note shows plain text.
+            if keepsType, let kept = CredentialEditableFieldType(rawValue: field.fieldType.rawValue) {
+                fieldType = kept
+            } else {
+                fieldType = .string
+                simplified = true
+            }
         }
         var metadata = CredentialEditableFieldMetadata(id: field.id, label: field.label, fieldType: fieldType)
         if (try? metadata.validate()) == nil {
@@ -774,6 +825,14 @@ nonisolated enum CredentialExchangeCodec {
                         existing: .note(accountID: linked.id)
                     ))
                 }
+                // Identical items need no decision either.
+                if candidate.secureItems != nil, linked.secureItems != nil,
+                   try CredentialContent.hash(.secureItems(candidate)) != CredentialContent.hash(.secureItems(linked)) {
+                    conflicts.append(.init(
+                        incoming: .secureItems(accountID: candidate.id),
+                        existing: .secureItems(accountID: linked.id)
+                    ))
+                }
             }
             for passkey in candidate.passkeys {
                 let matches = existingPasskeys[ExternalPasskeyID(relyingPartyID: passkey.rpID, credentialID: passkey.credentialID)] ?? []
@@ -801,17 +860,15 @@ nonisolated enum CredentialExchangeCodec {
         if account.notes != nil {
             result.append(.note(accountID: account.id))
         }
+        if account.secureItems != nil {
+            result.append(.secureItems(accountID: account.id))
+        }
         return result
     }
 
-    /// The identity a note follows when nobody decided it: the item's login, else its first passkey, else its code.
+    /// The identity notes and items follow when nobody decided them: the item's login, else its first passkey, else its code.
     static func leadIdentity(of account: CredentialAccount) -> CredentialIdentity? {
-        identities(in: account).first {
-            if case .note = $0 {
-                return false
-            }
-            return true
-        }
+        identities(in: account).first { !$0.followsLogin }
     }
 
     static func hasBasicAuthentication(_ account: CredentialAccount) -> Bool {

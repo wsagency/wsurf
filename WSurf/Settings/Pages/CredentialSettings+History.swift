@@ -116,6 +116,8 @@ struct CredentialHistoryPanel: View {
             RowSeparator()
             notesRow(from, draft, reveals: reveals)
             RowSeparator()
+            itemsRow(from, draft, reveals: reveals)
+            RowSeparator()
             Text("Passkeys have no earlier versions; a removed passkey is in Trash.")
                 .font(Theme.Font.label)
                 .foregroundStyle(.secondary)
@@ -126,6 +128,12 @@ struct CredentialHistoryPanel: View {
 
     private func use(_ field: CredentialHistoryField) {
         model.copyToDraft(field, from: model.history?.selected)
+    }
+
+    /// Items may ask for Touch ID, so they are copied in a task of their own; a failure shows in the editor's footer.
+    private func useItems() {
+        let selected = model.history?.selected
+        Task { await model.attempt { try await model.copyItemsToDraft(from: selected) } }
     }
 
     /// `current` is the draft's value (the "Current" line); otherwise the shown version's. A failure shows in the editor's footer. It
@@ -249,6 +257,40 @@ struct CredentialHistoryPanel: View {
                                 .controlSize(.small)
                                 .disabled(isFull)
                                 .accessibilityLabel("Add note \(index + 1)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The cards, addresses and other items of the version: each value under its item's title, hidden ones masked until shown.
+    private func itemsRow(_ from: CredentialAccount, _ draft: CredentialDraft, reveals: Bool) -> some View {
+        let held = from.secureItems ?? []
+        return VersionFieldRow(
+            title: "Cards and other items", differs: held != (try? draft.account().secureItems ?? []), offersUse: !held.isEmpty,
+            use: useItems
+        ) {
+            VStack(alignment: .leading, spacing: 6) {
+                if held.isEmpty {
+                    Text("None").foregroundStyle(.secondary)
+                }
+                ForEach(held.indices, id: \.self) { index in
+                    Text(verbatim: held[index].title).fontWeight(.medium)
+                    ForEach(held[index].fields.indices, id: \.self) { position in
+                        let item = held[index]
+                        let field = item.fields[position]
+                        let hides = item.isConcealed(field) && !reveals
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(verbatim: item.label(of: field)).foregroundStyle(.secondary)
+                            noteText(field.value, reveals: !hides)
+                                .lineLimit(3)
+                                .privacySensitive()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            CredentialCopyButton(
+                                label: "Copy \(item.label(of: field))", extent: 18,
+                                action: copier(.secureField(item: index, field: position), current: false)
+                            )
                         }
                     }
                 }

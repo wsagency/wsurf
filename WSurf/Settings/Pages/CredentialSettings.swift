@@ -525,6 +525,7 @@ struct CredentialRow: View {
         }
         if summary.hasTOTP { parts.append(String(localized: "Verification code")) }
         if summary.hasNotes { parts.append(String(localized: "Notes")) }
+        parts += summary.itemTitles
         return parts.joined(separator: " · ")
     }
 
@@ -562,6 +563,12 @@ struct CredentialRow: View {
             if summary.hasTOTP {
                 Button("Copy Verification Code") { run { try await model.copyTOTP(accountID: summary.id) } }
             }
+            // A card's or an ID document's hidden value asks for Touch ID before it is copied.
+            ForEach(summary.hiddenItemFields, id: \.self) { reference in
+                Button("Copy \(reference.label)") {
+                    run { try await model.copy(.secureField(item: reference.item, field: reference.field), of: .stored(summary.id)) }
+                }
+            }
             if summary.hasPassword {
                 if model.revealedPassword?.accountID == summary.id {
                     Button("Hide Password") { model.hideSecrets() }
@@ -581,6 +588,13 @@ struct CredentialRow: View {
                     Button("Hide Verification Code") { model.hideSecrets() }
                 } else {
                     Button("Show Verification Code") { run { try await model.showTOTP(accountID: summary.id) } }
+                }
+            }
+            if !summary.itemKinds.isEmpty {
+                if model.revealedItems?.accountID == summary.id {
+                    Button("Hide Details") { model.hideSecrets() }
+                } else {
+                    Button("Show Details") { run { try await model.revealSecureItems(accountID: summary.id) } }
                 }
             }
             Divider()
@@ -604,6 +618,15 @@ struct CredentialRow: View {
         if let password = model.revealedPassword, password.accountID == summary.id {
             revealedLine("Password", value: password.value)
         }
+        if let revealed = model.revealedItems, revealed.accountID == summary.id {
+            ForEach(revealed.items.indices, id: \.self) { index in
+                let item = revealed.items[index]
+                Text(verbatim: item.title).font(Theme.Font.label).fontWeight(.medium)
+                ForEach(item.fields.indices, id: \.self) { position in
+                    revealedItemLine(item, index: index, position: position)
+                }
+            }
+        }
         if model.shownTOTPAccountID == summary.id {
             // Ticks only while this row shows a code, which only exists while the vault is unlocked.
             TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -623,6 +646,26 @@ struct CredentialRow: View {
                 }
             }
         }
+    }
+
+    /// One value of a shown item. Copying it reads the vault again (and asks for Touch ID for a card's or a document's hidden value).
+    private func revealedItemLine(_ item: SecureItem, index: Int, position: Int) -> some View {
+        let field = item.fields[position]
+        let title = item.label(of: field)
+        return HStack(spacing: 8) {
+            Text(verbatim: title).foregroundStyle(.secondary)
+            Text(verbatim: field.value)
+                .font(.system(.body, design: .monospaced))
+                .lineLimit(3)
+                .textSelection(.enabled)
+                .privacySensitive()
+            Spacer(minLength: 0)
+            CredentialCopyButton(label: "Copy \(title)", extent: 18) {
+                run { try await model.copy(.secureField(item: index, field: position), of: .stored(summary.id)) }
+            }
+        }
+        .font(Theme.Font.label)
+        .accessibilityElement(children: .contain)
     }
 
     private func revealedLine(_ title: LocalizedStringResource, value: String) -> some View {

@@ -69,7 +69,7 @@ nonisolated extension CredentialExchangeCodec {
         }
     }
 
-    /// Records the login and the code of `candidate` that equal what `account` holds, as the base of the item (`link` nil) or of the
+    /// Records the login, the code and the items of `candidate` that equal what `account` holds, as the base of the item (`link` nil) or of the
     /// merged item at that place in `account.mergedFrom`.
     private static func observe(_ candidate: CredentialAccount, itemID: Data, in account: inout CredentialAccount, link: Int?) throws {
         if hasBasicAuthentication(candidate), hasBasicAuthentication(account) {
@@ -92,6 +92,13 @@ nonisolated extension CredentialExchangeCodec {
                 } else {
                     account.totpBase = base
                 }
+            }
+        }
+        // A merged item's link keeps no base for items: a later change to them is a decision, never a replacement nobody chose.
+        if link == nil, candidate.secureItems != nil, account.secureItems != nil {
+            let hash = try CredentialContent.hash(.secureItems(candidate))
+            if try CredentialContent.hash(.secureItems(account)) == hash {
+                account.secureItemsBase = ExchangeBase(contentHash: hash, itemID: itemID)
             }
         }
     }
@@ -259,14 +266,14 @@ nonisolated extension CredentialExchangeCodec {
         }
     }
 
-    /// A note nobody decided goes where its item's lead credential was sent, a Skip included: choosing Skip, Merge Into or Add
-    /// Separately for a login moves the notes of that item with it. Only a note without a conflict of its own follows.
+    /// A note or an item nobody decided goes where its item's lead credential was sent, a Skip included: choosing Skip, Merge Into or
+    /// Add Separately for a login moves the notes and items of that item with it. Only one without a conflict of its own follows.
     private static func followedDecision(
         for identity: CredentialIdentity,
         of candidate: CredentialAccount,
         decisions: [CredentialIdentity: CredentialImportDecision]
     ) -> CredentialImportDecision? {
-        guard case .note = identity, let lead = leadIdentity(of: candidate), let decision = decisions[lead] else { return nil }
+        guard identity.followsLogin, let lead = leadIdentity(of: candidate), let decision = decisions[lead] else { return nil }
         switch decision {
         case .keep:
             return .keep(incoming: identity)
@@ -346,7 +353,7 @@ nonisolated extension CredentialExchangeCodec {
 
     private static func sameKind(_ lhs: CredentialIdentity, _ rhs: CredentialIdentity) -> Bool {
         switch (lhs, rhs) {
-        case (.password, .password), (.passkey, .passkey), (.totp, .totp), (.note, .note):
+        case (.password, .password), (.passkey, .passkey), (.totp, .totp), (.note, .note), (.secureItems, .secureItems):
             true
         default:
             false
@@ -517,6 +524,11 @@ nonisolated extension CredentialExchangeCodec {
             }
             guard notes.count <= CredentialAccount.noteLimit else { throw CredentialVaultError.invalidData }
             target.notes = notes.isEmpty ? nil : notes
+        case .secureItems:
+            // Appends the items the target does not already hold as the same bytes; its own stay.
+            let items = try (target.secureItems ?? []).uniting(source.secureItems ?? [])
+            guard items.count <= SecureItem.itemLimit else { throw CredentialVaultError.invalidData }
+            target.secureItems = items.isEmpty ? nil : items
         }
     }
 
@@ -541,6 +553,8 @@ nonisolated extension CredentialExchangeCodec {
             accounts[index].totp = source.totp
         case (.note, .note):
             accounts[index].notes = source.notes
+        case (.secureItems, .secureItems):
+            accounts[index].secureItems = source.secureItems
         default:
             throw CredentialVaultError.invalidData
         }
@@ -557,6 +571,8 @@ nonisolated extension CredentialExchangeCodec {
             target.totp = source.totp
         case .note:
             target.notes = source.notes
+        case .secureItems:
+            target.secureItems = source.secureItems
         }
     }
 
@@ -568,7 +584,7 @@ nonisolated extension CredentialExchangeCodec {
 
     private static func accountID(for identity: CredentialIdentity) -> UUID {
         switch identity {
-        case let .password(accountID), let .totp(accountID), let .note(accountID):
+        case let .password(accountID), let .totp(accountID), let .note(accountID), let .secureItems(accountID):
             accountID
         case let .passkey(accountID, _):
             accountID

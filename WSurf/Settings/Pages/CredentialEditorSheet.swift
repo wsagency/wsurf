@@ -5,8 +5,8 @@ import SwiftUI
 
 // MARK: - Editor
 
-/// One credential in one sheet. Its password, verification code, websites, passkeys and notes are parts of the same
-/// credential, so they are sections here and not separate items.
+/// One credential in one sheet. Its password, verification code, websites, passkeys, notes and items (cards, addresses and the
+/// other kinds) are parts of the same credential, so they are sections here and not separate items.
 struct CredentialEditorSheet: View {
     let model: CredentialSettingsModel
     @State private var totpInput = ""
@@ -116,6 +116,7 @@ struct CredentialEditorSheet: View {
                     totp(draft)
                     passkeys(draft)
                     notes(draft)
+                    CredentialSecureItemsSection(model: model)
                     dates(draft)
                 }
                 .padding(24)

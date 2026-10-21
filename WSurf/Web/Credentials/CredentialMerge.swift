@@ -11,6 +11,7 @@ nonisolated enum CredentialMergeError: Error, Equatable, Sendable {
     case invalidPicks
     case websiteLimit
     case noteLimit
+    case itemLimit
     case linkLimit
 }
 
@@ -94,6 +95,7 @@ nonisolated enum CredentialMerge {
         func rank(_ account: CredentialAccount) -> (link: Int, website: Int, kinds: Int) {
             let kinds = [
                 CredentialExchangeCodec.hasBasicAuthentication(account), !account.passkeys.isEmpty, account.totp != nil, account.notes != nil,
+                account.secureItems != nil,
             ].filter { $0 }.count
             return (account.exchangeItemID == nil ? 0 : 1, account.origins.isEmpty ? 0 : 1, kinds)
         }
@@ -226,6 +228,11 @@ nonisolated enum CredentialMerge {
             }
             guard notes.count <= CredentialAccount.noteLimit else { throw CredentialMergeError.noteLimit }
             result.notes = notes.isEmpty ? nil : notes
+
+            // Cards and other items are united like notes: the same item (the same bytes) is kept once, and none is dropped.
+            let items = try (survivor.secureItems ?? []).uniting(others.flatMap { $0.secureItems ?? [] })
+            guard items.count <= SecureItem.itemLimit else { throw CredentialMergeError.itemLimit }
+            result.secureItems = items.isEmpty ? nil : items
 
             let added = included + offered.filter(picks.extraWebsites.contains)
             result.origins += added

@@ -13,6 +13,7 @@ nonisolated extension CredentialImportReview {
             case passkeys(Int)
             case code
             case notes(Int)
+            case items(Int)
         }
 
         let target: UUID
@@ -75,6 +76,7 @@ nonisolated enum ImportDuplicates {
         var origins = Set<String>()
         var loginURLs = 0
         var notes = 0
+        var items = 0
         var code = false
         var linked = false
     }
@@ -207,6 +209,7 @@ nonisolated enum ImportDuplicates {
             claim.origins.formUnion(plan.claim.origins)
             claim.loginURLs += plan.claim.loginURLs
             claim.notes += plan.claim.notes
+            claim.items += plan.claim.items
             claim.code = claim.code || plan.claim.code
             claim.linked = claim.linked || plan.claim.linked
             claims[at] = claim
@@ -237,8 +240,21 @@ nonisolated enum ImportDuplicates {
         }
     }
 
+    /// Decides a part that is appended to what the saved credential holds (notes, items): kept when nothing is missing, merged when
+    /// the missing ones fit in `room`. `false` when they don't fit.
+    private static func append(_ identity: CredentialIdentity, missing: Int, room: Int, into plan: inout Plan, target: UUID) -> Bool {
+        if missing == 0 {
+            plan.choices[identity] = .skip
+            plan.unchanged.insert(identity)
+            return true
+        }
+        guard missing <= room else { return false }
+        plan.choices[identity] = .merge(into: target)
+        return true
+    }
+
     /// How `candidate` merges into `saved`, or `nil` when it can't without replacing something or exceeding a limit: the saved
-    /// credential has another code, or it has no room for the notes or websites. Only websites on `matchedSites` are added.
+    /// credential has another code, or it has no room for the notes, items or websites. Only websites on `matchedSites` are added.
     private static func mergePlan(
         for candidate: CredentialAccount,
         _ identities: [CredentialIdentity],
@@ -254,6 +270,7 @@ nonisolated enum ImportDuplicates {
         var passkeys = 0
         var code = false
         var notes = 0
+        var items = 0
         for identity in identities {
             switch identity {
             case .password:
@@ -279,16 +296,18 @@ nonisolated enum ImportDuplicates {
                 }
             case .note:
                 let held = saved.notes ?? []
-                let missing = (candidate.notes ?? []).filter { note in !held.contains { $0.text.utf8.elementsEqual(note.text.utf8) } }
-                if missing.isEmpty {
-                    plan.choices[identity] = .skip
-                    plan.unchanged.insert(identity)
-                } else {
-                    guard held.count + claim.notes + missing.count <= CredentialAccount.noteLimit else { return nil }
-                    plan.choices[identity] = .merge(into: target)
-                    notes = missing.count
-                    plan.claim.notes = missing.count
-                }
+                let missing = (candidate.notes ?? []).filter { note in !held.contains { $0.text.utf8.elementsEqual(note.text.utf8) } }.count
+                guard append(identity, missing: missing, room: CredentialAccount.noteLimit - held.count - claim.notes, into: &plan, target: target)
+                else { return nil }
+                notes = missing
+                plan.claim.notes = missing
+            case .secureItems:
+                let held = saved.secureItems ?? []
+                guard let united = try? held.uniting(candidate.secureItems ?? []),
+                      append(identity, missing: united.count - held.count, room: SecureItem.itemLimit - held.count - claim.items, into: &plan, target: target)
+                else { return nil }
+                items = united.count - held.count
+                plan.claim.items = items
             }
         }
         // The websites go with the merge, which exists when there is a login to link or a part to add.
@@ -318,6 +337,9 @@ nonisolated enum ImportDuplicates {
         }
         if notes > 0 {
             additions.append(.notes(notes))
+        }
+        if items > 0 {
+            additions.append(.items(items))
         }
         if websites > 0 {
             additions.append(.websites(websites))
