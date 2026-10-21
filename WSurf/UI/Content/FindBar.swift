@@ -70,16 +70,22 @@ struct FindDriver {
                     return
                 }
                 Task { @MainActor in
-                    let count = (try? await current.evaluateJavaScript(
-                        FindSession.countScript(for: query)
-                    )) as? Int ?? 0
-                    completion(count)
+                    completion(await Self.read(FindSession.countScript(for: query), in: current) as? Int ?? 0)
                 }
             },
             clearHighlight: {
-                page()?.evaluateJavaScript("window.getSelection().removeAllRanges()")
+                guard let current = page() else { return }
+                Task { @MainActor in
+                    _ = await Self.read("window.getSelection().removeAllRanges()", in: current)
+                }
             }
         )
+    }
+
+    /// Runs `script` in the app's own world. A page whose JavaScript is off (Reader's article, or a website with scripts turned
+    /// off) answers only there, and the DOM, the text and the selection are the same in both worlds.
+    private static func read(_ script: String, in page: BrowserPage) async -> Any? {
+        try? await page.evaluateJavaScript(script, in: nil, contentWorld: .defaultClient)
     }
 }
 

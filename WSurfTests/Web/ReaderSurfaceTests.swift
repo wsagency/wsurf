@@ -374,6 +374,56 @@ struct ReaderSurfaceTests {
         #expect(item.title == String(localized: "Show Reader"))
     }
 
+    // MARK: Translate and Find
+
+    /// The text the article's view shows. Its page's JavaScript is off, so it is read in the app's own world.
+    private func shownText(of article: BrowserPage) async -> String {
+        (try? await article.evaluateJavaScript("document.body.innerText", in: nil, contentWorld: .defaultClient)) as? String ?? ""
+    }
+
+    private func occurrences(of needle: String, in text: String) -> Int {
+        text.lowercased().components(separatedBy: needle).count - 1
+    }
+
+    /// Find counts the matches in the article, whose JavaScript is off, and clears its highlight; once Reader is left, Find
+    /// searches the page again.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func findCountsInTheArticleAndReturnsToThePageWhenReaderEnds(engine: BrowserEngine) async throws {
+        try await withTab(engine: engine, routes: articleRoutes, start: "/news/tide") { tab, _ in
+            try await withReader(on: tab) { article in
+                let expected = occurrences(of: "tide clock", in: await shownText(of: article))
+                try #require(expected > 1)
+
+                tab.find.open()
+                tab.find.query = "Tide Clock"
+                tab.find.queryDidChange()
+                #expect(await waitUntil { tab.find.totalMatches == expected }, "engine \(engine): \(tab.find.totalMatches) of \(expected)")
+
+                tab.find.query = "newsletter"
+                tab.find.queryDidChange()
+                #expect(await waitUntil { tab.find.totalMatches == 0 }, "the sidebar is not part of the article")
+
+                _ = try await article.evaluateJavaScript(
+                    "getSelection().selectAllChildren(document.body); 1", in: nil, contentWorld: .defaultClient
+                )
+                tab.find.driver?.clearHighlight()
+                #expect(await waitUntil {
+                    (try? await article.evaluateJavaScript("getSelection().toString()", in: nil, contentWorld: .defaultClient)) as? String == ""
+                }, "the highlight stayed")
+
+                tab.find.close()
+                tab.reader.close()
+            }
+
+            #expect(tab.shownPage === tab.page)
+            tab.find.open()
+            tab.find.query = "newsletter"
+            tab.find.queryDidChange()
+            #expect(await waitUntil { tab.find.totalMatches == 1 }, "engine \(engine): \(tab.find.totalMatches)")
+            tab.find.close()
+        }
+    }
+
     // MARK: Hosting
 
     private func host(_ tab: BrowserTab, showing article: ReaderArticle) -> NSWindow {
@@ -384,6 +434,22 @@ struct ReaderSurfaceTests {
         window.contentView = NSHostingView(rootView: ReaderSurface(tab: tab, article: article))
         window.orderBack(nil)
         return window
+    }
+
+    /// Opens Reader on `tab`, shows its view in a window and runs `body` with the page that shows the article.
+    private func withReader(on tab: BrowserTab, body: (BrowserPage) async throws -> Void) async throws {
+        tab.isFrontTab = { true }
+        tab.probeReader()
+        try #require(await waitUntil { tab.reader.availability == .available })
+        try #require(await tab.reader.open())
+        let article = try #require(tab.reader.article)
+        let window = host(tab, showing: article)
+        defer {
+            window.contentView = nil
+            window.close()
+        }
+        try #require(await waitUntil { tab.reader.presentedPage?.title == article.title }, "the article was not loaded")
+        try await body(try #require(tab.reader.presentedPage))
     }
 
     /// A private tab of either engine showing a fixture page, in a window so Chromium loads it.
