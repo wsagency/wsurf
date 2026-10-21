@@ -24,7 +24,7 @@ enum VaultChoicePrompt {
 
     static func present(
         _ candidates: [VaultListing], reason: VaultChoiceReason, profileID: UUID, offersHandOff: Bool = false,
-        continuesInChromium: Bool = false, in anchor: ASPresentationAnchor
+        continuesInChromium: Bool = false, in anchor: @autoclosure () -> ASPresentationAnchor
     ) async -> Answer? {
         guard !candidates.isEmpty else { return nil }
         if offersHandOff, handOffForTesting.contains(profileID) {
@@ -53,7 +53,7 @@ enum VaultChoicePrompt {
                 alert.informativeText += "\n" + NativeWebAuthnInteraction.chromiumReason
             }
         }
-        guard case .response(let response) = await NativeSheet.present(alert, in: anchor, until: nil) else { return nil }
+        guard case .response(let response) = await NativeSheet.present(alert, in: anchor(), until: nil) else { return nil }
         let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
         if candidates.indices.contains(index) {
             return .vault(candidates[index].vaultID)

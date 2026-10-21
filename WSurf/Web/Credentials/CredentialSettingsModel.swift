@@ -572,14 +572,14 @@ final class CredentialSettingsModel {
     /// an existing passkey that is no longer enrolled in its vault is refused, never swapped for another. The first vault is
     /// created only from a confirmed first run; a further one is authorized by the selected vault if it is unlocked, else the
     /// lowest-numbered unlocked one. A v1 vault or interrupted migration is listed, so it never offers Create.
-    func createVault(name: String, choice: NewVaultChoice, in anchor: ASPresentationAnchor) async {
+    func createVault(name: String, choice: NewVaultChoice, in anchor: @autoclosure () -> ASPresentationAnchor) async {
         guard let store else { return }
         var created: UUID?
         let succeeded = await guarded {
             let chosen = try await store.creationChoice(for: choice) {
                 CredentialManager.unlockedAuthorizer(in: $0, selected: manager, profile: profile)
             }
-            created = try await CredentialManager.createVault(profile: profile, name: name, choice: chosen, in: anchor, native: native)
+            created = try await CredentialManager.createVault(profile: profile, name: name, choice: chosen, in: anchor(), native: native)
         }
         guard succeeded, let created else { return }
         do {
@@ -593,7 +593,9 @@ final class CredentialSettingsModel {
 
     /// `confirmMigration` is the user's explicit consent to migrate a v1 vault; without it the manager refuses before any
     /// passkey prompt and `needsMigrationConfirmation` is set.
-    func unlock(in anchor: ASPresentationAnchor, confirmMigration: Bool = false, verifying: (@Sendable (Bool) -> Void)? = nil) async {
+    func unlock(
+        in anchor: @autoclosure () -> ASPresentationAnchor, confirmMigration: Bool = false, verifying: (@Sendable (Bool) -> Void)? = nil
+    ) async {
         unlockInFlight = true
         defer {
             unlockInFlight = false
@@ -607,7 +609,7 @@ final class CredentialSettingsModel {
                 }
             }
         }
-        if await perform({ try await $0.unlock(in: anchor, confirmMigration: confirmMigration, verifying: report) }) {
+        if await perform({ try await $0.unlock(in: anchor(), confirmMigration: confirmMigration, verifying: report) }) {
             // An upgraded vault is a new state of the store: read it again before the page offers anything from the old one.
             if store != nil, openState?.isProvisional != true {
                 await discoverVault()
@@ -617,8 +619,8 @@ final class CredentialSettingsModel {
         }
     }
 
-    func addUnlock(in anchor: ASPresentationAnchor) async {
-        _ = await perform { _ = try await $0.addUnlock(in: anchor) }
+    func addUnlock(in anchor: @autoclosure () -> ASPresentationAnchor) async {
+        _ = await perform { _ = try await $0.addUnlock(in: anchor()) }
     }
 
     /// Marks one of the profile's vaults as the one autofill and saving use without asking. Only a listed vault can be chosen.
@@ -646,9 +648,9 @@ final class CredentialSettingsModel {
 
     /// Like the purge: the confirmation is kept until the removal has run, so a declined or failed assertion with one of the
     /// remaining passkeys can be retried. A removal that no longer applies (the passkey is already gone) is dropped.
-    func confirmUnlockRemoval(_ pending: PendingUnlockRemoval, in anchor: ASPresentationAnchor) async {
+    func confirmUnlockRemoval(_ pending: PendingUnlockRemoval, in anchor: @autoclosure () -> ASPresentationAnchor) async {
         guard !isBusy, live?.pendingUnlockRemoval == pending else { return }
-        let removed = await perform(epoch: pending.epoch) { _ = try await $0.removeUnlock(credentialID: pending.credentialID, in: anchor) }
+        let removed = await perform(epoch: pending.epoch) { _ = try await $0.removeUnlock(credentialID: pending.credentialID, in: anchor()) }
         guard live?.pendingUnlockRemoval == pending else { return }
         if removed || !(manager?.unlockCredentials.contains { $0.credentialID == pending.credentialID } ?? false) {
             session?.pendingUnlockRemoval = nil

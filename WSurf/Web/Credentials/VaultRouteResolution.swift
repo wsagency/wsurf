@@ -17,15 +17,15 @@ extension VaultRoute {
     /// nothing is unlocked here, so a caller that unlocks does so after revalidating its own page, frame, offer and lifecycle (the
     /// prompt suspends, and a lock or sleep while it was open must not be followed by an unlock the user never asked for then).
     /// `nil` when there is no usable vault or the user canceled.
-    func resolve(profile: Profile, in anchor: ASPresentationAnchor) async -> CredentialManager? {
-        guard case .vault(let manager) = await select(profile: profile, offersHandOff: false, in: anchor) else { return nil }
+    func resolve(profile: Profile, in anchor: @autoclosure () -> ASPresentationAnchor) async -> CredentialManager? {
+        guard case .vault(let manager) = await select(profile: profile, offersHandOff: false, in: anchor()) else { return nil }
         return manager
     }
 
     /// `resolve`, for a request that can also be answered by the system's authenticator: its prompt then offers that as a
     /// choice, and choosing it is an answer that unlocks nothing.
     func select(
-        profile: Profile, offersHandOff: Bool, continuesInChromium: Bool = false, in anchor: ASPresentationAnchor
+        profile: Profile, offersHandOff: Bool, continuesInChromium: Bool = false, in anchor: @autoclosure () -> ASPresentationAnchor
     ) async -> VaultSelection {
         let candidates: [VaultListing]
         let reason: VaultChoiceReason
@@ -41,7 +41,7 @@ extension VaultRoute {
         }
         switch await VaultChoicePrompt.present(
             candidates, reason: reason, profileID: profile.id, offersHandOff: offersHandOff,
-            continuesInChromium: continuesInChromium, in: anchor
+            continuesInChromium: continuesInChromium, in: anchor()
         ) {
         case .vault(let vaultID):
             return (try? CredentialManager.forVault(profile, vaultID: vaultID)).map(VaultSelection.vault) ?? .none

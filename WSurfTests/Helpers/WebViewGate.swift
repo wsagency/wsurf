@@ -67,16 +67,21 @@ nonisolated struct BoundedWebViews: TestTrait, SuiteTrait, TestScoping {
         }
         let requiresCache = test.traits.contains { $0 is RequiresBackForwardCache }
         let permits = await WebViewGate.shared.acquire(exclusive: requiresCache)
+        // The shared teardown of every window and web view test: the main autorelease pool is drained as the test starts and as
+        // it ends, so the windows, web views and pages of one test are freed by the end of the next (see `MainEventLoop`).
+        await MainEventLoop.drainSoon()
         let windows: Set<ObjectIdentifier>? = await WindowCensus.isEnabled ? WindowCensus.snapshot() : nil
         do {
             try await function()
         } catch {
+            await MainEventLoop.drainSoon()
             if let windows {
                 await WindowCensus.report(test.name, since: windows)
             }
             await WebViewGate.shared.release(permits)
             throw error
         }
+        await MainEventLoop.drainSoon()
         if let windows {
             await WindowCensus.report(test.name, since: windows)
         }

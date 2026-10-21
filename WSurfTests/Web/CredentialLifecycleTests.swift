@@ -137,11 +137,10 @@ struct CredentialLifecycleTests {
         let profile = try await VaultManagerFixture.newProfile()
         let passkeys = VaultPasskeys()
         passkeys.beforeRegister = { CredentialManager.lock(profileID: profile.id, reason: reason) }
-        let anchor = VaultManagerFixture.anchor()
         do {
             await #expect(throws: (any Error).self) {
                 _ = try await CredentialManager.createVault(
-                    profile: profile, name: "Late", choice: .newPasskey(authorizedBy: nil), in: anchor, native: passkeys.native
+                    profile: profile, name: "Late", choice: .newPasskey(authorizedBy: nil), in: VaultManagerFixture.anchor(), native: passkeys.native
                 )
             }
             let store = try CredentialManager.store(for: profile)
@@ -149,7 +148,7 @@ struct CredentialLifecycleTests {
 
             passkeys.beforeRegister = nil
             let vaultID = try await CredentialManager.createVault(
-                profile: profile, name: "Fresh", choice: .newPasskey(authorizedBy: nil), in: anchor, native: passkeys.native
+                profile: profile, name: "Fresh", choice: .newPasskey(authorizedBy: nil), in: VaultManagerFixture.anchor(), native: passkeys.native
             )
             #expect(try await store.listing().map(\.isUnlocked) == [false])
             #expect(!(try CredentialManager.forVault(profile, vaultID: vaultID)).isUnlocked)
@@ -301,7 +300,7 @@ struct CredentialLifecycleTests {
         let unlocker = PasskeyVaultUnlocker()
 
         do {
-            _ = try await unlocker.verifyRegistration(registration, in: NSWindow()) {
+            _ = try await unlocker.verifyRegistration(registration, in: VaultManagerFixture.anchor()) {
                 try access.checkAuthorization(at: clock.now)
             }
             Issue.record("revoked registration started an assertion")

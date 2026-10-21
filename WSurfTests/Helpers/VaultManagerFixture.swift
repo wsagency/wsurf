@@ -156,8 +156,15 @@ enum VaultManagerFixture {
         Profile(id: UUID(), name: name, symbol: "key", color: .blue)
     }
 
-    static func anchor() -> ASPresentationAnchor {
-        NSWindow()
+    /// The presentation anchor of a fixture call. The managers, the settings model, vault routing and the vault choice take their
+    /// anchor lazily and ask for it only to show a native prompt, and here every prompt is answered without one: the
+    /// `VaultPasskeys` stub for the passkey, `VaultChoicePrompt.answersForTesting` for the choice. So `in: anchor()` makes no
+    /// window, and the vault suites need none. Asking for it is a prompt a test forgot to stub: that is recorded, and a window
+    /// that is never shown comes back so the run goes on.
+    static func anchor(sourceLocation: SourceLocation = #_sourceLocation) -> ASPresentationAnchor {
+        Issue.record("a vault call asked for a window to present a native prompt; stub it (VaultPasskeys, answersForTesting)",
+                     sourceLocation: sourceLocation)
+        return ASPresentationAnchor()
     }
 
     /// Builds `vaults.count` vaults (each with its own passkey) on the profile's real store, registered like production managers

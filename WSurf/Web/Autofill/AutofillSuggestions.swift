@@ -704,7 +704,7 @@ final class AutofillSuggestions {
     /// `VaultChoicePrompt`. `isCurrent` is asked after every suspension, and last right before the unlock starts, so a request that
     /// ended while the choice was open (another field, a navigation, a lock or profile switch) unlocks nothing. The lease is the
     /// vault's own: nothing here extends it (`CredentialAutoLock`).
-    func unlockVault(of profile: Profile, in window: NSWindow, while isCurrent: () -> Bool) async -> Bool {
+    func unlockVault(of profile: Profile, in window: @autoclosure () -> NSWindow, while isCurrent: () -> Bool) async -> Bool {
         let generation = accessGenerations[profile.id]
         guard !profile.isPrivate, let store = try? CredentialManager.store(for: profile), await store.openState().isProvisional,
               let listing = try? await store.listing(), !listing.isEmpty,
@@ -716,11 +716,11 @@ final class AutofillSuggestions {
         } else {
             route = .needsChoice(ordered, reason: .noneMatchedLockedExists)
         }
-        guard let chosen = await route.resolve(profile: profile, in: window), chosen.profileID == profile.id,
+        guard let chosen = await route.resolve(profile: profile, in: window()), chosen.profileID == profile.id,
               generation == accessGenerations[profile.id], isCurrent() else { return false }
         if !chosen.isUnlocked {
             do {
-                try await chosen.unlock(in: window)
+                try await chosen.unlock(in: window())
             } catch {
                 return false
             }
