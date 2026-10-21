@@ -86,7 +86,7 @@ NOT_A_NAME = {'func', 'var', 'let', 'subscript', 'init', 'deinit', 'override', '
 
 def strip(src):
     """Returns src with comments and string-literal contents removed and line breaks kept."""
-    out, i, n = [], 0, len(src)
+    out, n = [], len(src)
 
     def string(i, hashes):
         # src[i] is the opening quote run; returns the index after the closing delimiter.
@@ -128,8 +128,8 @@ def strip(src):
                         if src[i] == '\n':
                             out.append('\n')
                         i += 1
-            elif c == '#' and re.match(r'#+"', src[i:]):
-                hashes = len(re.match(r'#+', src[i:]).group())
+            elif c == '#' and (raw := re.match(r'(#+)"', src[i:])):
+                hashes = len(raw.group(1))
                 out.append('""')
                 i = string(i + hashes, hashes)
             elif c == '"':
