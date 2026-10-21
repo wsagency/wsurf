@@ -234,6 +234,11 @@ struct AppDatabase: Sendable {
                 t.add(column: "diagnostics", .blob)
             }
         }
+        if !traceColumns.contains("openedTabIDs") {
+            try db.alter(table: "agentTrace") { t in
+                t.add(column: "openedTabIDs", .text)
+            }
+        }
         try db.create(table: "agentConversationMemory", options: .ifNotExists) { t in
             t.primaryKey("traceID", .blob).references("agentTrace", onDelete: .cascade)
             t.column("payload", .blob).notNull()

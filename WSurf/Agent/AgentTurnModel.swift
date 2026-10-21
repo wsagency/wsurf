@@ -81,6 +81,8 @@ final class AgentTurnModel {
     @ObservationIgnored private var runTask: Task<Void, Never>?
     @ObservationIgnored private var completion: ((Result<AgentTurnResult, any Error>) -> Void)?
     @ObservationIgnored private var compactionTask: Task<Void, Never>?
+    /// Notes the finished turn's words after its reply is shown; the next turn, Stop and a profile switch cancel it.
+    @ObservationIgnored private var factTask: Task<Void, Never>?
     @ObservationIgnored private var pendingAnchorMoves: [(from: UUID, to: UUID)] = []
     @ObservationIgnored var onTurnFinished: (() -> Void)?
 
@@ -246,6 +248,11 @@ final class AgentTurnModel {
             activeTask = nil
             runTask = nil
             applyPendingAnchorMoves()
+            factTask = Task {
+                await LLMSettings.$scoped.withValue(modelSettings) {
+                    await runner.rememberFacts(fromTask: task.id)
+                }
+            }
             let completed = self.completion
             self.completion = nil
             onTurnFinished?()
@@ -256,6 +263,8 @@ final class AgentTurnModel {
 
     func cancel() {
         cancelCompaction()
+        factTask?.cancel()
+        factTask = nil
         let hadActiveTurn = activeTask != nil || runTask != nil
         onCancel?()
         runTask?.cancel()

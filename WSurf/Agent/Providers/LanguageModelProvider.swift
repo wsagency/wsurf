@@ -179,7 +179,8 @@ private struct AnyLanguageModelProvider: ModelProvider {
             onImageInputUnsupported: { ModelImageSupport.record(false, for: configuration, model: model, settings: settings) },
             enabledToolIDs: toolIDs,
             toolkit: toolkit,
-            log: log
+            log: log,
+            factModel: UtilityModelSource.onDevice
         )
     }
 

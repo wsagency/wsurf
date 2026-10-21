@@ -41,6 +41,8 @@ final class AgentQuestionModel {
 
     @ObservationIgnored private var waiting: [UUID: CheckedContinuation<String, Never>] = [:]
     @ObservationIgnored private var settled: [UUID: String] = [:]
+    /// The person's own replies to each closed ask, kept apart from the transcript so nothing has to parse it back.
+    @ObservationIgnored private var given: [UUID: [String]] = [:]
 
     var current: Question? {
         ask?.questions.indices.contains(index) == true ? ask?.questions[index] : nil
@@ -71,8 +73,11 @@ final class AgentQuestionModel {
         reply(at: index).text
     }
 
-    func put(_ questions: [Question], inAnchor anchorID: UUID?) async -> String {
-        await result(for: present(questions, inAnchor: anchorID))
+    /// The transcript for the model, and the person's own answers as typed or chosen.
+    func put(_ questions: [Question], inAnchor anchorID: UUID?) async -> (transcript: String, given: [String]) {
+        let asked = present(questions, inAnchor: anchorID)
+        let transcript = await result(for: asked)
+        return (transcript, given.removeValue(forKey: asked.id) ?? [])
     }
 
     @discardableResult
@@ -149,7 +154,7 @@ final class AgentQuestionModel {
         if handingOver, replies.contains(where: { $0.isBlank }) {
             let unanswered = questions.enumerated()
                 .filter { reply(at: $0.offset).isBlank }
-                .map(\.element.text)
+                .map { Self.oneLine($0.element.text) }
             transcript = ([transcript] + [
                 "\(Self.handoverMark) for the rest and carry on, without asking again: "
                     + unanswered.joined(separator: " · "),
@@ -157,6 +162,7 @@ final class AgentQuestionModel {
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
         }
+        given[closing.id] = replies.compactMap(\.text)
         ask = nil
         index = 0
         replies = []
@@ -172,6 +178,11 @@ final class AgentQuestionModel {
     nonisolated static let handoverMark = "Choose sensible answers yourself"
     nonisolated static let passedMark = "No preference, you choose from: "
 
+    /// Question text and options come from the model and from pages: a line break in them could pass for an answer line.
+    nonisolated static func oneLine(_ text: String) -> String {
+        text.components(separatedBy: .newlines).joined(separator: " ")
+    }
+
     static func transcript(of questions: [Question], replies: [Reply]) -> String {
         let lines = questions.enumerated().compactMap { index, question -> String? in
             guard replies.indices.contains(index) else { return nil }
@@ -179,11 +190,11 @@ final class AgentQuestionModel {
             case .none:
                 return nil
             case .given(let answer):
-                return "\(questionMark)\(question.text)\n\(answerMark)\(answer)"
+                return "\(questionMark)\(oneLine(question.text))\n\(answerMark)\(oneLine(answer))"
             case .skipped:
                 guard !question.options.isEmpty else { return nil }
-                let choices = question.options.joined(separator: " · ")
-                return "\(questionMark)\(question.text)\n\(answerMark)\(passedMark)\(choices)"
+                let choices = question.options.map(oneLine).joined(separator: " · ")
+                return "\(questionMark)\(oneLine(question.text))\n\(answerMark)\(passedMark)\(choices)"
             }
         }
         return lines.joined(separator: "\n")

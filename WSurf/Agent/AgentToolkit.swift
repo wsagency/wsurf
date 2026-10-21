@@ -22,6 +22,7 @@ final class AgentToolkit {
     private var closingWasConfirmed = false
     private(set) var lastToolFailed = false
     var taskLedger = AgentTaskLedger()
+    var givenAnswers: [String] = [] // The person's own askUser answers in this run, for the note writer; the run resets it.
     var fileSelection: ((PageFileSelection.Parameters) async -> [URL]?)? {
         services.chooseFiles
     }
@@ -183,6 +184,7 @@ final class AgentToolkit {
         hasSeenUntrustedContent = false
         discoveredDestinations = []
         searchCache = [:]
+        releaseOpenedTabs(keeping: task.anchorID)
         self.task = task
         seededContextTabIDs = Set(onScreenTabs.map(\.id))
         agentOpenedTabIDs = []
@@ -191,6 +193,7 @@ final class AgentToolkit {
 
     func finishTask(_ completedTask: AgentTaskContext) {
         guard task?.id == completedTask.id else { return }
+        releaseOpenedTabs(keeping: nil)
         computerObservation = nil
         task = nil
     }
@@ -375,7 +378,7 @@ final class AgentToolkit {
                 return output
             }
             let tab = browser.newTab(url: url, transition: .agent)
-            agentOpenedTabIDs.insert(tab.id)
+            adoptOpened(tab)
             tab.assistantAccess.pageChanged(url: url)
             let access = await authorize(.read, in: tab.page, requiresTaskTab: false)
             if let output = cancellationOutput(for: step) {
@@ -414,7 +417,7 @@ final class AgentToolkit {
             return fencedPageOutput(output)
         }
         let tab = browser.newTab()
-        agentOpenedTabIDs.insert(tab.id)
+        adoptOpened(tab)
         let output = "New empty tab opened and active."
         completeTool(step, output: output)
         return output
@@ -522,7 +525,7 @@ final class AgentToolkit {
         }
         if let videoID = resolved.videoID, let watch = Self.watchURL(videoID: videoID) {
             let tab = browser.newTab(url: watch, activate: !media.isEnabled, transition: .agent)
-            agentOpenedTabIDs.insert(tab.id)
+            adoptOpened(tab)
             media.controlTab(
                 page: tab.page,
                 title: topic,
@@ -541,7 +544,7 @@ final class AgentToolkit {
             return output
         }
         let fallbackTab = browser.newTab(url: fallbackURL, transition: .agent)
-        agentOpenedTabIDs.insert(fallbackTab.id)
+        adoptOpened(fallbackTab)
         let output = "Couldn't resolve a video directly; opened the results in a tab instead."
         completeTool(
             step,
@@ -868,7 +871,6 @@ final class AgentToolkit {
         completeTool(stepID, output: output, failed: true)
         return output
     }
-
 }
 
 extension AgentToolkit {
@@ -888,8 +890,9 @@ extension AgentToolkit {
         if let output = cancellationOutput(for: step) {
             return output
         }
-        let answers = await questions.put(put, inAnchor: task?.anchorID)
-        let trimmed = answers.trimmingCharacters(in: .whitespacesAndNewlines)
+        let answered = await questions.put(put, inAnchor: task?.anchorID)
+        givenAnswers += Task.isCancelled ? [] : answered.given
+        let trimmed = answered.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             let output = "Nothing was answered. Carry on with what you have."
             completeTool(step, output: output, failed: true)
@@ -974,5 +977,24 @@ extension AgentToolkit {
         var components = URLComponents(string: "https://www.youtube.com/watch")
         components?.queryItems = [URLQueryItem(name: "v", value: videoID)]
         return components?.url
+    }
+
+    /// A tab the assistant opened: the task shows in its Ask panel, and the tab shows its work until this task ends or the next begins.
+    private func adoptOpened(_ tab: BrowserTab) {
+        agentOpenedTabIDs.insert(tab.id)
+        guard let task else { return }
+        log.noteOpenedTab(browser.anchorID(of: tab.id), taskID: task.id)
+        browser.setAgentWorking(true, inAnchor: browser.anchorID(of: tab.id))
+    }
+
+    private func releaseOpenedTabs(keeping anchor: UUID?) {
+        for anchorID in agentOpenedTabIDs.map({ browser.anchorID(of: $0) }) where anchorID != anchor {
+            browser.setAgentWorking(false, inAnchor: anchorID)
+        }
+    }
+
+    /// The profile's notes about the person, nil in a private window. Only the in-app assistant reads them.
+    var assistantFacts: AssistantFacts? {
+        browser.context.assistantFacts
     }
 }

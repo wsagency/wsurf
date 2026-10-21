@@ -20,6 +20,7 @@ extension AnyLanguageModelAgent {
         let started = ContinuousClock.now
         let state = RunState(agent: self, utterance: utterance, task: task, reply: reply)
         toolkit.taskLedger = task.isContinuation ? (state.checkpoint.taskLedger ?? .init()) : .init()
+        toolkit.givenAnswers = []
         if task.isContinuation, !toolkit.taskLedger.outcomes.isEmpty || toolkit.taskLedger.actionRevision > 0 {
             toolkit.taskLedger.actionRevision += 1
         }
@@ -121,6 +122,8 @@ extension AnyLanguageModelAgent {
         toolkit.finishTask(task)
         reply.setActivity(nil)
         reply.endStream()
+        let said = ([AgentToolkit.userText(of: utterance)] + toolkit.givenAnswers).filter { !$0.isEmpty }.joined(separator: "\n")
+        pendingFacts = Task.isCancelled || said.isEmpty ? nil : (taskID: task.id, said: said)
     }
 
     private func runLoop(_ state: RunState, callbacks: RunCallbacks) async throws {
@@ -402,7 +405,7 @@ extension AnyLanguageModelAgent {
             session = agent.session(for: task.anchorID)
             policy = agent.executionPolicy ?? .current
             monitor = AgentProgressMonitor(policy: policy)
-            prompt = task.isContinuation ? AnyLanguageModelAgent.continuationPrompt : AssistantAttachment.prompt(
+            prompt = task.isContinuation ? AnyLanguageModelAgent.continuationPrompt : agent.toolkit.rememberedContext() + AssistantAttachment.prompt(
                 utterance, attachments: task.attachments, textOnly: task.attachmentTextOnly || !agent.acceptsImages
             )
             images = AttachmentRequest.images(task.attachments, textOnly: task.attachmentTextOnly || !agent.acceptsImages)

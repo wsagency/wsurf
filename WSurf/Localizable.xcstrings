@@ -6560,6 +6560,116 @@
     },
     "%lld min read" : {
       "comment" : "Reading time of an article in Reader, shown under its title beside the author's name. %lld is the number of minutes and is at least 1. Keep it short; it sits on one line."
+    },
+    "Memory" : {
+      "comment" : "Title of the section and row on the Assistant settings page, and of the page they open, that lists the notes the assistant keeps about the person. A noun; one word."
+    },
+    "Notes about you that the assistant keeps on this Mac." : {
+      "comment" : "Caption under the Memory row on the Assistant settings page."
+    },
+    "Not in private windows" : {
+      "comment" : "Detail on the Memory row on the Assistant settings page in a private window, which keeps no notes. Short; it sits at the trailing edge of the row."
+    },
+    "%lld notes" : {
+      "comment" : "Detail on the Memory row on the Assistant settings page: how many notes the assistant keeps. %lld is at least 1. Short; it sits at the trailing edge of the row.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld note"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld notes"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "What the assistant remembers about you. It saves your answers and what you ask it to remember. It never saves page content, passwords, or payment details." : {
+      "comment" : "Caption under the title of Settings › Assistant › Memory."
+    },
+    "Not available in private windows" : {
+      "comment" : "Title of the empty state of Settings › Assistant › Memory in a private window."
+    },
+    "A private window keeps no notes about you, and the assistant uses none there." : {
+      "comment" : "Caption of the empty state of Settings › Assistant › Memory in a private window."
+    },
+    "Remember things about me" : {
+      "comment" : "Title of the switch on Settings › Assistant › Memory that turns assistant memory on or off for this profile. Also its Settings search title."
+    },
+    "New notes need Apple Intelligence, which is off or unavailable. The assistant still uses the notes it has." : {
+      "comment" : "Caption under the Remember things about me switch on Settings › Assistant › Memory while memory is on but the on-device model cannot write notes."
+    },
+    "When this is off, the assistant can’t save or recall anything." : {
+      "comment" : "Caption under the Remember things about me switch on Settings › Assistant › Memory."
+    },
+    "Also forget everything?" : {
+      "comment" : "Title of the question shown when the person turns memory off on Settings › Assistant › Memory while notes are kept."
+    },
+    "Forget Everything" : {
+      "comment" : "Default, destructive button of the Also forget everything? question: turns memory off and deletes every note. Title Case."
+    },
+    "Keep Notes" : {
+      "comment" : "Button of the Also forget everything? question: turns memory off and keeps the notes. Title Case."
+    },
+    "Memory turns off either way. Kept notes stay on this Mac until you forget them." : {
+      "comment" : "Message of the Also forget everything? question."
+    },
+    "Search memory" : {
+      "comment" : "Placeholder of the search field above the notes on Settings › Assistant › Memory."
+    },
+    "Notes" : {
+      "comment" : "Title of the section that lists the assistant's notes on Settings › Assistant › Memory. A plural noun."
+    },
+    "Notes are written on this Mac. When you use a cloud model, the notes it needs are sent with your request. Forgetting a note stops it being used. Earlier conversations keep what they said." : {
+      "comment" : "Footnote under the notes on Settings › Assistant › Memory. A cloud model is a model provider on the internet, as opposed to Apple Intelligence on this Mac."
+    },
+    "Nothing remembered" : {
+      "comment" : "Title of the empty state of the notes list on Settings › Assistant › Memory."
+    },
+    "Things appear here when you answer the assistant or ask it to remember something." : {
+      "comment" : "Caption of the empty state of the notes list on Settings › Assistant › Memory."
+    },
+    "Try a different word." : {
+      "comment" : "Caption under No matches when a settings search field finds nothing."
+    },
+    "Forget All…" : {
+      "comment" : "Button under the notes on Settings › Assistant › Memory that asks before deleting every note. Title Case; the ellipsis means it asks first."
+    },
+    "Forget everything the assistant remembers?" : {
+      "comment" : "Title of the confirmation for Forget All… on Settings › Assistant › Memory."
+    },
+    "Forget All" : {
+      "comment" : "Destructive button of the confirmation that deletes every note the assistant keeps. Title Case."
+    },
+    "The assistant will ask again when it needs these details." : {
+      "comment" : "Message of the confirmation that deletes every note the assistant keeps."
+    },
+    "This can’t be saved. It is too long, or it looks like a password, code or number." : {
+      "comment" : "Shown under a note being edited on Settings › Assistant › Memory when the new text is refused."
+    },
+    "Forget" : {
+      "comment" : "Button on a note's row on Settings › Assistant › Memory that deletes that note at once. A verb."
+    },
+    "Saved %@ from your answer" : {
+      "comment" : "Caption of a note on Settings › Assistant › Memory. %@ is the date it was saved, for example Oct 21, 2026. The note came from the person's answer to the assistant's question."
+    },
+    "Saved %@ from your message" : {
+      "comment" : "Caption of a note on Settings › Assistant › Memory. %@ is the date it was saved, for example Oct 21, 2026. The note came from what the person typed."
+    },
+    "Saved %@ by the assistant" : {
+      "comment" : "Caption of a note on Settings › Assistant › Memory. %@ is the date it was saved, for example Oct 21, 2026."
+    },
+    "Notes about you that the assistant keeps on this Mac. See, edit or forget them." : {
+      "comment" : "Settings search result detail for the Remember things about me switch."
     }
   },
   "version" : "1.0"

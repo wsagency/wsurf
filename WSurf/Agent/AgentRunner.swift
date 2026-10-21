@@ -43,12 +43,16 @@ protocol AgentRunner: AnyObject {
         into reply: AgentReplyModel,
         speech: any SpeechOutput
     ) async
+    /// Notes what the person said in the task that just finished. The turn model calls it after the reply is shown, as its own
+    /// task, and cancels it with the next turn, Stop or a profile switch.
+    func rememberFacts(fromTask taskID: UUID) async
 }
 
 extension AgentRunner {
     var supportsCompaction: Bool {
         false
     }
+    func rememberFacts(fromTask taskID: UUID) async {}
     func compactContext(forTab tabID: UUID) async throws -> Bool {
         false
     }

@@ -348,6 +348,50 @@ struct AgentTurnModelTests {
         #expect(await waitUntil { !fixture.model.isRunning })
     }
 
+    @Test func notesAreWrittenOnlyAfterTheTurnHasFinished() async throws {
+        let fixture = Fixture()
+        fixture.model.use(fixture.runner)
+        var seen: (running: Bool, completed: Int)?
+        fixture.runner.onRememberFacts = { seen = (fixture.model.isRunning, fixture.log.completed.count) }
+
+        #expect(fixture.model.run(utterance: "My shoe size is 42"))
+        try #require(await waitUntil { fixture.runner.factWrites.count == 1 })
+
+        let task = try #require(fixture.log.completed.first)
+        #expect(fixture.runner.factWrites == [.init(taskID: task.id, cancelled: false)])
+        #expect(seen?.running == false)
+        #expect(seen?.completed == 1)
+    }
+
+    @Test func stopCancelsTheNoteWriter() async throws {
+        let fixture = Fixture()
+        fixture.runner.holdsFacts = true
+        fixture.model.use(fixture.runner)
+        #expect(fixture.model.run(utterance: "My shoe size is 42"))
+        try #require(await waitUntil { fixture.runner.factWritesStarted == 1 })
+
+        fixture.model.cancel()
+        fixture.runner.releaseFacts()
+
+        try #require(await waitUntil { fixture.runner.factWrites.count == 1 })
+        #expect(fixture.runner.factWrites.first?.cancelled == true)
+    }
+
+    @Test func aCancelledTurnNeverAsksForNotes() async throws {
+        let fixture = Fixture()
+        fixture.runner.waitsForRelease = true
+        fixture.model.use(fixture.runner)
+        #expect(fixture.model.run(utterance: "My shoe size is 42"))
+        try #require(await waitUntil { fixture.runner.runs.count == 1 })
+        let cancelled = try #require(fixture.model.activeTask)
+        fixture.model.cancel()
+        fixture.runner.release(cancelled.id)
+
+        fixture.runner.waitsForRelease = false
+        #expect(fixture.model.run(utterance: "I am vegetarian"))
+        try #require(await waitUntil { fixture.runner.factWrites.count == 1 })
+        #expect(fixture.runner.factWrites.map(\.taskID) == [fixture.runner.runs[1].task.id])
+    }
 }
 
 @MainActor
@@ -537,6 +581,31 @@ private final class FakeAgentRunner: AgentRunner {
 
     func release(_ taskID: UUID) {
         continuations.removeValue(forKey: taskID)?.resume()
+    }
+
+    struct FactWrite: Equatable {
+        let taskID: UUID
+        let cancelled: Bool
+    }
+
+    var holdsFacts = false
+    var onRememberFacts: () -> Void = {}
+    private(set) var factWritesStarted = 0
+    private(set) var factWrites: [FactWrite] = []
+    private var factContinuation: CheckedContinuation<Void, Never>?
+
+    func rememberFacts(fromTask taskID: UUID) async {
+        factWritesStarted += 1
+        onRememberFacts()
+        if holdsFacts {
+            await withCheckedContinuation { factContinuation = $0 }
+        }
+        factWrites.append(FactWrite(taskID: taskID, cancelled: Task.isCancelled))
+    }
+
+    func releaseFacts() {
+        factContinuation?.resume()
+        factContinuation = nil
     }
 }
 
