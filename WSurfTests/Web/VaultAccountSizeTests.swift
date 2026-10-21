@@ -50,7 +50,8 @@ struct VaultAccountSizeTests {
                 #expect(stamped.modifiedAt != nil)
                 #expect(try CredentialVaultCrypto.storedBytes(of: stamped) <= CredentialVaultLimits.encodedAccountBytes)
 
-                try await f.edit(store, access) { commitEditing($0, victim.id) { $0.password = "changed" } }
+                // As long as "secret": the account is exactly on the cap, and one byte more is refused (`.limit(.accountBytes)`).
+                try await f.edit(store, access) { commitEditing($0, victim.id) { $0.password = "hidden" } }
                 _ = try expectRowsFit(in: f.vaultID, "password edit")
 
                 // The whole account to Trash and back.
@@ -58,7 +59,7 @@ struct VaultAccountSizeTests {
                 _ = try expectRowsFit(in: f.trashID, "account removed")
                 try await f.undelete(store, access, try f.trashEntry(of: victim.id).row.recordID)
                 var restored = try #require(try await store.snapshot(vaultID: f.vaultID, using: access).accounts.first)
-                #expect(restored.notes == replacement.notes && restored.password == "changed")
+                #expect(restored.notes == replacement.notes && restored.password == "hidden")
 
                 // The note alone to Trash and back.
                 try await f.deleteCredential(store, access, owner: victim.id, subject: .note)
