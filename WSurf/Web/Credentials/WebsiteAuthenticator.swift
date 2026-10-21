@@ -52,6 +52,9 @@ nonisolated struct WebAuthnAssertionOptions: Sendable {
     var rpID: String?
     var allowCredentials: [Data]
     var userVerification: WebAuthnUserVerification
+    /// The FIDO AppID extension input (`extensions.appid`), which relying parties with old U2F keys send (GitHub). Only answered,
+    /// never used: a vault passkey is always scoped to a domain RP ID, never to a U2F AppID URL.
+    var appID: String?
 }
 
 nonisolated enum WebAuthnRequestOptions: Sendable {
@@ -86,6 +89,8 @@ nonisolated struct WebAuthnCredentialProperties: Sendable {
 
 nonisolated struct WebAuthnClientExtensionResults: Sendable {
     var credProps: WebAuthnCredentialProperties?
+    /// `appid` output: present when the request asked for it. Always false, since the assertion is made under the RP ID.
+    var appid: Bool?
 }
 
 nonisolated struct WebAuthnResult: Sendable {
@@ -240,7 +245,7 @@ nonisolated enum WebsiteAuthenticator {
             rpID: context.rpID,
             userVerified: consent.userVerified,
             backupEligible: passkey.backupEligible,
-            backupState: passkey.backupState
+            backupState: passkey.isBackedUp
         )
         var signedData = authenticatorData
         signedData.append(Data(SHA256.hash(data: clientDataJSON)))
@@ -254,7 +259,9 @@ nonisolated enum WebsiteAuthenticator {
             authenticatorData: authenticatorData,
             signature: signature,
             userHandle: passkey.userHandle,
-            clientExtensionResults: nil,
+            // WebAuthn §10.1.1: an RP that sent appid reads `appid: false` as "verify against the RP ID hash", which is what
+            // this assertion carries.
+            clientExtensionResults: options.appID == nil ? nil : WebAuthnClientExtensionResults(appid: false),
             publicKeySPKI: nil,
             publicKeyAlgorithm: nil
         )

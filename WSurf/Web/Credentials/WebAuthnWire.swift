@@ -125,7 +125,8 @@ nonisolated enum WebAuthnWire {
                 challenge: challenge,
                 rpID: options["rpId"] as? String,
                 allowCredentials: try descriptors(options["allowCredentials"]),
-                userVerification: verification
+                userVerification: verification,
+                appID: try appID(options["appid"])
             ))
         }
         return Parsed(
@@ -137,6 +138,12 @@ nonisolated enum WebAuthnWire {
     private static func enumValue<T: RawRepresentable>(_: T.Type, _ raw: Any?, default fallback: T) throws -> T where T.RawValue == String {
         guard let raw else { return fallback }
         guard let string = raw as? String, let value = T(rawValue: string) else { throw Malformed(reason: "enum") }
+        return value
+    }
+
+    private static func appID(_ raw: Any?) throws -> String? {
+        guard let raw else { return nil }
+        guard let value = raw as? String, (1...2_048).contains(value.utf8.count) else { throw Malformed(reason: "appid") }
         return value
     }
 
@@ -168,6 +175,7 @@ nonisolated enum WebAuthnWire {
         }
         var extensions: [String: Any] = [:]
         if let properties = result.clientExtensionResults?.credProps { extensions["credProps"] = ["rk": properties.rk] }
+        if let appid = result.clientExtensionResults?.appid { extensions["appid"] = appid }
         return [
             "operation": operation == .create ? "create" : "get",
             "id": id, "rawId": id, "type": "public-key", "authenticatorAttachment": "platform",

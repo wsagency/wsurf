@@ -24,7 +24,7 @@ enum VaultChoicePrompt {
 
     static func present(
         _ candidates: [VaultListing], reason: VaultChoiceReason, profileID: UUID, offersHandOff: Bool = false,
-        in anchor: ASPresentationAnchor
+        continuesInChromium: Bool = false, in anchor: ASPresentationAnchor
     ) async -> Answer? {
         guard !candidates.isEmpty else { return nil }
         if offersHandOff, handOffForTesting.contains(profileID) {
@@ -48,7 +48,10 @@ enum VaultChoicePrompt {
         }
         alert.addButton(withTitle: String(localized: "Cancel"))
         if offersHandOff {
-            alert.addButton(withTitle: NativeWebAuthnInteraction.handOffTitle)
+            alert.addButton(withTitle: NativeWebAuthnInteraction(continuesInChromium: continuesInChromium).handOffTitle)
+            if continuesInChromium {
+                alert.informativeText += "\n" + NativeWebAuthnInteraction.chromiumReason
+            }
         }
         guard case .response(let response) = await NativeSheet.present(alert, in: anchor, until: nil) else { return nil }
         let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue

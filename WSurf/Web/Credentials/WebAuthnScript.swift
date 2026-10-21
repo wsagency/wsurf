@@ -274,15 +274,19 @@ nonisolated enum WebAuthnScript {
           result.credProps = extensions.credProps === true;
         } else {
           if (pk.rpId !== undefined) result.rpId = text(pk.rpId, 'rpId');
+          if (extensions.appid !== undefined) result.appid = text(extensions.appid, 'extensions.appid');
           result.allowCredentials = descriptors(pk.allowCredentials);
           result.userVerification = pk.userVerification || 'preferred';
         }
         return result;
       }
 
+      // Methods stay assignable, as the engine's own prototype methods are: libraries replace them on the credential (GitHub's
+      // webauthn-json ponyfill sets `credential.toJSON` in strict mode, which throws on a read-only property). Values stay
+      // read-only, like the engine's getter-only attributes.
       function define(target, properties) {
         for (const [key, item] of Object.entries(properties)) {
-          Object.defineProperty(target, key, {value: item, enumerable: true, configurable: true});
+          Object.defineProperty(target, key, {value: item, enumerable: true, configurable: true, writable: typeof item === 'function'});
         }
         return target;
       }
@@ -316,7 +320,7 @@ nonisolated enum WebAuthnScript {
             return json;
           };
         }
-        Object.defineProperty(response, 'toJSON', {value: responseJSON, configurable: true});
+        Object.defineProperty(response, 'toJSON', {value: responseJSON, writable: true, configurable: true});
         const object = define(Object.create(PublicKeyCredential.prototype), {
           id: value.id, rawId: decode(value.rawId), type: 'public-key',
           authenticatorAttachment: 'platform', response,
@@ -325,7 +329,7 @@ nonisolated enum WebAuthnScript {
         Object.defineProperty(object, 'toJSON', {
           value: () => ({id: value.id, rawId: value.rawId, type: 'public-key', authenticatorAttachment: 'platform',
             response: responseJSON(), clientExtensionResults: JSON.parse(JSON.stringify(results))}),
-          configurable: true
+          writable: true, configurable: true
         });
         return object;
       }
