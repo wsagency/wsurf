@@ -57,6 +57,10 @@ Everything since 0.1.0 (build 1), the installed candidate 6.2. None of the scree
 - In Chromium tabs, WSurf’s own scripts no longer count as a click, so they cannot open pop-ups or start sound. Connected apps’ clicks and typing and WSurf’s media controls still do.
 - Test runs keep their preference files in a test folder instead of `~/Library/Preferences`, and the command palette and sidebar row tests close the windows they open.
 
+### Known issues
+
+- A native test of the Chromium external-app handoff (a link to another app opened without a referrer by a page inside a frame of a different website) fails on some runs. When it fails, the request is dropped before WSurf sees it: no app is launched, no approval is remembered and no prompt is shown. The cause is still being traced.
+
 ## 0.1.0 (build 1)
 
 - Credential Manager no longer freezes after unlocking a vault with thousands of credentials; long lists draw only the rows on screen.

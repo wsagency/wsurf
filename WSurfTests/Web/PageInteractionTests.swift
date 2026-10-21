@@ -882,7 +882,7 @@ extension PageInteractionTests {
         }) { view, first, _ in
             let chromium = try #require(view.chromium)
             try #require(await waitUntil { gate.reached })
-            _ = try await view.evaluateJavaScript("history.pushState({}, '', '/pushed'); 0")
+            _ = try await view.evaluateJavaScript("history.pushState({}, '', '/pushed'); 0", in: nil, contentWorld: .page, userGesture: true)
             try #require(await waitUntil { view.url?.path == "/pushed" })
             #expect(view.canGoBack, "Back reaches the page the entry was pushed from while the reset is pending")
             gate.open()
@@ -910,7 +910,7 @@ extension PageInteractionTests {
                 // (`aStartupResetNeverDropsAnEntryAddedBeforeItLands`).
                 try #require(await waitUntil { chromium.startupEntry == .dropped || chromium.startupEntry == .kept })
             }
-            _ = try await view.evaluateJavaScript("history.pushState({}, '', '/pushed'); 0")
+            _ = try await view.evaluateJavaScript("history.pushState({}, '', '/pushed'); 0", in: nil, contentWorld: .page, userGesture: true)
             try #require(await waitUntil { view.url?.path == "/pushed" })
             let back = await PageDriver.goBack(in: view)
             #expect(back.hasPrefix("Went back."), "engine \(engine): \(back)")
