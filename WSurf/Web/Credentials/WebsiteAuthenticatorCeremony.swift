@@ -3,7 +3,6 @@
 
 import AuthenticationServices
 import Foundation
-import os
 
 /// What a finished ceremony hands to page delivery: the result plus the exact vault state it was checked against, so the
 /// final dispatch can refuse a result whose authority or key material changed after that check.
@@ -285,7 +284,7 @@ extension WebsiteAuthenticator {
             let lengths = { (ids: [Data]) in Set(ids.map(\.count)).sorted().map(String.init).joined(separator: ",") }
             WebAuthnRefusal.note(
                 "no-match", rpID: bound.rpID, profileID: context.profileID,
-                "allowCredentials=\(options.allowCredentials.count) matching=0 sameRP=\(sameRP.count) relatedRP=\(related)"
+                counts: "allowCredentials=\(options.allowCredentials.count) matching=0 sameRP=\(sameRP.count) relatedRP=\(related)"
                     + " allowedIDBytes=[\(lengths(options.allowCredentials))] storedIDBytes=[\(lengths(sameRP.map(\.credentialID)))]"
             )
         }
@@ -374,13 +373,13 @@ extension WebsiteAuthenticator {
         try Task.checkCancellation()
         try validateDeadline(request)
         // What a relying party that rejects this assertion would need to tell apart, without any ID or user data.
-        Pipeline.log.notice("""
-            webauthn: asserted rpId=\(bound.rpID, privacy: .public) source=\(passkey.source.map { "\($0)" } ?? "unknown", privacy: .public) \
-            idBytes=\(passkey.credentialID.count, privacy: .public) handleBytes=\(passkey.userHandle.count, privacy: .public) \
-            candidates=\(candidates.count, privacy: .public) allowCredentials=\(options.allowCredentials.count, privacy: .public) \
-            appid=\(options.appID != nil, privacy: .public) uv=\(verified, privacy: .public) be=\(passkey.backupEligible, privacy: .public) \
-            bs=\(passkey.isBackedUp, privacy: .public)
-            """)
+        WebAuthnRefusal.log(
+            "asserted", rpID: bound.rpID,
+            counts: "idBytes=\(passkey.credentialID.count) handleBytes=\(passkey.userHandle.count) candidates=\(candidates.count) "
+                + "allowCredentials=\(options.allowCredentials.count)",
+            info: "source=\(passkey.source.map { "\($0)" } ?? "unknown") discoverable=\(options.allowCredentials.isEmpty) "
+                + "appid=\(options.appID != nil) uv=\(verified) be=\(passkey.backupEligible) bs=\(passkey.isBackedUp)"
+        )
         return WebAuthnCeremonyOutcome(
             result: result, epoch: bound.epoch, generation: settled.generation,
             savedRevision: nil, rpID: bound.rpID, userName: passkey.userName.displaySafe
@@ -457,7 +456,7 @@ extension WebsiteAuthenticator {
                 throw CancellationError()
             } catch {
                 guard !Task.isCancelled else { throw CancellationError() }
-                WebAuthnRefusal.note("unlock-failed", rpID: resolved, profileID: context.profileID, "\(type(of: error))")
+                WebAuthnRefusal.note("unlock-failed", rpID: resolved, profileID: context.profileID, info: "\(type(of: error))")
                 throw WebsiteAuthenticatorError.notAllowed
             }
             try await requireFreeWindow(anchor, rpID: resolved, context: context, "after unlock")
@@ -476,7 +475,7 @@ extension WebsiteAuthenticator {
     ) async throws {
         guard await NativeSheet.waitForSheetToClose(on: anchor) else {
             try Task.checkCancellation()
-            WebAuthnRefusal.note("interaction-refused", rpID: rpID, profileID: context.profileID, "a sheet stayed up \(moment)")
+            WebAuthnRefusal.note("interaction-refused", rpID: rpID, profileID: context.profileID, info: "a sheet stayed up \(moment)")
             throw WebsiteAuthenticatorError.notAllowed
         }
     }
@@ -570,7 +569,7 @@ extension WebsiteAuthenticator {
             WebAuthnRefusal.note("timeout", rpID: rpID, profileID: context.profileID)
             throw WebsiteAuthenticatorError.expired
         case .unavailable:
-            WebAuthnRefusal.note("interaction-refused", rpID: rpID, profileID: context.profileID, "window hidden or busy")
+            WebAuthnRefusal.note("interaction-refused", rpID: rpID, profileID: context.profileID, info: "window hidden or busy")
             throw WebsiteAuthenticatorError.notAllowed
         case .cancelled:
             throw CancellationError()

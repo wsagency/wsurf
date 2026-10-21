@@ -7,18 +7,49 @@ import Foundation
 import os
 import WebKit
 
-/// One log line for each way a passkey request ends without a result, or leaves the vault: a case name, the relying party
-/// (not secret) and counts only. Never a credential ID, user name, user handle or page text.
+/// The passkey diagnostics: a request's shape, each way it ends without a result, and a signed assertion's flags. Never a
+/// credential ID, user name, user handle or page text. Which sites a person has passkeys for is private too: the RP ID (always
+/// the validated one) is logged only as a hash, and counts and lengths, which describe the vault, are private outside DEBUG.
 @MainActor
 enum WebAuthnRefusal {
     /// Tests read the case names noted for their own profile (keyed like `WebAuthnAdapter.interactionForTesting`).
     static var recordedForTesting: [UUID: [String]] = [:]
 
-    static func note(_ name: String, rpID: String, profileID: UUID, _ details: String = "") {
-        Pipeline.log.notice(
-            "webauthn: refused, \(name, privacy: .public) rpId=\(rpID, privacy: .public) \(details, privacy: .public)"
-        )
+    /// A refusal: `name` is the case. `counts` describe the vault or request (private in release); `info` is a non-personal
+    /// reason or request flag (public).
+    static func note(_ name: String, rpID: String, profileID: UUID, counts: String = "", info: String = "") {
+        log("refused, " + name, rpID: rpID, counts: counts, info: info)
         recordedForTesting[profileID]?.append(name)
+    }
+
+    /// The one place passkey diagnostics are written. `event` and `info` are fixed, non-personal text.
+    static func log(_ event: String, rpID: String, counts: String, info: String) {
+        #if DEBUG
+        Pipeline.log.notice("""
+            webauthn: \(event, privacy: .public) rpId=\(rpID, privacy: .private(mask: .hash)) \(info, privacy: .public) \
+            \(counts, privacy: .public)
+            """)
+        #else
+        Pipeline.log.notice("""
+            webauthn: \(event, privacy: .public) rpId=\(rpID, privacy: .private(mask: .hash)) \(info, privacy: .public) \
+            \(counts, privacy: .private)
+            """)
+        #endif
+    }
+
+    /// The RP ID a request names, validated against the frame's own origin as the ceremony will validate it. Never the raw,
+    /// page-supplied value.
+    static func validatedRPID(_ options: WebAuthnRequestOptions, frame: BrowserFrame) -> String {
+        let raw: String?
+        switch options {
+        case let .creation(creation):
+            raw = creation.rpID
+        case let .assertion(assertion):
+            raw = assertion.rpID
+        }
+        guard let origin = try? BrowserPage.credentialOrigin(frame.securityOrigin).url,
+              let rpID = try? RelyingPartyPolicy.validate(rpID: raw, origin: origin) else { return "(invalid)" }
+        return rpID
     }
 }
 
@@ -153,16 +184,16 @@ enum WebAuthnAdapter {
         refuse(entry, reason: "timeout")
     }
 
-    /// `WebAuthnRefusal.note` for one request: the RP ID it asked for (else its origin's host) and its allowCredentials count.
-    private static func note(_ name: String, _ entry: Entry, _ details: String = "") {
-        let rpID: String?, allowed: String
-        switch entry.parsed.request.options {
-        case let .creation(options):
-            (rpID, allowed) = (options.rpID, "")
-        case let .assertion(options):
-            (rpID, allowed) = (options.rpID, "allowCredentials=\(options.allowCredentials.count) ")
+    /// `WebAuthnRefusal.note` for one request: its validated RP ID and its allowCredentials count.
+    private static func note(_ name: String, _ entry: Entry) {
+        var counts = ""
+        if case let .assertion(options) = entry.parsed.request.options {
+            counts = "allowCredentials=\(options.allowCredentials.count)"
         }
-        WebAuthnRefusal.note(name, rpID: rpID ?? entry.frame.securityOrigin.host, profileID: entry.profileID, allowed + details)
+        WebAuthnRefusal.note(
+            name, rpID: WebAuthnRefusal.validatedRPID(entry.parsed.request.options, frame: entry.frame), profileID: entry.profileID,
+            counts: counts
+        )
     }
 
     private static func discard(_ entry: Entry) {
@@ -283,11 +314,12 @@ enum WebAuthnAdapter {
         }
         if case let .assertion(options) = parsed.request.options {
             // The request's shape, never its IDs or user data: what a refusing relying party (GitHub) asked for.
-            Pipeline.log.notice("""
-                webauthn: request get rpId=\(options.rpID ?? frame.securityOrigin.host, privacy: .public) \
-                appid=\(options.appID != nil, privacy: .public) allowCredentials=\(options.allowCredentials.count, privacy: .public) \
-                userVerification=\(options.userVerification.rawValue, privacy: .public) mediation=\(parsed.mediation.rawValue, privacy: .public)
-                """)
+            WebAuthnRefusal.log(
+                "request get", rpID: WebAuthnRefusal.validatedRPID(parsed.request.options, frame: frame),
+                counts: "allowCredentials=\(options.allowCredentials.count)",
+                info: "appid=\(options.appID != nil) discoverable=\(options.allowCredentials.isEmpty) "
+                    + "userVerification=\(options.userVerification.rawValue) mediation=\(parsed.mediation.rawValue)"
+            )
         }
         let entry = Entry(key: key, page: page, frame: frame, parsed: parsed)
         entries[key] = entry
