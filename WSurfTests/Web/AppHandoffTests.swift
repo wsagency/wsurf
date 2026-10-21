@@ -117,6 +117,66 @@ struct AppHandoffTests {
         #expect(store.externalAppRecords.isEmpty)
     }
 
+    /// A fresh Chromium tab has no committed document to bind; the request lasts until another main-frame navigation.
+    @Test(arguments: [false, true])
+    func aFreshChromiumTabOffersARedirectStraightToAnAppOnce(anotherNavigationStarts: Bool) async throws {
+        let externalURL = URL(string: "slack://open")!
+        let response = ResponseGate()
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/redirect": .redirect(to: externalURL),
+            "/waiting": .html("<title>Next navigation</title>", gate: response),
+        ])
+        let file = URL.temporaryDirectory.appending(path: "FreshCEFRedirectApp-\(UUID().uuidString).json")
+        let store = SitePermissions(storageURL: file)
+        store.setEngine(.chromium, for: SitePermissions.origin(for: try server.url()))
+        let tab = BrowserTab(opensBlank: false, privately: true, sitePermissions: store)
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 800, height: 600),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.orderFront(nil)
+        var presenter: CheckedContinuation<NSApplication.ModalResponse, Never>?
+        var prompts = 0
+        var opened: [URL] = []
+        ExternalApp.resolverForTesting = { _ in
+            .init(url: URL(filePath: "/Applications/Slack.app"), name: "Slack", bundleIdentifier: "com.tinyspeck.slackmacgap")
+        }
+        ExternalApp.presenterForTesting = { alert in
+            prompts += 1
+            #expect(!alert.showsSuppressionButton, "a request no document proves names no site")
+            return await withCheckedContinuation { presenter = $0 }
+        }
+        ExternalApp.openerForTesting = { opened.append($0) }
+        defer {
+            presenter?.resume(returning: .alertSecondButtonReturn)
+            ExternalApp.resolverForTesting = nil
+            ExternalApp.presenterForTesting = nil
+            ExternalApp.openerForTesting = nil
+            response.open()
+            tab.detach()
+            window.close()
+            try? FileManager.default.removeItem(at: file)
+            withExtendedLifetime(server) {}
+        }
+        tab.load(try server.url("/redirect"))
+        window.contentView = tab.page
+        try #require(await waitUntil { presenter != nil })
+        #expect(tab.page.engine == .chromium)
+        #expect(tab.committedNavigation == nil)
+        if anotherNavigationStarts {
+            tab.load(try server.url("/waiting"))
+            try #require(await waitUntil { response.requestCount == 1 })
+        }
+        presenter?.resume(returning: .alertFirstButtonReturn)
+        presenter = nil
+        try #require(await waitUntil { !ExternalApp.hasPendingOfferForTesting })
+        #expect(prompts == 1)
+        #expect(opened == (anotherNavigationStarts ? [] : [externalURL]))
+        #expect(store.externalAppRecords.isEmpty)
+        response.open()
+        tab.detach()
+        await tab.waitForRetirement()
+    }
+
     @Test func aLinkToAnAppIsOffered() async throws {
         let seen = try await asked(for: "/link", routes: [
             "/link": .html(

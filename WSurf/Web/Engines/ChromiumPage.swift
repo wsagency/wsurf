@@ -50,6 +50,9 @@ final class ChromiumPage: NSView {
         case inHistory, resetting, dropped, kept
     }
     private(set) var startupEntry = StartupEntry.inHistory
+    /// Moves on when a main-frame navigation is requested, starts or commits, or the renderer is lost (`load`,
+    /// `willNavigate`, `didStartLoad`, `didTerminate`). It proves a request made before the tab committed any document.
+    private(set) var mainFrameGeneration: UInt64 = 0
     private static let startupResetAttempts = 10
     private static let startupResetRetryDelay: Duration = .milliseconds(100)
     /// Test seam: runs in place of the `Page.resetNavigationHistory` command; a throw is a refused reset.
@@ -199,6 +202,7 @@ final class ChromiumPage: NSView {
     func load(_ request: URLRequest) -> PageNavigation? {
         guard !isClosed, !closing, let url = request.url else { return nil }
         pendingLoad?.cancel()
+        mainFrameGeneration &+= 1
         let next = PageNavigation()
         navigation = next
         requestedURL = url
@@ -511,6 +515,7 @@ final class ChromiumPage: NSView {
             navigation = PageNavigation()
         }
         if !isRedirect {
+            mainFrameGeneration &+= 1
             client?.documentResponses.reset()
         }
         awaitingNativeNavigation = false
@@ -531,6 +536,7 @@ final class ChromiumPage: NSView {
     }
 
     func didStartLoad() {
+        mainFrameGeneration &+= 1
         guard !initialDocument, !awaitingNativeNavigation, !closing, !isClosed else { return }
         updateNativeSecurity()
         owner?.isLoading = true
@@ -590,6 +596,7 @@ final class ChromiumPage: NSView {
 
     func didTerminate() {
         // The renderer's documents and execution contexts are gone; no DevTools event reports it.
+        mainFrameGeneration &+= 1
         devTools.forgetDocuments()
         owner?.invalidateCredentialContexts()
         owner?.onContentProcessTerminated?()
