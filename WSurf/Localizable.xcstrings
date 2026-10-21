@@ -253,6 +253,9 @@
     "Old Passwords list removed" : {
 
     },
+    "Open" : {
+      "comment" : "Item in a download’s right-click menu on the Downloads page, and a VoiceOver action on its row. It opens the finished file in the app the Mac chooses for it. A verb, one word."
+    },
     "Open %@" : {
 
     },
@@ -689,6 +692,9 @@
           }
         }
       }
+    },
+    "%@ (default)" : {
+      "comment" : "Item in the Open With submenu of a download’s right-click menu on the Downloads page, for the app the Mac opens that file with by default. %@ is the app’s name, for example Preview. Keep the parentheses, as the Finder does."
     },
     "%@ allowed" : {
       "comment" : "Fragment in the one-line summary under a website in the list. %@ is a list of permission names already worded and joined, for example camera and microphone. Lower case: it is joined with other fragments, never shown alone."
@@ -3989,6 +3995,9 @@
     "Open in New Tab" : {
       "comment" : "Context-menu command on a history row, on the history page and the start page; it opens that entry in a new tab and leaves the list on screen. Title Case."
     },
+    "Open in WSurf" : {
+      "comment" : "Item in a download’s right-click menu on the Downloads page, and a VoiceOver action on its row. It is offered for a PDF, an image, a text file or a web page, and opens the file in a new WSurf tab instead of another app. WSurf is the app’s name — leave as is."
+    },
     "Open Link in New Tab" : {
       "comment" : "Item in the web page’s right-click menu. Title Case."
     },
@@ -4042,6 +4051,9 @@
     },
     "Open Websites" : {
       "comment" : "Tool name in assistant settings: opening a web address."
+    },
+    "Open With" : {
+      "comment" : "Submenu in a download’s right-click menu on the Downloads page. It lists the apps that can open the file. Use Apple’s own wording for the Finder’s Open With command. Title Case."
     },
     "OpenAI" : {
 
@@ -4294,6 +4306,9 @@
     },
     "Preview %@" : {
 
+    },
+    "Preview File" : {
+      "comment" : "Tooltip and VoiceOver label of the eye button beside a finished download, an item in its right-click menu, and a VoiceOver action on its row. It shows the file in the system’s Quick Look window without opening another app. A verb; not the noun Preview used for the update channel. Title Case."
     },
     "Previous (⇧⌘G)" : {
       "comment" : "Tooltip on the up-chevron in the find bar, which moves to the previous match on the page. ⇧⌘G is the keyboard shortcut — keyboard symbols, keep exactly, including the parentheses."
