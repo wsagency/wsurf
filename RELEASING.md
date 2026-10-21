@@ -331,6 +331,17 @@ Release requirements:
   top of `CHANGELOG.md`. `Tools/check-changelog.sh` runs in the candidate gate
   and fails without that section. The release workflow still finds the section
   by its `## <version>` prefix.
+- **A partitioned candidate gate runs the three test plans from one build.**
+  After one `build-for-testing`, it runs `WSurf-Parallel`, `WSurf-Serial` and
+  then `WSurf-Performance` against the same `.xctestrun`, all under one hold of
+  the machine lock. `python3 -I Tools/check-test-partition.py` runs first and
+  must pass, and each run takes its selection from
+  `Tools/check-test-partition.py --args <plan>`. Coverage comes from the three
+  result bundles merged with `xcresulttool merge`; the budgets in
+  `Tools/check-performance.sh` come from the `WSurf-Performance` bundle. The test
+  counts of the three runs must add up to the merged total. A new suite is
+  serial until someone shows it is safe in parallel; see CONTRIBUTING.md,
+  "Parallel and serial tests".
 - **The release body supplies the “What’s New” sheet.** The workflow makes the
   body from two parts. `CHANGELOG.md` is optional: make it only when a release
   needs notes of its own. If it contains a `## 1.1` section, that section comes
