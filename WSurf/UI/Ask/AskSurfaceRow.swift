@@ -103,6 +103,7 @@ struct AskSurfaceRow: View {
             HStack(spacing: placement.controlSpacing) {
                 if placement.showsSiteControls {
                     AutofillSaveBadge(browser: model.browser, coordinator: model.coordinator)
+                    InputHistoryBadge(browser: model.browser, coordinator: model.coordinator)
                     TabAudioBadge(browser: model.browser, coordinator: model.coordinator)
                         .frame(width: placement.iconSlot)
                     TabPictureBadge(browser: model.browser, coordinator: model.coordinator)

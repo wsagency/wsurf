@@ -196,6 +196,11 @@ again. It is off by default. Source behavior:
   `CredentialAccountSelection.savePlan` and `commitSave`). The vault is chosen
   and unlocked on the click; nothing is written until the person confirms, and
   a vault that changed since writes nothing and shows the new plan once.
+- While the switch is on, the toolbar shows a clipboard button beside the key
+  (`InputHistoryBadge`). It opens Settings › Autofill › Input History through
+  `AppCoordinator.openSettings(revealing:)` and `pendingSettingsAnchor`. It is
+  hidden in private profiles and on internal pages. Opening the page never
+  unlocks the list.
 - No code under `WSurf/MCP`, `WSurf/Agent` or `WSurf/Web/Assistant` names it
   (`InputHistoryIsolationTests`).
 

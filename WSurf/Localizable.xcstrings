@@ -836,6 +836,52 @@
         }
       }
     },
+    "%lld entries, each kept for %@" : {
+      "comment" : "Footnote under the Entries list in Settings, Autofill, Input History, shown while the list is unlocked. The first number is how many entries the list holds. %@ is how long each entry is kept, such as “30 minutes” or “1 week”. A mid-sentence time span, not a sentence of its own.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld entry, each kept for %@"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld entries, each kept for %@"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld entries, kept until you delete them" : {
+      "comment" : "Footnote under the Entries list in Settings, Autofill, Input History, shown while the list is unlocked and entries never expire. %lld is how many entries the list holds.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld entry, kept until you delete it"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld entries, kept until you delete them"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld extensions, %lld running." : {
       "comment" : "Caption under the Extensions settings title. The first %lld is the total number of extensions available, the second is how many are switched on in this profile."
     },

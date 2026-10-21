@@ -19,6 +19,14 @@ extension InputHistoryRetention {
             "Until I delete"
         }
     }
+
+    /// The line under the entries. The string catalog gives both forms a plural, so one entry reads "1 entry".
+    func footnote(entries count: Int) -> LocalizedStringResource {
+        if self == .untilDeleted {
+            return "\(count) entries, kept until you delete them"
+        }
+        return "\(count) entries, each kept for \(String(localized: label))"
+    }
 }
 
 /// Settings > Autofill > Input History: the switch, how long entries stay, the excluded websites, and the entries themselves.
@@ -147,11 +155,7 @@ private struct InputHistoryEntries: View {
     @Environment(\.settingsScrollProxy) private var scrollProxy
 
     private var footnote: LocalizedStringResource? {
-        guard !model.isLocked else { return nil }
-        if model.retention == .untilDeleted {
-            return "\(model.entryCount) entries, kept until you delete them"
-        }
-        return "\(model.entryCount) entries, each kept for \(String(localized: model.retention.label))"
+        model.isLocked ? nil : model.retention.footnote(entries: model.entryCount)
     }
 
     var body: some View {

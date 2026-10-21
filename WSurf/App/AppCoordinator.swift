@@ -446,6 +446,9 @@ final class AppCoordinator {
         route(to: category, in: tab)
     }
 
+    /// A setting for the Settings page to reveal (see `openSettings(revealing:)`). The page takes it and clears it.
+    var pendingSettingsAnchor: String?
+
     func routeSettings(to category: SettingsCategory) {
         guard let tab = browser.tabs.first(where: { $0.internalPage == .settings }) else { return }
         route(to: category, in: tab)
