@@ -59,11 +59,16 @@ final class SiteContentGuard {
         page.addScriptMessageHandler(name: Self.handlerName, in: BrowserPage.servicesWorld) { [permissions, settings] message in
             let origin = SitePermissions.origin(for: message.page.url ?? message.frameInfo.request.url)
             let autoplay = permissions.autoplay(for: origin) ?? settings.autoplay
+            // Allow is the person's own choice for this website, so the release of held media carries a user gesture: media
+            // that was held while the answer was on its way then starts with sound, as the person asked. Only a frame of the
+            // website itself gets it: a frame of another origin (an ad, an embed) is never given the website's activation.
+            // Muted and Block stay gesture-less, as does everything else WSurf runs in a page.
+            let userGesture = autoplay == .allow && !origin.isEmpty && SitePermissions.origin(for: message.frameInfo.request.url) == origin
             Task { @MainActor in
                 _ = try? await message.page.callAsyncJavaScript(
                     "globalThis.__wsurfSiteGuard?.applyPolicy(policy);",
                     arguments: ["policy": ["autoplay": autoplay.rawValue]], in: message.frameInfo,
-                    contentWorld: BrowserPage.servicesWorld
+                    contentWorld: BrowserPage.servicesWorld, userGesture: userGesture
                 )
             }
         }

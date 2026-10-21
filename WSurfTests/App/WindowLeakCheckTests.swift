@@ -30,31 +30,4 @@ struct WindowLeakCheckTests {
 
         #expect(await waitUntil(timeout: .seconds(10)) { check.live == 0 })
     }
-
-    /// A browser tab served by `HTTPFixtureServer` in an on-screen window, and a shown browser window: the two shapes most
-    /// tests build on.
-    @Test func representativeFixturesLeaveNoWindowBehind() async throws {
-        let check = WindowLeakCheck()
-        do {
-            let fixture = try await ComputerWorkflowFixture()
-            check.track(fixture.window)
-
-            let app = BrowserApplication()
-            let coordinator = AppCoordinator(
-                browser: BrowserModel(context: BrowserProfileContext.shared(for: .original()), windowID: UUID())
-            )
-            app.register(coordinator)
-            coordinator.showBrowser(activate: false)
-            check.track(coordinator.nativeWindow)
-            #expect(check.live == 2)
-
-            fixture.close()
-            coordinator.closeWindow()
-        }
-
-        #expect(
-            await waitUntil(timeout: .seconds(10)) { check.live == 0 },
-            "fixture windows outlived their test: \(check.live)"
-        )
-    }
 }

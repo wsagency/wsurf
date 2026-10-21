@@ -78,7 +78,7 @@ struct ReaderSurfaceTests {
         controller.show(scripted, appearance: .init(typeface: .system, palette: .automatic, textSize: 19))
         try #require(await waitUntil { controller.isLoaded })
 
-        #expect(view.title == "Safe", "the article's script changed the document")
+        #expect(await documentTitle(of: view) == "Safe", "the article's script changed the document")
     }
 
     /// The view's JavaScript setting and the page's policy each stop the script alone. The same document in a view with neither
@@ -89,10 +89,17 @@ struct ReaderSurfaceTests {
         let withoutPolicy = html.replacingOccurrences(of: policy, with: "")
         try #require(withoutPolicy != html)
 
-        #expect(await loadedTitle(of: withoutPolicy, in: pageView(javaScript: true)) == "ran", "the script is live without either barrier")
-        #expect(await loadedTitle(of: html, in: pageView(javaScript: true)) == "Safe", "the page's policy alone")
+        let open = pageView(javaScript: true)
+        await load(withoutPolicy, in: open)
+        #expect(await waitUntil { await documentTitle(of: open) == "ran" }, "the script is live without either barrier")
+
+        let policyOnly = pageView(javaScript: true)
+        await load(html, in: policyOnly)
+        #expect(await documentTitle(of: policyOnly) == "Safe", "the page's policy alone")
+
         let readerView = ReaderPageController.makeWebView(dataStore: .nonPersistent())
-        #expect(await loadedTitle(of: withoutPolicy, in: readerView) == "Safe", "the view's JavaScript setting alone")
+        await load(withoutPolicy, in: readerView)
+        #expect(await documentTitle(of: readerView) == "Safe", "the view's JavaScript setting alone")
     }
 
     private func pageView(javaScript: Bool) -> WKWebView {
@@ -102,10 +109,17 @@ struct ReaderSurfaceTests {
         return WKWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: configuration)
     }
 
-    private func loadedTitle(of html: String, in view: WKWebView) async -> String? {
+    private func load(_ html: String, in view: WKWebView) async {
         let waiter = ReaderLoadWaiter()
         await waiter.load(html, in: view, baseURL: URL(string: "https://example.test/story"))
-        return view.title
+    }
+
+    /// The title the document itself holds. `WKWebView.title` reaches the app over IPC and can still show an earlier value, or
+    /// none, when the load finishes, so it is read from the DOM. The article's script is inline and synchronous: it runs while
+    /// the document is parsed, before the load finishes, so a title still "Safe" after the load means it never ran. An app's
+    /// own evaluation runs even with the page's JavaScript off.
+    private func documentTitle(of view: WKWebView) async -> String? {
+        try? await view.evaluateJavaScript("document.title", in: nil, contentWorld: .defaultClient) as? String
     }
 
     // MARK: Either engine

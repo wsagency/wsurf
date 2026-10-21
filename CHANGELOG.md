@@ -19,7 +19,7 @@ Everything since 0.1.0 (build 1), the installed candidate 6.2. None of the scree
 - Google sign-in always opens in WebKit, since Google refuses sign-in from embedded Chromium, and the redirect back to a service set to Chromium keeps the sign-in. The engine choice for Google sign-in says so.
 - Back in a Chromium tab no longer loses the page you came from when the page adds a history entry right after loading.
 - Auto-play “Muted” now works like Safari’s “Stop Media with Sound”: a video that would start with sound waits for you; muted videos still play.
-- Pop-ups a page opens by itself, including from a scripted Cmd-click, are blocked like any other pop-up you didn’t open. A blocked pop-up with no address is blocked without a notice.
+- Pop-ups a page opens by itself, including from a scripted Cmd-click, are blocked like any other pop-up you didn’t open. A blocked pop-up with no address is blocked without a notice. In a Chromium tab a pop-up that a page opens without any action of yours is blocked before WSurf hears of it, so there is no “pop-up blocked” notice for it; WebKit tabs show one.
 - The tracker count, and the tracker blocker in Chromium tabs, count only trackers from other websites; a website’s own subdomains are no longer counted or blocked as trackers.
 - After you switch on an extension, tabs opened from then on get its page script fixes; tabs already open get them once reopened.
 - A screen share in a Chromium tab keeps that tab from being unloaded.
@@ -56,6 +56,10 @@ Everything since 0.1.0 (build 1), the installed candidate 6.2. None of the scree
 
 - In Chromium tabs, WSurf’s own scripts no longer count as a click, so they cannot open pop-ups or start sound. Connected apps’ clicks and typing and WSurf’s media controls still do.
 - Test runs keep their preference files in a test folder instead of `~/Library/Preferences`, and the command palette and sidebar row tests close the windows they open.
+
+### Known issues
+
+- A native test of the Chromium external-app handoff (a link to another app opened without a referrer by a page inside a frame of a different website) fails on some runs. When it fails, the request is dropped before WSurf sees it: no app is launched, no approval is remembered and no prompt is shown. The cause is still being traced.
 
 ## 0.1.0 (build 1)
 

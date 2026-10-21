@@ -694,8 +694,8 @@ nonisolated enum CredentialExchangeCodec {
         case .email:
             fieldType = .email
         default:
-            // An item's value keeps any type WSurf knows (the raw values are the SDK's); a login or a note shows plain text.
-            if keepsType, let kept = CredentialEditableFieldType(rawValue: field.fieldType.rawValue) {
+            // An item's value keeps any type WSurf knows; a login or a note shows plain text.
+            if keepsType, let kept = CredentialEditableFieldType(exchange: field.fieldType) {
                 fieldType = kept
             } else {
                 fieldType = .string
