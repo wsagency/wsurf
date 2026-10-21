@@ -5,9 +5,13 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
-## 0.1.4 (build 4) — 2026-10-21
+## 0.1.5 (build 5) — 2026-10-21
 
-Everything since 0.1.1 (build 2), the installed candidate; build 3 was never installed, and its changes are included. None of the screens and prompts below has been checked by hand.
+Everything since 0.1.1 (build 2), the installed candidate; build 3 and 0.1.4 (build 4) were never installed, and their changes are included. None of the screens and prompts below has been checked by hand.
+
+### Browsing
+
+- In Reader, View › Translate Page now translates the article instead of the page behind it, Show Original brings its text back, and Find shows how many matches the article has. Find also counts matches on websites whose JavaScript you turned off.
 
 ### Passwords, passkeys and autofill
 
@@ -16,11 +20,32 @@ Everything since 0.1.1 (build 2), the installed candidate; build 3 was never ins
 - On WebKit, a sign-in that needs a hardware key, a phone or an iCloud passkey that is not in the vault offers “Continue in Chromium”, which opens the page in a Chromium tab of the same profile.
 - Imported Apple passkeys report as synced.
 - When a website has several passkeys, none is preselected.
+- Export to another app now includes cards, addresses, names, Wi-Fi networks, API and SSH keys, identity documents and custom fields. Each credential offers “Cards and other items” in the export sheet, which lists, kind by kind, every value the selected items carry and says that card numbers, security codes, PINs, document numbers, Wi-Fi passwords and keys leave the vault for the app you pick. Exporting a card or an ID document asks for Touch ID first. Every value keeps its type, so a hidden one stays hidden, and importing the export back gives the same items. A CSV file still holds only passwords.
+- When a site offers to save a passkey to a credential that holds only notes or only cards and other items, the prompt now says so instead of showing an empty detail.
+- Saving in a large vault does less work: the credential editor, an autofilled password, adding a website, a passkey registration or sign-in, a merge, an undo and a restore from the Trash name the credentials they change, so the vault no longer encodes every other credential to find them. A change to a credential that was not named is still written, and every whole-vault check still runs.
+- A clipboard button beside the key opens Settings › Autofill › Input History while it is on. The count under the entries now reads “1 entry”.
+
+### Assistant and MCP
+
+- The assistant can remember things about you, per profile. It is off until you turn on Settings › Assistant › Memory › Remember things about me. Apple Intelligence writes the notes on this Mac from what you type and your answers to the assistant’s questions, never from pages, passwords, codes or payment details. You can see, edit and forget each note, or forget them all; turning memory off asks whether to forget everything. A cloud model gets the notes it needs with your request. Private windows keep no notes.
+- A task now also shows in every tab the assistant opens for it, and those tabs show the assistant working until it finishes.
+
+### Appearance
+
+- Settings › Appearance › Layout adds Page spacing (down to none, so the page meets the window and the sidebar), Sidebar margin (down to 1 pt), Tab padding and Tab icon size (12–24 pt). Each is saved with the theme, previews live, and comes along with Save as Theme and Duplicate. The defaults keep today’s look.
+- A page with no spacing has square corners; the resize handles still work at its edges.
+- Theme Brightness now goes from −100 % to 100 %. Text, icons and accent text stay readable at both ends.
+- Theme thumbnails show the current tab the way the sidebar draws it, and show each theme’s spacing and icon size.
+- Tab icons pick a larger site icon when the site offers one, so they stay sharp at bigger sizes.
 
 ### Fixes
 
 - Credentials no longer shows “Locked” for a moment when the vault is open.
 - About WSurf and Settings › About show the candidate label and commit under the version. Builds without a candidate label show nothing.
+- A new Chromium tab whose first page redirects straight to an app offers to open the app instead of doing nothing.
+- The Chromium external-app handoff test listed under 0.1.1’s known issues replayed the click in the wrong frame; it now clicks in the frame that hands off, and the product was not at fault.
+- Forgetting a profile also deletes its empty preferences file.
+- Test runs free the windows and web views each test closes; before, they stayed in memory until the run ended. The vault tests open no windows, and ten vault suites now run in the parallel plan.
 
 ## 0.1.1 (build 2) — 2026-10-21
 
