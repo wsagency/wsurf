@@ -45,9 +45,14 @@ nonisolated enum LockTrigger: CaseIterable, Sendable {
             NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.screensDidSleepNotification, object: nil)
         case .sessionResign:
             NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+            // The save-offer coordinator is process-wide and watches these: hand the session back so later suites can offer.
+            NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
         case .screenLocked:
             DistributedNotificationCenter.default().postNotificationName(
                 Notification.Name("com.apple.screenIsLocked"), object: nil, userInfo: nil, deliverImmediately: true
+            )
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name("com.apple.screenIsUnlocked"), object: nil, userInfo: nil, deliverImmediately: true
             )
         case .termination:
             NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
