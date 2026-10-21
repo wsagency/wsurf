@@ -274,6 +274,7 @@ nonisolated enum WebAuthnScript {
           result.credProps = extensions.credProps === true;
         } else {
           if (pk.rpId !== undefined) result.rpId = text(pk.rpId, 'rpId');
+          if (extensions.appid !== undefined) result.appid = text(extensions.appid, 'extensions.appid');
           result.allowCredentials = descriptors(pk.allowCredentials);
           result.userVerification = pk.userVerification || 'preferred';
         }

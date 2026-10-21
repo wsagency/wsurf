@@ -187,6 +187,7 @@ final class BrowserModel {
                 noteOpened(opened, by: tab)
             }
         }
+        tab.onOpenInChromium = { [weak self, weak tab] url in tab.map { self?.openInChromium(url, from: $0) } }
         tab.onOpenInNewWindow = { [weak self, weak tab] url, isPrivate in
             guard let tab, !tab.isClosed else { return }
             self?.onOpenInNewWindow?(tab, url, isPrivate)
@@ -275,6 +276,13 @@ final class BrowserModel {
     var lastVisitID: [UUID: Int64] = [:]
 
     /// A page opened `opened`: the tab continues that page's visit, and the page is remembered as its opener.
+    /// "Continue in Chromium" on a WebKit passkey sheet: the page again, in a Chromium tab of this profile next to its tab. The
+    /// engine is that tab's own override, never written to the site's setting.
+    private func openInChromium(_ url: URL, from tab: BrowserTab) {
+        guard !tab.isClosed else { return }
+        noteOpened(newTab(url: url, after: tab, transition: .link, engine: .chromium), by: tab)
+    }
+
     private func noteOpened(_ opened: BrowserTab, by tab: BrowserTab) {
         openerByTab[opened.id] = tab.id
         if let origin = lastVisitID[tab.id] {

@@ -3,6 +3,7 @@
 
 import AuthenticationServices
 import Foundation
+import os
 
 /// What a finished ceremony hands to page delivery: the result plus the exact vault state it was checked against, so the
 /// final dispatch can refuse a result whose authority or key material changed after that check.
@@ -108,7 +109,7 @@ extension WebsiteAuthenticator {
             in: anchor,
             until: request.deadline
         )
-        let selected = try approval(decision)
+        let selected = try approval(decision, rpID: bound.rpID, context: context)
         try await revalidate(request, context: context, manager: manager, bound: bound)
         if let selected, !candidates.contains(where: { $0.id == selected }) {
             throw WebsiteAuthenticatorError.notAllowed
@@ -251,7 +252,7 @@ extension WebsiteAuthenticator {
             in: anchor,
             until: request.deadline
         )
-        _ = try approval(decision)
+        _ = try approval(decision, rpID: resolved, context: context)
         throw WebsiteAuthenticatorError.notAllowed
     }
 
@@ -274,6 +275,20 @@ extension WebsiteAuthenticator {
         )
         let listed = try await snapshot(manager, bound: bound)
         let candidates = assertionCandidates(listed.accounts, rpID: bound.rpID, allowed: options.allowCredentials)
+        if candidates.isEmpty {
+            // Counts only: whether the vault holds this relying party at all (an allowCredentials mismatch) or only a related one
+            // (an RP ID mismatch, such as example.com against login.example.com, which WebAuthn never matches).
+            // ID lengths, never IDs, tell an encoding mismatch (20 bytes asked, 27 stored) from a passkey the site never had.
+            let stored = listed.accounts.flatMap(\.passkeys)
+            let sameRP = stored.filter { $0.rpID == bound.rpID }
+            let related = stored.filter { $0.rpID != bound.rpID && ($0.rpID.hasSuffix("." + bound.rpID) || bound.rpID.hasSuffix("." + $0.rpID)) }.count
+            let lengths = { (ids: [Data]) in Set(ids.map(\.count)).sorted().map(String.init).joined(separator: ",") }
+            WebAuthnRefusal.note(
+                "no-match", rpID: bound.rpID, profileID: context.profileID,
+                "allowCredentials=\(options.allowCredentials.count) matching=0 sameRP=\(sameRP.count) relatedRP=\(related)"
+                    + " allowedIDBytes=[\(lengths(options.allowCredentials))] storedIDBytes=[\(lengths(sameRP.map(\.credentialID)))]"
+            )
+        }
         // No matching passkey is still a user-visible decision, never an immediate error or an immediate hand-off: either would tell
         // a page whether this vault holds a passkey for it, with no origin-bearing native step. The prompt names the site; with
         // nothing to approve it offers only the way to the system's authenticator, and the page hears of it only if the user
@@ -294,10 +309,10 @@ extension WebsiteAuthenticator {
             until: request.deadline
         )
         guard !candidates.isEmpty else {
-            _ = try approval(decision)
+            _ = try approval(decision, rpID: bound.rpID, context: context)
             throw WebsiteAuthenticatorError.notAllowed
         }
-        guard let selected = try approval(decision),
+        guard let selected = try approval(decision, rpID: bound.rpID, context: context),
               let pick = candidates.first(where: { $0.choice.id == selected }) else {
             throw WebsiteAuthenticatorError.notAllowed
         }
@@ -358,6 +373,14 @@ extension WebsiteAuthenticator {
         }
         try Task.checkCancellation()
         try validateDeadline(request)
+        // What a relying party that rejects this assertion would need to tell apart, without any ID or user data.
+        Pipeline.log.notice("""
+            webauthn: asserted rpId=\(bound.rpID, privacy: .public) source=\(passkey.source.map { "\($0)" } ?? "unknown", privacy: .public) \
+            idBytes=\(passkey.credentialID.count, privacy: .public) handleBytes=\(passkey.userHandle.count, privacy: .public) \
+            candidates=\(candidates.count, privacy: .public) allowCredentials=\(options.allowCredentials.count, privacy: .public) \
+            appid=\(options.appID != nil, privacy: .public) uv=\(verified, privacy: .public) be=\(passkey.backupEligible, privacy: .public) \
+            bs=\(passkey.isBackedUp, privacy: .public)
+            """)
         return WebAuthnCeremonyOutcome(
             result: result, epoch: bound.epoch, generation: settled.generation,
             savedRevision: nil, rpID: bound.rpID, userName: passkey.userName.displaySafe
@@ -414,7 +437,7 @@ extension WebsiteAuthenticator {
                 operation: context.operation == .create ? .create : .get,
                 origin: context.origin, locked: lockedAtOffer, in: anchor, until: request.deadline
             )
-            _ = try approval(offer)
+            _ = try approval(offer, rpID: resolved, context: context)
             try Task.checkCancellation()
             try await context.validate()
             try validateDeadline(request)
@@ -425,19 +448,37 @@ extension WebsiteAuthenticator {
         }
 
         if manager.authorizationEpoch == nil {
+            // Our offer sheet and the system's unlock sheet never share the window: each is still closing for a moment after
+            // its answer arrives (the next step would be refused, or the system sheet put behind ours).
+            try await requireFreeWindow(anchor, rpID: resolved, context: context, "before unlock")
             do {
                 try await manager.unlock(in: anchor)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                throw Task.isCancelled ? CancellationError() : WebsiteAuthenticatorError.notAllowed
+                guard !Task.isCancelled else { throw CancellationError() }
+                WebAuthnRefusal.note("unlock-failed", rpID: resolved, profileID: context.profileID, "\(type(of: error))")
+                throw WebsiteAuthenticatorError.notAllowed
             }
+            try await requireFreeWindow(anchor, rpID: resolved, context: context, "after unlock")
             try Task.checkCancellation()
             try await context.validate()
             try validateDeadline(request)
         }
         guard let epoch = manager.authorizationEpoch else { throw WebsiteAuthenticatorError.notAllowed }
         return Bound(client: client, rpID: resolved, epoch: epoch)
+    }
+
+    /// Waits (bounded) for a sheet still closing on `anchor`; one that stays up is a logged refusal, never a queue behind it.
+    @MainActor
+    private static func requireFreeWindow(
+        _ anchor: ASPresentationAnchor, rpID: String, context: WebAuthnContext, _ moment: String
+    ) async throws {
+        guard await NativeSheet.waitForSheetToClose(on: anchor) else {
+            try Task.checkCancellation()
+            WebAuthnRefusal.note("interaction-refused", rpID: rpID, profileID: context.profileID, "a sheet stayed up \(moment)")
+            throw WebsiteAuthenticatorError.notAllowed
+        }
     }
 
     /// Re-establishes, synchronously after the preceding await, that the page context and vault access are still the
@@ -504,19 +545,33 @@ extension WebsiteAuthenticator {
         reason: String
     ) async throws -> Bool {
         guard willVerify else { return false }
-        try await interaction.verifyUser(reason: reason, until: request.deadline)
+        do {
+            try await interaction.verifyUser(reason: reason, until: request.deadline)
+        } catch let error as WebsiteAuthenticatorError {
+            var name = "verification-failed"
+            if case .expired = error { name = "timeout" }
+            WebAuthnRefusal.note(name, rpID: bound.rpID, profileID: context.profileID)
+            throw error
+        }
         try await revalidate(request, context: context, manager: manager, bound: bound)
         return true
     }
 
-    private static func approval(_ decision: WebAuthnDecision) throws -> UUID? {
+    /// A step's answer. Every refusal is logged here by case; a cancel is logged by whoever cancelled, and a hand-off by the adapter.
+    @MainActor
+    private static func approval(_ decision: WebAuthnDecision, rpID: String, context: WebAuthnContext) throws -> UUID? {
         switch decision {
         case let .approved(choice):
             return choice
         case .declined:
+            WebAuthnRefusal.note("user-declined", rpID: rpID, profileID: context.profileID)
             throw WebsiteAuthenticatorError.notAllowed
         case .expired:
+            WebAuthnRefusal.note("timeout", rpID: rpID, profileID: context.profileID)
             throw WebsiteAuthenticatorError.expired
+        case .unavailable:
+            WebAuthnRefusal.note("interaction-refused", rpID: rpID, profileID: context.profileID, "window hidden or busy")
+            throw WebsiteAuthenticatorError.notAllowed
         case .cancelled:
             throw CancellationError()
         case .handOff:

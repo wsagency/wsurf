@@ -37,8 +37,11 @@ nonisolated enum WebAuthnDecision: Sendable, Equatable {
     case declined
     case expired
     case cancelled
-    /// "Use Another Device or Key…": the request goes to the system's own authenticator. Nothing was written or signed.
+    /// "Use Another Device or Key…" (Chromium) or "Continue in Chromium" (WebKit): the request is not the vault's. Nothing was
+    /// written or signed.
     case handOff
+    /// The window could not show the step: hidden, minimised, or another sheet stayed up. A refusal, never queued.
+    case unavailable
 }
 
 /// Everything a ceremony needs from the user. The native implementation is the only production one; tests may script
@@ -61,6 +64,9 @@ protocol WebAuthnCeremonyInteraction {
 
 @MainActor
 struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
+    /// A WebKit page: the engine's own WebAuthn needs Apple's browser entitlement, so the way out is a Chromium tab instead.
+    var continuesInChromium = false
+
     /// Capability discovery only; a throwaway context is never an approval.
     var canVerifyUser: Bool {
         let context = LAContext()
@@ -70,8 +76,7 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
 
     func decide(_ prompt: WebAuthnPrompt, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision {
         guard !Task.isCancelled else { return .cancelled }
-        // A window already showing a sheet is refused, never queued behind it by AppKit.
-        guard anchor.isVisible, !anchor.isMiniaturized, anchor.attachedSheet == nil else { return .declined }
+        guard await Self.windowIsFree(anchor) else { return Task.isCancelled ? .cancelled : .unavailable }
 
         let nothing = Self.hasNothingToApprove(prompt)
         let alert = NSAlert()
@@ -80,13 +85,16 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         if nothing {
             // Nothing of ours to approve, but the step is the same one with the same origin: the way on is the system's
             // authenticator, and Cancel is Cancel.
-            alert.addButton(withTitle: Self.handOffTitle)
+            alert.addButton(withTitle: handOffTitle)
             alert.addButton(withTitle: String(localized: "Cancel"))
         } else {
             alert.addButton(withTitle: prompt.operation == .create
                 ? String(localized: "Create Passkey") : String(localized: "Use Passkey"))
             alert.addButton(withTitle: String(localized: "Cancel"))
-            alert.addButton(withTitle: Self.handOffTitle)
+            alert.addButton(withTitle: handOffTitle)
+        }
+        if continuesInChromium {
+            alert.informativeText += "\n" + Self.chromiumReason
         }
 
         let popup = Self.makeChooser(for: prompt)
@@ -110,14 +118,28 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         }
     }
 
-    /// The same words on every sheet that offers it: choosing it hands the request to the system's own authenticator, which is
-    /// where passkeys kept in Apple Passwords, on a phone or on a security key live.
-    static let handOffTitle = String(localized: "Use Another Device or Key…")
+    /// The same words on every sheet that offers it. In Chromium, choosing it hands the request to the engine's own authenticator,
+    /// which reaches passkeys on a phone or a security key. In WebKit that hand-off cannot succeed, so the page is reopened in a
+    /// Chromium tab instead.
+    var handOffTitle: String {
+        continuesInChromium ? String(localized: "Continue in Chromium") : String(localized: "Use Another Device or Key…")
+    }
+
+    /// The one line a WebKit sheet adds to say why its way out is a Chromium tab.
+    static let chromiumReason = String(
+        localized: "WebKit tabs can’t use security keys, phones or Apple Passwords. A Chromium tab of this profile can; you may need to sign in there again."
+    )
+
+    /// The window is free for a step: a sheet still closing (the system's unlock sheet) is waited for, briefly.
+    static func windowIsFree(_ anchor: ASPresentationAnchor) async -> Bool {
+        let closed = await NativeSheet.waitForSheetToClose(on: anchor)
+        return closed && !Task.isCancelled && anchor.isVisible && !anchor.isMiniaturized
+    }
 
     /// Declining leaves a conditional page request pending and fails a modal one; nothing is unlocked either way.
     func offerStart(operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision {
         guard !Task.isCancelled else { return .cancelled }
-        guard anchor.isVisible, !anchor.isMiniaturized, anchor.attachedSheet == nil else { return .declined }
+        guard await Self.windowIsFree(anchor) else { return Task.isCancelled ? .cancelled : .unavailable }
         let alert = NSAlert()
         alert.messageText = operation == .create
             ? String(localized: "Create a passkey?") : String(localized: "Sign in with a saved passkey?")
@@ -125,9 +147,10 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
             + "\n" + (locked
                 ? String(localized: "Credential Manager is locked. You will unlock it, then choose an account.")
                 : String(localized: "You will choose an account next."))
+            + (continuesInChromium ? "\n" + Self.chromiumReason : "")
         alert.addButton(withTitle: locked ? String(localized: "Unlock and Choose…") : String(localized: "Choose…"))
         alert.addButton(withTitle: String(localized: "Cancel"))
-        alert.addButton(withTitle: Self.handOffTitle)
+        alert.addButton(withTitle: handOffTitle)
         switch await NativeSheet.present(alert, in: anchor, until: deadline) {
         case .expired:
             return .expired
@@ -221,6 +244,11 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         let entries = entries(for: prompt)
         guard !entries.isEmpty else { return nil }
         let button = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 360, height: 28))
+        // Several passkeys for one site: none is preselected, so a click on the default never signs with one the user did not pick
+        // (a stale one the site no longer knows). The placeholder carries no identity, so it can only decline.
+        if prompt.operation == .get {
+            button.menu?.addItem(NSMenuItem(title: String(localized: "Choose a passkey…"), action: nil, keyEquivalent: ""))
+        }
         for entry in entries {
             let item = NSMenuItem(title: entry.title, action: nil, keyEquivalent: "")
             item.representedObject = entry

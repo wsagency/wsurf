@@ -7,6 +7,21 @@ import Foundation
 import os
 import WebKit
 
+/// One log line for each way a passkey request ends without a result, or leaves the vault: a case name, the relying party
+/// (not secret) and counts only. Never a credential ID, user name, user handle or page text.
+@MainActor
+enum WebAuthnRefusal {
+    /// Tests read the case names noted for their own profile (keyed like `WebAuthnAdapter.interactionForTesting`).
+    static var recordedForTesting: [UUID: [String]] = [:]
+
+    static func note(_ name: String, rpID: String, profileID: UUID, _ details: String = "") {
+        Pipeline.log.notice(
+            "webauthn: refused, \(name, privacy: .public) rpId=\(rpID, privacy: .public) \(details, privacy: .public)"
+        )
+        recordedForTesting[profileID]?.append(name)
+    }
+}
+
 /// Routes `navigator.credentials` public-key calls from both engines to the native website authenticator.
 ///
 /// The page-facing script only marshals; every authority input (origin, frame, policy, profile, anchor) is derived here
@@ -88,7 +103,7 @@ enum WebAuthnAdapter {
         let identity = ObjectIdentifier(page)
         let retired = documentID.flatMap { $0.isEmpty ? nil : $0 }
         for entry in Array(entries.values) where entry.key.page == identity && (retired == nil || entry.frame.documentID == retired) {
-            refuse(entry)
+            refuse(entry, reason: "document-replaced")
         }
     }
 
@@ -97,7 +112,7 @@ enum WebAuthnAdapter {
     /// landed keeps its receipt inside the ceremony.
     static func cancel(profileID: UUID) {
         for entry in Array(entries.values) where entry.profileID == profileID {
-            refuse(entry)
+            refuse(entry, reason: "vault-locked")
         }
     }
 
@@ -105,7 +120,7 @@ enum WebAuthnAdapter {
     /// vault's lock leaves them running; a ceremony still choosing its vault is covered by `cancel(profileID:)`.
     static func cancel(manager: CredentialManager) {
         for entry in Array(entries.values) where entry.boundManager === manager {
-            refuse(entry)
+            refuse(entry, reason: "vault-locked")
         }
     }
 
@@ -120,7 +135,8 @@ enum WebAuthnAdapter {
         WebAuthnScript.route(routeMode(for: page), sequence: routeSequence)
     }
 
-    private static func refuse(_ entry: Entry) {
+    private static func refuse(_ entry: Entry, reason: String) {
+        note(reason, entry)
         discard(entry)
         guard let page = entry.page else { return }
         let key = entry.key, frame = entry.frame
@@ -134,7 +150,19 @@ enum WebAuthnAdapter {
         // Cleared first so `discard` cannot cancel the task that is running this.
         entry.expiryTask = nil
         guard !entry.cancelled, entries[entry.key] === entry else { return }
-        refuse(entry)
+        refuse(entry, reason: "timeout")
+    }
+
+    /// `WebAuthnRefusal.note` for one request: the RP ID it asked for (else its origin's host) and its allowCredentials count.
+    private static func note(_ name: String, _ entry: Entry, _ details: String = "") {
+        let rpID: String?, allowed: String
+        switch entry.parsed.request.options {
+        case let .creation(options):
+            (rpID, allowed) = (options.rpID, "")
+        case let .assertion(options):
+            (rpID, allowed) = (options.rpID, "allowCredentials=\(options.allowCredentials.count) ")
+        }
+        WebAuthnRefusal.note(name, rpID: rpID ?? entry.frame.securityOrigin.host, profileID: entry.profileID, allowed + details)
     }
 
     private static func discard(_ entry: Entry) {
@@ -253,6 +281,14 @@ enum WebAuthnAdapter {
             reject(key, page, frame, WebAuthnWire.pageError(error))
             return
         }
+        if case let .assertion(options) = parsed.request.options {
+            // The request's shape, never its IDs or user data: what a refusing relying party (GitHub) asked for.
+            Pipeline.log.notice("""
+                webauthn: request get rpId=\(options.rpID ?? frame.securityOrigin.host, privacy: .public) \
+                appid=\(options.appID != nil, privacy: .public) allowCredentials=\(options.allowCredentials.count, privacy: .public) \
+                userVerification=\(options.userVerification.rawValue, privacy: .public) mediation=\(parsed.mediation.rawValue, privacy: .public)
+                """)
+        }
         let entry = Entry(key: key, page: page, frame: frame, parsed: parsed)
         entries[key] = entry
         // A conditional request has no lifetime of its own (`deadline` is nil). Every other request expires natively at its
@@ -278,6 +314,18 @@ enum WebAuthnAdapter {
     /// engine's own timeout and abort signal take over.
     private static func handOff(_ entry: Entry, page: BrowserPage, context: WebAuthnContext?) async {
         guard !entry.cancelled, entries[entry.key] === entry else { return }
+        // WebKit's own WebAuthn needs Apple's browser entitlement, so a hand-off there could only fail. The sheet said "Continue in
+        // Chromium": the page is reopened in a Chromium tab of this profile, and this request ends as any refusal does (a
+        // discovery stays pending).
+        if page.chromium == nil {
+            note("continue-in-chromium", entry)
+            if let url = page.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+                page.onOpenInChromium?(url)
+            }
+            await finish(entry, page: page, context: context, error: WebsiteAuthenticatorError.notAllowed)
+            return
+        }
+        note("handoff-to-engine", entry)
         retire(entry)
         await deliver(["handoff": "modal"], key: entry.key, page: page, frame: entry.frame, entry: entry, context: context)
     }
@@ -396,6 +444,7 @@ enum WebAuthnAdapter {
                 throw WebAuthnContextError.staleFrame
             }
             guard !page.isPrivate, native.profileID == page.profileID, let anchor = startWindow, page.window === anchor else {
+                note("no-window", entry)
                 throw WebsiteAuthenticatorError.notAllowed
             }
             // A page that replaces its conditional request with a modal one cancels the first, whose run may still be closing
@@ -411,10 +460,14 @@ enum WebAuthnAdapter {
             }
             // Claimed in the same synchronous step that proved the window, before the first await that can launch a ceremony.
             // Busy: a modal request fails NotAllowed, a conditional one stays pending (`finish`).
-            guard busyWindows[ObjectIdentifier(anchor)] == nil else { throw WebsiteAuthenticatorError.notAllowed }
+            guard busyWindows[ObjectIdentifier(anchor)] == nil else {
+                note("window-busy", entry)
+                throw WebsiteAuthenticatorError.notAllowed
+            }
             busyWindows[ObjectIdentifier(anchor)] = entry
             claimed = anchor
-            let interaction: any WebAuthnCeremonyInteraction = interactionForTesting[page.profileID]?() ?? NativeWebAuthnInteraction()
+            let interaction: any WebAuthnCeremonyInteraction = interactionForTesting[page.profileID]?()
+                ?? NativeWebAuthnInteraction(continuesInChromium: page.chromium == nil)
             let chosen = try await vault(for: entry, native: native, in: anchor, interaction: interaction)
             // The route and the prompt suspended: the request must still be this live document, in this window, before any
             // manager is bound to it. Nothing suspends between these checks and the binding.
@@ -447,6 +500,7 @@ enum WebAuthnAdapter {
                 // The page was not given the result (dispatch refused or the document is gone). The memory-only notice goes
                 // first, never behind an await on a renderer that may not answer; then one non-secret failure so the page
                 // does not wait for its timeout (a replaced document drops it at the fence).
+                note("dispatch-stale", entry)
                 noteUnconfirmedReceipt()
                 await deliver(["error": errorPayload(WebsiteAuthenticatorError.notAllowed)], key: entry.key, page: page, frame: entry.frame)
             }
@@ -494,12 +548,13 @@ enum WebAuthnAdapter {
             // nameless sheet is the first thing a page can show.
             chosen = try? CredentialManager.forVault(profile, vaultID: only.vaultID)
         } else {
-            switch await route.select(profile: profile, offersHandOff: true, in: anchor) {
+            switch await route.select(profile: profile, offersHandOff: true, continuesInChromium: entry.page?.chromium == nil, in: anchor) {
             case .vault(let manager):
                 chosen = manager
             case .handOff:
                 throw WebsiteAuthenticatorError.handOff
             case .none:
+                note("vault-choice-cancelled", entry)
                 chosen = nil
             }
         }
@@ -514,12 +569,15 @@ enum WebAuthnAdapter {
     private static func finish(_ entry: Entry, page: BrowserPage, context: WebAuthnContext?, error: any Error) async {
         guard !entry.cancelled, entries[entry.key] === entry else { return }
         // A user who declines the native offer or prompt, or has no passkey here, leaves a conditional discovery pending; the
-        // dropdown offers it again, and nothing shows it by itself.
+        // dropdown offers it again, and nothing shows it by itself. Either way the case name is logged: the page is told just a
+        // DOMException name (or nothing), so this is the one record of why.
         if entry.parsed.mediation == .conditional, case WebsiteAuthenticatorError.notAllowed = error {
+            note("pending:" + caseName(error), entry)
             entry.started = false
             entry.task = nil
             return
         }
+        note("ended:" + caseName(error), entry)
         retire(entry)
         await deliver(["error": errorPayload(error)], key: entry.key, page: page, frame: entry.frame, entry: entry, context: context)
     }
@@ -529,17 +587,28 @@ enum WebAuthnAdapter {
         return ["name": mapped.name, "message": mapped.message]
     }
 
+    /// A loggable name for how a ceremony ended: the case of our own errors, the type of anything else (never its payload).
+    private static func caseName(_ error: any Error) -> String {
+        switch error {
+        case let error as WebsiteAuthenticatorError:
+            String(describing: error)
+        case let error as WebAuthnContextError:
+            "context." + String(describing: error)
+        case is CancellationError:
+            "cancelled"
+        default:
+            String(describing: type(of: error))
+        }
+    }
+
     private static func pageError(_ error: any Error) -> WebAuthnWire.PageError {
         switch error {
         case let error as WebAuthnContextError:
-            // The case name only: the page is told just NotAllowedError, so this is the one record of why.
-            Pipeline.log.notice("webauthn: refused, context \(String(describing: error), privacy: .public)")
             if case .insecureOrigin = error {
                 return WebAuthnWire.PageError(name: "SecurityError", message: "This page cannot use passkeys.")
             }
             return WebAuthnWire.PageError(name: "NotAllowedError", message: "The request is not allowed by the user agent or the platform.")
         case is CredentialVaultError, is CredentialManagerError:
-            Pipeline.log.notice("webauthn: refused, \(String(describing: type(of: error)), privacy: .public)")
             return WebAuthnWire.PageError(name: "NotAllowedError", message: "The request is not allowed by the user agent or the platform.")
         default:
             return WebAuthnWire.pageError(error)

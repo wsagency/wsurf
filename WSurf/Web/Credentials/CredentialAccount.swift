@@ -287,6 +287,13 @@ nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
     var events: CredentialEvents?
     var base: ExchangeBase?
 
+    /// The BS flag an assertion reports. A passkey imported from another provider (Apple Passwords) is still kept there, synced,
+    /// so it is backed up whatever this vault does, and the provider registered it with BS set: some relying parties refuse an
+    /// assertion whose backup state changed from that.
+    var isBackedUp: Bool {
+        backupEligible && (backupState || source == .imported)
+    }
+
     static let credentialIDLimit = 1_024
     /// The most bytes WSurf keeps in a user handle, the same bound as a credential ID. WebAuthn tells a relying party to keep
     /// the handle to 64 bytes or fewer, and CTAP2 only requires an authenticator to hold that many. Real relying parties send

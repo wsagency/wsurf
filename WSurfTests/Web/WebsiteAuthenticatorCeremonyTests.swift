@@ -72,6 +72,8 @@ struct WebsiteAuthenticatorCeremonyTests {
     /// One real WebKit page on localhost whose profile is the fresh, test-owned profile of an unlocked encrypted vault.
     struct Fixture {
         let manager: CredentialManager
+        /// The stand-in for the system's passkey unlock sheet that this vault's manager uses.
+        let passkeys: VaultPasskeys
         let vaultID: UUID
         /// The page's own regular profile (never the original or a shared one), erased again by `cleanup`.
         let profile: Profile
@@ -159,7 +161,7 @@ struct WebsiteAuthenticatorCeremonyTests {
         }
         let port = url.port.map { ":\($0)" } ?? ""
         return Fixture(
-            manager: vault.manager, vaultID: vault.vaultID, profile: profile, page: page, tab: tab, window: window, server: server,
+            manager: vault.manager, passkeys: made.passkeys, vaultID: vault.vaultID, profile: profile, page: page, tab: tab, window: window, server: server,
             origin: "\(scheme)://\(host)\(port)", next: url.appendingPathComponent("next"), frame: frame
         )
     }
@@ -872,8 +874,10 @@ struct WebsiteAuthenticatorCeremonyTests {
         #expect(NativeWebAuthnInteraction.makeChooser(for: prompt([one], offersNewAccount: false)) == nil)
         let many = [one, WebAuthnPromptChoice(id: UUID(), title: "Ada", detail: "ada")]
         let chooser = try #require(NativeWebAuthnInteraction.makeChooser(for: prompt(many, offersNewAccount: false)))
-        #expect(chooser.numberOfItems == 2)
-        chooser.selectItem(at: 1)
+        #expect(chooser.numberOfItems == 3, "a placeholder, then every passkey")
+        // Nothing is preselected: using the default declines rather than signing with a passkey the user did not pick.
+        #expect(chooser.indexOfSelectedItem == 0 && NativeWebAuthnInteraction.decision(from: chooser) == .declined)
+        chooser.selectItem(at: 2)
         guard case .approved(let picked) = NativeWebAuthnInteraction.decision(from: chooser) else { Issue.record("not approved"); return }
         #expect(picked == many[1].id)
     }
