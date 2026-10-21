@@ -4,7 +4,8 @@
   1. Add new changes at the top, under a new <article class="day"> for the merge date. Keep dates newest first.
   2. Write one plain sentence or two per change, for people who use WSurf. No hype, no claims the code does not prove.
   3. Link the pull request (or the commit, if there was none). Say so if a change is in the source only and not yet verified in a running app.
-  4. Keep CHANGELOG.md in the repository as the detailed record. This page is the short version.
+  4. Group days under a version: add a <div class="version-head"> with the version and a .version-pill (for example Candidate) at the top of its group.
+  5. Keep CHANGELOG.md in the repository as the detailed record. This page is the short version.
 -->
 <html lang="en">
 <head>
@@ -41,7 +42,32 @@
       <p class="note"><strong>No public signed release yet.</strong> These entries describe changes merged into the source. Some are in the source only and not yet verified in a running app.</p>
     </section>
 
-    <section class="section section-timeline wrap" aria-label="Changes by date">
+    <section class="section section-timeline wrap" aria-label="Changes by version">
+
+      <div class="version-head" id="v090-candidate">
+        <p class="eyebrow">In development · merged into main</p>
+        <h2>0.9.0 <span class="version-pill">Candidate</span></h2>
+        <p class="lede">Everything merged since the 0.8.0 snapshot on 8 October. This is what the current source does.</p>
+      </div>
+
+      <article class="day" aria-labelledby="d-2026-10-21">
+        <h2 id="d-2026-10-21"><time datetime="2026-10-21">21 October 2026</time></h2>
+        <ul class="day-items">
+          <li>
+            <div>
+              <p><strong>The Tandem website is live.</strong> wsurf.app serves the new design, with the features list and this changelog. CI publishes the site after every green main push.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/commit/ad75257c">Commit ad75257c <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Real Earth and Moon in the relief set.</strong> The brand kit gains an animated Earth and Moon in true NASA colors, at the Moon's real size relative to Earth, beside the Tandem-colored pair.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/31">Pull request #31 <span aria-hidden="true">↗</span></a></p>
+          </li>
+        </ul>
+      </article>
+
       <article class="day" aria-labelledby="d-2026-10-17">
         <h2 id="d-2026-10-17"><time datetime="2026-10-17">17 October 2026</time></h2>
         <ul class="day-items">
@@ -146,6 +172,11 @@
           </li>
         </ul>
       </article>
+
+      <div class="version-head" id="v080">
+        <h2>0.8.0</h2>
+        <p class="lede">The first numbered snapshot of WSurf, taken 8 October 2026: profiles, embedded Chromium, the assistant, themes, and the sidebar.</p>
+      </div>
 
       <article class="day" aria-labelledby="d-2026-10-08">
         <h2 id="d-2026-10-08"><time datetime="2026-10-08">8 October 2026</time></h2>
@@ -262,10 +293,10 @@
         </ul>
       </article>
 
-      <div class="day day-plain">
-        <h2>Before WSurf</h2>
+      <div class="day day-plain" id="v071-and-earlier">
+        <h2>0.7.1 and earlier</h2>
         <div>
-          <p>WSurf began as a fork of <a href="https://github.com/kavoye/linen-browser">Linen by Kavoye</a>. Linen's inherited release notes are in <a href="https://github.com/wsagency/wsurf/blob/main/CHANGELOG.md">CHANGELOG.md</a> on GitHub. They describe Linen releases, not WSurf releases.</p>
+          <p>Early WSurf work is tagged <a href="https://github.com/wsagency/wsurf/releases/tag/v0.7.1">v0.7.1</a> on GitHub. WSurf began as a fork of <a href="https://github.com/kavoye/linen-browser">Linen by Kavoye</a>. Linen's inherited release notes are in <a href="https://github.com/wsagency/wsurf/blob/main/CHANGELOG.md">CHANGELOG.md</a> on GitHub. They describe Linen releases, not WSurf releases.</p>
           <p>CHANGELOG.md also keeps the detailed WSurf notes.</p>
         </div>
       </div>

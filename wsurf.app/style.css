@@ -206,6 +206,11 @@ pre { overflow-x: auto; margin: 0 0 24px; padding: 20px 24px; border-radius: var
 .day-plain p { max-width: 62ch; color: var(--muted); font-size: 15px; line-height: 1.6; text-wrap: pretty; }
 .day-plain p + p { margin-top: 12px; }
 .day-plain a { color: var(--accent-text); }
+.version-head { margin-bottom: 24px; }
+.version-head h2 { font: 700 28px/1.25 var(--font-display); letter-spacing: -0.02em; }
+.version-head .lede { margin-top: 8px; font-size: 16px; }
+.version-pill { display: inline-block; margin-left: 10px; padding: 3px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); color: var(--muted); font: 650 11px/1.4 var(--font-text); letter-spacing: 0.08em; text-transform: uppercase; vertical-align: 3px; white-space: nowrap; }
+.eyebrow .version-pill { margin-left: 6px; color: var(--accent-text); border-color: currentColor; vertical-align: 1px; }
 @media (min-width: 800px) {
   .day { grid-template-columns: var(--rail) minmax(0, 1fr); }
   .day > h2 { position: sticky; top: 24px; align-self: start; }
