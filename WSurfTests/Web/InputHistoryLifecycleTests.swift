@@ -55,7 +55,8 @@ nonisolated final class InputHistoryBlockingStorage: AutofillSecureStorage {
     }
 }
 
-/// An `InputHistory` over temporary directories, in-memory keys, a clock the test moves and a wall clock the test moves.
+/// An `InputHistory` over temporary directories, in-memory keys, a clock the test moves and a wall clock the test moves. Its profiles
+/// have no vault unless `vaultKey` says otherwise.
 @MainActor
 final class InputHistoryHarness {
     final class Calls {
@@ -67,10 +68,13 @@ final class InputHistoryHarness {
     let calls: Calls
     let privateKeys: any AutofillSecureStorage
     let publicKeys: MemoryAutofillStorage
+    private let vaultKey: InputHistory.VaultKeySource
     private(set) var history: InputHistory
     private var profiles: [Profile] = []
 
-    init(ownsSession: Bool = true, privateKeys: (any AutofillSecureStorage)? = nil) {
+    init(
+        ownsSession: Bool = true, privateKeys: (any AutofillSecureStorage)? = nil, vaultKey: @escaping InputHistory.VaultKeySource = { _, _ in nil }
+    ) {
         let wall = InputHistoryTestWallClock()
         let clock = TestClock()
         let calls = Calls()
@@ -81,8 +85,10 @@ final class InputHistoryHarness {
         self.calls = calls
         self.privateKeys = privateKeys
         self.publicKeys = publicKeys
+        self.vaultKey = vaultKey
         history = Self.makeHistory(
-            ownsSession: ownsSession, wall: wall, clock: clock, calls: calls, privateKeys: privateKeys, publicKeys: publicKeys
+            ownsSession: ownsSession, wall: wall, clock: clock, calls: calls, privateKeys: privateKeys, publicKeys: publicKeys,
+            vaultKey: vaultKey
         )
     }
 
@@ -92,7 +98,8 @@ final class InputHistoryHarness {
         clock: TestClock,
         calls: Calls,
         privateKeys: any AutofillSecureStorage,
-        publicKeys: MemoryAutofillStorage
+        publicKeys: MemoryAutofillStorage,
+        vaultKey: @escaping InputHistory.VaultKeySource
     ) -> InputHistory {
         InputHistory(
             ownsSession: ownsSession,
@@ -108,7 +115,8 @@ final class InputHistoryHarness {
                     ownsSession: owns,
                     now: { wall.now() }
                 )
-            }
+            },
+            vaultKey: vaultKey
         )
     }
 
@@ -116,7 +124,8 @@ final class InputHistoryHarness {
     func relaunch(ownsSession: Bool = true) -> InputHistory {
         calls.profiles = []
         history = Self.makeHistory(
-            ownsSession: ownsSession, wall: wall, clock: clock, calls: calls, privateKeys: privateKeys, publicKeys: publicKeys
+            ownsSession: ownsSession, wall: wall, clock: clock, calls: calls, privateKeys: privateKeys, publicKeys: publicKeys,
+            vaultKey: vaultKey
         )
         return history
     }

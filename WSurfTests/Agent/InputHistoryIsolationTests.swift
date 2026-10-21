@@ -57,6 +57,19 @@ struct InputHistoryIsolationTests {
         }
     }
 
+    /// The vault's Input History key is reached only through these names, and the scan above refuses each of them in agent and MCP
+    /// code, so neither can ask a vault for it. The calls stop compiling if one is renamed, which brings this test back into review.
+    @Test func agentsAndMCPCannotNameTheVaultsInputHistoryKey() {
+        let viaManager: (CredentialManager) async throws -> InputHistoryVaultKey = { try await $0.inputHistoryKey() }
+        let viaStore: (ProfileVaultStore, UUID, VaultAccess) async throws -> InputHistoryVaultKey = {
+            try await $0.inputHistoryKey(vaultID: $1, using: $2)
+        }
+        _ = (viaManager, viaStore)
+        for name in [String(describing: InputHistoryVaultKey.self), "inputHistoryKey", "wsurf.input-history.v2"] {
+            #expect(Self.needles.contains { name.lowercased().contains($0) }, "the scan would not see \(name)")
+        }
+    }
+
     @Test func theScanSeesAMentionInAnyCaseSpelling() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("InputHistoryScan-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory.appendingPathComponent("Nested"), withIntermediateDirectories: true)
