@@ -56,10 +56,11 @@ SERIAL_MARKERS = re.compile(r'''\b(
     requiresBackForwardCache | exclusiveExternalApp | WindowCensus |
     # The MCP socket (one listener per user) and live network.
     LocalMCPEndpoint | BrowserMCPServer | MCPSocket\w* | NWListener | NWConnection | URLSession |
-    # The real Keychain, and app types backed by it or by the production vault manager registry.
+    # The real Keychain, and app types backed by it. CredentialManager and VaultManagerFixture are not markers: the fixture
+    # makes no window and stubs every prompt, and its managers use fresh profiles under the per-process test directory.
     SecItem\w* | Keychain\w* | kSecClass\w* | SecAccessControl\w* | LAContext |
     CredentialStore\b | MCPTrustStore\b | SecureAutofillVault | PaymentCardVault | AutofillSaveIndex | AutofillVaults |
-    CredentialManager\b | AutofillSuggestions | VaultManagerFixture | IntelligenceViewModel |
+    AutofillSuggestions | IntelligenceViewModel |
     # The test host's standard defaults domain, which every clone shares.
     UserDefaults\.standard | UserDefaults\(\)\.(?!removePersistentDomain) | UserDefaults\(suiteName:\s*""\) |
     CFPreferences\w* | OpenAISettingsStore\.save | ProviderCatalog\.shared | AgentActionPolicy\(\s*\) |
