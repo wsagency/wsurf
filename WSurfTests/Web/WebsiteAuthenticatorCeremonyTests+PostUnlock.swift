@@ -13,9 +13,9 @@ import Testing
 extension WebsiteAuthenticatorCeremonyTests {
     /// A window whose attached sheet the test sets, the way the system's unlock sheet stays attached while it closes.
     final class SheetWindow: NSWindow {
-        var sheet: NSWindow?
+        var attached: NSWindow?
         override var attachedSheet: NSWindow? {
-            sheet
+            attached
         }
     }
 
@@ -35,15 +35,15 @@ extension WebsiteAuthenticatorCeremonyTests {
             fixture.manager.lock(reason: .manual)
             let window = SheetWindow()
             fixture.passkeys.beforeAssert = {
-                window.sheet = NSWindow()
+                window.attached = NSWindow()
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(400))
-                    window.sheet = nil
+                    window.attached = nil
                 }
             }
             let user = User()
             user.respond = { prompt in
-                window.sheet == nil ? .approved(choice: prompt.choices.first?.id) : .unavailable
+                window.attached == nil ? .approved(choice: prompt.choices.first?.id) : .unavailable
             }
             let logged = try await recording(fixture) {
                 let outcome = try await WebsiteAuthenticator.perform(
@@ -63,7 +63,7 @@ extension WebsiteAuthenticatorCeremonyTests {
             try await seed(fixture, 1)
             fixture.manager.lock(reason: .manual)
             let window = SheetWindow()
-            fixture.passkeys.beforeAssert = { window.sheet = NSWindow() }
+            fixture.passkeys.beforeAssert = { window.attached = NSWindow() }
             let user = User()
             let logged = await recording(fixture) {
                 await #expect(throws: WebsiteAuthenticatorError.self) {
