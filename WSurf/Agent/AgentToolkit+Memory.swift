@@ -14,17 +14,6 @@ extension AgentToolkit {
         return String(utterance[end.upperBound...])
     }
 
-    /// The person's own answers in an askUser result: not the assistant's questions, and not the options handed back to it.
-    nonisolated static func answers(in output: String) -> [String] {
-        output.split(separator: "\n").compactMap { line in
-            guard line.hasPrefix(AgentQuestionModel.answerMark),
-                  !line.hasPrefix(AgentQuestionModel.answerMark + AgentQuestionModel.passedMark)
-            else { return nil }
-            let answer = line.dropFirst(AgentQuestionModel.answerMark.count).trimmingCharacters(in: .whitespaces)
-            return answer.isEmpty ? nil : answer
-        }
-    }
-
     /// The notes for the first prompt of a new task; empty while memory is off and in a private window.
     func rememberedContext() -> String {
         guard let facts = assistantFacts, facts.isEnabled else { return "" }

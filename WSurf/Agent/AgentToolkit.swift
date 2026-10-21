@@ -22,6 +22,7 @@ final class AgentToolkit {
     private var closingWasConfirmed = false
     private(set) var lastToolFailed = false
     var taskLedger = AgentTaskLedger()
+    var givenAnswers: [String] = [] // The person's own askUser answers in this run, for the note writer; the run resets it.
     var fileSelection: ((PageFileSelection.Parameters) async -> [URL]?)? {
         services.chooseFiles
     }
@@ -889,8 +890,9 @@ extension AgentToolkit {
         if let output = cancellationOutput(for: step) {
             return output
         }
-        let answers = await questions.put(put, inAnchor: task?.anchorID)
-        let trimmed = answers.trimmingCharacters(in: .whitespacesAndNewlines)
+        let answered = await questions.put(put, inAnchor: task?.anchorID)
+        givenAnswers += Task.isCancelled ? [] : answered.given
+        let trimmed = answered.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             let output = "Nothing was answered. Carry on with what you have."
             completeTool(step, output: output, failed: true)
@@ -977,7 +979,7 @@ extension AgentToolkit {
         return components?.url
     }
 
-    /// A tab the assistant opened: the task shows in its Ask panel, and the tab shows the task's work until the task ends.
+    /// A tab the assistant opened: the task shows in its Ask panel, and the tab shows its work until this task ends or the next begins.
     private func adoptOpened(_ tab: BrowserTab) {
         agentOpenedTabIDs.insert(tab.id)
         guard let task else { return }
@@ -985,7 +987,6 @@ extension AgentToolkit {
         browser.setAgentWorking(true, inAnchor: browser.anchorID(of: tab.id))
     }
 
-    /// beginTask runs it too: a task the new one cancelled may never reach finishTask.
     private func releaseOpenedTabs(keeping anchor: UUID?) {
         for anchorID in agentOpenedTabIDs.map({ browser.anchorID(of: $0) }) where anchorID != anchor {
             browser.setAgentWorking(false, inAnchor: anchorID)

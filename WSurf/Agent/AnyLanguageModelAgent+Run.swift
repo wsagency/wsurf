@@ -20,6 +20,7 @@ extension AnyLanguageModelAgent {
         let started = ContinuousClock.now
         let state = RunState(agent: self, utterance: utterance, task: task, reply: reply)
         toolkit.taskLedger = task.isContinuation ? (state.checkpoint.taskLedger ?? .init()) : .init()
+        toolkit.givenAnswers = []
         if task.isContinuation, !toolkit.taskLedger.outcomes.isEmpty || toolkit.taskLedger.actionRevision > 0 {
             toolkit.taskLedger.actionRevision += 1
         }
@@ -121,7 +122,7 @@ extension AnyLanguageModelAgent {
         toolkit.finishTask(task)
         reply.setActivity(nil)
         reply.endStream()
-        let said = ([AgentToolkit.userText(of: utterance)] + state.answers).filter { !$0.isEmpty }.joined(separator: "\n")
+        let said = ([AgentToolkit.userText(of: utterance)] + toolkit.givenAnswers).filter { !$0.isEmpty }.joined(separator: "\n")
         pendingFacts = Task.isCancelled || said.isEmpty ? nil : (taskID: task.id, said: said)
     }
 
@@ -352,7 +353,6 @@ extension AnyLanguageModelAgent {
             let text = Self.text(in: output.segments)
             if call.toolName == "askUser", !failed, !text.isEmpty {
                 state.checkpoint.userAnswers.append(text)
-                state.answers += AgentToolkit.answers(in: text)
             }
             callbacks.save()
             let progress = inspectProgress(state.monitor.observe(
@@ -392,8 +392,6 @@ extension AnyLanguageModelAgent {
         var responsePrefix = 0
         var verificationRounds = 0
         var providerRetries = 0
-        /// The person's answers to askUser in this run, for the note writer.
-        var answers: [String] = []
 
         init(agent: AnyLanguageModelAgent, utterance: String, task: AgentTaskContext, reply: AgentReplyModel) {
             self.task = task
