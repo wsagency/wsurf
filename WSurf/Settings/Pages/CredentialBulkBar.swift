@@ -60,7 +60,11 @@ struct CredentialBulkBar: View {
             .help(canMerge ? "" : mergeRefusal(ids.count))
         Button("Select All (\(visibleCount.formatted()))") { selection.selectAll() }
         // Both end selection mode and deselect everything; "Done" reads better once Select started the mode.
-        Button(selection.isSelecting ? "Done" : "Deselect All") { selection.clear() }
+        if selection.isSelecting {
+            Button("Done") { selection.clear() }
+        } else {
+            Button("Deselect All") { selection.clear() }
+        }
     }
 
     /// Why Merge… is off, in the sentences the merge sheet uses.

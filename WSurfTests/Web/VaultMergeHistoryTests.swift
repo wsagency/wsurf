@@ -200,6 +200,33 @@ struct VaultMergeHistoryTests {
         }
     }
 
+    @Test func twoMergedAwayCredentialsNeverShowAsOneVersion() async throws {
+        try await withFixture { f in
+            let primary = account("primary-pw")
+            // Ids that sort A before B, the order in which A's code would otherwise sit right after B's password in History.
+            var withCode = account("a-pw")
+            withCode.id = try #require(UUID(uuidString: "00000000-0000-0000-0000-00000000000A"))
+            withCode.totp = code(9)
+            var passwordOnly = account("b-pw")
+            passwordOnly.id = try #require(UUID(uuidString: "00000000-0000-0000-0000-00000000000B"))
+            try await f.save([primary, withCode, passwordOnly])
+            await f.model.load()
+
+            try await f.model.confirmMerge(
+                try await f.model.mergeProposal(ids: [primary.id, withCode.id, passwordOnly.id], survivor: primary.id)
+            )
+
+            let current = try #require(try await f.accounts().first)
+            let versions = try CredentialHistory.versions(current: current, revisions: try await f.history(of: primary.id))
+            let kept = versions.filter { $0.cause == CredentialChangeCause.mergedFrom }
+            #expect(kept.count == 2, "one version per merged-away credential")
+            let both = try #require(kept.first { $0.changed == [.password, .totp] })
+            #expect(both.account.password == "a-pw" && both.account.totp == code(9))
+            let alone = try #require(kept.first { $0.changed == [.password] })
+            #expect(alone.account.password == "b-pw")
+        }
+    }
+
     @Test func mergeAllIdenticalTurnsNumberedCopiesIntoOneLogin() async throws {
         try await withFixture { f in
             let copies = [account("pw", username: "ada@example.test")] + (1...3).map { account("pw", username: "ada@example.test (\($0))") }
