@@ -472,9 +472,7 @@ struct AppHandoffTests {
             if source == .opaqueOrigin {
                 try await activateOpaqueFrameLink(in: tab)
             } else {
-                _ = try await chromium.devTools.evaluate(
-                    "document.querySelector('iframe').contentWindow.postMessage('handoff', '*'); true", in: nil, world: .page,
-                    userGesture: true)
+                try await replayHandoffClick(source, in: chromium, frameURL: frameURL)
             }
         }
         for expectedPrompts in 1...2 {
@@ -745,6 +743,23 @@ struct AppHandoffTests {
         #expect(!tab.externalApps.allows(app, from: SitePermissions.origin(for: frameURL)))
         await store.waitForPendingSave()
         #expect(SitePermissions(storageURL: file).externalAppRecords.isEmpty)
+    }
+
+    /// Replays the person's click in the frame that navigates the top page. A cross-origin frame needs it there: a click
+    /// in the top page activates only that page, its ancestors and its same-origin frames (HTML user activation), and
+    /// Chromium blocks a cross-origin frame's top navigation without activation of its own, before `on_before_browse`.
+    private func replayHandoffClick(_ source: UnattributedSource, in chromium: ChromiumPage, frameURL: URL) async throws {
+        guard source == .noReferrer || source == .duplicateURL else {
+            _ = try await chromium.devTools.evaluate(
+                "document.querySelector('iframe').contentWindow.postMessage('handoff', '*'); true", in: nil, world: .page,
+                userGesture: true)
+            return
+        }
+        let frames = try await chromium.devTools.frames()
+        let frame = try #require(frames.first { $0.request.url == frameURL })
+        // A subframe's page world takes an expression only.
+        _ = try await chromium.devTools.evaluate(
+            "(window.postMessage('handoff', '*'), true)", in: frame, world: .page, userGesture: true)
     }
 
     private func activateOpaqueFrameLink(in tab: BrowserTab) async throws {
