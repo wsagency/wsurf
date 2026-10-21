@@ -196,7 +196,8 @@ struct PageTranslationScriptTests {
             translation.translate(request, in: page) { _ in nil }
 
             #expect(await waitUntil { translation.phase == .original }, "engine \(engine)")
-            #expect(try await text("document.body.textContent", in: page) == "Erster AbsatzZweiter Absatz")
+            let remaining = try await text("document.body.textContent", in: page)
+            #expect(remaining == "Erster AbsatzZweiter Absatz")
         }
     }
 

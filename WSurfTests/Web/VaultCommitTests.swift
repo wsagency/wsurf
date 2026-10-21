@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import GRDB
 import Testing
 
 @testable import WSurf
