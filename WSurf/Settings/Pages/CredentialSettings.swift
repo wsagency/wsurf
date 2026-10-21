@@ -594,11 +594,23 @@ struct CredentialRow: View {
             Divider()
             Button("Edit…", action: open).disabled(model.isBusy)
         case .merge(let ids):
-            Button(ids.count > 1 ? "Merge \(ids.count) Credentials…" : "Merge…") { merge(ids) }
-                .disabled(model.isBusy)
+            Group {
+                if ids.count > 1 {
+                    Button("Merge \(ids.count) Credentials…") { merge(ids) }
+                } else {
+                    Button("Merge…") { merge(ids) }
+                }
+            }
+            .disabled(model.isBusy)
         case .moveToTrash(let ids):
-            Button(ids.count > 1 ? "Move \(ids.count) Credentials to Trash" : "Move to Trash", role: .destructive) { trash(ids) }
-                .disabled(model.isBusy)
+            Group {
+                if ids.count > 1 {
+                    Button("Move \(ids.count) Credentials to Trash", role: .destructive) { trash(ids) }
+                } else {
+                    Button("Move to Trash", role: .destructive) { trash(ids) }
+                }
+            }
+            .disabled(model.isBusy)
         case .select:
             Divider()
             Button("Select") { selection.beginSelecting(with: summary.id) }

@@ -28,17 +28,20 @@ nonisolated extension CommitTransaction {
         }
         var held: [UUID: Set<Data>] = [:]
         var carried: [CarriedRevision] = []
-        // A fixed order, so the same merge always writes the same rows.
-        for (absorbedID, survivorID) in merging.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
+        // A fixed order, so the same merge always writes the same rows. Each absorbed account's current values get their own time
+        // (a millisecond apart): History makes one version of adjacent rows with the same time and cause, so two accounts' values
+        // never show as one credential.
+        for (index, (absorbedID, survivorID)) in merging.sorted(by: { $0.key.uuidString < $1.key.uuidString }).enumerated() {
             guard absorbedID != survivorID, plan.removals.contains(.account(absorbedID)), let survivor = live[survivorID],
                   let absorbed = previous[absorbedID] else { throw CredentialVaultError.invalidData }
             if held[survivorID] == nil {
                 held[survivorID] = try heldKeys(of: survivor, plan: plan)
             }
             let earlier = try ownedRevisions(of: absorbedID).sorted { $0.body.recordedAt < $1.body.recordedAt }
+            let mergedAt = wall.addingTimeInterval(Double(index) * 0.001)
             let current = try Self.currentValues(of: absorbed).map { subject, value in
                 CarriedRevision(
-                    ownerID: absorbedID, subject: subject, body: RevisionBody(recordedAt: wall, cause: CredentialChangeCause.mergedFrom, value: value)
+                    ownerID: absorbedID, subject: subject, body: RevisionBody(recordedAt: mergedAt, cause: CredentialChangeCause.mergedFrom, value: value)
                 )
             }
             // The current values win a tie with an earlier version of the same value, but are written last, so History lists them first.
