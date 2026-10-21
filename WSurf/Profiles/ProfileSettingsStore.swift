@@ -79,7 +79,7 @@ nonisolated final class InMemoryUserDefaults: UserDefaults {
 enum ProfileSettingsStore {
 
     static func suiteName(for id: UUID) -> String {
-        AppDatabase.defaultsSuite("io.wsagency.wsurf.profile.\(id.uuidString)")
+        AppDatabase.defaultsSuite(profileSuitePrefix + id.uuidString)
     }
 
     static func defaults(for profile: Profile) -> UserDefaults {
@@ -98,12 +98,29 @@ enum ProfileSettingsStore {
         return defaults
     }
 
+    /// Empties the profile's settings domain and deletes its plist, which emptying alone leaves behind.
     static func forget(_ id: UUID) {
         guard id != Profile.privateID else { return }
-        UserDefaults.standard.removePersistentDomain(forName: suiteName(for: id))
-        // Emptying a domain leaves its plist behind; a test run removes the file too.
-        if AppDatabase.isRunningTests {
-            try? FileManager.default.removeItem(atPath: suiteName(for: id) + ".plist")
+        let suite = suiteName(for: id)
+        UserDefaults.standard.removePersistentDomain(forName: suite)
+        if let file = plistURL(forSuite: suite) {
+            try? FileManager.default.removeItem(at: file)
         }
     }
+
+    /// The one file CFPreferences keeps a profile's domain in: an absolute suite name (a test run's) is that file's path without
+    /// `.plist`, any other name is `<name>.plist` in the user's Library/Preferences. Nil for anything but a profile suite, so
+    /// `forget` never reaches another domain's plist.
+    static func plistURL(forSuite suite: String) -> URL? {
+        let name = (suite as NSString).lastPathComponent
+        guard name.hasPrefix(profileSuitePrefix), UUID(uuidString: String(name.dropFirst(profileSuitePrefix.count))) != nil else {
+            return nil
+        }
+        if suite.hasPrefix("/") {
+            return URL(filePath: suite + ".plist")
+        }
+        return URL.libraryDirectory.appending(path: "Preferences", directoryHint: .isDirectory).appending(path: name + ".plist")
+    }
+
+    private static let profileSuitePrefix = "io.wsagency.wsurf.profile."
 }

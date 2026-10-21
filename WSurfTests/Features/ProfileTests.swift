@@ -68,6 +68,25 @@ struct ProfileTests {
         #expect(ProfileSettingsStore.defaults(for: work).string(forKey: "search.engine") == nil)
     }
 
+    /// Forgetting a profile deletes the plist its domain leaves, in the app too: the file it removes is the profile suite's own
+    /// (`<name>.plist` in ~/Library/Preferences for the app's bare name, the path itself for a test run's), and nothing else.
+    @Test func forgettingAProfileDeletesOnlyItsOwnPreferencesFile() {
+        let id = UUID()
+        let name = "io.wsagency.wsurf.profile.\(id.uuidString)"
+        let preferences = URL.libraryDirectory.appending(path: "Preferences", directoryHint: .isDirectory)
+
+        #expect(ProfileSettingsStore.plistURL(forSuite: name) == preferences.appending(path: name + ".plist"))
+        #expect(ProfileSettingsStore.plistURL(forSuite: "/Run/Preferences/" + name) == URL(filePath: "/Run/Preferences/\(name).plist"))
+        #expect(ProfileSettingsStore.plistURL(forSuite: ProfileSettingsStore.suiteName(for: id))?.lastPathComponent == name + ".plist")
+        let others = [
+            "io.wsagency.wsurf", "io.wsagency.wsurf.profile.", "io.wsagency.wsurf.profile.not-a-uuid", "com.apple.Safari",
+            "/Run/Preferences/io.wsagency.wsurf", "io.wsagency.wsurf.stage.\(id.uuidString)",
+        ]
+        for other in others {
+            #expect(ProfileSettingsStore.plistURL(forSuite: other) == nil, "\(other)")
+        }
+    }
+
     @Test func afirstLaunchHasOneProfileHoldingEverything() {
         let (store, _) = makeStore()
 
