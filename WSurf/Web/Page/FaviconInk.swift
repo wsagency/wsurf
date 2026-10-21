@@ -27,7 +27,8 @@ nonisolated enum FaviconInk {
         return (reading.luminance > lightLimit, reading.luminance < darkLimit)
     }
 
-    static func inked(_ data: Data, isDark: Bool, side: Int = 32) -> Data? {
+    /// 48 px keeps the largest tab icon (24 pt) sharp at 2x.
+    static func inked(_ data: Data, isDark: Bool, side: Int = 48) -> Data? {
         guard let source = NSImage(data: data), source.isValid,
               let rep = makeRep(side: side),
               let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }

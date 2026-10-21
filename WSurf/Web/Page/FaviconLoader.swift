@@ -184,8 +184,11 @@ final class FaviconLoader {
               l => (l.type || '').includes('svg') || /\\.svg(\\?|$)/i.test(l.href)
             );
             if (vector.length) { return vector[vector.length - 1]; }
-            const sized = list.filter(l => side(l) >= 32).sort((a, b) => side(a) - side(b));
+            // 48 px covers the largest tab icon (24 pt) at 2x. A site that stops below it keeps its largest 32 px+.
+            const sized = list.filter(l => side(l) >= 48).sort((a, b) => side(a) - side(b));
             if (sized.length) { return sized[0]; }
+            const small = list.filter(l => side(l) >= 32).sort((a, b) => side(b) - side(a));
+            if (small.length) { return small[0]; }
             return list[list.length - 1];
           };
 
