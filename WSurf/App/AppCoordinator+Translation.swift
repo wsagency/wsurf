@@ -7,31 +7,33 @@ import SwiftUI
 @preconcurrency import Translation
 
 extension AppCoordinator {
-    /// Translates `tab` to `target`, or to the first offered or the remembered language. In a private window this request is the
-    /// person's consent to read the page; nothing reads it before.
+    /// Translates `tab` to `target`, or to the first offered or the remembered language. While Reader shows the article, that is
+    /// what is translated, not the page behind it. In a private window this request is the person's consent to read the page;
+    /// nothing reads it before.
     func translatePage(_ tab: BrowserTab, to target: Locale.Language? = nil) {
-        guard tab.canTranslate else { return }
+        guard tab.canTranslateShown else { return }
         if let target {
             tab.context.settings.translationTarget = target
         }
         let downloads = translationDownloads
+        // The offer is about the page's language, which the article is in too.
         let chosen = target ?? tab.translation.targets.first ?? tab.context.settings.translationTarget
         Task {
             let started = await tab.translate(to: chosen) { model, source, target in
                 await downloads.prepare(model, from: source, to: target)
             }
             // A newer request for the same tab answers for itself.
-            guard !started, !tab.isClosed, !tab.translation.isActive else { return }
+            guard !started, !tab.isClosed, !tab.shownTranslation.isActive else { return }
             show(notice: String(localized: "Translation Unavailable"))
         }
     }
 
     func showOriginal(_ tab: BrowserTab) {
-        tab.translation.showOriginal(in: tab.liveView)
+        tab.shownTranslation.showOriginal(in: tab.translatedPage)
     }
 
     func toggleTranslation(_ tab: BrowserTab) {
-        if tab.translation.isActive {
+        if tab.shownTranslation.isActive {
             showOriginal(tab)
         } else {
             translatePage(tab)
@@ -42,7 +44,7 @@ extension AppCoordinator {
     func setAlwaysTranslates(_ always: Bool, _ language: Locale.Language, in tab: BrowserTab) {
         guard !tab.isPrivate else { return }
         tab.context.settings.setAlwaysTranslates(always, language)
-        if always, !tab.translation.isActive {
+        if always, !tab.shownTranslation.isActive {
             translatePage(tab)
         }
     }

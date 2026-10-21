@@ -12,7 +12,7 @@ struct TranslationBadge: View {
 
     private var tab: BrowserTab? {
         guard let tab = browser.activeTab, tab.isMaterialised, !tab.isShowingSystemPage,
-              tab.translation.isActive || !tab.translation.targets.isEmpty
+              tab.shownTranslation.isActive || !tab.translation.targets.isEmpty
         else { return nil }
         return tab
     }
@@ -46,7 +46,7 @@ enum TranslationAnnouncement {
         }
 
         init(tab: BrowserTab?) {
-            self.init(tabID: tab?.id, phase: tab?.translation.phase ?? .original, target: tab?.translation.target)
+            self.init(tabID: tab?.id, phase: tab?.shownTranslation.phase ?? .original, target: tab?.shownTranslation.target)
         }
     }
 
@@ -89,7 +89,13 @@ private struct TranslationMenu: View {
     @Environment(\.chromeIconExtent) private var extent
     @Environment(\.windowColorScheme) private var windowColorScheme
 
+    /// What is on screen: the article's translation while Reader shows it, the page's otherwise.
     private var translation: PageTranslation {
+        tab.shownTranslation
+    }
+
+    /// The languages offered and the page's own language belong to the page, which the article is in too.
+    private var offers: PageTranslation {
         tab.translation
     }
 
@@ -107,7 +113,7 @@ private struct TranslationMenu: View {
 
     var body: some View {
         Menu {
-            ForEach(translation.targets, id: \.self) { language in
+            ForEach(offers.targets, id: \.self) { language in
                 Button("Translate to \(TranslationLanguage.name(language))") {
                     coordinator.translatePage(tab, to: language)
                 }
@@ -125,7 +131,7 @@ private struct TranslationMenu: View {
             }
             .disabled(!translation.isActive)
 
-            if !tab.isPrivate, let source = translation.detectedLanguage {
+            if !tab.isPrivate, let source = offers.detectedLanguage {
                 Toggle(isOn: Binding(
                     get: { tab.context.settings.alwaysTranslates(source) },
                     set: { coordinator.setAlwaysTranslates($0, source, in: tab) }
