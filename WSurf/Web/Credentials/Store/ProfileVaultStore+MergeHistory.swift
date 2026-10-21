@@ -44,7 +44,7 @@ nonisolated extension CommitTransaction {
             // The current values win a tie with an earlier version of the same value, but are written last, so History lists them first.
             var kept: [(row: CarriedRevision, isCurrent: Bool)] = []
             for (row, isCurrent) in current.map({ ($0, true) }) + earlier.map({ ($0, false) }) {
-                guard let key = try Self.mergeKey(row.subject, row.body.value), held[survivorID, default: []].insert(key).inserted else {
+                guard let key = Self.mergeKey(row.subject, row.body.value), held[survivorID, default: []].insert(key).inserted else {
                     continue
                 }
                 kept.append((CarriedRevision(ownerID: survivorID, subject: row.subject, body: row.body), isCurrent))
@@ -59,7 +59,7 @@ nonisolated extension CommitTransaction {
         var values = try Self.currentValues(of: survivor)
         values += try ownedRevisions(of: survivor.id).map { ($0.subject, $0.body.value) }
         values += plan.revisions.filter { $0.ownerID == survivor.id }.map { ($0.subject, $0.superseded) }
-        return Set(try values.compactMap { try Self.mergeKey($0.0, $0.1) })
+        return Set(values.compactMap { Self.mergeKey($0.0, $0.1) })
     }
 
     /// The account's own login and code, as the History stores them.
@@ -97,13 +97,15 @@ nonisolated extension CommitTransaction {
     }
 
     /// What makes two History values the same to a merge: a password's bytes, or a code's secret and settings. `nil` for a login
-    /// without a password, which holds nothing the merged credential would miss.
-    private static func mergeKey(_ subject: RecordSubject, _ value: Data) throws -> Data? {
+    /// without a password, which holds nothing the merged credential would miss. A value that does not decode is kept by its bytes:
+    /// it is copied rather than lost, and it never blocks the merge.
+    private static func mergeKey(_ subject: RecordSubject, _ value: Data) -> Data? {
         switch subject {
         case .password:
-            return try ProfileVaultStore.decode(PasswordValue.self, from: value).password.map { Data("p".utf8) + Data($0.utf8) }
+            guard let login = try? JSONDecoder().decode(PasswordValue.self, from: value) else { return Data("r".utf8) + value }
+            return login.password.map { Data("p".utf8) + Data($0.utf8) }
         case .totp:
-            let code = try ProfileVaultStore.decode(TOTPGenerator.self, from: value)
+            guard let code = try? JSONDecoder().decode(TOTPGenerator.self, from: value) else { return Data("r".utf8) + value }
             return Data("t\(code.algorithm.rawValue)/\(code.period)/\(code.digits)/".utf8) + code.secret
         case .account, .passkey, .metadata, .note, .secureItem:
             return nil
