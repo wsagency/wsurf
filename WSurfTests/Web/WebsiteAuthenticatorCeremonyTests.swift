@@ -814,6 +814,21 @@ struct WebsiteAuthenticatorCeremonyTests {
         #expect(!choices[2].detail.contains("#"))
     }
 
+    @Test func anAccountOfNotesOrItemsOnlySaysWhatItHolds() {
+        var memo = CredentialAccount(
+            id: UUID(), username: "", displayName: "Memo", origins: ["https://login.example.com"], loginURLs: [], password: nil,
+            passkeys: [], totp: nil, exchangeAccountID: nil, exchangeItemID: nil
+        )
+        memo.notes = [CredentialNote(text: "synthetic note", field: nil)]
+        var wallet = memo
+        wallet.id = UUID()
+        wallet.notes = nil
+        wallet.secureItems = [SecureItemFixtures.address()]
+
+        let choices = WebsiteAuthenticator.registrationChoices([memo, wallet], rpID: "example.com", origin: "https://login.example.com")
+        #expect(choices.map(\.detail) == [String(localized: "notes"), String(localized: "cards and other items")])
+    }
+
     // MARK: Native chooser identity
     // Real AppKit controls, never presented: this proves which identity each menu position carries, not that the sheet
     // or the user's click works (native consent stays an acceptance item).
