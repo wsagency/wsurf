@@ -16,8 +16,14 @@ extension CredentialSettingsModel {
         let vault = manager?.vaultID
         ownMessage = nil
         var outcome: CredentialExportOutcome?
-        let sent = await perform {
+        let sent = await perform(describe: { Self.exportMessage(for: $0) }) {
             let stamps = try await self.exportStamps(epoch: epoch)
+            // A card's or an ID document's values leave the vault only after Touch ID, asked before the system's sheet. The summaries
+            // are the ones the stamps vouch for: an account that changed since is refused by the export itself.
+            if CredentialExportSelection.sendsSensitiveItems(selection, in: self.summaries) {
+                try await self.verifyUser(String(localized: "export saved cards and documents"))
+                try Task.checkCancellation()
+            }
             outcome = try await self.exchange.exportCredentials(
                 selection: selection, expectedStamps: stamps, epoch: epoch, from: $0, in: anchor
             )
@@ -50,6 +56,13 @@ extension CredentialSettingsModel {
             ownMessage = (.csvExported(rows: rows), vault)
         }
         return saved
+    }
+
+    private static func exportMessage(for error: any Error) -> String? {
+        if case WebsiteAuthenticatorError.notAllowed = error {
+            return String(localized: "Authentication didn’t finish. Nothing was exported.")
+        }
+        return message(for: error)
     }
 
     /// The stamps the selection was made against; after this page's own write, a fresh read of the same revision stands in.

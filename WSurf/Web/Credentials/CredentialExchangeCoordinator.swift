@@ -735,6 +735,6 @@ final class CredentialExchangeCoordinator {
     }
 
     private static func isNonEmpty(_ selection: [CredentialExportSelection]) -> Bool {
-        selection.contains { $0.password || $0.totp || $0.notes || !$0.passkeyIDs.isEmpty }
+        selection.contains(where: \.hasParts)
     }
 }

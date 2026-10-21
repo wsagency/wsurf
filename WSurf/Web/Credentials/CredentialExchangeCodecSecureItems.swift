@@ -88,6 +88,77 @@ nonisolated extension CredentialExchangeCodec {
         members.compactMap { name, field in field.map { (name: name, field: $0) } }
     }
 
+    /// The Credential Exchange credential `item` goes out as: `secureItemSource` read backwards, member by member. Every value keeps
+    /// the field type, id and label it is stored with (`exchangeType`, never a raw value), so a hidden value goes out hidden and an
+    /// import of the result gives back the same item.
+    static func exportSecureItem(_ item: SecureItem) throws -> ASImportableCredential {
+        func exported(_ stored: SecureItemField) -> ASImportableEditableField {
+            let fieldType = item.kind.member(stored.name)?.type ?? .string
+            return makeField(stored.value, metadata: stored.field ?? CredentialEditableFieldMetadata(id: nil, label: nil, fieldType: fieldType))
+        }
+        func field(_ name: String) -> ASImportableEditableField? {
+            item.fields.first { $0.name == name }.map(exported)
+        }
+        switch item.kind {
+        case .creditCard:
+            return .creditCard(.init(
+                number: field("number"), fullName: field("fullName"), cardType: field("cardType"),
+                verificationNumber: field("verificationNumber"), pin: field("pin"), expiryDate: field("expiryDate"),
+                validFrom: field("validFrom")
+            ))
+        case .address:
+            return .address(.init(
+                streetAddress: field("streetAddress"), postalCode: field("postalCode"), city: field("city"),
+                territory: field("territory"), country: field("country"), telephone: field("telephone")
+            ))
+        case .personName:
+            return .personName(.init(
+                title: field("title"), given: field("given"), givenInformal: field("givenInformal"), given2: field("given2"),
+                surnamePrefix: field("surnamePrefix"), surname: field("surname"), surname2: field("surname2"),
+                credentials: field("credentials"), generation: field("generation")
+            ))
+        case .wifi:
+            return .wifi(.init(
+                ssid: field("ssid"), networkSecurityType: field("networkSecurityType"), passphrase: field("passphrase"),
+                hidden: field("hidden")
+            ))
+        case .apiKey:
+            return .apiKey(.init(
+                key: field("key"), userName: field("userName"), keyType: field("keyType"), url: field("url"),
+                validFrom: field("validFrom"), expiryDate: field("expiryDate")
+            ))
+        case .sshKey:
+            // The SDK requires a key type and key bytes. One the item lacks goes out empty, which an import reads as absent again.
+            let privateKey = try item.value("privateKey").map { try WebAuthnWire.base64URLDecode($0, maximum: CredentialVaultLimits.payloadBytes) }
+            return .sshKey(.init(
+                keyType: item.value("keyType") ?? "", privateKey: privateKey ?? Data(), keyComment: item.value("keyComment"),
+                creationDate: field("creationDate"), expiryDate: field("expiryDate"), keyGenerationSource: field("keyGenerationSource")
+            ))
+        case .driversLicense:
+            return .driversLicense(.init(
+                fullName: field("fullName"), birthDate: field("birthDate"), issueDate: field("issueDate"), expiryDate: field("expiryDate"),
+                issuingAuthority: field("issuingAuthority"), territory: field("territory"), country: field("country"),
+                licenseNumber: field("licenseNumber"), licenseClass: field("licenseClass")
+            ))
+        case .passport:
+            return .passport(.init(
+                issuingCountry: field("issuingCountry"), passportType: field("passportType"), passportNumber: field("passportNumber"),
+                nationalIdentificationNumber: field("nationalIdentificationNumber"), nationality: field("nationality"),
+                fullName: field("fullName"), birthDate: field("birthDate"), birthPlace: field("birthPlace"), sex: field("sex"),
+                issueDate: field("issueDate"), expiryDate: field("expiryDate"), issuingAuthority: field("issuingAuthority")
+            ))
+        case .identityDocument:
+            return .identityDocument(.init(
+                issuingCountry: field("issuingCountry"), documentNumber: field("documentNumber"),
+                identificationNumber: field("identificationNumber"), nationality: field("nationality"), fullName: field("fullName"),
+                birthDate: field("birthDate"), birthPlace: field("birthPlace"), sex: field("sex"), issueDate: field("issueDate"),
+                expiryDate: field("expiryDate"), issuingAuthority: field("issuingAuthority")
+            ))
+        case .customFields:
+            return .customFields(.init(id: item.id, label: item.label, fields: item.fields.map(exported)))
+        }
+    }
+
     /// Whether every item `incoming` brings is already one of `local`'s, as the same bytes: the other app sent nothing that isn't
     /// saved here.
     static func secureItemsAreHeld(_ incoming: CredentialAccount, by local: CredentialAccount) -> Bool {

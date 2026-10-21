@@ -109,12 +109,17 @@ nonisolated struct CredentialDraft: Sendable {
         secureItems.remove(at: index)
     }
 
-    /// Adds an empty value of `member` to the item at `index`, when the item has none: a member the exporter left out.
+    /// Adds an empty value of `member` to the item at `index`, when the item has none: a member the exporter left out. It goes in the
+    /// SDK's member order, the order an import keeps, so the item exports and imports back unchanged.
     mutating func addMember(_ member: SecureItemMember, toItem index: Int) {
         guard secureItems.indices.contains(index), !member.isPlain, !secureItems[index].fields.contains(where: { $0.name == member.name })
         else { return }
-        secureItems[index].fields.append(
-            SecureItemField(name: member.name, value: "", field: CredentialEditableFieldMetadata(id: nil, label: nil, fieldType: member.type))
+        let order = secureItems[index].kind.members.map(\.name)
+        let rank = { (name: String) in order.firstIndex(of: name) ?? order.count }
+        let position = secureItems[index].fields.firstIndex { rank($0.name) > rank(member.name) } ?? secureItems[index].fields.endIndex
+        secureItems[index].fields.insert(
+            SecureItemField(name: member.name, value: "", field: CredentialEditableFieldMetadata(id: nil, label: nil, fieldType: member.type)),
+            at: position
         )
     }
 

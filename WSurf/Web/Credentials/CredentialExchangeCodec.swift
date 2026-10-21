@@ -45,6 +45,8 @@ nonisolated struct CredentialExportSelection: Sendable {
     var passkeyIDs: Set<UUID>
     var totp: Bool
     var notes = false
+    /// The credential's cards, addresses and other items, all of them, as one part (like its notes).
+    var secureItems = false
 }
 
 /// An import size limit was exceeded. Only `CredentialExchangeError` reads it, to name the limit in the refusal.

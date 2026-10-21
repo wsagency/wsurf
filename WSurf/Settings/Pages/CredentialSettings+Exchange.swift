@@ -42,8 +42,8 @@ struct CredentialExportSheet: View {
         model.summaries.compactMap { selection[$0.id] }.filter(\.hasParts)
     }
 
-    /// The credentials this export can carry that match the search: the list's rule, over the summaries' precomputed keys. A
-    /// credential that holds only cards and other items has nothing an export sends, so it is not listed.
+    /// The credentials this export can carry that match the search: the list's rule, over the summaries' precomputed keys. A CSV
+    /// file holds no cards or other items, so a credential that holds only those is not listed for one.
     private var listed: [CredentialSummary] {
         let all = csv ? model.summaries.filter(CredentialCSVExport.isExportable) : model.summaries
         return CredentialListFilter.visible(all.filter { CredentialExportSelection(allOf: $0).hasParts }, query: query, filter: .all)
@@ -94,11 +94,15 @@ struct CredentialExportSheet: View {
             } else {
                 Text("""
                     Choose what to send to another app. The system passes your selection to the app you pick next, and \
-                    that app can read it: any passwords, passkeys, verification code setups and notes you select aren’t \
-                    encrypted by WSurf. WSurf doesn’t write a file, and your vault keeps its own copy.
+                    that app can read it: any passwords, passkeys, verification code setups, notes, cards and other items \
+                    you select aren’t encrypted by WSurf. WSurf doesn’t write a file, and your vault keeps its own copy.
                     """)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                let kinds = CredentialExportSelection.itemKinds(selection, in: model.summaries)
+                if !kinds.isEmpty {
+                    itemsNotice(kinds)
+                }
             }
             if attempted, let message = model.transferMessage {
                 Text(verbatim: message.text)
@@ -177,6 +181,11 @@ struct CredentialExportSheet: View {
                 if summary.hasNotes {
                     Toggle("Notes", isOn: binding(summary.id, \.notes))
                 }
+                if !csv, !summary.itemTitles.isEmpty {
+                    Toggle(isOn: binding(summary.id, \.secureItems)) {
+                        Text(verbatim: "\(String(localized: "Cards and other items")) · \(summary.itemTitles.joined(separator: ", "))")
+                    }
+                }
             }
             .padding(.top, 4)
         } label: {
@@ -205,7 +214,33 @@ struct CredentialExportSheet: View {
         if summary.hasNotes {
             result.append(binding(summary.id, \.notes))
         }
+        if !csv, !summary.itemTitles.isEmpty {
+            result.append(binding(summary.id, \.secureItems))
+        }
         return result
+    }
+
+    /// What the selected items send, kind by kind, and that their secrets leave the vault. Shown before Export is clicked.
+    private func itemsNotice(_ kinds: [SecureItemKind]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Cards and other items in this export, with every value they hold:").fontWeight(.medium)
+            ForEach(kinds, id: \.self) { kind in
+                Text(verbatim: "\(kind.label): \(Self.exportedValues(of: kind))")
+            }
+            Text("""
+                Card numbers, security codes (CVV), PINs, document numbers, Wi-Fi passwords and API and SSH keys leave the \
+                vault, and the app you pick can read them. Exporting a card or an ID document asks for Touch ID first.
+                """)
+        }
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The values an item of `kind` carries, by the names the editor shows.
+    private static func exportedValues(of kind: SecureItemKind) -> String {
+        guard kind != .customFields else { return String(localized: "every field, with its label") }
+        return kind.members.map { SecureItemKind.memberLabel($0.name) }.joined(separator: ", ")
     }
 
     /// What the refresh did to the chosen credentials. Nothing is sent by it: the user reads this, checks the selection

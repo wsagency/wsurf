@@ -39,9 +39,10 @@ nonisolated struct CredentialExportReview: Sendable {
             kept.password = chosen.password && now.hasLogin
             kept.totp = chosen.totp && now.hasTOTP
             kept.notes = chosen.notes && now.hasNotes
+            kept.secureItems = chosen.secureItems && !now.itemKinds.isEmpty
             kept.passkeyIDs = chosen.passkeyIDs.intersection(now.passkeys.map(\.id))
             let partsChanged = kept.password != chosen.password || kept.totp != chosen.totp
-                || kept.notes != chosen.notes || kept.passkeyIDs != chosen.passkeyIDs
+                || kept.notes != chosen.notes || kept.secureItems != chosen.secureItems || kept.passkeyIDs != chosen.passkeyIDs
             let stampChanged = freshStamps.map { $0[before.id] != shownStamps[before.id] } ?? false
             if partsChanged || now != before || stampChanged {
                 result.changed.append(now.title)
@@ -56,22 +57,35 @@ nonisolated struct CredentialExportReview: Sendable {
 
 nonisolated extension CredentialExportSelection {
     var hasParts: Bool {
-        password || totp || notes || !passkeyIDs.isEmpty
+        password || totp || notes || secureItems || !passkeyIDs.isEmpty
+    }
+
+    /// The kinds of item `selection` sends from `summaries`, each once, in `SecureItemKind` order: what the export sheet lists.
+    static func itemKinds(_ selection: [UUID: CredentialExportSelection], in summaries: [CredentialSummary]) -> [SecureItemKind] {
+        let held = Set(summaries.filter { selection[$0.id]?.secureItems == true }.flatMap(\.itemKinds))
+        return SecureItemKind.allCases.filter(held.contains)
+    }
+
+    /// Whether `selection` sends a card or an identity document of `summaries`, which needs Touch ID first.
+    static func sendsSensitiveItems(_ selection: [CredentialExportSelection], in summaries: [CredentialSummary]) -> Bool {
+        let sensitive = Set(summaries.filter(\.hasSensitiveItems).map(\.id))
+        return selection.contains { $0.secureItems && sensitive.contains($0.accountID) }
     }
 }
 
 // MARK: - A credential as one unit
 
 nonisolated extension CredentialExportSelection {
-    /// Everything of `summary` the export can carry: its login, every passkey, its code setup and its notes. A CSV file carries only a
-    /// login and its notes.
+    /// Everything of `summary` the export can carry: its login, every passkey, its code setup, its notes and its items. A CSV file
+    /// carries only a login and its notes.
     init(allOf summary: CredentialSummary, csv: Bool = false) {
         self.init(
             accountID: summary.id,
             password: summary.hasLogin,
             passkeyIDs: csv ? [] : Set(summary.passkeys.map(\.id)),
             totp: !csv && summary.hasTOTP,
-            notes: summary.hasNotes
+            notes: summary.hasNotes,
+            secureItems: !csv && !summary.itemKinds.isEmpty
         )
     }
 
@@ -80,10 +94,10 @@ nonisolated extension CredentialExportSelection {
         let offered = Self(allOf: summary, csv: csv)
         let selected = Self(
             accountID: summary.id, password: password && offered.password, passkeyIDs: passkeyIDs.intersection(offered.passkeyIDs),
-            totp: totp && offered.totp, notes: notes && offered.notes
+            totp: totp && offered.totp, notes: notes && offered.notes, secureItems: secureItems && offered.secureItems
         )
         func count(_ selection: Self) -> Int {
-            [selection.password, selection.totp, selection.notes].filter { $0 }.count + selection.passkeyIDs.count
+            [selection.password, selection.totp, selection.notes, selection.secureItems].filter { $0 }.count + selection.passkeyIDs.count
         }
         return (count(selected), count(offered))
     }
