@@ -320,3 +320,68 @@ check_average \
   '4096' \
   'One merge choice in a review that fills a 25,000-credential vault memory growth' \
   'kB'
+
+# Whole-vault cases of the 0.1.5 build (20,000 credentials). Two five-sample runs on the Pro (2026-10-21), time means (s) run1 / run2:
+# editor 1.7201 / 1.6935, autofilled 1.0595 / 1.0818, passkey 1.0661 / 1.0457, undo 1.1041 / 1.0934, restore 1.0174 / 1.0171.
+# Time budgets are twice the mean of the ten samples. Memory growth is noisy (single samples between -19 and +22 MB), so
+# each memory budget is at least 4096 kB and otherwise twice the larger of the two run means (editor 7471 kB, restore 3319 kB).
+check_average \
+  'VaultScalePerformanceTests/testSavingOneEditInTheCredentialEditorAmongTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '3.414' \
+  'Credential Editor save among 20,000 credentials' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testSavingOneEditInTheCredentialEditorAmongTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '14943' \
+  'Credential Editor save among 20,000 credentials memory growth' \
+  'kB'
+check_average \
+  'VaultScalePerformanceTests/testSavingAnAutofilledPasswordAmongTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '2.142' \
+  'Autofilled password saved among 20,000 credentials' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testSavingAnAutofilledPasswordAmongTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Autofilled password saved among 20,000 credentials memory growth' \
+  'kB'
+check_average \
+  'VaultScalePerformanceTests/testSigningInWithAPasskeyAmongTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '2.112' \
+  'Passkey sign-in among 20,000 credentials' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testSigningInWithAPasskeyAmongTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Passkey sign-in among 20,000 credentials memory growth' \
+  'kB'
+check_average \
+  'VaultScalePerformanceTests/testUndoingOneEditAmongTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '2.198' \
+  'Undo of one edit among 20,000 credentials' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testUndoingOneEditAmongTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Undo of one edit among 20,000 credentials memory growth' \
+  'kB'
+check_average \
+  'VaultScalePerformanceTests/testRestoringOneOfTwentyThousandCredentialsFromTheTrash()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '2.035' \
+  'Restore of one credential from the Trash among 20,000' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testRestoringOneOfTwentyThousandCredentialsFromTheTrash()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '6639' \
+  'Restore of one credential from the Trash among 20,000 memory growth' \
+  'kB'
