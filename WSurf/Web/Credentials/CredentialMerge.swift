@@ -237,6 +237,10 @@ nonisolated enum CredentialMerge {
                 result.password = picked.login.password
                 result.basicAuthenticationMetadata = picked.login.basicAuthenticationMetadata
             }
+            // Copies an export numbered ("ada (1)", "ada (2)") become one login under the username without the number.
+            if Set(([survivor] + others).map(\.username).filter { !$0.isEmpty }.map { Data($0.utf8) }).count > 1 {
+                result.username = CredentialMergeSuggestions.baseUsername(result.username)
+            }
             result.totp = picked.code.totp
             result.displayName = picked.name.displayName
             result.passkeys += others.flatMap(\.passkeys)
@@ -298,7 +302,7 @@ extension CredentialMerge {
         var names = Set<Data>()
         for summary in summaries {
             if let username = summary.username {
-                names.insert(Data(username.utf8))
+                names.insert(Data(CredentialMergeSuggestions.baseUsername(username).utf8))
                 continue
             }
             if summary.usernameIsConcealed {

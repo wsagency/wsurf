@@ -200,6 +200,24 @@ struct VaultMergeHistoryTests {
         }
     }
 
+    @Test func mergeAllIdenticalTurnsNumberedCopiesIntoOneLogin() async throws {
+        try await withFixture { f in
+            let copies = [account("pw", username: "ada@example.test")] + (1...3).map { account("pw", username: "ada@example.test (\($0))") }
+            let other = account("pw", on: "https://unrelated.test", username: "ada@example.test (4)")
+            try await f.save(copies + [other])
+            await f.model.load()
+
+            let result = try await f.model.mergeAllIdentical(revision: try await f.vault.manager.snapshot().revision)
+
+            #expect(result == CredentialMergeAllResult(merged: 1, absorbed: 3, skipped: 0))
+            let remaining = try await f.accounts()
+            #expect(remaining.count == 2, "the copy on another site is not merged")
+            let merged = try #require(remaining.first { $0.id != other.id })
+            #expect(merged.username == "ada@example.test")
+            #expect(merged.password == "pw")
+        }
+    }
+
     @Test func aMergeMapThatNamesALiveAccountWritesNothing() async throws {
         try await withFixture { f in
             let primary = account("one")

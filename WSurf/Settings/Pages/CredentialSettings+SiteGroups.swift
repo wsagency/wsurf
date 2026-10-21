@@ -101,6 +101,8 @@ extension CredentialMergeReason {
         switch self {
         case .sameLogin:
             "Same site and username"
+        case .numberedCopies:
+            "Numbered copies of one username"
         case .splitParts:
             "Password, passkey or code saved separately"
         case .relatedSite:
@@ -217,7 +219,9 @@ struct CredentialSuggestionsSheet: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(verbatim: names(of: suggestion)).font(Theme.Font.row).fixedSize(horizontal: false, vertical: true)
                 Group {
-                    if suggestion.isIdentical {
+                    if suggestion.isIdentical, suggestion.reason == .numberedCopies {
+                        Text("Numbered copies with the same password")
+                    } else if suggestion.isIdentical {
                         Text("Same site, username and password")
                     } else {
                         Text(suggestion.reason.text)

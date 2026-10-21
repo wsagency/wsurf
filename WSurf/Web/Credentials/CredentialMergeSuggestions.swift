@@ -7,6 +7,8 @@ import Foundation
 nonisolated enum CredentialMergeReason: Int, Comparable, Sendable {
     /// The same website and the same username.
     case sameLogin
+    /// The same website and one username with copy numbers, as exports name duplicates: "ada@example.test (1)".
+    case numberedCopies
     /// A password, a passkey and a verification code that were saved apart and belong together.
     case splitParts
     /// The same username on a website that is not the same but is related: the same password, or the same site name.
@@ -53,11 +55,11 @@ nonisolated enum CredentialMergeSuggestions {
 
     private typealias Group = (reason: CredentialMergeReason, members: [Int], isIdentical: Bool)
 
-    /// Who a credential is for: its username, else its passkeys' user name, else its code's, as exact bytes. `isAmbiguous` when the
-    /// passkeys name more than one person, so there is no telling.
+    /// Who a credential is for: its username (without a copy number, `baseUsername`), else its passkeys' user name, else its
+    /// code's, as exact bytes. `isAmbiguous` when the passkeys name more than one person, so there is no telling.
     static func identity(of account: CredentialAccount) -> (name: Data?, isAmbiguous: Bool) {
         if !account.username.isEmpty {
-            return (Data(account.username.utf8), false)
+            return (Data(baseUsername(account.username).utf8), false)
         }
         let names = Set(account.passkeys.map { Data($0.userName.utf8) }.filter { !$0.isEmpty })
         if names.count == 1 {
@@ -67,6 +69,17 @@ nonisolated enum CredentialMergeSuggestions {
             return (nil, true)
         }
         return (account.totp?.userName.flatMap { $0.isEmpty ? nil : Data($0.utf8) }, false)
+    }
+
+    /// `username` without the copy number an export adds to a duplicate: a trailing space and one to four digits in parentheses.
+    /// "ada@example.test (2)" is "ada@example.test"; a username that is only a number in parentheses keeps it.
+    static func baseUsername(_ username: String) -> String {
+        guard username.hasSuffix(")"), let open = username.lastIndex(of: "("), open > username.startIndex else { return username }
+        let digits = username[username.index(after: open)..<username.index(before: username.endIndex)]
+        let space = username.index(before: open)
+        guard (1...4).contains(digits.count), digits.allSatisfy(\.isASCII), digits.allSatisfy(\.isNumber), username[space] == " ",
+              space > username.startIndex else { return username }
+        return String(username[..<space])
     }
 
     static func index(for accounts: [CredentialAccount], revision: UInt64) -> CredentialMergeIndex {
@@ -100,8 +113,10 @@ nonisolated enum CredentialMergeSuggestions {
 
     /// What the suggestions compare, read once per credential.
     private struct Facts {
-        /// The login's username, as exact bytes. `nil` when there is none.
+        /// The login's username without a copy number, as exact bytes. `nil` when there is none.
         let loginUsername: Data?
+        /// The login's username as stored, so copies with different numbers are told from plain repeats.
+        let storedUsername: String
         /// Who the credential is for (`identity(of:)`).
         let identity: Data?
         /// The passkeys name more than one user, so there is no telling who the credential is for.
@@ -116,7 +131,8 @@ nonisolated enum CredentialMergeSuggestions {
         let code: Data?
 
         init(_ account: CredentialAccount, _ sites: inout ImportDuplicates.Sites) {
-            loginUsername = account.username.isEmpty ? nil : Data(account.username.utf8)
+            loginUsername = account.username.isEmpty ? nil : Data(CredentialMergeSuggestions.baseUsername(account.username).utf8)
+            storedUsername = account.username
             (identity, isAmbiguous) = CredentialMergeSuggestions.identity(of: account)
             password = account.password.map { Data($0.utf8) }
             var domains = sites.of(account.origins)
@@ -212,7 +228,8 @@ nonisolated enum CredentialMergeSuggestions {
             .flatMap { members in members.dropFirst().map { (members[0], $0) } }
         joiner.join(edges)
         return joiner.groups().map { members in
-            (.sameLogin, members, isIdentical(members.map { facts[$0] }))
+            let numbered = Set(members.map { Data(facts[$0].storedUsername.utf8) }).count > 1
+            return (numbered ? .numberedCopies : .sameLogin, members, isIdentical(members.map { facts[$0] }))
         }
     }
 
