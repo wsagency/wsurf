@@ -298,8 +298,9 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
     }
 
     /// The crowded sidebar under a theme that moves every layout knob: thin row edges instead of glass on the marked
-    /// rows, square corners and color favicons on every loaded row. The knobs are a preview of the app-wide theme, so
-    /// nothing is written to the test host's defaults.
+    /// rows, square corners, color favicons on every loaded row, and the spacing extremes (largest icons, least
+    /// padding and margin, a flush page). The knobs are a preview of the app-wide theme, so nothing is written to the
+    /// test host's defaults.
     func testLayingOutACrowdedSidebarWithEveryLayoutOption() throws {
         try MainActor.assumeIsolated {
             let settings = BrowserSettings.application
@@ -313,6 +314,10 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             adjustment.rowFrame = .hairline
             adjustment.cornerScale = 0
             adjustment.loadedFavicons = .color
+            adjustment.pageSpacing = ThemeAdjustment.pageSpacingRange.lowerBound
+            adjustment.sidebarMargin = ThemeAdjustment.sidebarMarginRange.lowerBound
+            adjustment.rowPadding = ThemeAdjustment.rowPaddingRange.lowerBound
+            adjustment.tabIconSize = ThemeAdjustment.tabIconSizeRange.upperBound
             settings.previewThemeAdjustment(adjustment)
             XCTAssertTrue(settings.chromeShape == ThemeShape(adjustment))
 

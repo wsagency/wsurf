@@ -37,7 +37,11 @@ enum SidebarMetrics {
 
     /// A row is at least as tall as its icon plus 4 pt above and below, which a 16 pt icon in the 24 pt floor has.
     static func rowHeight(settings: BrowserSettings) -> CGFloat {
-        max(24, rowIconSize + 8, settings.sidebarLineHeight + CGFloat(settings.sidebarRowSpacing * 2 + 8))
+        max(
+            24,
+            settings.globalSettings.chromeShape.tabIconSize + 8,
+            settings.sidebarLineHeight + CGFloat(settings.sidebarRowSpacing * 2 + 8)
+        )
     }
 
     /// The theme's tab padding in the full sidebar.
