@@ -134,7 +134,7 @@ struct ConversationLogTests {
     }
     @Test func aTaskTraceUsesItsScopedProviderSelection() {
         let (log, _) = makeLog()
-        let suiteName = "ConversationLogTests.\(UUID().uuidString)"
+        let suiteName = AppDatabase.defaultsSuite("ConversationLogTests.\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let settings = LLMSettings(defaults: defaults)

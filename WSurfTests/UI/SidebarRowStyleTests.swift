@@ -314,7 +314,7 @@ struct SidebarRowStyleTests {
     }
 
     @Test func theEmphasizedFontFollowsTheFontSettings() {
-        let suite = "SidebarEmphasis-\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("SidebarEmphasis-\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = BrowserSettings(defaults: defaults)

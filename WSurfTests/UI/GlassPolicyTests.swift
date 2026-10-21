@@ -122,7 +122,7 @@ struct GlassPolicyTests {
     }
 
     private func makeSettings(material: ThemeMaterial) -> (BrowserSettings, UserDefaults, String) {
-        let suite = "GlassPolicy-\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("GlassPolicy-\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suite)!
         let settings = BrowserSettings(defaults: defaults)
         settings.themeMaterial = material

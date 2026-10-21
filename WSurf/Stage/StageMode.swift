@@ -30,7 +30,7 @@ nonisolated enum StageMode {
     }
 
     static func defaults(for home: URL) -> UserDefaults {
-        UserDefaults(suiteName: defaultsSuiteName(for: home))!
+        UserDefaults(suiteName: AppDatabase.defaultsSuite(defaultsSuiteName(for: home)))!
     }
 
     static func dataStoreID(for home: URL) -> UUID {

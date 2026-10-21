@@ -162,7 +162,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                 )
             }
 
-            let settings = BrowserSettings(defaults: UserDefaults(suiteName: "BrowserPerformanceTests.\(UUID())")!)
+            let settings = BrowserSettings(defaults: UserDefaults(suiteName: AppDatabase.defaultsSuite("BrowserPerformanceTests.\(UUID())"))!)
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
                 let sites = StartPageSnapshot.frequentSites(
                     from: visits,
@@ -335,7 +335,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
     /// icon and URL inks, ten times over. With a copy that changes the palette, so no color is the plain default.
     func testResolvingThemeColorsForACrowdedSidebar() {
         MainActor.assumeIsolated {
-            let suite = "BrowserPerformanceTests-\(UUID().uuidString)"
+            let suite = AppDatabase.defaultsSuite("BrowserPerformanceTests-\(UUID().uuidString)")
             guard let defaults = UserDefaults(suiteName: suite) else { return }
             defer { defaults.removePersistentDomain(forName: suite) }
             let settings = BrowserSettings(defaults: defaults)
@@ -365,7 +365,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
     /// Choosing each built-in theme ten times: every choice rebuilds the cached colors once.
     func testSwitchingThemes() {
         MainActor.assumeIsolated {
-            let suite = "BrowserPerformanceTests-\(UUID().uuidString)"
+            let suite = AppDatabase.defaultsSuite("BrowserPerformanceTests-\(UUID().uuidString)")
             guard let defaults = UserDefaults(suiteName: suite) else { return }
             defer { defaults.removePersistentDomain(forName: suite) }
             let settings = BrowserSettings(defaults: defaults)

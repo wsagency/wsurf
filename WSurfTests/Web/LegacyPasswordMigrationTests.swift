@@ -21,7 +21,7 @@ struct LegacyPasswordMigrationTests {
         let storage = MemoryAutofillStorage()
         let vault: SecureAutofillVault<SavedPassword>
         let defaults: UserDefaults
-        private let suiteName = "LegacyPasswordMigrationTests.\(UUID().uuidString)"
+        private let suiteName = AppDatabase.defaultsSuite("LegacyPasswordMigrationTests.\(UUID().uuidString)")
         /// The profiles whose "never save" digests were cleared.
         private let log = ResetLog()
         var resets: [UUID] {

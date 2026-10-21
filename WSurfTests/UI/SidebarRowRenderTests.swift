@@ -139,6 +139,7 @@ struct SidebarRowRenderTests {
         defer { fixture.restoreTheme() }
         let current = fixture.browser.newTab()
         fixture.coordinator.requestNewTab()
+        defer { fixture.coordinator.closeWindow() }
         defer { fixture.coordinator.closePalette() }
 
         let row = sidebar(SidebarTabRow(tab: current, depth: 0, context: fixture.context))

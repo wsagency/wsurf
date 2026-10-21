@@ -233,7 +233,7 @@ struct CommandPaletteOrderTests {
     }
 
     @Test func aWindowSettingsObjectFollowsTheApplicationOrder() {
-        let suites = (0..<2).map { "CommandPaletteOrder-\($0)-\(UUID().uuidString)" }
+        let suites = (0..<2).map { AppDatabase.defaultsSuite("CommandPaletteOrder-\($0)-\(UUID().uuidString)") }
         let defaults = suites.compactMap { UserDefaults(suiteName: $0) }
         defer {
             for (suite, store) in zip(suites, defaults) {
@@ -254,7 +254,7 @@ struct CommandPaletteOrderTests {
     // MARK: - Fixtures
 
     private func withSettings<T>(_ body: (BrowserSettings, UserDefaults) throws -> T) rethrows -> T {
-        let suite = "CommandPaletteOrder-\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("CommandPaletteOrder-\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         return try body(BrowserSettings(defaults: defaults), defaults)

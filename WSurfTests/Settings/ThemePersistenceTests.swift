@@ -28,7 +28,7 @@ struct ThemePersistenceTests {
     private static let key = "appearance.themeID"
 
     private func withDefaults(_ test: (CountingDefaults) async throws -> Void) async throws {
-        let name = "ThemePersistenceTests-\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("ThemePersistenceTests-\(UUID().uuidString)")
         let defaults = try #require(CountingDefaults(suiteName: name))
         defer {
             BrowserSettings.flushAllPendingWrites()
@@ -169,7 +169,7 @@ struct ThemePersistenceTests {
     @Test func settingsBoundToTheAppShareItsPendingChoice() async throws {
         try await withDefaults { defaults in
             let app = make(defaults)
-            let sessionName = "ThemePersistenceTests-\(UUID().uuidString)"
+            let sessionName = AppDatabase.defaultsSuite("ThemePersistenceTests-\(UUID().uuidString)")
             let sessionDefaults = try #require(CountingDefaults(suiteName: sessionName))
             defer { sessionDefaults.removePersistentDomain(forName: sessionName) }
             let window = BrowserSettings(defaults: sessionDefaults, application: app)

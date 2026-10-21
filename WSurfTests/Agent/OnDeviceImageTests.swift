@@ -100,7 +100,7 @@ struct OnDeviceImageTests {
     }
 
     @Test func hostedImageSupportStaysPerWindowSettings() {
-        let suites = [UUID().uuidString, UUID().uuidString]
+        let suites = [AppDatabase.defaultsSuite(UUID().uuidString), AppDatabase.defaultsSuite(UUID().uuidString)]
         let defaults = suites.map { UserDefaults(suiteName: $0)! }
         defer { zip(defaults, suites).forEach { $0.removePersistentDomain(forName: $1) } }
         let rejecting = LLMSettings(defaults: defaults[0])

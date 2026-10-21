@@ -87,7 +87,7 @@ struct ThemeGoldenTests {
     /// Puts `scenario` on the application settings the way an upgrade does: as the old keys, read by a new
     /// `BrowserSettings` that migrates them. This is the one place that knows how the settings are stored.
     private func install(_ scenario: Scenario) throws {
-        let name = "ThemeGolden-\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("ThemeGolden-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
         defaults.set(true, forKey: "appearance.websiteTint")

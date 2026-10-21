@@ -287,7 +287,7 @@ struct MCPDeveloperAccessTests {
             "mcp.standing", "mcp.standing.\(client.id.uuidString)", "mcp.paused", "mcp.developerSites", "mcp.developerProfileID",
             "mcp.developerProfile", "mcp.includesThisMac", "mcp.developer", "mcp.enabled",
         ]
-        let suiteName = "mcp-p4-\(UUID().uuidString)"
+        let suiteName = AppDatabase.defaultsSuite("mcp-p4-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer {
             defaults.removePersistentDomain(forName: suiteName)

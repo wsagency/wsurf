@@ -39,6 +39,35 @@ struct ProfileTests {
         #expect(!files.fileExists(atPath: try #require(profile.databaseURL).deletingLastPathComponent().path))
     }
 
+    /// A named profile's settings live in their own preferences domain. Test runs used to write those domains into the real
+    /// ~/Library/Preferences, and emptying a domain does not unlink its plist, so tens of thousands of empty
+    /// `io.wsagency.wsurf.profile.<UUID>.plist` files piled up on the Macs that ran the suite.
+    @Test func aProfileMadeAndDeletedByATestLeavesNoRealPreferencesFile() async {
+        let preferences = URL.libraryDirectory.appending(path: "Preferences", directoryHint: .isDirectory)
+        let files = FileManager.default
+        func realFiles(naming id: UUID) -> Set<String> {
+            Set(((try? files.contentsOfDirectory(atPath: preferences.path)) ?? []).filter { $0.contains(id.uuidString) })
+        }
+        let (store, file) = makeStore()
+        defer { try? files.removeItem(at: file) }
+        let work = store.add(name: "Work")
+        let before = realFiles(naming: work.id)
+        let isolated = ProfileSettingsStore.suiteName(for: work.id) + ".plist"
+
+        let defaults = ProfileSettingsStore.defaults(for: work)
+        defaults.set("kagi", forKey: "search.engine")
+        defaults.synchronize()
+        #expect(await waitUntil(timeout: .seconds(5)) { files.fileExists(atPath: isolated) })
+        #expect(realFiles(naming: work.id) == before)
+
+        await store.remove(work)
+
+        #expect(before.isEmpty)
+        #expect(realFiles(naming: work.id) == before)
+        #expect(!files.fileExists(atPath: isolated))
+        #expect(ProfileSettingsStore.defaults(for: work).string(forKey: "search.engine") == nil)
+    }
+
     @Test func afirstLaunchHasOneProfileHoldingEverything() {
         let (store, _) = makeStore()
 

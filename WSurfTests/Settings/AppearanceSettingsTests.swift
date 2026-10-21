@@ -13,7 +13,7 @@ import Testing
 
 struct AppearanceSettingsTests {
     @Test func contextSettingsShareObservableApplicationPreferences() {
-        let suites = (0..<3).map { "SharedBrowserSettings-\($0)-\(UUID().uuidString)" }
+        let suites = (0..<3).map { AppDatabase.defaultsSuite("SharedBrowserSettings-\($0)-\(UUID().uuidString)") }
         let defaults = suites.map { UserDefaults(suiteName: $0)! }
         defer {
             for (suiteName, suiteDefaults) in zip(suites, defaults) {
@@ -43,7 +43,7 @@ struct AppearanceSettingsTests {
     }
 
     @Test func sleepAfterDefaultsToMemoryPressureOnlyAndNotifiesTheOwnerOnChange() {
-        let suite = "SleepAfter-\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("SleepAfter-\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = BrowserSettings(defaults: defaults)
@@ -78,7 +78,7 @@ struct AppearanceSettingsTests {
     }
 
     @Test func sidebarAppearancePersistsAndBoundsMalformedValues() throws {
-        let suiteName = "AppearanceSettingsTests-\(UUID().uuidString)"
+        let suiteName = AppDatabase.defaultsSuite("AppearanceSettingsTests-\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -126,7 +126,7 @@ struct AppearanceSettingsTests {
 
     @MainActor
     @Test func resettingAppearanceRestoresSidebarLayoutAfterRestart() throws {
-        let suiteName = "SidebarReset-\(UUID().uuidString)"
+        let suiteName = AppDatabase.defaultsSuite("SidebarReset-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         let previousAppearance = NSApp.appearance
         defer {
@@ -170,7 +170,7 @@ struct AppearanceSettingsTests {
 
     @MainActor
     @Test func sidebarTextColorsFollowTheVariantAndLoadStateAcrossRestart() throws {
-        let suiteName = "SidebarTextColors-\(UUID().uuidString)"
+        let suiteName = AppDatabase.defaultsSuite("SidebarTextColors-\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
         func srgb(_ color: Color) throws -> NSColor {
@@ -228,7 +228,7 @@ struct AppearanceSettingsTests {
     }
 
     @Test func themeColorsPersistSeparatelyAndResetOnlyTheShownVariant() throws {
-        let suite = "ThemeColors-\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("ThemeColors-\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = BrowserSettings(defaults: defaults)
@@ -296,8 +296,8 @@ struct AppearanceSettingsTests {
 
     @MainActor
     @Test func privateAppearanceDoesNotChangeTheApplicationAppearance() throws {
-        let appName = "AppearanceApp-\(UUID().uuidString)"
-        let sessionName = "AppearanceSession-\(UUID().uuidString)"
+        let appName = AppDatabase.defaultsSuite("AppearanceApp-\(UUID().uuidString)")
+        let sessionName = AppDatabase.defaultsSuite("AppearanceSession-\(UUID().uuidString)")
         let appDefaults = try #require(UserDefaults(suiteName: appName))
         let sessionDefaults = try #require(UserDefaults(suiteName: sessionName))
         defer {

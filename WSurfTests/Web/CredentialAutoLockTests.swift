@@ -35,7 +35,7 @@ struct CredentialAutoLockTests {
     }
 
     private func withDefaults(_ body: (UserDefaults) -> Void) {
-        let name = "io.wsagency.wsurf.tests.autolock.\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("io.wsagency.wsurf.tests.autolock.\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: name)!
         defer { defaults.removePersistentDomain(forName: name) }
         body(defaults)

@@ -79,7 +79,7 @@ struct ChromiumFingerprintTests {
         // Sent at document start, before native can bind the world: it must be queued, not lost.
         page.installScript("globalThis.__wsurfSend('fingerprintProbe', location.pathname);", in: world,
                            injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        let suite = "ChromiumFingerprint-\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("ChromiumFingerprint-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: suite))
         let settings = BrowserSettings(defaults: defaults)
         let window = NSWindow(
@@ -256,7 +256,7 @@ struct ChromiumFingerprintTests {
         let context = BrowserProfileContext(profile: profile)
         let native = ChromiumPage(context: context)
         let page = BrowserPage(chromium: native)
-        let suite = "ChromiumSignals-\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("ChromiumSignals-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: suite))
         let settings = BrowserSettings(defaults: defaults)
         let window = NSWindow(

@@ -12,7 +12,7 @@ import Testing
 @MainActor
 struct ThemePreviewTests {
     private func withSettings(_ test: (BrowserSettings, UserDefaults) throws -> Void) throws {
-        let name = "ThemePreviewTests-\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("ThemePreviewTests-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
         try test(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false), defaults)

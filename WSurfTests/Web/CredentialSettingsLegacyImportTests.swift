@@ -20,7 +20,7 @@ struct CredentialSettingsLegacyImportTests {
         let model: CredentialSettingsModel
         let storage = MemoryAutofillStorage()
         let vault: SecureAutofillVault<SavedPassword>
-        private let suiteName = "CredentialSettingsLegacyImportTests.\(UUID().uuidString)"
+        private let suiteName = AppDatabase.defaultsSuite("CredentialSettingsLegacyImportTests.\(UUID().uuidString)")
         private let pasteboard = NSPasteboard(name: NSPasteboard.Name("io.wsagency.wsurf.tests.\(UUID().uuidString)"))
 
         init(_ fixture: CredentialExchangeCoordinatorTests.Fixture) throws {
@@ -279,7 +279,7 @@ struct CredentialSettingsLegacyImportTests {
     }
 
     @Test func aPrivateProfileNeverReadsPromptsOrStoresAnything() async throws {
-        let suite = "CredentialSettingsLegacyImportTests.\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("CredentialSettingsLegacyImportTests.\(UUID().uuidString)")
         defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
         let storage = MemoryAutofillStorage()
         let profile = Profile.privateBrowsing()

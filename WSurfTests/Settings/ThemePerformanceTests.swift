@@ -94,7 +94,7 @@ nonisolated final class ThemePerformanceTests: XCTestCase, @unchecked Sendable {
 
     func testRenderingTheThemeGallery() throws {
         try MainActor.assumeIsolated {
-            let suite = "ThemePerformanceTests-\(UUID().uuidString)"
+            let suite = AppDatabase.defaultsSuite("ThemePerformanceTests-\(UUID().uuidString)")
             let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
             defer { defaults.removePersistentDomain(forName: suite) }
             let settings = BrowserSettings(defaults: defaults)

@@ -79,7 +79,7 @@ nonisolated final class InMemoryUserDefaults: UserDefaults {
 enum ProfileSettingsStore {
 
     static func suiteName(for id: UUID) -> String {
-        "io.wsagency.wsurf.profile.\(id.uuidString)"
+        AppDatabase.defaultsSuite("io.wsagency.wsurf.profile.\(id.uuidString)")
     }
 
     static func defaults(for profile: Profile) -> UserDefaults {
@@ -101,5 +101,9 @@ enum ProfileSettingsStore {
     static func forget(_ id: UUID) {
         guard id != Profile.privateID else { return }
         UserDefaults.standard.removePersistentDomain(forName: suiteName(for: id))
+        // Emptying a domain leaves its plist behind; a test run removes the file too.
+        if AppDatabase.isRunningTests {
+            try? FileManager.default.removeItem(atPath: suiteName(for: id) + ".plist")
+        }
     }
 }

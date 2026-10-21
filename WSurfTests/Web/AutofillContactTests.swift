@@ -87,7 +87,7 @@ struct AutofillContactTests {
     }
 
     @Test func contactPreferencePersistsAndIsIsolatedBetweenProfiles() throws {
-        let names = (0..<3).map { "ContactPreferenceTests.\(UUID().uuidString).\($0)" }
+        let names = (0..<3).map { AppDatabase.defaultsSuite("ContactPreferenceTests.\(UUID().uuidString).\($0)") }
         defer { names.forEach { UserDefaults.standard.removePersistentDomain(forName: $0) } }
         let app = try #require(UserDefaults(suiteName: names[0]))
         let first = try #require(UserDefaults(suiteName: names[1]))
@@ -102,7 +102,7 @@ struct AutofillContactTests {
     }
 
     @Test func passwordSettingsOfTheRemovedProviderAreDroppedOnLoad() throws {
-        let names = (0..<2).map { "PasswordProviderTests.\(UUID().uuidString).\($0)" }
+        let names = (0..<2).map { AppDatabase.defaultsSuite("PasswordProviderTests.\(UUID().uuidString).\($0)") }
         defer { names.forEach { UserDefaults.standard.removePersistentDomain(forName: $0) } }
         let app = try #require(UserDefaults(suiteName: names[0]))
         let profile = try #require(UserDefaults(suiteName: names[1]))

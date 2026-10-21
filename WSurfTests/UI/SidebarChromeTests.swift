@@ -284,7 +284,7 @@ struct SidebarDragGhostTests {
 @MainActor
 struct SidebarIconsOnlyMenuTests {
     private func makeLayout() -> (SidebarLayout, UserDefaults, String) {
-        let suite = "SidebarIconsOnlyMenuTests-\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("SidebarIconsOnlyMenuTests-\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suite)!
         return (SidebarLayout(defaults: defaults), defaults, suite)
     }
