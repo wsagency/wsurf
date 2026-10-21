@@ -5,6 +5,31 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.6 (build 6) — 2026-10-21
+
+Everything since 0.1.5 (build 5), the installed candidate. None of the screens and prompts below has been checked by hand.
+
+### Browsing
+
+- On the Downloads page, a finished download can be previewed with Quick Look: use the eye button on its row, Preview File in its right-click menu, or select it with the arrow keys and press Space. The right-click menu also gains Open With, which lists the apps that can open the file, and Open in WSurf, which opens a PDF, image or text file in a new tab, able to read only that file. Show in Finder is still there. Nothing opens by itself, and downloaded files keep their quarantine.
+- With Settings › Experiments › Show video in the player on, the video player can be dragged to any corner of the window. It snaps to the nearest corner when you let go, remembers its corner in every window, and View › Move Player to Corner (also in the player's right-click menu and as VoiceOver actions) moves it without dragging. Bottom Left is still the default and docks it in the sidebar as before.
+
+### Passwords, passkeys and autofill
+
+- When you merge credentials you now choose the primary one; its name, username, password, verification code and notes win, and nothing else is lost: every passkey, note, card and other item is kept, websites on other sites start ticked, and every other password and verification code, with its earlier versions, stays in the merged credential's History. Command-Z still takes the merge back.
+- Copies an export numbered “name@example.com (1)”, “(2)” … on one site are suggested as one login and merged into it, several at once; with the same password Merge All Identical collapses them.
+- Each credential has an Open Website button that opens its site in a new tab of the same window, and in the editor you can open a website from the menu beside Copy or by Command-clicking it.
+- Right-click a credential for Open Website, Copy Username, Copy Password, Edit, Merge, Move to Trash and Select. Select shows checkboxes so you can pick several and move them to Trash or merge them; the separate Merge With window is gone.
+
+### Fixes
+
+- Test runs now free the windows each test closes. Every event the test host takes gets its own autorelease pool, as the app's own event loop gives each event one; before, a closed window stayed in memory until the run ended. The native test `representativeFixturesLeaveNoWindowBehind`, left out of 0.1.5, is back.
+
+### Known issues
+
+- While the experimental video player floats over the page, the page underneath can still react to the pointer, and while the sidebar is peeking the player's shadow can show around it.
+- The sidebar layout memory check in the performance tests, described under 0.1.5, is unchanged in this build.
+
 ## 0.1.5 (build 5) — 2026-10-21
 
 Everything since 0.1.1 (build 2), the installed candidate; build 3 and 0.1.4 (build 4) were never installed, and their changes are included. None of the screens and prompts below has been checked by hand.
