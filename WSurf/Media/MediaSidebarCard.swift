@@ -124,10 +124,14 @@ struct MediaSidebarCard: View {
     nonisolated static func panelWidth(
         sidebarWidth: CGFloat,
         isStowed: Bool,
-        isFloating: Bool
+        isFloating: Bool,
+        margin: CGFloat = LoomChrome.canvasInset,
+        pageSpacing: CGFloat = LoomChrome.canvasInset
     ) -> CGFloat {
         guard !isStowed else { return floatingWidth }
-        let room = SidebarMetrics.contentWidth(sidebarWidth, style: .full, isFloating: isFloating)
+        let room = SidebarMetrics.contentWidth(
+            sidebarWidth, style: .full, isFloating: isFloating, margin: margin, pageSpacing: pageSpacing
+        )
         return max(room, 150)
     }
 
@@ -294,7 +298,11 @@ struct MediaSidebarCard: View {
     }
 
     private var panelWidth: CGFloat {
-        Self.panelWidth(sidebarWidth: sidebarWidth, isStowed: isStowed, isFloating: sidebarIsFloating)
+        let shape = BrowserSettings.application.chromeShape
+        return Self.panelWidth(
+            sidebarWidth: sidebarWidth, isStowed: isStowed, isFloating: sidebarIsFloating,
+            margin: shape.sidebarMargin, pageSpacing: shape.pageSpacing
+        )
     }
 
     private var stowedButton: some View {

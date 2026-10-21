@@ -23,24 +23,30 @@ enum SidebarMetrics {
         iconsWidth + LoomChrome.canvasInset
     }
 
-    static let rowIconSize: CGFloat = 16
+    /// The theme's tab icon size.
+    static var rowIconSize: CGFloat {
+        BrowserSettings.application.chromeShape.tabIconSize
+    }
     static let rowControlExtent: CGFloat = 20
 
     static let rowIconSpacing: CGFloat = 8
-    nonisolated static var fullContentInset: CGFloat {
-        LoomChrome.canvasInset - LoomChrome.sidebarContentBalanceOffset
-    }
 
     static var profileLeading: CGFloat {
         max(0, rowContentPadding(style: .full) + rowIconSize / 2 - 14)
     }
 
+    /// A row is at least as tall as its icon plus 4 pt above and below, which a 16 pt icon in the 24 pt floor has.
     static func rowHeight(settings: BrowserSettings) -> CGFloat {
-        max(24, settings.sidebarLineHeight + CGFloat(settings.sidebarRowSpacing * 2 + 8))
+        max(
+            24,
+            settings.globalSettings.chromeShape.tabIconSize + 8,
+            settings.sidebarLineHeight + CGFloat(settings.sidebarRowSpacing * 2 + 8)
+        )
     }
 
+    /// The theme's tab padding in the full sidebar.
     static func rowContentPadding(style: SidebarStyle) -> CGFloat {
-        style == .icons ? 0 : 9
+        style == .icons ? 0 : BrowserSettings.application.chromeShape.rowPadding
     }
 
     static func rowVerticalSpacing(settings: BrowserSettings) -> CGFloat {
@@ -55,7 +61,14 @@ enum SidebarMetrics {
             - rowContentPadding(style: style)
     }
 
-    nonisolated static func contentInsets(style: SidebarStyle, isFloating: Bool) -> EdgeInsets {
+    /// A docked full sidebar sits `margin` from the window edge, and its rows keep at least that much room from the
+    /// page: the page spacing already gives them some. Icons only and a floating sidebar keep their fixed insets.
+    nonisolated static func contentInsets(
+        style: SidebarStyle,
+        isFloating: Bool,
+        margin: CGFloat = LoomChrome.canvasInset,
+        pageSpacing: CGFloat = LoomChrome.canvasInset
+    ) -> EdgeInsets {
         if isFloating {
             let inset = LoomChrome.canvasInset
             return EdgeInsets(top: 0, leading: inset, bottom: 0, trailing: inset)
@@ -63,22 +76,17 @@ enum SidebarMetrics {
         guard style == .full else {
             return EdgeInsets(top: 0, leading: LoomChrome.canvasInset, bottom: 0, trailing: 0)
         }
-        let inset = fullContentInset
-        let balance = LoomChrome.sidebarContentBalanceOffset
-        return EdgeInsets(
-            top: 0,
-            leading: inset + balance,
-            bottom: 0,
-            trailing: inset - balance
-        )
+        return EdgeInsets(top: 0, leading: margin, bottom: 0, trailing: max(0, margin - pageSpacing))
     }
 
     nonisolated static func contentWidth(
         _ sidebarWidth: CGFloat,
         style: SidebarStyle,
-        isFloating: Bool
+        isFloating: Bool,
+        margin: CGFloat = LoomChrome.canvasInset,
+        pageSpacing: CGFloat = LoomChrome.canvasInset
     ) -> CGFloat {
-        let insets = contentInsets(style: style, isFloating: isFloating)
+        let insets = contentInsets(style: style, isFloating: isFloating, margin: margin, pageSpacing: pageSpacing)
         return max(0, sidebarWidth - insets.leading - insets.trailing)
     }
 

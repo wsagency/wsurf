@@ -98,7 +98,8 @@ struct FolderSection: View {
                 Image(systemName: audible == nil
                     ? (folder.isExpanded ? "folder" : "folder.fill")
                     : "speaker.wave.2.fill")
-                    .font(Theme.Font.caption)
+                    // Theme.Font.caption at the 16 pt icon size; the glyph grows with the theme's tab icons.
+                    .font(.system(size: 10.5 * SidebarMetrics.rowIconSize / 16))
                     .foregroundStyle(folder.color.tint)
                     .contentTransition(.symbolEffect(.replace))
                     .animation(Theme.Motion.settle, value: audible?.id)

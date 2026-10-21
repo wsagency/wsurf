@@ -28,9 +28,16 @@ struct ThemeThumbnailPalette: Equatable {
     var sidebar: Color?
     /// A flat translucent preview, not a backdrop or glass effect.
     var materialOpacity: Double = 1
-    /// The theme's corner rounding and page edge, drawn as plain shapes.
-    var cornerScale: CGFloat = 1
-    var pageFrame = FrameStyle.standard
+    /// The theme's layout knobs, drawn in miniature as plain shapes.
+    var layout = ThemeShape()
+
+    var cornerScale: CGFloat {
+        layout.cornerScale
+    }
+
+    var pageFrame: FrameStyle {
+        layout.pageFrame
+    }
 
     private static let light = ThemeThumbnailPalette(
         id: "light",
@@ -97,8 +104,7 @@ struct ThemeThumbnailPalette: Equatable {
                 sidebar: color(variant.sidebar)
             )
             materialOpacity = adjustment.material == .glass ? 0.35 + 0.55 * adjustment.glassOpacity : 1
-            cornerScale = CGFloat(adjustment.cornerScale)
-            pageFrame = adjustment.pageFrame
+            layout = ThemeShape(adjustment)
             return
         }
         let base = switch (theme.ground, isDark) {
@@ -124,8 +130,7 @@ struct ThemeThumbnailPalette: Equatable {
             secondary: variant.urlInk ?? base.secondary, accent: accent
         )
         materialOpacity = adjustment.material == .glass ? 0.35 + 0.55 * adjustment.glassOpacity : 1
-        cornerScale = CGFloat(adjustment.cornerScale)
-        pageFrame = adjustment.pageFrame
+        layout = ThemeShape(adjustment)
     }
 
     init(
@@ -189,19 +194,21 @@ struct ThemeThumbnailWindow: View {
 struct AppearanceBrowserThumbnail<Backdrop: View>: View {
     let palette: ThemeThumbnailPalette
     let chromeInk: Color
-    let tintsSelectedTab: Bool
     let backdrop: Backdrop
 
     init(
         palette: ThemeThumbnailPalette,
         chromeInk: Color,
-        tintsSelectedTab: Bool = false,
         @ViewBuilder backdrop: () -> Backdrop
     ) {
         self.palette = palette
         self.chromeInk = chromeInk
-        self.tintsSelectedTab = tintsSelectedTab
         self.backdrop = backdrop()
+    }
+
+    /// The page gutter at the miniature's scale, from the theme's page spacing; `base` is the default gutter.
+    private func pageInset(_ base: CGFloat) -> CGFloat {
+        base * palette.layout.pageSpacing / LoomChrome.canvasInset
     }
 
     var body: some View {
@@ -218,17 +225,16 @@ struct AppearanceBrowserThumbnail<Backdrop: View>: View {
 
             AppearanceBrowserPage(palette: palette)
                 .padding(.top, 14)
-                .padding(.leading, 29)
-                .padding(.trailing, 5)
-                .padding(.bottom, 5)
+                .padding(.leading, 27 + pageInset(2))
+                .padding(.trailing, pageInset(5))
+                .padding(.bottom, pageInset(5))
 
             AppearanceBrowserChrome(
                 ink: chromeInk,
                 secondaryInk: palette.secondary,
-                accent: palette.accent,
-                tintsSelectedTab: tintsSelectedTab,
+                ground: palette.sidebar ?? palette.backdrop,
                 dimsUnloadedRow: palette.sidebar != nil,
-                cornerScale: palette.cornerScale
+                layout: palette.layout
             )
         }
         .overlay(alignment: .top) {
@@ -249,7 +255,9 @@ private struct AppearanceBrowserPage: View {
     let palette: ThemeThumbnailPalette
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 7 * palette.cornerScale, style: .continuous)
+        // A flush page is square, as in the window.
+        let radius = palette.layout.pageSpacing == 0 ? 0 : 7 * palette.cornerScale
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         let hasShadow = palette.pageFrame == .standard
         shape
             .fill(palette.canvas)
@@ -291,22 +299,20 @@ private struct AppearanceBrowserPage: View {
 private struct AppearanceBrowserChrome: View {
     let ink: Color
     let secondaryInk: Color
-    let accent: Color
-    let tintsSelectedTab: Bool
+    let ground: Color
     let dimsUnloadedRow: Bool
-    let cornerScale: CGFloat
+    let layout: ThemeShape
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             AppearanceBrowserSidebar(
                 ink: ink,
                 secondaryInk: secondaryInk,
-                accent: accent,
-                tintsSelectedTab: tintsSelectedTab,
+                ground: ground,
                 dimsUnloadedRow: dimsUnloadedRow,
-                cornerScale: cornerScale
+                layout: layout
             )
-                .padding(.leading, 6)
+                .padding(.leading, layout.sidebarMargin)
                 .padding(.top, 17)
 
             AppearanceTrafficLights()
@@ -346,14 +352,22 @@ private struct AppearanceBrowserChrome: View {
 private struct AppearanceBrowserSidebar: View {
     let ink: Color
     let secondaryInk: Color
-    let accent: Color
-    let tintsSelectedTab: Bool
+    /// The sidebar behind the rows: the current row's content takes it, as on the inverse fill of the real row.
+    let ground: Color
     let dimsUnloadedRow: Bool
-    let cornerScale: CGFloat
+    let layout: ThemeShape
+
+    /// The second row is the current tab.
+    private static let current = 1
 
     /// A preset shows loaded rows in its text color and the last row unloaded, as the sidebar draws them.
     private func rowInk(_ index: Int) -> Color {
         dimsUnloadedRow && index == 3 ? secondaryInk : ink
+    }
+
+    /// The icon dot, its row padding and the row height, at the miniature's scale of the theme's knobs.
+    private var dot: CGFloat {
+        3 * layout.tabIconSize / 16
     }
 
     var body: some View {
@@ -363,27 +377,22 @@ private struct AppearanceBrowserSidebar: View {
                 .frame(width: 15, height: 2)
 
             ForEach(0..<4, id: \.self) { index in
+                let isCurrent = index == Self.current
                 HStack(spacing: 2) {
                     Circle()
-                        .fill(
-                            index == 1 && tintsSelectedTab
-                                ? accent
-                                : (dimsUnloadedRow ? rowInk(index) : secondaryInk.opacity(0.76))
-                        )
-                        .frame(width: 3, height: 3)
+                        .fill(isCurrent ? ground : (dimsUnloadedRow ? rowInk(index) : secondaryInk.opacity(0.76)))
+                        .frame(width: dot, height: dot)
                     Capsule()
-                        .fill(rowInk(index).opacity(dimsUnloadedRow ? 1 : (index == 1 ? 0.78 : 0.43)))
-                        .frame(width: index == 1 ? 10 : 12, height: 2)
+                        .fill(isCurrent ? ground : rowInk(index).opacity(dimsUnloadedRow ? 1 : 0.43))
+                        .frame(width: isCurrent ? 10 : 12, height: 2)
                 }
-                .padding(.horizontal, 1.5)
-                .frame(height: 6)
+                .padding(.horizontal, 1.5 * layout.rowPadding / 9)
+                .frame(height: max(6, dot + 3))
                 .background {
-                    RoundedRectangle(cornerRadius: 2.5 * cornerScale, style: .continuous)
-                        .fill(
-                            index == 1
-                                ? (tintsSelectedTab ? accent.opacity(0.58) : ink.opacity(0.10))
-                                : Color.clear
-                        )
+                    if isCurrent {
+                        RoundedRectangle(cornerRadius: 2.5 * layout.cornerScale, style: .continuous)
+                            .fill(ink)
+                    }
                 }
             }
 

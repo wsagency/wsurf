@@ -49,13 +49,15 @@ struct BrowserView: View {
         let width = sidebar.openWidth(in: containerWidth)
         let roomBesideSidebar = containerWidth - (sidebar.isVisible ? width : 0)
         let isExpanded = showsPanel && panel.isExpanded
+        let spacing = BrowserSettings.application.chromeShape.pageSpacing
         let shell = LoomShellGeometry(
             containerWidth: containerWidth,
             sidebarWidth: width,
             preferredPanelWidth: panel.openWidth(in: roomBesideSidebar),
             isSidebarVisible: sidebar.isVisible,
             isPanelVisible: showsPanel,
-            isPanelExpanded: isExpanded
+            isPanelExpanded: isExpanded,
+            pageSpacing: spacing
         )
 
         ZStack(alignment: .leading) {
@@ -82,10 +84,10 @@ struct BrowserView: View {
             )
             .frame(width: shell.panelWidth)
             .padding(.top, LoomChrome.canvasTop)
-            .padding(.trailing, LoomChrome.canvasInset)
-            .padding(.bottom, LoomChrome.canvasInset)
+            .padding(.trailing, spacing)
+            .padding(.bottom, spacing)
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .offset(x: showsPanel ? 0 : shell.panelWidth + LoomChrome.canvasInset + 24)
+            .offset(x: showsPanel ? 0 : shell.panelWidth + spacing + 24)
 
             if showsPanel && !isExpanded {
                 LoomColumnResizeHandle(
@@ -101,7 +103,7 @@ struct BrowserView: View {
                     onReset: { panel.resetWidth() }
                 )
                 .padding(.top, LoomChrome.canvasTop)
-                .padding(.bottom, LoomChrome.canvasInset)
+                .padding(.bottom, spacing)
                 .offset(x: shell.panelResizeLeading)
             }
 
@@ -144,7 +146,7 @@ struct BrowserView: View {
                     onReset: { sidebar.resetWidth() }
                 )
                 .padding(.top, LoomChrome.canvasTop)
-                .padding(.bottom, LoomChrome.canvasInset)
+                .padding(.bottom, spacing)
                 .offset(
                     x: shell.sidebarResizeLeading
                 )
