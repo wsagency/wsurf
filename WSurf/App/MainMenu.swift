@@ -87,7 +87,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
 
     private func appMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(chain("About WSurf", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
+        menu.addItem(command("About WSurf", #selector(showAbout)))
         menu.addItem(.separator())
         menu.addItem(command("Check for Updates…", #selector(checkForUpdates)))
         menu.addItem(command("Release Notes…", #selector(showReleaseNotes)))
@@ -276,6 +276,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     }
 
     // MARK: - Commands
+
+    @objc private func showAbout() {
+        BuildIdentity.showAboutPanel()
+    }
 
     @objc private func openSettings() {
         coordinator.openSettings()
@@ -469,7 +473,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         if let application, application.activeCoordinator == nil {
             return [
                 #selector(newWindow), #selector(newTab), #selector(newPrivateWindow),
-                #selector(openSettings), #selector(checkForUpdates), #selector(reopenClosedTab),
+                #selector(openSettings), #selector(checkForUpdates), #selector(reopenClosedTab), #selector(showAbout),
             ].contains(menuItem.action)
         }
         switch menuItem.action {

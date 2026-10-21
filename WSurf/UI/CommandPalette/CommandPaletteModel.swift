@@ -906,7 +906,7 @@ final class CommandPaletteModel {
         case .releaseNotes:
             coordinator.showReleaseNotes()
         case .aboutWSurf:
-            NSApp.orderFrontStandardAboutPanel(nil)
+            BuildIdentity.showAboutPanel()
         case .quitWSurf:
             NSApp.terminate(nil)
         default:

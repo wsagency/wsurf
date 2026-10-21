@@ -331,6 +331,16 @@ Release requirements:
   top of `CHANGELOG.md`. `Tools/check-changelog.sh` runs in the candidate gate
   and fails without that section. The release workflow still finds the section
   by its `## <version>` prefix.
+- **Every candidate build says which candidate it is.** The gate and the sign
+  driver add two build settings to every `xcodebuild` call (build, test,
+  archive): `WSURF_CANDIDATE=<label>`, the orchestrator's label such as
+  `0.1.1-b3`, and `WSURF_COMMIT=$(git rev-parse --short=8 HEAD)`. They become the
+  `WSurfCandidate` and `WSurfCommit` keys in `WSurf/Info.plist`, and the About
+  panel and Settings › About show `Candidate <label> · <commit>` under the
+  version. The defaults are `dev` and empty; a `dev` or empty candidate shows no
+  line. Pass them on the command line, as with `WSURF_BUNDLE_ID_SUFFIX`: the
+  Xcode project keeps the defaults, so nothing changes by hand and the build
+  stays reproducible from the commit and the label.
 - **The release body supplies the “What’s New” sheet.** The workflow makes the
   body from two parts. `CHANGELOG.md` is optional: make it only when a release
   needs notes of its own. If it contains a `## 1.1` section, that section comes

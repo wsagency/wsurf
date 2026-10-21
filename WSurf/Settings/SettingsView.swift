@@ -300,11 +300,20 @@ private struct AboutSettings: View {
                 readingAcknowledgements = false
             }
         } else {
-            SettingsPageHeader(
-                title: "WSurf",
-                detail: String(localized: "Version \(UpdateFeed.currentVersion)"),
-                icon: AppIcon.bundle
-            )
+            VStack(alignment: .leading, spacing: 6) {
+                SettingsPageHeader(
+                    title: "WSurf",
+                    detail: String(localized: "Version \(UpdateFeed.currentVersion)"),
+                    icon: AppIcon.bundle
+                )
+
+                if let candidate = BuildIdentity.candidateLine() {
+                    Text(verbatim: candidate)
+                        .font(Theme.Font.row)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
 
             SettingsCard {
                 UpdateRow(updates: coordinator.updates)
