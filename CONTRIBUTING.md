@@ -30,7 +30,11 @@ to commits on `main`. See [Releasing](RELEASING.md) for the existing release and
 preview gates.
 Every candidate build increments `CURRENT_PROJECT_VERSION` and adds its own
 `## <version> (build <n>) — <date>` section to `CHANGELOG.md`;
-`Tools/check-changelog.sh` runs in the candidate gate.
+`Tools/check-changelog.sh` runs in the candidate gate. Every candidate build also
+passes `WSURF_CANDIDATE=<label>` (for example `0.1.1-b3`) and
+`WSURF_COMMIT=$(git rev-parse --short=8 HEAD)` to `xcodebuild`, so its About panel
+and Settings › About show which candidate it is. Without them the build is a `dev`
+build and shows no candidate line.
 
 ## Set up the project
 

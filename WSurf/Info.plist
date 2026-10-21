@@ -41,6 +41,13 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 WSurf contributors. Based on Linen by Kavoye. Apache 2.0 licensed.</string>
 
+	<!-- Which candidate build this is, from the WSURF_CANDIDATE and WSURF_COMMIT build settings. The About panel and
+	     Settings › About show it unless the candidate is empty or the default `dev`. -->
+	<key>WSurfCandidate</key>
+	<string>$(WSURF_CANDIDATE)</string>
+	<key>WSurfCommit</key>
+	<string>$(WSURF_COMMIT)</string>
+
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

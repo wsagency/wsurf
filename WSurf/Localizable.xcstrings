@@ -1792,6 +1792,9 @@
     "Canceled." : {
       "comment" : "Tool result and trace line when an agent step was cancelled mid-run."
     },
+    "Candidate %@" : {
+      "comment" : "Line under the version in the About panel and in Settings › About that says which candidate build this is. %@ is the candidate label, for example 0.1.1-b3. The app adds the short commit hash after it, separated by a middle dot."
+    },
     "Capture page" : {
 
     },

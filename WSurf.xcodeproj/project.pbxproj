@@ -406,6 +406,8 @@
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				WSURF_BUNDLE_ID_SUFFIX = "";
+				WSURF_CANDIDATE = dev;
+				WSURF_COMMIT = "";
 			};
 			name = Debug;
 		};
@@ -467,6 +469,8 @@
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				WSURF_CANDIDATE = dev;
+				WSURF_COMMIT = "";
 			};
 			name = Release;
 		};
