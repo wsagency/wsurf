@@ -285,7 +285,6 @@ struct VaultManagerTests {
     @Test func purgeRequiresAFreshAssertion() async throws {
         try await VaultManagerFixture.with(vaults: [.unlocked]) { _, passkeys, vaults in
             let a = vaults[0]
-            let anchor = VaultManagerFixture.anchor()
             let first = try await seedTrash(a)
             #expect(passkeys.assertions.isEmpty)
 
@@ -293,13 +292,13 @@ struct VaultManagerTests {
             let stranger = VaultFixtures.proof(9)
             passkeys.answer = stranger
             await #expect(throws: CredentialVaultError.authenticationFailed) {
-                _ = try await a.manager.purge(entryIDs: [first.entry], emptyAll: false, in: anchor)
+                _ = try await a.manager.purge(entryIDs: [first.entry], emptyAll: false, in: VaultManagerFixture.anchor())
             }
             #expect(try await a.manager.trashPage(after: nil).items.map(\.id) == [first.entry])
             passkeys.answer = nil
 
             // The enrolled passkey purges, after exactly one native assertion.
-            let receipt = try await a.manager.purge(entryIDs: [first.entry], emptyAll: false, in: anchor)
+            let receipt = try await a.manager.purge(entryIDs: [first.entry], emptyAll: false, in: VaultManagerFixture.anchor())
             #expect(passkeys.assertions == [stranger.credentialID, a.proof.credentialID])
             #expect(receipt.removedEntries == 1)
             #expect(try await a.manager.trashPage(after: nil).items.isEmpty)
@@ -308,7 +307,7 @@ struct VaultManagerTests {
             let second = try await seedTrash(a)
             a.manager.lock(reason: .manual)
             await #expect(throws: CredentialVaultError.unauthorized) {
-                _ = try await a.manager.purge(entryIDs: [second.entry], emptyAll: true, in: anchor)
+                _ = try await a.manager.purge(entryIDs: [second.entry], emptyAll: true, in: VaultManagerFixture.anchor())
             }
             #expect(passkeys.assertions.count == 2)
             try await VaultManagerFixture.unlock(a)
@@ -323,10 +322,9 @@ struct VaultManagerTests {
 
     @Test func createVaultCoversEveryChoice() async throws {
         try await VaultManagerFixture.with(vaults: []) { profile, passkeys, _ in
-            let anchor = VaultManagerFixture.anchor()
             let store = try CredentialManager.store(for: profile)
-            func create(_ name: String, _ choice: NewVaultChoice) async throws -> UUID {
-                try await CredentialManager.createVault(profile: profile, name: name, choice: choice, in: anchor, native: passkeys.native)
+            @MainActor func create(_ name: String, _ choice: NewVaultChoice) async throws -> UUID {
+                try await CredentialManager.createVault(profile: profile, name: name, choice: choice, in: VaultManagerFixture.anchor(), native: passkeys.native)
             }
 
             // The first vault is created locked: nobody holds a grant.
@@ -570,15 +568,14 @@ struct VaultManagerTests {
             let manager = VaultManagerFixture.manager(
                 profileID: env.profileID, vaultID: legacy.vaultID, store: tracker.makeStore(env: env), passkeys: passkeys
             )
-            let anchor = VaultManagerFixture.anchor()
             let image = try directoryImage(env.directory)
 
-            await #expect(throws: CredentialStoreError.migrationNeedsConfirmation) { try await manager.unlock(in: anchor) }
+            await #expect(throws: CredentialStoreError.migrationNeedsConfirmation) { try await manager.unlock(in: VaultManagerFixture.anchor()) }
             #expect(passkeys.assertions.isEmpty)
             #expect(!manager.isUnlocked)
             #expect(try directoryImage(env.directory) == image)
 
-            try await manager.unlock(in: anchor, confirmMigration: true)
+            try await manager.unlock(in: VaultManagerFixture.anchor(), confirmMigration: true)
             #expect(passkeys.assertions == [legacy.proof.credentialID])
             #expect(manager.isUnlocked)
             #expect(try await manager.snapshot().accounts == legacy.accounts)
