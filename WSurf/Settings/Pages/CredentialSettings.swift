@@ -172,19 +172,32 @@ struct CredentialSettings: View {
         if model.isLoaded {
             transferEnding
         }
-        switch tab {
-        case .credentials:
-            if model.isLoaded {
-                credentialsTab
-            } else {
-                lockedCredentials
+        switch (tab, model.presentation) {
+        case (_, .opening):
+            openingPlaceholder
+        case (.credentials, .content):
+            credentialsTab
+        case (.credentials, .locked):
+            lockedCredentials
+        case (.settings, .content):
+            settingsTab
+        case (.settings, .locked):
+            lockedSettings
+        }
+    }
+
+    // MARK: Opening
+
+    /// Until the first load ends the vault may well be unlocked already, so this says nothing of a lock, offers no Unlock and lists no vault.
+    private var openingPlaceholder: some View {
+        SettingsCard {
+            VStack(spacing: 12) {
+                Spinner(size: 22)
+                Text("Opening…").font(Theme.Font.row)
             }
-        case .settings:
-            if model.isLoaded {
-                settingsTab
-            } else {
-                lockedSettings
-            }
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 24)
+            .frame(maxWidth: .infinity, minHeight: 160)
         }
     }
 

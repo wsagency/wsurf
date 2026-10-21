@@ -36,6 +36,12 @@ final class CredentialSettingsModel {
     /// True while an unlock is verifying the vault (it took longer than the store's threshold); only meaningful during `unlock`.
     private(set) var isVerifying = false
     @ObservationIgnored private var unlockInFlight = false
+    /// True from the page's creation (and from `close()`) until its first `load()` ends. A vault whose lease is still valid is not locked,
+    /// but this model learns that only by loading, so until then the page shows neither "locked" nor content. See `presentation`.
+    private(set) var isOpening = false
+    @ObservationIgnored private var openingBound: Task<Void, Never>?
+    /// How long `isOpening` may last without a load ending; a seam so a test does not wait for the real time.
+    @ObservationIgnored private let openingDuration: Duration
 
     /// The one vault this page operates on; `nil` until discovery selects one, and while the profile has no vault.
     /// Read by `CredentialSettingsModel+Export`; only this class sets it.
@@ -88,6 +94,7 @@ final class CredentialSettingsModel {
         native: VaultNativeUnlock? = nil,
         noticeDuration: Duration = .seconds(1.6),
         undoNoticeDuration: Duration = .seconds(4),
+        openingDuration: Duration = .seconds(2),
         verifyUser: @escaping @MainActor (String) async throws -> Void = { try await NativeWebAuthnInteraction().verifyUser(reason: $0, until: nil) }
     ) {
         self.profile = profile
@@ -96,6 +103,7 @@ final class CredentialSettingsModel {
         self.pasteboard = pasteboard
         self.noticeDuration = noticeDuration
         self.undoNoticeDuration = undoNoticeDuration
+        self.openingDuration = openingDuration
         self.native = native
         legacy = LegacyPasswordImport(profile: profile)
         if profile.isPrivate {
@@ -107,9 +115,27 @@ final class CredentialSettingsModel {
         }
         watchAuthorization()
         watchListing()
+        startOpening()
     }
 
     // MARK: Observable state
+
+    enum Presentation: Equatable {
+        /// The first load has not ended: it is not yet known whether the vault is locked.
+        case opening
+        /// A session the manager's current authorization backs.
+        case content
+        case locked
+    }
+
+    /// What the page draws. `.content` is exactly `isLoaded`, so nothing is shown before the vault really is unlocked; `.opening` shows
+    /// nothing of the vault either, and the first load decides what follows it: content, or the lock the vault really has.
+    var presentation: Presentation {
+        if isLoaded {
+            return .content
+        }
+        return isOpening ? .opening : .locked
+    }
 
     /// The enrolled passkeys of the vaults the page lists now, each with that vault's current listing.
     var existingPasskeys: [(vault: VaultListing, unlock: VaultUnlock)] {
@@ -243,9 +269,31 @@ final class CredentialSettingsModel {
         }
     }
 
-    /// Forgets everything shown without touching the manager's authorization.
+    /// Forgets everything shown without touching the manager's authorization. The page may come back before the next `load()`
+    /// has read the session again, and that gap is not a lock.
     func close() {
         session = nil
+        startOpening()
+    }
+
+    /// A manager that is bound and locked has nothing to wait for; an unlocked one is about to be read, and one not bound yet
+    /// (production, before discovery) may be either. The bound is a fail-safe: past it the page says locked, never content.
+    private func startOpening() {
+        openingBound?.cancel()
+        openingBound = nil
+        isOpening = isAvailable && manager?.isUnlocked != false
+        guard isOpening else { return }
+        openingBound = Task { [weak self, duration = openingDuration] in
+            try? await Task.sleep(for: duration)
+            guard !Task.isCancelled else { return }
+            self?.finishOpening()
+        }
+    }
+
+    private func finishOpening() {
+        openingBound?.cancel()
+        openingBound = nil
+        isOpening = false
     }
 
     func lock() {
@@ -257,6 +305,13 @@ final class CredentialSettingsModel {
 
     func load() async {
         guard isAvailable else { return }
+        // A load the page cancelled (its authorization changed under it) is followed by another one, so only a load that ran to its
+        // end has seen the vault.
+        defer {
+            if !Task.isCancelled {
+                finishOpening()
+            }
+        }
         if manager?.isUnlocked != true {
             session = nil
             await discoverVault()
