@@ -258,7 +258,10 @@ struct WebAuthnAdapterTests {
             authenticatorData: s.getAuthenticatorData() instanceof ArrayBuffer, transports: s.getTransports().join(),
             credProps: r.getClientExtensionResults().credProps?.rk === true,
             json: JSON.parse(JSON.stringify(r)).id === r.id, attachment: r.authenticatorAttachment,
-            copies: s.getPublicKey() !== s.getPublicKey()
+            copies: s.getPublicKey() !== s.getPublicKey(),
+            // GitHub's webauthn-json ponyfill replaces toJSON on the credential, in strict mode.
+            ponyfill: (() => { 'use strict'; r.toJSON = () => ({ponyfill: true}); s.toJSON = () => ({}); return JSON.parse(JSON.stringify(r)).ponyfill === true; })(),
+            readOnlyValues: (() => { 'use strict'; try { r.id = 'forged'; return false; } catch { return r.id !== 'forged'; } })()
           }); })()
         """) as? String
         let checksJSON = try #require(checks)
