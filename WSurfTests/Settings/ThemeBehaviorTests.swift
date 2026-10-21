@@ -74,6 +74,39 @@ struct ThemeBehaviorTests {
         }
     }
 
+    /// Brightness reaches 100 % either way. The readability guard runs on the grounds the knob produces, so text,
+    /// icons and accent text stay legible at both ends, in light and dark, for every built-in theme.
+    @Test(arguments: [1.0, -1.0])
+    func everyThemeStaysReadableAtFullBrightness(_ brightness: Double) {
+        #expect(ThemeAdjustment(lightBrightness: brightness, darkBrightness: brightness).bounded().lightBrightness == brightness)
+        for definition in ThemeCatalog.builtIn {
+            let theme = ResolvedTheme(
+                definition, adjustment: ThemeAdjustment(lightBrightness: brightness, darkBrightness: brightness)
+            )
+            for scheme in [ColorScheme.light, .dark] {
+                let variant = theme.variant(scheme)
+                let backgrounds = grounds(variant, scheme: scheme)
+                let label = "\(definition.id), \(scheme), \(brightness)"
+                #expect(contrast(variant.loadedInk, on: backgrounds[0], scheme: scheme) >= 4.5, "\(label)")
+                #expect(contrast(variant.unloadedInk, on: backgrounds[0], scheme: scheme) >= 4.5, "\(label)")
+                if definition.ground == .solid {
+                    #expect(contrast(variant.floatingLoadedInk, on: backgrounds[1], scheme: scheme) >= 4.5, "\(label)")
+                    #expect(contrast(variant.floatingUnloadedInk, on: backgrounds[1], scheme: scheme) >= 4.5, "\(label)")
+                }
+                if let controlInk = variant.controlInk {
+                    for ground in backgrounds.prefix(2) {
+                        #expect(contrast(controlInk, on: ground, scheme: scheme) >= 3, "\(label)")
+                    }
+                }
+                for ground in backgrounds {
+                    #expect(contrast(theme.accentText, on: ground, scheme: scheme) >= 4.5, "\(label)")
+                }
+                let accent = SidebarRowStyle.srgb(theme.accent, scheme: scheme)
+                #expect(contrast(theme.onAccent, on: accent, scheme: scheme) >= 4.5, "\(label)")
+            }
+        }
+    }
+
     @Test func accentTextKeepsTheFirstReadableOnePercentStep() {
         func expectFirstStep(_ accent: NSColor, on backgrounds: [NSColor], isDark: Bool) {
             let target: CGFloat = isDark ? 1 : 0

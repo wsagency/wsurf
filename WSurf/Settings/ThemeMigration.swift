@@ -14,6 +14,8 @@ struct ThemeCustomization: Codable, Equatable {
 
     func bounded() -> Self {
         var result = self
+        // The old slider stopped at 50 %, and an old build drew any stored value beyond it at 50 %. Migrating with
+        // the same bound keeps an old theme as it looked; ThemeAdjustment allows 100 % from here on.
         result.brightness = brightness.isFinite ? min(max(brightness, -0.5), 0.5) : 0
         result.hue = hue.isFinite ? min(max(hue, -0.5), 0.5) : 0
         result.primary = primary.bounded(defaultOpacity: 1)

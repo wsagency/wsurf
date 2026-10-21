@@ -146,7 +146,7 @@ struct ThemeAdjustment: Codable, Equatable {
     var material: ThemeMaterial = .plain
     /// How much of the desktop shows through a glass window, 0...1. 0.5 was the default of the old Transparency slider.
     var glassOpacity = 0.5
-    /// Lightens or darkens the colors of each variant, -0.5...0.5.
+    /// Lightens or darkens the colors of each variant, within `brightnessRange`.
     var lightBrightness = 0.0
     var darkBrightness = 0.0
     var pageFrame = FrameStyle.standard
@@ -163,6 +163,8 @@ struct ThemeAdjustment: Codable, Equatable {
     /// Points.
     var tabIconSize = 16.0
 
+    /// -100 % to 100 %. Text, icons and accent text keep their contrast through `ThemeReadability` at either end.
+    static let brightnessRange = -1.0...1.0
     static let pageSpacingRange = 0.0...8.0
     /// A row flush with the window edge looks clipped, so the margin never reaches 0.
     static let sidebarMarginRange = 1.0...8.0
@@ -187,8 +189,8 @@ struct ThemeAdjustment: Codable, Equatable {
         }
         var result = self
         result.glassOpacity = clamp(glassOpacity, 0...1, default: 0.5)
-        result.lightBrightness = clamp(lightBrightness, -0.5...0.5, default: 0)
-        result.darkBrightness = clamp(darkBrightness, -0.5...0.5, default: 0)
+        result.lightBrightness = clamp(lightBrightness, Self.brightnessRange, default: 0)
+        result.darkBrightness = clamp(darkBrightness, Self.brightnessRange, default: 0)
         result.cornerScale = clamp(cornerScale, 0...1.5, default: 1)
         // Whole points keep favicons crisp and rows on the pixel grid.
         result.pageSpacing = clamp(pageSpacing.rounded(), Self.pageSpacingRange, default: 6)

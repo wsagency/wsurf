@@ -121,7 +121,7 @@ struct ThemeCatalogTests {
         #expect(variant.hue == 0)
         #expect(variant.sidebarText == SidebarTextStyle(opacity: 0))
         #expect(variant.unloadedText.opacity == ThemeVariant.unloadedOpacity)
-        #expect(adjustment.glassOpacity == 1 && adjustment.lightBrightness == 0 && adjustment.darkBrightness == -0.5)
+        #expect(adjustment.glassOpacity == 1 && adjustment.lightBrightness == 0 && adjustment.darkBrightness == -1)
         #expect(adjustment.cornerScale == 1.5)
 
         let theme = ThemeDefinition(id: "x", name: "  " + String(repeating: "n", count: 90) + "  ", ground: .solid).bounded()

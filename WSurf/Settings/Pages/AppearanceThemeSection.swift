@@ -99,7 +99,7 @@ struct AppearanceThemeSection: View {
                     : "Makes this theme’s light colors darker or lighter."
             ) {
                 HStack(spacing: 8) {
-                    Slider(value: brightness, in: -0.5...0.5, onEditingChanged: editingChanged)
+                    Slider(value: brightness, in: ThemeAdjustment.brightnessRange, onEditingChanged: editingChanged)
                         .frame(width: 140)
                         .accessibilityLabel("Theme brightness")
                         .accessibilityValue(Text(brightness.wrappedValue, format: .percent))
