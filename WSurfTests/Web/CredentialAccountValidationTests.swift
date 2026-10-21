@@ -273,6 +273,42 @@ struct CredentialAccountValidationTests {
         #expect(try CredentialVaultCrypto.liveBytes(of: account) == 55 + 10 + 12)
     }
 
+    /// A write checks an account the store holds byte for byte (`unchanged`) only towards the totals and the uniqueness rules; every
+    /// other account is checked one by one.
+    @Test func aWriteChecksOnlyItsChangedAccountsOneByOne() throws {
+        var stored = VaultFixtures.account(username: "ada")
+        stored.notes = []  // never valid: notes are nil or not empty
+        let other = VaultFixtures.account(username: "grace", origin: "https://b.example")
+        let payload = CredentialVaultPayload(revision: 0, accounts: [stored, other], blockedPasswordOrigins: [])
+        #expect(throws: CredentialVaultError.invalidData) { try CredentialVaultCrypto.validate(payload) }
+        try CredentialVaultCrypto.validate(payload, unchanged: [stored.id])
+        #expect(throws: CredentialVaultError.invalidData) { try CredentialVaultCrypto.validate(payload, unchanged: [other.id]) }
+
+        // An unchanged account still counts: no other account may hold its passkey's credential ID.
+        let holder = VaultFixtures.account(username: "linus", origin: "https://c.example", passkeys: [try VaultFixtures.passkey()])
+        let copy = VaultFixtures.account(username: "mary", origin: "https://d.example", passkeys: [try VaultFixtures.passkey()])
+        #expect(throws: CredentialVaultError.duplicateIdentifier) {
+            try CredentialVaultCrypto.validate(
+                CredentialVaultPayload(revision: 0, accounts: [holder, copy], blockedPasswordOrigins: []), unchanged: [holder.id]
+            )
+        }
+    }
+
+    /// An import plan checks one by one only the accounts it changes or adds: an account equal to the one already checked at its
+    /// position (the vault's own, left alone) counts towards the limits but is not checked again.
+    @Test func anImportChecksOnlyChangedOrAddedAccountsOneByOne() throws {
+        var stored = VaultFixtures.account(username: "ada")
+        stored.notes = []  // never valid: notes are nil or not empty
+        let other = VaultFixtures.account(username: "grace", origin: "https://b.example")
+        #expect(throws: CredentialVaultError.invalidData) { try CredentialExchangeCodec.validateAccounts([stored, other]) }
+        try CredentialExchangeCodec.validateAccounts([stored, other], checked: [stored])
+
+        var changed = stored
+        changed.username = "ada again"
+        #expect(throws: CredentialVaultError.invalidData) { try CredentialExchangeCodec.validateAccounts([changed, other], checked: [stored]) }
+        #expect(throws: CredentialVaultError.invalidData) { try CredentialExchangeCodec.validateAccounts([other, stored], checked: [other]) }
+    }
+
     @Test func liveBytesAreCappedPerAccountAndInTotal() throws {
         func payload(_ accounts: [CredentialAccount], origins: Set<String> = []) -> CredentialVaultPayload {
             CredentialVaultPayload(revision: 0, accounts: accounts, blockedPasswordOrigins: origins)

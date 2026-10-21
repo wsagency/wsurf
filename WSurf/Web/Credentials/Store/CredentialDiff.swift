@@ -48,9 +48,12 @@ nonisolated enum CredentialDiff {
     /// `returning` lists the accounts an undo gives back from the Trash in the same commit. A password, code or passkey that an
     /// account loses here and that is byte-equal to the same part of one of them is neither moved to the Trash nor kept as a revision:
     /// it comes back with its own account and history, so undoing a merge leaves no second copy of it behind.
+    ///
+    /// `unchanged` names accounts the caller knows to be byte-equal in both lists (the store's own rows, read in the same transaction):
+    /// they are not encoded again. Every other pair is compared on its bytes, and the identity checks above still cover every account.
     static func plan(
         old: [CredentialAccount], new: [CredentialAccount], restoring: UUID? = nil, removing: RemovalScope? = nil,
-        returning: [CredentialAccount] = []
+        returning: [CredentialAccount] = [], unchanged: Set<UUID> = []
     ) throws -> CredentialChangePlan {
         let oldIndex = try indexByID(old)
         var newIDs = Set<UUID>()
@@ -59,14 +62,12 @@ nonisolated enum CredentialDiff {
             guard newIDs.insert(account.id).inserted else { throw CredentialVaultError.invalidData }
             try requireUniquePasskeyIDs(account)
         }
-        // Complete-payload comparison on the encoded bytes, never `Equatable` (it equates composed and decomposed UTF-8).
-        guard try CredentialContent.canonicalJSON(old) != CredentialContent.canonicalJSON(new) else {
-            return CredentialChangePlan(persistence: .noop, revisions: [], removals: [], touched: [], setsModifiedAt: [])
-        }
         var plan = Accumulator(restoring: restoring, removing: removing, returning: returning)
         for account in new {
             if let position = oldIndex[account.id] {
-                try plan.compare(old[position], account)
+                if !unchanged.contains(account.id) {
+                    try plan.compare(old[position], account)
+                }
             } else {
                 plan.touched.insert(account.id)
                 plan.semantic = true
@@ -76,6 +77,11 @@ nonisolated enum CredentialDiff {
             plan.touched.insert(account.id)
             plan.removals.append(.account(account.id))
             plan.semantic = true
+        }
+        // Complete-payload comparison on the encoded bytes, never `Equatable` (it equates composed and decomposed UTF-8): every pair is
+        // byte-equal and in the same order exactly when the encoded payloads are.
+        if plan.touched.isEmpty, old.count == new.count, zip(old, new).allSatisfy({ $0.id == $1.id }) {
+            return CredentialChangePlan(persistence: .noop, revisions: [], removals: [], touched: [], setsModifiedAt: [])
         }
         return CredentialChangePlan(
             persistence: plan.semantic ? .semantic : .persistOnly,

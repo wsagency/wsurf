@@ -285,18 +285,31 @@ extension ProfileVaultStore {
     /// The live accounts of one unlocked vault, read from the file and checked against the head's `liveCatalog`.
     func snapshot(vaultID: UUID, using access: VaultAccess) async throws -> StoreSnapshot {
         _ = try authorizedGrant(vaultID, access)
-        return try await withOperation { pool in
+        let (snapshot, decoded) = try await withOperation { pool in
             let grant = try authorizedGrant(vaultID, access)
-            return try pool.read { (db: Database) throws in try Self.readSnapshot(db, grant: grant, vaultID: vaultID) }
+            return try pool.read { (db: Database) throws in try Self.readLive(db, grant: grant, vaultID: vaultID) }
         }
+        remember(decoded, vaultID: vaultID, access: access)
+        return snapshot
     }
 
     nonisolated static func readSnapshot(_ db: Database, grant: VaultGrant, vaultID: UUID) throws -> StoreSnapshot {
+        try readLive(db, grant: grant, vaultID: vaultID).snapshot
+    }
+
+    /// The snapshot, and what each live row decrypted to (for `remember`). Every row is read, its stored sealed bytes hashed against
+    /// the head's catalog and opened under its own AAD, as at every read; only the JSON decode is skipped for a row whose plaintext
+    /// digest is the one `grant.decoded` holds for it.
+    nonisolated static func readLive(
+        _ db: Database, grant: VaultGrant, vaultID: UUID
+    ) throws -> (snapshot: StoreSnapshot, decoded: [UUID: DecodedRow]) {
         let row = try activeRow(vaultID, in: db)
         let head = try openStoredHead(db, row: row, key: grant.dek, ids: grant.ids, ordinal: grant.ordinal)
         return try mapIntegrity(grant.ordinal) {
             var accounts: [CredentialAccount] = []
+            accounts.reserveCapacity(head.liveCatalog.count)
             var stamps: [UUID: AccountStamp] = [:]
+            var decoded: [UUID: DecodedRow] = [:]
             for entry in head.liveCatalog {
                 guard let record = try StoreTables.record(db, vaultID: vaultID, recordID: entry.recordID),
                     record.kind == .account, record.version == entry.version, StoreSeal.digest(record.sealed) == entry.digest
@@ -305,17 +318,26 @@ extension ProfileVaultStore {
                     ids: grant.ids, vaultID: vaultID, recordID: record.recordID, kind: record.kind, ownerID: record.ownerID,
                     subject: record.subject, version: record.version
                 )
-                let account = try JSONDecoder().decode(CredentialAccount.self, from: StoreSeal.openRow(record.sealed, key: grant.dek, aad: aad))
+                let plaintext = try StoreSeal.openRow(record.sealed, key: grant.dek, aad: aad)
+                let digest = StoreSeal.digest(plaintext)
+                let account: CredentialAccount
+                if let known = grant.decoded[entry.recordID], known.plaintextDigest == digest {
+                    account = known.account
+                } else {
+                    account = try JSONDecoder().decode(CredentialAccount.self, from: plaintext)
+                }
                 guard account.id == entry.recordID else { throw CredentialStoreError.malformed }
                 accounts.append(account)
                 stamps[entry.recordID] = AccountStamp(version: entry.version, digest: entry.digest)
+                decoded[entry.recordID] = DecodedRow(plaintextDigest: digest, account: account)
             }
             guard try StoreTables.recordCount(db, vaultID: vaultID, kind: .account) == head.liveCatalog.count else {
                 throw CredentialStoreError.malformed
             }
-            return StoreSnapshot(
+            let snapshot = StoreSnapshot(
                 vaultID: vaultID, revision: head.revision, accounts: accounts, blockedPasswordOrigins: Set(head.blockedOrigins), stamps: stamps
             )
+            return (snapshot, decoded)
         }
     }
 }

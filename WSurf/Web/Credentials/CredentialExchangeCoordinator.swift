@@ -313,7 +313,7 @@ final class CredentialExchangeCoordinator {
     /// Existing accounts `incoming` can be merged into: the ones that don't already hold that kind of credential.
     func mergeTargets(for incoming: CredentialIdentity, owner: UUID) -> [CredentialImportReview.Target] {
         guard let live, live.owner == owner else { return [] }
-        return Self.targets(for: incoming, in: live.preview)
+        return live.index.targets(for: incoming)
     }
 
     /// Applies the reviewed import with one per-account write bound to the stamps of the accounts it touches, so a write to

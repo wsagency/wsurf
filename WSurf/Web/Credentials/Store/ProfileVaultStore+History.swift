@@ -198,7 +198,8 @@ extension ProfileVaultStore {
             try transaction.verifyHistories()  // before the selected row is read or decoded
             let restored = try Self.restoringRevision(db, revisionID, snapshot: snapshot, grant: request.grant)
             return try Self.apply(
-                Proposal(accounts: restored.accounts, requires: nil, restoring: restored.owner), snapshot: snapshot, transaction, request,
+                Proposal(accounts: restored.accounts, requires: nil, restoring: restored.owner, changing: [restored.owner]),
+                snapshot: snapshot, transaction, request,
                 ledgerAttached: ledgerAttached
             )
         }.receipt

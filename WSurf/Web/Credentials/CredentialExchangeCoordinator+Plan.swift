@@ -25,23 +25,6 @@ extension CredentialExchangeCoordinator {
         }
     }
 
-    static func targets(
-        for incoming: CredentialIdentity,
-        in preview: CredentialImportPreview
-    ) -> [CredentialImportReview.Target] {
-        guard let source = preview.candidates.first(where: { $0.id == accountID(incoming) }) else { return [] }
-        let passkeyIDIsStored = credentialIDIsStored(incoming, in: preview)
-        return preview.base.accounts
-            .filter { accepts(incoming, source: source, into: $0, passkeyIDIsStored: passkeyIDIsStored) }
-            .map { account in
-                CredentialImportReview.Target(
-                    accountID: account.id,
-                    title: CredentialSummary(account).title,
-                    allowedOrigins: account.origins
-                )
-            }
-    }
-
     /// Whether `incoming`, a credential of `source`, can be merged into the stored `account`: the account doesn't already hold that
     /// kind of credential, and nothing of the exporter's item would be lost.
     static func accepts(
@@ -59,14 +42,6 @@ extension CredentialExchangeCoordinator {
             // Notes are appended to what the account already holds.
             return true
         }
-    }
-
-    /// Whether `incoming` is a passkey whose credential ID is already held by a stored passkey.
-    static func credentialIDIsStored(_ incoming: CredentialIdentity, in preview: CredentialImportPreview) -> Bool {
-        guard case let .passkey(accountID, passkeyID) = incoming,
-              let value = preview.candidates.first(where: { $0.id == accountID })?.passkeys.first(where: { $0.id == passkeyID })
-        else { return false }
-        return preview.base.accounts.contains { $0.passkeys.contains { $0.credentialID == value.credentialID } }
     }
 
     /// Whether another incoming credential is already set to replace the stored credential `target`.
@@ -120,7 +95,8 @@ extension CredentialExchangeCoordinator {
         _ preview: CredentialImportPreview,
         choices: [CredentialIdentity: CredentialImportChoice],
         required: Set<CredentialIdentity>,
-        duplicates: [UUID: CredentialImportReview.Duplicate] = [:]
+        duplicates: [UUID: CredentialImportReview.Duplicate] = [:],
+        inputsValidated: Bool = false
     ) throws -> (touched: [CredentialAccount], outcome: CredentialImportOutcome) {
         guard let decisions = decisions(preview, choices, required: required) else {
             throw CredentialExchangeCoordinatorError.unresolvedConflicts
@@ -130,7 +106,7 @@ extension CredentialExchangeCoordinator {
             throw CredentialVaultError.invalidData
         }
         let merges = duplicateMerges(choices, duplicates)
-        let accounts = try CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: merges)
+        let accounts = try CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: merges, inputsValidated: inputsValidated)
         let duplicated = Set(merges.values.map(\.target))
         let before = Dictionary(preview.base.accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var touched: [CredentialAccount] = []
@@ -172,7 +148,8 @@ extension CredentialExchangeCoordinator {
     /// import is turned into writes, for the success message and for the commit alike.
     static func planned(_ session: Session) throws -> (touched: [CredentialAccount], outcome: CredentialImportOutcome) {
         var planned = try plan(
-            session.preview, choices: session.choices, required: session.index.mustDecide, duplicates: session.index.duplicates
+            session.preview, choices: session.choices, required: session.index.mustDecide, duplicates: session.index.duplicates,
+            inputsValidated: session.inputsValidated
         )
         let changed = Set(planned.touched.map(\.id))
         planned.outcome.results = session.review.candidates.flatMap(\.records).map { record in
@@ -209,5 +186,13 @@ extension CredentialExchangeCoordinator {
     static func removals(in session: Session) -> [UUID] {
         guard session.review.transferIsComplete else { return [] }
         return session.review.missing.filter(\.movesToTrash).map(\.accountID)
+    }
+}
+
+extension CredentialExchangeCoordinator.Session {
+    /// A system transfer was validated whole, with the vault it was read against, when it was staged (`CredentialExchangeCodec.preview`),
+    /// so planning it again for a decision or for Import does not check both again. A CSV file or the old list is checked at every plan.
+    var inputsValidated: Bool {
+        context.origin == .system
     }
 }

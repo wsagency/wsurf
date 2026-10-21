@@ -82,6 +82,32 @@ extension CredentialExchangeCoordinatorTests {
 
     }
 
+    /// Every added passkey is checked against the saved ones before the plan writes it. Two thousand of them next to 20,000 saved
+    /// credentials must cost one index of the vault, not one per passkey (that was 2,000 indexes of 20,000 accounts).
+    @Test(.timeLimit(.minutes(2)))
+    func planning2000AddedPasskeysBeside20000SavedCredentialsIsNotQuadratic() async throws {
+        let clock = ContinuousClock()
+        let stored = try VaultScalePerformanceTests.storedAccounts()
+        let transfer = try ExchangeScale.transfer(items: 2_000, passkeyEvery: 1, totpEvery: nil)
+        try await withFixture { f in
+            try await f.seed(stored)
+            try await f.stage(transfer)
+            let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
+            let passkeys = review.candidates.flatMap(\.records).filter { $0.kind == .passkey }
+            #expect(passkeys.count == 2_000)
+            for record in passkeys {
+                try f.coordinator.choose(.addSeparately, for: record.incoming, owner: f.owner)
+            }
+
+            let started = clock.now
+            let outcome = try #require(planned(f))
+            let elapsed = clock.now - started
+            print("[scale] plan 2,000 added passkeys beside 20,000: \(elapsed.formatted(.units(allowed: [.seconds, .milliseconds], width: .narrow)))")
+            #expect(outcome.added >= 2_000)
+            #expect(elapsed < .seconds(20), "the plan took \(elapsed)")
+        }
+    }
+
     /// A decision in the review is local to its own item. Deciding 1,000 items of a 25,000-item review must cost 1,000 small steps, not
     /// 1,000 passes over the whole review; the budget is generous, and the loop stops at it so a regression fails in seconds, not hours.
     @Test(.timeLimit(.minutes(2)))

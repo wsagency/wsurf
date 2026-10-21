@@ -836,10 +836,15 @@ nonisolated enum CredentialExchangeCodec {
     /// The checks the store makes of a vault: distinct ids, each account valid, one account per exporter item, and the live byte
     /// budgets, measured as the store measures them (one account within `accountBytes`; all accounts plus `blockedOrigins` within
     /// `liveBytes`).
-    static func validateAccounts(_ accounts: [CredentialAccount], blockedOrigins: Set<String> = []) throws {
+    ///
+    /// `checked` holds accounts that already passed these checks, at the positions they keep in `accounts` (`apply` starts from the
+    /// vault's accounts and only appends). An account equal to its checked one still counts towards the totals and the one-holder rule,
+    /// but its own validity and encoded size are not checked again.
+    static func validateAccounts(_ accounts: [CredentialAccount], blockedOrigins: Set<String> = [], checked: [CredentialAccount] = []) throws {
         guard accounts.count <= CredentialVaultLimits.accounts else { throw CredentialVaultError.oversized }
         guard Set(accounts.map({ $0.id })).count == accounts.count else { throw CredentialVaultError.duplicateIdentifier }
-        for account in accounts {
+        let rechecks = accounts.indices.map { $0 >= checked.count || accounts[$0] != checked[$0] }
+        for (position, account) in accounts.enumerated() where rechecks[position] {
             try account.validate()
         }
         // Two accounts claiming one exporter item, as their own or as one merged into them, would make every later import and export
@@ -852,10 +857,10 @@ nonisolated enum CredentialExchangeCodec {
             }
         }
         var total = blockedOrigins.reduce(0) { $0 + $1.utf8.count }
-        for account in accounts {
+        for (position, account) in accounts.enumerated() {
             let bytes = try CredentialVaultCrypto.liveBytes(of: account)
             guard bytes <= CredentialVaultLimits.accountBytes, bytes <= CredentialVaultLimits.liveBytes - total,
-                  try CredentialVaultCrypto.storedBytes(of: account) <= CredentialVaultLimits.encodedAccountBytes else {
+                  try !rechecks[position] || CredentialVaultCrypto.storedBytes(of: account) <= CredentialVaultLimits.encodedAccountBytes else {
                 throw CredentialVaultError.oversized
             }
             total += bytes
