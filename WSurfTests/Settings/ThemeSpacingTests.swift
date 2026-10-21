@@ -240,6 +240,17 @@ struct ThemeSpacingTests {
         }
     }
 
+    @Test func theGalleryDrawsEachThemesSpacing() {
+        let theme = ThemeCatalog.fallback
+        for scheme in [ColorScheme.light, .dark] {
+            let plain = ThemeThumbnailPalette(theme, adjustment: ThemeAdjustment(), scheme: scheme)
+            let roomy = ThemeThumbnailPalette(theme, adjustment: spacing, scheme: scheme)
+            #expect(plain.layout == ThemeShape())
+            #expect(roomy.layout == ThemeShape(spacing))
+            #expect(roomy.accent == plain.accent && roomy.canvas == plain.canvas, "spacing changes no color")
+        }
+    }
+
     @Test func searchFindsTheSpacingKnobs() {
         for query in ["spacing", "margin", "padding", "flush"] {
             #expect(SettingsIndex.search(query).contains { $0.id == "appearance.layout" }, "\(query)")
