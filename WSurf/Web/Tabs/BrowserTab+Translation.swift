@@ -11,8 +11,24 @@ extension BrowserTab {
         return scheme == "https" || scheme == "http"
     }
 
+    /// The translation Translate Page, Show Original and the translate control act on: the article's while Reader shows it, the
+    /// page's otherwise. The page behind Reader keeps its own and is not touched.
+    var shownTranslation: PageTranslation {
+        reader.isActive ? reader.translation : translation
+    }
+
+    /// The view `shownTranslation` reads and replaces text in. Nil while Reader has no view yet.
+    var translatedPage: BrowserPage? {
+        reader.isActive ? reader.presentedPage : liveView
+    }
+
+    /// Whether Translate Page has anything to act on: the article's view while Reader shows it, a web page otherwise.
+    var canTranslateShown: Bool {
+        reader.isActive ? reader.presentedPage != nil : canTranslate
+    }
+
     var canToggleTranslation: Bool {
-        translation.isActive || canTranslate
+        shownTranslation.isActive || canTranslateShown
     }
 
     /// Whether Always Translate may translate this tab by itself. Not while the assistant works in it or a connected app is in
@@ -62,17 +78,18 @@ extension BrowserTab {
         offerTranslation()
     }
 
-    /// Translates the page to `target`. `prepare` may show the system's language download sheet; without it, only installed
-    /// languages are used. Answers whether a translation started: false when the page's language is unknown or already `target`,
-    /// no model is available, or the page changed meanwhile.
+    /// Translates what is shown (the page, or the article while Reader shows it) to `target`. `prepare` may show the system's
+    /// language download sheet; without it, only installed languages are used. Answers whether a translation started: false when
+    /// the language is unknown or already `target`, no model is available, or what is shown changed meanwhile.
     @discardableResult
     func translate(
         to target: Locale.Language,
         downloading prepare: ((TranslationModel, Locale.Language, Locale.Language) async -> Bool)?
     ) async -> Bool {
-        guard canTranslate else { return false }
+        guard canTranslateShown else { return false }
+        let translation = shownTranslation
         // Held weakly: a download sheet can stay open while the tab closes.
-        weak let current = liveView
+        weak let current = translatedPage
         let request = translation.begin(to: target)
         var detected: Locale.Language?
         if let current {
@@ -80,9 +97,9 @@ extension BrowserTab {
         }
         guard let source = detected, translation.isCurrent(request), !TranslationLanguage.matches(source, target),
               let model = await TranslationModel.choose(from: source, to: target, downloading: prepare),
-              translation.isCurrent(request), !isClosed, let page = current, liveView === page
+              translation.isCurrent(request), !isClosed, let page = current, translatedPage === page
         else {
-            translation.abandon(request, in: liveView)
+            translation.abandon(request, in: translatedPage)
             return false
         }
         if translation.targets.isEmpty {

@@ -143,6 +143,13 @@ sending a block's segments as one attributed request, and writes the batch back 
 one call. Show Original restores only text the page did not change itself. A new
 document, a new engine page or a closed tab ends the run.
 
+While Reader shows an article, Translate Page, Show Original and the translate
+control act on Reader's WebKit view and the `ReaderSession`'s own
+`PageTranslation` (`BrowserTab.shownTranslation`); the page behind keeps its own
+state and is not touched. The script runs in the same content world, which answers
+with the view's JavaScript off. Leaving Reader, or a new article view, starts the
+article's translation over.
+
 ## Agent trust boundaries
 
 The model is not a security boundary. Page text is untrusted, even when the

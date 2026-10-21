@@ -496,7 +496,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             return tab.isMaterialised && !tab.isShowingSystemPage
         case #selector(toggleTranslation):
             let tab = coordinator.pageCommandTab
-            let translationTitle: LocalizedStringResource = tab?.translation.isActive == true ? "Show Original" : "Translate Page"
+            let translationTitle: LocalizedStringResource = tab?.shownTranslation.isActive == true ? "Show Original" : "Translate Page"
             menuItem.title = String(localized: translationTitle)
             return tab?.canToggleTranslation ?? false
         case #selector(toggleReader):

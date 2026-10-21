@@ -374,6 +374,182 @@ struct ReaderSurfaceTests {
         #expect(item.title == String(localized: "Show Reader"))
     }
 
+    // MARK: Translate and Find
+
+    private static let english = Locale.Language(identifier: "en")
+
+    /// A stand-in for the language model, so the suite needs no language pack.
+    private static func germanised(_ segments: [PageTranslationSegment]) -> [Int: String] {
+        Dictionary(uniqueKeysWithValues: segments.map { ($0.node, $0.text.replacingOccurrences(of: "harbour", with: "Hafen")) })
+    }
+
+    /// The text the article's view shows. Its page's JavaScript is off, so it is read in the app's own world.
+    private func shownText(of article: BrowserPage) async -> String {
+        (try? await article.evaluateJavaScript("document.body.innerText", in: nil, contentWorld: .defaultClient)) as? String ?? ""
+    }
+
+    private func pageText(of tab: BrowserTab) async throws -> String {
+        try #require(try await tab.page.evaluateJavaScript("document.body.innerText") as? String)
+    }
+
+    private func occurrences(of needle: String, in text: String) -> Int {
+        text.lowercased().components(separatedBy: needle).count - 1
+    }
+
+    /// Translate Page translates the article and Show Original brings its text back, with the page behind it left alone. The
+    /// article's view runs no JavaScript of the page's; the translation runs in its own world.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func translatePageAndShowOriginalActOnTheArticleWhileReaderShowsIt(engine: BrowserEngine) async throws {
+        try await withTab(engine: engine, routes: articleRoutes, start: "/news/tide") { tab, _ in
+            try await withReader(on: tab) { article in
+                let translation = tab.shownTranslation
+                #expect(translation === tab.reader.translation, "engine \(engine)")
+                #expect(tab.translatedPage === article)
+                #expect(tab.canTranslateShown)
+                #expect(tab.canToggleTranslation)
+
+                let request = translation.begin(to: Self.english)
+                translation.translate(request, in: article) { Self.germanised($0) }
+
+                #expect(await waitUntil { await shownText(of: article).contains("Hafen") }, "engine \(engine)")
+                #expect(await waitUntil { translation.phase == .translated })
+                let hidden = try await pageText(of: tab)
+                #expect(hidden.contains("harbour") && !hidden.contains("Hafen"), "the page behind Reader was translated")
+                #expect(tab.translation.phase == .original)
+
+                AppCoordinator().showOriginal(tab)
+
+                #expect(await waitUntil { !(await shownText(of: article)).contains("Hafen") }, "engine \(engine)")
+                #expect(await shownText(of: article).contains("harbour"))
+                #expect(!translation.isActive)
+
+                tab.reader.close()
+                #expect(tab.shownTranslation === tab.translation, "leaving Reader returns to the page")
+                #expect(tab.translatedPage === tab.liveView)
+                #expect(!tab.reader.translation.isActive)
+            }
+        }
+    }
+
+    /// Asking for a translation reads the language of what is shown: the article, not the page behind it.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func askingForATranslationReadsTheArticleAndNotThePage(engine: BrowserEngine) async throws {
+        try await withTab(engine: engine, routes: articleRoutes, start: "/news/tide") { tab, _ in
+            try await withReader(on: tab) { _ in
+                #expect(!tab.translation.hasDetected)
+
+                // The article is already English, so this ends before any model is needed, but only after reading it.
+                #expect(await tab.translate(to: Self.english, downloading: nil) == false)
+
+                #expect(tab.reader.translation.detectedLanguage.map(TranslationLanguage.key) == "en", "engine \(engine)")
+                #expect(!tab.translation.hasDetected, "the page behind Reader was read")
+            }
+        }
+    }
+
+    /// Find counts the matches in the article, whose JavaScript is off, and clears its highlight; once Reader is left, Find
+    /// searches the page again.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func findCountsInTheArticleAndReturnsToThePageWhenReaderEnds(engine: BrowserEngine) async throws {
+        try await withTab(engine: engine, routes: articleRoutes, start: "/news/tide") { tab, _ in
+            try await withReader(on: tab) { article in
+                let expected = occurrences(of: "tide clock", in: await shownText(of: article))
+                try #require(expected > 1)
+
+                tab.find.open()
+                tab.find.query = "Tide Clock"
+                tab.find.queryDidChange()
+                #expect(await waitUntil { tab.find.totalMatches == expected }, "engine \(engine): \(tab.find.totalMatches) of \(expected)")
+
+                tab.find.query = "newsletter"
+                tab.find.queryDidChange()
+                #expect(await waitUntil { tab.find.totalMatches == 0 }, "the sidebar is not part of the article")
+
+                _ = try await article.evaluateJavaScript(
+                    "getSelection().selectAllChildren(document.body); 1", in: nil, contentWorld: .defaultClient
+                )
+                tab.find.driver?.clearHighlight()
+                #expect(await waitUntil {
+                    (try? await article.evaluateJavaScript("getSelection().toString()", in: nil, contentWorld: .defaultClient)) as? String == ""
+                }, "the highlight stayed")
+
+                tab.find.close()
+                tab.reader.close()
+            }
+
+            #expect(tab.shownPage === tab.page)
+            tab.find.open()
+            tab.find.query = "newsletter"
+            tab.find.queryDidChange()
+            #expect(await waitUntil { tab.find.totalMatches == 1 }, "engine \(engine): \(tab.find.totalMatches)")
+            tab.find.close()
+        }
+    }
+
+    /// The Translate Page command follows what is shown: the page's translation, then the article's while Reader has a view.
+    @Test(.boundedWebViews) func theTranslateCommandFollowsWhatIsShown() async throws {
+        let coordinator = AppCoordinator()
+        let menu = MainMenu(coordinator: coordinator)
+        menu.install()
+        defer { NSApp.mainMenu = nil }
+        let root = try #require(NSApp.mainMenu)
+        let item = try #require(root.items.compactMap(\.submenu).flatMap(\.items)
+            .first { $0.title == String(localized: "Translate Page") })
+        let tab = coordinator.browser.newTab()
+        defer { coordinator.browser.closeAllTabs(saving: false) }
+        let articlePage = BrowserPage(
+            webKit: ReaderPageController.makeWebView(dataStore: tab.context.dataStore), context: tab.context
+        )
+        tab.reader.driver = StubReader().driver
+
+        #expect(!menu.validateMenuItem(item), "a new tab holds no web page")
+        _ = tab.translation.begin(to: Self.english)
+        #expect(menu.validateMenuItem(item))
+        #expect(item.title == String(localized: "Show Original"), "the page is translated")
+
+        #expect(await tab.reader.open())
+        #expect(!menu.validateMenuItem(item), "Reader has no view yet")
+        #expect(item.title == String(localized: "Translate Page"), "what is shown is not translated")
+
+        tab.reader.presentedPage = articlePage
+        #expect(menu.validateMenuItem(item), "the article can be translated though the page behind it is")
+        #expect(item.title == String(localized: "Translate Page"))
+        _ = tab.reader.translation.begin(to: Self.english)
+        #expect(menu.validateMenuItem(item))
+        #expect(item.title == String(localized: "Show Original"))
+
+        tab.reader.close()
+        #expect(menu.validateMenuItem(item))
+        #expect(item.title == String(localized: "Show Original"), "the page is still translated")
+        #expect(!tab.reader.translation.isActive, "the article's translation ended with Reader")
+        await articlePage.close()
+    }
+
+    /// A new view of the article, as when the tab is brought back to the front, starts from the original text.
+    @Test(.boundedWebViews) func aNewArticleViewForgetsWhatWasTranslatedInTheOldOne() async {
+        let tab = BrowserTab(context: BrowserProfileContext(profile: .privateBrowsing()))
+        defer { tab.detach() }
+        let first = BrowserPage(webKit: ReaderPageController.makeWebView(dataStore: tab.context.dataStore), context: tab.context)
+        let second = BrowserPage(webKit: ReaderPageController.makeWebView(dataStore: tab.context.dataStore), context: tab.context)
+        tab.reader.driver = StubReader().driver
+        #expect(await tab.reader.open())
+        tab.reader.presentedPage = first
+        _ = tab.shownTranslation.begin(to: Self.english)
+        #expect(tab.shownTranslation.isActive)
+
+        tab.reader.presentedPage = second
+        #expect(!tab.shownTranslation.isActive)
+
+        _ = tab.shownTranslation.begin(to: Self.english)
+        tab.reader.presentedPage = second
+        #expect(tab.shownTranslation.isActive, "the same view is the same text")
+
+        tab.reader.pageChanged()
+        #expect(!tab.reader.translation.isActive)
+        await first.close()
+        await second.close()
+    }
+
     // MARK: Hosting
 
     private func host(_ tab: BrowserTab, showing article: ReaderArticle) -> NSWindow {
@@ -384,6 +560,22 @@ struct ReaderSurfaceTests {
         window.contentView = NSHostingView(rootView: ReaderSurface(tab: tab, article: article))
         window.orderBack(nil)
         return window
+    }
+
+    /// Opens Reader on `tab`, shows its view in a window and runs `body` with the page that shows the article.
+    private func withReader(on tab: BrowserTab, body: (BrowserPage) async throws -> Void) async throws {
+        tab.isFrontTab = { true }
+        tab.probeReader()
+        try #require(await waitUntil { tab.reader.availability == .available })
+        try #require(await tab.reader.open())
+        let article = try #require(tab.reader.article)
+        let window = host(tab, showing: article)
+        defer {
+            window.contentView = nil
+            window.close()
+        }
+        try #require(await waitUntil { tab.reader.presentedPage?.title == article.title }, "the article was not loaded")
+        try await body(try #require(tab.reader.presentedPage))
     }
 
     /// A private tab of either engine showing a fixture page, in a window so Chromium loads it.

@@ -96,6 +96,24 @@ struct ReaderSessionTests {
         #expect(!session.isActive)
     }
 
+    /// The page keeps the tab's translation; the article has its own, which ends with Reader, however Reader ends.
+    @Test func theArticlesTranslationEndsWithReader() async {
+        let session = ReaderSession()
+        session.driver = StubReader().driver
+        let english = Locale.Language(identifier: "en")
+
+        for end in [{ session.close() }, { session.pageChanged() }] {
+            #expect(await session.open())
+            _ = session.translation.begin(to: english)
+            #expect(session.translation.isActive)
+
+            end()
+
+            #expect(!session.translation.isActive)
+            #expect(session.translation.target == nil)
+        }
+    }
+
     @Test func aPageWithoutAnArticleCannotBeOpened() async {
         let stub = StubReader()
         stub.article = nil

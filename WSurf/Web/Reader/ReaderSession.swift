@@ -21,9 +21,20 @@ final class ReaderSession {
     private(set) var article: ReaderArticle?
     private(set) var generation = 0
 
+    /// The article's own translation. The website's page keeps the tab's `PageTranslation`; while Reader is shown, Translate Page
+    /// acts on the article's view and this one.
+    let translation = PageTranslation()
+
     @ObservationIgnored var driver: ReaderDriver?
-    /// The page that shows the article while Reader is on screen. Print and Find act on it.
-    @ObservationIgnored weak var presentedPage: BrowserPage?
+    /// The page that shows the article while Reader is on screen. Print, Find and Translate Page act on it. A new view starts from
+    /// the article as extracted, so whatever was translated in the old one is gone.
+    @ObservationIgnored weak var presentedPage: BrowserPage? {
+        didSet {
+            if presentedPage !== oldValue {
+                translation.documentChanged()
+            }
+        }
+    }
     @ObservationIgnored var retryDelay: Duration = .milliseconds(1500)
     @ObservationIgnored private var probing: Int?
 
@@ -39,6 +50,7 @@ final class ReaderSession {
         isOpening = false
         isActive = false
         article = nil
+        translation.documentChanged()
     }
 
     func probe() async {
@@ -96,6 +108,7 @@ final class ReaderSession {
     func close() {
         isActive = false
         article = nil
+        translation.documentChanged()
     }
 
     func toggle() {
