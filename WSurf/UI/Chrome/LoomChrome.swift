@@ -6,26 +6,18 @@ import AppKit
 import SwiftUI
 
 enum LoomChrome {
-    /// The inset shared by chrome-owned surfaces.
+    /// The inset shared by chrome-owned surfaces, and the default page spacing of a theme.
     nonisolated static let canvasInset: CGFloat = 6
+    /// As wide as the widest page spacing, and a flush page keeps 4 pt of grab on each side of its edge.
     nonisolated static let resizeGrabWidth: CGFloat = 8
-
-    /// Visually balances sidebar rows against the canvas gutter without
-    /// changing the resize handle's position inside that gutter.
-    nonisolated static var sidebarContentBalanceOffset: CGFloat {
-        canvasInset / 2
-    }
 
     nonisolated static var canvasTop: CGFloat {
         Theme.topBarHeight
     }
 
-    /// The page's corner, scaled by the theme's corner rounding. The side panel and split panes follow it.
+    /// The page's corner, from the theme's page spacing and corner rounding. The side panel and split panes follow it.
     static var canvasRadius: CGFloat {
-        let window = Theme.Radius.window
-        return BrowserSettings.application.chromeShape.pageRadius(
-            Theme.Radius.nested(in: window, inset: canvasInset), window: window
-        )
+        BrowserSettings.application.chromeShape.canvasRadius(window: Theme.Radius.window)
     }
 
     static var canvasShape: RoundedRectangle {
@@ -121,11 +113,13 @@ nonisolated struct LoomShellGeometry {
     let isSidebarVisible: Bool
     let isPanelVisible: Bool
     let isPanelExpanded: Bool
+    /// The theme's page spacing: the gap around the page and between the page and the side panel.
+    var pageSpacing = LoomChrome.canvasInset
 
     var panelWidth: CGFloat {
         guard isPanelExpanded else { return preferredPanelWidth }
         return max(
-            containerWidth - (isSidebarVisible ? sidebarWidth : 0) - LoomChrome.canvasInset * 2,
+            containerWidth - (isSidebarVisible ? sidebarWidth : 0) - pageSpacing * 2,
             0
         )
     }
@@ -134,16 +128,16 @@ nonisolated struct LoomShellGeometry {
     /// this value, so opening the panel cannot change toolbar geometry.
     var canvasTrailingInset: CGFloat {
         guard isPanelVisible, !isPanelExpanded else { return 0 }
-        return panelWidth + LoomChrome.canvasInset
+        return panelWidth + pageSpacing
     }
 
-    /// Leading edge for a resize hit target centred in the canvas gutter.
+    /// Leading edge for a resize hit target centred in the canvas gutter. With no gutter it straddles the page edge.
     var sidebarResizeLeading: CGFloat {
-        sidebarWidth + (LoomChrome.canvasInset - LoomChrome.resizeGrabWidth) / 2
+        sidebarWidth + (pageSpacing - LoomChrome.resizeGrabWidth) / 2
     }
 
     var panelLeading: CGFloat {
-        containerWidth - panelWidth - LoomChrome.canvasInset
+        containerWidth - panelWidth - pageSpacing
     }
 
     var panelCoversPage: Bool {
@@ -155,8 +149,8 @@ nonisolated struct LoomShellGeometry {
     var panelResizeLeading: CGFloat {
         containerWidth
             - panelWidth
-            - LoomChrome.canvasInset
-            - (LoomChrome.canvasInset + LoomChrome.resizeGrabWidth) / 2
+            - pageSpacing
+            - (pageSpacing + LoomChrome.resizeGrabWidth) / 2
     }
 }
 
@@ -382,7 +376,8 @@ struct LoomPageCanvas<Content: View>: View {
 
     var body: some View {
         let shape = LoomChrome.canvasShape
-        let frame = BrowserSettings.application.chromeShape.pageFrame(contrast: contrast)
+        let chrome = BrowserSettings.application.chromeShape
+        let frame = chrome.pageFrame(contrast: contrast)
         let hasShadow = frame == .standard
 
         // The clip and the shadow stay in place for every edge, with values that draw nothing, so changing the edge
@@ -408,8 +403,8 @@ struct LoomPageCanvas<Content: View>: View {
                 y: hasShadow ? 4 : 0
             )
             .padding(.top, LoomChrome.canvasTop)
-            .padding(.leading, LoomChrome.canvasInset)
-            .padding(.trailing, LoomChrome.canvasInset + trailingInset)
-            .padding(.bottom, LoomChrome.canvasInset)
+            .padding(.leading, chrome.pageSpacing)
+            .padding(.trailing, chrome.pageSpacing + trailingInset)
+            .padding(.bottom, chrome.pageSpacing)
     }
 }

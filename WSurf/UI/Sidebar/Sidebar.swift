@@ -71,20 +71,12 @@ struct Sidebar: View {
     }
 
     private var contentInsets: EdgeInsets {
-        if sidebar.isFloating {
-            let inset = LoomChrome.canvasInset
-            return EdgeInsets(top: 0, leading: inset, bottom: 0, trailing: inset)
-        }
-        guard sidebarStyle == .full else {
-            return EdgeInsets(top: 0, leading: LoomChrome.canvasInset, bottom: 0, trailing: 0)
-        }
-        let inset = SidebarMetrics.fullContentInset
-        let balance = LoomChrome.sidebarContentBalanceOffset
-        return EdgeInsets(
-            top: 0,
-            leading: inset + balance,
-            bottom: 0,
-            trailing: inset - balance
+        let shape = BrowserSettings.application.chromeShape
+        return SidebarMetrics.contentInsets(
+            style: sidebarStyle,
+            isFloating: sidebar.isFloating,
+            margin: shape.sidebarMargin,
+            pageSpacing: shape.pageSpacing
         )
     }
 

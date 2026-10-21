@@ -154,6 +154,20 @@ struct ThemeAdjustment: Codable, Equatable {
     /// Scales the corner radius of rows and the page, 0...1.5.
     var cornerScale = 1.0
     var loadedFavicons = FaviconStyle.mono
+    /// Points between the page and the window or sidebar. 0 puts the page flush with them.
+    var pageSpacing = 6.0
+    /// Points between the sidebar's rows and the window edge.
+    var sidebarMargin = 6.0
+    /// Points between a sidebar row's edge and its icon.
+    var rowPadding = 9.0
+    /// Points.
+    var tabIconSize = 16.0
+
+    static let pageSpacingRange = 0.0...8.0
+    /// A row flush with the window edge looks clipped, so the margin never reaches 0.
+    static let sidebarMarginRange = 1.0...8.0
+    static let rowPaddingRange = 1.0...12.0
+    static let tabIconSizeRange = 12.0...24.0
 
     func brightness(_ scheme: ColorScheme) -> Double {
         scheme == .dark ? darkBrightness : lightBrightness
@@ -176,6 +190,11 @@ struct ThemeAdjustment: Codable, Equatable {
         result.lightBrightness = clamp(lightBrightness, -0.5...0.5, default: 0)
         result.darkBrightness = clamp(darkBrightness, -0.5...0.5, default: 0)
         result.cornerScale = clamp(cornerScale, 0...1.5, default: 1)
+        // Whole points keep favicons crisp and rows on the pixel grid.
+        result.pageSpacing = clamp(pageSpacing.rounded(), Self.pageSpacingRange, default: 6)
+        result.sidebarMargin = clamp(sidebarMargin.rounded(), Self.sidebarMarginRange, default: 6)
+        result.rowPadding = clamp(rowPadding.rounded(), Self.rowPaddingRange, default: 9)
+        result.tabIconSize = clamp(tabIconSize.rounded(), Self.tabIconSizeRange, default: 16)
         return result
     }
 }
@@ -191,7 +210,11 @@ extension ThemeAdjustment {
             pageFrame: container.lenient(.pageFrame, .standard),
             rowFrame: container.lenient(.rowFrame, .standard),
             cornerScale: container.lenient(.cornerScale, 1),
-            loadedFavicons: container.lenient(.loadedFavicons, .mono)
+            loadedFavicons: container.lenient(.loadedFavicons, .mono),
+            pageSpacing: container.lenient(.pageSpacing, 6),
+            sidebarMargin: container.lenient(.sidebarMargin, 6),
+            rowPadding: container.lenient(.rowPadding, 9),
+            tabIconSize: container.lenient(.tabIconSize, 16)
         )
     }
 }
