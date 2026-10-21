@@ -236,9 +236,8 @@ nonisolated extension CredentialExchangeCodec {
     }
 
     private static func makeField(_ value: String, metadata: CredentialEditableFieldMetadata) -> ASImportableEditableField {
-        // The raw values are the SDK's own (`CredentialEditableFieldType`), so every type a field was imported with goes back out.
-        let fieldType = ASImportableEditableField.FieldType(rawValue: metadata.fieldType.rawValue) ?? .string
-        return ASImportableEditableField(id: metadata.id, fieldType: fieldType, value: value, label: metadata.label)
+        // Every type a field was imported with goes back out as it came in, a concealed one included.
+        ASImportableEditableField(id: metadata.id, fieldType: metadata.fieldType.exchangeType, value: value, label: metadata.label)
     }
 
     private static func exportPasskey(_ passkey: WebsitePasskey) throws -> ASImportableCredential.Passkey {
@@ -315,5 +314,65 @@ nonisolated extension CredentialExchangeCodec {
         }
         guard result.count <= 64 else { throw CredentialVaultError.oversized }
         return result
+    }
+}
+
+// MARK: Field types
+
+/// The Credential Exchange field types and WSurf's persisted ones, written out once in each direction. The exchange's raw values are
+/// kebab-case (`concealed-string`) and the persisted ones camelCase (`concealedString`), so neither direction may go through `rawValue`.
+nonisolated extension CredentialEditableFieldType {
+    /// WSurf's type for an exchange field type, or nil for one it does not know (a later SDK's).
+    init?(exchange type: ASImportableEditableField.FieldType) {
+        switch type {
+        case .string:
+            self = .string
+        case .concealedString:
+            self = .concealedString
+        case .email:
+            self = .email
+        case .number:
+            self = .number
+        case .boolean:
+            self = .boolean
+        case .date:
+            self = .date
+        case .yearMonth:
+            self = .yearMonth
+        case .wifiNetworkSecurityType:
+            self = .wifiNetworkSecurityType
+        case .countryCode:
+            self = .countryCode
+        case .subdivisionCode:
+            self = .subdivisionCode
+        @unknown default:
+            return nil
+        }
+    }
+
+    /// The exchange's field type for this one.
+    var exchangeType: ASImportableEditableField.FieldType {
+        switch self {
+        case .string:
+            .string
+        case .concealedString:
+            .concealedString
+        case .email:
+            .email
+        case .number:
+            .number
+        case .boolean:
+            .boolean
+        case .date:
+            .date
+        case .yearMonth:
+            .yearMonth
+        case .wifiNetworkSecurityType:
+            .wifiNetworkSecurityType
+        case .countryCode:
+            .countryCode
+        case .subdivisionCode:
+            .subdivisionCode
+        }
     }
 }

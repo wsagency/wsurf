@@ -3,8 +3,9 @@
 
 import Foundation
 
-/// The raw values are the Credential Exchange field types and the persisted format. Logins and notes keep only the first three;
-/// the values of a `SecureItem` keep any of them.
+/// The raw values are the persisted format (hashed into a credential's content), not the Credential Exchange's: the exchange's are
+/// kebab-case, and `init(exchange:)` and `exchangeType` map between the two. Logins and notes keep only the first three; the values
+/// of a `SecureItem` keep any of them.
 nonisolated enum CredentialEditableFieldType: String, Codable, Sendable {
     case string
     case concealedString

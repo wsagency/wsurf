@@ -385,8 +385,12 @@ extension CredentialExchangeTests {
         let item = try #require(preview.candidates.first?.secureItems?.first)
         #expect(item.fields.compactMap { $0.field?.fieldType } == types)
         #expect(item.fields.map(\.value) == values.map(\.text))
-        // The raw values are the exchange's field types and the persisted format.
-        #expect(types.map(\.rawValue) == values.map { sdkType($0.type).rawValue })
+        // The persisted names are the enum's raw values (hashed and stored), not the exchange's kebab-case ones.
+        #expect(types.map(\.rawValue) == [
+            "string", "concealedString", "email", "number", "boolean", "date", "yearMonth", "wifiNetworkSecurityType", "countryCode",
+            "subdivisionCode",
+        ])
+        #expect(types.map(sdkType) == types.map(\.exchangeType))
     }
 
     @Test func aLoginAndANoteStillSimplifyAnUnusualTypeWhileAnItemKeepsIt() throws {
@@ -395,7 +399,7 @@ extension CredentialExchangeTests {
                 userName: .init(id: Data([1]), fieldType: .string, value: "ada"),
                 password: .init(id: Data([2]), fieldType: .number, value: "123456")
             )),
-            note("dated", type: .date),
+            note("dated", id: Data([4]), type: .date),
             .creditCard(.init(
                 number: ASImportableEditableField(id: Data([3]), fieldType: .number, value: SecureItemFixtures.cardNumber),
                 fullName: nil, cardType: nil, verificationNumber: nil, pin: nil, expiryDate: nil, validFrom: nil
@@ -415,6 +419,14 @@ extension CredentialExchangeTests {
             itemOmission(.basicAuthentication, .fieldDetailsSimplified, credential: 0),
             itemOmission(.note, .fieldDetailsSimplified, credential: 1),
         ])
+    }
+
+    @Test func theFieldTypeTablesMapEveryExchangeTypeBothWays() {
+        let exchange: [ASImportableEditableField.FieldType] = [
+            .string, .concealedString, .email, .number, .boolean, .date, .yearMonth, .wifiNetworkSecurityType, .countryCode, .subdivisionCode,
+        ]
+        #expect(exchange.compactMap(CredentialEditableFieldType.init(exchange:)).map(\.exchangeType) == exchange)
+        #expect(Set(exchange.map(\.rawValue)).count == exchange.count, "the exchange's own names are distinct")
     }
 
     @Test func aDescriptionOverTheLimitIsDroppedFromAnItemNotRefused() throws {
