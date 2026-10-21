@@ -226,6 +226,7 @@ struct WindowSessionTests {
         let unrelatedSchemaSQL = """
             SELECT type, name, tbl_name, sql FROM sqlite_master
             WHERE tbl_name NOT LIKE 'session%' AND tbl_name NOT IN ('profilePin', 'archivedTab', 'assistantFact') AND name NOT LIKE 'sqlite_%'
+                AND NOT (type = 'table' AND name = 'agentTrace')
             ORDER BY type, name
             """
         let unrelatedSchema = try old.read { try Row.fetchAll($0, sql: unrelatedSchemaSQL) }
@@ -251,6 +252,7 @@ struct WindowSessionTests {
             #expect(try Row.fetchAll(db, sql: unrelatedSchemaSQL) == unrelatedSchema)
             #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
             #expect(try db.tableExists("profilePin"))
+            #expect(try db.columns(in: "agentTrace").contains { $0.name == "openedTabIDs" })
             let migrations = try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
             #expect(Set(migrations).isSuperset(of: ["v1", "v2-folder-pinning", "v3-profile-pins"]))
             #expect(try String.fetchAll(db, sql: """
