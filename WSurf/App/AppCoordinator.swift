@@ -157,7 +157,7 @@ final class AppCoordinator {
     var mainMenu: MainMenu?
 
     @ObservationIgnored private var isAskingForMicrophone = false
-    @ObservationIgnored private var shellFrameInWindow: CGRect = .zero
+    @ObservationIgnored private(set) var shellFrameInWindow: CGRect = .zero
     @ObservationIgnored private var appearanceObservation: NSKeyValueObservation?
     @ObservationIgnored private var iconScheme: FaviconLoader.IconScheme?
 

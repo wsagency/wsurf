@@ -68,6 +68,7 @@ final class BrowserSettings {
     @ObservationIgnored var storedRefractsTabColor: Bool?
     @ObservationIgnored var storedAutomaticPictureInPicture: Bool?
     @ObservationIgnored var storedShowsVideoInPlayer: Bool?
+    @ObservationIgnored var storedMediaPlayerCorner: MediaPlayerCorner?
     @ObservationIgnored var storedDownloadFolder: URL?
     @ObservationIgnored var storedAsksWhereToSave: Bool?
     @ObservationIgnored var storedDownloadRetention: DownloadRetention?
@@ -424,7 +425,7 @@ final class BrowserSettings {
 
     // MARK: - Init
 
-    init(
+    init(  // swiftlint:disable:this function_body_length
         defaults: UserDefaults = .standard,
         sessionDefaults: UserDefaults? = nil,
         appliesAppearanceGlobally: Bool = false,
@@ -499,6 +500,7 @@ final class BrowserSettings {
             storedPeeksAtLinks = object(Key.linkPeek) as? Bool ?? true
             storedAutomaticPictureInPicture = object(Key.automaticPiP) as? Bool ?? false
             storedShowsVideoInPlayer = object(Key.videoInPlayer) as? Bool ?? false
+            storedMediaPlayerCorner = string(Key.mediaPlayerCorner).flatMap(MediaPlayerCorner.init(rawValue:)) ?? .dock
             storedUpdateChannel = string(Key.updateChannel)
                 .flatMap(UpdateChannel.init(rawValue:)) ?? .release
             let storedZoom = double(Key.pageZoom)

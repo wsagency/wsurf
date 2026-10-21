@@ -1784,6 +1784,12 @@
     "Bookmarks" : {
       "comment" : "Title of the row that imports bookmarks, in the Import section of the General settings page and on the last onboarding screen. A noun."
     },
+    "Bottom Left" : {
+      "comment" : "Item in the View menu’s Move Player to Corner submenu and in the media player’s context menu; it moves the player to the bottom left of the window, where it sits docked at the foot of the sidebar. Title Case."
+    },
+    "Bottom Right" : {
+      "comment" : "Item in the View menu’s Move Player to Corner submenu and in the media player’s context menu; it moves the player to the bottom right of the page. Title Case."
+    },
     "Bring All to Front" : {
       "comment" : "Standard macOS item at the bottom of the Window menu. Use the system's own wording. Title Case."
     },
@@ -3486,6 +3492,9 @@
     "Media and windows" : {
       "comment" : "Heading of the group that holds Auto-Play, Pop-up Windows and Automatic Picture in Picture. Two places share it: a website's settings page and the Website Settings popover in the toolbar. Sentence case."
     },
+    "Media player" : {
+      "comment" : "VoiceOver label of the media player that holds the video, its timeline and its playback buttons. Sentence case."
+    },
     "Medium" : {
       "comment" : "The third of the four Thinking levels in Settings > Provider (None, Low, Medium, High). One segment of a segmented control, so space is tight."
     },
@@ -3622,6 +3631,21 @@
     },
     "Move Pin to This Page" : {
       "comment" : "Item in the Edit Pinned Page submenu of a tab row: it hands the tab's single anchor to the page now open, replacing the old one. Use the same noun for “pin” as in “Pin This Page”. Title Case."
+    },
+    "Move Player to Bottom Left" : {
+      "comment" : "VoiceOver action on the media player. It moves the player to the bottom left of the window. Pairs with the other three corners. Title Case."
+    },
+    "Move Player to Bottom Right" : {
+      "comment" : "VoiceOver action on the media player. It moves the player to the bottom right of the page. Pairs with the other three corners. Title Case."
+    },
+    "Move Player to Corner" : {
+      "comment" : "Title of the submenu, in the View menu and in the media player’s context menu, that moves the player to one of the four corners. It is the keyboard route to dragging the player. Title Case."
+    },
+    "Move Player to Top Left" : {
+      "comment" : "VoiceOver action on the media player. It moves the player to the top left of the page. Pairs with the other three corners. Title Case."
+    },
+    "Move Player to Top Right" : {
+      "comment" : "VoiceOver action on the media player. It moves the player to the top right of the page. Pairs with the other three corners. Title Case."
     },
     "Move Pointer" : {
 
@@ -5882,6 +5906,12 @@
     },
     "Tools" : {
       "comment" : "Title of the Tools settings page, and its row on the Assistant page."
+    },
+    "Top Left" : {
+      "comment" : "Item in the View menu’s Move Player to Corner submenu and in the media player’s context menu; it moves the player to the top left of the page, beside the sidebar. Title Case."
+    },
+    "Top Right" : {
+      "comment" : "Item in the View menu’s Move Player to Corner submenu and in the media player’s context menu; it moves the player to the top right of the page. Title Case."
     },
     "Tracker blocking" : {
       "comment" : "Something a profile keeps separately from every other profile."

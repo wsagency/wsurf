@@ -48,6 +48,16 @@ extension AppCoordinator {
         media.lendsPicture = settings.showsVideoInPlayer && !settings.automaticPictureInPicture
     }
 
+    /// The player moves while the video experiment is on and there is a player to move.
+    var canMovePlayer: Bool {
+        settings.showsVideoInPlayer && media.model.isActive
+    }
+
+    func movePlayer(to corner: MediaPlayerCorner) {
+        guard canMovePlayer else { return }
+        settings.mediaPlayerCorner = corner
+    }
+
     /// WebKit requires an on-screen destination before returning video from Picture in Picture.
     /// The media card already provides one when it hosts this web view.
     func makeRoomForPicture(in page: BrowserPage?) {

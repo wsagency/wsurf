@@ -61,4 +61,12 @@ extension BrowserSettings {
             })
         }
     }
+
+    /// The corner the player rests in while the video is in it. It is one choice for every window.
+    var mediaPlayerCorner: MediaPlayerCorner {
+        get { globalValue(\.mediaPlayerCorner, storage: storedMediaPlayerCorner) }
+        set {
+            setGlobal(\BrowserSettings.mediaPlayerCorner, storage: \BrowserSettings.storedMediaPlayerCorner, value: newValue, key: Key.mediaPlayerCorner, encode: { $0.rawValue })
+        }
+    }
 }
