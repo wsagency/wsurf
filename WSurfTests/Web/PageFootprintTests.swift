@@ -187,6 +187,9 @@ final class PageFootprintTests {
             "window.open('/popup'); true", in: nil, contentWorld: .page, userGesture: true)
         #expect(await waitUntil { opened == 1 }, "\(engine): the replayed action opens its pop-up")
         #expect(opened == 1, "\(engine): WSurf's own call opened one too")
-        #expect(tab.popups.blocked == (try server.url("/popup")), "\(engine)")
+        // CEF blocks a gesture-less `window.open` before `on_before_popup`, so WSurf has no notice to show there: only WebKit asks.
+        if engine == .webKit {
+            #expect(tab.popups.blocked == (try server.url("/popup")), "\(engine)")
+        }
     }
 }
