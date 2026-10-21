@@ -347,9 +347,23 @@ struct CredentialListView<Switcher: View>: View {
     private var actions: some View {
         HStack(spacing: 10) {
             switcher
-            ToolbarChip(symbol: "plus", label: "Add Credential") {
+            // A click adds a login, as before; the arrow offers the other templates (an identity, a card, an address, a note).
+            Menu {
+                ForEach(CredentialTemplate.allCases, id: \.self) { template in
+                    Button {
+                        run { try await model.beginEditing(accountID: nil, template: template) }
+                    } label: {
+                        Label(template.title, systemImage: template.symbol)
+                    }
+                }
+            } label: {
+                Label("Add", systemImage: "plus")
+            } primaryAction: {
                 run { try await model.beginEditing(accountID: nil) }
             }
+            .fixedSize()
+            .help("Add a login, or choose what to add from the menu")
+            .accessibilityLabel("Add Credential")
             .disabled(model.isBusy)
             ToolbarChip(symbol: "lock", label: "Lock") { model.lock() }
         }

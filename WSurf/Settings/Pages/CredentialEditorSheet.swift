@@ -22,10 +22,13 @@ struct CredentialEditorSheet: View {
     @State private var openingHistory: Task<Void, Never>?
     /// Open when the credential already has other origins, so nothing saved is hidden.
     @State private var showsOtherOrigins: Bool
+    /// An identity (`CredentialDraft.isIdentity`) opens with only its name and items; Add Sign-in shows the rest.
+    @State private var showsSignIn: Bool
 
     init(model: CredentialSettingsModel) {
         self.model = model
         _showsOtherOrigins = State(initialValue: model.draft?.extraOrigins.isEmpty == false)
+        _showsSignIn = State(initialValue: model.draft?.isIdentity != true)
     }
 
     var body: some View {
@@ -111,12 +114,18 @@ struct CredentialEditorSheet: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    signIn(draft)
-                    websites
-                    totp(draft)
-                    passkeys(draft)
-                    notes(draft)
-                    CredentialSecureItemsSection(model: model)
+                    if showsSignIn {
+                        signIn(draft)
+                        websites
+                        totp(draft)
+                        passkeys(draft)
+                        notes(draft)
+                        CredentialSecureItemsSection(model: model)
+                    } else {
+                        identityName
+                        CredentialSecureItemsSection(model: model)
+                        notes(draft)
+                    }
                     dates(draft)
                 }
                 .padding(24)
@@ -272,6 +281,19 @@ struct CredentialEditorSheet: View {
             }
             .formStyle(.columns)
             .textFieldStyle(.roundedBorder)
+        }
+    }
+
+    /// An identity's own section: its name, and the way to give it a sign-in after all.
+    private var identityName: some View {
+        section("Identity") {
+            Form {
+                copyableField("Name", text: optionalText(\.displayName), part: .name, copyLabel: "Copy Name")
+            }
+            .formStyle(.columns)
+            .textFieldStyle(.roundedBorder)
+            Button("Add Sign-in and Websites") { showsSignIn = true }
+                .controlSize(.small)
         }
     }
 

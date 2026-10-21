@@ -29,7 +29,7 @@ extension CredentialSettingsModel {
         // A card's or an ID document's hidden value asks for Touch ID on every copy from the list or History. The editor was opened
         // with that authentication (`beginEditing`), so its own copies don't ask again.
         if source != .draft, parts.isSensitive(part) {
-            try await verifyUser(String(localized: "copy a saved card or document detail"))
+            try await verifyUser(String(localized: "copy a saved card, document or hidden field"))
             try Task.checkCancellation()
         }
         try deliver(epoch: epoch, notice: part.copiedNotice) { try parts.value(of: part, now: now) }

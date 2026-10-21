@@ -130,3 +130,35 @@ nonisolated struct SecureFieldReference: Equatable, Hashable, Sendable {
     let field: Int
     let label: String
 }
+
+nonisolated extension CredentialEditableFieldType {
+    /// The types the editor's menu offers for a custom field, in its order. A value imported with another type keeps it, and the
+    /// menu lists that type too, so opening the menu changes nothing.
+    static let customFieldChoices: [Self] = [.string, .concealedString, .date, .number, .email]
+
+    /// What the editor's type menu calls the type.
+    var label: String {
+        switch self {
+        case .string:
+            String(localized: "Text")
+        case .concealedString:
+            String(localized: "Hidden")
+        case .email:
+            String(localized: "Email")
+        case .number:
+            String(localized: "Number")
+        case .boolean:
+            String(localized: "Yes or no")
+        case .date:
+            String(localized: "Date")
+        case .yearMonth:
+            String(localized: "Month and year")
+        case .wifiNetworkSecurityType:
+            String(localized: "Wi-Fi security")
+        case .countryCode:
+            String(localized: "Country")
+        case .subdivisionCode:
+            String(localized: "State or region")
+        }
+    }
+}

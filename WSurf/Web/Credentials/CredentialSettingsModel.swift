@@ -473,8 +473,8 @@ final class CredentialSettingsModel {
         manager?.authorizationEpoch
     }
 
-    /// `nil` starts a new credential.
-    func beginEditing(accountID: UUID?) async throws {
+    /// `nil` starts a new credential from `template` (a login unless the Add menu chose another).
+    func beginEditing(accountID: UUID?, template: CredentialTemplate = .login) async throws {
         let (epoch, snapshot) = try await authorizedSnapshot()
         var existing: CredentialAccount?
         if let accountID {
@@ -484,7 +484,10 @@ final class CredentialSettingsModel {
             existing = account
             try await verifySensitiveItems(of: account)
         }
-        let draft = CredentialDraft(editing: existing, revision: snapshot.revision)
+        var draft = CredentialDraft(editing: existing, revision: snapshot.revision)
+        if existing == nil {
+            template.apply(to: &draft)
+        }
         try update(epoch) {
             $0.refresh(snapshot)
             $0.draft = draft

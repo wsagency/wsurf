@@ -130,6 +130,22 @@ nonisolated struct CredentialDraft: Sendable {
         secureItems[index].fields.append(SecureItemField(name: "", value: "", field: .init(id: nil, label: "", fieldType: .string)))
     }
 
+    /// Gives a custom field another type (Text, Hidden, Date…), keeping its value, id and label. Nothing for any other item's member,
+    /// whose type is the Credential Exchange's.
+    mutating func setCustomFieldType(_ type: CredentialEditableFieldType, item index: Int, field position: Int) {
+        guard secureItems.indices.contains(index), secureItems[index].kind == .customFields,
+              secureItems[index].fields.indices.contains(position) else { return }
+        var metadata = secureItems[index].fields[position].field ?? CredentialEditableFieldMetadata(id: nil, label: nil, fieldType: .string)
+        metadata.fieldType = type
+        secureItems[index].fields[position].field = metadata
+    }
+
+    /// No sign-in, website, code or passkey, and a name or an identity document: the editor shows only the name and the items.
+    var isIdentity: Bool {
+        username.isEmpty && password == nil && websites.allSatisfy(\.isWhitespace) && extraOrigins.allSatisfy(\.isWhitespace)
+            && totp == nil && passkeys.isEmpty && secureItems.contains { $0.kind.isIdentity }
+    }
+
     /// Leaves the current generator untouched when `input` is not a valid secret or otpauth URI.
     mutating func setUpTOTP(
         _ input: String,

@@ -40,7 +40,8 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
     let itemKinds: [SecureItemKind]
     /// What each item is called (`SecureItem.title`): a card's network and last four digits, else its kind. Never another value.
     let itemTitles: [String]
-    /// It holds a card or an identity document: showing or copying their hidden values, and editing it, needs Touch ID.
+    /// It holds a card, an identity document or a hidden custom field (`SecureItem.isSensitive`): showing or copying their hidden
+    /// values, and editing it, needs Touch ID.
     let hasSensitiveItems: Bool
     /// The hidden values of its items that the row's menu offers to copy, by name.
     let hiddenItemFields: [SecureFieldReference]
@@ -71,7 +72,7 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
         }
         itemKinds = kinds
         itemTitles = items.map(\.title)
-        hasSensitiveItems = kinds.contains { $0.isSensitive }
+        hasSensitiveItems = items.contains(where: \.isSensitive)
         hiddenItemFields = items.enumerated().flatMap { index, item -> [SecureFieldReference] in
             item.fields.enumerated().compactMap { position, field -> SecureFieldReference? in
                 item.isConcealed(field) ? SecureFieldReference(item: index, field: position, label: item.label(of: field)) : nil

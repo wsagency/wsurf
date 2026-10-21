@@ -113,7 +113,7 @@ struct CredentialSecureItemSummaryTests {
         #expect(summary.itemTitles == ["Locker"])
     }
 
-    @Test func onlyCardsAndIdentityDocumentsAreSensitive() {
+    @Test func onlyCardsIdentityDocumentsAndHiddenCustomFieldsAreSensitive() {
         let sensitive: Set<SecureItemKind> = [.creditCard, .driversLicense, .passport, .identityDocument]
         for kind in SecureItemKind.allCases {
             let summary = summarize([bare(kind)])
@@ -122,6 +122,8 @@ struct CredentialSecureItemSummaryTests {
         }
         #expect(!summarize([SecureItemFixtures.wifi()]).hasSensitiveItems)
         #expect(summarize([SecureItemFixtures.wifi(), SecureItemFixtures.card()]).hasSensitiveItems)
+        #expect(summarize([SecureItemFixtures.custom()]).hasSensitiveItems, "a hidden custom field (an OIB) asks too")
+        #expect(!summarize([SecureItemFixtures.custom(values: [("Plain", "visible", false)])]).hasSensitiveItems)
 
         let plain = CredentialSummary(VaultFixtures.account())
         #expect(plain.itemKinds.isEmpty && plain.itemTitles.isEmpty && !plain.hasSensitiveItems)
