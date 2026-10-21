@@ -63,19 +63,25 @@ struct CredentialMergeSheet: View {
     private func content(_ proposal: CredentialMergeProposal) -> some View {
         let preview = proposal.preview
         VStack(alignment: .leading, spacing: 18) {
-            Picker(
-                "Keep",
-                selection: Binding(get: { proposal.picks.survivor }, set: { id in Task { await reload(survivor: id) } })
-            ) {
-                ForEach(preview.items) { item in
-                    Text(verbatim: label(of: item)).tag(item.id)
+            VStack(alignment: .leading, spacing: 4) {
+                Picker(
+                    "Primary",
+                    selection: Binding(get: { proposal.picks.survivor }, set: { id in Task { await reload(survivor: id) } })
+                ) {
+                    ForEach(preview.items) { item in
+                        Text(verbatim: label(of: item)).tag(item.id)
+                    }
                 }
+                .pickerStyle(.menu)
+                Text("""
+                    The primary credential’s name, username, password, verification code and notes win. The other passwords and \
+                    codes stay in its History, and every passkey, note, item and website is kept.
+                    """)
+                    .font(Theme.Font.label)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .pickerStyle(.menu)
             credentials(preview)
-            if preview.namesDiffer || preview.loginsDiffer || preview.codesDiffer {
-                choices(proposal)
-            }
             websites(proposal)
             alsoKept(preview)
         }
@@ -127,45 +133,6 @@ struct CredentialMergeSheet: View {
         )
     }
 
-    /// Where the merged credential takes its name, login and code from, for the parts that differ.
-    private func choices(_ proposal: CredentialMergeProposal) -> some View {
-        let preview = proposal.preview
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("Use").font(Theme.Font.rowTitle)
-            if preview.namesDiffer {
-                source("Name", \.name, among: preview.items.filter { !($0.displayName ?? "").isEmpty }, in: proposal)
-            }
-            if preview.loginsDiffer {
-                source("Login", \.login, among: preview.items.filter(\.hasLogin), in: proposal)
-            }
-            if preview.codesDiffer {
-                source("Verification code", \.code, among: preview.items.filter(\.hasCode), in: proposal)
-            }
-        }
-    }
-
-    private func source(
-        _ title: LocalizedStringResource, _ pick: WritableKeyPath<MergePicks, UUID>, among items: [MergePreview.Item],
-        in proposal: CredentialMergeProposal
-    ) -> some View {
-        Picker(
-            title,
-            selection: Binding(
-                get: { proposal.picks[keyPath: pick] },
-                set: { id in
-                    var picks = proposal.picks
-                    picks[keyPath: pick] = id
-                    Task { await reload(picks: picks) }
-                }
-            )
-        ) {
-            ForEach(items) { item in
-                Text("Use from “\(item.title)”").tag(item.id)
-            }
-        }
-        .pickerStyle(.menu)
-    }
-
     private func websites(_ proposal: CredentialMergeProposal) -> some View {
         let preview = proposal.preview
         return VStack(alignment: .leading, spacing: 6) {
@@ -201,15 +168,29 @@ struct CredentialMergeSheet: View {
 
     @ViewBuilder
     private func alsoKept(_ preview: MergePreview) -> some View {
-        if preview.passkeysAfter > 0 || preview.notesAfter > 0 {
+        if preview.passkeysAfter > 0 || preview.notesAfter > 0 || preview.itemsAfter > 0 || preview.passwordsInHistory > 0
+            || preview.codesInHistory > 0 {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Also kept").font(Theme.Font.rowTitle)
-                if preview.passkeysAfter > 0 {
-                    Text("Passkeys: \(preview.passkeysBefore) → \(preview.passkeysAfter)").font(Theme.Font.label).foregroundStyle(.secondary)
+                Group {
+                    if preview.passkeysAfter > 0 {
+                        Text("Passkeys: \(preview.passkeysBefore) → \(preview.passkeysAfter)")
+                    }
+                    if preview.notesAfter > 0 {
+                        Text("Notes: \(preview.notesBefore) → \(preview.notesAfter)")
+                    }
+                    if preview.itemsAfter > 0 {
+                        Text("Cards and other items: \(preview.itemsBefore) → \(preview.itemsAfter)")
+                    }
+                    if preview.passwordsInHistory > 0 {
+                        Text("Other passwords kept in History: \(preview.passwordsInHistory)")
+                    }
+                    if preview.codesInHistory > 0 {
+                        Text("Other verification codes kept in History: \(preview.codesInHistory)")
+                    }
                 }
-                if preview.notesAfter > 0 {
-                    Text("Notes: \(preview.notesBefore) → \(preview.notesAfter)").font(Theme.Font.label).foregroundStyle(.secondary)
-                }
+                .font(Theme.Font.label)
+                .foregroundStyle(.secondary)
             }
         }
     }
@@ -245,6 +226,10 @@ struct CredentialMergeSheet: View {
         if let host = item.origins.lazy.compactMap({ URL(string: $0)?.host }).first {
             parts.append(host)
         }
+        let dates = item.dates.caption(style: .list)
+        if !dates.isEmpty {
+            parts.append(dates)
+        }
         return parts.joined(separator: " · ")
     }
 
@@ -264,9 +249,15 @@ struct CredentialMergeSheet: View {
         let kept = items.first { $0.id == proposal.picks.survivor }?.title ?? ""
         let gone = items.filter { $0.id != proposal.picks.survivor }
         if gone.count == 1, let only = gone.first {
-            return String(localized: "“\(only.title)” moves to Trash with its history. It can’t be restored while “\(kept)” is in the vault.")
+            return String(localized: """
+                “\(only.title)” moves to Trash with its history, and its password and code stay in the History of “\(kept)”. \
+                It can’t be restored while “\(kept)” is in the vault.
+                """)
         }
-        return String(localized: "\(gone.count) credentials move to Trash with their history. They can’t be restored while “\(kept)” is in the vault.")
+        return String(localized: """
+            \(gone.count) credentials move to Trash with their history, and their passwords and codes stay in the History of \
+            “\(kept)”. They can’t be restored while “\(kept)” is in the vault.
+            """)
     }
 
     // MARK: Actions

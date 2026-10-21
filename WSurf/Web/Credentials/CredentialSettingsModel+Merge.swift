@@ -62,16 +62,25 @@ extension CredentialSettingsModel {
         return index
     }
 
-    /// Reads `ids` and what merging them would do under `picks` (the default picks, for `survivor` if given, when `nil`). Nothing is
-    /// written, and the proposal holds no secret. Throws `CredentialMergeError` for what the rules refuse.
+    /// Reads `ids` and what merging them would do under `picks`. Nothing is written, and the proposal holds no secret. Throws
+    /// `CredentialMergeError` for what the rules refuse. Without `picks` it starts from the default picks for `survivor` (the
+    /// primary) with every website of the others ticked, so nothing is left out unless the user unticks it.
     func mergeProposal(ids: [UUID], survivor: UUID? = nil, picks: MergePicks? = nil) async throws -> CredentialMergeProposal {
         let (epoch, snapshot) = try await authorizedSnapshot()
         let accounts = try Self.accounts(ids, in: snapshot.accounts)
-        guard let picks = picks ?? CredentialMerge.defaultPicks(for: accounts, survivor: survivor) else {
+        guard var chosen = picks ?? CredentialMerge.defaultPicks(for: accounts, survivor: survivor) else {
             throw CredentialMergeError.fewerThanTwo
         }
-        let preview = try CredentialMerge.preview(accounts, picks: picks)
-        return CredentialMergeProposal(ids: ids, picks: picks, preview: preview, revision: snapshot.revision, epoch: epoch)
+        var preview = try CredentialMerge.preview(accounts, picks: chosen)
+        // Ticked only while the merged credential stays within its limits; past one, the boxes start unticked.
+        if picks == nil, !preview.otherSite.isEmpty {
+            var ticked = chosen
+            ticked.extraWebsites = Set(preview.otherSite)
+            if let wider = try? CredentialMerge.preview(accounts, picks: ticked) {
+                (chosen, preview) = (ticked, wider)
+            }
+        }
+        return CredentialMergeProposal(ids: ids, picks: chosen, preview: preview, revision: snapshot.revision, epoch: epoch)
     }
 
     /// Merges what the proposal shows, in one commit: the survivor is replaced by the merged credential and the others leave the
@@ -85,8 +94,9 @@ extension CredentialSettingsModel {
         let absorbed = Set(proposal.ids).subtracting([merged.id])
         let result = snapshot.accounts.compactMap { $0.id == merged.id ? merged : (absorbed.contains($0.id) ? nil : $0) }
         let survivor = accounts.filter { $0.id == merged.id }
+        let merging = Dictionary(uniqueKeysWithValues: absorbed.map { ($0, merged.id) })
         return try await commitMerge(
-            result, revision: proposal.revision, epoch: epoch, survivors: survivor, absorbed: Array(absorbed), starting: snapshot.stamps
+            result, revision: proposal.revision, epoch: epoch, survivors: survivor, merging: merging, starting: snapshot.stamps
         ) {
             "Merged \(proposal.ids.count) credentials."
         }
@@ -107,6 +117,7 @@ extension CredentialSettingsModel {
         }
         var replaced: [Int: CredentialAccount] = [:]
         var removed = Set<Int>()
+        var merging: [UUID: UUID] = [:]
         var skipped = 0
         for group in groups {
             let chosen = group.ids.compactMap { position[$0].map { snapshot.accounts[$0] } }
@@ -123,29 +134,33 @@ extension CredentialSettingsModel {
                     replaced[at] = merged
                 } else {
                     removed.insert(at)
+                    merging[id] = merged.id
                 }
             }
         }
         guard !replaced.isEmpty else { return CredentialMergeAllResult(merged: 0, absorbed: 0, skipped: skipped) }
         let result = snapshot.accounts.enumerated().compactMap { offset, account in removed.contains(offset) ? nil : replaced[offset] ?? account }
         let survivors = replaced.keys.sorted().map { snapshot.accounts[$0] }
-        let gone = removed.sorted().map { snapshot.accounts[$0].id }
-        _ = try await commitMerge(result, revision: revision, epoch: epoch, survivors: survivors, absorbed: gone, starting: snapshot.stamps) {
+        _ = try await commitMerge(result, revision: revision, epoch: epoch, survivors: survivors, merging: merging, starting: snapshot.stamps) {
             "Merged \(replaced.count) groups of identical credentials."
         }
         return CredentialMergeAllResult(merged: replaced.count, absorbed: removed.count, skipped: skipped)
     }
 
-    /// Writes the merged accounts and keeps a step that takes the merge back: `survivors` as they were, and `absorbed`, which went to Trash.
+    /// Writes the merged accounts and keeps a step that takes the merge back: `survivors` as they were, and the absorbed accounts
+    /// (`merging`, each mapped to its survivor, whose History keeps their passwords and codes), which went to Trash.
     private func commitMerge(
-        _ accounts: [CredentialAccount], revision: UInt64, epoch: UInt64, survivors: [CredentialAccount], absorbed: [UUID],
+        _ accounts: [CredentialAccount], revision: UInt64, epoch: UInt64, survivors: [CredentialAccount], merging: [UUID: UUID],
         starting: [UUID: AccountStamp], notice: () -> LocalizedStringResource
     ) async throws -> VaultCommitReceipt {
         guard let manager, manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
         // Last point before the durable write: a cancelled task or a changed authorization never commits.
         try Task.checkCancellation()
+        let absorbed = merging.keys.sorted { $0.uuidString < $1.uuidString }
         let touched = Set(survivors.map(\.id)).union(absorbed)
-        let receipt = try await manager.commit(accounts, expectedRevision: revision, authorizedEpoch: epoch, cause: "merge", changing: touched)
+        let receipt = try await manager.commit(
+            accounts, expectedRevision: revision, authorizedEpoch: epoch, cause: "merge", changing: touched, merging: merging
+        )
         // Nothing throws once the vault has committed: the receipt reflects what is on disk.
         try? update(epoch) { $0.committed(accounts, revision: receipt.revision) }
         _ = try? await reloadAfterWrite(epoch: epoch)

@@ -46,6 +46,8 @@ nonisolated struct MergePreview: Equatable, Sendable {
         let noteCount: Int
         /// The credential's own websites.
         let origins: [String]
+        /// When it came into the vault and last changed, so the user can tell which one is newer.
+        let dates: CredentialDates
     }
 
     let items: [Item]
@@ -66,12 +68,18 @@ nonisolated struct MergePreview: Equatable, Sendable {
     let passkeysAfter: Int
     let notesBefore: Int
     let notesAfter: Int
+    let itemsBefore: Int
+    let itemsAfter: Int
+    /// The other passwords and verification codes (different from the merged credential's), which stay in its History.
+    let passwordsInHistory: Int
+    let codesInHistory: Int
 }
 
 /// Merging credentials into one. Pure: the accounts in, the account out, and nothing is written. A merge never loses a value: the
-/// credential that stays is replaced by the merged one and the others are removed in the same commit, so everything either stays or
-/// goes to the Trash with its history. It never adds a website on another site unless the user ticks it, and never merges different
-/// people.
+/// credential that stays (the primary) is replaced by the merged one and the others are removed in the same commit. Every passkey,
+/// note, item and ticked website is in the merged credential; every other password and code goes into its History in that commit
+/// (`CommitTransaction.carriedRevisions`), and the others go to the Trash with their own history. It never adds a website on
+/// another site unless the user ticks it, and never merges different people.
 nonisolated enum CredentialMerge {
     /// The picks a merge starts from. The survivor is `chosen`, else the one with an exchange link, else one with a website, else the
     /// one with the most kinds of credential, else the first by title. The name and code are the survivor's, or the first other
@@ -114,6 +122,8 @@ nonisolated enum CredentialMerge {
             Set(hashes).count > 1
         }
         let withLogin = accounts.filter(CredentialExchangeCodec.hasBasicAuthentication)
+        let passwords = Set(accounts.compactMap { $0.password.map { Data($0.utf8) } })
+        let codes = Set(accounts.compactMap(\.totp).map(codeKey))
         return MergePreview(
             items: accounts.map { account in
                 let summary = CredentialSummary(account)
@@ -121,7 +131,7 @@ nonisolated enum CredentialMerge {
                     id: account.id, title: summary.title, displayName: summary.displayName, hasLogin: summary.hasLogin,
                     username: summary.username, usernameIsConcealed: summary.usernameIsConcealed,
                     hasPassword: account.password != nil, hasCode: account.totp != nil, passkeyCount: account.passkeys.count,
-                    noteCount: account.notes?.count ?? 0, origins: account.origins
+                    noteCount: account.notes?.count ?? 0, origins: account.origins, dates: summary.dates
                 )
             },
             loginsDiffer: distinct(try withLogin.map { try CredentialContent.hash(.password($0)) }),
@@ -135,8 +145,17 @@ nonisolated enum CredentialMerge {
             passkeysBefore: plan.survivor.passkeys.count,
             passkeysAfter: merged.passkeys.count,
             notesBefore: plan.survivor.notes?.count ?? 0,
-            notesAfter: merged.notes?.count ?? 0
+            notesAfter: merged.notes?.count ?? 0,
+            itemsBefore: plan.survivor.secureItems?.count ?? 0,
+            itemsAfter: merged.secureItems?.count ?? 0,
+            passwordsInHistory: passwords.subtracting(merged.password.map { [Data($0.utf8)] } ?? []).count,
+            codesInHistory: codes.subtracting(merged.totp.map { [codeKey($0)] } ?? []).count
         )
+    }
+
+    /// A code's secret and settings: two codes with the same key give the same numbers, whatever their labels.
+    private static func codeKey(_ code: TOTPGenerator) -> Data {
+        Data("\(code.algorithm.rawValue)/\(code.period)/\(code.digits)/".utf8) + code.secret
     }
 
     /// The merged credential: the survivor's account with the picked login, code and name, every passkey and note, and the websites
