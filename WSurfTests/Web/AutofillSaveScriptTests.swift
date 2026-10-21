@@ -555,7 +555,8 @@ struct AutofillSaveScriptTests {
             let text = try String(contentsOf: file, encoding: .utf8)
             #expect(!text.contains("testHooks: true"), "\(file.lastPathComponent)")
             if text.contains("testHooks: AppDatabase.isRunningTests") {
-                #expect(file.lastPathComponent == "AutofillSaveScript.swift")
+                // The input-history script keeps the same test-process default; its own tests check it ships without hooks.
+                #expect(["AutofillSaveScript.swift", "InputHistoryScript.swift"].contains(file.lastPathComponent), "\(file.lastPathComponent)")
             }
         }
     }
