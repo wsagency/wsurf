@@ -5,9 +5,9 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
-## 0.1.1 (build 3) — 2026-10-21
+## 0.1.4 (build 4) — 2026-10-21
 
-Everything since 0.1.1 (build 2), the installed candidate. None of the screens and prompts below has been checked by hand.
+Everything since 0.1.1 (build 2), the installed candidate; build 3 was never installed, and its changes are included. None of the screens and prompts below has been checked by hand.
 
 ### Passwords, passkeys and autofill
 

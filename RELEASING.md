@@ -326,15 +326,18 @@ Release requirements:
 - **Every candidate build has its own build number and changelog section.** A
   candidate is a local signed build, so it carries the Xcode project's values;
   this is the one place they change by hand. Each candidate build increments
-  `CURRENT_PROJECT_VERSION` (and sets `MARKETING_VERSION` when the version
-  changes) and adds its own `## <version> (build <n>) — <date>` section at the
-  top of `CHANGELOG.md`. `Tools/check-changelog.sh` runs in the candidate gate
-  and fails without that section. The release workflow still finds the section
+  `CURRENT_PROJECT_VERSION` and sets `MARKETING_VERSION`: while the version is
+  0.x, build N is `0.<minor>.N` (the 123rd build is `0.1.123`), and the
+  orchestrator proposes a minor bump (0.1 to 0.2) at checkpoints. Each candidate
+  adds its own `## <version> (build <n>) — <date>` section at the top of
+  `CHANGELOG.md`. `Tools/check-changelog.sh` runs in the candidate gate and
+  fails without that section, and for a 0.x version also when the patch number
+  differs from the build number. The release workflow still finds the section
   by its `## <version>` prefix.
 - **Every candidate build says which candidate it is.** The gate and the sign
   driver add two build settings to every `xcodebuild` call (build, test,
-  archive): `WSURF_CANDIDATE=<label>`, the orchestrator's label such as
-  `0.1.1-b3`, and `WSURF_COMMIT=$(git rev-parse --short=8 HEAD)`. They become the
+  archive): `WSURF_CANDIDATE=<label>`, the orchestrator's label (for now the
+  version, such as `0.1.4`), and `WSURF_COMMIT=$(git rev-parse --short=8 HEAD)`. They become the
   `WSurfCandidate` and `WSurfCommit` keys in `WSurf/Info.plist`, and the About
   panel and Settings › About show `Candidate <label> · <commit>` under the
   version. The defaults are `dev` and empty; a `dev` or empty candidate shows no
