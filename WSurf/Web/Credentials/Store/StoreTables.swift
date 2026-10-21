@@ -58,6 +58,11 @@ nonisolated enum StoreTables {
         return (try Stored.int(row[0]), StoreIDs(storeID: try Stored.uuid(row[1]), profileID: try Stored.uuid(row[2])))
     }
 
+    /// Raises `store_meta.schema` to `schema`; never lowers it.
+    static func raiseSchema(_ db: Database, to schema: Int) throws {
+        try db.execute(sql: "UPDATE store_meta SET schema = ? WHERE schema < ?", arguments: [schema, schema])
+    }
+
     // MARK: Vaults
 
     static func insertVault(_ db: Database, _ row: VaultRow) throws {

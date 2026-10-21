@@ -16,6 +16,10 @@ nonisolated struct CredentialDraft: Sendable {
     /// The cards, addresses and other items in order. A new item has an empty value for each member so it can be typed; empty values,
     /// and items left with nothing, are dropped on save.
     var secureItems: [SecureItem]
+    /// The files in order. One added here is already encrypted in the vault's folder; Save stores its record with the credential.
+    private(set) var attachments: [CredentialAttachment]
+    /// The files this editor added, so Cancel, or a save that left one out, removes what nothing refers to.
+    private(set) var addedFileIDs: Set<UUID> = []
     private(set) var totp: TOTPGenerator?
     private(set) var passkeys: [WebsitePasskey]
     let revision: UInt64
@@ -39,6 +43,7 @@ nonisolated struct CredentialDraft: Sendable {
         notes = account?.notes ?? []
         secureItems = account?.secureItems ?? []
         originalSecureItems = account?.secureItems ?? []
+        attachments = account?.attachments ?? []
         passkeys = account?.passkeys ?? []
         usernameIsConcealed = account?.basicAuthenticationMetadata?.username?.fieldType == .concealedString
         reportedCreatedAt = account.flatMap { try? CredentialContent.exchangeMetadata($0) }?.created
@@ -109,6 +114,17 @@ nonisolated struct CredentialDraft: Sendable {
         secureItems.remove(at: index)
     }
 
+    mutating func addAttachment(_ file: CredentialAttachment) {
+        guard attachments.count < CredentialAttachment.entryLimit, !attachments.contains(where: { $0.id == file.id }) else { return }
+        attachments.append(file)
+        addedFileIDs.insert(file.id)
+    }
+
+    /// The file leaves the credential when it is saved; its earlier version keeps it, so History and Undo can bring it back.
+    mutating func removeAttachment(_ id: UUID) {
+        attachments.removeAll { $0.id == id }
+    }
+
     /// Adds an empty value of `member` to the item at `index`, when the item has none: a member the exporter left out. It goes in the
     /// SDK's member order, the order an import keeps, so the item exports and imports back unchanged.
     mutating func addMember(_ member: SecureItemMember, toItem index: Int) {
@@ -174,7 +190,8 @@ nonisolated struct CredentialDraft: Sendable {
         }
         let blank = { (text: String) in text.allSatisfy(\.isWhitespace) }
         return !(username.isEmpty && displayName == nil && password == nil && blank(websites) && blank(extraOrigins)
-            && totp == nil && passkeys.isEmpty && notes.allSatisfy { $0.text.isEmpty } && Self.keptItems(secureItems).isEmpty)
+            && totp == nil && passkeys.isEmpty && notes.allSatisfy { $0.text.isEmpty } && Self.keptItems(secureItems).isEmpty
+            && attachments.isEmpty)
     }
 
     func account() throws -> CredentialAccount {
@@ -214,6 +231,7 @@ nonisolated struct CredentialDraft: Sendable {
             let items = Self.keptItems(secureItems)
             result.secureItems = items.isEmpty ? nil : items
         }
+        result.attachments = attachments.isEmpty ? nil : attachments
         try result.validate()
         return result
     }
@@ -297,6 +315,9 @@ extension CredentialDraft {
             notes.append(note)
         case .secureItems:
             secureItems = version.secureItems ?? []
+        case .files:
+            // The earlier list's files are still in the vault's folder: its revision names them.
+            attachments = version.attachments ?? []
         }
     }
 

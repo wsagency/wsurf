@@ -13,6 +13,7 @@ nonisolated enum CredentialMergeError: Error, Equatable, Sendable {
     case noteLimit
     case itemLimit
     case linkLimit
+    case fileLimit
 }
 
 /// What the user chose for a merge. Every pick names one of the credentials being merged.
@@ -256,6 +257,15 @@ nonisolated enum CredentialMerge {
             let items = try (survivor.secureItems ?? []).uniting(others.flatMap { $0.secureItems ?? [] })
             guard items.count <= SecureItem.itemLimit else { throw CredentialMergeError.itemLimit }
             result.secureItems = items.isEmpty ? nil : items
+
+            // Files go to the primary too: each encrypted file once (the same id), none dropped. The others' Trash entries name them as
+            // well, so they stay on disk until both are gone.
+            var files = survivor.attachments ?? []
+            for file in others.flatMap({ $0.attachments ?? [] }) where !files.contains(where: { $0.id == file.id }) {
+                files.append(file)
+            }
+            guard files.count <= CredentialAttachment.entryLimit else { throw CredentialMergeError.fileLimit }
+            result.attachments = files.isEmpty ? nil : files
 
             let added = included + offered.filter(picks.extraWebsites.contains)
             result.origins += added

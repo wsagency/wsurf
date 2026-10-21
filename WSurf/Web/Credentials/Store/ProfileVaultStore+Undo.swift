@@ -104,7 +104,7 @@ extension ProfileVaultStore {
             case .passkey:
                 let passkey = try Self.decode(WebsitePasskey.self, from: value)
                 result.passkeys.removeAll { $0.id == passkey.id }
-            case .account, .metadata:
+            case .account, .metadata, .attachment:
                 throw CredentialStoreError.malformed
             }
         }

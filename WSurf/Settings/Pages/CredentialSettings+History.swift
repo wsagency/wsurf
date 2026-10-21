@@ -118,6 +118,8 @@ struct CredentialHistoryPanel: View {
             RowSeparator()
             itemsRow(from, draft, reveals: reveals)
             RowSeparator()
+            filesRow(from, draft)
+            RowSeparator()
             Text("Passkeys have no earlier versions; a removed passkey is in Trash.")
                 .font(Theme.Font.label)
                 .foregroundStyle(.secondary)
@@ -261,6 +263,32 @@ struct CredentialHistoryPanel: View {
                     }
                 }
             }
+        }
+    }
+
+    /// The files of the version by name and size. "Use This" puts the whole list back: the earlier files are still in the vault's folder.
+    private func filesRow(_ from: CredentialAccount, _ draft: CredentialDraft) -> some View {
+        let held = from.attachments ?? []
+        let now = Set(draft.attachments.map(\.id))
+        return VersionFieldRow(
+            title: "Files", differs: held.map(\.id) != draft.attachments.map(\.id), offersUse: !held.isEmpty, use: { use(.files) }
+        ) {
+            VStack(alignment: .leading, spacing: 4) {
+                if held.isEmpty {
+                    Text("None").foregroundStyle(.secondary)
+                }
+                ForEach(held) { file in
+                    HStack(spacing: 6) {
+                        if !now.contains(file.id) {
+                            Image(systemName: "minus.circle").foregroundStyle(.secondary).accessibilityLabel("Not in the current credential")
+                        }
+                        Text(verbatim: file.name).lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 4)
+                        Text(verbatim: ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .font(Theme.Font.label)
         }
     }
 

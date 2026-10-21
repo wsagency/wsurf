@@ -97,11 +97,14 @@ nonisolated struct RegistryCatalog: Equatable, Sendable {
     var ids: StoreIDs
     var revision: UInt64
     var vaults: [RegistryEntry]
+    /// `StoreFormat.schema`, or `StoreFormat.fileSchema` once the store holds a file. Only ever raised: every rewrite starts from the
+    /// decoded catalog.
+    var schema = StoreFormat.schema
 
     /// Fixed field order; vaults sorted by their 16 raw id bytes, so the input order never matters.
     func encode() -> Data {
         var writer = StoreWriter()
-        writer.u64(UInt64(StoreFormat.schema))
+        writer.u64(UInt64(schema))
         ids.write(to: &writer)
         writer.u64(revision)
         writer.array(vaults.sorted { $0.vaultID.rawBytes.lexicographicallyPrecedes($1.vaultID.rawBytes) }) { writer, entry in
@@ -117,10 +120,12 @@ nonisolated struct RegistryCatalog: Equatable, Sendable {
         return writer.data
     }
 
-    /// Strict inverse of `encode()`: a foreign schema, an unsorted or repeated vault id and trailing bytes are malformed.
+    /// Strict inverse of `encode()`: a schema other than `StoreFormat.schema` or `fileSchema`, an unsorted or repeated vault id and
+    /// trailing bytes are malformed.
     static func decode(_ data: Data) throws -> RegistryCatalog {
         var reader = StoreReader(data)
-        guard try reader.u64() == UInt64(StoreFormat.schema) else { throw CredentialStoreError.malformed }
+        let schema = try reader.u64()
+        guard schema == UInt64(StoreFormat.schema) || schema == UInt64(StoreFormat.fileSchema) else { throw CredentialStoreError.malformed }
         let ids = try StoreIDs.read(from: &reader)
         let revision = try reader.u64()
         let vaults = try reader.array(maxCount: 2 * StoreFormat.activeVaultLimit) { reader in
@@ -139,7 +144,7 @@ nonisolated struct RegistryCatalog: Equatable, Sendable {
         for (previous, next) in zip(vaults, vaults.dropFirst()) {
             guard previous.vaultID.rawBytes.lexicographicallyPrecedes(next.vaultID.rawBytes) else { throw CredentialStoreError.malformed }
         }
-        return RegistryCatalog(ids: ids, revision: revision, vaults: vaults)
+        return RegistryCatalog(ids: ids, revision: revision, vaults: vaults, schema: Int(schema))
     }
 }
 

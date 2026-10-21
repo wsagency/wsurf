@@ -21,7 +21,7 @@ nonisolated enum CredentialListFilter: CaseIterable, Hashable, Sendable {
     case documents
     /// Wi-Fi networks, API and SSH keys, and custom fields.
     case otherItems
-    /// Entries with attached files. Its chip stays hidden: no entry holds a file until attachments exist.
+    /// Entries with attached files. Its chip shows while one does.
     case files
 
     /// A narrower kind whose chip is shown only while some entry holds one. The sections (Logins, Identities, Cards, Addresses,
@@ -66,7 +66,7 @@ nonisolated enum CredentialListFilter: CaseIterable, Hashable, Sendable {
         case .otherItems:
             summary.itemKinds.contains { $0 == .wifi || $0 == .apiKey || $0 == .sshKey || $0 == .customFields }
         case .files:
-            false
+            summary.fileCount > 0
         }
     }
 

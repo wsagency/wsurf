@@ -119,6 +119,8 @@ extension StoreFailCause {
             "An upgrade of the older vault didn’t finish."
         case .witnessMismatch:
             "The credential store doesn’t match its own records, so it may have been replaced or rolled back."
+        case .newerVersion:
+            "These credentials were saved by a newer version of WSurf. Update WSurf to open them. Nothing was changed."
         }
     }
 }

@@ -149,4 +149,6 @@ nonisolated enum CredentialHistoryField: Equatable, Sendable {
     case note(Int)
     /// The whole list of cards, addresses and other items.
     case secureItems
+    /// The whole list of files.
+    case files
 }

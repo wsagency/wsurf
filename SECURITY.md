@@ -74,6 +74,17 @@ your report.
     chosen entries and their earlier versions with identifier-only records,
     and older database pages, backups and the pre-upgrade backup may still
     hold the data.
+  - Files. An entry's files are separate encrypted files beside the store
+    (`Credentials.blobs`), each under its own key, which only the sealed
+    entry holds, wrapped under a key derived from the vault key. A file is
+    decrypted only when the person previews, opens or saves a copy of it;
+    Quick Look and Open With get a copy in a private folder of the user's
+    Caches that WSurf removes when the preview closes, when a vault locks,
+    at quit and at the next launch, but the app it was opened in may keep
+    its own copy. A file is removed once no entry, earlier version or Trash
+    entry names it (after a purge, Delete Vault or an unsaved edit); like a
+    purge this is a logical removal, and backups keep the ciphertext. No
+    assistant or MCP tool reaches a file.
   - Bounds and exchange. Per vault: 1,000 accounts, 4,000,000 bytes of live
     data, 32 wrappers; 16 active vaults per profile (each Trash in addition);
     a history row is capped at 8,000,000 bytes and history has no count

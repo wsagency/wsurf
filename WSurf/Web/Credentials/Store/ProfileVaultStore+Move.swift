@@ -191,7 +191,7 @@ nonisolated extension CommitTransaction {
         case .passkey:
             guard let passkey = account.passkeys.first(where: { $0.id == passkeyID }) else { throw CredentialVaultError.invalidData }
             return try CredentialContent.canonicalJSON(passkey)
-        case .account, .metadata:
+        case .account, .metadata, .attachment:
             throw CredentialVaultError.invalidData
         }
     }

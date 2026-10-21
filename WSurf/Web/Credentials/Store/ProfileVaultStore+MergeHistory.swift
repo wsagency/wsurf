@@ -110,7 +110,7 @@ nonisolated extension CommitTransaction {
         case .totp:
             guard let code = try? JSONDecoder().decode(TOTPGenerator.self, from: value) else { return Data("r".utf8) + value }
             return Data("t\(code.algorithm.rawValue)/\(code.period)/\(code.digits)/".utf8) + code.secret
-        case .account, .passkey, .metadata, .note, .secureItem:
+        case .account, .passkey, .metadata, .note, .secureItem, .attachment:
             return nil
         }
     }

@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppleSpeechVoiceCatalog.shared.prepare()
         guard !isRunningTests else { return }
+        // Decrypted vault files an earlier run showed and could not remove (a crash, a forced quit).
+        VaultFilePreviewFolder.shared.removeLeftovers()
         NSApp.setActivationPolicy(.regular)
         guard MoveToApplications.offerIfNeeded() != .relaunching else { return }
         Task {
@@ -86,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         guard !isRunningTests else { return }
+        VaultFilePreviewFolder.shared.removeAll()
         application.finishTermination()
     }
 }

@@ -670,6 +670,28 @@ final class CredentialManager {
         try await reading { access in try await store.revisionLog(vaultID: vaultID, using: access) }
     }
 
+    // MARK: - Files (this manager's lease only)
+
+    /// Encrypts `source` into the vault's folder; the record is stored by the commit that saves the entry holding it.
+    func addAttachment(from source: URL) async throws -> CredentialAttachment {
+        try await reading { access in try await store.addAttachment(vaultID: vaultID, from: source, using: access) }
+    }
+
+    /// Decrypts `file` into `destination`: Save Copy…, or a private copy for Quick Look and Open With.
+    func readAttachment(_ file: CredentialAttachment, to destination: URL) async throws {
+        try await reading { access in try await store.readAttachment(vaultID: vaultID, file, to: destination, using: access) }
+    }
+
+    /// Removes those of `ids` that nothing in the vault refers to: the files an editor added and did not save.
+    func discardAttachments(_ ids: Set<UUID>) async throws {
+        _ = try await reading { access in try await store.sweepAttachments(vaultID: vaultID, only: ids, using: access) }
+    }
+
+    /// Whether `file`'s encrypted file is on disk (a stat). A restore from a backup that lacks it shows "File missing".
+    func hasAttachment(_ file: CredentialAttachment) -> Bool {
+        store.hasBlob(file, vaultID: vaultID)
+    }
+
     /// A purge needs a fresh assertion of an enrolled passkey on top of the unlock: a cached lease alone never purges.
     func purge(entryIDs: [UUID], emptyAll: Bool, in anchor: @autoclosure () -> ASPresentationAnchor) async throws -> PurgeReceipt {
         let access = try currentAccess()
@@ -747,6 +769,8 @@ final class CredentialManager {
         timer?.cancel()
         timer = nil
         native.cancel()
+        // Decrypted copies shown in Quick Look or handed to another app end with the lease.
+        VaultFilePreviewFolder.shared.removeAll()
         VaultStateChanges.shared.note(profile.id)
         let store = store
         Task { for access in revoked { await store.lock(ifUsing: access) } }

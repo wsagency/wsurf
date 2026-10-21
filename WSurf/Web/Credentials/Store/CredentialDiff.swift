@@ -8,7 +8,7 @@ nonisolated enum PersistenceClass: Equatable, Sendable {
 }
 
 /// The earlier value being superseded: `superseded` is the canonical JSON of exactly one typed value
-/// (`PasswordValue`, `TOTPGenerator`, `[CredentialNote]` or `MetadataProjection`).
+/// (`PasswordValue`, `TOTPGenerator`, `[CredentialNote]`, `[SecureItem]`, `[CredentialAttachment]` or `MetadataProjection`).
 nonisolated struct RevisionDraft: Equatable, Sendable {
     let ownerID: UUID
     let subject: RecordSubject
@@ -128,9 +128,10 @@ nonisolated enum CredentialDiff {
             let totpChanged = try compareTOTP(old, new)
             let notesChanged = try compareNotes(old, new)
             let itemsChanged = try compareSecureItems(old, new)
+            let filesChanged = try compareAttachments(old, new)
             let metadataChanged = try compareMetadata(old, new)
             let passkeysChanged = try comparePasskeys(old, new)
-            if passwordChanged || totpChanged || notesChanged || itemsChanged || metadataChanged || passkeysChanged {
+            if passwordChanged || totpChanged || notesChanged || itemsChanged || filesChanged || metadataChanged || passkeysChanged {
                 semantic = true
                 setsModifiedAt.insert(new.id)
             }
@@ -195,6 +196,17 @@ nonisolated enum CredentialDiff {
                 removals.append(delete)
             } else if let previous = old.secureItems {
                 revisions.append(RevisionDraft(ownerID: old.id, subject: .secureItem, superseded: try CredentialContent.canonicalJSON(previous)))
+            }
+            return true
+        }
+
+        /// Files are one list like the items, but with no Trash of their own: any change (a file added, removed or renamed) keeps the
+        /// earlier list as a revision. The revision still names the earlier files, so they stay on disk (`ProfileVaultStore.referencedBlobs`)
+        /// and History or an undo can bring one back.
+        private mutating func compareAttachments(_ old: CredentialAccount, _ new: CredentialAccount) throws -> Bool {
+            guard try CredentialContent.hash(.attachments(old)) != CredentialContent.hash(.attachments(new)) else { return false }
+            if let previous = old.attachments {
+                revisions.append(RevisionDraft(ownerID: old.id, subject: .attachment, superseded: try CredentialContent.canonicalJSON(previous)))
             }
             return true
         }

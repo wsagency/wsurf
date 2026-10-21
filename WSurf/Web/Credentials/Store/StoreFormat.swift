@@ -4,7 +4,12 @@
 import Foundation
 
 nonisolated enum StoreFormat {
+    /// The format every row, head, journal and registry is sealed and authenticated under. Frozen: the AADs carry it.
     static let schema = 2, wrapperFormat = 1
+    /// What the registry and `store_meta` say once a vault of the store has saved a file (owner decision 8). A build that predates files
+    /// (0.1.5) accepts only `schema` in the registry, so it refuses the whole store instead of dropping the files on its next edit; a
+    /// store that says more than this is from a newer WSurf and is refused here (`StoreFailCause.newerVersion`).
+    static let fileSchema = 3
     static let rowLabel = "WSurf credential store", registryLabel = "WSurf registry v1"
     static let busyTimeoutMS = 5000, historyPage = 50, nameLimit = 64, activeVaultLimit = 16
     static let journalOpsPerRow = 1000, historyRowBytes = 8_000_000, blockedOriginLimit = 4_096
@@ -72,7 +77,7 @@ nonisolated enum RecordKind: UInt8, Sendable {
 }
 
 nonisolated enum RecordSubject: UInt8, Codable, Sendable {
-    case account = 1, password, totp, passkey, metadata, note, secureItem
+    case account = 1, password, totp, passkey, metadata, note, secureItem, attachment
 
     var sqlName: String {
         switch self {
@@ -90,6 +95,8 @@ nonisolated enum RecordSubject: UInt8, Codable, Sendable {
             "note"
         case .secureItem:
             "secureItem"
+        case .attachment:
+            "attachment"
         }
     }
 
@@ -109,6 +116,8 @@ nonisolated enum RecordSubject: UInt8, Codable, Sendable {
             self = .note
         case "secureItem":
             self = .secureItem
+        case "attachment":
+            self = .attachment
         default:
             return nil
         }

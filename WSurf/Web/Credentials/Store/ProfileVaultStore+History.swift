@@ -421,7 +421,7 @@ extension ProfileVaultStore {
                 return block
             }
             return otherAccountBlock(itemIDs: [body.exchangeItemID, passkey.base?.itemID], username: passkey.userName)
-        case .account, .metadata:
+        case .account, .metadata, .attachment:
             throw CredentialStoreError.malformed
         }
     }
@@ -513,7 +513,7 @@ extension ProfileVaultStore {
             owner.secureItems = try decode([SecureItem].self, from: value)
         case .passkey:
             owner.passkeys.append(try decode(WebsitePasskey.self, from: value))
-        case .account, .metadata:
+        case .account, .metadata, .attachment:
             throw CredentialStoreError.malformed
         }
         var result = accounts
@@ -537,6 +537,9 @@ extension ProfileVaultStore {
             account.notes = try decode([CredentialNote].self, from: value)
         case .secureItem:
             account.secureItems = try decode([SecureItem].self, from: value)
+        case .attachment:
+            // The earlier list names its files, which stay on disk while any revision names them: the reference comes back.
+            account.attachments = try decode([CredentialAttachment].self, from: value)
         case .metadata:
             let details = try decode(MetadataProjection.self, from: value)
             account.displayName = details.displayName

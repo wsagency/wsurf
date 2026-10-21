@@ -61,6 +61,8 @@ nonisolated enum StoreAnchors {
 
     private nonisolated enum Store {
         case absent, present(StoreIDs), unreadable
+        /// A readable `store_meta` whose schema is past `StoreFormat.fileSchema`.
+        case newer
     }
 
     /// A3 is present when its object exists, whatever its type; only a string parsing as a UUID can ever agree.
@@ -94,6 +96,9 @@ nonisolated enum StoreAnchors {
 
         let vault = readVault(url(directory, Names.vault), profileID: profileID)
         let store = readStore(url(directory, Names.store))
+        if case .newer = store {
+            return closed(.newerVersion)  // before anything could read or write a format this build doesn't know
+        }
         if case .wrongProfile = vault {
             return closed(.wrongProfile)
         }
@@ -105,8 +110,8 @@ nonisolated enum StoreAnchors {
         switch (vault, store) {
         case (.unreadable, _), (.wrongProfile, _):
             return closed(.unreadableVault)  // row 11 (wrongProfile returned above)
-        case (_, .unreadable):
-            return closed(.unreadableStore)  // row 12
+        case (_, .unreadable), (_, .newer):
+            return closed(.unreadableStore)  // row 12 (`.newer` returned above)
         case (.v1(let vaultID), .absent):
             if case .absent = witness { return .legacy(vaultID: vaultID) }  // row 1
             return closed(.v1AfterMigration)  // row 2
@@ -217,7 +222,7 @@ nonisolated enum StoreAnchors {
         do {
             let queue = try DatabaseQueue(path: file.absoluteString + "?immutable=1", configuration: configuration)
             guard let meta = try queue.read({ (db: Database) throws in try StoreTables.storeMeta(db) }) else { return .unreadable }
-            return .present(meta.ids)
+            return meta.schema > StoreFormat.fileSchema ? .newer : .present(meta.ids)
         } catch {
             return .unreadable
         }

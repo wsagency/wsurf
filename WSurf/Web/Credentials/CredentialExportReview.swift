@@ -66,6 +66,12 @@ nonisolated extension CredentialExportSelection {
         return SecureItemKind.allCases.filter(held.contains)
     }
 
+    /// The files the selected credentials hold. An export carries none (owner decision 4): the sheet says so, and each file has Save
+    /// Copy… in the editor.
+    static func fileCount(_ selection: [UUID: CredentialExportSelection], in summaries: [CredentialSummary]) -> Int {
+        summaries.reduce(0) { $0 + (selection[$1.id]?.hasParts == true ? $1.fileCount : 0) }
+    }
+
     /// Whether `selection` sends a card or an identity document of `summaries`, which needs Touch ID first.
     static func sendsSensitiveItems(_ selection: [CredentialExportSelection], in summaries: [CredentialSummary]) -> Bool {
         let sensitive = Set(summaries.filter(\.hasSensitiveItems).map(\.id))

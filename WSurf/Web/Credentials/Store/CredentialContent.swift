@@ -41,6 +41,7 @@ nonisolated enum CredentialPart: Equatable, Sendable {
     case metadata(CredentialAccount)
     case note(CredentialAccount)
     case secureItems(CredentialAccount)
+    case attachments(CredentialAccount)
 }
 
 /// §12.3 content hash: SHA-256 over `StoreWriter` bytes (u8 part tag, then the fields in a fixed order). No JSON is hashed.
@@ -111,6 +112,19 @@ nonisolated enum CredentialContent {
                         writer.text(field.value)
                         writer.optional(field.field, writeField)
                     }
+                }
+            }
+        case let .attachments(account):
+            // Tag 7. Every file in order: the encrypted file it names, its name, type, size and plaintext digest. The wrapped key is
+            // not content: it only opens the file the id names.
+            writer.u8(7)
+            writer.optional(account.attachments) { writer, files in
+                writer.array(files) { writer, file in
+                    writer.uuid(file.id)
+                    writer.text(file.name)
+                    writer.text(file.contentType)
+                    writer.u64(UInt64(clamping: file.size))
+                    writer.bytes(file.sha256)
                 }
             }
         }
