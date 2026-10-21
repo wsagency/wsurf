@@ -187,7 +187,7 @@ final class BrowserModel {
                 noteOpened(opened, by: tab)
             }
         }
-        tab.onOpenInChromium = { [weak self, weak tab] url in tab.map { self?.openInChromium(url, from: $0) } }
+        tab.onOpenInChromium = { [weak self, weak tab] url in if let tab { self?.openInChromium(url, from: tab) } }
         tab.onOpenInNewWindow = { [weak self, weak tab] url, isPrivate in
             guard let tab, !tab.isClosed else { return }
             self?.onOpenInNewWindow?(tab, url, isPrivate)
