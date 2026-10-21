@@ -193,27 +193,42 @@ extension BrowserTab {
 
     private func offerChromiumExternalApp(_ url: URL, sourceURL: URL?, sourceFrame: BrowserFrame?) {
         let view = page
-        guard let chromium = view.chromium, let client = chromium.client,
-              let native = client.externalAppSnapshot(for: sourceFrame) else {
+        guard let chromium = view.chromium, let client = chromium.client else {
             ExternalApp.noteDropped(url, .stale)
             return
         }
-        let source = native.sourceIsUnique ? sourceFrame : nil
+        let document = committedNavigation
+        let source: BrowserFrame?
+        let requestIsCurrent: () -> Bool
+        if document == nil, sourceFrame == nil {
+            // Nothing committed yet (a fresh tab's first redirect): no document can prove it, and the DevTools frame map
+            // can still be empty (the startup page may commit before Page.enable). No newer main-frame navigation is the
+            // proof, as WebKit's first redirect; the request names no site, so nothing can be remembered.
+            let generation = chromium.mainFrameGeneration
+            source = nil
+            requestIsCurrent = { chromium.mainFrameGeneration == generation }
+        } else {
+            guard let native = client.externalAppSnapshot(for: sourceFrame) else {
+                ExternalApp.noteDropped(url, .stale)
+                return
+            }
+            source = native.sourceIsUnique ? sourceFrame : nil
+            // ponytail: ambiguous initiators bind every live native document until CEF can prove the source.
+            let snapshot = source.map { [$0] } ?? chromium.devTools.frameSnapshot()
+            // DevTools renderer RPCs are suspended by an unrelated pending top-level navigation.
+            requestIsCurrent = {
+                client.isCurrentExternalAppSnapshot(native.documents) && chromium.devTools.isCurrent(snapshot: snapshot)
+            }
+        }
         let candidate = SitePermissions.webOrigin(for: sourceURL)
         let origin = source.map { ChromiumClient.sameOrigin(candidate, $0.securityOrigin) } == true ? candidate : ""
-        let document = committedNavigation
-        // ponytail: ambiguous initiators bind every live native document until CEF can prove the source.
-        let snapshot = source.map { [$0] } ?? chromium.devTools.frameSnapshot()
         Task { [weak self, weak view] in
             guard let self, !isClosed, let view, liveView === view else {
                 ExternalApp.noteDropped(url, .tabClosed)
                 return
             }
             await ExternalApp.offerToOpen(url, from: origin, policy: externalApps, in: view.window, isCurrent: {
-                // DevTools renderer RPCs are suspended by an unrelated pending top-level navigation.
-                client.isCurrentExternalAppSnapshot(native.documents)
-                    && chromium.devTools.isCurrent(snapshot: snapshot)
-                    && !self.isClosed && self.liveView === view && self.committedNavigation === document
+                requestIsCurrent() && !self.isClosed && self.liveView === view && self.committedNavigation === document
             })
         }
     }

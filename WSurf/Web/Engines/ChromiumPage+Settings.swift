@@ -40,6 +40,9 @@ extension ChromiumPage {
         }
         // An override without metadata makes Chromium drop every Sec-CH-UA header and empty `navigator.userAgentData`, a
         // classic spoofing signal. So the engine's own string is never overridden, and any other carries client hints.
+        // Known gap: service workers keep the engine's string. Chromium fixes a service worker's `navigator.userAgent` from
+        // the browser's own user agent when it starts, which no DevTools session reaches, and a launch-time `--user-agent`
+        // would instead blank the high-entropy client hints (platform version, architecture, full versions) everywhere.
         if userAgent != genuineUserAgent {
             var params: [String: Any] = ["userAgent": userAgent]
             if let metadata = Self.userAgentMetadata(product: version["product"] as? String, userAgent: userAgent) {

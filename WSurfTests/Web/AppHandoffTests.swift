@@ -117,6 +117,66 @@ struct AppHandoffTests {
         #expect(store.externalAppRecords.isEmpty)
     }
 
+    /// A fresh Chromium tab has no committed document to bind; the request lasts until another main-frame navigation.
+    @Test(arguments: [false, true])
+    func aFreshChromiumTabOffersARedirectStraightToAnAppOnce(anotherNavigationStarts: Bool) async throws {
+        let externalURL = URL(string: "slack://open")!
+        let response = ResponseGate()
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/redirect": .redirect(to: externalURL),
+            "/waiting": .html("<title>Next navigation</title>", gate: response),
+        ])
+        let file = URL.temporaryDirectory.appending(path: "FreshCEFRedirectApp-\(UUID().uuidString).json")
+        let store = SitePermissions(storageURL: file)
+        store.setEngine(.chromium, for: SitePermissions.origin(for: try server.url()))
+        let tab = BrowserTab(opensBlank: false, privately: true, sitePermissions: store)
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 800, height: 600),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.orderFront(nil)
+        var presenter: CheckedContinuation<NSApplication.ModalResponse, Never>?
+        var prompts = 0
+        var opened: [URL] = []
+        ExternalApp.resolverForTesting = { _ in
+            .init(url: URL(filePath: "/Applications/Slack.app"), name: "Slack", bundleIdentifier: "com.tinyspeck.slackmacgap")
+        }
+        ExternalApp.presenterForTesting = { alert in
+            prompts += 1
+            #expect(!alert.showsSuppressionButton, "a request no document proves names no site")
+            return await withCheckedContinuation { presenter = $0 }
+        }
+        ExternalApp.openerForTesting = { opened.append($0) }
+        defer {
+            presenter?.resume(returning: .alertSecondButtonReturn)
+            ExternalApp.resolverForTesting = nil
+            ExternalApp.presenterForTesting = nil
+            ExternalApp.openerForTesting = nil
+            response.open()
+            tab.detach()
+            window.close()
+            try? FileManager.default.removeItem(at: file)
+            withExtendedLifetime(server) {}
+        }
+        tab.load(try server.url("/redirect"))
+        window.contentView = tab.page
+        try #require(await waitUntil { presenter != nil })
+        #expect(tab.page.engine == .chromium)
+        #expect(tab.committedNavigation == nil)
+        if anotherNavigationStarts {
+            tab.load(try server.url("/waiting"))
+            try #require(await waitUntil { response.requestCount == 1 })
+        }
+        presenter?.resume(returning: .alertFirstButtonReturn)
+        presenter = nil
+        try #require(await waitUntil { !ExternalApp.hasPendingOfferForTesting })
+        #expect(prompts == 1)
+        #expect(opened == (anotherNavigationStarts ? [] : [externalURL]))
+        #expect(store.externalAppRecords.isEmpty)
+        response.open()
+        tab.detach()
+        await tab.waitForRetirement()
+    }
+
     @Test func aLinkToAnAppIsOffered() async throws {
         let seen = try await asked(for: "/link", routes: [
             "/link": .html(
@@ -472,9 +532,7 @@ struct AppHandoffTests {
             if source == .opaqueOrigin {
                 try await activateOpaqueFrameLink(in: tab)
             } else {
-                _ = try await chromium.devTools.evaluate(
-                    "document.querySelector('iframe').contentWindow.postMessage('handoff', '*'); true", in: nil, world: .page,
-                    userGesture: true)
+                try await replayHandoffClick(source, in: chromium, frameURL: frameURL)
             }
         }
         for expectedPrompts in 1...2 {
@@ -745,6 +803,23 @@ struct AppHandoffTests {
         #expect(!tab.externalApps.allows(app, from: SitePermissions.origin(for: frameURL)))
         await store.waitForPendingSave()
         #expect(SitePermissions(storageURL: file).externalAppRecords.isEmpty)
+    }
+
+    /// Replays the person's click in the frame that navigates the top page. A cross-origin frame needs it there: a click
+    /// in the top page activates only that page, its ancestors and its same-origin frames (HTML user activation), and
+    /// Chromium blocks a cross-origin frame's top navigation without activation of its own, before `on_before_browse`.
+    private func replayHandoffClick(_ source: UnattributedSource, in chromium: ChromiumPage, frameURL: URL) async throws {
+        guard source == .noReferrer || source == .duplicateURL else {
+            _ = try await chromium.devTools.evaluate(
+                "document.querySelector('iframe').contentWindow.postMessage('handoff', '*'); true", in: nil, world: .page,
+                userGesture: true)
+            return
+        }
+        let frames = try await chromium.devTools.frames()
+        let frame = try #require(frames.first { $0.request.url == frameURL })
+        // A subframe's page world takes an expression only.
+        _ = try await chromium.devTools.evaluate(
+            "(window.postMessage('handoff', '*'), true)", in: frame, world: .page, userGesture: true)
     }
 
     private func activateOpaqueFrameLink(in tab: BrowserTab) async throws {
