@@ -215,6 +215,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             modifiers: [.command, .option]
         ))
         menu.addItem(command("Show Lyrics", #selector(toggleLyrics), key: "y", modifiers: [.command, .option]))
+        menu.addItem(submenu(playerCornerMenu(), titled: "Move Player to Corner"))
         menu.addItem(.separator())
         let developer = NSMenu()
         developer.addItem(command("Restart Page", #selector(restartPage)))
@@ -235,6 +236,17 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(.separator())
         menu.addItem(command("Exit Split", #selector(exitSplit)))
         menu.addItem(command("Close Other Pages", #selector(closeOtherPanes)))
+        return menu
+    }
+
+    /// The keyboard route to what dragging does: one item per corner, the current one checked.
+    private func playerCornerMenu() -> NSMenu {
+        let menu = NSMenu()
+        for corner in MediaPlayerCorner.allCases {
+            let item = command(corner.title, #selector(movePlayerToCorner(_:)))
+            item.representedObject = corner.rawValue
+            menu.addItem(item)
+        }
         return menu
     }
 
@@ -378,6 +390,11 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func toggleAgentInspector() {
         coordinator.toggleAgentInspector()
     }
+    @objc private func movePlayerToCorner(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let corner = MediaPlayerCorner(rawValue: raw) else { return }
+        coordinator.movePlayer(to: corner)
+    }
+
     @objc private func toggleLyrics() {
         coordinator.toggleLyrics()
     }
@@ -547,6 +564,11 @@ final class MainMenu: NSObject, NSMenuItemValidation {
                 : "Show Assistant"
             menuItem.title = String(localized: activityTitle)
             return true
+        case #selector(movePlayerToCorner(_:)):
+            menuItem.state = (menuItem.representedObject as? String) == coordinator.settings.mediaPlayerCorner.rawValue
+                ? .on
+                : .off
+            return coordinator.canMovePlayer
         case #selector(toggleLyrics):
             let lyricsTitle: LocalizedStringResource = coordinator.sidePanel.isShowing(.lyrics)
                 ? "Hide Lyrics"

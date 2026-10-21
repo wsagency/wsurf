@@ -107,8 +107,115 @@ struct MediaSidebarCard: View {
 
     @State private var buttonFrame: CGRect = .zero
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The panel's own size, so a drop can tell which corner it is nearest.
+    @State private var panelSize: CGSize = .zero
+
+    /// How far the pointer has carried the panel since it was picked up, while it is.
+    @State private var carried: CGSize?
+
     private var isStowed: Bool {
         sidebarStyle != .full
+    }
+
+    /// The player moves while the video experiment is on. Without it the panel stays docked.
+    private var isMovable: Bool {
+        coordinator.settings.showsVideoInPlayer
+    }
+
+    private var corner: MediaPlayerCorner {
+        isMovable ? coordinator.settings.mediaPlayerCorner : .dock
+    }
+
+    /// The panel has left the dock and rests over the page. It then neither covers the sidebar nor hides behind the
+    /// stowed button, and it stays where it is when the sidebar goes away.
+    private var isUndocked: Bool {
+        corner != .dock
+    }
+
+    private var snap: Animation? {
+        reduceMotion ? nil : Theme.Motion.settle
+    }
+
+    private var page: CGRect {
+        coordinator.sidebarDrag.contentFrameInWindow
+    }
+
+    private var window: CGRect {
+        coordinator.shellFrameInWindow
+    }
+
+    private var hasMeasured: Bool {
+        panelSize.width > 0 && buttonFrame.width > 0 && page.width > 0 && window.width > 0
+    }
+
+    /// Where the sidebar's layout puts the panel before any offset: against the left of the dock's anchor, resting on its
+    /// bottom. The anchor is the stowed button or, in the full sidebar, a point above the profile row.
+    private var naturalOrigin: CGPoint {
+        CGPoint(x: buttonFrame.minX, y: buttonFrame.maxY - panelSize.height)
+    }
+
+    /// The stowed panel stands above its button.
+    private var stowedOffset: CGFloat {
+        isStowed ? -(Self.buttonHeight + 6) : 0
+    }
+
+    /// Where the top left of the panel rests in `corner`, in window coordinates. The dock is where the sidebar puts it.
+    private func restingOrigin(of corner: MediaPlayerCorner) -> CGPoint {
+        guard corner != .dock else {
+            return CGPoint(x: naturalOrigin.x, y: naturalOrigin.y + stowedOffset)
+        }
+        return MediaPlayerPlacement.origin(of: corner, size: panelSize, page: page, window: window)
+    }
+
+    /// How far the panel sits from where the sidebar's layout would put it. Docked and still, that is only the stowed
+    /// offset, with no measurement to go wrong.
+    private var displacement: CGSize {
+        guard isUndocked || carried != nil, hasMeasured else {
+            return CGSize(width: 0, height: isUndocked ? 0 : stowedOffset)
+        }
+        var origin = restingOrigin(of: corner)
+        if let carried {
+            origin = MediaPlayerPlacement.clamped(
+                CGPoint(x: origin.x + carried.width, y: origin.y + carried.height),
+                size: panelSize,
+                within: window
+            )
+        }
+        return CGSize(width: origin.x - naturalOrigin.x, height: origin.y - naturalOrigin.y)
+    }
+
+    private var carry: some Gesture {
+        DragGesture(minimumDistance: 6, coordinateSpace: .global)
+            .onChanged { carried = $0.translation }
+            .onEnded { drop(after: $0.translation) }
+    }
+
+    /// Lets go of the panel in the corner it is nearest, wherever it was left.
+    private func drop(after translation: CGSize) {
+        let start = restingOrigin(of: corner)
+        let released = MediaPlayerPlacement.clamped(
+            CGPoint(x: start.x + translation.width, y: start.y + translation.height),
+            size: panelSize,
+            within: window
+        )
+        let target = MediaPlayerPlacement.nearestCorner(to: released) { restingOrigin(of: $0) }
+        withAnimation(snap) {
+            carried = nil
+            coordinator.movePlayer(to: target)
+        }
+    }
+
+    @ViewBuilder private var cornerChoices: some View {
+        ForEach(MediaPlayerCorner.allCases, id: \.self) { target in
+            Toggle(isOn: Binding(
+                get: { corner == target },
+                set: { _ in coordinator.movePlayer(to: target) }
+            )) {
+                Text(target.title)
+            }
+        }
     }
 
     private var isCompact: Bool {
@@ -203,7 +310,7 @@ struct MediaSidebarCard: View {
     }
 
     private var showsPlayer: Bool {
-        !isStowed || isPulledOut
+        !isStowed || isPulledOut || isUndocked
     }
     private var showsVideo: Bool {
         showsPlayer && !isPlayerHidden && !media.model.isInNativePiP
@@ -217,9 +324,9 @@ struct MediaSidebarCard: View {
             .frame(maxWidth: .infinity, alignment: sidebarStyle == .full ? .leading : .center)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { buttonFrame = $0 }
             .overlay(alignment: .bottomLeading) { panel }
-            .padding(.top, 4)
+            .padding(.top, isUndocked ? 0 : 4)
             .background {
-                ClickOutsideCatcher(isActive: isStowed && isPulledOut, keepingOut: [panelFrame, buttonFrame]) {
+                ClickOutsideCatcher(isActive: isStowed && isPulledOut && !isUndocked, keepingOut: [panelFrame, buttonFrame]) {
                     isPulledOut = false
                 }
                 .allowsHitTesting(false)
@@ -229,6 +336,11 @@ struct MediaSidebarCard: View {
                     isPulledOut = false
                 }
             }
+            .onChange(of: isUndocked) { _, undocked in
+                if !undocked, isStowed {
+                    isPulledOut = true
+                }
+            }
             .animation(nil, value: panelWidth)
             .animation(Theme.Motion.settle, value: showsPlayer)
             .animation(Theme.Motion.settle, value: isStowed)
@@ -236,7 +348,7 @@ struct MediaSidebarCard: View {
 
     @ViewBuilder
     private var inFlow: some View {
-        if isStowed {
+        if isStowed, !isUndocked {
             stowedButton
         } else {
             Color.clear.frame(height: 0)
@@ -283,9 +395,36 @@ struct MediaSidebarCard: View {
         }
         .frame(width: panelWidth, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
-        .offset(y: isStowed ? -(Self.buttonHeight + 6) : 0)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("Media player"))
+        .accessibilityActions {
+            if isMovable {
+                ForEach(MediaPlayerCorner.allCases, id: \.self) { target in
+                    Button {
+                        coordinator.movePlayer(to: target)
+                    } label: {
+                        Text(target.moveTitle)
+                    }
+                }
+            }
+        }
+        .contextMenu {
+            if isMovable {
+                Menu {
+                    cornerChoices
+                } label: {
+                    Text("Move Player to Corner")
+                }
+            }
+        }
+        .gesture(carry, including: isMovable ? .all : .subviews)
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { panelSize = $0 }
+        .offset(displacement)
+        .opacity(isUndocked && !hasMeasured ? 0 : 1)
+        .animation(snap, value: corner)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { panelFrame = $0 }
-        .onGeometryChange(for: CGFloat.self) { [isStowed, showsPlayer] proxy in
+        .onGeometryChange(for: CGFloat.self) { [isStowed, showsPlayer, isUndocked] proxy in
+            guard !isUndocked else { return 0 }
             let panelHeight = proxy.size.height
             if isStowed {
                 return showsPlayer

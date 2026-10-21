@@ -50,6 +50,7 @@ extension BrowserSettings {
         static let tabColorRefraction = "appearance.tabColorRefraction"
         static let automaticPiP = "media.automaticPiP"
         static let videoInPlayer = "experiments.videoInPlayer"
+        static let mediaPlayerCorner = "experiments.videoInPlayer.corner"
         static let passwordAutofill = "autofill.passwords"
         static let contactAutofill = "autofill.contacts"
         static let paymentCardAutofill = "privacy.paymentCardAutofill"
