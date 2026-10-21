@@ -4,21 +4,25 @@
 import AppKit
 
 /// AppKit keeps a window that has been ordered on screen in `NSApp.windows` until it is closed or ordered out; dropping the last
-/// Swift reference does not free it. A closed window can still be held by the main autorelease pool (see `MainEventLoop`), which
-/// is not a leak: `live` asks for that pool to be drained, so a window it counts after the next drain is one something retains.
+/// Swift reference does not free it. A closed window can still be held by an autorelease pool for a moment (see `MainEventLoop`),
+/// which is not a leak: `live` asks for the waiting event call to return, so a window it counts after that is one something retains.
 ///
 /// Counts only the windows handed to `track`, so suites running alongside cannot move the number.
 @MainActor
 final class WindowLeakCheck {
     private var tracked: [() -> NSWindow?] = []
 
+    init() {
+        MainEventLoop.install()
+    }
+
     func track(_ window: NSWindow?) {
         guard let window else { return }
         tracked.append { [weak window] in window }
     }
 
-    /// Tracked windows the app still holds. Zero is the baseline before any fixture ran. While any is left it asks the event loop
-    /// to drain the main autorelease pool, so a later look (the next `waitUntil` tick) no longer counts a window only the pool held.
+    /// Tracked windows the app still holds. Zero is the baseline before any fixture ran. While any is left it makes the waiting event
+    /// call return, so a later look (the next `waitUntil` tick) no longer counts a window only that call's pool held.
     var live: Int {
         let count = liveWindows.count
         if count > 0 {
@@ -41,19 +45,63 @@ final class WindowLeakCheck {
     }
 }
 
-/// AppKit drains the main thread's autorelease pool once per event its loop takes from the queue. A test host in the background
-/// takes none, so for a whole run nothing autoreleased on the main thread was freed: WebKit autoreleases the window of a web view
-/// that loads a page, so every closed test window stayed alive (off screen, no content, no delegate; about 800 by the end of a
-/// full suite) with its backing store, the alerts shown on it and any web view it still held, and page creation slowed from
-/// 0.4 s to 12.5 s. A standalone AppKit probe reproduces it, and one application-defined event frees them.
+/// Why closed test windows stayed alive for the rest of a run (about 800 by the end of a full suite, 1,087 in 0.1.5, and pages
+/// 0.4 s fresh, 12.5 s late). XCTest starts the run from a run loop callout (`_XCTestMain`) and waits out the whole Swift Testing
+/// session in `+[XCTWaiter _synchronouslyWaitForTimeInterval:]`, which takes each event with `nextEventMatchingMask` and sends it
+/// with `sendEvent` with no autorelease pool of its own (and is a direct method, so it cannot be swizzled). Taking or handling an
+/// event that names a window (the window server sends them as a window orders in, moves, is covered or closes) looks the window
+/// up, and AppKit autoreleases it into the pool around that callout, which ends only with the run. Found natively with a retain
+/// and autorelease tracker and `_objc_autoreleasePoolPrint` (branch `diag/test-infra-leak-20261021`).
 ///
-/// `drainSoon` posts that event (never a mouse or key event, so nothing reaches a window or a monitor); the loop takes it as soon
-/// as the main actor next waits. `.boundedWebViews` posts one when each test starts and ends, so a test's windows are gone by the
-/// end of the next one.
+/// `install` gives every `nextEventMatchingMask` and `sendEvent` call its own pool, the way `NSApp.run` gives each event one: what
+/// the call autoreleases (the window lookups, and the main-queue work that ran while it waited) is released when it returns, and
+/// the event it returns is kept alive for its caller (an event does not retain its window; a freed one reads as nil). Test host
+/// only. `drainSoon` posts an application-defined event (never a mouse or key event, so nothing reaches a window or a monitor),
+/// which makes a waiting call return and its pool end.
 @MainActor
 enum MainEventLoop {
     private static let subtype: Int16 = 0x5753
     private static var posted = 0
+    private static var installed = false
+
+    /// Idempotent. `.boundedWebViews` and `WindowLeakCheck` install it before their first test.
+    static func install() {
+        guard !installed else { return }
+        installed = true
+        let selector = #selector(NSApplication.nextEvent(matching:until:inMode:dequeue:))
+        guard let method = class_getInstanceMethod(NSApplication.self, selector) else { return }
+        // Raw pointers throughout: the wrapper adds no retain or release of its own beyond keeping the returned event.
+        typealias NextEvent = @convention(c) (
+            UnsafeRawPointer, Selector, UInt64, UnsafeRawPointer?, UnsafeRawPointer?, ObjCBool
+        ) -> UnsafeRawPointer?
+        let original = unsafeBitCast(method_getImplementation(method), to: NextEvent.self)
+        typealias Pooled = @convention(block) (UnsafeRawPointer, UInt64, UnsafeRawPointer?, UnsafeRawPointer?, ObjCBool) -> UnsafeRawPointer?
+        let pooled: Pooled = { app, mask, until, mode, dequeue in
+            var event: Unmanaged<AnyObject>?
+            autoreleasepool {
+                if let raw = original(app, selector, mask, until, mode, dequeue) {
+                    event = Unmanaged<AnyObject>.fromOpaque(raw).retain()
+                }
+            }
+            return event.map { UnsafeRawPointer($0.autorelease().toOpaque()) }
+        }
+        method_setImplementation(method, imp_implementationWithBlock(pooled))
+
+        // XCTWaiter sends each event it took itself, outside any pool, and handling a window's event looks the window up again.
+        let send = #selector(NSApplication.sendEvent(_:))
+        if let sendMethod = class_getInstanceMethod(NSApplication.self, send) {
+            typealias SendEvent = @convention(c) (UnsafeRawPointer, Selector, UnsafeRawPointer?) -> Void
+            let originalSend = unsafeBitCast(method_getImplementation(sendMethod), to: SendEvent.self)
+            let pooledSend: @convention(block) (UnsafeRawPointer, UnsafeRawPointer?) -> Void = { app, event in
+                autoreleasepool {
+                    originalSend(app, send, event)
+                }
+            }
+            method_setImplementation(sendMethod, imp_implementationWithBlock(pooledSend))
+        }
+        // The call already waiting is the original one: let it return so the next one is pooled.
+        drainSoon()
+    }
 
     @discardableResult
     static func drainSoon() -> Int {
@@ -66,8 +114,8 @@ enum MainEventLoop {
         return posted
     }
 
-    /// Returns once the loop has taken an event posted now, which ends the pool everything before it went into. Gives up after
-    /// a second (a modal session in another mode holds the event back).
+    /// Returns once the loop has taken an event posted now, which ends the pool of the call that took it. Gives up after a second
+    /// (a modal session in another mode holds the event back).
     static func drain() async {
         let tag = drainSoon()
         for _ in 0..<100 {
