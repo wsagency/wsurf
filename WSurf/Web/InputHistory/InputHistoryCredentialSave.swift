@@ -84,20 +84,20 @@ final class InputHistoryCredentialSave: Identifiable {
     // MARK: - Choosing the vault
 
     /// Picks the vault (the person chooses when more than one could hold it), unlocks it, and works out what saving would do.
-    func start(in anchor: ASPresentationAnchor) async {
+    func start(in anchor: @autoclosure () -> ASPresentationAnchor) async {
         guard stage == .working, manager == nil else { return }
         let route = await CredentialRouting.route(profile: profile, origin: origin, username: username.isEmpty ? nil : username)
         if case .unavailable = route {
             finish(.unavailable)
             return
         }
-        guard let chosen = await route.resolve(profile: profile, in: anchor), chosen.profileID == profile.id else {
+        guard let chosen = await route.resolve(profile: profile, in: anchor()), chosen.profileID == profile.id else {
             cancel()
             return
         }
         if !chosen.isUnlocked {
             do {
-                try await chosen.unlock(in: anchor)
+                try await chosen.unlock(in: anchor())
             } catch {
                 cancel()
                 return

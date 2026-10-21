@@ -138,7 +138,7 @@ extension CredentialSettingsModel {
     /// confirmed again or cancelled. A lock or a re-unlock since the sheet was shown deletes nothing. On success the page lists
     /// the remaining vaults again and opens the default one (still locked, if it is).
     @discardableResult
-    func confirmVaultDeletion(typedName: String, in anchor: ASPresentationAnchor) async -> Bool {
+    func confirmVaultDeletion(typedName: String, in anchor: @autoclosure () -> ASPresentationAnchor) async -> Bool {
         guard !isBusy else { return false }
         guard let live, let pending = live.pendingVaultDeletion, pending.epoch == live.epoch, pending.vaultID == manager?.vaultID else {
             error = Self.message(for: CredentialVaultError.unauthorized)
@@ -149,7 +149,7 @@ extension CredentialSettingsModel {
             cancelVaultDeletion()
             return false
         }
-        var deleted = await perform(epoch: pending.epoch) { try await $0.deleteVault(authorizedEpoch: pending.epoch, in: anchor) }
+        var deleted = await perform(epoch: pending.epoch) { try await $0.deleteVault(authorizedEpoch: pending.epoch, in: anchor()) }
         if !deleted {
             deleted = await isGone(pending.vaultID)
         }

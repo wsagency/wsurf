@@ -28,18 +28,21 @@ nonisolated enum CredentialManagerError: Error {
 }
 
 /// The native passkey calls a manager (or a vault creation) makes, as closures so a test drives the real manager with a stub.
-/// `.native` is the only production value.
+/// `.native` is the only production value. Each takes its presentation anchor lazily: only a prompt that is shown asks for the
+/// window, so a manager driven by a stub never needs one.
 struct VaultNativeUnlock {
-    var register: (ASPresentationAnchor) async throws -> VaultUnlockRegistration
-    var verifyRegistration: (VaultUnlockRegistration, ASPresentationAnchor, () throws -> Void) async throws -> VaultUnlockProof
-    var assert: ([VaultUnlock], ASPresentationAnchor) async throws -> VaultUnlockProof
+    var register: (_ anchor: () -> ASPresentationAnchor) async throws -> VaultUnlockRegistration
+    var verifyRegistration: (VaultUnlockRegistration, _ anchor: () -> ASPresentationAnchor, () throws -> Void) async throws -> VaultUnlockProof
+    var assert: ([VaultUnlock], _ anchor: () -> ASPresentationAnchor) async throws -> VaultUnlockProof
     var cancel: () -> Void
 
     static func native(_ unlocker: PasskeyVaultUnlocker) -> VaultNativeUnlock {
         VaultNativeUnlock(
-            register: { try await unlocker.register(in: $0) },
-            verifyRegistration: { try await unlocker.verifyRegistration($0, in: $1, beforeAssertion: $2) },
-            assert: { try await unlocker.assert(among: $0, in: $1) },
+            register: { anchor in try await unlocker.register(in: anchor()) },
+            verifyRegistration: { registration, anchor, beforeAssertion in
+                try await unlocker.verifyRegistration(registration, in: anchor(), beforeAssertion: beforeAssertion)
+            },
+            assert: { unlocks, anchor in try await unlocker.assert(among: unlocks, in: anchor()) },
             cancel: { unlocker.cancel() }
         )
     }
@@ -268,7 +271,7 @@ final class CredentialManager {
         profile: Profile,
         name: String,
         choice: NewVaultChoice,
-        in anchor: ASPresentationAnchor,
+        in anchor: @autoclosure () -> ASPresentationAnchor,
         native: VaultNativeUnlock? = nil
     ) async throws -> UUID {
         let store = try store(for: profile)
@@ -417,7 +420,9 @@ final class CredentialManager {
 
     // MARK: - Native unlock management
 
-    func unlock(in anchor: ASPresentationAnchor, confirmMigration: Bool = false, verifying: (@Sendable (Bool) -> Void)? = nil) async throws {
+    func unlock(
+        in anchor: @autoclosure () -> ASPresentationAnchor, confirmMigration: Bool = false, verifying: (@Sendable (Bool) -> Void)? = nil
+    ) async throws {
         let access = beginAccess()
         do {
             try requirePending(access)
@@ -440,7 +445,7 @@ final class CredentialManager {
         }
     }
 
-    func addUnlock(in anchor: ASPresentationAnchor) async throws -> VaultCommitReceipt {
+    func addUnlock(in anchor: @autoclosure () -> ASPresentationAnchor) async throws -> VaultCommitReceipt {
         let access = try currentAccess()
         _ = try await preflightAddingUnlock(using: access)
         try requireCurrent(access)
@@ -512,7 +517,7 @@ final class CredentialManager {
         return receipt
     }
 
-    func removeUnlock(credentialID: Data, in anchor: ASPresentationAnchor) async throws -> VaultCommitReceipt {
+    func removeUnlock(credentialID: Data, in anchor: @autoclosure () -> ASPresentationAnchor) async throws -> VaultCommitReceipt {
         let access = try currentAccess()
         guard unlockCredentials.contains(where: { $0.credentialID == credentialID }) else { throw CredentialVaultError.invalidData }
         let remaining = unlockCredentials.filter { $0.credentialID != credentialID }
@@ -660,7 +665,7 @@ final class CredentialManager {
     }
 
     /// A purge needs a fresh assertion of an enrolled passkey on top of the unlock: a cached lease alone never purges.
-    func purge(entryIDs: [UUID], emptyAll: Bool, in anchor: ASPresentationAnchor) async throws -> PurgeReceipt {
+    func purge(entryIDs: [UUID], emptyAll: Bool, in anchor: @autoclosure () -> ASPresentationAnchor) async throws -> PurgeReceipt {
         let access = try currentAccess()
         let unlocks = try await guarded(using: access) { try await store.discovery(vaultID: vaultID) }.unlocks
         try requireCurrent(access)
@@ -680,7 +685,7 @@ final class CredentialManager {
     /// the unlock, and it is bound to `authorizedEpoch`, the lease the user confirmed under: a lock or re-unlock since, a declined
     /// prompt and another vault's passkey delete nothing. Once it has committed the manager is retired: unregistered, locked, and
     /// unable to unlock again.
-    func deleteVault(authorizedEpoch: UInt64, in anchor: ASPresentationAnchor) async throws {
+    func deleteVault(authorizedEpoch: UInt64, in anchor: @autoclosure () -> ASPresentationAnchor) async throws {
         let access = try currentAccess()
         guard access.epoch == authorizedEpoch else { throw CredentialVaultError.unauthorized }
         let unlocks = try await guarded(using: access) { try await store.discovery(vaultID: vaultID) }.unlocks

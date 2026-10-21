@@ -82,7 +82,7 @@ extension CredentialSettingsModel {
     /// The confirmation stays until the purge has actually run: a declined, cancelled or failed passkey assertion leaves it
     /// shown so the same purge can be confirmed again or cancelled. A tap while the purge is in flight does nothing, a success
     /// consumes the confirmation, and a lock, re-unlock or another vault drops it with the session.
-    func confirmPurge(in anchor: ASPresentationAnchor) async {
+    func confirmPurge(in anchor: @autoclosure () -> ASPresentationAnchor) async {
         guard !isBusy else { return }
         guard let live, let pending = live.pendingPurge, pending.epoch == live.epoch, pending.vaultID == manager?.vaultID else {
             if let live {
@@ -92,7 +92,7 @@ extension CredentialSettingsModel {
             return
         }
         let purged = await perform(epoch: pending.epoch) {
-            _ = try await $0.purge(entryIDs: pending.entryIDs, emptyAll: pending.emptyAll, in: anchor)
+            _ = try await $0.purge(entryIDs: pending.entryIDs, emptyAll: pending.emptyAll, in: anchor())
         }
         guard purged else { return }
         if let current = self.live {
@@ -128,11 +128,11 @@ extension CredentialSettingsModel {
 
     /// Leaving the Trash, or Delete Now: deletes everything marked, in one purge with ONE fresh passkey or Touch ID assertion and no
     /// dialog of the app. A declined or failed assertion deletes nothing; the marks end either way, so the entries show again.
-    func commitMarked(in anchor: ASPresentationAnchor) async {
+    func commitMarked(in anchor: @autoclosure () -> ASPresentationAnchor) async {
         guard !isBusy, let live, !live.markedForDeletion.isEmpty else { return }
         let ids = live.markedForDeletion
         let epoch = live.epoch
-        let purged = await perform(epoch: epoch) { _ = try await $0.purge(entryIDs: ids, emptyAll: false, in: anchor) }
+        let purged = await perform(epoch: epoch) { _ = try await $0.purge(entryIDs: ids, emptyAll: false, in: anchor()) }
         try? update(epoch) { $0.dropMarks(nil) }
         guard purged else {
             showNotice("Nothing was deleted.")

@@ -11,7 +11,7 @@ extension CredentialSettingsModel {
     func exportCredentials(
         selection: [CredentialExportSelection],
         epoch: UInt64,
-        in anchor: ASPresentationAnchor
+        in anchor: @autoclosure () -> ASPresentationAnchor
     ) async -> CredentialExportOutcome? {
         let vault = manager?.vaultID
         ownMessage = nil
@@ -19,7 +19,7 @@ extension CredentialSettingsModel {
         let sent = await perform {
             let stamps = try await self.exportStamps(epoch: epoch)
             outcome = try await self.exchange.exportCredentials(
-                selection: selection, expectedStamps: stamps, epoch: epoch, from: $0, in: anchor
+                selection: selection, expectedStamps: stamps, epoch: epoch, from: $0, in: anchor()
             )
         }
         // The page showed an older vault than the one on disk: read it again, or every retry would fail the same way.
