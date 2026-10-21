@@ -514,12 +514,12 @@ struct CredentialRow: View {
     /// Read here, row by row, so a change redraws only the rows that are built.
     let selection: CredentialSelection
     let run: (@escaping () async throws -> Void) -> Void
-    /// Moves it to the Trash, without a dialog.
-    let remove: () -> Void
+    /// Moves credentials to the Trash, without a dialog: this one, or the selection it is part of.
+    let trash: ([UUID]) -> Void
+    /// Merges credentials: this one with its suggestion or the ones the user selects next, or the selection it is part of.
+    let merge: ([UUID]) -> Void
     let open: () -> Void
     let history: () -> Void
-    /// "Merge With…"; `nil` leaves it out of the menu.
-    var mergeWith: (() -> Void)?
 
     private var host: String {
         summary.origins.lazy.compactMap { URL(string: $0)?.host }.first ?? summary.title
@@ -561,7 +561,7 @@ struct CredentialRow: View {
                     }
                     Button("Edit…", action: open)
                         .disabled(model.isBusy)
-                    Button("Remove", role: .destructive, action: remove)
+                    Button("Remove", role: .destructive) { trash([summary.id]) }
                         .disabled(model.isBusy)
                         .help("Move to Trash")
                         .accessibilityLabel("Move \(summary.title) to Trash")
@@ -570,8 +570,42 @@ struct CredentialRow: View {
             }
             revealed
         }
-        .credentialRowSelection(selection, id: summary.id, open: open, remove: remove, removeName: "Move to Trash")
+        .credentialRowSelection(
+            selection, id: summary.id, title: summary.title, open: open, remove: { trash([summary.id]) }, removeName: "Move to Trash"
+        )
         .accessibilityAction(named: "Open", open)
+        .accessibilityAction(named: "Open Website") { model.openWebsite(summary.website) }
+        .contextMenu {
+            ForEach(selection.menu(for: summary), id: \.self, content: menuItem)
+        }
+    }
+
+    /// One entry of the right-click menu (`CredentialSelection.menu(for:)` decides which, and on which credentials).
+    @ViewBuilder
+    private func menuItem(_ item: CredentialRowMenuItem) -> some View {
+        switch item {
+        case .openWebsite(let url):
+            Button("Open Website") { model.openWebsite(url) }
+        case .copyUsername:
+            Button("Copy Username") { run { try await model.copy(.username, of: .stored(summary.id)) } }
+        case .copyPassword:
+            Button("Copy Password") { run { try await model.copyPassword(accountID: summary.id) } }
+        case .edit:
+            Divider()
+            Button("Edit…", action: open).disabled(model.isBusy)
+        case .merge(let ids):
+            Button(ids.count > 1 ? "Merge \(ids.count) Credentials…" : "Merge…") { merge(ids) }
+                .disabled(model.isBusy)
+        case .moveToTrash(let ids):
+            Button(ids.count > 1 ? "Move \(ids.count) Credentials to Trash" : "Move to Trash", role: .destructive) { trash(ids) }
+                .disabled(model.isBusy)
+        case .select:
+            Divider()
+            Button("Select") { selection.beginSelecting(with: summary.id) }
+        case .deselect:
+            Divider()
+            Button("Deselect") { selection.toggle(summary.id) }
+        }
     }
 
     private var actions: some View {
@@ -624,9 +658,8 @@ struct CredentialRow: View {
             }
             Divider()
             Button("History…", action: history)
-            if let mergeWith {
-                Button("Merge With…", action: mergeWith)
-            }
+            Button("Merge…") { merge(selection.menuTargets(for: summary.id)) }
+                .disabled(model.isBusy)
         } label: {
             Image(systemName: "ellipsis.circle")
                 .accessibilityLabel("More actions for \(summary.title)")

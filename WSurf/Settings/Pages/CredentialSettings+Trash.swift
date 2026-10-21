@@ -155,7 +155,9 @@ extension CredentialSettings {
                 restoreBlockedRow(blocked)
             }
         }
-        .credentialRowSelection(selection, id: item.id, remove: { markForDeletion([item.id]) }, removeName: "Delete Permanently")
+        .credentialRowSelection(
+            selection, id: item.id, title: item.label, remove: { markForDeletion([item.id]) }, removeName: "Delete Permanently"
+        )
     }
 
     /// Shown while X has marked entries: they are hidden, and leaving the Trash deletes them with one passkey or Touch ID prompt. There

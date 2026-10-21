@@ -20,7 +20,7 @@ struct CredentialKeyboardHost: View {
     var body: some View {
         CredentialListKeyCatcher(
             selection: selection, inTrash: inTrash, ownsKeyboard: selection.ownsKeyboard, request: selection.keyboardRequestID,
-            hasSelection: !selection.isEmpty, perform: perform, undo: undo, redo: redo, undoTitle: undoTitle, redoTitle: redoTitle
+            hasSelection: selection.showsCheckboxes, perform: perform, undo: undo, redo: redo, undoTitle: undoTitle, redoTitle: redoTitle
         )
         // A key that moved the cursor brings its row into view; a click never scrolls.
         .onChange(of: selection.scrollRequestID) {

@@ -5,11 +5,13 @@ import AppKit
 import SwiftUI
 
 /// How a row of the credential list or of the Trash shows and takes the selection: a wash when it is selected, a ring on the keyboard
-/// cursor, a check mark, and its clicks. The row reads `selection.selected` and `selection.cursor` itself, so a change redraws only
-/// the rows that are built.
+/// cursor, a leading checkbox while selecting, and its clicks. The row reads `selection.selected` and `selection.cursor` itself, so a
+/// change redraws only the rows that are built.
 struct CredentialRowSelection: ViewModifier {
     let selection: CredentialSelection
     let id: UUID
+    /// What the checkbox says it selects.
+    let title: String
     /// A double click. `nil` where the row has no editor (the Trash).
     var open: (() -> Void)?
     /// What the "Move to Trash" or "Delete Permanently" accessibility action does.
@@ -25,22 +27,26 @@ struct CredentialRowSelection: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        content
-            .background { wash }
-            .overlay { ring }
-            .overlay(alignment: .bottomLeading) { mark }
-            .contentShape(.rect)
-            .onTapGesture(perform: click)
-            .accessibilityElement(children: .contain)
-            .accessibilityAddTraits(isSelected ? .isSelected : [])
-            .accessibilityAction(named: selectName) { selection.toggle(id) }
-            .accessibilityAction(named: removeName, remove)
+        HStack(alignment: .center, spacing: 8) {
+            if selection.showsCheckboxes {
+                checkbox
+            }
+            content
+        }
+        .background { wash }
+        .overlay { ring }
+        .contentShape(.rect)
+        .onTapGesture(perform: click)
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityAction(named: selectName) { selection.toggle(id) }
+        .accessibilityAction(named: removeName, remove)
     }
 
-    /// A click on the row itself (its buttons take their own). Plain: the cursor and the keyboard. Command: toggles the row. Shift: the
-    /// range from the anchor. Double: opens the editor, where there is one.
+    /// A click on the row itself (its buttons take their own). Plain: the cursor and the keyboard, or in selection mode a toggle.
+    /// Command: toggles the row. Shift: the range from the anchor. Double: opens the editor, where there is one (not while selecting).
     private func click() {
-        if NSApp.currentEvent?.clickCount == 2, let open {
+        if NSApp.currentEvent?.clickCount == 2, let open, !selection.isSelecting {
             open()
             return
         }
@@ -72,25 +78,21 @@ struct CredentialRowSelection: ViewModifier {
         }
     }
 
-    @ViewBuilder
-    private var mark: some View {
-        if isSelected {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(Color.accentColor)
-                .background(Circle().fill(.background))
-                .padding(.leading, 17)
-                .padding(.bottom, 3)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+    private var checkbox: some View {
+        Toggle(isOn: Binding(get: { isSelected }, set: { _ in selection.toggle(id) })) {
+            Text(verbatim: title)
         }
+        .toggleStyle(.checkbox)
+        .labelsHidden()
+        .accessibilityLabel(isSelected ? String(localized: "Deselect \(title)") : String(localized: "Select \(title)"))
     }
 }
 
 extension View {
     func credentialRowSelection(
-        _ selection: CredentialSelection, id: UUID, open: (() -> Void)? = nil, remove: @escaping () -> Void, removeName: LocalizedStringKey
+        _ selection: CredentialSelection, id: UUID, title: String, open: (() -> Void)? = nil, remove: @escaping () -> Void,
+        removeName: LocalizedStringKey
     ) -> some View {
-        modifier(CredentialRowSelection(selection: selection, id: id, open: open, remove: remove, removeName: removeName))
+        modifier(CredentialRowSelection(selection: selection, id: id, title: title, open: open, remove: remove, removeName: removeName))
     }
 }

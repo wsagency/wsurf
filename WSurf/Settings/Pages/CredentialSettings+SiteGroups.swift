@@ -12,8 +12,6 @@ enum CredentialMergeRoute: Hashable {
     case suggestions
     /// These credentials, for the user to review before merging.
     case review([UUID])
-    /// Choose the credential to merge this one with.
-    case pick(UUID)
 }
 
 /// The merge suggestions of the vault on screen, and the merge sheet that is open. It holds ids, the reasons and the summaries a
@@ -24,7 +22,7 @@ final class CredentialMergeState {
     /// The sheet that is open, if any.
     var route: CredentialMergeRoute?
     private(set) var index: CredentialMergeIndex?
-    /// The credentials by id, for the suggestion list and the picker.
+    /// The credentials by id, for the suggestion list.
     private(set) var summaries: [UUID: CredentialSummary] = [:]
     /// The first suggestion that names each credential, by its position in `index`.
     @ObservationIgnored private var suggestionOf: [UUID: Int] = [:]
@@ -271,13 +269,11 @@ struct CredentialSuggestionsSheet: View {
 
 // MARK: - Flow
 
-/// The one sheet of the merge flow: the suggestions, the choice of a credential to merge with, and the merge itself. It moves between
-/// them itself, so the page presents a single sheet however the user got here.
+/// The one sheet of the merge flow: the suggestions and the merge itself. It moves between them itself, so the page presents a single
+/// sheet however the user got here. Which credentials to merge is chosen in the list (Select, or the selection's Merge…).
 struct CredentialMergeFlow: View {
     let model: CredentialSettingsModel
     let merge: CredentialMergeState
-    /// The credentials that match a search, for "Merge With…".
-    let matches: (String) -> [CredentialSummary]
     let route: CredentialMergeRoute
     let close: () -> Void
     @State private var step: CredentialMergeRoute?
@@ -286,10 +282,6 @@ struct CredentialMergeFlow: View {
         switch step ?? route {
         case .suggestions:
             CredentialSuggestionsSheet(model: model, merge: merge, review: { step = .review($0) }, close: close)
-        case let .pick(id):
-            if let source = merge.summaries[id] ?? model.summaries.first(where: { $0.id == id }) {
-                CredentialMergePicker(source: source, matches: matches, choose: { step = .review([id, $0.id]) }, cancel: close)
-            }
         case let .review(ids):
             CredentialMergeSheet(model: model, ids: ids) { merged in
                 // A written merge ends the flow; a cancelled one returns to the suggestions it came from.
