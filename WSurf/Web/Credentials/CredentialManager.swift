@@ -564,12 +564,15 @@ final class CredentialManager {
 
     /// `authorizedEpoch` is the lease the caller's decision was made under. It is compared with the current access in the
     /// same main-actor segment that captures it, before any write starts, so a lock and re-unlock that landed after the
-    /// decision (for example while a task was queued) can never carry the write into the newer lease.
+    /// decision (for example while a task was queued) can never carry the write into the newer lease. `changing` names the accounts
+    /// the caller edited, so the store does not encode the other 20,000 to find them; `nil` compares every account on its bytes.
     func commit(
-        _ accounts: [CredentialAccount], expectedRevision: UInt64, authorizedEpoch: UInt64, cause: String? = nil
+        _ accounts: [CredentialAccount], expectedRevision: UInt64, authorizedEpoch: UInt64, cause: String? = nil, changing: Set<UUID>? = nil
     ) async throws -> VaultCommitReceipt {
         try await authorizedWrite(epoch: authorizedEpoch) { access in
-            try await store.commit(vaultID: vaultID, accounts, expectedRevision: expectedRevision, cause: cause, using: access)
+            try await store.commit(
+                vaultID: vaultID, accounts, expectedRevision: expectedRevision, cause: cause, changing: changing, using: access
+            )
         }
     }
 

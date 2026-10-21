@@ -171,7 +171,11 @@ extension ProfileVaultStore {
                 throw CredentialStoreError.undeleteBlocked(block)
             }
             let restored = try Self.restoring(entry.body, into: snapshot.accounts)
-            try Self.validate(restored.accounts, blockedOrigins: transaction.opened.head.blockedOrigins)
+            // Every account but the one the entry returns to is the snapshot's own value (`restoring`).
+            let unchanged = try transaction.unchanged(
+                in: Proposal(accounts: restored.accounts, requires: nil, changing: [restored.account.id])
+            )
+            try Self.validate(restored.accounts, blockedOrigins: transaction.opened.head.blockedOrigins, unchanged: unchanged)
             try transaction.restore(entry, account: restored.account, stampsModifiedAt: entry.body.scope == .credential)
             return try transaction.finish()
         }.receipt

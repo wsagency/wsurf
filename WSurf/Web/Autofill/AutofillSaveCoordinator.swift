@@ -460,7 +460,8 @@ final class AutofillSaveSession: NSObject {
             }
             let accounts = try CredentialAccountSelection.addingWebsite(offer.origin, to: offer.accountID, in: snapshot.accounts)
             _ = try await manager.commit(
-                accounts, expectedRevision: snapshot.revision, authorizedEpoch: offer.managerEpoch, cause: CredentialChangeCause.addWebsite
+                accounts, expectedRevision: snapshot.revision, authorizedEpoch: offer.managerEpoch, cause: CredentialChangeCause.addWebsite,
+                changing: [offer.accountID]
             )
             guard self.context === context, websiteOffer?.id == offer.id else { return }
             dismissWebsite(offer, rememberingChoice: false)

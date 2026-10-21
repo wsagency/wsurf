@@ -49,8 +49,8 @@ nonisolated enum CredentialDiff {
     /// account loses here and that is byte-equal to the same part of one of them is neither moved to the Trash nor kept as a revision:
     /// it comes back with its own account and history, so undoing a merge leaves no second copy of it behind.
     ///
-    /// `unchanged` names accounts the caller knows to be byte-equal in both lists (the store's own rows, read in the same transaction):
-    /// they are not encoded again. Every other pair is compared on its bytes, and the identity checks above still cover every account.
+    /// `unchanged` names accounts that stay as stored (the store's own rows read in the same transaction, or a caller's `==` copy of
+    /// one): they are not compared or encoded again. Every other pair is compared on its bytes, and the identity checks above still cover every account.
     static func plan(
         old: [CredentialAccount], new: [CredentialAccount], restoring: UUID? = nil, removing: RemovalScope? = nil,
         returning: [CredentialAccount] = [], unchanged: Set<UUID> = []

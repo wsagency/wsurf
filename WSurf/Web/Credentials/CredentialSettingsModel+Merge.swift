@@ -144,11 +144,11 @@ extension CredentialSettingsModel {
         guard let manager, manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
         // Last point before the durable write: a cancelled task or a changed authorization never commits.
         try Task.checkCancellation()
-        let receipt = try await manager.commit(accounts, expectedRevision: revision, authorizedEpoch: epoch, cause: "merge")
+        let touched = Set(survivors.map(\.id)).union(absorbed)
+        let receipt = try await manager.commit(accounts, expectedRevision: revision, authorizedEpoch: epoch, cause: "merge", changing: touched)
         // Nothing throws once the vault has committed: the receipt reflects what is on disk.
         try? update(epoch) { $0.committed(accounts, revision: receipt.revision) }
         _ = try? await reloadAfterWrite(epoch: epoch)
-        let touched = Set(survivors.map(\.id)).union(absorbed)
         recordMerge(
             survivors, absorbed: absorbed, starting: starting.filter { touched.contains($0.key) }, receipt: receipt, epoch: epoch,
             notice: notice()

@@ -203,6 +203,34 @@ struct VaultCommitTests {
         }
     }
 
+    /// A whole-vault commit names the accounts its caller edited. A named account is still compared on its bytes (a respelled
+    /// password is written), a real edit to an account it did not name is not `==` its stored value and is written too (only a
+    /// byte-only respelling there would keep the stored bytes), and an account nobody edited keeps its row.
+    @Test func aWholeVaultCommitThatNamesTooFewAccountsStillWritesEveryChange() async throws {
+        let ada = VaultFixtures.account(username: "ada", password: "\u{00E9}")
+        let grace = VaultFixtures.account(username: "grace", origin: "https://b.example")
+        let alan = VaultFixtures.account(username: "alan", origin: "https://c.example")
+        try await VaultStoreFixture.with(accounts: [ada, grace, alan]) { f in
+            let probe = CommitProbe(f: f)
+            let (store, access) = try await f.unlocked()
+            let before = try await store.snapshot(vaultID: f.vaultID, using: access)
+            let respelled = commitEditing(before.accounts, ada.id) { $0.password = "e\u{301}" }
+            let edited = commitEditing(respelled, grace.id) { $0.password = "changed" }
+
+            let receipt = try await store.commit(
+                vaultID: f.vaultID, edited, expectedRevision: before.revision, cause: nil, changing: [ada.id], using: access
+            )
+
+            #expect(receipt.revision == before.revision + 1)
+            #expect(try probe.liveRow(ada.id).account.password?.utf8.elementsEqual("e\u{301}".utf8) == true)
+            #expect(try probe.liveRow(grace.id).account.password == "changed")
+            let after = try await store.snapshot(vaultID: f.vaultID, using: access)
+            #expect(after.stamps[alan.id] == before.stamps[alan.id])
+            #expect(after.stamps[grace.id] != before.stamps[grace.id])
+            try f.verify()
+        }
+    }
+
     /// The handoff hash is local evidence: it persists across a reopen as a persist-only commit (no history, no `modifiedAt`,
     /// no base), and a wrong-length hash is refused before anything is written.
     @Test func exportHandoffHashPersistsAsPersistOnlyAndRejectsBadLength() async throws {

@@ -55,8 +55,10 @@ extension ProfileVaultStore {
             return AccountWrite(accountID: write.accountID, expected: write.expected, replacement: replacement)
         }
         var accounts = try Self.candidates(applying: emptied, removing: removing, to: snapshot)
+        // Every account but the written ones is the snapshot's own value (`candidates`), as in `commitAccounts`.
+        let unchanged = try transaction.unchanged(in: Proposal(accounts: accounts, requires: nil, changing: Set(writes.map(\.accountID))))
         let wholeAccounts = entries.compactMap { $0.body.scope == .account ? $0.body.snapshot : nil }
-        let plan = try CredentialDiff.plan(old: snapshot.accounts, new: accounts, returning: wholeAccounts)
+        let plan = try CredentialDiff.plan(old: snapshot.accounts, new: accounts, returning: wholeAccounts, unchanged: unchanged)
         let writesSomething = plan.persistence != .noop && !(plan.touched.isEmpty && plan.removals.isEmpty)
         guard writesSomething || !entries.isEmpty else {
             return CommitOutcome(receipt: VaultCommitReceipt(revision: transaction.opened.head.revision), entry: nil, trashEntry: nil)
@@ -72,7 +74,10 @@ extension ProfileVaultStore {
             accounts = restored.accounts
             try transaction.restore(entry, account: restored.account, stampsModifiedAt: entry.body.scope == .credential)
         }
-        try Self.validate(accounts, blockedOrigins: transaction.opened.head.blockedOrigins)
+        // A returned part changed its owner, which is checked again; a returned whole account was not live, so it never was unchanged.
+        try Self.validate(
+            accounts, blockedOrigins: transaction.opened.head.blockedOrigins, unchanged: unchanged.subtracting(entries.map(\.body.ownerID))
+        )
         return try transaction.finish()
     }
 
