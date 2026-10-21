@@ -4,31 +4,21 @@
 
 import SwiftUI
 
-struct PaymentCardSettings: View {
-    @Bindable var settings: BrowserSettings
-    let context: BrowserProfileContext
+/// The payment cards kept in this Mac's Keychain, outside the vault, under the Vault tab's Cards section. Reading them asks for Touch
+/// ID, so they are read when the section opens and dropped when it closes, the session resigns, the Mac sleeps or the screen locks.
+/// Their switch, save suggestions and Apple Pay are on the Settings tab (`AutofillOptions`).
+struct SavedPaymentCards: View {
     @State private var model: PaymentCardSettingsModel
     @State private var showsAddCard = false
     @State private var editing: PaymentCard?
     @State private var removing: PaymentCard.Summary?
 
-    init(context: BrowserProfileContext) {
-        self.context = context
-        self.settings = context.settings
-        _model = State(initialValue: PaymentCardSettingsModel(profileID: context.profile.id))
+    init(profileID: UUID) {
+        _model = State(initialValue: PaymentCardSettingsModel(profileID: profileID))
     }
 
     var body: some View {
-        SettingsPageHeader(title: "Payment cards")
-        SettingsCard {
-            DetailRow(title: "Save and fill payment cards", caption: "Offer to save new cards at checkout.") {
-                SettingsToggle($settings.fillsPaymentCards)
-            }
-        }
-        .disabled(model.profileID == Profile.privateID)
-        .settingsAnchor("autofill.cards")
-        AutofillSavePromptReset(kind: .card, context: context)
-        SettingsSection(title: "Saved cards", symbol: "creditcard", footnote: "Cards are encrypted in Keychain.", accessory: {
+        SettingsSection(title: "Cards saved on this Mac", symbol: "creditcard", footnote: "Cards are encrypted in Keychain.", accessory: {
             SettingsButton(title: "Add Card", symbol: "plus") { showsAddCard = true }
                 .disabled(model.cards == nil || model.isBusy)
         }, content: {
@@ -58,12 +48,6 @@ struct PaymentCardSettings: View {
             }
             AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .card)
         })
-        SettingsSection(title: "Apple Pay", symbol: "apple.logo") {
-            DetailRow(title: "Pay with iPhone", caption: "Scan a code to pay with iPhone.") {
-                Text("Website support required").foregroundStyle(.secondary).font(Theme.Font.caption)
-            }
-        }
-        .settingsAnchor("autofill.applePay")
         .task { await model.unlock() }
         .onDisappear(perform: lock)
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.sessionDidResignActiveNotification)) { _ in

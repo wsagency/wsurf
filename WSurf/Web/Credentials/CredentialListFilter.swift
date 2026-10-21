@@ -3,30 +3,42 @@
 
 import Foundation
 
-/// Which kind of credential the list shows. Pure and secret-free: it reads only what a `CredentialSummary` carries, so searching and
-/// filtering never touch a snapshot. A credential that holds several kinds is listed under each.
+/// Which kind of entry the Vault tab shows: its sections. Pure and secret-free: it reads only what a `CredentialSummary` carries, so
+/// searching and filtering never touch a snapshot. An entry that holds several kinds is listed under each.
 nonisolated enum CredentialListFilter: CaseIterable, Hashable, Sendable {
     case all
     case logins
     case passkeys
     case codes
-    case notes
+    /// Entries without a sign-in or a passkey that hold a person's name or an identity document.
+    case identities
     case cards
-    /// Addresses and names.
     case addresses
+    /// A person with an address: a name and an address in one entry.
+    case contacts
+    case notes
     /// Driver's licenses, passports and ID documents.
     case documents
     /// Wi-Fi networks, API and SSH keys, and custom fields.
     case otherItems
+    /// Entries with attached files. Its chip stays hidden: no entry holds a file until attachments exist.
+    case files
 
-    /// A kind of item rather than a part every login can have: its chip is shown only while some credential holds one.
-    var isItemKind: Bool {
+    /// A narrower kind whose chip is shown only while some entry holds one. The sections (Logins, Identities, Cards, Addresses,
+    /// Contacts, Notes) and Passkeys and Codes are always there, so the cards and addresses kept on this Mac stay reachable.
+    var hidesWhenEmpty: Bool {
         switch self {
-        case .cards, .addresses, .documents, .otherItems:
+        case .documents, .otherItems, .files:
             true
-        case .all, .logins, .passkeys, .codes, .notes:
+        case .all, .logins, .passkeys, .codes, .identities, .cards, .addresses, .contacts, .notes:
             false
         }
+    }
+
+    /// The chips the Vault tab shows, in order: every kind that is always there, and one that hides when empty while some entry holds
+    /// one or while it is the filter in use. `counts` is nil while the vault is not open.
+    static func chips(counts: [Self: Int]?, selected: Self) -> [Self] {
+        allCases.filter { !$0.hidesWhenEmpty || $0 == selected || (counts?[$0] ?? 0) > 0 }
     }
 
     func includes(_ summary: CredentialSummary) -> Bool {
@@ -41,14 +53,20 @@ nonisolated enum CredentialListFilter: CaseIterable, Hashable, Sendable {
             summary.hasTOTP
         case .notes:
             summary.hasNotes
+        case .identities:
+            !summary.hasLogin && summary.passkeys.isEmpty && summary.itemKinds.contains(where: \.isIdentity)
         case .cards:
             summary.itemKinds.contains(.creditCard)
         case .addresses:
-            summary.itemKinds.contains { $0 == .address || $0 == .personName }
+            summary.itemKinds.contains(.address)
+        case .contacts:
+            summary.itemKinds.contains(.personName) && summary.itemKinds.contains(.address)
         case .documents:
             summary.itemKinds.contains { $0 == .driversLicense || $0 == .passport || $0 == .identityDocument }
         case .otherItems:
             summary.itemKinds.contains { $0 == .wifi || $0 == .apiKey || $0 == .sshKey || $0 == .customFields }
+        case .files:
+            false
         }
     }
 

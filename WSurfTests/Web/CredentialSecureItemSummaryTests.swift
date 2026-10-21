@@ -190,7 +190,10 @@ struct CredentialSecureItemSummaryTests {
         let all = library()
         let expected: [CredentialListFilter: [String]] = [
             .cards: ["Card", "Card and Wi-Fi"],
-            .addresses: ["Address", "Name"],
+            .addresses: ["Address"],
+            .identities: ["Name", "License", "Passport", "ID"],
+            .contacts: [],
+            .files: [],
             .documents: ["License", "Passport", "ID"],
             .otherItems: ["Wi-Fi", "API", "SSH", "Custom", "Card and Wi-Fi"],
             .logins: ["Login"],
@@ -205,7 +208,7 @@ struct CredentialSecureItemSummaryTests {
         }
         #expect(counts[.all] == all.count)
         #expect(counts[.passkeys] == 0 && counts[.codes] == 0 && counts[.notes] == 0)
-        #expect(Set(CredentialListFilter.allCases.filter(\.isItemKind)) == [.cards, .addresses, .documents, .otherItems])
+        #expect(Set(CredentialListFilter.allCases.filter(\.hidesWhenEmpty)) == [.documents, .otherItems, .files])
     }
 
     @Test func searchFindsAnItemByItsTitleAndNeverByASecret() {

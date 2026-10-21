@@ -5,31 +5,21 @@
 import Contacts
 import SwiftUI
 
-struct ContactAutofillSettings: View {
-    @Bindable var settings: BrowserSettings
-    let context: BrowserProfileContext
+/// The contacts and addresses kept on this Mac, outside the vault, under the Vault tab's Addresses and Contacts sections. They are
+/// read without a prompt when the section opens and dropped when it closes or the session resigns. Their switch and save suggestions
+/// are on the Settings tab (`AutofillOptions`).
+struct SavedContactAddresses: View {
     @State private var store: AutofillContactStore
     @State private var editing: AutofillContact?
     @State private var removing: AutofillContact?
     @State private var saveError: String?
 
-    init(context: BrowserProfileContext) {
-        self.context = context
-        self.settings = context.settings
-        _store = State(initialValue: AutofillContactStore(profile: context.profile))
+    init(profile: Profile) {
+        _store = State(initialValue: AutofillContactStore(profile: profile))
     }
 
     var body: some View {
-        SettingsPageHeader(title: "Contacts and addresses")
-        SettingsCard {
-            DetailRow(title: "Save and fill contacts and addresses", caption: "Offer to save contact details entered in forms.") {
-                SettingsToggle($settings.fillsContacts)
-            }
-        }
-        .disabled(store.profile.isPrivate)
-        .settingsAnchor("autofill.contacts")
-        AutofillSavePromptReset(kind: .contact, context: context)
-        SettingsSection(title: "Saved addresses", symbol: "person.crop.rectangle", footnote: "WSurf encrypts saved contacts. Imported copies don’t sync.", accessory: {
+        SettingsSection(title: "Addresses saved on this Mac", symbol: "person.crop.rectangle", footnote: "WSurf encrypts saved contacts. Imported copies don’t sync.", accessory: {
             SettingsButton(title: "Add Address", symbol: "plus") { editing = AutofillContact() }
                 .disabled(!store.isLoaded || store.isBusy || store.contacts.count >= 100)
         }, content: {
