@@ -59,6 +59,16 @@ final class AssistantFacts {
     @discardableResult
     func remember(_ subject: String, is value: String, source: Fact.Source, at date: Date = Date()) -> Fact? {
         guard settings.remembersFacts else { return nil }
+        return save(subject, is: value, source: source, at: date)
+    }
+
+    /// The person's own edit in Settings. It works with the setting off, and the same limits and filter apply.
+    @discardableResult
+    func update(_ fact: Fact, to value: String) -> Fact? {
+        save(fact.subject, is: value, source: fact.source, at: Date())
+    }
+
+    private func save(_ subject: String, is value: String, source: Fact.Source, at date: Date) -> Fact? {
         let subject = Self.normalized(subject)
         let value = value.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
         guard !subject.isEmpty, subject.count <= Self.subjectLimit, !value.isEmpty, value.count <= Self.valueLimit,

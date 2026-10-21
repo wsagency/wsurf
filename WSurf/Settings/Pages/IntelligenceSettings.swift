@@ -26,6 +26,8 @@ struct AssistantSettings: View {
                 AgentToolsPage(model: model)
             case .grants:
                 AssistantGrantsPage(policy: model.actionPolicy, onBack: { model.showOverview() })
+            case .memory:
+                AssistantMemoryPage(facts: coordinator.context.assistantFacts, onBack: { model.showOverview() })
             case .connectedApps:
                 ConnectedAppsPage(
                     server: coordinator.mcpServer, permissions: coordinator.context.sitePermissions,
@@ -37,6 +39,8 @@ struct AssistantSettings: View {
             guard let anchor else { return }
             if anchor == "assistant.connectedApps" {
                 model.showConnectedApps()
+            } else if anchor == "assistant.memory" {
+                model.showMemory()
             } else if anchor == "provider.connected" || anchor == "privacy.assistant"
                 || anchor.hasPrefix("voice.") || anchor.hasPrefix("assistant.") {
                 model.showOverview()
@@ -84,6 +88,8 @@ private struct AssistantOverview: View {
         .padding(.top, 6)
 
         BehaviourSection(coordinator: coordinator)
+
+        AssistantMemoryPage.OverviewSection(facts: coordinator.context.assistantFacts) { model.showMemory() }
 
         AssistantExecutionSettings()
 
@@ -955,27 +961,6 @@ private struct AgentToolsPage: View {
             "square.on.square"
         case .media:
             "play.rectangle"
-        }
-    }
-}
-
-// MARK: - Readiness
-
-enum ProviderReadiness: Equatable {
-    case ready(String)
-    case needsKey
-    case notRunning(String)
-    case checking
-    case unsupported(String)
-
-    var level: StatusLevel {
-        switch self {
-        case .ready:
-            .ready
-        case .needsKey, .notRunning, .unsupported:
-            .attention
-        case .checking:
-            .idle
         }
     }
 }

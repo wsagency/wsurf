@@ -15,6 +15,7 @@ final class IntelligenceViewModel {
         case editor
         case tools
         case grants
+        case memory
         case connectedApps
     }
 
@@ -229,6 +230,12 @@ final class IntelligenceViewModel {
         customDraft = nil
         customError = nil
         destination = .grants
+    }
+
+    func showMemory() {
+        customDraft = nil
+        customError = nil
+        destination = .memory
     }
 
     func showConnectedApps() {
