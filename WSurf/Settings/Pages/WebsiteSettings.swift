@@ -254,6 +254,18 @@ private struct PermissionDetailPage: View {
     }
 }
 
+/// What resetting one website clears. Assistant Access belongs to the whole website, so resetting a subdomain's page resets
+/// it for every page of that site, and the confirmation says so.
+enum WebsiteReset {
+    static func message(for origin: String) -> String {
+        let site = SitePermissions.displayName(for: SitePermissions.site(for: origin))
+        return String(localized: """
+            The website will ask again to use your camera, microphone, location, or notifications. \
+            The assistant will ask again before reading any page on \(site).
+            """)
+    }
+}
+
 private struct SiteDetailPage: View {
     let origin: String
     let settings: BrowserSettings
@@ -353,7 +365,7 @@ private struct SiteDetailPage: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("The website will ask again to use your camera, microphone, location, or notifications. The assistant will ask again before reading the website.")
+                Text(WebsiteReset.message(for: origin))
             }
         }
 
@@ -384,7 +396,10 @@ private struct SiteDetailPage: View {
             }
             .settingsAnchor("websites.engine")
             RowSeparator()
-            DetailRow(title: "Assistant access") {
+            DetailRow(
+                title: "Assistant access",
+                caption: "Applies to every page on \(SitePermissions.displayName(for: SitePermissions.site(for: origin)))."
+            ) {
                 SettingsMenu(
                     options: assistantAccessOptions,
                     selection: Binding(

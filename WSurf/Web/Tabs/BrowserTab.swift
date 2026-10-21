@@ -233,6 +233,10 @@ final class BrowserTab: Identifiable {
     let assistantAccess: TabAssistantAccessCenter
     let find = FindSession()
     let translation = PageTranslation()
+    let reader = ReaderSession()
+    /// Whether this tab is the one in front. Only that tab asks its page for an article, so a window of background tabs does not
+    /// scan them all. The model answers; a tab without one is never in front.
+    @ObservationIgnored var isFrontTab: () -> Bool = { false }
     let dialogs = PageDialogQueue()
 
     let isPrivate: Bool
@@ -298,7 +302,8 @@ final class BrowserTab: Identifiable {
         if let liveView {
             adopt(liveView)
         }
-        find.driver = .browserPage { [weak self] in self?.page }
+        find.driver = .browserPage { [weak self] in self?.shownPage }
+        reader.driver = .page { [weak self] in self?.liveView }
         assistantAccess.onPolicyChanged = { [weak self] in self?.releaseInvalidDevelopment() }
         if opensStartPage {
             permitSystemPage(SystemPages.start)
@@ -387,6 +392,7 @@ final class BrowserTab: Identifiable {
         isClosed = true
         releaseCurrentDevelopment(reason: .tabClosed)
         translation.documentChanged()
+        reader.pageChanged()
         pendingNavigationTask?.cancel()
         coverHold?.cancel()
         onChromiumDownload = nil

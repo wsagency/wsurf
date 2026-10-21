@@ -32,6 +32,7 @@ struct OmniboxItem: Identifiable {
         case phrase
         case history
         case tab
+        case archived
         case ask
         case action
     }
@@ -45,6 +46,7 @@ struct OmniboxItem: Identifiable {
     let shortcut: String
     let completionText: String?
     let alternate: (() -> Void)?
+    let remove: (() -> Void)?
     let run: () -> Void
 
     init(
@@ -57,6 +59,7 @@ struct OmniboxItem: Identifiable {
         shortcut: String = "",
         completionText: String? = nil,
         alternate: (() -> Void)? = nil,
+        remove: (() -> Void)? = nil,
         run: @escaping () -> Void
     ) {
         self.id = id
@@ -75,6 +78,7 @@ struct OmniboxItem: Identifiable {
             }
         }()
         self.alternate = alternate
+        self.remove = remove
         self.run = run
     }
 }
@@ -92,6 +96,8 @@ extension OmniboxItem.Kind {
             "clock"
         case .tab:
             "rectangle.on.rectangle"
+        case .archived:
+            "archivebox"
         case .ask:
             "sparkle"
         case .action:
@@ -101,7 +107,7 @@ extension OmniboxItem.Kind {
 
     var stacksDetail: Bool {
         switch self {
-        case .history, .tab:
+        case .history, .tab, .archived:
             true
         case .go, .search, .newTab, .phrase, .ask, .action:
             false
@@ -305,6 +311,46 @@ enum Omnibox {
 
         guard !items.isEmpty else { return nil }
         return OmniboxSection(id: "tabs", title: String(localized: "Switch to Tab"), items: items)
+    }
+
+    static func archivedSection(
+        query: String,
+        entries: [TabArchive.Entry],
+        excluding openURLs: Set<String> = [],
+        restore: @escaping (TabArchive.Entry) -> Void,
+        remove: ((TabArchive.Entry) -> Void)? = nil
+    ) -> OmniboxSection? {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let needle = query.lowercased()
+
+        let closed = entries.filter { !openURLs.contains($0.url) }
+        let listed = needle.isEmpty
+            ? closed
+            : mostRelevant(
+                closed.filter { $0.title.lowercased().contains(needle) || $0.url.lowercased().contains(needle) },
+                for: query,
+                limit: closed.count
+            ) {
+                ($0.title, URL(string: $0.url)?.displayAddress ?? $0.url, 0)
+            }
+        let items: [OmniboxItem] = listed.map { entry in
+            let host = URL(string: entry.url)?.displayHost
+            let archived = entry.archivedAt.formatted(.relative(presentation: .named, unitsStyle: .wide))
+            return OmniboxItem(
+                id: "omnibox-archived-\(entry.id)",
+                kind: .archived,
+                title: entry.title,
+                detail: [host, archived].compactMap { $0 }.joined(separator: " · "),
+                iconHost: host,
+                completionText: entry.url,
+                remove: remove.map { remove in { remove(entry) } }
+            ) {
+                restore(entry)
+            }
+        }
+
+        guard !items.isEmpty else { return nil }
+        return OmniboxSection(id: "archived", title: String(localized: "Archived Tabs"), items: items)
     }
 
     static func relevance(title: String, address: String, for query: String) -> Int {

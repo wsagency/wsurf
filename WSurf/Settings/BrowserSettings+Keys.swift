@@ -69,5 +69,8 @@ extension BrowserSettings {
         static let commandPaletteOrder = "palette.order"
         static let translationTarget = "translation.target"
         static let alwaysTranslate = "translation.always"
+        static let readerTypeface = "reader.typeface"
+        static let readerTheme = "reader.theme"
+        static let readerTextSize = "reader.textSize"
     }
 }

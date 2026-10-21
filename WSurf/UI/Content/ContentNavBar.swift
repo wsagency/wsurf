@@ -200,6 +200,11 @@ enum ChromeBand {
     static func pageColor(browser: BrowserModel, coordinator: AppCoordinator) -> NSColor? {
         guard !coordinator.isShowingSettings, !showsStartPage(browser: browser) else { return nil }
         guard browser.activeSplit == nil else { return nil }
+        // Reader covers the page, so the bar takes the color of the article's page instead.
+        if let tab = browser.activeTab, tab.reader.isActive {
+            let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return BrowserSettings.application.readerPalette.resolved(isDark: isDark).background
+        }
         return browser.activeTab?.pageColor
     }
 

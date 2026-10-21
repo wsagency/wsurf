@@ -244,9 +244,10 @@ final class SitePermissions {
         defaults[permission] ?? .ask
     }
 
-    /// The website's own choice, including an explicit Ask. `nil` means it follows the default.
+    /// The website's own choice, including an explicit Ask. `nil` means it follows the default. One choice covers the
+    /// whole website (`site(for:)`), so a subdomain answers with the record of the site it belongs to.
     func assistantRecord(for origin: String) -> AssistantAccessPolicy? {
-        assistantRecords[normalize(origin)]
+        assistantRecords[Self.site(for: normalize(origin))]
     }
 
     func assistantAccess(for origin: String) -> AssistantAccessPolicy {
@@ -379,9 +380,10 @@ final class SitePermissions {
     /// Settings > Websites), so every tab's live assistant state is re-evaluated against the store.
     var onAssistantAccessChanged: (() -> Void)?
 
-    /// `nil` removes the record, so the website follows the default again. Ask is a record like any other.
+    /// `nil` removes the record, so the website follows the default again. Ask is a record like any other. The record is
+    /// kept for the whole website the origin belongs to.
     func setAssistantAccess(_ policy: AssistantAccessPolicy?, for origin: String) {
-        let origin = normalize(origin)
+        let origin = Self.site(for: normalize(origin))
         guard !origin.isEmpty else { return }
         assistantRecords[origin] = policy
         scheduleSave()
@@ -487,6 +489,40 @@ final class SitePermissions {
         return "\(scheme)://\(host):\(port)"
     }
 
+    /// The website an origin belongs to: its registrable domain under the public suffix list, with the origin's scheme and
+    /// port. A host the list cannot reduce keeps its own origin: an IP address, `localhost`, or a name that is itself a
+    /// suffix. Names under a private-section suffix such as `github.io` stay separate sites.
+    nonisolated static func site(for origin: String) -> String {
+        guard let components = URLComponents(string: origin), let scheme = components.scheme,
+              let host = components.host, let domain = RelyingPartyPolicy.registrableDomain(of: host)
+        else { return origin }
+        return components.port.map { "\(scheme)://\(domain):\($0)" } ?? "\(scheme)://\(domain)"
+    }
+
+    /// Whether a record for `origin` covers more as a site record than it did for the origin: its host has a registrable
+    /// domain, so the site also takes in its subdomains.
+    private nonisolated static func widensToSite(_ origin: String) -> Bool {
+        URLComponents(string: origin)?.host.flatMap(RelyingPartyPolicy.registrableDomain(of:)) != nil
+    }
+
+    /// The stricter of two choices for one website: No Access, then Ask (a stored choice that holds against a more open
+    /// default), then Read Only, then Allow Control.
+    nonisolated static func stricter(_ first: AssistantAccessPolicy, _ second: AssistantAccessPolicy) -> AssistantAccessPolicy {
+        func openness(_ policy: AssistantAccessPolicy) -> Int {
+            switch policy {
+            case .deny:
+                0
+            case .ask:
+                1
+            case .readOnly:
+                2
+            case .control:
+                3
+            }
+        }
+        return openness(first) <= openness(second) ? first : second
+    }
+
     nonisolated static func webOrigin(for url: URL?) -> String {
         guard let scheme = url?.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return "" }
         return origin(for: url)
@@ -537,6 +573,8 @@ final class SitePermissions {
         var records: [String: [WebPermission: PermissionPolicy]] = [:]
         var defaults: [WebPermission: PermissionPolicy] = [:]
         var assistantAccess: [String: AssistantAccessPolicy] = [:]
+        /// True once `assistantAccess` is keyed by website (`site(for:)`). Files from before have per-origin records.
+        var assistantAccessBySite: Bool?
         /// Absent for Ask, so a file nobody changed stays as it was and older builds ignore the key.
         var assistantDefault: AssistantAccessPolicy?
         /// Absent for Ask to close tabs, for the same reason.
@@ -553,6 +591,7 @@ final class SitePermissions {
             defaults:
                 [WebPermission: PermissionPolicy],
             assistantAccess: [String: AssistantAccessPolicy],
+            assistantAccessBySite: Bool?,
             assistantDefault: AssistantAccessPolicy?,
             assistantTabClosing: AssistantTabClosing?,
             keptActive: Set<String>,
@@ -565,6 +604,7 @@ final class SitePermissions {
             self.records = records
             self.defaults = defaults
             self.assistantAccess = assistantAccess
+            self.assistantAccessBySite = assistantAccessBySite
             self.assistantDefault = assistantDefault
             self.assistantTabClosing = assistantTabClosing
             self.keptActive = keptActive
@@ -589,6 +629,7 @@ final class SitePermissions {
                 [String: AssistantAccessPolicy].self,
                 forKey: .assistantAccess
             ) ?? [:]
+            assistantAccessBySite = try? values.decodeIfPresent(Bool.self, forKey: .assistantAccessBySite)
             assistantDefault = try? values.decodeIfPresent(AssistantAccessPolicy.self, forKey: .assistantDefault)
             assistantTabClosing = try? values.decodeIfPresent(AssistantTabClosing.self, forKey: .assistantTabClosing)
             keptActive = try values.decodeIfPresent(
@@ -639,6 +680,7 @@ final class SitePermissions {
             defaults:
                 defaults,
             assistantAccess: assistantRecords,
+            assistantAccessBySite: true,
             assistantDefault: assistantDefault == .ask ? nil : assistantDefault,
             assistantTabClosing: assistantTabClosing == .ask ? nil : assistantTabClosing,
             keptActive: keptActiveOriginSet,
@@ -665,10 +707,19 @@ final class SitePermissions {
             records[origin, default: [:]].merge(policies) { existing, _ in existing }
         }
         defaults = snapshot.defaults
+        // Records from before access covered whole websites were kept per origin. They fold into their website, the
+        // stricter winning, and only No Access and Ask carry over: an old Read Only or Allow Control on one origin would
+        // otherwise cover every page of the site, so the person is asked again for the site. A host the suffix list cannot
+        // reduce (an address, localhost) covers no more than before and keeps its record.
+        let bySite = snapshot.assistantAccessBySite == true
         for (key, policy) in snapshot.assistantAccess {
             let origin = normalize(key)
-            guard !origin.isEmpty, assistantRecords[origin] == nil else { continue }
-            assistantRecords[origin] = policy
+            let site = Self.site(for: origin)
+            guard !site.isEmpty else { continue }
+            if !bySite, policy == .readOnly || policy == .control, Self.widensToSite(origin) {
+                continue
+            }
+            assistantRecords[site] = assistantRecords[site].map { Self.stricter($0, policy) } ?? policy
         }
         if let stored = snapshot.assistantDefault, stored != .deny {
             assistantDefault = stored

@@ -316,9 +316,6 @@
     "Paused because the provider is rate limited. Your progress is saved; wait, then choose Continue." : {
 
     },
-    "Press Tab to search this site" : {
-      "comment" : "Accessibility hint for the command palette's site search suggestion. Tab is the keyboard key."
-    },
     "Re-pair" : {
       "comment" : "Menu command on a client row that replaces the app’s pairing token with a new one. A verb."
     },
@@ -5657,9 +5654,6 @@
     "The text in this form was written by AI, not by you. Publishing it puts AI-generated text out under your name." : {
 
     },
-    "The website will ask again to use your camera, microphone, location, or notifications. The assistant will ask again before reading the website." : {
-
-    },
     "The website’s certificate couldn’t be verified, so WSurf stopped before sending anything." : {
       "comment" : "Explanatory sentence on the certificate error page, under its headline. Curly apostrophes."
     },
@@ -6439,6 +6433,84 @@
     },
     "• Allow Developer: also types test passwords it gives itself, and acts without asking before purchases, sending, and deleting. Only on developer sites in your Developer profile." : {
       "comment" : "Line in the access sheet that explains the Allow Developer button. It follows the lines for the other buttons."
+    },
+    "This includes %@ and other pages on %@." : {
+      "comment" : "Last paragraph of the Allow Assistant question, shown when the page is on a subdomain. The first %@ is the page’s host, for example maps.google.com; the second is the website the answer covers, for example google.com. The answer applies to every page of that website."
+    },
+    "This applies to every page on %@." : {
+      "comment" : "Last paragraph of the Allow Assistant question. %@ is the website the answer covers, for example google.com, including its subdomains."
+    },
+    "Applies to every page on %@." : {
+      "comment" : "Caption under Assistant access on a website’s page in Settings > Websites. %@ is the website the choice covers, for example google.com; the choice also covers its subdomains such as maps.google.com. Full sentence."
+    },
+    "Archived Tabs" : {
+      "comment" : "Heading of the ⌘K palette section that lists tabs WSurf closed automatically because they sat unused, and the label of the chip in the palette field while only those tabs are searched. Choosing a row opens the tab again. Plural noun phrase, Title Case."
+    },
+    "Show all results" : {
+      "comment" : "Tooltip and accessibility label of the Archived Tabs chip in the ⌘K palette field. Choosing it leaves the archive and searches everything again. Sentence case."
+    },
+    "Search archived tabs" : {
+      "comment" : "Placeholder and accessibility label of the ⌘K palette field while it searches only archived tabs, and the hint beside the field that offers that scope when the typed text starts to spell “archived tabs”. Search is a verb. Sentence case."
+    },
+    "Press Tab to search" : {
+      "comment" : "Accessibility hint on the scope hint in the ⌘K palette and the address bar, which offers to search one website or the archived tabs. Tab is the keyboard key. Replaces “Press Tab to search this site”."
+    },
+    "Show Archived Tabs" : {
+      "comment" : "Command in the ⌘K palette that switches the palette to searching tabs WSurf archived automatically. Title Case, like a menu command. A caption beside it counts the archived tabs."
+    },
+    "Remove from Archive" : {
+      "comment" : "Tooltip and VoiceOver action on the × button at the right of an archived tab in the ⌘K palette. It deletes that entry from the archive without opening the tab. Verb phrase, Title Case."
+    },
+    "Archive unused tabs" : {
+      "comment" : "Title of the row in Settings > General > Tabs that chooses how long a background tab may sit unused before it closes into the archive, and the same row in Settings search. A pop-up menu completes it: After 12 hours, After a day, After a week, or Never. Sentence case."
+    },
+    "Archived tabs stay searchable from ⌘K. The newest 30 are kept." : {
+      "comment" : "Caption under the Archive unused tabs row in Settings > General, and the description of that row in Settings search. ⌘K is the shortcut for the command palette; keep it as it is. 30 is how many archived tabs WSurf keeps, so keep the number."
+    },
+    "After 12 hours" : {
+      "comment" : "Choice in the Archive unused tabs pop-up menu in Settings > General: a background tab closes into the archive once it has gone unused for 12 hours. Sentence case, one short line."
+    },
+    "After a day" : {
+      "comment" : "Choice in the Archive unused tabs pop-up menu in Settings > General: a background tab closes into the archive once it has gone unused for a day. Sentence case, one short line."
+    },
+    "After a week" : {
+      "comment" : "Choice in the Archive unused tabs pop-up menu in Settings > General: a background tab closes into the archive once it has gone unused for a week. Sentence case, one short line."
+    },
+    "The website will ask again to use your camera, microphone, location, or notifications. The assistant will ask again before reading any page on %@." : {
+      "comment" : "Message of the confirmation for Reset this website in Settings > Websites. %@ is the whole website the assistant’s access covers, for example google.com when resetting maps.google.com: assistant access is reset for every page of that site."
+    },
+    "Show Reader" : {
+      "comment" : "Menu command in View, and accessibility label of the Reader control in the address bar while the page is shown as it is. Reader shows only the article of a page, without the navigation, ads and other things around it. Pairs with “Hide Reader”. Title Case."
+    },
+    "Hide Reader" : {
+      "comment" : "Menu command in View, and accessibility label of the Reader control in the address bar while Reader is on screen. It goes back to the page. Pairs with “Show Reader”. Title Case."
+    },
+    "Show Reader (⌥⌘R)" : {
+      "comment" : "Tooltip on the Reader control in the address bar while the page is shown as it is. ⌥⌘R is the keyboard shortcut — keyboard symbols, keep exactly, including the parentheses. Pairs with “Hide Reader (⌥⌘R)”."
+    },
+    "Hide Reader (⌥⌘R)" : {
+      "comment" : "Tooltip on the Reader control in the address bar while Reader is on screen, and on the Done button of the floating bar over the article. ⌥⌘R is the keyboard shortcut — keyboard symbols, keep exactly, including the parentheses."
+    },
+    "Text appearance" : {
+      "comment" : "Tooltip on the button in Reader's floating bar that opens the choices for the article's text: size, theme and font. Sentence case."
+    },
+    "Make text smaller" : {
+      "comment" : "Tooltip and accessibility label of the small A button in Reader's text appearance popover; it steps the article's text size down. Sentence case. Pairs with “Make text bigger”."
+    },
+    "Make text bigger" : {
+      "comment" : "Tooltip and accessibility label of the large A button in Reader's text appearance popover; it steps the article's text size up. Sentence case. Pairs with “Make text smaller”."
+    },
+    "Font" : {
+      "comment" : "Heading above the list of typefaces in Reader's text appearance popover. A noun; one short word."
+    },
+    "Reset to Defaults" : {
+      "comment" : "Button at the bottom of Reader's text appearance popover that puts the article's text size, theme and font back to the original choices. Title Case, imperative."
+    },
+    "Sepia" : {
+      "comment" : "Name of Reader's warm, paper-colored page theme, one of Automatic, Light, Sepia and Dark. It names a color, as in a sepia-toned photograph. Shown as the tooltip and accessibility label of a round color swatch."
+    },
+    "%lld min read" : {
+      "comment" : "Reading time of an article in Reader, shown under its title beside the author's name. %lld is the number of minutes and is at least 1. Keep it short; it sits on one line."
     }
   },
   "version" : "1.0"

@@ -60,6 +60,8 @@ extension BrowserTab {
         }
         noteDocumentChanged()
         translation.documentChanged()
+        reader.pageChanged()
+        probeReader()
         noteHoveredLink(nil)
         clearPageActivity()
         if isShowingRealPage, !hasPresentedContent {
@@ -89,6 +91,7 @@ extension BrowserTab {
         releasePageColorHold()
         refreshPageColor(from: page)
         restoreScrollOffsetIfNeeded()
+        probeReader()
         offerTranslation()
         onNavigationFinished?(wasRestore || isShowingError)
     }
@@ -465,6 +468,7 @@ extension BrowserTab {
         refreshFavicon()
         measureBandUnderBar()
         invalidateSessionState()
+        readerPageMoved(from: previous)
         translationPageMoved()
         onSameDocumentNavigation?()
     }

@@ -34,7 +34,10 @@ extension AssistantAccessPolicy {
 final class TabAssistantAccessCenter {
     private let store: SitePermissions
 
+    /// The page's own origin. Requests are checked against it, so a page that moves to another origin needs a new look.
     private(set) var origin = ""
+    /// The website `origin` belongs to (`SitePermissions.site(for:)`). A choice, saved or for this visit, covers all of it.
+    private(set) var site = ""
     var persistsAnswers = true
     private(set) var sessionPolicy: AssistantAccessPolicy?
 
@@ -55,7 +58,7 @@ final class TabAssistantAccessCenter {
     @ObservationIgnored var onPolicyChanged: (() -> Void)?
 
     var displayHost: String {
-        SitePermissions.displayName(for: origin)
+        SitePermissions.displayName(for: site)
     }
 
     /// The website's own choice: this visit's answer in a private tab, else its saved record. `nil` follows the default.
@@ -142,6 +145,7 @@ final class TabAssistantAccessCenter {
             answer = await Self.ask(
                 capability: capability,
                 origin: requestedOrigin,
+                site: site,
                 pageHasSensitiveField: isCappedBySensitiveField,
                 in: window
             )
@@ -187,7 +191,11 @@ final class TabAssistantAccessCenter {
             : ""
         guard nextOrigin != origin else { return }
         origin = nextOrigin
-        sessionPolicy = nil
+        let nextSite = SitePermissions.site(for: nextOrigin)
+        if nextSite != site {
+            site = nextSite
+            sessionPolicy = nil
+        }
         sensitiveOrigin = nil
         onPolicyChanged?()
     }
@@ -233,15 +241,17 @@ final class TabAssistantAccessCenter {
     private static func ask(
         capability: AssistantPageCapability,
         origin: String,
+        site: String,
         pageHasSensitiveField: Bool,
         in window: NSWindow
     ) async -> AssistantAccessPolicy {
         guard !isRunningTests || presentsNativeSheetForTesting else { return .ask }
 
-        let site = SitePermissions.displayName(for: origin)
+        let siteName = SitePermissions.displayName(for: site)
         let alert = NSAlert()
-        alert.messageText = String(localized: "Allow Assistant on \(site)?")
-        alert.informativeText = body(capability: capability, site: site, pageHasSensitiveField: pageHasSensitiveField)
+        alert.messageText = String(localized: "Allow Assistant on \(siteName)?")
+        alert.informativeText = body(capability: capability, site: siteName, pageHasSensitiveField: pageHasSensitiveField)
+            + "\n\n" + coverage(origin: origin, site: site)
 
         let choices: [(LocalizedStringResource, AssistantAccessPolicy)] = switch capability {
         case .read:
@@ -268,6 +278,16 @@ final class TabAssistantAccessCenter {
         default:
             .ask
         }
+    }
+
+    /// Says that the answer covers the whole website, naming the page's own host when it is not the site itself.
+    static func coverage(origin: String, site: String) -> String {
+        let siteName = SitePermissions.displayName(for: site)
+        let pageName = SitePermissions.displayName(for: origin)
+        guard pageName != siteName, pageName != "www." + siteName else {
+            return String(localized: "This applies to every page on \(siteName).")
+        }
+        return String(localized: "This includes \(pageName) and other pages on \(siteName).")
     }
 
     static func body(capability: AssistantPageCapability, site: String, pageHasSensitiveField: Bool = false) -> String {

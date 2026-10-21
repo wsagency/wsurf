@@ -546,8 +546,8 @@ final class AppCoordinator {
     }
 
     func printActivePage() {
-        guard let page = pageCommandTab?.page else { return }
-        PagePrinting.begin(for: page)
+        guard let tab = pageCommandTab else { return }
+        PagePrinting.begin(for: tab.shownPage)
     }
 
     func toggleFullScreen() {

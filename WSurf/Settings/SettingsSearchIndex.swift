@@ -87,6 +87,11 @@ enum SettingsIndex {
                       ["sleep", "sleeping", "discard", "unload", "memory", "ram", "background tabs", "reload",
                        "sleep after", "timer", "idle", "inactive", "hours", "minutes", "custom",
                       ]),
+        SettingsEntry("general.archiveTabs", .general, "Archive unused tabs",
+                      "Archived tabs stay searchable from ⌘K. The newest 30 are kept.",
+                      ["archive", "archived", "auto archive", "close", "old tabs", "inactive", "unused",
+                       "clean up", "tidy", "12 hours", "day", "week", "command palette",
+                      ]),
         SettingsEntry("general.freeMemory", .general, "Free memory",
                       """
                       Unloads background tabs now, in WebKit and Chromium. They reload when you open them; Chromium tabs \

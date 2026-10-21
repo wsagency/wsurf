@@ -15,6 +15,19 @@ enum TabArchiveDelay: String, CaseIterable, Identifiable {
         rawValue
     }
 
+    var label: LocalizedStringResource {
+        switch self {
+        case .twelveHours:
+            "After 12 hours"
+        case .day:
+            "After a day"
+        case .week:
+            "After a week"
+        case .never:
+            "Never"
+        }
+    }
+
     var interval: TimeInterval? {
         switch self {
         case .twelveHours:

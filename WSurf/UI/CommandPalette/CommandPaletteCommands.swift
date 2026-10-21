@@ -18,6 +18,7 @@ struct CommandPaletteContext {
     var isShowingPin = false
     var isAwayFromPin = false
     var canReopenClosedTab = false
+    var archivedCount = 0
     var canSplit = false
     var isSplit = false
     var canSwapPanes = false
@@ -46,6 +47,7 @@ enum CommandPaletteAction: String, CaseIterable {
     case unloadTab
     case freeMemory
     case reopenTab
+    case showArchivedTabs
     case duplicateTab
     case togglePin
     case returnToPin
@@ -306,6 +308,15 @@ enum CommandPaletteCatalog {
                     aliases: ["restore", "undo close", "bring back"],
                     isAvailable: context.canReopenClosedTab,
                     isSuggested: true
+                ),
+                make(
+                    .showArchivedTabs,
+                    group: .tabs,
+                    title: "Show Archived Tabs",
+                    detail: "\(context.archivedCount) tabs",
+                    symbol: "archivebox",
+                    aliases: ["archive", "archived", "auto archived", "old tabs"],
+                    isAvailable: context.archivedCount > 0
                 ),
                 make(
                     .duplicateTab,

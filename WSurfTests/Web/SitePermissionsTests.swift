@@ -89,6 +89,114 @@ struct SitePermissionsStoreTests {
         #expect(store.assistantOrigins == ["https://example.com", "https://example.com:8443"])
     }
 
+    @Test func assistantAccessCoversTheWholeSite() {
+        let store = temporaryStore()
+        store.setAssistantAccess(.deny, for: "https://www.google.com")
+
+        #expect(store.assistantAccess(for: "https://maps.google.com") == .deny)
+        #expect(store.assistantAccess(for: "https://google.com") == .deny)
+        #expect(store.assistantRecord(for: "https://google.co.uk") == nil)
+        #expect(store.assistantAccess(for: "http://google.com") == .ask)
+        #expect(store.assistantOrigins == ["https://google.com"])
+
+        store.setAssistantAccess(nil, for: "https://mail.google.com")
+        #expect(store.assistantRecord(for: "https://maps.google.com") == nil)
+    }
+
+    /// Names under a private-section suffix belong to different people, so each is its own website.
+    @Test func assistantAccessKeepsHostedSitesApart() {
+        let store = temporaryStore()
+        store.setAssistantAccess(.control, for: "https://alice.github.io")
+
+        #expect(store.assistantAccess(for: "https://docs.alice.github.io") == .control)
+        #expect(store.assistantRecord(for: "https://bob.github.io") == nil)
+        #expect(store.assistantRecord(for: "https://github.io") == nil)
+        #expect(store.assistantRecord(for: "http://127.0.0.1:8080") == nil)
+        #expect(store.assistantOrigins == ["https://alice.github.io"])
+    }
+
+    /// A file from before access covered whole websites: No Access and Ask fold into their website, the stricter winning.
+    /// Read Only and Allow Control on a host with a registrable domain are dropped, so an answer for one origin never becomes
+    /// an answer for the whole site; the person is asked again. An address keeps its record, since it covers no more.
+    @Test func legacyOriginsFoldOnlyTheirRefusalsIntoTheSite() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SitePermissionsFold-\(UUID().uuidString).json")
+        let json = """
+            {"assistantDefault":"control","assistantAccess":{\
+            "https://maps.google.com":"control","https://www.google.com":"readOnly","https://mail.google.com":"deny",\
+            "https://news.ycombinator.com":"control",\
+            "https://shop.example.com":"control","https://www.example.com":"ask","https://blog.example.com":"readOnly",\
+            "https://alice.github.io":"deny","https://bob.github.io":"control","http://127.0.0.1:8080":"control"}}
+            """
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        let store = SitePermissions(storageURL: url)
+
+        #expect(store.assistantAccess(for: "https://maps.google.com") == .deny)
+        #expect(store.assistantRecord(for: "https://ycombinator.com") == nil)
+        #expect(store.assistantRecord(for: "https://shop.example.com") == .ask)
+        #expect(store.assistantRecord(for: "https://bob.github.io") == nil)
+        #expect(store.assistantAccess(for: "https://alice.github.io") == .deny)
+        #expect(store.assistantRecord(for: "http://127.0.0.1:8080") == .control)
+        #expect(store.assistantOrigins == ["http://127.0.0.1:8080", "https://alice.github.io", "https://example.com", "https://google.com"])
+    }
+
+    @Test func aLegacyAllowOnOneSubdomainGivesTheSiteNoAllow() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SitePermissionsLegacyAllow-\(UUID().uuidString).json")
+        try #"{"assistantAccess":{"https://a.example.com":"control"}}"#.write(to: url, atomically: true, encoding: .utf8)
+        let store = SitePermissions(storageURL: url)
+
+        #expect(store.assistantRecord(for: "https://a.example.com") == nil)
+        #expect(store.assistantRecord(for: "https://example.com") == nil)
+        #expect(store.assistantOrigins.isEmpty)
+    }
+
+    @Test func aLegacyDenyBeatsALegacyAllowOnTheSameSite() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SitePermissionsLegacyDeny-\(UUID().uuidString).json")
+        try #"{"assistantAccess":{"https://a.example.com":"control","https://b.example.com":"deny"}}"#
+            .write(to: url, atomically: true, encoding: .utf8)
+        let store = SitePermissions(storageURL: url)
+
+        #expect(store.assistantAccess(for: "https://a.example.com") == .deny)
+        #expect(store.assistantOrigins == ["https://example.com"])
+    }
+
+    /// Once saved by site, an Allow Control record is the person's choice for the whole site and survives a relaunch.
+    @Test func aSiteRecordSurvivesRelaunch() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SitePermissionsSiteRecord-\(UUID().uuidString).json")
+        let writer = SitePermissions(storageURL: url)
+        writer.setAssistantAccess(.control, for: "https://a.example.com")
+        await writer.waitForPendingSave()
+
+        let reader = SitePermissions(storageURL: url)
+        #expect(reader.assistantAccess(for: "https://b.example.com") == .control)
+    }
+
+    /// Resetting a subdomain's page in Settings > Websites drops the whole site's Assistant Access, and the confirmation names
+    /// the site.
+    @Test func resettingASubdomainResetsTheSitesAssistantAccessAndSaysSo() {
+        let store = temporaryStore()
+        store.setAssistantAccess(.deny, for: "https://www.google.com")
+
+        store.setAssistantAccess(nil, for: "https://maps.google.com")
+
+        #expect(store.assistantRecord(for: "https://google.com") == nil)
+        #expect(WebsiteReset.message(for: "https://maps.google.com").hasSuffix("before reading any page on google.com."))
+        #expect(WebsiteReset.message(for: "http://127.0.0.1:8080").hasSuffix("any page on http://127.0.0.1:8080."))
+    }
+
+    @Test func theStricterChoiceWins() {
+        let order: [AssistantAccessPolicy] = [.deny, .ask, .readOnly, .control]
+        for (index, stricter) in order.enumerated() {
+            for looser in order[index...] {
+                #expect(SitePermissions.stricter(stricter, looser) == stricter)
+                #expect(SitePermissions.stricter(looser, stricter) == stricter)
+            }
+        }
+    }
+
     @Test func useDefaultForgetsAssistantAccess() {
         let store = temporaryStore()
         store.setAssistantAccess(.deny, for: "https://example.com")
@@ -313,7 +421,9 @@ struct SitePermissionsStoreTests {
             """.write(to: old, atomically: true, encoding: .utf8)
         let store = SitePermissions(storageURL: old)
         #expect(store.assistantDefault == .ask)
-        #expect(store.assistantAccess(for: "https://example.com") == .readOnly)
+        // A per-origin Read Only from before site-wide access is dropped; an Ask carries over.
+        #expect(store.assistantRecord(for: "https://example.com") == nil)
+        #expect(store.assistantRecord(for: "https://dropped.example") == .ask)
         #expect(store.assistantAccess(for: "https://unknown.example") == .ask)
     }
 

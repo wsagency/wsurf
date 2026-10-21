@@ -75,6 +75,24 @@ final class ExtensionLibrary {
         var enabled: Bool
         var isPinned: Bool
         var toolbarOrder: Int
+        /// Websites this profile blocked the extension on, sorted (`ExtensionManager+Websites`).
+        var blockedHosts: [String] = []
+
+        init(enabled: Bool, isPinned: Bool, toolbarOrder: Int, blockedHosts: [String] = []) {
+            self.enabled = enabled
+            self.isPinned = isPinned
+            self.toolbarOrder = toolbarOrder
+            self.blockedHosts = blockedHosts
+        }
+
+        /// A `profiles.json` written before blocking existed has no `blockedHosts`: nothing is blocked.
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            enabled = try container.decode(Bool.self, forKey: .enabled)
+            isPinned = try container.decode(Bool.self, forKey: .isPinned)
+            toolbarOrder = try container.decode(Int.self, forKey: .toolbarOrder)
+            blockedHosts = try container.decodeIfPresent([String].self, forKey: .blockedHosts) ?? []
+        }
     }
 
     private nonisolated struct Catalogue: Codable {
@@ -309,7 +327,8 @@ final class ExtensionLibrary {
         mine[id] = Placement(
             enabled: true,
             isPinned: mine[id]?.isPinned ?? true,
-            toolbarOrder: mine[id]?.toolbarOrder ?? mine.count
+            toolbarOrder: mine[id]?.toolbarOrder ?? mine.count,
+            blockedHosts: mine[id]?.blockedHosts ?? []
         )
         placements.profiles[profileKey] = mine
         save()
@@ -353,6 +372,20 @@ final class ExtensionLibrary {
         return (mine?.enabled ?? false, mine?.isPinned ?? true, mine?.toolbarOrder ?? .max)
     }
 
+    func blockedHosts(for id: String) -> [String] {
+        placements.profiles[profileKey]?[id]?.blockedHosts ?? []
+    }
+
+    func setBlocked(_ blocked: Bool, host: String, id: String) {
+        updatePlacement(id: id) { placement in
+            placement.blockedHosts.removeAll { $0 == host }
+            if blocked {
+                placement.blockedHosts.append(host)
+                placement.blockedHosts.sort()
+            }
+        }
+    }
+
     func setPinned(_ pinned: Bool, id: String) {
         updatePlacement(id: id) { $0.isPinned = pinned }
     }
@@ -370,7 +403,8 @@ final class ExtensionLibrary {
             mine[entry.id] = Placement(
                 enabled: mine[entry.id]?.enabled ?? entry.enabled,
                 isPinned: mine[entry.id]?.isPinned ?? entry.isPinned,
-                toolbarOrder: offset
+                toolbarOrder: offset,
+                blockedHosts: mine[entry.id]?.blockedHosts ?? []
             )
         }
         placements.profiles[profileKey] = mine

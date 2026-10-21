@@ -48,6 +48,19 @@ struct GeneralSettings: View {
             RowSeparator()
 
             DetailRow(
+                title: "Archive unused tabs",
+                caption: "Archived tabs stay searchable from ⌘K. The newest 30 are kept."
+            ) {
+                SettingsMenu(
+                    options: TabArchiveDelay.allCases.map { .init(value: $0, label: String(localized: $0.label)) },
+                    selection: $settings.archiveTabsAfter
+                )
+            }
+            .settingsAnchor("general.archiveTabs")
+
+            RowSeparator()
+
+            DetailRow(
                 title: "Free memory",
                 caption: """
                 Unloads background tabs now, in WebKit and Chromium. They reload when you open them; Chromium tabs \

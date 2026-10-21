@@ -95,6 +95,7 @@ final class BrowserModel {
                 previous?.noteHoveredLink(nil)
             }
             activeTab?.realizeDeferredSession()
+            activeTab?.probeReader()
             for id in activeSplit?.tabs ?? [] {
                 tabsByID[id]?.realizeDeferredSession()
             }
@@ -171,6 +172,7 @@ final class BrowserModel {
             guard let self, let tab else { return false }
             return activeTab !== tab && !tab.isFavorite && protectionReason(for: tab) == nil
         }
+        tab.isFrontTab = { [weak self, weak tab] in self?.activeTab === tab }
         tab.onNavigationOutsideExtension = { [weak self] url in
             self?.newTab(url: url)
         }

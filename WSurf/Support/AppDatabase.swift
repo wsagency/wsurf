@@ -278,6 +278,19 @@ struct AppDatabase: Sendable {
         try defineWindowSessions(in: db)
         try defineProfilePins(in: db)
         try defineTabArchive(in: db)
+        try defineAssistantFacts(in: db)
+    }
+
+    /// Notes the assistant keeps about the person, one per subject. History-class data in the profile's database; not
+    /// `agentConversationMemory`, which holds one conversation's payload.
+    private nonisolated static func defineAssistantFacts(in db: Database) throws {
+        try db.create(table: "assistantFact", options: .ifNotExists) { t in
+            t.primaryKey("id", .blob)
+            t.column("subject", .text).notNull().unique()
+            t.column("value", .text).notNull()
+            t.column("source", .text).notNull()
+            t.column("savedAt", .datetime).notNull().indexed()
+        }
     }
 
     /// Tabs closed for sitting unused. They are history-class data and live in the profile's database next to the
