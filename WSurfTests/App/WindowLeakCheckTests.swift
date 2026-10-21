@@ -32,12 +32,14 @@ struct WindowLeakCheckTests {
     }
 
     /// A browser tab served by `HTTPFixtureServer` in an on-screen window, and a shown browser window: the two shapes most
-    /// tests build on.
+    /// tests build on. Each is checked on its own, so a failure names the fixture that kept its window.
     @Test func representativeFixturesLeaveNoWindowBehind() async throws {
-        let check = WindowLeakCheck()
+        let harnessWindows = WindowLeakCheck()
+        let browserWindows = WindowLeakCheck()
+        weak var host: BrowserHost?
         do {
             let fixture = try await ComputerWorkflowFixture()
-            check.track(fixture.window)
+            harnessWindows.track(fixture.window)
 
             let app = BrowserApplication()
             let coordinator = AppCoordinator(
@@ -45,16 +47,25 @@ struct WindowLeakCheckTests {
             )
             app.register(coordinator)
             coordinator.showBrowser(activate: false)
-            check.track(coordinator.nativeWindow)
-            #expect(check.live == 2)
+            browserWindows.track(coordinator.nativeWindow)
+            host = coordinator.nativeWindow?.delegate as? BrowserHost
+            #expect(harnessWindows.live == 1)
+            #expect(browserWindows.live == 1)
+            #expect(host != nil)
 
             fixture.close()
             coordinator.closeWindow()
+            #expect(coordinator.nativeWindow == nil)
         }
 
         #expect(
-            await waitUntil(timeout: .seconds(10)) { check.live == 0 },
-            "fixture windows outlived their test: \(check.live)"
+            await waitUntil(timeout: .seconds(10)) { harnessWindows.live == 0 },
+            "the tab harness window outlived its test: \(harnessWindows.liveDescription)"
+        )
+        #expect(await waitUntil(timeout: .seconds(10)) { host == nil }, "the closed browser window's host is still alive")
+        #expect(
+            await waitUntil(timeout: .seconds(10)) { browserWindows.live == 0 },
+            "the closed browser window outlived its test: \(browserWindows.liveDescription)"
         )
     }
 }
