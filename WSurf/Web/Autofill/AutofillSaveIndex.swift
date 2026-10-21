@@ -7,6 +7,9 @@ import Foundation
 import LocalAuthentication
 import Synchronization
 
+/// Per profile: the "Never for This Site" digests of every kind, and the rows the old Keychain lists filled from. Nothing writes the
+/// rows of cards and addresses any more (a card's network, last four digits and holder, a contact's email and street, readable without
+/// a prompt): they stay only until the person confirms the move into the vault, and `AutofillVaultMigration` then erases them.
 nonisolated enum AutofillSaveIndex {
     enum Decision: Sendable {
         case new, update, unchanged, blocked
@@ -26,9 +29,9 @@ nonisolated enum AutofillSaveIndex {
     }
 
     private static let lock = Mutex(())
-    private static let storage = AutofillKeychainStorage(access: .whenUnlocked)
+    static let keychain: any AutofillSecureStorage = AutofillKeychainStorage(access: .whenUnlocked)
 
-    private static func service(_ profileID: UUID) -> String {
+    static func service(_ profileID: UUID) -> String {
         var namespace = "io.wsagency.wsurf.autofill"
         if AppDatabase.isRunningTests { namespace += ".tests.\(ProcessInfo.processInfo.processIdentifier)" }
         #if DEBUG
@@ -37,7 +40,9 @@ nonisolated enum AutofillSaveIndex {
         return "\(namespace).save-index.\(profileID.uuidString)"
     }
 
-    private static func access<T>(profileID: UUID, saving: Bool, _ body: (inout Index) throws -> T) throws -> T {
+    private static func access<T>(
+        profileID: UUID, saving: Bool, storage: any AutofillSecureStorage = AutofillSaveIndex.keychain, _ body: (inout Index) throws -> T
+    ) throws -> T {
         guard profileID != Profile.privateID else { throw AutofillVaultError.privateBrowsing }
         return try lock.withLock { _ in
             let context = LAContext()
@@ -55,20 +60,20 @@ nonisolated enum AutofillSaveIndex {
         }
     }
 
-    static func decision(for candidate: AutofillSaveCandidate, origin: String, profileID: UUID) throws -> Decision {
-        try access(profileID: profileID, saving: false) { index in
-            let kind = candidate.kind.rawValue
-            if try index.blocked[kind]?.contains(index.digest([kind, origin])) == true {
-                return .blocked
-            }
-            let identity = try index.digest([kind] + candidate.identity)
-            guard let existing = index.records[kind]?[identity] else { return .new }
-            return try existing == index.digest([kind] + candidate.values) ? .unchanged : .update
+    /// Whether the person chose "Never for This Site" for `kind` on `origin`.
+    static func isBlocked(
+        kind: AutofillSaveKind, origin: String, profileID: UUID, storage: any AutofillSecureStorage = AutofillSaveIndex.keychain
+    ) throws -> Bool {
+        try access(profileID: profileID, saving: false, storage: storage) { index in
+            try index.blocked[kind.rawValue]?.contains(index.digest([kind.rawValue, origin])) == true
         }
     }
 
-    static func replace(_ candidates: [AutofillSaveCandidate], kind: AutofillSaveKind, profileID: UUID) throws {
-        try access(profileID: profileID, saving: true) { index in
+    static func replace(
+        _ candidates: [AutofillSaveCandidate], kind: AutofillSaveKind, profileID: UUID,
+        storage: any AutofillSecureStorage = AutofillSaveIndex.keychain
+    ) throws {
+        try access(profileID: profileID, saving: true, storage: storage) { index in
             var records: [String: String] = [:]
             for candidate in candidates {
                 records[try index.digest([kind.rawValue] + candidate.identity)] = try index.digest([kind.rawValue] + candidate.values)
@@ -86,8 +91,10 @@ nonisolated enum AutofillSaveIndex {
         }
     }
 
-    static func block(kind: AutofillSaveKind, origin: String, profileID: UUID) throws {
-        try access(profileID: profileID, saving: true) { index in
+    static func block(
+        kind: AutofillSaveKind, origin: String, profileID: UUID, storage: any AutofillSecureStorage = AutofillSaveIndex.keychain
+    ) throws {
+        try access(profileID: profileID, saving: true, storage: storage) { index in
             var blocked = index.blocked[kind.rawValue] ?? []
             guard blocked.count < 1000 else { return }
             blocked.insert(try index.digest([kind.rawValue, origin]))
@@ -99,7 +106,26 @@ nonisolated enum AutofillSaveIndex {
         try access(profileID: profileID, saving: true) { $0.blocked[kind.rawValue] = nil }
     }
 
+    /// Whether the index still holds a row (a digest or a suggestion) of any of `kinds`. Reads without a prompt.
+    static func hasRows(of kinds: [AutofillSaveKind], profileID: UUID, storage: any AutofillSecureStorage = AutofillSaveIndex.keychain) throws -> Bool {
+        try access(profileID: profileID, saving: false, storage: storage) { index in
+            kinds.contains { !(index.records[$0.rawValue] ?? [:]).isEmpty || !(index.suggestions[$0.rawValue] ?? []).isEmpty }
+        }
+    }
+
+    /// Removes every row of `kinds`: the record digests and the suggestions, keys and all. "Never for This Site" stays. An index that
+    /// holds none is left as it is, and one that does not exist is not created.
+    static func eraseRows(of kinds: [AutofillSaveKind], profileID: UUID, storage: any AutofillSecureStorage = AutofillSaveIndex.keychain) throws {
+        guard try hasRows(of: kinds, profileID: profileID, storage: storage) else { return }
+        try access(profileID: profileID, saving: true, storage: storage) { index in
+            for kind in kinds {
+                index.records[kind.rawValue] = nil
+                index.suggestions[kind.rawValue] = nil
+            }
+        }
+    }
+
     static func erase(profileID: UUID) throws {
-        try lock.withLock { _ in try storage.erase(service: service(profileID)) }
+        try lock.withLock { _ in try keychain.erase(service: service(profileID)) }
     }
 }

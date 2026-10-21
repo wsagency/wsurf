@@ -17,6 +17,8 @@ nonisolated enum CredentialChangeCause {
     static let addWebsite = "add-website"
     /// Written by Undo (and Redo), which puts back what an earlier action of the same page changed.
     static let undo = "undo"
+    /// Written by the move of the cards and addresses saved on this Mac into the vault, and by its Undo (`AutofillVaultMigration`).
+    static let autofillMigration = "autofill-migration"
 
     /// What the History panel says, `nil` when the writer said nothing.
     static func text(for cause: String?) -> String? {
@@ -32,6 +34,8 @@ nonisolated enum CredentialChangeCause {
             String(localized: "Website added from autofill")
         case Self.undo:
             String(localized: "Changed by Undo")
+        case Self.autofillMigration:
+            String(localized: "Moved from the cards and addresses saved on this Mac")
         default:
             cause
         }

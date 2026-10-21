@@ -56,36 +56,6 @@ struct AutofillContactTests {
         #expect(imported.phone == "+44 1234 567890")
     }
 
-    @Test func contactsAreSavedOnlyInTheVaultAndLockClearsMemory() async throws {
-        let profile = Profile(id: UUID(), name: "Test", symbol: "person", color: .gray)
-        let vault = SecureAutofillVault<AutofillContact>(profileID: profile.id, kind: "contacts", reason: "Test", storage: MemoryAutofillStorage())
-        let store = AutofillContactStore(profile: profile, vault: vault)
-        await store.load()
-        var contact = sample()
-        #expect(await store.save(contact))
-        contact.label = "Home"
-        #expect(await store.save(contact))
-        #expect(store.contacts == [contact])
-        store.lock()
-        #expect(store.contacts.isEmpty)
-        #expect(!store.isLoaded)
-        await store.load()
-        #expect(store.contacts == [contact])
-        #expect(await store.remove(contact.id))
-        #expect(try await vault.records().isEmpty)
-    }
-
-    @Test func privateBrowsingNeverReadsOrWritesSavedContacts() async {
-        let profile = Profile.privateBrowsing()
-        let storage = MemoryAutofillStorage()
-        let vault = SecureAutofillVault<AutofillContact>(profileID: profile.id, kind: "contacts", reason: "Test", storage: storage)
-        let store = AutofillContactStore(profile: profile, vault: vault)
-        await store.load()
-        #expect(!store.isLoaded)
-        #expect(await store.save(sample()) == false)
-        #expect(storage.itemCount == 0)
-    }
-
     @Test func contactPreferencePersistsAndIsIsolatedBetweenProfiles() throws {
         let names = (0..<3).map { AppDatabase.defaultsSuite("ContactPreferenceTests.\(UUID().uuidString).\($0)") }
         defer { names.forEach { UserDefaults.standard.removePersistentDomain(forName: $0) } }

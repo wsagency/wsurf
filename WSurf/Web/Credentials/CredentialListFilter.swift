@@ -25,7 +25,7 @@ nonisolated enum CredentialListFilter: CaseIterable, Hashable, Sendable {
     case files
 
     /// A narrower kind whose chip is shown only while some entry holds one. The sections (Logins, Identities, Cards, Addresses,
-    /// Contacts, Notes) and Passkeys and Codes are always there, so the cards and addresses kept on this Mac stay reachable.
+    /// Contacts, Notes) and Passkeys and Codes are always there.
     var hidesWhenEmpty: Bool {
         switch self {
         case .documents, .otherItems, .files:
