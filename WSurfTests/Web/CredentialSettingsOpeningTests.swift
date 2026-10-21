@@ -86,7 +86,9 @@ struct CredentialSettingsOpeningTests {
             #expect(model.presentation == .locked)
             #expect(await waitUntil { frames.presentations.last == .locked })
             #expect(!frames.showedContentWhileLocked)
-            #expect(!frames.presentations.dropFirst().contains(.opening))
+            // Opening is only the start: the page can draw it more than once while the first load runs (it records on every
+            // observed change, `isUnlocked` included), but once it has left it, it never returns to it.
+            #expect(!frames.presentations.drop { $0 == .opening }.contains(.opening))
         }
     }
 
