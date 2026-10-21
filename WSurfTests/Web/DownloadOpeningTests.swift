@@ -106,19 +106,27 @@ struct DownloadOpeningTests {
     // MARK: - Open in WSurf
 
     @Test(arguments: [
-        "Report.pdf", "REPORT.PDF", "photo.png", "photo.jpg", "photo.JPEG", "anim.gif", "photo.webp", "logo.svg",
-        "icon.ico", "scan.bmp", "notes.txt", "page.html", "page.htm",
+        "Report.pdf", "REPORT.PDF", "photo.png", "photo.jpg", "photo.JPEG", "anim.gif", "photo.webp",
+        "icon.ico", "scan.bmp", "notes.txt",
     ])
     func theBrowserRendersTheseTypes(_ name: String) {
         #expect(DownloadWorkspace.rendersInBrowser(URL(fileURLWithPath: "/tmp/\(name)")))
     }
 
     @Test(arguments: [
+        "page.html", "page.htm", "PAGE.HTML", "page.xhtml", "logo.svg", "LOGO.SVG", "logo.svgz",
         "archive.zip", "installer.dmg", "WSurf.app", "movie.mp4", "song.mp3", "letter.docx", "sheet.xlsx",
         "notes.md", "main.swift", "data.json", "photo.heic", "scan.tiff", "setup.pkg", "run.sh", "Download", "",
     ])
-    func everythingElseIsLeftToOtherApps(_ name: String) {
+    func scriptableAndOtherTypesAreLeftToOtherApps(_ name: String) {
         #expect(!DownloadWorkspace.rendersInBrowser(URL(fileURLWithPath: "/tmp/\(name)")))
+    }
+
+    @Test(arguments: ["Report.pdf", "photo.png", "photo.jpg", "anim.gif", "photo.webp", "icon.ico", "scan.bmp", "notes.txt"])
+    func aDownloadOpenedInATabMayReadOnlyItself(_ name: String) {
+        let file = URL(fileURLWithPath: "/Users/someone/Downloads/\(name)")
+
+        #expect(BrowserTab.readAccess(forFile: file) == file)
     }
 
     // MARK: - What is available
@@ -220,7 +228,7 @@ struct DownloadOpenInTabTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         let model = BrowserModel(database: .temporary())
 
-        for name in ["archive.zip", "notes.md", "installer.dmg", "letter.docx"] {
+        for name in ["page.html", "page.htm", "logo.svg", "archive.zip", "notes.md", "installer.dmg", "letter.docx"] {
             let item = try finished(name, in: folder)
             #expect(model.openDownloadInTab(item) == nil)
         }

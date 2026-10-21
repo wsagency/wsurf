@@ -3996,7 +3996,7 @@
       "comment" : "Context-menu command on a history row, on the history page and the start page; it opens that entry in a new tab and leaves the list on screen. Title Case."
     },
     "Open in WSurf" : {
-      "comment" : "Item in a download’s right-click menu on the Downloads page, and a VoiceOver action on its row. It is offered for a PDF, an image, a text file or a web page, and opens the file in a new WSurf tab instead of another app. WSurf is the app’s name — leave as is."
+      "comment" : "Item in a download’s right-click menu on the Downloads page, and a VoiceOver action on its row. It is offered for a PDF, an image or a plain text file, and opens the file in a new WSurf tab instead of another app. WSurf is the app’s name — leave as is."
     },
     "Open Link in New Tab" : {
       "comment" : "Item in the web page’s right-click menu. Title Case."

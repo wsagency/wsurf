@@ -43,11 +43,13 @@ struct DownloadWorkspace {
             }
     }
 
-    /// Types WSurf's tabs show instead of handing off. Each is a type both engines render from a `file:` URL; a
-    /// type a tab would only download (a Markdown file, a code file, a Word document) is not here, because
-    /// opening it would make a second copy in the Downloads folder.
+    /// Types WSurf's tabs show instead of handing off. Each is a type both engines render from a `file:` URL and
+    /// that runs no script of its own. HTML and SVG are left out on purpose: a downloaded page could read the
+    /// other files in the Downloads folder and send them out. A type a tab would only download (a Markdown file,
+    /// a code file, a Word document) is left out too, because opening it would make a second copy in Downloads.
+    /// Preview and Open With still cover everything.
     static let browserTypes: [UTType] = [
-        .pdf, .png, .jpeg, .gif, .webP, .svg, .bmp, .ico, .html, .plainText,
+        .pdf, .png, .jpeg, .gif, .webP, .bmp, .ico, .plainText,
     ]
 
     static func rendersInBrowser(_ file: URL) -> Bool {
@@ -85,7 +87,7 @@ extension DownloadManager.Item {
 }
 
 extension BrowserModel {
-    /// "Open in WSurf": a new tab on the downloaded file. Only a PDF, an image, a text file or an HTML page
+    /// "Open in WSurf": a new tab on the downloaded file. Only a PDF, an image or a text file
     /// opens; anything else is refused here, whatever the caller offered. The tab belongs to this window, so a
     /// private window's download opens in a private tab.
     @discardableResult

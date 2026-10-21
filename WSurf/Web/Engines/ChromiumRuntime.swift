@@ -26,6 +26,11 @@ final class ChromiumRuntime {
         }
     }
 
+    /// Every switch WSurf adds to Chromium. None may loosen what a `file:` page can read: left alone, Chromium stops a
+    /// local page from fetching other local files, which is what keeps a file opened from Downloads to itself.
+    /// `ChromiumFileAccessTests` guards this list and the sources against any such switch or setting.
+    nonisolated static let extraCommandLineSwitches: [String: String?] = ["disable-backgrounding-occluded-windows": nil]
+
     private(set) var rootDirectory: URL
     private var contexts: [UUID: Context] = [:]
     var privateOrigins: [UUID: [String: Date]] = [:]
@@ -76,7 +81,7 @@ final class ChromiumRuntime {
         // Chromium hides the pages of a window that other apps cover: no paint, no resize, throttled timers. An external
         // connection works in such a window, so its screenshots and waits would see a stale or blank page. WebKit tabs get the
         // same per controlled tab (`BrowserPage.ignoresWindowOcclusion`); a minimized window stays hidden in both.
-        configuration.extraCommandLineSwitches = ["disable-backgrounding-occluded-windows": nil]
+        configuration.extraCommandLineSwitches = Self.extraCommandLineSwitches
         try CefRuntime.shared.initialize(configuration: configuration)
         // Our native clients own their browser lifetimes, not CefKit's browser registry.
         CEFApplication.setTerminateHandler(nil)

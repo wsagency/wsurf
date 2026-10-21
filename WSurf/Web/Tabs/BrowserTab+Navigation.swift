@@ -99,9 +99,15 @@ extension BrowserTab {
         stopUncommittedStartPage()
         permitSystemPage(url)
         if url.isFileURL {
-            return page.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            return page.loadFileURL(url, allowingReadAccessTo: Self.readAccess(forFile: url))
         }
         return page.load(URLRequest(url: url))
+    }
+
+    /// What a `file:` page may read. A PDF, image or text file has no subresources, so it gets only itself, and a
+    /// download opened in a tab cannot reach its neighbours in the Downloads folder. Any other file keeps its folder.
+    static func readAccess(forFile url: URL) -> URL {
+        DownloadWorkspace.rendersInBrowser(url) ? url : url.deletingLastPathComponent()
     }
 
     func waitForPendingNavigation() async -> PageNavigation? {
