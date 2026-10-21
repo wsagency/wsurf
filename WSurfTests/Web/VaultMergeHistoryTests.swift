@@ -202,7 +202,9 @@ struct VaultMergeHistoryTests {
 
     @Test func twoMergedAwayCredentialsNeverShowAsOneVersion() async throws {
         try await withFixture { f in
-            let primary = account("primary-pw")
+            // The primary has a code of its own, so A's different code is not taken as the live one and really goes to History.
+            var primary = account("primary-pw")
+            primary.totp = code(8)
             // Ids that sort A before B, the order in which A's code would otherwise sit right after B's password in History.
             var withCode = account("a-pw")
             withCode.id = try #require(UUID(uuidString: "00000000-0000-0000-0000-00000000000A"))
