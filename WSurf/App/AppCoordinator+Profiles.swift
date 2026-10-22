@@ -76,13 +76,16 @@ extension AppCoordinator {
 
         browser.restoreSession()
         retainAgentMemory()
-        browser.ensureActiveTab()
+        if browser.activeTabID == nil {
+            browser.newTab()
+        }
         timing.mark("restore session")
 
         show(notice: profile.name)
         timing.log(isPrivate: profile.isPrivate)
 
         await extensions.start()
+        Task { [weak self] in await self?.offerLegacyPasswordImport() }
     }
 
     func enterPrivateBrowsing() {

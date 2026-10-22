@@ -14,8 +14,9 @@ import Foundation
 nonisolated struct CredentialTransferMessage: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         case alreadyInProgress, discarded, applyFailed(operation: String), succeeded, mayHaveLanded, nothingImported
-        /// The codec's own structural position of the bad record (indices only, never content); nil when it names none.
-        case malformed(record: CredentialExchangeError.Record?)
+        /// The codec's own fixed-vocabulary account of the bad record: its position, a reason and, for a credential, its kind.
+        /// Never content or the underlying error text.
+        case malformed(CredentialExchangeError)
         /// The system accepted the hand-off. Says nothing about the other app.
         case handedToSystem
         /// The hand-off had started and then failed or was cancelled: whether data left is unknown.
@@ -36,7 +37,11 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
 
     /// Where an import came from, so a message tells the one retry that is true: send it again from the other app, or
     /// choose the same file again. Only the endings of an import (a discard, a failed apply, an uncertain write) differ.
-    enum Origin: Equatable, Sendable { case system, csvFile }
+    enum Origin: Equatable, Sendable {
+        case system, csvFile
+        /// The passwords saved before Credential Manager. The list stays where it is until the user removes it, so a retry is Review again.
+        case legacyPasswords
+    }
 
     let kind: Kind
     let action: Action
@@ -76,6 +81,11 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
                 This import was discarded. WSurf dropped its copy of the file’s data. No data was written and the file was not \
                 changed. To import it, choose the file again.
                 """))
+        case .legacyPasswords:
+            Self(.discarded, .none, String(localized: """
+                This import was discarded. No data was written. Your saved passwords are still in the old list. To import them, \
+                choose Review again.
+                """))
         }
     }
 
@@ -91,12 +101,29 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
                 \(operation) failed and nothing was written. This import was discarded and the file was not changed. \
                 To import it, choose the file again.
                 """))
+        case .legacyPasswords:
+            Self(.applyFailed(operation: operation), .none, String(localized: """
+                \(operation) failed and nothing was written. This import was discarded and the old list was not changed. \
+                To import it, choose Review again.
+                """))
         }
     }
 
-    static func succeeded(_ outcome: CredentialImportOutcome, receipt: VaultCommitReceipt) -> Self {
-        Self(.succeeded, .none, receipt: receipt, String(localized: """
-            Imported into WSurf: \(outcome.added) added, \(outcome.updated) updated. Nothing was changed in the other app.
+    static func succeeded(_ outcome: CredentialImportOutcome, receipt: VaultCommitReceipt, origin: Origin = .system) -> Self {
+        guard origin == .legacyPasswords else {
+            guard outcome.movedToTrash > 0 else {
+                return Self(.succeeded, .none, receipt: receipt, String(localized: """
+                    Imported into WSurf: \(outcome.added) added, \(outcome.updated) updated. Nothing was changed in the other app.
+                    """))
+            }
+            return Self(.succeeded, .none, receipt: receipt, String(localized: """
+                Imported into WSurf: \(outcome.added) added, \(outcome.updated) updated, \(outcome.movedToTrash) moved to Trash. \
+                Nothing was changed in the other app.
+                """))
+        }
+        return Self(.succeeded, .none, receipt: receipt, String(localized: """
+            Imported into WSurf: \(outcome.added) added, \(outcome.updated) updated. The old Passwords list is still on this Mac \
+            until you remove it.
             """))
     }
 
@@ -107,12 +134,17 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
         case .system:
             Self(.mayHaveLanded, .checkSavedCredentials, String(localized: """
                 WSurf could not confirm the result of this import. It may have been saved. \
-                Check Saved Credentials before exporting again.
+                Check Credentials before exporting again.
                 """))
         case .csvFile:
             Self(.mayHaveLanded, .checkSavedCredentials, String(localized: """
                 WSurf could not confirm the result of this import. It may have been saved. \
-                Check Saved Credentials before choosing the file again.
+                Check Credentials before choosing the file again.
+                """))
+        case .legacyPasswords:
+            Self(.mayHaveLanded, .checkSavedCredentials, String(localized: """
+                WSurf could not confirm the result of this import. It may have been saved. \
+                Check Credentials before choosing Review again. The old list was not changed.
                 """))
         }
     }
@@ -122,13 +154,21 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
         Self(.nothingImported, .none, String(localized: "Nothing was imported."))
     }
 
-    /// Any bad record rejects the whole payload; only its structural position is shown, never content or the underlying error.
-    static func malformed(record: CredentialExchangeError.Record?) -> Self {
-        let culprit = record.map { String(localized: "The problem is at \($0.description).") }
-            ?? String(localized: "WSurf could not tell which record is at fault.")
-        return Self(.malformed(record: record), .exportAgain, String(localized: """
-            The transfer could not be read, so nothing was imported. \(culprit) \
-            This transfer was discarded. Export again from Passwords.
+    /// Any bad record rejects the whole payload; only its position, reason and credential kind are shown, never content.
+    static func malformed(_ error: CredentialExchangeError) -> Self {
+        let reason = switch error.reason {
+        case .invalidData:
+            String(localized: "WSurf could not validate this data")
+        case .duplicateIdentifier:
+            String(localized: "an identifier is repeated")
+        case .oversized:
+            error.limit?.text ?? String(localized: "the transfer is over WSurf’s import limits")
+        }
+        let kind = error.credentialKind.map { " (\($0.rawValue))" } ?? ""
+        return Self(.malformed(error), .none, String(localized: """
+            The transfer could not be read, so nothing was imported. \
+            The problem is at \(error.record.description)\(kind): \(reason). \
+            This transfer was discarded, and WSurf does not retry it.
             """))
     }
 
@@ -197,6 +237,35 @@ nonisolated struct CredentialTransferMessage: Equatable, Sendable {
         Self(.exportNotSent, .none, String(localized: """
             The CSV file could not be saved, so nothing was exported. Anything already at that location was left as it was.
             """))
+    }
+}
+
+/// What a refusal says about the limit it hit: the bound, from the same constants the import checks, and never a title, a value
+/// or the amount the transfer held.
+nonisolated extension CredentialExchangeError.Limit {
+    var text: String {
+        switch self {
+        case .items:
+            String(localized: "the transfer has more than \(CredentialVaultLimits.accounts.formatted()) items")
+        case .credentials:
+            String(localized: "the transfer has more than \(CredentialVaultLimits.credentials.formatted()) credentials")
+        case .collections:
+            String(localized: "the transfer has more than \(CredentialVaultLimits.accounts.formatted()) collections")
+        case .nesting:
+            String(localized: "its collections are nested more than \(CredentialExchangeCodec.maximumCollectionDepth.formatted()) levels deep")
+        case .websites:
+            String(localized: "this item has more than \(CredentialExchangeCodec.maximumWebsites.formatted()) websites")
+        case .notes:
+            String(localized: "this item has more than \(CredentialAccount.noteLimit.formatted()) notes")
+        case .keyBytes:
+            String(localized: "a passkey key is larger than \(PasskeyKeyEncoding.maximumDERBytes.formatted()) bytes")
+        case .itemBytes:
+            String(localized: "this item holds more than \((CredentialVaultLimits.accountBytes / 1_000_000).formatted()) MB")
+        case .itemEncodedBytes:
+            String(localized: "this item would be larger than \((Double(CredentialVaultLimits.encodedAccountBytes) / 1_000_000).formatted()) MB once saved")
+        case .transferBytes:
+            String(localized: "the transfer holds more than \((CredentialVaultLimits.liveBytes / 1_000_000).formatted()) MB")
+        }
     }
 }
 

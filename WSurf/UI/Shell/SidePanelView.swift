@@ -203,7 +203,7 @@ private struct SidePanelStatusMark: View {
         case .agent(let dot):
             AgentStateMarker(
                 isRunning: true,
-                tint: dot == .attention ? Theme.warning : Theme.accent
+                tint: dot == .attention ? Theme.warning : Theme.assistant
             )
         case .lyrics:
             Image(systemName: "music.note")
@@ -261,7 +261,7 @@ private struct SidePanelTabChip: View {
         let shape = Capsule()
         HStack(spacing: 5) {
             if let mark {
-                AgentStateMarker(isRunning: true, tint: mark == .attention ? Theme.warning : Theme.accent)
+                AgentStateMarker(isRunning: true, tint: mark == .attention ? Theme.warning : Theme.assistant)
                     .frame(width: 11, height: 11)
             } else {
                 Image(systemName: tab.kind.symbol)

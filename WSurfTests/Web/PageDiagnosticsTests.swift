@@ -1,0 +1,466 @@
+// SPDX-FileCopyrightText: 2026 Kavoye
+// SPDX-License-Identifier: Apache-2.0
+// Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
+
+import CryptoKit
+import Foundation
+import Testing
+
+@testable import WSurf
+
+/// One fixed key, so tags in expectations are computed here by an independent HMAC, not read back from the code under test.
+nonisolated enum DiagnosticsTestKey {
+    static let key = SymmetricKey(data: Data(repeating: 0x5A, count: 32))
+    static let values = PageDiagnostics.QueryValues.tagged(key)
+    /// A value that looks generated: 20 mixed characters of the token alphabet.
+    static let secret = "a1B2c3D4e5F6g7H8i9J0"
+    static let otherSecret = "Z9y8X7w6V5u4T3s2R1q0"
+
+    /// What a generated value is shown as: `~` and 16 hex digits.
+    static func tag(_ value: String, key: SymmetricKey = DiagnosticsTestKey.key) -> String {
+        "~" + HMAC<SHA256>.authenticationCode(for: Data(value.utf8), using: key).prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+@MainActor
+struct PageDiagnosticsTests {
+    private let connection = UUID()
+
+    private func buffer(maxRecords: Int = 1_024, maxBytes: Int = 2 * 1_048_576, maxRecordBytes: Int = 8 * 1_024) -> PageDiagnostics.Buffer {
+        PageDiagnostics.Buffer(connection: connection, tab: "tab-1", documentID: "doc-1", maxRecords: maxRecords, maxBytes: maxBytes, maxRecordBytes: maxRecordBytes)
+    }
+
+    @discardableResult
+    private func add(_ buffer: PageDiagnostics.Buffer, _ stream: PageDiagnostics.Stream = .console, _ text: String = "x", document: String = "doc-1") -> Bool {
+        buffer.append(stream: stream, timestamp: Date(timeIntervalSince1970: 0), documentID: document, fields: ["text": .text(text)])
+    }
+
+    // MARK: Reading and cursors
+
+    @Test func emptyBufferReadsNothingWithAUsableCursor() throws {
+        let buffer = buffer()
+        let page = try buffer.read(stream: .console, cursor: nil, limit: 50)
+        #expect(page.records.isEmpty)
+        #expect(page.gap == 0)
+        add(buffer, .console, "later")
+        let next = try buffer.read(stream: .console, cursor: page.nextCursor, limit: 50)
+        #expect(next.records.map { $0.fields["text"] } == ["later"])
+    }
+
+    @Test func readsAreOrderedPagedAndResumeFromTheCursor() throws {
+        let buffer = buffer()
+        for index in 0..<5 { add(buffer, .console, "m\(index)") }
+        let first = try buffer.read(stream: .console, cursor: nil, limit: 2)
+        #expect(first.records.map { $0.fields["text"] } == ["m0", "m1"])
+        #expect(first.records.map(\.seq) == [0, 1])
+        let second = try buffer.read(stream: .console, cursor: first.nextCursor, limit: 10)
+        #expect(second.records.map { $0.fields["text"] } == ["m2", "m3", "m4"])
+        let third = try buffer.read(stream: .console, cursor: second.nextCursor, limit: 10)
+        #expect(third.records.isEmpty)
+    }
+
+    @Test func streamsHaveIndependentSequencesAndCursors() throws {
+        let buffer = buffer()
+        add(buffer, .console, "c0")
+        add(buffer, .network, "n0")
+        add(buffer, .console, "c1")
+        let console = try buffer.read(stream: .console, cursor: nil, limit: 10)
+        let network = try buffer.read(stream: .network, cursor: nil, limit: 10)
+        #expect(console.records.map(\.seq) == [0, 1])
+        #expect(network.records.map(\.seq) == [0])
+        #expect(throws: PageDiagnostics.ReadError.self) {
+            try buffer.read(stream: .network, cursor: console.nextCursor, limit: 10)
+        }
+    }
+
+    @Test func aLimitOutsideOneToOneHundredIsAnErrorNotClamped() throws {
+        let buffer = buffer()
+        for _ in 0..<150 {
+            add(buffer)
+        }
+        #expect(try buffer.read(stream: .console, cursor: nil, limit: 100).records.count == 100)
+        for limit in [0, -1, 101, 1_000] {
+            #expect(throws: PageDiagnostics.ReadError.invalidLimit) { try buffer.read(stream: .console, cursor: nil, limit: limit) }
+        }
+    }
+
+    @Test func foreignMalformedAndExpiredCursorsAreRejected() throws {
+        let buffer = buffer()
+        add(buffer)
+        let valid = try buffer.read(stream: .console, cursor: nil, limit: 10).nextCursor
+
+        let otherConnection = PageDiagnostics.Buffer(connection: UUID(), tab: "tab-1", documentID: "doc-1")
+        add(otherConnection)
+        let otherTab = PageDiagnostics.Buffer(connection: connection, tab: "tab-2", documentID: "doc-1")
+        add(otherTab)
+        for foreign in [otherConnection, otherTab] {
+            #expect(throws: PageDiagnostics.ReadError.self) { try foreign.read(stream: .console, cursor: valid, limit: 10) }
+        }
+        for malformed in ["", "not base64!", Data("a|b".utf8).base64EncodedString(), Data("\(connection)|tab-1|console|0|abc".utf8).base64EncodedString()] {
+            #expect(throws: PageDiagnostics.ReadError.self) { try buffer.read(stream: .console, cursor: malformed, limit: 10) }
+        }
+        // A cursor pointing past anything ever produced cannot be genuine.
+        let future = Data("\(connection)|tab-1|console|\(buffer.epoch)|999".utf8).base64EncodedString()
+        #expect(throws: PageDiagnostics.ReadError.self) { try buffer.read(stream: .console, cursor: future, limit: 10) }
+
+        buffer.reset()
+        #expect(throws: PageDiagnostics.ReadError.self) { try buffer.read(stream: .console, cursor: valid, limit: 10) }
+    }
+
+    @Test func aCursorFromBeforeResetAndStartIsRejectedByTheNewBufferToo() throws {
+        let first = buffer()
+        for index in 0..<5 { add(first, .console, "old\(index)") }
+        let old = try first.read(stream: .console, cursor: nil, limit: 3).nextCursor
+        // `resetDevelopment` then `startDiagnostics` for the same connection and tab builds a fresh buffer.
+        let second = buffer()
+        for index in 0..<5 { add(second, .console, "new\(index)") }
+        #expect(throws: PageDiagnostics.ReadError.self) { try second.read(stream: .console, cursor: old, limit: 10) }
+        #expect(second.epoch != first.epoch)
+    }
+
+    // MARK: Eviction and loss counters
+
+    @Test func recordCapEvictsOldestAndReportsTheGap() throws {
+        let buffer = buffer(maxRecords: 3)
+        for index in 0..<5 { add(buffer, .console, "m\(index)") }
+        #expect(buffer.recordCount == 3)
+        #expect(buffer.evicted(.console) == 2)
+        let page = try buffer.read(stream: .console, cursor: nil, limit: 10)
+        #expect(page.records.map { $0.fields["text"] } == ["m2", "m3", "m4"])
+        #expect(page.gap == 0)  // reading from the oldest retained record is not a gap
+        #expect(page.evicted == 2)
+    }
+
+    @Test func staleCursorBehindEvictionYieldsDataPlusDropCount() throws {
+        let buffer = buffer(maxRecords: 3)
+        add(buffer, .console, "m0")
+        let cursor = try buffer.read(stream: .console, cursor: nil, limit: 1).nextCursor  // next = seq 1
+        for index in 1..<8 { add(buffer, .console, "m\(index)") }  // retains m5, m6, m7
+        let page = try buffer.read(stream: .console, cursor: cursor, limit: 10)
+        #expect(page.records.map { $0.fields["text"] } == ["m5", "m6", "m7"])
+        #expect(page.gap == 4)  // m1…m4 were lost between the cursor and the oldest retained record
+    }
+
+    @Test func retentionIsSharedAcrossStreamsAndEvictsTheGloballyOldest() throws {
+        let buffer = buffer(maxRecords: 2)
+        add(buffer, .console, "c0")
+        add(buffer, .network, "n0")
+        add(buffer, .console, "c1")
+        #expect(buffer.evicted(.console) == 1)
+        #expect(buffer.evicted(.network) == 0)
+        #expect(try buffer.read(stream: .network, cursor: nil, limit: 10).records.count == 1)
+        #expect(try buffer.read(stream: .console, cursor: nil, limit: 10).records.map { $0.fields["text"] } == ["c1"])
+    }
+
+    @Test func byteCapEvictsOldestUntilTheNewRecordFits() {
+        let buffer = buffer(maxBytes: 1_000, maxRecordBytes: 600)
+        for _ in 0..<10 { add(buffer, .console, String(repeating: "a", count: 300)) }
+        #expect(buffer.byteCount <= 1_000)
+        #expect(buffer.recordCount >= 1)
+        #expect(buffer.evicted(.console) == 10 - buffer.recordCount)
+    }
+
+    @Test func burstOfLargeEventsStaysWithinTheRealSerializedByteCap() throws {
+        let buffer = buffer()
+        // Control characters serialize to 6 bytes each: 1,200 of them are far more than 1,200 raw bytes.
+        let payload = String(repeating: "\u{1}", count: 1_200)
+        for index in 0..<10_000 { add(buffer, .console, "event \(index) " + payload) }
+        let page = try buffer.read(stream: .console, cursor: nil, limit: 100)
+        let serialized = try JSONSerialization.data(withJSONObject: page.records.map { record in
+            ["seq": Int(record.seq), "stream": record.stream.rawValue, "documentID": record.documentID, "truncated": record.truncated,
+             "timestamp": "2026-10-14T00:00:00.000Z", "fields": record.fields.mapValues { field -> Any in
+                switch field {
+                case .text(let text):
+                    text
+                case .number(let number):
+                    number
+                }
+            },
+            ] as [String: Any]
+        })
+        // What the buffer counts for a record is never less than what that record serializes to.
+        #expect(buffer.byteCount <= 2 * 1_048_576)
+        #expect(buffer.byteCount >= serialized.count / page.records.count * buffer.recordCount)
+        #expect(buffer.evicted(.console) == 10_000 - buffer.recordCount)
+        #expect(page.records.first?.seq == UInt64(buffer.evicted(.console)))
+    }
+
+    // MARK: Record bounds
+
+    @Test func oversizedRecordsAreTruncatedWithAFlag() throws {
+        let buffer = buffer(maxRecordBytes: 256)
+        add(buffer, .console, String(repeating: "é", count: 1_000))  // 2 bytes per character
+        let page = try buffer.read(stream: .console, cursor: nil, limit: 1)
+        let record = try #require(page.records.first)
+        #expect(record.truncated)
+        #expect(record.byteCount <= 256)
+        guard case .text(let text)? = record.fields["text"] else { Issue.record("text missing"); return }
+        #expect(text.allSatisfy { $0 == "é" })  // cut on a character boundary, never mid-scalar
+        #expect(page.truncated == 1)
+        #expect(buffer.byteCount == record.byteCount)
+    }
+
+    @Test func controlCharactersCountAtTheirEscapedSize() throws {
+        let buffer = buffer(maxRecordBytes: 400)
+        add(buffer, .console, String(repeating: "\u{1}", count: 500))  // 3,000 bytes once escaped
+        let record = try #require(try buffer.read(stream: .console, cursor: nil, limit: 1).records.first)
+        #expect(record.truncated)
+        #expect(record.byteCount <= 400)
+        guard case .text(let text)? = record.fields["text"] else { Issue.record("text missing"); return }
+        #expect(!text.isEmpty)
+        let json = try JSONSerialization.data(withJSONObject: ["text": text])
+        #expect(json.count <= 400)
+    }
+
+    @Test func aHugeGraphemeClusterIsCutByScalarsNotEmptied() throws {
+        let buffer = buffer(maxRecordBytes: 1_024)
+        // One grapheme cluster of 5,001 scalars: character-based cutting would drop it whole and leave nothing.
+        add(buffer, .console, "e" + String(repeating: "\u{301}", count: 5_000))
+        let record = try #require(try buffer.read(stream: .console, cursor: nil, limit: 1).records.first)
+        guard case .text(let text)? = record.fields["text"] else { Issue.record("text missing"); return }
+        #expect(record.truncated)
+        #expect(record.byteCount <= 1_024)
+        #expect(text.unicodeScalars.count > 100)
+    }
+
+    @Test func numericFieldsSurviveTruncationUntouched() throws {
+        let buffer = buffer(maxRecordBytes: 256)
+        buffer.append(stream: .network, timestamp: Date(timeIntervalSince1970: 0), documentID: "doc-1", fields: ["url": .text(String(repeating: "u", count: 1_000)), "status": 404])
+        let record = try #require(try buffer.read(stream: .network, cursor: nil, limit: 1).records.first)
+        #expect(record.fields["status"] == 404)
+        #expect(record.truncated)
+    }
+
+    @Test func withinLimitRecordsAreNotMarkedTruncated() throws {
+        let buffer = buffer()
+        add(buffer, .network, "small")
+        let page = try buffer.read(stream: .network, cursor: nil, limit: 1)
+        #expect(page.records.first?.truncated == false)
+        #expect(page.truncated == 0)
+    }
+
+    @Test func truncationShrinksTheLargestFieldFirst() throws {
+        let buffer = buffer(maxRecordBytes: 400)
+        _ = buffer.append(stream: .console, timestamp: Date(), documentID: "doc-1", fields: ["level": "error", "text": .text(String(repeating: "t", count: 500)), "url": "https://a.example/x"])
+        let record = try #require(try buffer.read(stream: .console, cursor: nil, limit: 1).records.first)
+        #expect(record.fields["level"] == "error")
+        #expect(record.fields["url"] == "https://a.example/x")
+        #expect(record.byteCount <= 400)
+    }
+
+    // MARK: Epochs and documents
+
+    @Test func resetClearsRecordsBumpsTheEpochAndKeepsCountersHonest() throws {
+        let buffer = buffer()
+        add(buffer)
+        let epoch = buffer.epoch
+        buffer.reset()
+        #expect(buffer.epoch == epoch + 1)
+        #expect(buffer.recordCount == 0)
+        #expect(buffer.byteCount == 0)
+        #expect(buffer.evicted(.console) == 0)
+        add(buffer, .console, "fresh")
+        #expect(try buffer.read(stream: .console, cursor: nil, limit: 10).records.map(\.seq) == [0])
+    }
+
+    @Test func recordsFromAnotherDocumentAreRejectedNotMerged() throws {
+        let buffer = buffer()
+        buffer.reset(documentID: "doc-2")
+        #expect(!add(buffer, .console, "old", document: "doc-1"))
+        #expect(add(buffer, .console, "new", document: "doc-2"))
+        let page = try buffer.read(stream: .console, cursor: nil, limit: 10)
+        #expect(page.records.map { $0.fields["text"] } == ["new"])
+        #expect(page.records.allSatisfy { $0.documentID == "doc-2" })
+        #expect(page.documentID == "doc-2")
+    }
+
+    @Test func recordsForAnyOtherDocumentThanTheOwnersAreDropped() {
+        let buffer = buffer()
+        #expect(!add(buffer, .console, "x", document: "other"))
+        #expect(buffer.recordCount == 0)
+    }
+}
+
+struct PageDiagnosticsSanitizeTests {
+    private nonisolated static func tag(_ value: String) -> String {
+        DiagnosticsTestKey.tag(value)
+    }
+
+    private func sanitize(_ url: String, _ queryValues: PageDiagnostics.QueryValues = DiagnosticsTestKey.values) -> String? {
+        PageDiagnostics.sanitize(url: url, queryValues: queryValues)
+    }
+
+    @Test(arguments: [
+        ("https://user:pw@example.com/a/b?token=secret#frag", "https://example.com/a/b?token=*short"),
+        ("http://example.com:8080/p?x=1", "http://example.com:8080/p?x=*short"),
+        ("https://example.com", "https://example.com"),
+        ("https://example.com/?a=b", "https://example.com/?a=*short"),
+        ("https://example.com/a%20b?q", "https://example.com/a%20b?*short"),
+        ("wss://h.example/socket?key=1#x", "wss://h.example/socket?key=*short"),
+        ("https://[::1]:3000/x?y", "https://[::1]:3000/x?*short"),
+        ("https://u%40x:p%3A@example.com/", "https://example.com/"),
+        ("file:///Users/me/page.html?x#y", "file:///Users/me/page.html?*short"),
+    ])
+    func stripsUserinfoAndFragmentAndConcealsTheQuery(input: String, expected: String) {
+        #expect(sanitize(input) == expected)
+    }
+
+    @Test(arguments: [
+        "data:text/plain;base64,c2VjcmV0",
+        "blob:https://example.com/3f6e",
+        "javascript:alert(document.cookie)",
+        "about:blank?x",
+    ])
+    func opaqueSchemesRevealOnlyTheScheme(input: String) {
+        let scheme = String(input.prefix { $0 != ":" })
+        #expect(sanitize(input) == "\(scheme):")
+    }
+
+    @Test(arguments: ["", "   ", "not a url", "https:///nohost", "/relative?token=1", "://x"])
+    func unparsableOrHostlessInputIsNil(input: String) {
+        #expect(sanitize(input) == nil)
+    }
+
+    @Test func neverEmitsASecretFromAnyPartOfTheURL() throws {
+        let hostile = [
+            "https://admin:hunter2@example.com/path?password=hunter2#hunter2",
+            "https://example.com/a?next=https://evil.example/?hunter2",
+            "https://hunter2@example.com/",
+            "https://example.com/#hunter2",
+            "https://example.com/confirm?hunter2",
+            "https://example.com/a?x=1&hunter2&y=hunter2",
+            "https://example.com/a?hunter2=",
+            "https://example.com/a?hunter2=&\(DiagnosticsTestKey.secret)=1&\(DiagnosticsTestKey.secret)",
+        ]
+        for url in hostile {
+            let sanitized = sanitize(url) ?? ""
+            #expect(!sanitized.contains("hunter2") && !sanitized.contains(DiagnosticsTestKey.secret), "\(sanitized)")
+        }
+    }
+
+    // MARK: Values
+
+    @Test func plainNamesStayAndEveryValueIsConcealed() {
+        let secret = DiagnosticsTestKey.secret
+        let result = sanitize("https://api.test/search?q=swift&page=2&sid=\(secret)&filter%5Bcategory%5D=shoes&items%5B0%5D.id=7")
+        #expect(result == "https://api.test/search?q=*short&page=*short&sid=\(Self.tag(secret))&filter[category]=*short&items[0].id=*short")
+        #expect(result?.contains("swift") == false)
+    }
+
+    @Test func aGeneratedValueIsATagOfSixteenHexDigitsAndAnyOtherValueOnlyALengthClass() throws {
+        let generated = [
+            "550e8400-e29b-41d4-a716-446655440000", "9f86d081884c7d659a2feaa0c55ad015", DiagnosticsTestKey.secret,
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c", "dGhpcyBpcyBhIHRva2VuIDEyMzQ1Ng==",
+        ]
+        for value in generated {
+            let result = try #require(sanitize("https://a.test/?v=\(value)"))
+            #expect(result == "https://a.test/?v=\(Self.tag(value))", "\(value)")
+            #expect(result.split(separator: "=").last?.count == 17)
+        }
+        let guessable = [
+            ("hunter2", "*short"), ("letmein", "*short"), ("", "*short"), ("12345678", "*short"), ("correct-horse-battery-staple", "*medium"),
+            ("1234567890123456", "*medium"), ("passwordpasswordpass1", "*medium"), ("aaaaaaaaaaaaaaaa1", "*medium"),
+            ("hello world, this is a long value", "*long"), (String(repeating: "x", count: 500), "*long"),
+        ]
+        for (value, shown) in guessable where !value.isEmpty {
+            #expect(sanitize("https://a.test/?v=\(value.replacingOccurrences(of: " ", with: "%20"))") == "https://a.test/?v=\(shown)", "\(value)")
+        }
+    }
+
+    @Test(arguments: [
+        ("550e8400-e29b-41d4-a716-446655440000", true), ("9f86d081884c7d659a2feaa0c55ad015", true), (DiagnosticsTestKey.secret, true),
+        ("deadbeefdeadbeef0123456789abcdef", true), ("dGhpcyBpcyBhIHRva2VuIDEyMzQ1Ng==", true),
+        ("hunter2", false), ("correct-horse-battery-staple", false), ("1234567890123456", false), ("ABCDEFGHIJKLMNOP", false),
+        ("aaaaaaaaaaaaaaaa1", false), ("passwordpassword1234", false), ("a1b2c3", false), ("a b c d e f g h 1 2 3 4", false),
+        ("a1B2c3D4e5F6g7H8i9J0😀", false), (String(repeating: "a1B2", count: 600), false),
+    ])
+    func looksGeneratedTellsTokensFromGuessableValues(value: String, expected: Bool) {
+        #expect(PageDiagnostics.looksGenerated(value) == expected, "\(value)")
+    }
+
+    @Test func aTagIsDeterministicWithinOneKeyAndLongEnoughNotToBeGuessed() throws {
+        let secret = DiagnosticsTestKey.secret
+        let once = try #require(sanitize("https://a.test/?a=\(secret)&b=\(secret)&c=\(DiagnosticsTestKey.otherSecret)"))
+        let tags = once.split(separator: "?").last?.split(separator: "&").compactMap { $0.split(separator: "=").last.map(String.init) } ?? []
+        #expect(tags.count == 3 && tags[0] == tags[1] && tags[0] != tags[2], "the same value correlates inside one document")
+        #expect(tags.allSatisfy { $0.count == 17 && $0.hasPrefix("~") && $0.dropFirst().allSatisfy(\.isHexDigit) })
+    }
+
+    @Test func theSameValueInAnotherDocumentsKeyHasAnotherTag() throws {
+        let secret = DiagnosticsTestKey.secret
+        let first = try #require(PageDiagnostics.sanitize(url: "https://a.test/?sid=\(secret)", queryValues: DiagnosticsTestKey.values))
+        let next = try #require(PageDiagnostics.sanitize(url: "https://a.test/?sid=\(secret)", queryValues: .tagged(SymmetricKey(size: .bits256))))
+        let again = try #require(PageDiagnostics.sanitize(url: "https://a.test/?sid=\(secret)", queryValues: .tagged(SymmetricKey(size: .bits256))))
+        #expect(first != next && next != again, "a client that supplies the page's secret in a later document learns nothing from the tag")
+        // A different value never shares a tag with the secret, and neither does a guess that differs by one character.
+        let guess = try #require(sanitize("https://a.test/?sid=\(secret.dropLast())1"))
+        #expect(guess != first)
+    }
+
+    // MARK: Names
+
+    @Test(arguments: [
+        "utm_source", "page", "sort_by", "filter[category]", "items[0].id", "X-Amz-Signature", "_private", "a", "access_token",
+        "abcdefghijklmnopqrstuvwxyz012345",
+    ])
+    func aPlainNameIsShown(name: String) {
+        #expect(sanitize("https://a.test/?\(name)=v") == "https://a.test/?\(name)=*short")
+    }
+
+    @Test(arguments: [
+        ("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c", true),
+        ("9f86d081884c7d659a2feaa0c55ad01509f86d08", true),
+        ("a9f86d081884c7d659a2feaa0c55ad01", true),
+        ("550e8400-e29b-41d4-a716-446655440000", true),
+        ("1abc", false), ("-flag", false), ("with space", false), ("name@host", false), (String(repeating: "n", count: 33), false),
+        ("naïve", false), ("utm%20source", false), ("a1B2c3D4e5F6g7H8i9J0", true),
+    ])
+    func aNameThatCouldHoldASecretIsConcealed(name: String, generated: Bool) throws {
+        let encoded = name.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? name
+        for url in ["https://a.test/?\(encoded)=v", "https://a.test/?\(encoded)=", "https://a.test/?\(encoded)"] {
+            let result = try #require(sanitize(url))
+            let query = String(result.split(separator: "?").last ?? "")
+            #expect(!query.contains(name) || name.count <= 6, "\(query)")
+            if generated {
+                #expect(query.hasPrefix(Self.tag(name)), "a token-shaped name is tagged: \(query)")
+            } else {
+                #expect(query.hasPrefix("*"), "an odd name shows only a length class: \(query)")
+            }
+        }
+    }
+
+    @Test func aParameterWithoutAValueIsConcealedWholeWhateverItsShape() {
+        let secret = DiagnosticsTestKey.secret
+        #expect(sanitize("https://a.test/?\(secret)") == "https://a.test/?\(Self.tag(secret))")
+        #expect(sanitize("https://a.test/?\(secret)=") == "https://a.test/?\(Self.tag(secret))")
+        #expect(sanitize("https://a.test/?debug") == "https://a.test/?*short")
+        #expect(sanitize("https://a.test/?debug=") == "https://a.test/?*short", "name= is no different from a bare parameter")
+        #expect(sanitize("https://a.test/?q=&page=2") == "https://a.test/?*short&page=*short")
+        #expect(sanitize("https://a.test/?=\(secret)") == "https://a.test/?*short=\(Self.tag(secret))")
+    }
+
+    @Test func fragmentsUserinfoAndOpaqueSchemesStayRemoved() {
+        #expect(sanitize("https://u:p@a.test/p?a=1#frag=2") == "https://a.test/p?a=*short")
+        #expect(sanitize("blob:https://a.test/uuid?x=1") == "blob:")
+        #expect(sanitize("data:text/plain,a?b=c") == "data:")
+    }
+
+    @Test func aHugeQueryIsBoundedAndFlagged() throws {
+        let many = (0..<100).map { "p\($0)=v\($0)" }.joined(separator: "&")
+        let cut = try #require(PageDiagnostics.sanitized(url: "https://a.test/?\(many)", queryValues: DiagnosticsTestKey.values))
+        let parameters = cut.text.split(separator: "?").last?.split(separator: "&") ?? []
+        #expect(parameters.count == PageDiagnostics.maxQueryParameters + 1)
+        #expect(parameters.last == "…")
+        #expect(cut.cut)
+        let hostileNames = (0..<32).map { "\(String(repeating: "n", count: 500))\($0)=1" }.joined(separator: "&")
+        let bounded = try #require(PageDiagnostics.sanitized(url: "https://a.test/?\(hostileNames)", queryValues: DiagnosticsTestKey.values))
+        #expect(bounded.text.utf8.count < 2_048, "a long name is concealed, so the query cannot outgrow its parameters")
+        let fits = try #require(PageDiagnostics.sanitized(url: "https://a.test/?a=1&b=2", queryValues: DiagnosticsTestKey.values))
+        #expect(!fits.cut)
+    }
+
+    @Test func clearModeKeepsEverythingForTheDeveloperTier() {
+        let secret = DiagnosticsTestKey.secret
+        #expect(sanitize("https://u:p@a.test/p?a=1&\(secret)&b=#f", .clear) == "https://a.test/p?a=1&\(secret)&b=")
+    }
+}

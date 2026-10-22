@@ -73,6 +73,10 @@ final class ChromiumRuntime {
         configuration.logSeverity = .error
         // Keep stderr errors visible without persisting private-page details in CEF's log file.
         configuration.logFile = URL(filePath: "/dev/null")
+        // Chromium hides the pages of a window that other apps cover: no paint, no resize, throttled timers. An external
+        // connection works in such a window, so its screenshots and waits would see a stale or blank page. WebKit tabs get the
+        // same per controlled tab (`BrowserPage.ignoresWindowOcclusion`); a minimized window stays hidden in both.
+        configuration.extraCommandLineSwitches = ["disable-backgrounding-occluded-windows": nil]
         try CefRuntime.shared.initialize(configuration: configuration)
         // Our native clients own their browser lifetimes, not CefKit's browser registry.
         CEFApplication.setTerminateHandler(nil)

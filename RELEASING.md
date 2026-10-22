@@ -106,11 +106,12 @@ on both the app and exchange extension; each needs its own authorized profile.
 WSurf deliberately does not declare Apple's managed
 `com.apple.developer.web-browser.public-key-credential` entitlement. This does
 not change routing: native system passkeys for arbitrary relying parties via
-WebKit are not guaranteed in legacy/default or private tabs. Vault-managed
-WebAuthn and Apple Passwords exchange use separate paths. A Developer ID
-signature needs a profile authorizing the restricted entitlements it declares.
-Gatekeeper refuses to launch an app that declares a restricted entitlement
-without the profile.
+WebKit are not guaranteed: a normal tab reaches them only through its "Use
+Another Device or Key…" hand-off, and a private tab uses them directly.
+Vault-managed WebAuthn and Apple Passwords exchange use separate paths. A
+Developer ID signature needs a profile authorizing the restricted entitlements
+it declares. Gatekeeper refuses to launch an app that declares a restricted
+entitlement without the profile.
 
 The managed browser capability is not needed for WSurf's vault-managed WebAuthn,
 `wsurf.app` PRF unlock, or Apple Passwords exchange. Signing still requires
@@ -322,6 +323,38 @@ Release requirements:
   build number that goes down stops every installed copy from updating. Do not
   change a version by hand in the Xcode project. The values in the Xcode project
   apply only to local builds.
+- **Every candidate build has its own build number and changelog section.** A
+  candidate is a local signed build, so it carries the Xcode project's values;
+  this is the one place they change by hand. Each candidate build increments
+  `CURRENT_PROJECT_VERSION` and sets `MARKETING_VERSION`: while the version is
+  0.x, build N is `0.<minor>.N` (the 123rd build is `0.1.123`), and the
+  orchestrator proposes a minor bump (0.1 to 0.2) at checkpoints. Each candidate
+  adds its own `## <version> (build <n>) — <date>` section at the top of
+  `CHANGELOG.md`. `Tools/check-changelog.sh` runs in the candidate gate and
+  fails without that section, and for a 0.x version also when the patch number
+  differs from the build number. The release workflow still finds the section
+  by its `## <version>` prefix.
+- **Every candidate build says which candidate it is.** The gate and the sign
+  driver add two build settings to every `xcodebuild` call (build, test,
+  archive): `WSURF_CANDIDATE=<label>`, the orchestrator's label (for now the
+  version, such as `0.1.4`), and `WSURF_COMMIT=$(git rev-parse --short=8 HEAD)`. They become the
+  `WSurfCandidate` and `WSurfCommit` keys in `WSurf/Info.plist`, and the About
+  panel and Settings › About show `Candidate <label> · <commit>` under the
+  version. The defaults are `dev` and empty; a `dev` or empty candidate shows no
+  line. Pass them on the command line, as with `WSURF_BUNDLE_ID_SUFFIX`: the
+  Xcode project keeps the defaults, so nothing changes by hand and the build
+  stays reproducible from the commit and the label.
+- **A partitioned candidate gate runs the three test plans from one build.**
+  After one `build-for-testing`, it runs `WSurf-Parallel`, `WSurf-Serial` and
+  then `WSurf-Performance` against the same `.xctestrun`, all under one hold of
+  the machine lock. `python3 -I Tools/check-test-partition.py` runs first and
+  must pass, and each run takes its selection from
+  `Tools/check-test-partition.py --args <plan>`. Coverage comes from the three
+  result bundles merged with `xcresulttool merge`; the budgets in
+  `Tools/check-performance.sh` come from the `WSurf-Performance` bundle. The test
+  counts of the three runs must add up to the merged total. A new suite is
+  serial until someone shows it is safe in parallel; see CONTRIBUTING.md,
+  "Parallel and serial tests".
 - **The release body supplies the “What’s New” sheet.** The workflow makes the
   body from two parts. `CHANGELOG.md` is optional: make it only when a release
   needs notes of its own. If it contains a `## 1.1` section, that section comes

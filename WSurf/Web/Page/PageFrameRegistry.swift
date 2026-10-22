@@ -210,6 +210,10 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
         store.activeNavigation = nil
         store.committedNavigation = navigation
         store.pendingResponse = nil
+        // Once this navigation commits, one it replaced can neither commit nor answer any more. WebKit does not always
+        // report such an end, and a stale entry would keep every later response unrecorded: the tab would have no policy
+        // evidence, so no passkey, for good.
+        store.supersededNavigations.removeAll()
         store.issued = store.issued.filter { $0.value.navigation === navigation }
         if acceptedCurrentDocument, let frame = store.mainFrame {
             store.root = frame.documentID
@@ -224,6 +228,13 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
             store.restorationToken = nil
         }
         pruneRestorable(in: view)
+    }
+
+    /// The active navigation's main-frame response becomes a download, so it will never commit. WebKit need not report its
+    /// end, and an active navigation left behind would keep the current document without policy evidence.
+    func mainFrameNavigationBecameDownload(in view: BrowserPage) {
+        guard let active = stores.object(forKey: view)?.activeNavigation else { return }
+        navigationFailed(active, in: view)
     }
 
     func navigationFailed(_ navigation: WKNavigation?, in view: BrowserPage) {
@@ -739,6 +750,9 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
     /// Binds `source` to one registered or issued document without waiting for its acknowledgement. Ambiguity fails closed.
     /// A registered document is owned by `mainFrameNavigation` (early acknowledgements can precede the commit), an issued
     /// one by its own navigation; an unrelated navigation that is merely in flight does not own the source document.
+    /// WebKit's frame info is matched by identity first, then by URL and origin. A main frame whose script changed its
+    /// address (`pushState`, `replaceState`, a fragment) keeps its document, so it also matches by origin alone when no
+    /// frame matches by URL. `isLiveAfterReady` proves the document itself.
     func captureSourceFrame(_ source: WKFrameInfo, in view: BrowserPage) -> SourceFrameClaim? {
         guard let store = stores.object(forKey: view) else { return nil }
         let current = store.activeNavigation ?? store.committedNavigation
@@ -749,19 +763,20 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
         )
         let sourceURL = source.request.url
         let sourceIsMain = source.isMainFrame
-        var exact: (nonce: String, navigation: WKNavigation?)?
-        var similar: (nonce: String, navigation: WKNavigation?)?
-        var exactCount = 0
-        var similarCount = 0
+        typealias Hit = (nonce: String, navigation: WKNavigation?)
+        var exact: (count: Int, hit: Hit?) = (0, nil)
+        var sameURL: (count: Int, hit: Hit?) = (0, nil)
+        var sameOrigin: (count: Int, hit: Hit?) = (0, nil)
         func consider(_ nonce: String, _ frame: BrowserFrame, _ navigation: WKNavigation?) {
             if frame.webKit === source || frame.webKit?.isEqual(source) == true {
-                exactCount += 1
-                exact = (nonce, navigation)
-            } else if frame.isMainFrame == sourceIsMain
-                && frame.request.url == sourceURL
-                && frame.securityOrigin == origin {
-                similarCount += 1
-                similar = (nonce, navigation)
+                exact = (exact.count + 1, (nonce, navigation))
+            } else if frame.isMainFrame == sourceIsMain && frame.securityOrigin == origin {
+                if frame.request.url == sourceURL {
+                    sameURL = (sameURL.count + 1, (nonce, navigation))
+                }
+                if sourceIsMain {
+                    sameOrigin = (sameOrigin.count + 1, (nonce, navigation))
+                }
             }
         }
         if let mainFrame = store.mainFrame {
@@ -773,7 +788,8 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
         for (nonce, issued) in store.issued where Self.sameNavigation(issued.navigation, current) {
             consider(nonce, issued.frame, issued.navigation)
         }
-        guard let match = exactCount == 1 ? exact : (exactCount == 0 && similarCount == 1 ? similar : nil) else { return nil }
+        guard let tier = [exact, sameURL, sameOrigin].first(where: { $0.count > 0 }),
+              tier.count == 1, let match = tier.hit else { return nil }
         return SourceFrameClaim(frame: BrowserFrame(webKit: source, documentID: match.nonce), navigation: match.navigation)
     }
 
@@ -783,11 +799,9 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
     func isLiveAfterReady(_ claim: SourceFrameClaim, in view: BrowserPage) async -> Bool {
         guard let webKit = view.webKit, let source = claim.frame.webKit,
               navigationUnchanged(claim, in: view) else { return false }
-        let proven = try? await webKit.callAsyncJavaScript(
+        let proven = try? await webKit.evaluate(
             "return (await globalThis.__wsurfNativeFrameReady) === true && globalThis.__wsurfNativeFrameNonce === nonce;",
-            arguments: ["nonce": claim.frame.documentID],
-            in: source,
-            contentWorld: PageAutomationGuard.world
+            asFunction: true, arguments: ["nonce": claim.frame.documentID], in: source, in: PageAutomationGuard.world
         ) as? Bool
         return proven == true && navigationUnchanged(claim, in: view) && isCurrent(claim.frame, in: view)
     }

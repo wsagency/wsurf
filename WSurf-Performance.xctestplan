@@ -1,0 +1,34 @@
+{
+  "configurations" : [
+    {
+      "id" : "A1B2C3D4-0002-4000-8000-000000000002",
+      "name" : "Configuration 1",
+      "options" : {}
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : true,
+    "defaultTestExecutionTimeAllowance" : 120,
+    "maximumTestExecutionTimeAllowance" : 300,
+    "testTimeoutsEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : false,
+      "selectedTests" : [
+        "BrowserPerformanceTests",
+        "CredentialListPerformanceTests",
+        "PageWatchPerformanceTests",
+        "ReaderPerformanceTests",
+        "ThemePerformanceTests",
+        "VaultScalePerformanceTests"
+      ],
+      "target" : {
+        "containerPath" : "container:WSurf.xcodeproj",
+        "identifier" : "EEC0DE100000000000000001",
+        "name" : "WSurfTests"
+      }
+    }
+  ],
+  "version" : 1
+}

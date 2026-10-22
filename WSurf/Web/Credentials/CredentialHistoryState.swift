@@ -41,13 +41,28 @@ nonisolated struct PendingPurge: Equatable, Sendable {
 nonisolated extension RecordSubject {
     /// Earlier versions restore only these. A passkey is never rolled back to an older key.
     var restoresFromEarlierVersions: Bool {
-        self == .password || self == .totp || self == .metadata
+        self == .password || self == .totp || self == .note || self == .secureItem || self == .metadata
     }
 }
 
 nonisolated extension VaultListing {
-    /// A vault's name is sealed until it unlocks, so a locked one is told apart by its ordinal (1-based, never reused).
+    /// A vault's name is sealed until it unlocks, so a locked one is told apart by its ordinal (1-based; a number can come back after the highest vault is deleted).
+    var numberedName: String {
+        String(localized: "Vault \(ordinal)")
+    }
+
+    /// The name only while the vault is unlocked: a listing kept across a lock never shows it.
     var displayName: String {
-        name ?? String(localized: "Vault \(ordinal)")
+        guard isUnlocked, let name else { return numberedName }
+        return name
+    }
+
+    /// What every surface that lists or asks for a vault calls it, so one vault never reads "Vault 1" in one place and "Personal" in
+    /// another. Unlocked and named: the name with its number ("Personal · Vault 1"). Locked: the number alone, since the name is
+    /// sealed ("Vault 1 (locked)"). The vault's own name, to edit it, is `displayName`.
+    var label: String {
+        guard isUnlocked else { return String(localized: "Vault \(ordinal) (locked)") }
+        guard let name, !name.isEmpty, name != numberedName else { return numberedName }
+        return String(localized: "\(name) · Vault \(ordinal)")
     }
 }

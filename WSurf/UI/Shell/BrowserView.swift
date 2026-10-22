@@ -49,13 +49,15 @@ struct BrowserView: View {
         let width = sidebar.openWidth(in: containerWidth)
         let roomBesideSidebar = containerWidth - (sidebar.isVisible ? width : 0)
         let isExpanded = showsPanel && panel.isExpanded
+        let spacing = BrowserSettings.application.chromeShape.pageSpacing
         let shell = LoomShellGeometry(
             containerWidth: containerWidth,
             sidebarWidth: width,
             preferredPanelWidth: panel.openWidth(in: roomBesideSidebar),
             isSidebarVisible: sidebar.isVisible,
             isPanelVisible: showsPanel,
-            isPanelExpanded: isExpanded
+            isPanelExpanded: isExpanded,
+            pageSpacing: spacing
         )
 
         ZStack(alignment: .leading) {
@@ -82,10 +84,10 @@ struct BrowserView: View {
             )
             .frame(width: shell.panelWidth)
             .padding(.top, LoomChrome.canvasTop)
-            .padding(.trailing, LoomChrome.canvasInset)
-            .padding(.bottom, LoomChrome.canvasInset)
+            .padding(.trailing, spacing)
+            .padding(.bottom, spacing)
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .offset(x: showsPanel ? 0 : shell.panelWidth + LoomChrome.canvasInset + 24)
+            .offset(x: showsPanel ? 0 : shell.panelWidth + spacing + 24)
 
             if showsPanel && !isExpanded {
                 LoomColumnResizeHandle(
@@ -101,7 +103,7 @@ struct BrowserView: View {
                     onReset: { panel.resetWidth() }
                 )
                 .padding(.top, LoomChrome.canvasTop)
-                .padding(.bottom, LoomChrome.canvasInset)
+                .padding(.bottom, spacing)
                 .offset(x: shell.panelResizeLeading)
             }
 
@@ -144,7 +146,7 @@ struct BrowserView: View {
                     onReset: { sidebar.resetWidth() }
                 )
                 .padding(.top, LoomChrome.canvasTop)
-                .padding(.bottom, LoomChrome.canvasInset)
+                .padding(.bottom, spacing)
                 .offset(
                     x: shell.sidebarResizeLeading
                 )
@@ -159,11 +161,13 @@ struct BrowserView: View {
             )
 
             SidebarDragOverlay(browser: browser, model: coordinator.sidebarDrag)
+                .environment(\.sidebarStyle, sidebar.style)
 
             DownloadFlightLayer(flights: coordinator.downloadFlights)
                 .environment(\.sidebarStyle, sidebar.style)
 
             PaneDragOverlay(browser: browser, model: coordinator.sidebarDrag)
+                .environment(\.sidebarStyle, sidebar.style)
 
             if !sidebar.isShowing {
                 Color.clear
@@ -227,10 +231,12 @@ struct BrowserView: View {
         .onChange(of: ObjectIdentifier(browser.context)) { _, _ in
             settingsWorkspace.adoptProfile(coordinator: coordinator)
         }
+        .modifier(TranslationDownloadHost(downloads: coordinator.translationDownloads))
         .environment(\.profileFavicons, coordinator.context.favicons)
         .environment(\.assistantProviderID, coordinator.selectedProvider.id)
         .environment(\.chromeIsLight, scheme == .light)
         .environment(\.chromeWash, .of(nil, isLight: scheme == .light))
+        .environment(\.windowColorScheme, scheme)
         .animation(chromeMotion, value: sidebar.isVisible)
         .animation(nil, value: sidebar.isPeeking)
         .animation(chromeMotion, value: showsPanel)

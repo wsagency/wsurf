@@ -58,6 +58,45 @@ struct VaultDiffTests {
         #expect(plan.removals.isEmpty)
     }
 
+    // MARK: Undo
+
+    @Test func aLossThatReturnsWithAnAccountFromTrashIsNeitherMovedNorKept() throws {
+        let merged = try rich()
+        var survivor = merged
+        survivor.password = "own"
+        survivor.totp = nil
+        survivor.passkeys = []
+        var absorbed = VaultFixtures.account(username: "ada", password: "s3cret", origin: "https://example.test")
+        absorbed.totp = merged.totp
+        absorbed.passkeys = merged.passkeys
+
+        let plan = try CredentialDiff.plan(old: [merged], new: [survivor], returning: [absorbed])
+
+        #expect(plan.removals.isEmpty, "the code and the passkey come back with their own account")
+        #expect(plan.revisions.isEmpty, "so does the password")
+        #expect(plan.touched == [id])
+        #expect(plan.persistence == .semantic)
+
+        // Without the returning account the same change keeps the old password and moves the code and the passkey.
+        let plain = try CredentialDiff.plan(old: [merged], new: [survivor])
+        #expect(plain.removals.count == 2)
+        #expect(plain.revisions.map(\.subject) == [.password])
+    }
+
+    @Test func aLossThatDiffersFromWhatReturnsIsStillKept() throws {
+        let merged = try rich()
+        var survivor = merged
+        survivor.totp = nil
+        var absorbed = VaultFixtures.account(username: "ada", password: "other", origin: "https://example.test")
+        var otherCode = try #require(merged.totp)
+        otherCode.digits = 8
+        absorbed.totp = otherCode
+
+        let plan = try CredentialDiff.plan(old: [merged], new: [survivor], returning: [absorbed])
+
+        #expect(plan.removals == [.credential(ownerID: id, subject: .totp, passkeyID: nil)], "a different code is not the one that returns")
+    }
+
     // MARK: Revisions
 
     @Test func passwordReplaceMakesARevision() throws {
@@ -282,6 +321,129 @@ struct VaultDiffTests {
         #expect(plan.revisions.isEmpty)
         #expect(plan.removals == [.account(id)])
         #expect(!plan.setsModifiedAt.contains(id))
+    }
+
+    // MARK: Notes
+
+    private nonisolated static let planted = [
+        CredentialNote(text: "planted-note-1", field: CredentialEditableFieldMetadata(id: Data([1]), label: "Note", fieldType: .string)),
+        CredentialNote(text: "planted-note-2", field: nil),
+    ]
+
+    private func withNotes(_ edit: (inout CredentialAccount) -> Void = { _ in }) throws -> CredentialAccount {
+        var account = try rich()
+        account.notes = Self.planted
+        edit(&account)
+        return account
+    }
+
+    @Test func noteEditCreatesNoteRevision() throws {
+        let old = try withNotes()
+        var new = old
+        new.notes = [CredentialNote(text: "changed", field: nil)]
+
+        let plan = try diff(old: old, new: new)
+
+        #expect(plan.persistence == .semantic)
+        #expect(plan.revisions.count == 1)
+        let revision = try pick(.note, in: plan)
+        #expect(revision.ownerID == id)
+        #expect(try decode([CredentialNote].self, revision) == Self.planted)
+        #expect(plan.removals.isEmpty)
+        #expect(plan.setsModifiedAt == [id])
+    }
+
+    @Test func addingTheFirstNoteSupersedesNothing() throws {
+        let plan = try diff { $0.notes = Self.planted }
+
+        #expect(plan.persistence == .semantic)
+        expectNoWork(plan)
+        #expect(plan.touched == [id])
+        #expect(plan.setsModifiedAt == [id])
+    }
+
+    @Test func clearingNotesKeepsThemAsAnEarlierVersion() throws {
+        let plan = try diff(old: withNotes(), new: rich())
+
+        #expect(plan.persistence == .semantic)
+        #expect(plan.removals.isEmpty)
+        #expect(plan.revisions.count == 1)
+        let revision = try pick(.note, in: plan)
+        #expect(revision.ownerID == id)
+        #expect(try decode([CredentialNote].self, revision) == Self.planted)
+        #expect(plan.setsModifiedAt == [id])
+    }
+
+    @Test func onlyAnExplicitNotesDeleteMovesThemToTrash() throws {
+        let notesDelete = RemovalScope.credential(ownerID: id, subject: .note, passkeyID: nil)
+        let plan = try CredentialDiff.plan(old: [withNotes()], new: [rich()], removing: notesDelete)
+
+        #expect(plan.removals == [notesDelete])
+        #expect(plan.revisions.isEmpty)
+        #expect(plan.setsModifiedAt == [id])
+
+        // A delete of another part, or of another account's notes, does not turn a notes edit into a removal.
+        let other = [
+            RemovalScope.credential(ownerID: id, subject: .totp, passkeyID: nil),
+            RemovalScope.credential(ownerID: UUID(), subject: .note, passkeyID: nil),
+        ]
+        for scope in other {
+            let edit = try CredentialDiff.plan(old: [withNotes()], new: [rich()], removing: scope)
+            #expect(edit.removals.isEmpty && edit.revisions.map(\.subject) == [.note])
+        }
+    }
+
+    @Test func aNoteEditLeavesEveryOtherPartAlone() throws {
+        let old = try withNotes()
+        var new = old
+        new.notes?[1].text = "other"
+
+        let plan = try diff(old: old, new: new)
+
+        #expect(plan.revisions.map(\.subject) == [.note])
+        #expect(plan.removals.isEmpty)
+    }
+
+    @Test func removingThePasswordKeepsAnAccountThatStillHasNotes() throws {
+        let owner = try withNotes {
+            $0.totp = nil
+            $0.passkeys = []
+        }
+        let scope = RemovalScope.credential(ownerID: id, subject: .password, passkeyID: nil)
+
+        let proposal = try ProfileVaultStore.removing(scope, from: [owner])
+
+        #expect(proposal.requires == scope)
+        let kept = try #require(proposal.accounts.first)
+        #expect(proposal.accounts.count == 1 && kept.password == nil && kept.username.isEmpty)
+        #expect(kept.notes == Self.planted)
+        try kept.validate()
+
+        // Without notes the same removal leaves nothing valid, so the whole account goes.
+        var noteless = owner
+        noteless.notes = nil
+        let whole = try ProfileVaultStore.removing(scope, from: [noteless])
+        #expect(whole.accounts.isEmpty && whole.requires == .account(id))
+    }
+
+    @Test func removingTheNotesKeepsTheRestAndRefusesWhenThereAreNone() throws {
+        let scope = RemovalScope.credential(ownerID: id, subject: .note, passkeyID: nil)
+
+        let proposal = try ProfileVaultStore.removing(scope, from: [withNotes()])
+
+        #expect(proposal.requires == scope)
+        #expect(proposal.accounts.first?.notes == nil)
+        #expect(proposal.accounts.first?.password == "s3cret")
+        #expect { try ProfileVaultStore.removing(scope, from: [rich()]) } throws: { Self.isInvalidData($0) }
+
+        // A note-only account has nothing else, so removing its notes removes the account.
+        var noteOnly = CredentialAccount(
+            id: id, username: "", displayName: nil, origins: [], loginURLs: [], password: nil, passkeys: [], totp: nil,
+            exchangeAccountID: nil, exchangeItemID: nil
+        )
+        noteOnly.notes = Self.planted
+        let whole = try ProfileVaultStore.removing(scope, from: [noteOnly])
+        #expect(whole.accounts.isEmpty && whole.requires == .account(id))
     }
 
     // MARK: No revision

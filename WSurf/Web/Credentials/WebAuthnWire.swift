@@ -79,7 +79,7 @@ nonisolated enum WebAuthnWire {
         }
         let isConditional = operation == .get && mediation == .conditional
         let deadline: ContinuousClock.Instant? = isConditional ? nil : now.advanced(by: .milliseconds(Int64(timeout)))
-        let challenge = try base64URLDecode(options["challenge"], maximum: 1_024)
+        let challenge = try base64URLDecode(options["challenge"], maximum: 64 * 1_024)
         let verification = try enumValue(WebAuthnUserVerification.self, options["userVerification"], default: .preferred)
 
         let parsed: WebAuthnRequestOptions
@@ -109,7 +109,7 @@ nonisolated enum WebAuthnWire {
             parsed = .creation(WebAuthnCreationOptions(
                 challenge: challenge,
                 rpID: rp["id"] as? String,
-                userID: try base64URLDecode(user["id"], maximum: 64),
+                userID: try base64URLDecode(user["id"], maximum: WebsitePasskey.userHandleLimit),
                 userName: userName,
                 userDisplayName: displayName,
                 publicKeyAlgorithms: integers,
@@ -125,7 +125,8 @@ nonisolated enum WebAuthnWire {
                 challenge: challenge,
                 rpID: options["rpId"] as? String,
                 allowCredentials: try descriptors(options["allowCredentials"]),
-                userVerification: verification
+                userVerification: verification,
+                appID: try appID(options["appid"])
             ))
         }
         return Parsed(
@@ -137,6 +138,12 @@ nonisolated enum WebAuthnWire {
     private static func enumValue<T: RawRepresentable>(_: T.Type, _ raw: Any?, default fallback: T) throws -> T where T.RawValue == String {
         guard let raw else { return fallback }
         guard let string = raw as? String, let value = T(rawValue: string) else { throw Malformed(reason: "enum") }
+        return value
+    }
+
+    private static func appID(_ raw: Any?) throws -> String? {
+        guard let raw else { return nil }
+        guard let value = raw as? String, (1...2_048).contains(value.utf8.count) else { throw Malformed(reason: "appid") }
         return value
     }
 
@@ -168,6 +175,7 @@ nonisolated enum WebAuthnWire {
         }
         var extensions: [String: Any] = [:]
         if let properties = result.clientExtensionResults?.credProps { extensions["credProps"] = ["rk": properties.rk] }
+        if let appid = result.clientExtensionResults?.appid { extensions["appid"] = appid }
         return [
             "operation": operation == .create ? "create" : "get",
             "id": id, "rawId": id, "type": "public-key", "authenticatorAttachment": "platform",
@@ -196,7 +204,8 @@ nonisolated enum WebAuthnWire {
                 return PageError(name: "InvalidStateError", message: "The authenticator was not able to process the request.")
             case .unsupported:
                 return PageError(name: "NotSupportedError", message: "No supported passkey option was requested.")
-            case .notAllowed, .expired, .invalidCredential:
+            // A hand-off is delivered as its own message and never as an error; if one is ever mapped it is a refusal, not an engine call.
+            case .notAllowed, .expired, .invalidCredential, .handOff:
                 return PageError(name: "NotAllowedError", message: "The request is not allowed by the user agent or the platform.")
             case .savedNotDelivered:
                 return PageError(name: "NotAllowedError", message: "The request could not be completed.")

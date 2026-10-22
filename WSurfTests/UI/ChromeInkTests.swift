@@ -107,7 +107,13 @@ struct ThemeRadiusTests {
 
     @Test func aDeepInsetStopsAtTheTightestCorner() {
         #expect(Theme.Radius.nested(in: Theme.Radius.control, inset: 40) == Theme.Radius.tight)
-        #expect(Theme.Radius.nested(in: 0, inset: 0) == Theme.Radius.tight)
+    }
+
+    /// Square corner rounding makes containers square, and what they hold must be square too.
+    @Test func aContainerSmallerThanTheTightestCornerKeepsItsOwnCorner() {
+        #expect(Theme.Radius.nested(in: 0, inset: 0) == 0)
+        #expect(Theme.Radius.nested(in: 0, inset: 2) == 0)
+        #expect(Theme.Radius.nested(in: 3, inset: 2) == 3)
     }
 
     @Test func anInsetCornerIsNeverRounderThanItsContainer() {
@@ -138,12 +144,16 @@ struct PageInkContrastTests {
     }
 
     @Test func aDarkBlueGroundTakesLightInk() {
+        let restore = useStandardTheme()
+        defer { restore() }
         let hero = NSColor(srgbRed: 0.016, green: 0.016, blue: 0.227, alpha: 1)
         #expect(!PageInk.isLight(ground(hero, dark: false), scheme: .light))
         #expect(!PageInk.isLight(ground(hero, dark: true), scheme: .dark))
     }
 
     @Test func aDarkPageTakesLightInkInEitherWindowAppearance() {
+        let restore = useStandardTheme()
+        defer { restore() }
         let pages = [
             NSColor(srgbRed: 0.05, green: 0.067, blue: 0.09, alpha: 1),
             NSColor(srgbRed: 0.016, green: 0.016, blue: 0.227, alpha: 1),

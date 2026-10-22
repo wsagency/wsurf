@@ -68,17 +68,20 @@ private nonisolated func longOrigin(_ index: Int) -> String {
 }
 
 struct VaultAccountWriteTests {
-    private func write(_ rig: RevisionRig, _ writes: [AccountWrite], cause: String? = nil) async throws -> VaultCommitReceipt {
-        try await rig.store.commitAccounts(vaultID: rig.f.vaultID, writes, cause: cause, using: rig.access)
+    private func write(
+        _ rig: RevisionRig, _ writes: [AccountWrite], removing: [UUID: AccountStamp] = [:], cause: String? = nil
+    ) async throws -> VaultCommitReceipt {
+        try await rig.store.commitAccounts(vaultID: rig.f.vaultID, writes, removing: removing, cause: cause, using: rig.access)
     }
 
     private func expectNothingWritten(
-        _ rig: RevisionRig, throwing expected: any Error, _ writes: [AccountWrite], sourceLocation: SourceLocation = #_sourceLocation
+        _ rig: RevisionRig, throwing expected: any Error, _ writes: [AccountWrite], removing: [UUID: AccountStamp] = [:],
+        sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
         let before = try StoreImage(rig.f)
         let revision = try await rig.snapshot().revision
         do {
-            _ = try await write(rig, writes)
+            _ = try await write(rig, writes, removing: removing)
             Issue.record("expected \(expected)", sourceLocation: sourceLocation)
         } catch {
             #expect(String(describing: error) == String(describing: expected), sourceLocation: sourceLocation)
@@ -260,7 +263,10 @@ struct VaultAccountWriteTests {
         }
     }
 
-    @Test func combinedAccountsAndPolicyBudgetIsEnforced() async throws {
+    /// One account is capped by its own bytes, not by what the stored policy adds beside it: with a full policy an edit of 3.3 MB
+    /// is kept (the old whole-vault budget refused it), an edit over `accountBytes` is refused by name with nothing written, and
+    /// the policy is never rewritten. That the policy counts toward the vault total is in `CredentialAccountValidationTests`.
+    @Test func anAccountEditIsCappedByItsOwnBytesAndLeavesThePolicyAlone() async throws {
         let origins = (1...4_096).map(longOrigin)
         var big = VaultFixtures.account(username: String(repeating: "x", count: 2_500_000), password: nil)
         big.displayName = nil
@@ -271,22 +277,23 @@ struct VaultAccountWriteTests {
             let bound = try await store.snapshot(vaultID: f.vaultID, using: access)
             #expect(bound.blockedPasswordOrigins.count == 4_096)
             let stamp = try #require(bound.stamps[account.id])
-            func resized(_ count: Int) -> [AccountWrite] {
+            func resized(_ count: Int, displayName: Int = 0) -> [AccountWrite] {
                 var edited = account
                 edited.username = String(repeating: "x", count: count)
+                edited.displayName = displayName == 0 ? nil : String(repeating: "d", count: displayName)
                 return [AccountWrite(accountID: account.id, expected: .stamp(stamp), replacement: edited)]
             }
             let before = try StoreImage(f)
             let policy = try probe.heads().source.blockedOrigins
 
-            // Accounts alone fit within 4,000,000 B; with the stored policy they do not.
-            #expect(3_300_000 < CredentialVaultLimits.payloadBytes)
-            await #expect(throws: CredentialStoreError.limit(.payloadBytes)) {
-                try await store.commitAccounts(vaultID: f.vaultID, resized(3_300_000), cause: nil, using: access)
+            // Each field is within its own bound; together they are over the cap of one account.
+            #expect(3_900_000 + 200_000 > CredentialVaultLimits.accountBytes)
+            await #expect(throws: CredentialStoreError.limit(.accountBytes)) {
+                try await store.commitAccounts(vaultID: f.vaultID, resized(3_900_000, displayName: 200_000), cause: nil, using: access)
             }
             #expect(try StoreImage(f) == before)
 
-            let receipt = try await store.commitAccounts(vaultID: f.vaultID, resized(2_800_000), cause: nil, using: access)
+            let receipt = try await store.commitAccounts(vaultID: f.vaultID, resized(3_300_000), cause: nil, using: access)
             #expect(receipt.revision == bound.revision + 1)
             #expect(try probe.heads().source.blockedOrigins == policy)
             #expect(try await store.snapshot(vaultID: f.vaultID, using: access).blockedPasswordOrigins == Set(origins))
@@ -405,6 +412,74 @@ struct VaultAccountWriteTests {
             ]
             try await expectNothingWritten(rig, throwing: CredentialVaultError.duplicateIdentifier, writes)
             #expect(try f.moveTrashEntries().isEmpty)
+        }
+    }
+}
+
+// MARK: - Removing whole accounts
+
+extension VaultAccountWriteTests {
+    @Test func anAccountWriteMovesARemovedAccountToTrashWithItsHistory() async throws {
+        let victim = try MoveFixtures.fullAccount()
+        let kept = VaultFixtures.account(username: "grace", origin: "https://b.example")
+        try await VaultStoreFixture.with(accounts: [victim, kept], historyRows: 2) { f in
+            let rig = try await f.unlockedRig()
+            let probe = CommitProbe(f: f)
+            let bound = try await rig.snapshot()
+            let owned = try f.moveRevisions(in: f.vaultID, owner: victim.id)
+            #expect(!owned.isEmpty)
+            let before = try await rig.store.historyCounts(vaultID: f.vaultID, using: rig.access)
+            let keptRow = try probe.liveRow(kept.id).plaintext
+
+            let receipt = try await write(rig, [], removing: [victim.id: try #require(bound.stamps[victim.id])])
+
+            #expect(receipt.revision == bound.revision + 1)
+            #expect(try await rig.snapshot().accounts.map(\.id) == [kept.id])
+            let after = try await rig.store.historyCounts(vaultID: f.vaultID, using: rig.access)
+            #expect(after.trash.trashEntry == before.trash.trashEntry + 1)
+            let entry = try f.trashEntry(of: victim.id)
+            #expect(Set(try f.moveRevisions(in: f.trashID, owner: victim.id).map(\.moveKey)) == Set(owned.map(\.moveKey)))
+            #expect(try probe.liveRow(kept.id).plaintext == keptRow)
+            // Restorable: nothing is deleted, and the way back is open.
+            let preview = try await rig.store.previewUndelete(vaultID: f.vaultID, entryID: entry.row.recordID, using: rig.access)
+            #expect(preview.block == nil)
+            try await f.undelete(rig.store, rig.access, entry.row.recordID)
+            #expect(try await rig.snapshot().account(victim.id) == victim)
+            try probe.expectRegistryMatchesStore()
+            try f.verify()
+        }
+    }
+
+    @Test func aRemovalBoundToAStaleStampWritesNothing() async throws {
+        let ada = VaultFixtures.account(username: "ada")
+        let grace = VaultFixtures.account(username: "grace", origin: "https://b.example")
+        try await VaultStoreFixture.withRig(accounts: [ada, grace], historyRows: 2) { rig in
+            let bound = try await rig.snapshot()
+            let stale = try #require(bound.stamps[ada.id])
+            var edited = grace
+            edited.password = "sibling"
+            let sibling = AccountWrite(accountID: grace.id, expected: .stamp(try #require(bound.stamps[grace.id])), replacement: edited)
+
+            // An account that is not live is as stale as one that changed, and a valid sibling write does not save the call.
+            try await expectNothingWritten(rig, throwing: CredentialVaultError.staleRevision, [sibling], removing: [UUID(): stale])
+            _ = try await rig.commit(commitEditing(bound.accounts, ada.id) { $0.password = "moved on" })
+            try await expectNothingWritten(rig, throwing: CredentialVaultError.staleRevision, [sibling], removing: [ada.id: stale])
+            try await expectNothingWritten(rig, throwing: CredentialVaultError.staleRevision, [], removing: [ada.id: stale])
+            #expect(try rig.f.moveTrashEntries().isEmpty)
+        }
+    }
+
+    @Test func writingAndRemovingOneAccountIsRefused() async throws {
+        let ada = VaultFixtures.account(username: "ada")
+        try await VaultStoreFixture.withRig(accounts: [ada]) { rig in
+            let bound = try await rig.snapshot()
+            let stamp = try #require(bound.stamps[ada.id])
+            var edited = ada
+            edited.password = "new"
+            try await expectNothingWritten(
+                rig, throwing: CredentialStoreError.malformed,
+                [AccountWrite(accountID: ada.id, expected: .stamp(stamp), replacement: edited)], removing: [ada.id: stamp]
+            )
         }
     }
 }

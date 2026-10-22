@@ -13,7 +13,7 @@ nonisolated enum PasswordAutofillScript {
         ? { postMessage: value => globalThis.__wsurfSend('wsurfPasswords', value) } : null;
       const state = {target:null, token:null, url:null};
       const forms = globalThis.__wsurfAutofillForms;
-      let enabled = false, managerMode = false;
+      let enabled = false;
       const visible = forms.visible;
       const tokens = forms.tokens;
       const fields = target => {
@@ -29,17 +29,20 @@ nonisolated enum PasswordAutofillScript {
       };
       // A lone, visible verification-code input in a safe form with no password: the one field a code may fill.
       const otp = target => {
-        if (!managerMode || !(target instanceof HTMLInputElement) || !visible(target)) return null;
+        if (!(target instanceof HTMLInputElement) || !visible(target)) return null;
         const group = forms.group(target);
         if (!group?.safe || group.passwords.length || forms.field(target)?.kind !== 'one-time-code') return null;
         if (group.fields.filter(field => field.kind === 'one-time-code').length !== 1) return null;
         return {form:group.root,element:target};
       };
+      // `kind` is what the dropdown may do with typing: only a username field lets typed characters start its search.
+      // `webauthn`: the field takes passkeys, so native may add "Use a Passkey…" while the page has a pending conditional request.
       const extra = target => {
-        if (!managerMode) return {};
-        if (otp(target)) return {field:'totp'};
+        const kind = forms.field(target)?.kind || '';
+        if (otp(target)) return {field:'totp',kind};
         const username = fields(target)?.username?.value;
-        return {field:'password',username:typeof username === 'string' && username.length <= 500 ? username : ''};
+        return {field:'password',kind,webauthn:tokens(target).includes('webauthn'),
+          username:typeof username === 'string' && username.length <= 500 ? username : ''};
       };
       const suggestions = globalThis.__wsurfAutofillSuggestions;
       const tracker = suggestions.track(channel, state, target => {
@@ -53,11 +56,8 @@ nonisolated enum PasswordAutofillScript {
           if (!enabled) tracker.clear();
           else if (changed) tracker.refresh();
         },
-        setCredentialManager(value) {
-          const changed = managerMode !== (value === true);
-          managerMode = value === true;
-          if (changed) tracker.clear();
-        },
+        // A vault was unlocked: the field that is still focused is selected again, and its select carries the same token.
+        refresh() { if (enabled) tracker.refresh(); },
         eligible,
         bounds(token,url) { return eligible(token,url) ? suggestions.geometry(state.target) : null; },
         fill(token,url,login) {

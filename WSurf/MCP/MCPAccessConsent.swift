@@ -10,27 +10,50 @@ enum MCPAccessConsent {
     enum Access: Sendable {
         case readOnly
         case control
+        /// Control plus DOM inspection, console and network metadata, viewport and device emulation.
+        case development
+        /// Development, typing test secrets, and no confirmation before consequential actions. Only a paired app on a developer site in the
+        /// Developer profile can hold it.
+        case developer
     }
 
     struct Page: Equatable, Sendable {
         let id: UUID
         let title: String
         let url: URL
+        /// Whether this page qualifies for Allow Developer: a paired app asked for it on a developer site in the
+        /// Developer profile. The sheet offers the choice only when at least one page qualifies.
+        var developerEligible = false
     }
 
-    static func share(client: String, pages: [Page], in window: NSWindow?) async -> Access? {
-        guard !AppDatabase.isRunningTests, window != nil else { return nil }
-        let alert = NSAlert()
+    /// The access sheet as data: its text and its buttons in display order. Built apart from presenting it so the order and the
+    /// meaning of each button can be checked without a window.
+    struct Sheet: Equatable {
+        struct Button: Equatable {
+            let title: String
+            /// The access this button grants; nil declines.
+            let access: Access?
+            /// Escape presses this button.
+            let isEscape: Bool
+        }
+
+        let title: String
+        let message: String
+        let buttons: [Button]
+
+        /// The access chosen by the `index`th button (0 is the first button added); nil for a decline or an unknown button.
+        func access(forButton index: Int) -> Access? {
+            buttons.indices.contains(index) ? buttons[index].access : nil
+        }
+    }
+
+    static func sheet(client: String, pages: [Page], development: Bool) -> Sheet {
         let name = displayName(for: client)
-        alert.messageText = pages.count == 1
-            ? String(localized: "Allow \(name) to Access This Tab?")
-            : String(localized: "Allow \(name) to Access These Tabs?")
         guard !pages.isEmpty else {
-            alert.messageText = String(localized: "No Tab Available to Share")
-            alert.informativeText = String(localized: "Open a webpage in WSurf, then ask \(name) to try again.")
-            alert.addButton(withTitle: String(localized: "OK"))
-            _ = await present(alert, in: window)
-            return nil
+            return Sheet(
+                title: String(localized: "No Tab Available to Share"),
+                message: String(localized: "Open a webpage in WSurf, then ask \(name) to try again."),
+                buttons: [.init(title: String(localized: "OK"), access: nil, isEscape: false)])
         }
         let names = pages.map { page in
             let title = page.title.count > 80 ? String(page.title.prefix(80)) + "…" : page.title
@@ -39,7 +62,7 @@ enum MCPAccessConsent {
         let tabLabel = pages.count == 1
             ? String(localized: "Tab to share:")
             : String(localized: "Tabs to share:")
-        alert.informativeText = String(localized: """
+        var message = String(localized: """
             \(tabLabel)
             \(names)
 
@@ -47,18 +70,46 @@ enum MCPAccessConsent {
             • Read Only: read page content.
             • Allow Control: also click, type, and navigate.
             """)
-        alert.addButton(withTitle: String(localized: "Read Only"))
-        alert.addButton(withTitle: String(localized: "Allow Control"))
-        alert.addButton(withTitle: String(localized: "Don’t Allow"))
-        alert.buttons.last?.keyEquivalent = "\u{1b}"
-        switch await present(alert, in: window) {
-        case .alertFirstButtonReturn:
-            return .readOnly
-        case .alertSecondButtonReturn:
-            return .control
-        default:
-            return nil
+        var buttons: [Sheet.Button] = [
+            .init(title: String(localized: "Read Only"), access: .readOnly, isEscape: false),
+            .init(title: String(localized: "Allow Control"), access: .control, isEscape: false),
+        ]
+        if development {
+            message += "\n" + String(localized: """
+                • Allow Development: also inspect page structure and styles, read console and network metadata, and change the viewport. \
+                These can disclose additional private site data, including text a page writes to its console.
+                """)
+            buttons.append(.init(title: String(localized: "Allow Development"), access: .development, isEscape: false))
+            if pages.contains(where: \.developerEligible) {
+                message += "\n" + String(localized: """
+                    • Allow Developer: also types test passwords it gives itself, and acts without asking before purchases, \
+                    sending, and deleting. Only on developer sites in your Developer profile.
+                    """)
+                buttons.append(.init(title: String(localized: "Allow Developer"), access: .developer, isEscape: false))
+            }
         }
+        buttons.append(.init(title: String(localized: "Don’t Allow"), access: nil, isEscape: true))
+        return Sheet(
+            title: pages.count == 1
+                ? String(localized: "Allow \(name) to Access This Tab?")
+                : String(localized: "Allow \(name) to Access These Tabs?"),
+            message: message, buttons: buttons)
+    }
+
+    static func share(client: String, pages: [Page], development: Bool = false, in window: NSWindow?) async -> Access? {
+        guard !AppDatabase.isRunningTests, window != nil else { return nil }
+        let sheet = sheet(client: client, pages: pages, development: development)
+        let alert = NSAlert()
+        alert.messageText = sheet.title
+        alert.informativeText = sheet.message
+        for button in sheet.buttons {
+            alert.addButton(withTitle: button.title)
+            if button.isEscape {
+                alert.buttons.last?.keyEquivalent = "\u{1b}"
+            }
+        }
+        let response = await present(alert, in: window)
+        return sheet.access(forButton: response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue)
     }
 
     static func open(client: String, url: URL, in window: NSWindow?) async -> Bool {
@@ -72,6 +123,22 @@ enum MCPAccessConsent {
             It will be able to read the page, click, type, and navigate.
             """)
         alert.addButton(withTitle: String(localized: "Open and Share"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        alert.buttons.last?.keyEquivalent = "\u{1b}"
+        return await present(alert, in: window) == .alertFirstButtonReturn
+    }
+
+    /// The question for a page that shows a password or payment field, reached under the Website access default.
+    static func useSensitivePage(client: String, url: URL, in window: NSWindow?) async -> Bool {
+        guard !AppDatabase.isRunningTests, window != nil else { return false }
+        let alert = NSAlert()
+        let name = displayName(for: client)
+        alert.messageText = String(localized: "Allow \(name) to Use This Page?")
+        alert.informativeText = String(localized: """
+            This page has a password or payment field. \(name) will be able to click, type, and navigate on \(url.host() ?? url.absoluteString). \
+            Password and payment fields stay blocked.
+            """)
+        alert.addButton(withTitle: String(localized: "Allow"))
         alert.addButton(withTitle: String(localized: "Cancel"))
         alert.buttons.last?.keyEquivalent = "\u{1b}"
         return await present(alert, in: window) == .alertFirstButtonReturn

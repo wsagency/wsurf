@@ -54,7 +54,7 @@ struct AutofillSaveReview: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save") { save() }.keyboardShortcut(.defaultAction)
-                    .disabled(session.isBusy || session.current?.id != offer.id)
+                    .disabled(session.isBusy || session.current?.id != offer.id || session.current?.isGone == true)
             }
         }
         .padding(24).frame(width: 460)

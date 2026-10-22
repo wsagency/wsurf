@@ -1,0 +1,359 @@
+// SPDX-FileCopyrightText: 2026 WSurf Agency
+// SPDX-License-Identifier: Apache-2.0
+
+import AppKit
+import Foundation
+import SwiftUI
+import Testing
+
+@testable import WSurf
+
+/// Today's resolved chrome colors for every appearance, preset and saved customization, recorded from the code
+/// that existed before themes gained light and dark variants. Migration preserves the stored colors exactly;
+/// only the enumerated below-threshold foregrounds derive an opaque runtime ink under §1.4.
+@MainActor
+struct ThemeGoldenTests {
+    /// The legacy settings of one install, as the old keys stored them.
+    struct Scenario {
+        let name: String
+        var mode = "system"
+        var preset: String?
+        var customizations: [String: ThemeCustomization] = [:]
+        var textStyles: [String: SidebarTextStyle] = [:]
+    }
+
+    static let scenarios: [Scenario] = {
+        var result = ["system", "light", "dark", "lightCalm", "darkCalm"].map {
+            Scenario(name: "mode-\($0)", mode: $0)
+        }
+        let presets: [String] = [
+            "catppuccinLatte", "catppuccinMocha", "nord", "dracula", "gruvboxLight", "gruvboxDark", "rosePine",
+            "rosePineDawn",
+        ]
+        result += presets.map { Scenario(name: "preset-\($0)", preset: $0) }
+        result += [
+            Scenario(name: "brightness-only", customizations: [
+                "light": ThemeCustomization(brightness: 0.2),
+                "dark": ThemeCustomization(brightness: -0.15),
+            ]),
+            Scenario(name: "palette-and-inks", customizations: [
+                "light": ThemeCustomization(
+                    hue: 0.1, primary: SidebarTextStyle(colorRGB: 0xCC3300),
+                    controls: SidebarTextStyle(colorRGB: 0x0033CC, opacity: 0.4),
+                    url: SidebarTextStyle(colorRGB: 0x33CC00, opacity: 0.7)
+                ),
+                "dark": ThemeCustomization(
+                    primary: SidebarTextStyle(colorRGB: 0x3366FF),
+                    controls: SidebarTextStyle(colorRGB: 0xFFAA00, opacity: 0.6),
+                    url: SidebarTextStyle(colorRGB: 0x88DDFF, opacity: 0.8)
+                ),
+            ]),
+            Scenario(name: "sidebar-text-styles", textStyles: [
+                "light.loaded": SidebarTextStyle(colorRGB: 0xCC3300, opacity: 0.8),
+                "light.unloaded": SidebarTextStyle(colorRGB: 0x0033CC, opacity: 0.3),
+                "dark.loaded": SidebarTextStyle(colorRGB: 0x99FF99, opacity: 0.9),
+                "dark.unloaded": SidebarTextStyle(colorRGB: 0xFFCC00, opacity: 0.5),
+            ]),
+            Scenario(name: "calm-customized", mode: "lightCalm", customizations: [
+                "lightCalm": ThemeCustomization(
+                    brightness: -0.1, primary: SidebarTextStyle(colorRGB: 0x884488),
+                    controls: SidebarTextStyle(colorRGB: 0x224422, opacity: 0.9)
+                ),
+                "darkCalm": ThemeCustomization(hue: -0.2),
+            ], textStyles: [
+                "lightCalm.loaded": SidebarTextStyle(colorRGB: 0x553355, opacity: 0.95),
+                "darkCalm.unloaded": SidebarTextStyle(colorRGB: 0xDDBBFF, opacity: 0.4),
+            ]),
+            Scenario(name: "mode-light-customized-both", mode: "light", customizations: [
+                "light": ThemeCustomization(brightness: 0.1, url: SidebarTextStyle(colorRGB: 0x006600)),
+                "dark": ThemeCustomization(brightness: -0.3),
+            ]),
+            Scenario(name: "preset-over-customizations", mode: "darkCalm", preset: "nord", customizations: [
+                "darkCalm": ThemeCustomization(brightness: 0.2, primary: SidebarTextStyle(colorRGB: 0xFF0000)),
+                "dark": ThemeCustomization(hue: 0.3),
+            ], textStyles: ["darkCalm.loaded": SidebarTextStyle(colorRGB: 0xFF00FF, opacity: 0.5)]),
+        ]
+        return result
+    }()
+
+    private static let page = NSColor(srgbRed: 0, green: 0.35, blue: 1, alpha: 1)
+    static let cellNames = [
+        "window", "sidebar", "surface", "accent", "systemAccent", "control", "url", "loaded", "unloaded",
+        "ambient", "floating", "page", "pageFloating",
+    ]
+
+    // MARK: - Installing a scenario
+
+    /// Puts `scenario` on the application settings the way an upgrade does: as the old keys, read by a new
+    /// `BrowserSettings` that migrates them. This is the one place that knows how the settings are stored.
+    private func install(_ scenario: Scenario) throws {
+        let name = AppDatabase.defaultsSuite("ThemeGolden-\(UUID().uuidString)")
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(true, forKey: "appearance.websiteTint")
+        defaults.set(scenario.mode, forKey: "appearance.mode")
+        defaults.set(scenario.preset, forKey: "appearance.themePreset")
+        let customizations = try JSONEncoder().encode(scenario.customizations)
+        let textStyles = try JSONEncoder().encode(scenario.textStyles)
+        defaults.set(customizations, forKey: "appearance.themeCustomizations")
+        defaults.set(textStyles, forKey: "appearance.sidebar.textStyles")
+        let upgraded = BrowserSettings(defaults: defaults)
+        #expect(defaults.string(forKey: "appearance.mode") == scenario.mode)
+        #expect(defaults.string(forKey: "appearance.themePreset") == scenario.preset)
+        #expect(defaults.data(forKey: "appearance.themeCustomizations") == customizations)
+        #expect(defaults.data(forKey: "appearance.sidebar.textStyles") == textStyles)
+
+        let settings = BrowserSettings.application
+        settings.forcesDarkAppearance = false
+        settings.userThemes = upgraded.userThemes
+        settings.themeAdjustments = upgraded.themeAdjustments
+        settings.themeID = upgraded.themeID
+        settings.colorMode = upgraded.colorMode
+    }
+
+    private struct Snapshot {
+        let mode: AppearanceMode
+        let themeID: String
+        let userThemes: [ThemeDefinition]
+        let adjustments: [String: ThemeAdjustment]
+        let forcesDark: Bool
+        let native: NSAppearance?
+    }
+
+    private func snapshot() -> Snapshot {
+        let settings = BrowserSettings.application
+        return Snapshot(
+            mode: settings.colorMode, themeID: settings.themeID, userThemes: settings.userThemes,
+            adjustments: settings.themeAdjustments, forcesDark: settings.forcesDarkAppearance, native: NSApp.appearance
+        )
+    }
+
+    private func restore(_ saved: Snapshot) {
+        let settings = BrowserSettings.application
+        settings.userThemes = saved.userThemes
+        settings.themeAdjustments = saved.adjustments
+        settings.themeID = saved.themeID
+        settings.colorMode = saved.mode
+        settings.forcesDarkAppearance = saved.forcesDark
+        NSApp.appearance = saved.native
+    }
+
+    // MARK: - Measuring
+
+    private func cell(_ color: NSColor?) -> String {
+        guard let rgb = color?.usingColorSpace(.sRGB) else { return "-" }
+        func channel(_ value: CGFloat) -> String {
+            String(format: "%02X", Int((min(max(value, 0), 1) * 255).rounded()))
+        }
+        return channel(rgb.redComponent) + channel(rgb.greenComponent) + channel(rgb.blueComponent)
+            + channel(rgb.alphaComponent)
+    }
+
+    /// A dynamic color resolves when it is converted, so the conversion happens in the appearance too.
+    private func cell(_ color: Color?, in appearance: NSAppearance) -> String {
+        var resolved: NSColor?
+        appearance.performAsCurrentDrawingAppearance {
+            resolved = color.flatMap { NSColor($0).usingColorSpace(.sRGB) }
+        }
+        return cell(resolved)
+    }
+
+    /// Every cell of one appearance, in `cellNames` order, read from the same calls the chrome makes.
+    private func measure(_ appearance: NSAppearance, scheme: ColorScheme) -> [String] {
+        let settings = BrowserSettings.application
+        NSApp.appearance = appearance
+        return [
+            cell(Theme.windowBackground, in: appearance),
+            cell(Theme.sidebarTint, in: appearance),
+            cell(Theme.controlSurface, in: appearance),
+            cell(Theme.accent, in: appearance),
+            cell(Theme.systemAccent, in: appearance),
+            cell(Theme.controlOverride, in: appearance),
+            cell(Theme.urlOverride, in: appearance),
+            cell(settings.sidebarTextColor(scheme: scheme), in: appearance),
+            cell(settings.sidebarTextColor(isDeferred: true, scheme: scheme), in: appearance),
+            cell(LoomChrome.sampledColor(nil, scheme: scheme)),
+            cell(LoomChrome.sampledColor(nil, scheme: scheme, isFloating: true)),
+            cell(LoomChrome.sampledColor(Self.page, scheme: scheme)),
+            cell(LoomChrome.sampledColor(Self.page, scheme: scheme, isFloating: true)),
+        ]
+    }
+
+    private static let appearances: [(name: String, appearance: NSAppearance.Name, scheme: ColorScheme)] = [
+        ("aqua", .aqua, .light), ("darkAqua", .darkAqua, .dark),
+    ]
+
+    // MARK: - Verifying
+
+    /// A cell is `RRGGBBAA`, `-` for no color, `~` for a color that follows the live system accent (not recorded),
+    /// or `=blue` for the plain system blue.
+    private func matches(_ expected: String, _ measured: String, appearance: NSAppearance) -> Bool {
+        switch expected {
+        case "~":
+            return true
+        case "=blue":
+            return Self.agree(cell(Color.blue, in: appearance), measured)
+        default:
+            return Self.agree(expected, measured)
+        }
+    }
+
+    /// Equal, or within 1/255 per channel: the Calm colors are stored as 8-bit values.
+    private static func agree(_ first: String, _ second: String) -> Bool {
+        guard first.count == 8, second.count == 8,
+              let one = UInt32(first, radix: 16), let two = UInt32(second, radix: 16)
+        else { return first == second }
+        return (0..<4).allSatisfy { shift in
+            abs(Int((one >> (shift * 8)) & 255) - Int((two >> (shift * 8)) & 255)) <= 1
+        }
+    }
+
+    /// Rows whose old colors came from the other appearance's settings: a window drawn dark under a light mode or a
+    /// light preset, as a private window is. The old code fell back to Standard or to the light customizations
+    /// there. A theme has a dark variant for exactly that window, so these rows differ on purpose. A value is the
+    /// row of the same family in the appearance the window now shows, which the table holds; nil means the new
+    /// colors have no counterpart in the table and are checked by `ThemeResolutionTests` and `ThemeCatalogTests`.
+    private static let privateWindowRows: [String: String?] = [
+        "preset-catppuccinLatte|darkAqua": "preset-catppuccinMocha|darkAqua",
+        "preset-catppuccinMocha|aqua": "preset-catppuccinLatte|aqua",
+        "preset-gruvboxLight|darkAqua": "preset-gruvboxDark|darkAqua",
+        "preset-gruvboxDark|aqua": "preset-gruvboxLight|aqua",
+        "preset-rosePineDawn|darkAqua": "preset-rosePine|darkAqua",
+        "preset-rosePine|aqua": "preset-rosePineDawn|aqua",
+        "preset-nord|aqua": nil,
+        "preset-dracula|aqua": nil,
+        "preset-over-customizations|aqua": nil,
+        "mode-light-customized-both|darkAqua": nil,
+        "calm-customized|darkAqua": nil,
+    ]
+
+    /// The intentional §1.4 changes observed in b06-functional.log, with the exact migrated raw style and
+    /// inherited text. No backgrounds, control surfaces, accents, URLs or passing foregrounds are exempted.
+    /// `palette-and-inks|aqua|unloaded` stays exact: its original ink passes on the actual window ground.
+    private static let guardedLegacyInks: [String: (style: SidebarTextStyle, text: UInt32?)] = [
+        "mode-lightCalm|aqua|unloaded": (SidebarTextStyle(opacity: 0.55), nil),
+        "mode-darkCalm|aqua|unloaded": (SidebarTextStyle(opacity: 0.55), nil),
+        "preset-nord|darkAqua|unloaded": (SidebarTextStyle(opacity: 0.65), 0xD8DEE9),
+        "palette-and-inks|aqua|control": (SidebarTextStyle(colorRGB: 0x0033CC, opacity: 0.4), nil),
+        "sidebar-text-styles|aqua|loaded": (SidebarTextStyle(colorRGB: 0xCC3300, opacity: 0.8), nil),
+        "sidebar-text-styles|aqua|unloaded": (SidebarTextStyle(colorRGB: 0x0033CC, opacity: 0.3), nil),
+        "sidebar-text-styles|darkAqua|unloaded": (SidebarTextStyle(colorRGB: 0xFFCC00, opacity: 0.5), nil),
+        "calm-customized|aqua|control": (SidebarTextStyle(colorRGB: 0x224422, opacity: 0.9), nil),
+        "calm-customized|aqua|loaded": (SidebarTextStyle(colorRGB: 0x553355, opacity: 0.95), nil),
+        "calm-customized|aqua|unloaded": (SidebarTextStyle(opacity: 0.55), nil),
+        "preset-over-customizations|darkAqua|unloaded": (SidebarTextStyle(opacity: 0.65), 0xD8DEE9),
+    ]
+
+    private func expectGuardedLegacyInk(
+        _ original: (style: SidebarTextStyle, text: UInt32?), role: String, measured: String,
+        appearance: NSAppearance, scheme: ColorScheme
+    ) throws {
+        let settings = BrowserSettings.application
+        let stored = settings.selectedTheme.variant(scheme)
+        let style = role == "control" ? stored.icons : (role == "loaded" ? stored.sidebarText : stored.unloadedText)
+        #expect(style == original.style, "the exact stored RGB and opacity survive migration and resolution")
+        #expect(stored.text == original.text)
+        let base = style.color ?? stored.text.map(Color.init(hex:)) ?? (scheme == .dark ? .white : .black)
+        let raw = SidebarRowStyle.srgb(base.opacity(style.opacity), scheme: scheme)
+        let resolved = settings.resolvedTheme.variant(scheme)
+        let roles = role == "control" ? [resolved.window, resolved.sidebar] : [resolved.window]
+        let grounds = roles.map { SidebarRowStyle.srgb(Color(nsColor: $0.resolved(in: appearance)), scheme: scheme) }
+        let minimum: CGFloat = role == "control" ? 3 : 4.5
+        #expect(grounds.contains {
+            SidebarRowStyle.contrast(ThemeReadability.composite(raw, on: $0), $0) < minimum
+        }, "only an actually below-threshold runtime ink may change")
+        let ink: Color? = role == "control" ? resolved.controlInk : (role == "loaded" ? resolved.loadedInk : resolved.unloadedInk)
+        let fallback = SidebarRowStyle.srgb(try #require(ink), scheme: scheme)
+        let channels = [fallback.redComponent, fallback.greenComponent, fallback.blueComponent]
+        #expect(fallback.alphaComponent == 1 && (channels.allSatisfy { $0 == 0 } || channels.allSatisfy { $0 == 1 }))
+        #expect(cell(fallback) == measured, "the chrome consumer receives the derived opaque ink")
+        for ground in grounds {
+            #expect(SidebarRowStyle.contrast(ThemeReadability.composite(fallback, on: ground), ground) >= minimum)
+        }
+    }
+
+    @Test func everyRecordedColorSurvivesTheMigration() throws {
+        let saved = snapshot()
+        defer { restore(saved) }
+        var installed: String?
+        var checked = 0
+        var guarded = 0
+        for line in Self.table.split(separator: "\n") {
+            let parts = line.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+            let scenario = try #require(Self.scenarios.first { $0.name == parts[0] }, "\(parts[0])")
+            let row = try #require(Self.appearances.first { $0.name == parts[1] })
+            if installed != scenario.name {
+                try install(scenario)
+                installed = scenario.name
+            }
+            let appearance = try #require(NSAppearance(named: row.appearance))
+            let measured = measure(appearance, scheme: row.scheme)
+            var expected = parts[2].split(separator: " ").map(String.init)
+            if let changed = Self.privateWindowRows["\(parts[0])|\(parts[1])"] {
+                guard let partner = changed else { continue }
+                let row = try #require(Self.table.split(separator: "\n").first { $0.hasPrefix(partner + "|") })
+                expected = row.split(separator: "|")[2].split(separator: " ").map(String.init)
+            }
+            #expect(expected.count == Self.cellNames.count && measured.count == expected.count)
+            for (name, pair) in zip(Self.cellNames, zip(expected, measured)) {
+                if let original = Self.guardedLegacyInks["\(scenario.name)|\(row.name)|\(name)"] {
+                    try expectGuardedLegacyInk(original, role: name, measured: pair.1, appearance: appearance, scheme: row.scheme)
+                    guarded += 1
+                } else {
+                    #expect(
+                        matches(pair.0, pair.1, appearance: appearance),
+                        "\(scenario.name) in \(row.name): \(name) was \(pair.0), is \(pair.1)"
+                    )
+                }
+                checked += 1
+            }
+        }
+        let skipped = Self.privateWindowRows.values.filter { $0 == nil }.count
+        #expect(checked == (Self.scenarios.count * Self.appearances.count - skipped) * Self.cellNames.count)
+        #expect(guarded == Self.guardedLegacyInks.count, "every explicitly allowed case is exercised")
+    }
+
+    // MARK: - The recorded colors
+
+    /// Scenario, appearance and the cells in `cellNames` order, from the code before themes had variants.
+    static let table = """
+mode-system|aqua|FAFAFCFF E8E8EDFF FFFFFFFF =blue ~ - - 000000FF 0000008C F0F0F4FF F0F0F4FF 5578BBFF 5578BBFF
+mode-system|darkAqua|17171CFF 0D0D11FF 575757FF =blue ~ - - FFFFFFFF FFFFFF8C 1B1B20FF 1B1B20FF 5578BBFF 5578BBFF
+mode-light|aqua|FAFAFCFF E8E8EDFF FFFFFFFF =blue ~ - - 000000FF 0000008C F0F0F4FF F0F0F4FF 5578BBFF 5578BBFF
+mode-light|darkAqua|17171CFF 0D0D11FF 575757FF =blue ~ - - FFFFFFFF FFFFFF8C 1B1B20FF 1B1B20FF 5578BBFF 5578BBFF
+mode-dark|aqua|FAFAFCFF E8E8EDFF FFFFFFFF =blue ~ - - 000000FF 0000008C F0F0F4FF F0F0F4FF 5578BBFF 5578BBFF
+mode-dark|darkAqua|17171CFF 0D0D11FF 575757FF =blue ~ - - FFFFFFFF FFFFFF8C 1B1B20FF 1B1B20FF 5578BBFF 5578BBFF
+mode-lightCalm|aqua|DBCCC9FF C7B3BDFF E8D9D9FF AD638AFF AD638AFF - - 000000FF 0000008C DBCCC9FF DBCCC9FF CAC5D3FF CAC5D3FF
+mode-lightCalm|darkAqua|201D2EFF 181624FF 3B334AFF D1A1C2FF D1A1C2FF - - FFFFFFFF FFFFFF8C 201D2EFF 201D2EFF 2D3451FF 2D3451FF
+mode-darkCalm|aqua|DBCCC9FF C7B3BDFF E8D9D9FF AD638AFF AD638AFF - - 000000FF 0000008C DBCCC9FF DBCCC9FF CAC5D3FF CAC5D3FF
+mode-darkCalm|darkAqua|201D2EFF 181624FF 3B334AFF D1A1C2FF D1A1C2FF - - FFFFFFFF FFFFFF8C 201D2EFF 201D2EFF 2D3451FF 2D3451FF
+preset-catppuccinLatte|aqua|EFF1F5FF E6E9EFFF CCD0DAFF 8839EFFF 8839EFFF 4C4F69FF 4C4F69FF 4C4F69FF 4C4F69E0 EFF1F5FF E6E9EFFF EFF1F5FF E6E9EFFF
+preset-catppuccinLatte|darkAqua|17171CFF 0D0D11FF 575757FF =blue ~ FFFFFFD8 FFFFFFD8 FFFFFFFF FFFFFF8C 17171CFF 0D0D11FF 17171CFF 0D0D11FF
+preset-catppuccinMocha|aqua|FAFAFCFF E8E8EDFF FFFFFFFF =blue ~ 000000D8 000000D8 000000FF 0000008C FAFAFCFF E8E8EDFF FAFAFCFF E8E8EDFF
+preset-catppuccinMocha|darkAqua|1E1E2EFF 181825FF 313244FF CBA6F7FF CBA6F7FF CDD6F4FF CDD6F4FF CDD6F4FF CDD6F4A6 1E1E2EFF 181825FF 1E1E2EFF 181825FF
+preset-nord|aqua|FAFAFCFF E8E8EDFF FFFFFFFF =blue ~ 000000D8 000000D8 000000FF 0000008C FAFAFCFF E8E8EDFF FAFAFCFF E8E8EDFF
+preset-nord|darkAqua|3B4252FF 2E3440FF 434C5EFF 88C0D0FF 88C0D0FF D8DEE9FF D8DEE9FF D8DEE9FF D8DEE9A6 3B4252FF 2E3440FF 3B4252FF 2E3440FF
+preset-dracula|aqua|FAFAFCFF E8E8EDFF FFFFFFFF =blue ~ 000000D8 000000D8 000000FF 0000008C FAFAFCFF E8E8EDFF FAFAFCFF E8E8EDFF
+preset-dracula|darkAqua|282A36FF 282A36FF 44475AFF BD93F9FF BD93F9FF F8F8F2FF F8F8F2FF F8F8F2FF F8F8F2A6 282A36FF 282A36FF 282A36FF 282A36FF
+preset-gruvboxLight|aqua|FBF1C7FF F2E5BCFF EBDBB2FF 076678FF 076678FF 3C3836FF 3C3836FF 3C3836FF 3C3836E0 FBF1C7FF F2E5BCFF FBF1C7FF F2E5BCFF
+preset-gruvboxLight|darkAqua|17171CFF 0D0D11FF 575757FF =blue ~ FFFFFFD8 FFFFFFD8 FFFFFFFF FFFFFF8C 17171CFF 0D0D11FF 17171CFF 0D0D11FF
+preset-gruvboxDark|aqua|FAFAFCFF E8E8EDFF FFFFFFFF =blue ~ 000000D8 000000D8 000000FF 0000008C FAFAFCFF E8E8EDFF FAFAFCFF E8E8EDFF
+preset-gruvboxDark|darkAqua|282828FF 1D2021FF 3C3836FF 83A598FF 83A598FF EBDBB2FF EBDBB2FF EBDBB2FF EBDBB2A6 282828FF 1D2021FF 282828FF 1D2021FF
+preset-rosePine|aqua|FAFAFCFF E8E8EDFF FFFFFFFF =blue ~ 000000D8 000000D8 000000FF 0000008C FAFAFCFF E8E8EDFF FAFAFCFF E8E8EDFF
+preset-rosePine|darkAqua|1F1D2EFF 191724FF 26233AFF C4A7E7FF C4A7E7FF E0DEF4FF E0DEF4FF E0DEF4FF E0DEF4A6 1F1D2EFF 191724FF 1F1D2EFF 191724FF
+preset-rosePineDawn|aqua|FAF4EDFF F2E9E1FF FFFAF3FF 286983FF 286983FF 575279FF 575279FF 575279FF 575279E0 FAF4EDFF F2E9E1FF FAF4EDFF F2E9E1FF
+preset-rosePineDawn|darkAqua|17171CFF 0D0D11FF 575757FF =blue ~ FFFFFFD8 FFFFFFD8 FFFFFFFF FFFFFF8C 17171CFF 0D0D11FF 17171CFF 0D0D11FF
+brightness-only|aqua|FCFCFFFF FAFAFFFF FFFFFFFF ~ ~ - - 000000FF 0000008C FCFCFFFF FCFCFFFF FCFCFFFF FCFCFFFF
+brightness-only|darkAqua|000000FF 000000FF 303030FF ~ ~ - - FFFFFFFF FFFFFF8C 000000FF 000000FF 000000FF 000000FF
+palette-and-inks|aqua|FCEFA4FF EDE19AFF FFF2A6FF CCAD00FF CCAD00FF 0033CC66 33CC00B3 000000FF 0000008C FCEFA4FF FCEFA4FF FCEFA4FF FCEFA4FF
+palette-and-inks|darkAqua|12151CFF 0B0C11FF 384057FF 3366FFFF 3366FFFF FFAA0099 88DDFFCC FFFFFFFF FFFFFF8C 12151CFF 12151CFF 12151CFF 12151CFF
+sidebar-text-styles|aqua|FAFAFCFF E8E8EDFF FFFFFFFF =blue ~ - - CC3300CC 0033CC4D F0F0F4FF F0F0F4FF 5578BBFF 5578BBFF
+sidebar-text-styles|darkAqua|17171CFF 0D0D11FF 575757FF =blue ~ - - 99FF99E6 FFCC0080 1B1B20FF 1B1B20FF 5578BBFF 5578BBFF
+calm-customized|aqua|C27EC2FF AD71ADFF CF86CFFF 6F376FFF 6F376FFF 224422E6 - 553355F2 0000008C C27EC2FF C27EC2FF C27EC2FF C27EC2FF
+calm-customized|darkAqua|140D14FF 0A070AFF 301F30FF 6F376FFF 6F376FFF 224422E6 - 553355F2 FFFFFF8C 140D14FF 140D14FF 140D14FF 140D14FF
+mode-light-customized-both|aqua|FCFCFFFF FAFAFFFF FFFFFFFF ~ ~ - 006600FF 000000FF 0000008C FCFCFFFF FCFCFFFF FCFCFFFF FCFCFFFF
+mode-light-customized-both|darkAqua|2C2C36FF 20202AFF 707070FF ~ ~ - 006600FF FFFFFFFF FFFFFF8C 2C2C36FF 2C2C36FF 2C2C36FF 2C2C36FF
+preset-over-customizations|aqua|FAFAFCFF E8E8EDFF FFFFFFFF =blue ~ 000000D8 000000D8 000000FF 0000008C FAFAFCFF E8E8EDFF FAFAFCFF E8E8EDFF
+preset-over-customizations|darkAqua|3B4252FF 2E3440FF 434C5EFF 88C0D0FF 88C0D0FF D8DEE9FF D8DEE9FF D8DEE9FF D8DEE9A6 3B4252FF 2E3440FF 3B4252FF 2E3440FF
+"""
+}

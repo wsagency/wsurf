@@ -14,8 +14,69 @@
         }
       }
     },
+    "A website’s own Assistant Access setting wins. Private windows always ask. Stop External Connections pauses an app until you resume it." : {
+      "comment" : "Note under the Websites section of the Connected apps page. Assistant Access is the name of the per-website setting. Stop External Connections is the exact name of the menu command; Resume is the button on this page."
+    },
+    "Allow %@ to Use This Page?" : {
+      "comment" : "Heading of the sheet that asks whether a paired app may use a page that shows a password or payment field, after it opened the website under the Website access default. %@ is the app’s name, supplied at runtime. Title Case."
+    },
+    "assistant asks first" : {
+      "comment" : "Fragment in the one-line summary under a website, meaning its Assistant Access is set to Ask even if the default would allow more. Lower case: joined with other fragments by a separator, never shown alone."
+    },
+    "Default (%@)" : {
+      "comment" : "Menu item in a website’s Assistant Access choices that removes the website’s own setting so it follows the Website access default. %@ names that default, for example Allow Control, written as the menu spells it."
+    },
+    "Actions the assistant may take on these websites without asking again, such as purchases or posting." : {
+      "comment" : "Caption of the Approved actions page in Settings."
+    },
+    "Approved actions" : {
+      "comment" : "Row title in Settings › Assistant and title of the page it opens: the sensitive actions, such as purchases or posting, that the assistant may take on certain websites without asking again. Sentence case. Replaces Allowed without asking."
+    },
+    "A website’s own Assistant Access setting wins over this default. Private windows always ask." : {
+      "comment" : "Note under the Acting on websites section in Settings. Assistant Access is the name of the per-website setting in the site menu and on a website’s settings page; this default is the Website access row above."
+    },
+    "Follow Website access" : {
+      "comment" : "Row on the Connected apps page. Its switch lets paired apps open and use new websites under the Website access default, as the assistant does. Sentence case. Website access is the name of the row in Acting on websites."
+    },
     "%@ — Private Browsing" : {
 
+    },
+    "The assistant wants to click “%@” %@. This %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The assistant wants to click “%1$@” %2$@. This %3$@."
+          }
+        }
+      }
+    },
+    "signing in" : {
+      "comment" : "Lowercase name of one category of assistant permission, inserted mid-sentence into a list under a website’s name, which reads roughly: purchases and signing in without asking. Deliberately lowercase. The capitalised label Signing in is a separate string."
+    },
+    "Signing in" : {
+      "comment" : "Label of one category of sensitive action in the assistant-permissions list in Settings, covering signing in with another account and giving a website access to an account. A lowercase mid-sentence form of the same phrase exists separately."
+    },
+    "signs in or gives another website access to your account" : {
+      "comment" : "Clause that completes the sentence This … in the dialog asking the user to approve an action the assistant wants to take, for buttons such as Continue with Google or Authorize. Lowercase, third person singular; the implied subject is the action."
+    },
+    "This page has a password or payment field." : {
+      "comment" : "First sentence of the question asking whether the assistant may use a page. It says why the question appears even though the Website access default would allow it. Followed by the usual explanation of Read Only and Allow Control."
+    },
+    "The assistant reads and uses websites without asking. It still asks before purchases, payments, sending, deleting, and signing in, and on pages with password or payment fields." : {
+      "comment" : "Caption of the Website access row when it is set to Allow Control. It lists what the assistant still asks about."
+    },
+    "The assistant reads websites without asking. It asks before it clicks, types, or submits on a website." : {
+      "comment" : "Caption of the Website access row when it is set to Read Only."
+    },
+    "The assistant asks before it reads or uses each website." : {
+      "comment" : "Caption of the Website access row when it is set to Ask. The assistant is the name of the feature."
+    },
+    "Private windows always ask." : {
+      "comment" : "Caption of the Website access row when Settings is open in a private window, and the end of the note under the Acting on websites section. The Website access default never applies in private windows."
+    },
+    "This page has a password or payment field. %@ will be able to click, type, and navigate on %@. Password and payment fields stay blocked." : {
+      "comment" : "Body of the sheet that asks whether a paired app may use a page with a password or payment field. The first %@ is the app’s name and the second is the website’s host, both supplied at runtime. The consequence comes first."
     },
     "%@ wants to open %@." : {
       "localizations" : {
@@ -27,11 +88,38 @@
         }
       }
     },
+    "%lld paired" : {
+      "comment" : "Detail on the Connected apps row in Assistant settings. The number is how many apps are paired."
+    },
+    "Add a Developer Site" : {
+      "comment" : "Title of the alert that asks for a developer site on the Connected apps page. Title Case."
+    },
+    "Add Site…" : {
+      "comment" : "Row on the Connected apps page that opens an alert for typing a developer site. The ellipsis promises the alert. Title Case."
+    },
+    "All %lld passwords from the old list are in Credential Manager." : {
+
+    },
+    "Allow Developer" : {
+      "comment" : "Button in the sheet where the user chooses what a paired app may do in a tab. It grants the Developer tier: development access, typing test passwords the app supplies itself, and no confirmation before purchases, sending, or deleting on developer sites. Title Case. Offered only for a paired app on a developer site."
+    },
+    "Allow Developer Access in “%@”?" : {
+      "comment" : "Heading of the confirmation shown when the Developer profile is set to a profile WSurf did not create for this. The inserted text is the profile’s name."
+    },
     "Allow for this private tab" : {
 
     },
     "Always allow for this website" : {
 
+    },
+    "and %lld more entries with notes." : {
+
+    },
+    "Apps you paired with WSurf." : {
+      "comment" : "Search result description for the Connected apps page."
+    },
+    "Apps you paired with WSurf. Unpaired apps ask each time they connect." : {
+      "comment" : "Caption under the title of the Connected apps page."
     },
     "Ask before opening %@" : {
 
@@ -39,14 +127,89 @@
     "Ask next time" : {
 
     },
-    "Developer" : {
+    "Choose a Developer profile to use this." : {
+      "comment" : "Caption on a paired app’s row when its Without asking level is above Off but no Developer profile is chosen, so the level has no effect yet."
+    },
+    "Connected apps" : {
+      "comment" : "Name of the Settings page and section that list apps paired with WSurf over MCP. Sentence case; it is also the text of a link in the External connections page."
+    },
+    "Connected now" : {
+      "comment" : "Caption of a paired app row while the app has a live connection."
+    },
+    "Copy Configuration" : {
+      "comment" : "Button above the client list when pairing is unavailable and the configuration is copied at once. Title Case."
+    },
+    "Copy Configuration…" : {
+      "comment" : "Button above the client list. The ellipsis promises a dialog that asks for a name before the configuration is copied."
+    },
+    "Create a vault to import the passwords saved before Credential Manager." : {
 
+    },
+    "Create Developer Profile" : {
+      "comment" : "Row on the Connected apps page that creates a profile named Developer and chooses it as the Developer profile. Title Case."
+    },
+    "Credential Manager changed. Review the old list again." : {
+
+    },
+    "Developer" : {
+      "comment" : "Name of the profile WSurf creates for developer work, and the Developer choice in the Without asking menu on a paired app’s row. Title Case."
+    },
+    "Developer access works only in this profile, so connected apps never use your everyday sign-ins." : {
+      "comment" : "Caption under the Developer profile menu on the Connected apps page."
+    },
+    "Developer profile" : {
+      "comment" : "Row title on the Connected apps page for the menu that chooses the only profile where paired apps can work without asking."
+    },
+    "Developer work" : {
+      "comment" : "Title of the section on the Connected apps page that holds the Developer profile and the developer sites."
+    },
+    "Development" : {
+      "comment" : "Choice in the Without asking menu on a paired app’s row, and the name of the access level that adds inspection, diagnostics and device emulation to control. Title Case."
+    },
+    "Enter a site like staging.example.com or staging.example.com:8443. Wildcards and address ranges aren’t supported." : {
+      "comment" : "Error under the developer sites when the typed site is not an exact host with an optional port."
+    },
+    "Entry" : {
+
+    },
+    "Entry %lld of the old list" : {
+
+    },
+    "External app" : {
+      "comment" : "Name given to a paired app when none was typed."
     },
     "Fill form controls together without submitting." : {
 
     },
+    "Import the passwords saved before Credential Manager. WSurf doesn’t fill them until you do." : {
+
+    },
+    "Imported into WSurf: %lld added, %lld updated. The old Passwords list is still on this Mac until you remove it." : {
+
+    },
+    "Import…" : {
+
+    },
+    "It will need your approval each time it connects until you pair it again." : {
+      "comment" : "Body of the dialog that confirms withdrawing a paired app."
+    },
+    "Keep for Now" : {
+
+    },
+    "Later" : {
+
+    },
+    "localhost, 127.0.0.1, and [::1] on any port." : {
+      "comment" : "Caption of the This Mac row: the built-in developer sites. Keep the addresses as written."
+    },
     "Move Tab to Window" : {
 
+    },
+    "Move Your Saved Passwords" : {
+
+    },
+    "Name This App" : {
+      "comment" : "Title of the alert that asks for a name before WSurf pairs an app and copies its configuration. Title Case."
     },
     "New Page" : {
       "comment" : "Fallback title for a browser tab whose website has no title, including while a new website is loading. Title Case."
@@ -60,10 +223,43 @@
     "No app installed on this Mac handles %@ links." : {
 
     },
+    "No paired apps" : {
+      "comment" : "Title of the empty state on the Connected apps page."
+    },
+    "No passkey for this website in WSurf." : {
+
+    },
+    "No sites are excluded." : {
+
+    },
+    "not imported: same as entry %lld." : {
+
+    },
+    "Not paired. It asks for approval each time it connects." : {
+      "comment" : "Caption of a client row whose WSurf entry has no valid pairing token. Sentence case."
+    },
+    "Not set" : {
+      "comment" : "Choice in the Developer profile menu meaning no profile is chosen, so paired apps get no standing access."
+    },
+    "Not used yet" : {
+      "comment" : "Caption of a paired app row that has never connected."
+    },
+    "Nothing is saved until you review and confirm. The old list stays until you remove it." : {
+
+    },
+    "Off" : {
+      "comment" : "Choice in the Without asking menu on a paired app’s row: the app asks each time it connects."
+    },
+    "Old Passwords list removed" : {
+
+    },
     "Open %@" : {
 
     },
     "Open %@?" : {
+
+    },
+    "Open Credential Manager" : {
 
     },
     "Open downloads" : {
@@ -81,14 +277,59 @@
     "opens %@ without asking" : {
 
     },
+    "Pair" : {
+      "comment" : "Button in the External connections client list that pairs an app already added to a client, so WSurf can recognize it. A verb (a command)."
+    },
+    "Pair %@ with WSurf" : {
+      "comment" : "VoiceOver label of the Pair button on a client row. The inserted text is the client’s name."
+    },
+    "Pair an app under Advanced › External connections." : {
+      "comment" : "Caption of the empty state on the Connected apps page. The names are the Settings page and row where an app is paired."
+    },
+    "Paired apps" : {
+      "comment" : "Row title in the External connections client list; the caption links to Connected apps."
+    },
+    "Paired apps could work on your developer sites without asking, and skip the confirmation before purchases, sending, and deleting, while you’re signed in there." : {
+      "comment" : "Message of the confirmation shown when the Developer profile is set to a profile WSurf did not create for this."
+    },
+    "Paired apps set to work without asking can use this site too. A site without a port covers the usual web port only. Add one, like staging.example.com:8443, to include another." : {
+      "comment" : "Message of the alert that adds a developer site. It says what adding the site allows and how a port works."
+    },
+    "Paired as %@" : {
+      "comment" : "Caption of a client row whose pairing token WSurf recognizes. The inserted text is the paired app’s name."
+    },
+    "Pairing isn’t available because WSurf can’t reach its secure storage." : {
+      "comment" : "Caption of the empty Connected apps list when the keychain item cannot be read."
+    },
+    "Pairing isn’t available because WSurf can’t reach its secure storage. Apps ask for approval each time they connect." : {
+      "comment" : "Caption of the Paired apps row when the keychain item cannot be read, for example in a development build."
+    },
+    "Pairing isn’t available because WSurf can’t reach its secure storage. The app asks for approval each time it connects." : {
+      "comment" : "Error shown when setting up a client cannot pair it because the keychain item cannot be read."
+    },
+    "Pairing lets WSurf recognize an app. Review paired apps in Connected apps." : {
+      "comment" : "Caption of the Paired apps row. “Connected apps” is a link to that Settings page and must stay a substring."
+    },
+    "Passwords saved before Credential Manager" : {
+
+    },
     "Paused because the provider is rate limited. Your progress is saved; wait, then choose Continue." : {
 
     },
-    "Press Tab to search this site" : {
-      "comment" : "Accessibility hint for the command palette's site search suggestion. Tab is the keyboard key."
+    "Re-pair" : {
+      "comment" : "Menu command on a client row that replaces the app’s pairing token with a new one. A verb."
     },
     "Remove %@ search" : {
       "comment" : "Accessibility label and tooltip for removing the active site search chip. %@ is the website's name and should not be translated."
+    },
+    "Remove Old List" : {
+
+    },
+    "Remove Old List…" : {
+
+    },
+    "Remove the Old Passwords List?" : {
+
     },
     "Reopen Last Closed Window" : {
 
@@ -96,10 +337,34 @@
     "Restart Page" : {
 
     },
+    "Restore prompts on %lld excluded sites." : {
+
+    },
+    "Restore prompts on 1 excluded site." : {
+
+    },
+    "Review the old list before removing it." : {
+
+    },
+    "Review…" : {
+
+    },
+    "Revoke “%@”?" : {
+      "comment" : "Heading of the dialog that confirms withdrawing a paired app. The inserted text is the app’s name."
+    },
+    "same website and username as entry %lld with another password. Choose what to do with each of them." : {
+
+    },
+    "Save passwords in Credential Manager?" : {
+
+    },
     "Search %@" : {
       "comment" : "Command palette site search hint, placeholder, and result detail. %@ is the website's name and should not be translated. Search is a verb."
     },
     "Search in current tab" : {
+
+    },
+    "Set Up Vault…" : {
 
     },
     "Tabs cannot move between profiles or private sessions." : {
@@ -111,10 +376,31 @@
     "The browser window is no longer available." : {
 
     },
+    "The import ended because %@, and nothing was saved. Your saved passwords are still in the old list. To import them, choose Review again." : {
+
+    },
     "The model is rate limited. Retrying shortly without repeating browser actions." : {
 
     },
+    "The old list has no passwords. Remove it to finish the move to Credential Manager." : {
+
+    },
+    "The old Passwords list has %lld passwords. %lld already saved here, %lld can’t be imported." : {
+
+    },
+    "The passkey is saved in Credential Manager." : {
+
+    },
+    "This import was discarded. No data was written. Your saved passwords are still in the old list. To import them, choose Review again." : {
+
+    },
+    "This Mac" : {
+      "comment" : "Row title for the built-in developer sites on this computer (localhost, 127.0.0.1 and [::1]). Capitalized as a name."
+    },
     "This page wants to open %@." : {
+
+    },
+    "This page changed, so nothing was saved." : {
 
     },
     "This website can open this app without asking." : {
@@ -201,6 +487,87 @@
     "Hold ⌘" : {
       "comment" : "Choice requiring the Command modifier to remove an unloaded tab."
     },
+    "Unlock the vault to import the passwords saved before Credential Manager." : {
+
+    },
+    "Use Another Device or Key…" : {
+
+    },
+    "Usual web port only. Add a port to include another." : {
+      "comment" : "Caption under a developer site that has no port. It covers port 80 for http and 443 for https only."
+    },
+    "Website access" : {
+      "comment" : "Row title in Settings › Assistant, Acting on websites. It chooses how much of a website the assistant may use when that website has no setting of its own: Ask, Read Only or Allow Control. Sentence case."
+    },
+    "With the default set to Allow Control, paired apps open and use new websites without asking again. They still ask on pages with a password or payment field, and before signing in, purchases, and deleting." : {
+      "comment" : "Caption of the Follow Website access row on the Connected apps page. Allow Control is the exact name of a Website access level. Paired apps are apps the user paired with WSurf."
+    },
+    "Ask to close tabs" : {
+      "comment" : "Choice of the Closing tabs row in Settings › Assistant, the default: the assistant and connected apps ask before closing a tab. Sentence case."
+    },
+    "Allow closing tabs" : {
+      "comment" : "Choice of the Closing tabs row in Settings › Assistant, shown under the Allow Control default: the assistant closes ordinary tabs without asking. Sentence case."
+    },
+    "Closing tabs" : {
+      "comment" : "Row title in Settings › Assistant, Acting on websites, shown under the Allow Control default. It chooses whether the assistant asks before closing a tab. Sentence case."
+    },
+    "Pinned tabs are never closed. The assistant can always close tabs it opened. Connected apps ask unless they opened the tab or have Developer access." : {
+      "comment" : "Caption of the Closing tabs row in Settings › Assistant. Pinned tabs are the tabs the person pinned, including pages in a pinned folder. Developer access is the Developer level of a paired app on the Connected apps page."
+    },
+    "Close “%@”?" : {
+      "comment" : "Heading of the sheet that asks whether the assistant or a connected app may close a tab. %@ is the title of the tab, cut to one short line."
+    },
+    "Close this tab?" : {
+      "comment" : "Heading of the sheet that asks whether the assistant or a connected app may close a tab, when the tab has no title."
+    },
+    "“%@” wants to close this tab." : {
+      "comment" : "First sentence of the sheet that asks whether a connected app may close a tab. %@ is the app’s name."
+    },
+    "The assistant wants to close this tab." : {
+      "comment" : "First sentence of the sheet that asks whether the assistant may close a tab."
+    },
+    "You can reopen it with Reopen Last Closed Tab." : {
+      "comment" : "Second sentence of the sheet that asks whether the assistant or a connected app may close a tab. Reopen Last Closed Tab is the name of the menu command. Left out for private tabs, which cannot be reopened."
+    },
+    "Keep Open" : {
+      "comment" : "Button in the sheet that asks whether the assistant or a connected app may close a tab: leaves the tab open. Title Case."
+    },
+    "Don’t ask again for this task" : {
+      "comment" : "Checkbox in the sheet that asks whether the assistant may close a tab. When checked and the person closes the tab, the assistant closes other tabs of the same task without asking."
+    },
+    "Don’t ask again for this connection" : {
+      "comment" : "Checkbox in the sheet that asks whether a connected app may close a tab. When checked and the person closes the tab, that connection closes other tabs without asking until it disconnects."
+    },
+    "Without asking" : {
+      "comment" : "Label beside the menu on a paired app’s row. The menu sets what the app may do on developer sites without a prompt: Off, Development or Developer."
+    },
+    "Without asking works only on developer sites in the Developer profile. Developer also skips the confirmation before purchases, sending, and deleting there." : {
+      "comment" : "Footnote under the Developer work section on the Connected apps page."
+    },
+    "WSurf added the app but couldn’t save its pairing. Choose Pair to try again." : {
+      "comment" : "Error shown when the client’s configuration was written but the pairing record could not be saved."
+    },
+    "WSurf can’t save a passkey here: Credential Manager has no vault yet." : {
+
+    },
+    "WSurf copies a configuration that pairs the app you paste it into. Keep it private." : {
+      "comment" : "Message of the alert that asks for an app name before copying a configuration that contains a pairing token."
+    },
+    "WSurf couldn’t pair this app. Try again." : {
+      "comment" : "Error under the client list when Copy Configuration could not save the new pairing."
+    },
+    "WSurf couldn’t revoke this app. Try again." : {
+      "comment" : "Error on the Connected apps page when the pairing could not be removed."
+    },
+    "WSurf couldn’t save this change. Try again." : {
+      "comment" : "Error on the Connected apps page when a change to a paired app or the developer settings could not be stored."
+    },
+    "WSurf keeps up to %lld developer sites. Remove one to add another." : {
+      "comment" : "Error when the developer site list is full. The number is the most sites that can be listed."
+    },
+    "WSurf now keeps passwords only in Credential Manager, an encrypted vault you unlock with a passkey. Passwords saved in the profile “%@” aren’t filled until you import them. Nothing is deleted without your confirmation." : {
+
+    },
     "X next to Play" : {
       "comment" : "Choice showing a separate remove X immediately left of the unloaded-tab Play button."
     },
@@ -224,6 +591,27 @@
     },
     "Unload %lld Tabs" : {
       "comment" : "Sidebar context-menu command that unloads selected tabs without removing their links or pins."
+    },
+    "Free Memory" : {
+      "comment" : "Command that unloads every background tab in every window now, in WebKit and Chromium. Title Case. File menu item, command palette entry and the button in Settings > General."
+    },
+    "Free memory" : {
+      "comment" : "Title of the Settings > General row, and its Settings search entry, with the Free Memory button. Sentence case."
+    },
+    "Unloads background tabs now, in WebKit and Chromium. They reload when you open them; Chromium tabs restore their address but not Back/Forward history. Chromium’s helper processes stay until you quit WSurf." : {
+      "comment" : "Caption of the Free memory row in Settings > General, and its Settings search entry. Chromium’s graphics, network and storage helper processes cannot be released without quitting WSurf."
+    },
+    "unload every background tab" : {
+      "comment" : "Caption under the Free Memory command in the command palette. Sentence fragment, lower case."
+    },
+    "No background tabs to unload." : {
+      "comment" : "Brief notice after Free Memory when every tab is the current tab, already unloaded or protected."
+    },
+    "Unloaded 1 tab." : {
+      "comment" : "Brief notice after Free Memory unloaded exactly one tab."
+    },
+    "Unloaded %lld tabs." : {
+      "comment" : "Brief notice after Free Memory. The integer is how many tabs were unloaded, at least 2."
     },
     "This tab has unsaved form changes." : {
       "comment" : "Notice explaining why a tab cannot safely be unloaded."
@@ -257,6 +645,12 @@
     },
     "" : {
       "comment" : "Not shown to anyone: the empty branch of a conditional tooltip on the sidebar's New Tab and Settings rows, used when the sidebar is wide enough to show the row's own title. Leave the translation empty."
+    },
+    "Your passwords are imported. Remove the old list in Credential Manager when you’re ready." : {
+
+    },
+    "Your saved passwords are now only in Credential Manager." : {
+
     },
     "“%@” is playing" : {
       "comment" : "Tooltip on the speaker glyph of a collapsed folder in the sidebar, saying which tab inside it is making sound. %@ is the tab's title, written by the website — never translated. Keep the curly quotation marks around it."
@@ -435,6 +829,52 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld entries"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld entries, each kept for %@" : {
+      "comment" : "Footnote under the Entries list in Settings, Autofill, Input History, shown while the list is unlocked. The first number is how many entries the list holds. %@ is how long each entry is kept, such as “30 minutes” or “1 week”. A mid-sentence time span, not a sentence of its own.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld entry, each kept for %@"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld entries, each kept for %@"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld entries, kept until you delete them" : {
+      "comment" : "Footnote under the Entries list in Settings, Autofill, Input History, shown while the list is unlocked and entries never expire. %lld is how many entries the list holds.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld entry, kept until you delete it"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld entries, kept until you delete them"
                 }
               }
             }
@@ -943,9 +1383,6 @@
     "Add or change the selected provider’s API key." : {
 
     },
-    "Add Password" : {
-
-    },
     "Add Payment Card" : {
 
     },
@@ -1048,9 +1485,6 @@
     "Allowed until you leave" : {
       "comment" : "Caption under a permission's name in the site permission panel: the grant lasts only until the user navigates away from the website. Sentence case, one line, tight."
     },
-    "Allowed without asking" : {
-      "comment" : "Heading of the list of websites the assistant may act on without confirming first. Past participle describing the websites below, not an instruction."
-    },
     "Already installed in WSurf" : {
 
     },
@@ -1068,6 +1502,9 @@
     },
     "Always ask the assistant" : {
       "comment" : "Title of the Settings switch that sends anything you type in the address bar to the assistant instead of the search engine. \"Always\" is about typed questions only — a link or a web address still opens as usual, which the caption underneath says. The feature is called the assistant throughout, never \"AI\". Sentence case, no final full stop."
+    },
+    "Always Translate %@" : {
+      "comment" : "Toggle in the address bar's translate menu. Translates pages in this language automatically in this profile. %@ is a language name, such as Japanese."
     },
     "An HTML file from another browser." : {
       "comment" : "Caption under the Bookmarks row on the last onboarding screen. It names the file the user picks. It must stay on one line, so it is shorter than its twin on the General settings page."
@@ -1400,6 +1837,9 @@
     },
     "Canceled." : {
       "comment" : "Tool result and trace line when an agent step was cancelled mid-run."
+    },
+    "Candidate %@" : {
+      "comment" : "Line under the version in the About panel and in Settings › About that says which candidate build this is. %@ is the candidate label, for example 0.1.1-b3. The app adds the short commit hash after it, separated by a middle dot."
     },
     "Capture page" : {
 
@@ -1742,8 +2182,8 @@
     "Color" : {
       "comment" : "Label of the color swatches that tint a profile’s symbol."
     },
-    "Color the selected tab using the website icon." : {
-
+    "Color tabs you select together using the website icon." : {
+      "comment" : "Caption under the Appearance switch “Tint selected tab”. The tint applies to several selected tabs; the tab being shown is drawn in inverse colors instead."
     },
     "Compact" : {
 
@@ -1810,6 +2250,12 @@
     },
     "Contacts and addresses" : {
 
+    },
+    "Contains current tab" : {
+      "comment" : "VoiceOver value of a collapsed sidebar folder that holds the tab being shown. Sentence case."
+    },
+    "Contains new tabs" : {
+      "comment" : "VoiceOver value of a collapsed sidebar folder that holds tabs opened in the background and not yet shown. Sentence case."
     },
     "Context compacted" : {
 
@@ -2237,9 +2683,6 @@
 
     },
     "Enter a unique server name, an HTTPS MCP URL or connector ID, and valid tool names." : {
-
-    },
-    "Enter a valid HTTPS website and a password." : {
 
     },
     "Enter a valid payment card number." : {
@@ -2908,9 +3351,6 @@
     "WSurf encrypts saved contacts. Imported copies don’t sync." : {
 
     },
-    "WSurf encrypts saved passwords. macOS manages passkeys." : {
-
-    },
     "WSurf is using %@ instead." : {
       "comment" : "Settings → Assistant. %@ is the provider name of the stand-in, e.g. \"Apple Intelligence\". Caption shown when the chosen provider is not ready and another one serves replies. WSurf is the application name and is never translated."
     },
@@ -2971,9 +3411,6 @@
     "Location" : {
       "comment" : "Name of the location permission: a row on the Websites settings page and a label in the permission badge in the toolbar. Means the Mac's geographic location."
     },
-    "Login details" : {
-
-    },
     "Long" : {
 
     },
@@ -3027,9 +3464,6 @@
     },
     "Manage your other extensions" : {
       "comment" : "One line in the bulleted list of what an extension will be able to do, in the install confirmation sheet. It completes “It will also be able to:”."
-    },
-    "Managed by %@" : {
-
     },
     "Manually" : {
 
@@ -3258,6 +3692,9 @@
     "Never opened" : {
       "comment" : "Summary of a profile that has never been used, shown in place of its counts."
     },
+    "New" : {
+      "comment" : "VoiceOver value of a sidebar tab that opened in the background and has not been shown yet. One word; it names the dot beside the tab’s icon."
+    },
     "New Folder" : {
       "comment" : "The name a newly created sidebar folder carries until it is renamed. Title Case, the way macOS names new folders."
     },
@@ -3348,9 +3785,6 @@
     "No pages visited yet." : {
       "comment" : "Empty state in the History view when there is no history at all. Full sentence with a period, sentence case."
     },
-    "No passwords match your search." : {
-
-    },
     "No preference — the assistant chose" : {
 
     },
@@ -3373,9 +3807,6 @@
 
     },
     "No saved cards" : {
-
-    },
-    "No saved passwords" : {
 
     },
     "No saved permissions" : {
@@ -3443,6 +3874,9 @@
     },
     "Not specified" : {
 
+    },
+    "Not translated" : {
+      "comment" : "Accessibility value of the translate control when the page shows its original text."
     },
     "Nothing is playing" : {
       "comment" : "Title of the empty state in the lyrics view when the media player holds no track. Sentence case with no final full stop."
@@ -3666,6 +4100,9 @@
     "Page Down" : {
       "comment" : "Legend printed on a key cap in the shortcut recorder in Settings, where the user records the key that activates the assistant. Use the word your language's Apple keyboards print on that key; the cap is only a few characters wide. This one is the Page Down navigation key."
     },
+    "Page translated to %@" : {
+      "comment" : "VoiceOver announcement after the shown page's text was translated. %@ is a language name."
+    },
     "Page Up" : {
       "comment" : "Legend printed on a key cap in the shortcut recorder in Settings, where the user records the key that activates the assistant. Use the word your language's Apple keyboards print on that key; the cap is only a few characters wide. This one is the Page Up navigation key."
     },
@@ -3684,16 +4121,7 @@
     "Password" : {
       "comment" : "Placeholder text inside the password field of the dialog a website shows when it asks for HTTP authentication."
     },
-    "Password filling" : {
-
-    },
-    "Password provider" : {
-
-    },
     "Passwords" : {
-
-    },
-    "Passwords are locked" : {
 
     },
     "Paste" : {
@@ -3830,6 +4258,9 @@
     },
     "posts or sends something in your name" : {
       "comment" : "Clause that completes the sentence This … and usually can’t be undone. in the dialog asking the user to approve an action the assistant wants to take. Lowercase, third person singular; the implied subject is the action, and in your name means as though the user had done it."
+    },
+    "Preferred Languages…" : {
+      "comment" : "Item in the translate menu that opens the Language & Region settings, where the person lists the languages they read."
     },
     "Preparing attachments…" : {
 
@@ -3993,6 +4424,54 @@
     "Recently Visited" : {
       "comment" : "Section heading in the ⌘K palette over pages taken from history. Title Case."
     },
+    "Command palette" : {
+      "comment" : "Heading of the Settings > General section that holds the command palette options. Title Case."
+    },
+    "Section order" : {
+      "comment" : "Title of the Settings > General row that sets the order of the command palette's result groups, and its Settings search entry. Sentence case."
+    },
+    "Choose where each group of command palette results appears. The best matches stay first within a group." : {
+      "comment" : "Caption of the Section order row, and its Settings search entry. Group means a set of results under one heading."
+    },
+    "Return runs the first result. An address you type keeps “Search or ask” first, and a command that matches strongly appears right under the first section." : {
+      "comment" : "Footnote under the command palette section in Settings > General. The name in quotes must match the Search or ask row title."
+    },
+    "Open tabs" : {
+      "comment" : "Name of a group in the Settings > General command palette order list: tabs that are open. Sentence case."
+    },
+    "Recently visited" : {
+      "comment" : "Name of a group in the Settings > General command palette order list: pages from history that the palette shows before anything is typed. Sentence case."
+    },
+    "What you type as a search or address, and the option to ask the assistant" : {
+      "comment" : "Caption of the Search or ask group in the command palette order list. Sentence fragment, no final full stop."
+    },
+    "Tabs that match, or recent tabs before you type" : {
+      "comment" : "Caption of the Open tabs group in the command palette order list. Sentence fragment, no final full stop."
+    },
+    "Pages that match as you type" : {
+      "comment" : "Caption of the History group in the command palette order list. Sentence fragment, no final full stop."
+    },
+    "Commands that match, or suggested ones before you type" : {
+      "comment" : "Caption of the Actions group in the command palette order list. Sentence fragment, no final full stop."
+    },
+    "Pages you visited, before you type" : {
+      "comment" : "Caption of the Recently visited group in the command palette order list. Sentence fragment, no final full stop."
+    },
+    "Move Up" : {
+      "comment" : "Tooltip on the small chevron button that moves a command palette group one place up in the Settings order list. Title Case."
+    },
+    "Move Down" : {
+      "comment" : "Tooltip on the small chevron button that moves a command palette group one place down in the Settings order list. Title Case."
+    },
+    "Move %@ Up" : {
+      "comment" : "VoiceOver label of the Move Up button in the command palette order list. The placeholder is the group's name, such as Open tabs."
+    },
+    "Move %@ Down" : {
+      "comment" : "VoiceOver label of the Move Down button in the command palette order list. The placeholder is the group's name, such as Open tabs."
+    },
+    "%@, position %lld of %lld" : {
+      "comment" : "VoiceOver announcement after a command palette group moves. The placeholder is the group's name; the integers are its new place and the number of groups."
+    },
     "Recently visited pages" : {
       "comment" : "Description of the History section in the start page editor. Pages means web pages. No final full stop."
     },
@@ -4119,12 +4598,6 @@
     "Remove key" : {
 
     },
-    "Remove Password" : {
-
-    },
-    "Remove Password?" : {
-
-    },
     "Remove Task" : {
       "comment" : "Tooltip on the close button of a card in Recent Tasks on the start page; it forgets that one turn the agent ran. Title Case."
     },
@@ -4139,9 +4612,6 @@
     },
     "Remove the data stored by every website?" : {
       "comment" : "Title of the confirmation for clearing the stored data of every website in the list."
-    },
-    "Remove the saved login for %@?" : {
-
     },
     "Remove This Page" : {
       "comment" : "Context-menu command on one page of several shown at once. That page leaves the arrangement and goes back to being an ordinary sidebar row; the others keep the window. Title Case."
@@ -4334,9 +4804,6 @@
     "Save a card to use at checkout." : {
 
     },
-    "Save a login to see it here." : {
-
-    },
     "Save address?" : {
 
     },
@@ -4359,9 +4826,6 @@
 
     },
     "Save and fill payment cards." : {
-
-    },
-    "Save and fill website logins." : {
 
     },
     "Save Card" : {
@@ -4415,9 +4879,6 @@
     "Saved in your Keychain." : {
       "comment" : "Caption under the API key row when a key is stored but cannot be shown in masked form. The implied subject is the key. Keychain is Apple’s password store — use Apple’s own name for it."
     },
-    "Saved passwords" : {
-
-    },
     "Saved passwords are unavailable in Private Browsing." : {
 
     },
@@ -4458,10 +4919,10 @@
       "comment" : "Placeholder in the search field of the History view. “Search” is the verb and “history” its object. Sentence case, narrow field."
     },
     "Search or ask" : {
-      "comment" : "Accessibility label for the combined search and assistant field on the start page. Keep it short and name both functions."
+      "comment" : "Accessibility label for the combined search and assistant field on the start page, and the name of the search and Ask group in the Settings command palette order list. Keep it short and name both functions."
     },
-    "Search passwords" : {
-
+    "Search or Ask" : {
+      "comment" : "Heading in the ⌘K palette over the search and Ask rows when another group comes first. Title Case. The group has no heading when it comes first."
     },
     "Search settings" : {
       "comment" : "Placeholder inside the search field at the top of the Settings sidebar. Search is the verb and settings its object, meaning the settings of this app. Narrow field, so keep it short."
@@ -4676,6 +5137,9 @@
     "Show or hide the list of tabs." : {
       "comment" : "Description of the Show sidebar switch, shown only in the Settings search results. The list of tabs is the sidebar down the side of the window. Imperative pair with a final full stop."
     },
+    "Show Original" : {
+      "comment" : "Menu command that removes a page translation and shows the page's original text. Title Case."
+    },
     "Show password" : {
 
     },
@@ -4705,6 +5169,9 @@
     },
     "Show what went wrong" : {
       "comment" : "Tooltip on the warning button beside an extension that reported problems; pressing it opens a panel listing them. Show is a verb."
+    },
+    "Showing the original page" : {
+      "comment" : "VoiceOver announcement after a translation is removed and the page's original text is back."
     },
     "Side by side" : {
 
@@ -4761,10 +5228,70 @@
       "comment" : "Secondary button on the onboarding screens; ends onboarding without granting anything. Title Case."
     },
     "Sleep inactive tabs" : {
-      "comment" : "Title of the switch in Settings > General that lets WSurf release the pages of background tabs when the Mac runs short of memory, and the same row in Settings search. Off by default. Sentence case; “Sleep” is a verb the browser does to the tabs."
+      "comment" : "Title of the switch in Settings > General that lets WSurf release the pages of background tabs when the Mac runs short of memory or, with Sleep after, once they have been idle, and the same row in Settings search. Off by default. Sentence case; “Sleep” is a verb the browser does to the tabs."
     },
     "Sleep inactive tabs is off, so every website stays loaded." : {
 
+    },
+    "Sleep after" : {
+      "comment" : "Title of the row in Settings > General, shown under Sleep inactive tabs, that chooses how long a background tab may sit out of view before it unloads. Sentence case; Sleep is a verb."
+    },
+    "Background tabs unload after they have been out of view this long, and reload when you open them. Favorites and tabs that play audio, use a camera or microphone, hold unsaved form input or are downloading stay loaded. Unloaded Chromium tabs restore only their URL." : {
+      "comment" : "Caption of the Sleep after row in Settings > General. Explains the idle delay and which tabs are never unloaded. Chromium is a browser engine name and stays untranslated."
+    },
+    "When memory is low" : {
+      "comment" : "Choice in the Sleep after menu that sets no idle delay: tabs unload only when the Mac runs short of memory. Sentence case."
+    },
+    "Custom…" : {
+      "comment" : "Last choice in the Sleep after menu; reveals a field for a custom number of minutes or hours. Ends with an ellipsis because it asks for more input."
+    },
+    "Custom time" : {
+      "comment" : "Title and accessibility label of the Settings row and field where a custom Sleep after duration is typed. Noun phrase, sentence case."
+    },
+    "Applied: %@" : {
+      "comment" : "Caption under the Custom time field in Settings > General showing the Sleep after duration that is currently in effect, for example Applied: 1 hour 30 minutes. The placeholder is that formatted duration or the words When memory is low."
+    },
+    "minutes" : {
+      "comment" : "Unit choice next to the Custom time field; lowercase plural noun."
+    },
+    "hours" : {
+      "comment" : "Unit choice next to the Custom time field; lowercase plural noun."
+    },
+    "Enter a whole number greater than zero, no larger than 2,147,483,647 minutes." : {
+      "comment" : "Shown under the Custom time field when the typed number is empty, not whole, not above zero, or too large to store. The number is the largest accepted count of minutes."
+    },
+    "Color preset" : {
+      "comment" : "Title of the Appearance settings row that picks a named color palette such as Nord or Dracula, and the same words in the Settings search index. Noun phrase, sentence case."
+    },
+    "Use a named palette for the window, sidebar, and controls. While a preset is on, its colors replace the theme, your custom colors, window style, transparency, and website tint; Reset brings your own settings back." : {
+      "comment" : "Caption of the Color preset row in Appearance settings. Reset is the button next to the preset cards."
+    },
+    "Use a named palette such as Catppuccin, Nord, Dracula, Gruvbox, or Rosé Pine." : {
+      "comment" : "Settings search description for the Color preset row. The palette names are proper names and stay untranslated."
+    },
+    "Catppuccin Latte" : {
+      "comment" : "Name of a color preset (the light Catppuccin palette). Proper name; do not translate."
+    },
+    "Catppuccin Mocha" : {
+      "comment" : "Name of a color preset (the dark Catppuccin palette). Proper name; do not translate."
+    },
+    "Nord" : {
+      "comment" : "Name of a color preset. Proper name; do not translate."
+    },
+    "Dracula" : {
+      "comment" : "Name of a color preset. Proper name; do not translate."
+    },
+    "Gruvbox Light" : {
+      "comment" : "Name of a color preset (the light Gruvbox palette). Proper name; do not translate."
+    },
+    "Gruvbox Dark" : {
+      "comment" : "Name of a color preset (the dark Gruvbox palette). Proper name; do not translate."
+    },
+    "Rosé Pine" : {
+      "comment" : "Name of a color preset (the dark Rosé Pine palette). Proper name; do not translate."
+    },
+    "Rosé Pine Dawn" : {
+      "comment" : "Name of a color preset (the light Rosé Pine palette). Proper name; do not translate."
     },
     "Small" : {
       "comment" : "First of the four sizes in the lyrics text-size menu (Small, Regular, Large, Extra Large). An adjective for the size of the words. Title Case, as macOS menu items are."
@@ -5176,9 +5703,6 @@
     "The text in this form was written by AI, not by you. Publishing it puts AI-generated text out under your name." : {
 
     },
-    "The website will ask again to use your camera, microphone, location, or notifications. The assistant will ask again before reading the website." : {
-
-    },
     "The website’s certificate couldn’t be verified, so WSurf stopped before sending anything." : {
       "comment" : "Explanatory sentence on the certificate error page, under its headline. Curly apostrophes."
     },
@@ -5365,6 +5889,21 @@
     "trackers allowed" : {
       "comment" : "Fragment in the one-line summary under a website, meaning tracker blocking is switched off there. Lower case: joined with other fragments."
     },
+    "Translate Page" : {
+      "comment" : "Menu command in View and help/accessibility label of the address bar's translate control. Translates the current page on this Mac. Title Case."
+    },
+    "Translate to %@" : {
+      "comment" : "Item in the address bar's translate menu. %@ is a language name, such as English."
+    },
+    "Translated to %@" : {
+      "comment" : "Accessibility value of the translate control when the page is translated. %@ is a language name."
+    },
+    "Translating to %@" : {
+      "comment" : "Accessibility value of the translate control while a translation runs. %@ is a language name."
+    },
+    "Translation Unavailable" : {
+      "comment" : "Brief notice when a page can't be translated, for example because it is already in that language or the language isn't installed."
+    },
     "Transparency" : {
 
     },
@@ -5431,12 +5970,6 @@
     "Unlock Cards" : {
 
     },
-    "Unlock Passwords" : {
-
-    },
-    "Unlock to view and edit passwords." : {
-
-    },
     "Unmute" : {
       "comment" : "Tooltip on the same speaker button in the media dock once sound is off; it lets the sound back. Verb, one word; pairs with “Mute”."
     },
@@ -5475,6 +6008,9 @@
     },
     "Update channel" : {
       "comment" : "Title of the pop-up menu in Settings > About that chooses which builds the app updates to. The choices are “Release” and “Preview”. Sentence case. “Channel” is the usual software word for a stream of builds."
+    },
+    "Update needs approval" : {
+      "comment" : "Small tag on an installed extension’s row in Settings, shown when a newer version asks for more website access or permissions than you approved and so has not been installed. Clicking it checks again and asks. Sentence case, no final full stop."
     },
     "Update password?" : {
 
@@ -5593,6 +6129,9 @@
     "Version %@" : {
       "comment" : "Line beside the WSurf heading on the About page in Settings. %@ is the version number of the running app, for example 1.4.2."
     },
+    "Version %@ asks for more access." : {
+      "comment" : "Tooltip on the “Update needs approval” tag of an extension in Settings. %@ is the version number of the update that has not been installed. Full sentence."
+    },
     "Version %@ is available. Installing restarts WSurf." : {
       "comment" : "Status line under the Software Update heading in Settings when a newer release exists. %@ is the new version number, e.g. 1.4.2. The second sentence is the only warning the user gets: the Install button does not ask again."
     },
@@ -5701,9 +6240,6 @@
     "Websites appear here after you grant or deny permission." : {
       "comment" : "Guidance under No websites yet, explaining that the list fills itself as websites ask for the permission. Third person plural."
     },
-    "Websites the assistant may act on without asking." : {
-      "comment" : "Settings search caption for the Assistant permissions section."
-    },
     "Websites use this data to keep you signed in and remember your preferences." : {
       "comment" : "Caption under the Website data page title, saying what the stored data is for before offering to remove it. Third person plural."
     },
@@ -5792,9 +6328,6 @@
 
     },
     "You’re talking to AI. " : {
-
-    },
-    "Your extension handles password autofill." : {
 
     },
     "Your microphone pauses while WSurf speaks." : {
@@ -5946,6 +6479,197 @@
     },
     "This tab cannot be unloaded right now." : {
       "comment" : "Fallback notice when a tab cannot safely be unloaded."
+    },
+    "• Allow Developer: also types test passwords it gives itself, and acts without asking before purchases, sending, and deleting. Only on developer sites in your Developer profile." : {
+      "comment" : "Line in the access sheet that explains the Allow Developer button. It follows the lines for the other buttons."
+    },
+    "This includes %@ and other pages on %@." : {
+      "comment" : "Last paragraph of the Allow Assistant question, shown when the page is on a subdomain. The first %@ is the page’s host, for example maps.google.com; the second is the website the answer covers, for example google.com. The answer applies to every page of that website."
+    },
+    "This applies to every page on %@." : {
+      "comment" : "Last paragraph of the Allow Assistant question. %@ is the website the answer covers, for example google.com, including its subdomains."
+    },
+    "Applies to every page on %@." : {
+      "comment" : "Caption under Assistant access on a website’s page in Settings > Websites. %@ is the website the choice covers, for example google.com; the choice also covers its subdomains such as maps.google.com. Full sentence."
+    },
+    "Archived Tabs" : {
+      "comment" : "Heading of the ⌘K palette section that lists tabs WSurf closed automatically because they sat unused, and the label of the chip in the palette field while only those tabs are searched. Choosing a row opens the tab again. Plural noun phrase, Title Case."
+    },
+    "Show all results" : {
+      "comment" : "Tooltip and accessibility label of the Archived Tabs chip in the ⌘K palette field. Choosing it leaves the archive and searches everything again. Sentence case."
+    },
+    "Search archived tabs" : {
+      "comment" : "Placeholder and accessibility label of the ⌘K palette field while it searches only archived tabs, and the hint beside the field that offers that scope when the typed text starts to spell “archived tabs”. Search is a verb. Sentence case."
+    },
+    "Press Tab to search" : {
+      "comment" : "Accessibility hint on the scope hint in the ⌘K palette and the address bar, which offers to search one website or the archived tabs. Tab is the keyboard key. Replaces “Press Tab to search this site”."
+    },
+    "Show Archived Tabs" : {
+      "comment" : "Command in the ⌘K palette that switches the palette to searching tabs WSurf archived automatically. Title Case, like a menu command. A caption beside it counts the archived tabs."
+    },
+    "Remove from Archive" : {
+      "comment" : "Tooltip and VoiceOver action on the × button at the right of an archived tab in the ⌘K palette. It deletes that entry from the archive without opening the tab. Verb phrase, Title Case."
+    },
+    "Archive unused tabs" : {
+      "comment" : "Title of the row in Settings > General > Tabs that chooses how long a background tab may sit unused before it closes into the archive, and the same row in Settings search. A pop-up menu completes it: After 12 hours, After a day, After a week, or Never. Sentence case."
+    },
+    "Archived tabs stay searchable from ⌘K. The newest 30 are kept." : {
+      "comment" : "Caption under the Archive unused tabs row in Settings > General, and the description of that row in Settings search. ⌘K is the shortcut for the command palette; keep it as it is. 30 is how many archived tabs WSurf keeps, so keep the number."
+    },
+    "After 12 hours" : {
+      "comment" : "Choice in the Archive unused tabs pop-up menu in Settings > General: a background tab closes into the archive once it has gone unused for 12 hours. Sentence case, one short line."
+    },
+    "After a day" : {
+      "comment" : "Choice in the Archive unused tabs pop-up menu in Settings > General: a background tab closes into the archive once it has gone unused for a day. Sentence case, one short line."
+    },
+    "After a week" : {
+      "comment" : "Choice in the Archive unused tabs pop-up menu in Settings > General: a background tab closes into the archive once it has gone unused for a week. Sentence case, one short line."
+    },
+    "The website will ask again to use your camera, microphone, location, or notifications. The assistant will ask again before reading any page on %@." : {
+      "comment" : "Message of the confirmation for Reset this website in Settings > Websites. %@ is the whole website the assistant’s access covers, for example google.com when resetting maps.google.com: assistant access is reset for every page of that site."
+    },
+    "Show Reader" : {
+      "comment" : "Menu command in View, and accessibility label of the Reader control in the address bar while the page is shown as it is. Reader shows only the article of a page, without the navigation, ads and other things around it. Pairs with “Hide Reader”. Title Case."
+    },
+    "Hide Reader" : {
+      "comment" : "Menu command in View, and accessibility label of the Reader control in the address bar while Reader is on screen. It goes back to the page. Pairs with “Show Reader”. Title Case."
+    },
+    "Show Reader (⌥⌘R)" : {
+      "comment" : "Tooltip on the Reader control in the address bar while the page is shown as it is. ⌥⌘R is the keyboard shortcut — keyboard symbols, keep exactly, including the parentheses. Pairs with “Hide Reader (⌥⌘R)”."
+    },
+    "Hide Reader (⌥⌘R)" : {
+      "comment" : "Tooltip on the Reader control in the address bar while Reader is on screen, and on the Done button of the floating bar over the article. ⌥⌘R is the keyboard shortcut — keyboard symbols, keep exactly, including the parentheses."
+    },
+    "Text appearance" : {
+      "comment" : "Tooltip on the button in Reader's floating bar that opens the choices for the article's text: size, theme and font. Sentence case."
+    },
+    "Make text smaller" : {
+      "comment" : "Tooltip and accessibility label of the small A button in Reader's text appearance popover; it steps the article's text size down. Sentence case. Pairs with “Make text bigger”."
+    },
+    "Make text bigger" : {
+      "comment" : "Tooltip and accessibility label of the large A button in Reader's text appearance popover; it steps the article's text size up. Sentence case. Pairs with “Make text smaller”."
+    },
+    "Font" : {
+      "comment" : "Heading above the list of typefaces in Reader's text appearance popover. A noun; one short word."
+    },
+    "Reset to Defaults" : {
+      "comment" : "Button at the bottom of Reader's text appearance popover that puts the article's text size, theme and font back to the original choices. Title Case, imperative."
+    },
+    "Sepia" : {
+      "comment" : "Name of Reader's warm, paper-colored page theme, one of Automatic, Light, Sepia and Dark. It names a color, as in a sepia-toned photograph. Shown as the tooltip and accessibility label of a round color swatch."
+    },
+    "%lld min read" : {
+      "comment" : "Reading time of an article in Reader, shown under its title beside the author's name. %lld is the number of minutes and is at least 1. Keep it short; it sits on one line."
+    },
+    "Memory" : {
+      "comment" : "Title of the section and row on the Assistant settings page, and of the page they open, that lists the notes the assistant keeps about the person. A noun; one word."
+    },
+    "Notes about you that the assistant keeps on this Mac." : {
+      "comment" : "Caption under the Memory row on the Assistant settings page."
+    },
+    "Not in private windows" : {
+      "comment" : "Detail on the Memory row on the Assistant settings page in a private window, which keeps no notes. Short; it sits at the trailing edge of the row."
+    },
+    "%lld notes" : {
+      "comment" : "Detail on the Memory row on the Assistant settings page: how many notes the assistant keeps. %lld is at least 1. Short; it sits at the trailing edge of the row.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld note"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld notes"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "What the assistant remembers about you. It saves your answers and what you ask it to remember. It never saves page content, passwords, or payment details." : {
+      "comment" : "Caption under the title of Settings › Assistant › Memory."
+    },
+    "Not available in private windows" : {
+      "comment" : "Title of the empty state of Settings › Assistant › Memory in a private window."
+    },
+    "A private window keeps no notes about you, and the assistant uses none there." : {
+      "comment" : "Caption of the empty state of Settings › Assistant › Memory in a private window."
+    },
+    "Remember things about me" : {
+      "comment" : "Title of the switch on Settings › Assistant › Memory that turns assistant memory on or off for this profile. Also its Settings search title."
+    },
+    "New notes need Apple Intelligence, which is off or unavailable. The assistant still uses the notes it has." : {
+      "comment" : "Caption under the Remember things about me switch on Settings › Assistant › Memory while memory is on but the on-device model cannot write notes."
+    },
+    "When this is off, the assistant can’t save or recall anything." : {
+      "comment" : "Caption under the Remember things about me switch on Settings › Assistant › Memory."
+    },
+    "Also forget everything?" : {
+      "comment" : "Title of the question shown when the person turns memory off on Settings › Assistant › Memory while notes are kept."
+    },
+    "Forget Everything" : {
+      "comment" : "Default, destructive button of the Also forget everything? question: turns memory off and deletes every note. Title Case."
+    },
+    "Keep Notes" : {
+      "comment" : "Button of the Also forget everything? question: turns memory off and keeps the notes. Title Case."
+    },
+    "Memory turns off either way. Kept notes stay on this Mac until you forget them." : {
+      "comment" : "Message of the Also forget everything? question."
+    },
+    "Search memory" : {
+      "comment" : "Placeholder of the search field above the notes on Settings › Assistant › Memory."
+    },
+    "Notes" : {
+      "comment" : "Title of the section that lists the assistant's notes on Settings › Assistant › Memory. A plural noun."
+    },
+    "Notes are written on this Mac. When you use a cloud model, the notes it needs are sent with your request. Forgetting a note stops it being used. Earlier conversations keep what they said." : {
+      "comment" : "Footnote under the notes on Settings › Assistant › Memory. A cloud model is a model provider on the internet, as opposed to Apple Intelligence on this Mac."
+    },
+    "Nothing remembered" : {
+      "comment" : "Title of the empty state of the notes list on Settings › Assistant › Memory."
+    },
+    "Things appear here when you answer the assistant or ask it to remember something." : {
+      "comment" : "Caption of the empty state of the notes list on Settings › Assistant › Memory."
+    },
+    "Try a different word." : {
+      "comment" : "Caption under No matches when a settings search field finds nothing."
+    },
+    "Forget All…" : {
+      "comment" : "Button under the notes on Settings › Assistant › Memory that asks before deleting every note. Title Case; the ellipsis means it asks first."
+    },
+    "Forget everything the assistant remembers?" : {
+      "comment" : "Title of the confirmation for Forget All… on Settings › Assistant › Memory."
+    },
+    "Forget All" : {
+      "comment" : "Destructive button of the confirmation that deletes every note the assistant keeps. Title Case."
+    },
+    "The assistant will ask again when it needs these details." : {
+      "comment" : "Message of the confirmation that deletes every note the assistant keeps."
+    },
+    "This can’t be saved. It is too long, or it looks like a password, code or number." : {
+      "comment" : "Shown under a note being edited on Settings › Assistant › Memory when the new text is refused."
+    },
+    "Forget" : {
+      "comment" : "Button on a note's row on Settings › Assistant › Memory that deletes that note at once. A verb."
+    },
+    "Saved %@ from your answer" : {
+      "comment" : "Caption of a note on Settings › Assistant › Memory. %@ is the date it was saved, for example Oct 21, 2026. The note came from the person's answer to the assistant's question."
+    },
+    "Saved %@ from your message" : {
+      "comment" : "Caption of a note on Settings › Assistant › Memory. %@ is the date it was saved, for example Oct 21, 2026. The note came from what the person typed."
+    },
+    "Saved %@ by the assistant" : {
+      "comment" : "Caption of a note on Settings › Assistant › Memory. %@ is the date it was saved, for example Oct 21, 2026."
+    },
+    "Notes about you that the assistant keeps on this Mac. See, edit or forget them." : {
+      "comment" : "Settings search result detail for the Remember things about me switch."
     }
   },
   "version" : "1.0"

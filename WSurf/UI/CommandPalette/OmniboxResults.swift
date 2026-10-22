@@ -52,6 +52,7 @@ struct OmniboxList: View {
     let onSelect: (Int) -> Void
     let onRun: (Int) -> Void
     var onRunAlternate: ((Int) -> Void)?
+    var onRemove: ((Int) -> Void)?
     var alternateClickModifier: NSEvent.ModifierFlags = .command
 
     @State private var pointerAnchor: CGPoint?
@@ -93,7 +94,8 @@ struct OmniboxList: View {
                             query: query,
                             isSelected: index == selection,
                             density: density,
-                            cornerRadius: Theme.Radius.nested(in: containerRadius, inset: density.padding)
+                            cornerRadius: Theme.Radius.nested(in: containerRadius, inset: density.padding),
+                            onRemove: removal(for: item, at: index)
                         )
                         .contentShape(Rectangle())
                         .onTapGesture { tapped(index) }
@@ -105,6 +107,11 @@ struct OmniboxList: View {
                             .joined(separator: ", ")))
                         .accessibilityAddTraits(index == selection ? [.isButton, .isSelected] : [.isButton])
                         .accessibilityAction { onRun(index) }
+                        .accessibilityActions {
+                            if let remove = removal(for: item, at: index) {
+                                Button(OmniboxRemoveButton.label, action: remove)
+                            }
+                        }
                     }
                     .id(index)
                 }
@@ -116,6 +123,11 @@ struct OmniboxList: View {
         .onChange(of: selection) { _, _ in
             pointerAnchor = NSEvent.mouseLocation
         }
+    }
+
+    private func removal(for item: OmniboxItem, at index: Int) -> (() -> Void)? {
+        guard item.remove != nil, let onRemove else { return nil }
+        return { onRemove(index) }
     }
 
     @ViewBuilder
@@ -182,7 +194,7 @@ struct OmniboxRowPresentation {
             detail = String(localized: "Search with \(Omnibox.engineName(settings: settings)) in current tab")
         case .history:
             detail = "\(item.detail) · \(String(localized: "Open in current tab"))"
-        case .newTab, .tab, .ask, .action:
+        case .newTab, .tab, .archived, .ask, .action:
             symbol = item.symbol
             detail = item.detail
             replacesFavicon = false
@@ -233,6 +245,7 @@ private struct OmniboxRow: View {
     let isSelected: Bool
     let density: OmniboxList.Density
     let cornerRadius: CGFloat
+    let onRemove: (() -> Void)?
     @Environment(\.assistantProviderID) private var assistantProviderID
 
     private var iconWidth: CGFloat {
@@ -277,6 +290,12 @@ private struct OmniboxRow: View {
                     .font(.system(size: density.detailSize, weight: .medium))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
+            }
+
+            if let onRemove {
+                OmniboxRemoveButton(density: density, action: onRemove)
+                    .opacity(isSelected ? 1 : 0)
+                    .allowsHitTesting(isSelected)
             }
         }
         .padding(.horizontal, density == .compact ? 8 : 10)
@@ -332,5 +351,29 @@ private struct OmniboxRow: View {
         var tail = AttributedString(item.title.dropFirst(typed.count))
         tail.foregroundColor = .primary
         return Text(head + tail)
+    }
+}
+
+private struct OmniboxRemoveButton: View {
+    let density: OmniboxList.Density
+    let action: () -> Void
+
+    static var label: String {
+        String(localized: "Remove from Archive")
+    }
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: density == .compact ? 9.5 : 11, weight: .semibold))
+                .foregroundStyle(hovering ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .frame(width: density == .compact ? 16 : 20, height: density == .compact ? 16 : 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(Self.label)
     }
 }

@@ -171,7 +171,8 @@ nonisolated extension CommitTransaction {
         }
     }
 
-    /// The removed credential's own value, never the account: the `PasswordValue`, `TOTPGenerator` or `WebsitePasskey`.
+    /// The removed credential's own value, never the account: the `PasswordValue`, `TOTPGenerator`, `[CredentialNote]`, `[SecureItem]` or
+    /// `WebsitePasskey`.
     private static func credentialValue(of account: CredentialAccount, subject: RecordSubject, passkeyID: UUID?) throws -> Data {
         switch subject {
         case .password:
@@ -181,6 +182,12 @@ nonisolated extension CommitTransaction {
         case .totp:
             guard let totp = account.totp else { throw CredentialVaultError.invalidData }
             return try CredentialContent.canonicalJSON(totp)
+        case .note:
+            guard let notes = account.notes else { throw CredentialVaultError.invalidData }
+            return try CredentialContent.canonicalJSON(notes)
+        case .secureItem:
+            guard let items = account.secureItems else { throw CredentialVaultError.invalidData }
+            return try CredentialContent.canonicalJSON(items)
         case .passkey:
             guard let passkey = account.passkeys.first(where: { $0.id == passkeyID }) else { throw CredentialVaultError.invalidData }
             return try CredentialContent.canonicalJSON(passkey)

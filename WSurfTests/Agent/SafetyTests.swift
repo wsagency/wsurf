@@ -481,9 +481,12 @@ struct ProviderEndpointTests {
 struct CertificateTrustTests {
     /// The setting itself, not the alert, is what the invariant hangs on.
     @Test func exceptionsAreOffUntilAskedFor() {
-        let settings = BrowserProfileContext(profile: .privateBrowsing()).settings
-        let restore = settings.allowsCertificateExceptions
-        defer { settings.allowsCertificateExceptions = restore }
+        // A private window's settings, kept in memory as `BrowserProfileContext` keeps them, but bound to app-wide settings of
+        // their own: resetting also resets app-wide values (the theme, fonts, downloads), which other suites read.
+        let settings = BrowserSettings(
+            sessionDefaults: InMemoryUserDefaults(inheriting: .standard),
+            application: BrowserSettings(defaults: InMemoryUserDefaults(inheriting: .standard))
+        )
 
         settings.resetToDefaults()
         #expect(!settings.allowsCertificateExceptions)

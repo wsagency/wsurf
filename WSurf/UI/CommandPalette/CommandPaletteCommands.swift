@@ -10,6 +10,7 @@ struct CommandPaletteContext {
     var historyCount = 0
     var tabCount = 0
     var hasActiveTab = false
+    var canReload = false
     var canGoBack = false
     var canGoForward = false
     var isLoading = false
@@ -17,6 +18,7 @@ struct CommandPaletteContext {
     var isShowingPin = false
     var isAwayFromPin = false
     var canReopenClosedTab = false
+    var archivedCount = 0
     var canSplit = false
     var isSplit = false
     var canSwapPanes = false
@@ -28,6 +30,7 @@ struct CommandPaletteContext {
     var canShowLyrics = false
     var isFullScreen = false
     var canCheckForUpdates = false
+    var hasExternalConnections = false
 }
 
 enum CommandPaletteAction: String, CaseIterable {
@@ -42,7 +45,9 @@ enum CommandPaletteAction: String, CaseIterable {
     case openLocation
     case privateBrowsing
     case unloadTab
+    case freeMemory
     case reopenTab
+    case showArchivedTabs
     case duplicateTab
     case togglePin
     case returnToPin
@@ -90,6 +95,7 @@ enum CommandPaletteAction: String, CaseIterable {
 
     case toggleSpeech
     case toggleListening
+    case stopExternalConnections
 
     case showHistory
     case showDownloads
@@ -304,6 +310,15 @@ enum CommandPaletteCatalog {
                     isSuggested: true
                 ),
                 make(
+                    .showArchivedTabs,
+                    group: .tabs,
+                    title: "Show Archived Tabs",
+                    detail: "\(context.archivedCount) tabs",
+                    symbol: "archivebox",
+                    aliases: ["archive", "archived", "auto archived", "old tabs"],
+                    isAvailable: context.archivedCount > 0
+                ),
+                make(
                     .duplicateTab,
                     group: .tabs,
                     title: "Duplicate Tab",
@@ -317,8 +332,16 @@ enum CommandPaletteCatalog {
                     title: "Unload Tab",
                     symbol: "moon.zzz",
                     shortcut: "⌘W",
-                    aliases: ["close page", "sleep tab", "release memory"],
+                    aliases: ["close page", "sleep tab"],
                     isAvailable: context.hasActiveTab
+                ),
+                make(
+                    .freeMemory,
+                    group: .tabs,
+                    title: "Free Memory",
+                    detail: "unload every background tab",
+                    symbol: "memorychip",
+                    aliases: ["release memory", "unload all tabs", "sleep all tabs", "reclaim memory", "ram"]
                 ),
                 make(
                     .togglePin,
@@ -393,7 +416,7 @@ enum CommandPaletteCatalog {
                     symbol: "arrow.clockwise",
                     shortcut: "⌘R",
                     aliases: ["refresh"],
-                    isAvailable: context.hasActiveTab
+                    isAvailable: context.canReload
                 ),
                 make(
                     .hardReload,
@@ -403,7 +426,7 @@ enum CommandPaletteCatalog {
                     symbol: "arrow.2.circlepath",
                     shortcut: "⇧⌘R",
                     aliases: ["hard refresh", "empty cache"],
-                    isAvailable: context.hasActiveTab
+                    isAvailable: context.canReload
                 ),
                 make(
                     .stopLoading,
@@ -654,6 +677,16 @@ enum CommandPaletteCatalog {
                     title: listenTitle,
                     symbol: context.isListening ? "mic.slash" : "mic",
                     aliases: ["microphone", "dictate", "talk", "voice input"]
+                ),
+                make(
+                    .stopExternalConnections,
+                    group: .assistant,
+                    title: "Stop External Connections",
+                    detail: "disconnect apps using this window",
+                    symbol: "hand.raised",
+                    shortcut: "⌥⌘.",
+                    aliases: ["stop agent", "kill switch", "disconnect", "revoke access", "mcp"],
+                    isAvailable: context.hasExternalConnections
                 ),
             ]
         }

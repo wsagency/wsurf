@@ -26,6 +26,7 @@ struct CredentialExportSheet: View {
     /// The vault's own stamps for those credentials, from the last read that could vouch for them.
     @State private var shownStamps: [UUID: AccountStamp]
     @State private var review: CredentialExportReview?
+    @State private var query = ""
     /// Set once the user asked to export from this sheet, so only that attempt's ending is shown here.
     @State private var attempted = false
 
@@ -41,6 +42,13 @@ struct CredentialExportSheet: View {
         model.summaries.compactMap { selection[$0.id] }.filter(\.hasParts)
     }
 
+    /// The credentials this export can carry that match the search: the list's rule, over the summaries' precomputed keys. A CSV
+    /// file holds no cards or other items, so a credential that holds only those is not listed for one.
+    private var listed: [CredentialSummary] {
+        let all = csv ? model.summaries.filter(CredentialCSVExport.isExportable) : model.summaries
+        return CredentialListFilter.visible(all.filter { CredentialExportSelection(allOf: $0).hasParts }, query: query, filter: .all)
+    }
+
     /// What a CSV file cannot hold, counted over the whole vault and shown before anything is written.
     private var csvLeftOut: String {
         let all = model.summaries
@@ -52,8 +60,8 @@ struct CredentialExportSheet: View {
         )
         return String(localized: """
             A CSV file holds only passwords with a website. It will not contain: \(counts.noWebsite) logins without a website, \
-            \(counts.noPassword) credentials without a password, \(counts.passkeys) passkeys, \(counts.codes) verification code \
-            setups, or any notes.
+            \(counts.noPassword) credentials without a password, \(counts.passkeys) passkeys or \(counts.codes) verification \
+            code setups. Notes are written only for a login whose Notes choice is on.
             """)
     }
 
@@ -86,11 +94,15 @@ struct CredentialExportSheet: View {
             } else {
                 Text("""
                     Choose what to send to another app. The system passes your selection to the app you pick next, and \
-                    that app can read it: any passwords, passkeys and verification code setups you select aren’t \
-                    encrypted by WSurf. WSurf doesn’t write a file, and your vault keeps its own copy.
+                    that app can read it: any passwords, passkeys, verification code setups, notes, cards and other items \
+                    you select aren’t encrypted by WSurf. WSurf doesn’t write a file, and your vault keeps its own copy.
                     """)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                let kinds = CredentialExportSelection.itemKinds(selection, in: model.summaries)
+                if !kinds.isEmpty {
+                    itemsNotice(kinds)
+                }
             }
             if attempted, let message = model.transferMessage {
                 Text(verbatim: message.text)
@@ -101,25 +113,12 @@ struct CredentialExportSheet: View {
             if let review, !review.isEmpty {
                 reviewNotice(review)
             }
+            selectionBar
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(csv ? model.summaries.filter(CredentialCSVExport.isExportable) : model.summaries) { summary in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(verbatim: summary.title).font(Theme.Font.rowTitle)
-                            if summary.hasLogin {
-                                Toggle("Login", isOn: binding(summary.id, \.password))
-                            }
-                            if !csv {
-                                ForEach(summary.passkeys) { passkey in
-                                    Toggle(isOn: passkeyBinding(summary.id, passkey.id)) {
-                                        Text(verbatim: "\(String(localized: "Passkey")) · \(passkey.rpID) · \(passkey.userName)")
-                                    }
-                                }
-                                if summary.hasTOTP {
-                                    Toggle("Verification code setup", isOn: binding(summary.id, \.totp))
-                                }
-                            }
-                        }
+                // Lazy: the sheet lists every credential, and a vault holds thousands.
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(listed) { summary in
+                        credentialRow(summary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -145,6 +144,103 @@ struct CredentialExportSheet: View {
         .frame(width: 520)
         .onChange(of: model.summaries) { reconcile() }
         .onChange(of: model.exportStamps) { reconcile() }
+    }
+
+    private var selectionBar: some View {
+        HStack(spacing: 10) {
+            TextField("Search by name, username or website", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Search credentials")
+            Button("Select All") { selection = CredentialExportSelection.setting(true, for: listed, csv: csv, in: selection) }
+            Button("Select None") { selection = CredentialExportSelection.setting(false, for: listed, csv: csv, in: selection) }
+            Text("\(chosen.count) selected").foregroundStyle(.secondary).fixedSize()
+        }
+        .controlSize(.small)
+    }
+
+    /// One credential is one unit: its switch selects every part, and shows a mixed state while only some are. The parts it holds are
+    /// under the disclosure triangle.
+    @ViewBuilder
+    private func credentialRow(_ summary: CredentialSummary) -> some View {
+        let parts = partBindings(summary)
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 4) {
+                if summary.hasLogin {
+                    Toggle("Login", isOn: binding(summary.id, \.password))
+                }
+                if !csv {
+                    ForEach(summary.passkeys) { passkey in
+                        Toggle(isOn: passkeyBinding(summary.id, passkey.id)) {
+                            Text(verbatim: "\(String(localized: "Passkey")) · \(passkey.rpID) · \(passkey.userName)")
+                        }
+                    }
+                    if summary.hasTOTP {
+                        Toggle("Verification code setup", isOn: binding(summary.id, \.totp))
+                    }
+                }
+                if summary.hasNotes {
+                    Toggle("Notes", isOn: binding(summary.id, \.notes))
+                }
+                if !csv, !summary.itemTitles.isEmpty {
+                    Toggle(isOn: binding(summary.id, \.secureItems)) {
+                        Text(verbatim: "\(String(localized: "Cards and other items")) · \(summary.itemTitles.joined(separator: ", "))")
+                    }
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            if parts.isEmpty {
+                Text(verbatim: summary.title).font(Theme.Font.rowTitle)
+            } else {
+                Toggle(sources: parts, isOn: \.self) {
+                    Text(verbatim: summary.title).font(Theme.Font.rowTitle)
+                }
+            }
+        }
+    }
+
+    /// One binding per part this export offers for `summary`.
+    private func partBindings(_ summary: CredentialSummary) -> [Binding<Bool>] {
+        var result: [Binding<Bool>] = []
+        if summary.hasLogin {
+            result.append(binding(summary.id, \.password))
+        }
+        if !csv {
+            result += summary.passkeys.map { passkeyBinding(summary.id, $0.id) }
+            if summary.hasTOTP {
+                result.append(binding(summary.id, \.totp))
+            }
+        }
+        if summary.hasNotes {
+            result.append(binding(summary.id, \.notes))
+        }
+        if !csv, !summary.itemTitles.isEmpty {
+            result.append(binding(summary.id, \.secureItems))
+        }
+        return result
+    }
+
+    /// What the selected items send, kind by kind, and that their secrets leave the vault. Shown before Export is clicked.
+    private func itemsNotice(_ kinds: [SecureItemKind]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Cards and other items in this export, with every value they hold:").fontWeight(.medium)
+            ForEach(kinds, id: \.self) { kind in
+                Text(verbatim: "\(kind.label): \(Self.exportedValues(of: kind))")
+            }
+            Text("""
+                Card numbers, security codes (CVV), PINs, document numbers, Wi-Fi passwords and API and SSH keys leave the \
+                vault, and the app you pick can read them. Exporting a card or an ID document asks for Touch ID first.
+                """)
+        }
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The values an item of `kind` carries, by the names the editor shows.
+    private static func exportedValues(of kind: SecureItemKind) -> String {
+        guard kind != .customFields else { return String(localized: "every field, with its label") }
+        return kind.members.map { SecureItemKind.memberLabel($0.name) }.joined(separator: ", ")
     }
 
     /// What the refresh did to the chosen credentials. Nothing is sent by it: the user reads this, checks the selection
@@ -210,227 +306,6 @@ struct CredentialExportSheet: View {
     }
 }
 
-struct CredentialImportReviewSheet: View {
-    let model: CredentialSettingsModel
-    let run: (@escaping () async throws -> Void) -> Void
-
-    var body: some View {
-        if let review = model.importReview {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("Review Import").font(.headline)
-                Text(verbatim: destination(review))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let report = review.csvReport {
-                    csvReportView(report)
-                }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        ForEach(review.candidates) { candidate in candidateView(candidate) }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 360)
-                if let outcome = review.outcome {
-                    Text(verbatim: importSummary(outcome)).foregroundStyle(.secondary)
-                } else {
-                    Text("Choose what to do with each credential marked “Choose…”.").foregroundStyle(.secondary)
-                }
-                if let error = model.error {
-                    Text(verbatim: error).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-                HStack {
-                    Spacer()
-                    Button("Cancel", role: .cancel) { model.error = nil; model.cancelImport() }
-                        .keyboardShortcut(.cancelAction)
-                    Button("Import") { run { await model.commitImport() } }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(!review.isResolved || (review.outcome.map { $0.added + $0.updated } ?? 0) == 0 || model.isBusy)
-                }
-            }
-            .padding(24)
-            .frame(width: 520)
-        }
-    }
-
-    /// What the file held beyond what will be imported, before anything is saved. Counts are of the file as read; the receipt
-    /// after Import reports what was actually saved. Line numbers and fixed wording only: nothing from the file itself.
-    private func csvReportView(_ report: CredentialCSVReport) -> some View {
-        let shown = report.issues.prefix(20)
-        return VStack(alignment: .leading, spacing: 4) {
-            Text("The file has \(report.rowsRead) rows. \(report.alreadySaved) already saved here, \(report.omittedRows) can’t be imported.")
-            ForEach(Array(shown.enumerated()), id: \.offset) { _, issue in
-                Text(verbatim: "\(String(localized: "Line")) \(issue.line): \(issue.reason.text)")
-            }
-            if report.issues.count > shown.count {
-                Text("and \(report.issues.count - shown.count) more lines with notes.")
-            }
-            if !report.ignoredColumns.isEmpty {
-                Text("Columns \(report.ignoredColumns.map(String.init).joined(separator: ", ")) hold data WSurf doesn’t import.")
-            }
-        }
-        .font(Theme.Font.label)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func destination(_ review: CredentialImportReview) -> String {
-        guard let vault = review.vaultName else {
-            return String(localized: """
-                Importing into the profile “\(review.profileName)”. Nothing is saved until you choose Import. \
-                Imported passwords, passkeys and verification codes are encrypted in that profile’s vault.
-                """)
-        }
-        return String(localized: """
-            Importing into the vault “\(vault)” of the profile “\(review.profileName)”. Nothing is saved until you \
-            choose Import. Imported passwords, passkeys and verification codes are encrypted in that vault.
-            """)
-    }
-
-    private func importSummary(_ outcome: CredentialImportOutcome) -> String {
-        var text = String(localized: "Adds \(outcome.added) and updates \(outcome.updated).")
-        let unchanged = outcome.results.filter { $0.action == .unchanged }.count
-        let skipped = outcome.results.filter { $0.action == .skipped }.count
-        if unchanged > 0 {
-            text += " " + String(localized: "\(unchanged) already saved.")
-        }
-        if skipped > 0 {
-            text += " " + String(localized: "\(skipped) won’t be imported.")
-        }
-        return text
-    }
-
-    @ViewBuilder
-    private func candidateView(_ candidate: CredentialImportReview.Candidate) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(verbatim: candidate.summary.title).font(Theme.Font.rowTitle)
-            if !candidate.summary.origins.isEmpty {
-                Text("The other app sent websites: \(candidate.summary.origins.joined(separator: ", "))")
-                    .font(Theme.Font.label)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if candidate.needsManualAssociation {
-                Text("The other app sent no website for this.")
-                    .font(Theme.Font.label)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            ForEach(candidate.records) { record in recordView(record) }
-        }
-    }
-
-    private func recordView(_ record: CredentialImportReview.Record) -> some View {
-        let targets = model.mergeTargets(for: record.incoming)
-        return VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: "\(record.kind.label) · \(record.title)")
-                    if let existing = record.existingTitle {
-                        Text("Already saved as “\(existing)”").font(Theme.Font.label).foregroundStyle(.secondary)
-                        if record.removesStoredPasswordOnReplace {
-                            Text("Replace Saved removes the password saved for “\(existing)”. The other app’s login has none.")
-                                .font(Theme.Font.label)
-                                .foregroundStyle(.orange)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    if record.needsChoice, record.existingTitle == nil {
-                        Text("Other logins have this website and username with a different password. Choose Skip or Add Separately for each.")
-                            .font(Theme.Font.label)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if record.needsChoice, let line = record.csvLine {
-                        Text("Line \(line) of the file").font(Theme.Font.label).foregroundStyle(.secondary)
-                    }
-                }
-                Spacer(minLength: 8)
-                Menu {
-                    Button("Skip") { model.chooseImport(.skip, for: record.incoming) }
-                    if record.isConflict {
-                        Button("Replace Saved") { model.chooseImport(.replace, for: record.incoming) }
-                    }
-                    if record.canAddSeparately {
-                        Button("Add Separately") { model.chooseImport(.addSeparately, for: record.incoming) }
-                    }
-                    if !targets.isEmpty {
-                        Menu("Merge Into…") {
-                            ForEach(targets) { target in
-                                Button(mergeMenuTitle(target, kind: record.kind)) {
-                                    model.chooseImport(.merge(into: target.accountID), for: record.incoming)
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    Text(choiceLabel(record))
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-            }
-            if let line = destinationLine(record) {
-                Text(verbatim: line)
-                    .font(Theme.Font.label)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    /// A passkey keeps the website it was created for, so the target's websites don't describe it. Any other
-    /// credential inherits them, and a target with none is said to have none rather than shown blank.
-    private func mergeMenuTitle(_ target: CredentialImportReview.Target, kind: CredentialImportReview.Record.Kind) -> String {
-        guard kind != .passkey else { return target.title }
-        if target.allowedOrigins.isEmpty { return "\(target.title) — \(String(localized: "no approved website"))" }
-        return "\(target.title) — \(target.allowedOrigins.joined(separator: ", "))"
-    }
-
-    /// Where the record will be saved and which websites it will work on, as the import itself will do it. A stored
-    /// account keeps exactly its own websites; the other app's are only ever listed here to say they are not added.
-    private func destinationLine(_ record: CredentialImportReview.Record) -> String? {
-        guard let destination = record.destination else { return nil }
-        let relyingParty = record.relyingParty ?? ""
-        switch destination {
-        case .skipped:
-            return String(localized: "Won’t be imported.")
-        case let .newAccount(origins):
-            if record.kind == .passkey {
-                return String(localized: "Saved as a new account. The passkey stays tied to \(relyingParty).")
-            }
-            if origins.isEmpty {
-                return String(localized: "Saved as a new account with no approved website, so autofill won’t offer it until you add one.")
-            }
-            return String(localized: "Saved as a new account that works on \(origins.joined(separator: ", ")).")
-        case let .existing(_, title, origins, ignored):
-            if record.kind == .passkey {
-                return String(localized: "Saved with “\(title)”. The passkey stays tied to \(relyingParty).")
-            }
-            var line = origins.isEmpty
-                ? String(localized: "Saved into “\(title)”, which has no approved website, so autofill won’t offer it until you add one.")
-                : String(localized: "Saved into “\(title)”, which works on \(origins.joined(separator: ", ")).")
-            if !ignored.isEmpty {
-                line += " " + String(localized: "The other app’s websites aren’t added: \(ignored.joined(separator: ", ")).")
-            }
-            return line
-        }
-    }
-
-    private func choiceLabel(_ record: CredentialImportReview.Record) -> LocalizedStringResource {
-        switch record.choice {
-        case nil:
-            record.needsChoice ? "Choose…" : "Import"
-        case .skip:
-            "Skip"
-        case .replace:
-            "Replace Saved"
-        case .addSeparately:
-            "Add Separately"
-        case .merge:
-            "Merge"
-        }
-    }
-}
-
 extension CredentialImportReview.Record.Kind {
     var label: String {
         switch self {
@@ -440,6 +315,10 @@ extension CredentialImportReview.Record.Kind {
             String(localized: "Passkey")
         case .totp:
             String(localized: "Verification code")
+        case .note:
+            String(localized: "Notes")
+        case .secureItems:
+            String(localized: "Cards and other items")
         }
     }
 }

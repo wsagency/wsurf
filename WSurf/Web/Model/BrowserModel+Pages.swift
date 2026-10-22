@@ -11,18 +11,53 @@ extension BrowserModel {
 
     private static let warningKeepsRecent = 3
 
+    /// `idleSince` limits the sweep to tabs that left the foreground at or before that instant.
     @discardableResult
-    func discardBackgroundTabs(keepingRecent keep: Int = 0) -> Int {
+    func discardBackgroundTabs(keepingRecent keep: Int = 0, idleSince cutoff: ContinuousClock.Instant? = nil) -> Int {
         let spared = Set([activeTabID].compactMap { $0 } + recentlyActive.prefix(keep))
         var discarded = 0
         for tab in tabs where !spared.contains(tab.id)
             && !tab.isFavorite
+            && cutoff.map({ tab.lastForegroundAt <= $0 }) ?? true
             && tab.canDiscardWebContent
             && protectionReason(for: tab) == nil {
             tab.discardWebContent()
             discarded += 1
         }
         return discarded
+    }
+
+    /// Unloads every background tab now, with the protections memory pressure uses, whether or not Sleep inactive tabs is on.
+    @discardableResult
+    func freeMemory() -> Int {
+        context.webViewPool.discardIdleForMemoryPressure()
+        let discarded = discardBackgroundTabs()
+        Pipeline.log.notice("free memory: unloaded \(discarded, privacy: .public) background tabs")
+        return discarded
+    }
+
+    /// Unloads background tabs idle for `limit`, with the protections memory pressure uses. A tab on screen when this
+    /// runs restarts its clock, so a split pane that was in front all along is not idle the moment the split closes.
+    @discardableResult
+    func sleepIdleTabs(after limit: Duration, now: ContinuousClock.Instant = .now) -> Int {
+        stampForeground(at: now)
+        let discarded = discardBackgroundTabs(idleSince: now - limit)
+        guard discarded > 0 else { return 0 }
+        Pipeline.log.notice("idle sweep: unloaded \(discarded, privacy: .public) background tabs")
+        return discarded
+    }
+
+    /// The active tab and the other panes of its split, which are all on screen.
+    func stampForeground(at now: ContinuousClock.Instant) {
+        stampPanes(of: activeTabID, in: splits, at: now)
+    }
+
+    /// Marks the tab `id` and the other panes of its split in `splits` as leaving, or being in, the foreground at `now`.
+    func stampPanes(of id: UUID?, in splits: TabSplits, at now: ContinuousClock.Instant) {
+        guard let id else { return }
+        for pane in splits.split(containing: id)?.tabs ?? [id] {
+            tabsByID[pane]?.lastForegroundAt = now
+        }
     }
 
     @discardableResult
@@ -108,6 +143,11 @@ extension BrowserModel {
         guard let scheme = URL(string: canonical)?.scheme?.lowercased(),
               scheme == "http" || scheme == "https"
         else { return false }
+        guard !SitePermissions.webKitOnlyOrigins.contains(canonical) else {
+            // Only WebKit is offered there; choosing it clears a Chromium record kept from before.
+            sitePermissions.setEngine(.webKit, for: canonical)
+            return engine == .webKit
+        }
         guard sitePermissions.engine(for: canonical) != engine else { return true }
 
         let affected = tabs.filter { siteOrigin(for: $0) == canonical && $0.isMaterialised }
@@ -134,7 +174,8 @@ extension BrowserModel {
 
     func applyStoredEngine(to origin: String) async {
         let engine = sitePermissions.engine(for: origin)
-        for tab in tabs where siteOrigin(for: tab) == origin && tab.isMaterialised {
+        // A tab opened to compare engines keeps its own engine until it is closed.
+        for tab in tabs where siteOrigin(for: tab) == origin && tab.isMaterialised && tab.engineOverride == nil {
             guard tab.page.engine != engine else { continue }
             _ = await tab.switchEngine(to: engine)
         }
@@ -175,7 +216,6 @@ extension BrowserModel {
         let settings = context.settings
         for tab in tabs where tab.isMaterialised {
             settings.apply(to: tab.page)
-            tab.refreshPopupPolicy()
         }
         context.webViewPool.discardIdle()
     }
@@ -201,7 +241,6 @@ extension BrowserModel {
         guard !origin.isEmpty else { return }
         let fallback: PopupPolicy = context.settings.blocksPopups ? .blockAndNotify : .allow
         sitePermissions.setPopups(policy == fallback ? nil : policy, for: origin)
-        tab.refreshPopupPolicy()
     }
 
     // MARK: - The browser's own pages

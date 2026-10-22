@@ -15,8 +15,10 @@ struct CredentialCSVTests {
     let base = CredentialExchangeCoordinatorTests()
     static let header = ["Title", "URL", "Username", "Password", "Notes", "OTPAuth"]
 
-    func row(_ username: String, _ password: String, url: String = "https://example.test/login", title: String = "Example") -> [String] {
-        [title, url, username, password, "", ""]
+    func row(
+        _ username: String, _ password: String, url: String = "https://example.test/login", title: String = "Example", notes: String = ""
+    ) -> [String] {
+        [title, url, username, password, notes, ""]
     }
 
     func data(_ rows: [[String]]) -> Data {
@@ -69,10 +71,10 @@ struct CredentialCSVTests {
         #expect(staged.preview.candidates.map(\.username) == ["ada"] && staged.preview.candidates.first?.password == "pw")
         #expect(staged.report.rowsRead == 1 && staged.report.issues.isEmpty && staged.report.ignoredColumns.isEmpty)
 
-        // Columns in another order, with notes and a verification code that are reported and never imported.
+        // Columns in another order: the note is imported, and the verification code is reported and never imported.
         let shuffled = Data("Password,OTPAuth,Username,Notes,URL\r\npw,otpauth://totp/x?secret=ABC,ada,secret note,https://example.test\r\n".utf8)
         let report = try CredentialCSVImport.stage(shuffled, against: empty).report
-        #expect(report.issues.map(\.reason) == [.notesNotImported, .oneTimeCodeNotImported] && report.omittedRows == 0)
+        #expect(report.issues.map(\.reason) == [.oneTimeCodeNotImported] && report.omittedRows == 0)
         let candidate = try #require(try CredentialCSVImport.stage(shuffled, against: empty).preview.candidates.first)
         #expect(candidate.totp == nil && candidate.password == "pw")
     }
@@ -109,7 +111,7 @@ struct CredentialCSVTests {
             try await stage(f, [row("ada", "pw1"), row("grace", "pw2", url: "https://other.test")])
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.csvReport?.rowsRead == 2 && review.csvReport?.alreadySaved == 0)
-            #expect(base.counts(review.outcome) == [2, 0])
+            #expect(base.counts(base.planned(f)) == [2, 0])
 
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             let added = try await f.stored().accounts.filter { $0.username == "ada" || $0.username == "grace" }
@@ -127,7 +129,7 @@ struct CredentialCSVTests {
             try await stage(f, [row("Alice", "same")])
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.csvReport?.alreadySaved == 0 && review.conflicts.isEmpty)
-            #expect(base.counts(review.outcome) == [1, 0])
+            #expect(base.counts(base.planned(f)) == [1, 0])
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             #expect(try await f.stored().accounts.map(\.username).sorted() == ["Alice", "alice"])
         }
@@ -160,7 +162,7 @@ struct CredentialCSVTests {
             // Four distinct logins; none is imported by default. Two differ from the saved login, two from each other.
             #expect(records.count == 4 && records.allSatisfy(\.needsChoice) && records.allSatisfy { $0.choice == nil })
             #expect(review.conflicts.count == 2)
-            #expect(!review.isResolved && review.outcome == nil)
+            #expect(!review.isResolved && base.planned(f) == nil)
 
             await #expect(throws: CredentialExchangeCoordinatorError.unresolvedConflicts) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
@@ -180,7 +182,7 @@ struct CredentialCSVTests {
             try decide(f, .addSeparately, line: 6)
 
             let resolved = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
-            #expect(resolved.isResolved && base.counts(resolved.outcome) == [1, 1])
+            #expect(resolved.isResolved && base.counts(base.planned(f)) == [1, 1])
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             #expect(try await f.stored().accounts.compactMap(\.password).sorted() == ["g2", "p2"])
         }
@@ -251,7 +253,7 @@ struct CredentialCSVTests {
             #expect(review.conflicts.isEmpty && !review.isResolved)
             try decide(f, .skip, line: 2)
             try decide(f, .skip, line: 3)
-            #expect(base.counts(try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)).outcome) == [0, 0])
+            #expect(base.counts(base.planned(f)) == [0, 0])
             try decide(f, .addSeparately, line: 3)
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             #expect(try await f.stored().accounts.compactMap(\.password) == ["p2"])
@@ -273,7 +275,7 @@ struct CredentialCSVTests {
             #expect(throws: CredentialExchangeCoordinatorError.invalidChoice) { try decide(f, .replace, line: 2) }
 
             try decide(f, .skip, line: 2)
-            #expect(base.counts(try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)).outcome) == [0, 0])
+            #expect(base.counts(base.planned(f)) == [0, 0])
             let failure = await #expect(throws: CredentialTransferFailure.self) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
@@ -343,11 +345,175 @@ struct CredentialCSVTests {
             try await stage(f, [row("ada", "pw", url: "example.test")])
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.candidates.isEmpty && review.csvReport?.omittedRows == 1)
-            #expect(base.counts(review.outcome) == [0, 0])
+            #expect(base.counts(base.planned(f)) == [0, 0])
         }
     }
 
+    // MARK: - Notes
+
+    @Test func csvNotesAreImported() async throws {
+        try await base.withFixture { f in
+            try await f.seed(base.neighbours(1))
+            let text = "first line\nsecond line, with \"quotes\""
+            try await stage(f, [row("ada", "pw1", notes: text), row("grace", "pw2", url: "https://other.test")])
+            let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
+            #expect(review.csvReport?.issues.isEmpty == true && review.csvReport?.omittedRows == 0)
+            #expect(review.candidates.flatMap(\.records).map(\.kind) == [.password, .note, .password])
+            #expect(base.counts(base.planned(f)) == [2, 0])
+
+            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            let stored = try await f.stored().accounts
+            #expect(stored.first { $0.username == "ada" }?.notes == [CredentialNote(text: text, field: nil)])
+            #expect(stored.first { $0.username == "grace" }?.notes == nil)
+        }
+    }
+
+    @Test func identicalLoginWithNewNoteIsNotAlreadySaved() async throws {
+        try await base.withFixture { f in
+            var saved = base.account(username: "ada", password: "pw")
+            saved.notes = [CredentialNote(text: "kept", field: nil)]
+            try await f.seed([saved])
+
+            // The same login with the note it already has is saved; without a note in the row it is saved too.
+            for notes in ["kept", ""] {
+                let empty = try await f.stored()
+                let staged = try CredentialCSVImport.stage(data([row("ada", "pw", notes: notes)]), against: empty)
+                #expect(staged.report.alreadySaved == 1 && staged.preview.candidates.isEmpty)
+            }
+
+            // A note the saved login lacks makes the row new: it is staged and the login is not skipped silently.
+            let staged = try CredentialCSVImport.stage(data([row("ada", "pw", notes: "new")]), against: try await f.stored())
+            #expect(staged.report.alreadySaved == 0 && staged.preview.candidates.count == 1)
+            #expect(staged.preview.candidates.first?.notes?.map(\.text) == ["new"])
+        }
+    }
+
+    @Test func aSavedLoginWithoutNotesTakesTheRowsNoteWithTheLogin() async throws {
+        try await base.withFixture { f in
+            try await f.seed([base.account(username: "ada", password: "pw")])
+            try await stage(f, [row("ada", "pw", notes: "added by the file")])
+            let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
+            #expect(review.conflicts.map(\.incoming).count == 1, "only the login is a conflict")
+
+            try decide(f, .replace, line: 2)
+            #expect(base.counts(base.planned(f)) == [0, 1])
+            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            let stored = try #require(try await f.stored().accounts.first)
+            #expect(stored.password == "pw" && stored.notes?.map(\.text) == ["added by the file"])
+        }
+    }
+
+    @Test func singleSavedMatchWithADifferentNoteIsANoteConflict() async throws {
+        try await base.withFixture { f in
+            var saved = base.account(username: "ada", password: "old")
+            saved.notes = [CredentialNote(text: "old note", field: nil)]
+            try await f.seed([saved])
+            try await stage(f, [row("ada", "new", notes: "new note")])
+
+            let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
+            #expect(review.conflicts.map(\.kind) == [.password, .note] && !review.isResolved)
+            await #expect(throws: CredentialExchangeCoordinatorError.unresolvedConflicts) {
+                _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            }
+
+            // Replace the login and keep both notes: the saved note stays and the new one is appended.
+            let note = try #require(review.conflicts.first { $0.kind == .note })
+            try decide(f, .replace, line: 2)
+            try f.coordinator.choose(.merge(into: saved.id), for: note.incoming, owner: f.owner)
+            _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
+            let stored = try #require(try await f.stored().accounts.first)
+            #expect(stored.password == "new" && stored.notes?.map(\.text) == ["old note", "new note"])
+        }
+    }
+
+    @Test func aNoteTheSavedLoginAlreadyHoldsIsNoConflict() async throws {
+        try await base.withFixture { f in
+            var saved = base.account(username: "ada", password: "old")
+            saved.notes = [CredentialNote(text: "old note", field: nil), CredentialNote(text: "other", field: nil)]
+            try await f.seed([saved])
+            try await stage(f, [row("ada", "new", notes: "old note")])
+
+            let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
+            #expect(review.conflicts.map(\.kind) == [.password])
+        }
+    }
+
+    @Test func undecidedCSVNoteFollowsItsLogin() async throws {
+        try await base.withFixture { f in
+            try await f.seed([])
+            try await stage(f, [row("ada", "pw", notes: "memo")])
+            let records = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner)).candidates.flatMap(\.records)
+            #expect(records.map(\.csvLine) == [2, 2] && records.allSatisfy { !$0.needsChoice })
+
+            try decide(f, .skip, line: 2)
+            let skipped = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
+            #expect(skipped.candidates.flatMap(\.records).map(\.destination) == [.skipped, .skipped])
+            #expect(base.counts(base.planned(f)) == [0, 0])
+        }
+    }
+
+    @Test func rowsThatDifferOnlyInTheirNoteAreBothKept() throws {
+        let empty = StoreSnapshot(vaultID: UUID(), revision: 0, accounts: [], blockedPasswordOrigins: [], stamps: [:])
+        let staged = try CredentialCSVImport.stage(data([row("ada", "pw", notes: "one"), row("ada", "pw", notes: "two")]), against: empty)
+
+        #expect(staged.preview.candidates.compactMap { $0.notes?.first?.text }.sorted() == ["one", "two"])
+        #expect(staged.report.omittedRows == 0)
+        // The same row twice is still a duplicate.
+        let twice = try CredentialCSVImport.stage(data([row("ada", "pw", notes: "one"), row("ada", "pw", notes: "one")]), against: empty)
+        #expect(twice.preview.candidates.count == 1 && twice.report.omittedRows == 1)
+    }
+
     // MARK: - Export
+
+    @Test func csvExportWritesNotes() async throws {
+        try await base.withFixture { f in
+            var withNotes = base.account(username: "ada", password: "pw")
+            withNotes.notes = [CredentialNote(text: "first", field: nil), CredentialNote(text: "second, \"quoted\"", field: nil)]
+            let plain = base.account(username: "grace", password: "pw2")
+            try await f.seed([withNotes, plain])
+            let snapshot = try await f.stored()
+            func selection(notes: Bool) -> [CredentialExportSelection] {
+                snapshot.accounts.map { CredentialExportSelection(accountID: $0.id, password: true, passkeyIDs: [], totp: false, notes: notes) }
+            }
+
+            let written = try CredentialCSVExport.encode(snapshot, selection: selection(notes: true))
+            let rows = try CredentialCSV.parse(written.data).map(\.fields)
+            #expect(rows.count == 3)
+            #expect(rows.first { $0.count > 2 && $0[2] == "ada" }?[4] == "first\n\nsecond, \"quoted\"")
+            #expect(rows.first { $0.count > 2 && $0[2] == "grace" }?[4] == "")
+
+            // Notes leave only when selected.
+            let without = try CredentialCSV.parse(CredentialCSVExport.encode(snapshot, selection: selection(notes: false)).data).map(\.fields)
+            #expect(without.allSatisfy { $0.count < 5 || $0[4].isEmpty || $0 == Self.header })
+
+            // The file reads back as the same login with one note.
+            let empty = StoreSnapshot(vaultID: UUID(), revision: 0, accounts: [], blockedPasswordOrigins: [], stamps: [:])
+            let again = try CredentialCSVImport.stage(written.data, against: empty)
+            #expect(again.preview.candidates.first { $0.username == "ada" }?.notes?.map(\.text) == ["first\n\nsecond, \"quoted\""])
+        }
+    }
+
+    @Test func exportCSVThroughTheCoordinatorCarriesTheNotesChoice() async throws {
+        try await base.withFixture { f in
+            var login = base.account(username: "ada", password: "pw")
+            login.notes = [CredentialNote(text: "kept note", field: nil)]
+            try await f.seed([login])
+            let snapshot = try await f.stored()
+            let epoch = try #require(f.manager.authorizationEpoch)
+            let directory = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+
+            for notes in [true, false] {
+                let destination = directory.appending(path: "out-\(notes).csv")
+                let selection = [CredentialExportSelection(accountID: login.id, password: true, passkeyIDs: [], totp: false, notes: notes)]
+                _ = try await f.coordinator.exportCSV(
+                    selection: selection, expectedStamps: snapshot.stamps, epoch: epoch, from: f.manager, to: destination
+                )
+                let written = try CredentialCSV.parse(Data(contentsOf: destination)).map(\.fields)
+                #expect(written.last?[4] == (notes ? "kept note" : ""))
+            }
+        }
+    }
 
     @Test func exportWritesOnlyLoginsWithAPasswordAndAWebsite() async throws {
         try await base.withFixture { f in

@@ -7,7 +7,8 @@ import Network
 
 /// A loopback HTTP server for WebKit integration tests. Routes are fixed so
 /// tests cannot depend on the public network or a live service.
-/// Network callbacks stay on `queue`; all state read by them is immutable.
+/// Network callbacks stay on `queue`; all state read by them is immutable,
+/// except the request heads, which only `queue` touches.
 nonisolated final class HTTPFixtureServer: @unchecked Sendable {
     struct Response: Sendable {
         let status: String
@@ -63,6 +64,14 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
         }
     }
 
+    /// A request as the fixture read it: header names are lowercased, and the body is whatever arrived.
+    struct Request: Sendable {
+        let method: String
+        let path: String
+        let headers: [String: String]
+        let body: Data
+    }
+
     enum StartError: Error {
         case cancelled
         case invalidURL
@@ -72,19 +81,36 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "WSurf.tests.http-fixture")
     private let routes: [String: Response]
+    private let waitsForBody: Bool
+    private let respond: (@Sendable (Request) -> Response?)?
+    private var requestHeads: [String: String] = [:]
 
-    private init(listener: NWListener, routes: [String: Response]) {
+    private init(
+        listener: NWListener,
+        routes: [String: Response],
+        waitsForBody: Bool,
+        respond: (@Sendable (Request) -> Response?)?
+    ) {
         self.listener = listener
         self.routes = routes
+        self.waitsForBody = waitsForBody
+        self.respond = respond
     }
 
     deinit {
         listener.cancel()
     }
 
-    static func start(routes: [String: Response]) async throws -> HTTPFixtureServer {
+    /// `waitsForBody` answers a request that has a body only after the body arrived, so closing the connection never cuts a POST off.
+    /// Off by default: the other tests send no bodies, and their timing is left as it was.
+    /// `respond` answers first, on the server's queue, for a test that needs state; nil falls back to `routes`.
+    static func start(
+        routes: [String: Response],
+        waitsForBody: Bool = false,
+        respond: (@Sendable (Request) -> Response?)? = nil
+    ) async throws -> HTTPFixtureServer {
         let listener = try NWListener(using: .tcp, on: .any)
-        let server = HTTPFixtureServer(listener: listener, routes: routes)
+        let server = HTTPFixtureServer(listener: listener, routes: routes, waitsForBody: waitsForBody, respond: respond)
         listener.newConnectionHandler = { [weak server] connection in
             server?.accept(connection)
         }
@@ -119,6 +145,11 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
         return url
     }
 
+    /// The request line and header fields of the latest request for `path`.
+    func lastRequestHead(for path: String) -> String? {
+        queue.sync { requestHeads[path] }
+    }
+
     private func accept(_ connection: NWConnection) {
         connection.start(queue: queue)
         receiveRequest(from: connection, accumulated: Data())
@@ -134,8 +165,9 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
             if let data {
                 request.append(data)
             }
-            let hasHeaders = request.range(of: Data("\r\n\r\n".utf8)) != nil
-            guard hasHeaders || complete || error != nil else {
+            let separator = request.range(of: Data("\r\n\r\n".utf8))
+            let bodyPending = waitsForBody && separator.map { Self.bodyLength(ofHead: request[..<$0.lowerBound]) > request.count - $0.upperBound } == true
+            guard (separator != nil && !bodyPending) || complete || error != nil else {
                 receiveRequest(from: connection, accumulated: request)
                 return
             }
@@ -143,15 +175,33 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
         }
     }
 
+    /// The `Content-Length` of a request head, or 0 (a chunked body is not waited for).
+    private static func bodyLength(ofHead head: Data) -> Int {
+        let lines = String(decoding: head, as: UTF8.self).lowercased().split(separator: "\r\n")
+        guard let line = lines.first(where: { $0.hasPrefix("content-length:") }) else { return 0 }
+        return Int(line.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)) ?? 0
+    }
+
     private func sendResponse(for request: Data, over connection: NWConnection) {
-        let line = String(decoding: request, as: UTF8.self)
-            .split(separator: "\n", maxSplits: 1)
-            .first
-            .map(String.init) ?? ""
-        let parts = line.split(separator: " ")
+        let separator = request.range(of: Data("\r\n\r\n".utf8))
+        let lines = String(decoding: request[..<(separator?.lowerBound ?? request.endIndex)], as: UTF8.self)
+            .components(separatedBy: "\r\n")
+        let parts = (lines.first ?? "").split(separator: " ")
         let target = parts.count > 1 ? String(parts[1]) : "/"
         let path = target.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
-        let response = routes[path] ?? Response(
+        let head = request.range(of: Data("\r\n\r\n".utf8)).map { request[..<$0.lowerBound] } ?? request
+        requestHeads[path] = String(decoding: head, as: UTF8.self)
+        let headers = lines.dropFirst().reduce(into: [String: String]()) { headers, line in
+            guard let colon = line.firstIndex(of: ":") else { return }
+            headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        }
+        let received = Request(
+            method: parts.first.map(String.init) ?? "",
+            path: path,
+            headers: headers,
+            body: separator.map { Data(request[$0.upperBound...]) } ?? Data()
+        )
+        let response = respond?(received) ?? routes[path] ?? Response(
             status: "404 Not Found",
             headers: ["Content-Type": "text/html; charset=utf-8"],
             body: Data("<h1>Not found</h1>".utf8)

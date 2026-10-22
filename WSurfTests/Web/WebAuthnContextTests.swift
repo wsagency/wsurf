@@ -252,23 +252,54 @@ struct WebAuthnContextTests {
             in contentWorld: WKContentWorld,
             completionHandler: (@MainActor @Sendable (Any?, (any Error)?) -> Void)?
         ) {
+            super.__callAsyncJavaScript(
+                functionBody, arguments: arguments, inFrame: frame, in: contentWorld,
+                completionHandler: holding(functionBody, in: frame, completionHandler)
+            )
+        }
+
+        private typealias Evaluate = @convention(c) (
+            AnyObject, Selector, NSString, Bool, NSURL?, NSDictionary?, Bool, WKFrameInfo?, WKContentWorld,
+            @escaping @convention(block) (Any?, (any Error)?) -> Void
+        ) -> Void
+
+        /// WSurf's own calls take WebKit's evaluation without a user gesture (`WKWebView.evaluate`); this is that entry
+        /// point, passed to WebKit's own implementation with the same hold.
+        @objc(_evaluateJavaScript:asAsyncFunction:withSourceURL:withArguments:forceUserGesture:inFrame:inWorld:completionHandler:)
+        func heldEvaluate(
+            _ source: NSString, asAsyncFunction: Bool, withSourceURL sourceURL: NSURL?, withArguments arguments: NSDictionary?,
+            forceUserGesture: Bool, inFrame frame: WKFrameInfo?, inWorld world: WKContentWorld,
+            completionHandler: @escaping @MainActor @Sendable (Any?, (any Error)?) -> Void
+        ) {
+            let selector = #selector(heldEvaluate(_:asAsyncFunction:withSourceURL:withArguments:forceUserGesture:inFrame:inWorld:completionHandler:))
+            guard let implementation = class_getMethodImplementation(WKWebView.self, selector) else { return }
+            let finish = holding(source as String, in: frame, completionHandler)
+            unsafeBitCast(implementation, to: Evaluate.self)(
+                self, selector, source, asAsyncFunction, sourceURL, arguments, forceUserGesture, frame, world
+            ) { result, error in
+                MainActor.assumeIsolated { finish?(result, error) }
+            }
+        }
+
+        private func holding(
+            _ functionBody: String, in frame: WKFrameInfo?,
+            _ completionHandler: (@MainActor @Sendable (Any?, (any Error)?) -> Void)?
+        ) -> (@MainActor @Sendable (Any?, (any Error)?) -> Void)? {
             let shouldHold = holdChildLiveness
                 && functionBody == "return globalThis.__wsurfNativeFrameNonce === nonce;"
                 && frame?.isMainFrame == false
-            super.__callAsyncJavaScript(
-                functionBody, arguments: arguments, inFrame: frame, in: contentWorld,
-                completionHandler: { [weak self] result, error in
-                    guard shouldHold, let self, let completionHandler else {
-                        completionHandler?(result, error)
-                        return
-                    }
-                    self.holdChildLiveness = false
-                    self.heldResult = result
-                    self.heldError = error
-                    self.heldCompletion = completionHandler
-                    self.didHoldChildLiveness = true
+            guard shouldHold else { return completionHandler }
+            return { [weak self] result, error in
+                guard let self, let completionHandler else {
+                    completionHandler?(result, error)
+                    return
                 }
-            )
+                self.holdChildLiveness = false
+                self.heldResult = result
+                self.heldError = error
+                self.heldCompletion = completionHandler
+                self.didHoldChildLiveness = true
+            }
         }
 
         var heldLivenessValue: Any? {
@@ -641,6 +672,39 @@ struct WebAuthnContextTests {
         }
     }
 
+    /// There is no loading gate (a page may ask while its subresources load). What ends the old document's requests is the
+    /// navigation's start: a context captured before it is stale before anything commits, and on WebKit a new request from
+    /// the old document has no policy evidence while the navigation is pending.
+    @Test(arguments: BrowserEngine.allCases)
+    func aStartedNavigationEndsTheOldDocumentsContextsBeforeItCommits(_ engine: BrowserEngine) async throws {
+        let stalled = ResponseGate()
+        let fixture = try await loadPage(engine: engine, pendingNavigation: stalled)
+        try await withFixture(fixture) {
+            defer { stalled.open() }
+            let frame = try await mainFrame(in: fixture.page)
+            let context = try await fixture.page.credentialContext(for: frame, operation: .get)
+            fixture.page.load(URLRequest(url: try localURL(fixture.server, path: "/stalled")))
+            #expect(await stalled.waitForRequest())
+            var stale = false
+            do {
+                try await context.validate()
+            } catch WebAuthnContextError.staleFrame {
+                stale = true
+            }
+            #expect(stale)
+            #expect(throws: (any Error).self) { try context.validateForDispatch() }
+            if engine == .webKit {
+                var unavailable = false
+                do {
+                    _ = try await fixture.page.credentialContext(for: frame, operation: .get)
+                } catch WebAuthnContextError.policyUnavailable {
+                    unavailable = true
+                }
+                #expect(unavailable)
+            }
+        }
+    }
+
     @Test(arguments: BrowserEngine.allCases)
     func navigationInvalidatesPreviouslyCapturedContext(_ engine: BrowserEngine) async throws {
         let fixture = try await loadPage(engine: engine)
@@ -670,7 +734,6 @@ struct WebAuthnContextTests {
             let webView = try #require(page.webKit)
             let delegate = try #require(webView.navigationDelegate as? TabNavigationDelegate)
             #expect(delegate === tab.navigationDelegate)
-            page.context.settings.passwordProvider = .credentialManager
             let routeScript = """
             (() => { let route = null; const note = event => { route = event.detail; };
               document.addEventListener('wsurf-webauthn-route', note);

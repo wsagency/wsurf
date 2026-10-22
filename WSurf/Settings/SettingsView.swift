@@ -77,6 +77,19 @@ final class SettingsWorkspace {
     }
 }
 
+extension AppCoordinator {
+    /// Opens Settings at the page and sub-page of one `SettingsIndex` entry, such as "autofill.inputHistory". `SettingsView` takes
+    /// `pendingSettingsAnchor`, so this works whether the Settings page is open already or is created by this call.
+    func openSettings(revealing anchor: String) {
+        guard let entry = SettingsIndex.all.first(where: { $0.id == anchor }) else {
+            openSettings()
+            return
+        }
+        pendingSettingsAnchor = anchor
+        openSettings(entry.category)
+    }
+}
+
 struct SettingsView: View {
     let coordinator: AppCoordinator
     let workspace: SettingsWorkspace
@@ -146,6 +159,11 @@ struct SettingsView: View {
         .onChange(of: address, initial: true) { _, _ in
             workspace.adopt(SystemPages.settingsCategory(of: address) ?? .general)
         }
+        .onChange(of: coordinator.pendingSettingsAnchor, initial: true) { _, anchor in
+            guard let anchor else { return }
+            coordinator.pendingSettingsAnchor = nil
+            workspace.reveal(anchor)
+        }
     }
 }
 
@@ -209,6 +227,7 @@ private struct SettingsDetail: View {
             }
             .scrollContentBackground(.hidden)
             .environment(\.settingsHighlight, highlight)
+            .environment(\.settingsScrollProxy, proxy)
             .environment(\.openURL, OpenURLAction { url in
                 guard url.scheme == SettingsIndex.linkScheme, let anchor = url.host() else {
                     return .systemAction
@@ -299,11 +318,20 @@ private struct AboutSettings: View {
                 readingAcknowledgements = false
             }
         } else {
-            SettingsPageHeader(
-                title: "WSurf",
-                detail: String(localized: "Version \(UpdateFeed.currentVersion)"),
-                icon: NSApp.applicationIconImage
-            )
+            VStack(alignment: .leading, spacing: 6) {
+                SettingsPageHeader(
+                    title: "WSurf",
+                    detail: String(localized: "Version \(UpdateFeed.currentVersion)"),
+                    icon: AppIcon.bundle
+                )
+
+                if let candidate = BuildIdentity.candidateLine() {
+                    Text(verbatim: candidate)
+                        .font(Theme.Font.row)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
 
             SettingsCard {
                 UpdateRow(updates: coordinator.updates)

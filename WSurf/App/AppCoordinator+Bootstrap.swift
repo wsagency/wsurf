@@ -37,19 +37,24 @@ extension AppCoordinator {
         timing.mark("web setup")
         if restoring {
             browser.restoreSession()
+        } else {
+            browser.attachProfilePins()
         }
         for url in urls.reversed() {
             browser.newTab(url: url, transition: .link)
         }
-        browser.ensureActiveTab()
+        // The profile's pins fill a window before it has a page of its own, so the first tab would be a pin.
+        if browser.activeTabID == nil {
+            browser.newTab()
+        }
         retainAgentMemory()
         timing.mark("session")
         wireMedia()
-        browser.onSpaceAnchorChanged = { [weak self] from, to in
-            if self?.conversationSpaceID == from {
+        browser.onAnchorChanged = { [weak self] from, to in
+            if self?.conversationAnchorID == from {
                 self?.conversationVoice?.stop()
             }
-            self?.agentTurns.reassignSpace(from: from, to: to)
+            self?.agentTurns.reassignAnchor(from: from, to: to)
         }
         browser.onLinkHovered = { [weak self] tab, url, modifiers, anchor in
             guard let self else { return }
@@ -138,7 +143,9 @@ extension AppCoordinator {
                 downloadFlights.noteClick(at: point)
             }
         }
-        context.webViewPool.installExtensionController(extensions.controller)
+        context.webViewPool.installExtensionController(extensions.controller) { [weak extensions] in
+            extensions?.hasEnabledExtensions == true
+        }
         prepareWindowHost()
         installDownloadFlights()
     }
@@ -229,6 +236,21 @@ extension AppCoordinator {
         discoverContextWindow()
     }
 
+    /// Runs the idle-tab sweep while Sleep inactive tabs has a duration; otherwise the timer does not exist. The archive
+    /// sweep follows its own setting.
+    func applySleepTimer() {
+        browser.applyArchiveSweeper(running: !isClosed)
+        let minutes = settings.sleepAfterMinutes
+        guard !isClosed, settings.sleepsInactiveTabs, minutes > 0 else {
+            sleepTimer.stop()
+            return
+        }
+        let limit = Duration.seconds(minutes * 60)
+        sleepTimer.start(every: min(.seconds(60), limit / 4)) { [weak self] in
+            self?.browser.sleepIdleTabs(after: limit)
+        }
+    }
+
     func followSettings() {
         let context = context
         let targets: () -> [AppCoordinator] = { [weak context, weak application, weak self] in
@@ -242,6 +264,7 @@ extension AppCoordinator {
         media.isEnabled = settings.showsMediaPlayer
         applyPictureLending()
         sidePanel.setAvailable(settings.showsLyrics, for: .lyrics)
+        applySleepTimer()
         updateWindowAppearance()
         browser.downloads.webViewProvider = {
             let windows = targets()

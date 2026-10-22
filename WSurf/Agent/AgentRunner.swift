@@ -7,20 +7,20 @@ import Foundation
 nonisolated struct AgentTaskContext: Sendable, Equatable {
     let id: UUID
     let tabID: UUID
-    let spaceID: UUID
+    let anchorID: UUID
     let mentionedTabIDs: [UUID]
     let attachments: [AssistantAttachment]
     let attachmentTextOnly: Bool
     let isContinuation: Bool
 
     init(
-        id: UUID, tabID: UUID, spaceID: UUID? = nil, mentionedTabIDs: [UUID] = [],
+        id: UUID, tabID: UUID, anchorID: UUID? = nil, mentionedTabIDs: [UUID] = [],
         attachments: [AssistantAttachment] = [], attachmentTextOnly: Bool = false,
         isContinuation: Bool = false
     ) {
         self.id = id
         self.tabID = tabID
-        self.spaceID = spaceID ?? tabID
+        self.anchorID = anchorID ?? tabID
         self.mentionedTabIDs = mentionedTabIDs
         self.attachments = attachments
         self.attachmentTextOnly = attachmentTextOnly
@@ -43,12 +43,16 @@ protocol AgentRunner: AnyObject {
         into reply: AgentReplyModel,
         speech: any SpeechOutput
     ) async
+    /// Notes what the person said in the task that just finished. The turn model calls it after the reply is shown, as its own
+    /// task, and cancels it with the next turn, Stop or a profile switch.
+    func rememberFacts(fromTask taskID: UUID) async
 }
 
 extension AgentRunner {
     var supportsCompaction: Bool {
         false
     }
+    func rememberFacts(fromTask taskID: UUID) async {}
     func compactContext(forTab tabID: UUID) async throws -> Bool {
         false
     }

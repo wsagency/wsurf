@@ -51,8 +51,14 @@ nonisolated enum AutoplayPolicy: String, Codable, CaseIterable, Identifiable, Se
 extension BrowserSettings {
     func apply(to configuration: WKWebViewConfiguration) {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = javaScriptEnabled
-        configuration.preferences.javaScriptCanOpenWindowsAutomatically = !blocksPopups
-        configuration.mediaTypesRequiringUserActionForPlayback = javaScriptEnabled ? [] : autoplay.mediaTypes
+        // A tab decides each pop-up as WebKit asks for its window, so WebKit hands them all over. A WebKit that cannot say
+        // who started one keeps its own blocker for the setting.
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = TabNavigationDelegate.decidesPopUps || !blocksPopups
+        // WebKit keeps the auto-play answer per document (`SiteContentGuard.apply`): the setting is every document's default,
+        // which a tab's navigation replaces with the website's own answer. The view-wide requirement keeps the setting too,
+        // for what no per-document answer reaches: a frame from another website, which WebKit gives none.
+        SiteContentGuard.apply(autoplay, to: configuration.defaultWebpagePreferences)
+        configuration.mediaTypesRequiringUserActionForPlayback = autoplay.mediaTypes
         configuration.preferences.isElementFullscreenEnabled = true
         // `isInspectable` only lets an external inspector attach. This private
         // preference enables the page's own Inspect Element item.

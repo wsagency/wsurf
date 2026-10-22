@@ -34,9 +34,11 @@ nonisolated extension CredentialExchangeCodec {
             guard chosen.passkeyIDs.isSubset(of: allPasskeyIDs) else { throw CredentialVaultError.invalidData }
 
             let basic = chosen.password ? exportBasicAuthentication(account) : nil
+            let notes = chosen.notes ? account.notes ?? [] : []
+            let items = chosen.secureItems ? account.secureItems ?? [] : []
             let selectedCredentialCount = chosen.passkeyIDs.count + (basic == nil ? 0 : 1) +
-                (chosen.totp && account.totp != nil ? 1 : 0)
-            guard selectedCredentialCount <= CredentialVaultLimits.accounts - totalCredentials else {
+                (chosen.totp && account.totp != nil ? 1 : 0) + notes.count + items.count
+            guard selectedCredentialCount <= CredentialVaultLimits.credentials - totalCredentials else {
                 throw CredentialVaultError.oversized
             }
             totalCredentials += selectedCredentialCount
@@ -62,6 +64,8 @@ nonisolated extension CredentialExchangeCodec {
                     issuer: totp.issuer
                 )))
             }
+            credentials += notes.map { .note(exportNote($0)) }
+            credentials += try items.map(exportSecureItem)
             guard !credentials.isEmpty else { continue }
             totalItems += 1
             guard totalItems <= CredentialVaultLimits.accounts else { throw CredentialVaultError.oversized }
@@ -124,7 +128,7 @@ nonisolated extension CredentialExchangeCodec {
             exporterDisplayName: "WSurf",
             timestamp: Date()
         )
-        guard try encodedSize(data) <= CredentialVaultLimits.payloadBytes else { throw CredentialVaultError.oversized }
+        guard try encodedSize(data) <= CredentialVaultLimits.liveBytes else { throw CredentialVaultError.oversized }
         return data
     }
 
@@ -179,6 +183,9 @@ nonisolated extension CredentialExchangeCodec {
         for passkey in account.passkeys where chosen.passkeyIDs.contains(passkey.id) {
             parts.append((passkey.base, .passkey(passkey)))
         }
+        if chosen.secureItems, account.secureItems != nil {
+            parts.append((account.secureItemsBase, .secureItems(account)))
+        }
         return try parts.allSatisfy { base, part in
             guard let base else { return false }
             return try CredentialContent.hash(part) == base.contentHash
@@ -227,17 +234,15 @@ nonisolated extension CredentialExchangeCodec {
         return ASImportableCredential.BasicAuthentication(userName: username, password: password)
     }
 
-    private static func makeField(_ value: String, metadata: CredentialEditableFieldMetadata) -> ASImportableEditableField {
-        let fieldType: ASImportableEditableField.FieldType
-        switch metadata.fieldType {
-        case .string:
-            fieldType = .string
-        case .concealedString:
-            fieldType = .concealedString
-        case .email:
-            fieldType = .email
-        }
-        return ASImportableEditableField(id: metadata.id, fieldType: fieldType, value: value, label: metadata.label)
+    private static func exportNote(_ note: CredentialNote) -> ASImportableCredential.Note {
+        let field = note.field.map { makeField(note.text, metadata: $0) }
+            ?? ASImportableEditableField(id: nil, fieldType: .string, value: note.text)
+        return ASImportableCredential.Note(content: field)
+    }
+
+    static func makeField(_ value: String, metadata: CredentialEditableFieldMetadata) -> ASImportableEditableField {
+        // Every type a field was imported with goes back out as it came in, a concealed one included.
+        ASImportableEditableField(id: metadata.id, fieldType: metadata.fieldType.exchangeType, value: value, label: metadata.label)
     }
 
     private static func exportPasskey(_ passkey: WebsitePasskey) throws -> ASImportableCredential.Passkey {
@@ -314,5 +319,65 @@ nonisolated extension CredentialExchangeCodec {
         }
         guard result.count <= 64 else { throw CredentialVaultError.oversized }
         return result
+    }
+}
+
+// MARK: Field types
+
+/// The Credential Exchange field types and WSurf's persisted ones, written out once in each direction. The exchange's raw values are
+/// kebab-case (`concealed-string`) and the persisted ones camelCase (`concealedString`), so neither direction may go through `rawValue`.
+nonisolated extension CredentialEditableFieldType {
+    /// WSurf's type for an exchange field type, or nil for one it does not know (a later SDK's).
+    init?(exchange type: ASImportableEditableField.FieldType) {
+        switch type {
+        case .string:
+            self = .string
+        case .concealedString:
+            self = .concealedString
+        case .email:
+            self = .email
+        case .number:
+            self = .number
+        case .boolean:
+            self = .boolean
+        case .date:
+            self = .date
+        case .yearMonth:
+            self = .yearMonth
+        case .wifiNetworkSecurityType:
+            self = .wifiNetworkSecurityType
+        case .countryCode:
+            self = .countryCode
+        case .subdivisionCode:
+            self = .subdivisionCode
+        @unknown default:
+            return nil
+        }
+    }
+
+    /// The exchange's field type for this one.
+    var exchangeType: ASImportableEditableField.FieldType {
+        switch self {
+        case .string:
+            .string
+        case .concealedString:
+            .concealedString
+        case .email:
+            .email
+        case .number:
+            .number
+        case .boolean:
+            .boolean
+        case .date:
+            .date
+        case .yearMonth:
+            .yearMonth
+        case .wifiNetworkSecurityType:
+            .wifiNetworkSecurityType
+        case .countryCode:
+            .countryCode
+        case .subdivisionCode:
+            .subdivisionCode
+        }
     }
 }

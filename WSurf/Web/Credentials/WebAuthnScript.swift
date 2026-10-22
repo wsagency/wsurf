@@ -5,13 +5,16 @@ import Foundation
 
 /// The two scripts that route `navigator.credentials` public-key calls to the native authenticator on both engines.
 ///
-/// - `relay` runs in an isolated content world. It owns the document fence: it forwards bounded requests to native,
-///   forwards native results back only while its own document is live, and relays a trusted user activation for
-///   conditional requests. The page cannot make it authorize anything; native derives origin, frame, policy and profile.
+/// - `relay` runs in an isolated content world. It owns the document fence: it forwards bounded requests to native and
+///   forwards native results back only while its own document is live. It never starts a conditional request: only the
+///   fill dropdown's "Use a Passkey…" row does, natively. The page cannot make it authorize anything; native derives
+///   origin, frame, policy and profile.
 /// - `page` runs in the page world. It only marshals options and results into browser-facing objects.
 ///
-/// Native decides the provider before the page script touches a call: `legacy` hands the untouched call to the engine,
-/// `manager` is handled here and never falls back to the engine, and no answer is a refusal, never implicit legacy.
+/// Native decides the route before the page script touches a call: `legacy` (a private page) hands the untouched call to the
+/// engine, `manager` is handled here, and no answer is a refusal, never implicit legacy. A call handled here reaches the
+/// engine only when native says so afterwards (`handoff`), and native says so only when the user chose another device or key
+/// on one of its sheets: never because of what the vault does or does not hold.
 nonisolated enum WebAuthnScript {
     static let handlerName = "wsurfWebAuthn"
     static let requestEvent = "wsurf-webauthn-request"
@@ -25,7 +28,7 @@ nonisolated enum WebAuthnScript {
     /// handshake (a non-writable global in this isolated world, never in the page world and never in any event or message
     /// to the page), so native can tell the live document from an older same-origin one. The relay waits on the
     /// handshake's own promise: no polling, no timer. A document with no handshake, or a failed one, is sent as
-    /// unidentified: native passes it through under the legacy provider and refuses it under the encrypted one, and never
+    /// unidentified: native passes it through on a private page and refuses it on any other, and never
     /// builds a frame or ceremony for it. Chromium identifies documents natively over CDP, so its relay keeps a random
     /// per-document fence.
     static func relay(nativeNonce: Bool) -> String { "const NATIVE = \(nativeNonce);\n" + relaySource }
@@ -72,7 +75,7 @@ nonisolated enum WebAuthnScript {
         }
         if (body.action !== 'request' || requests.size >= 8 || requests.has(body.id)) return;
         if (!active && !resuming) return;
-        requests.set(body.id, {conditional: body.mediation === 'conditional', capabilities: body.operation === 'capabilities'});
+        requests.set(body.id, {capabilities: body.operation === 'capabilities'});
         (resuming ? resuming.then(identify) : identify()).then(() => {
           if (!requests.has(body.id)) return;
           if (!active) return;
@@ -83,22 +86,6 @@ nonisolated enum WebAuthnScript {
           }
         });
       });
-      // A conditional request is only a pending discovery. Only a real user gesture on a webauthn field may start
-      // the native account selection; scripted focus or synthetic events are not isTrusted and are ignored.
-      const isWebAuthnField = node => {
-        if (!(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement)) return false;
-        return (node.getAttribute('autocomplete') || '').toLowerCase().split(/\s+/).includes('webauthn');
-      };
-      const activate = event => {
-        if (!active || !event.isTrusted || document.visibilityState !== 'visible') return;
-        if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== 'ArrowDown') return;
-        if (!isWebAuthnField(event.composedPath()[0])) return;
-        for (const [id, request] of requests) {
-          if (request.conditional) { try { send({action: 'conditionalActivate', id}); } catch {} return; }
-        }
-      };
-      document.addEventListener('click', activate, true);
-      document.addEventListener('keydown', activate, true);
       addEventListener('pagehide', () => {
         epoch += 1;
         resuming = null;
@@ -186,7 +173,7 @@ nonisolated enum WebAuthnScript {
     private static let pageSource = #"""
     (() => {
       const container = globalThis.navigator && navigator.credentials;
-      if (!container || !globalThis.PublicKeyCredential || container.__wsurfWebAuthn) return;
+      if (!container || !globalThis.PublicKeyCredential) return;
       const proto = Object.getPrototypeOf(container) || container;
       const originals = {create: container.create.bind(container), get: container.get.bind(container)};
       const requests = new Map();
@@ -287,15 +274,19 @@ nonisolated enum WebAuthnScript {
           result.credProps = extensions.credProps === true;
         } else {
           if (pk.rpId !== undefined) result.rpId = text(pk.rpId, 'rpId');
+          if (extensions.appid !== undefined) result.appid = text(extensions.appid, 'extensions.appid');
           result.allowCredentials = descriptors(pk.allowCredentials);
           result.userVerification = pk.userVerification || 'preferred';
         }
         return result;
       }
 
+      // Methods stay assignable, as the engine's own prototype methods are: libraries replace them on the credential (GitHub's
+      // webauthn-json ponyfill sets `credential.toJSON` in strict mode, which throws on a read-only property). Values stay
+      // read-only, like the engine's getter-only attributes.
       function define(target, properties) {
         for (const [key, item] of Object.entries(properties)) {
-          Object.defineProperty(target, key, {value: item, enumerable: true, configurable: true});
+          Object.defineProperty(target, key, {value: item, enumerable: true, configurable: true, writable: typeof item === 'function'});
         }
         return target;
       }
@@ -329,7 +320,7 @@ nonisolated enum WebAuthnScript {
             return json;
           };
         }
-        Object.defineProperty(response, 'toJSON', {value: responseJSON, configurable: true});
+        Object.defineProperty(response, 'toJSON', {value: responseJSON, writable: true, configurable: true});
         const object = define(Object.create(PublicKeyCredential.prototype), {
           id: value.id, rawId: decode(value.rawId), type: 'public-key',
           authenticatorAttachment: 'platform', response,
@@ -338,7 +329,7 @@ nonisolated enum WebAuthnScript {
         Object.defineProperty(object, 'toJSON', {
           value: () => ({id: value.id, rawId: value.rawId, type: 'public-key', authenticatorAttachment: 'platform',
             response: responseJSON(), clientExtensionResults: JSON.parse(JSON.stringify(results))}),
-          configurable: true
+          writable: true, configurable: true
         });
         return object;
       }
@@ -361,8 +352,32 @@ nonisolated enum WebAuthnScript {
         if (!value || typeof value.id !== 'string') return;
         const query = queryHandlers.get(value.id);
         if (query) { queryHandlers.delete(value.id); query(value.result ?? null); return; }
+        if (value.handoff !== undefined) {
+          if (value.handoff === 'modal') handOff(value.id);
+          return;
+        }
         settle(value.id, value.error, value.result);
       });
+
+      // Native says the user chose another device or key on one of its sheets: this request goes to the engine's own
+      // authenticator, in place of the vault's answer. The caller's own values are passed on once, as a modal request (a
+      // discovery the user turned into an explicit choice is no longer a background one). The request stays registered until the
+      // engine settles it, so a second foreground request is refused exactly as while the vault was answering, and the engine's
+      // own timeout and the caller's abort signal take over from ours.
+      function handOff(id) {
+        const pending = requests.get(id);
+        if (!pending || pending.handedOff) return;
+        pending.handedOff = true;
+        clearTimeout(pending.timer);
+        pending.signal?.removeEventListener('abort', pending.abort);
+        const options = {publicKey: pending.publicKey, signal: pending.signal};
+        if (pending.mediation !== undefined) options.mediation = pending.mediation;
+        if (pending.conditional) options.mediation = 'optional';
+        const done = settleWith => value => { requests.delete(id); settleWith(value); };
+        let call;
+        try { call = originals[pending.operation](options); } catch (error) { done(pending.reject)(error); return; }
+        Promise.resolve(call).then(done(pending.resolve), done(pending.reject));
+      }
       // The provider routing for this document is native's: delivered as an event by the isolated relay, which holds the
       // announcement of the document-start script native installed (and of every later change). It is a hint, not an
       // authority: the page can forge it, and native refuses any manager request it does not itself serve. `pending` is a
@@ -448,7 +463,7 @@ nonisolated enum WebAuthnScript {
             emit({action: 'cancel', id});
             settle(id, signal.reason ?? fail('AbortError', 'The request was aborted.'));
           };
-          requests.set(id, {resolve, reject, timer, signal, abort, conditional, operation});
+          requests.set(id, {resolve, reject, timer, signal, abort, conditional, operation, publicKey, mediation});
           signal?.addEventListener('abort', abort, {once: true});
           const body = {action: 'request', id, operation, options: marshalled, mediation: mediation || 'optional'};
           try {
@@ -462,7 +477,6 @@ nonisolated enum WebAuthnScript {
         const wrapper = {[operation](options) { return intercept(operation, options); }}[operation];
         Object.defineProperty(proto, operation, {value: wrapper, writable: true, enumerable: true, configurable: true});
       }
-      Object.defineProperty(container, '__wsurfWebAuthn', {value: true});
 
       // Capability answers come from the native side so they track the selected provider and the Mac's real ability to
       // verify the user. Native names the provider explicitly: 'legacy' (the engine keeps its own behaviour) or 'manager'
@@ -494,15 +508,15 @@ nonisolated enum WebAuthnScript {
       }), {});
       // Signal APIs ask the authenticator to update or hide credentials it holds. This authenticator does not implement
       // them, and forwarding them to the engine would address the system store, not the encrypted manager (a credential
-      // ID imported from another provider could be altered at its source). So in manager mode they reject honestly; with
-      // the legacy provider the engine's own behaviour is untouched. An engine that lacks a signal method keeps lacking it.
+      // ID imported from another provider could be altered at its source). So in manager mode they reject honestly; on a
+      // private page the engine's own behaviour is untouched. An engine that lacks a signal method keeps lacking it.
       for (const name of ['signalUnknownCredential', 'signalAllAcceptedCredentials', 'signalCurrentUserDetails']) {
         if (typeof PublicKeyCredential[name] !== 'function') continue;
         const original = PublicKeyCredential[name].bind(PublicKeyCredential);
         const wrapper = {[name]: async function (...args) {
           const state = await queryCapabilities();
           // Only an explicit native "legacy" decision reaches the engine. No answer, a stale or unknown page and the
-          // manager itself all reject: an unavailable bridge is never taken to mean the legacy provider.
+          // manager itself all reject: an unavailable bridge is never taken to mean a private page.
           if (!state || state.provider !== 'legacy') throw fail('NotSupportedError', 'This authenticator does not support credential signals.');
           return original(...args);
         }}[name];

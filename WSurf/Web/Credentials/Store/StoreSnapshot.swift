@@ -10,6 +10,14 @@ nonisolated struct AccountStamp: Equatable, Sendable {
     let digest: Data
 }
 
+/// What one live row decrypted to the last time this grant read it: the SHA-256 of the plaintext and the account decoded from it. A
+/// row whose plaintext has the same digest decodes to the same account, so the next read skips only the JSON decode; it still reads,
+/// hashes and decrypts the row. A write compares a proposed account's canonical JSON with the same digest.
+nonisolated struct DecodedRow: Sendable {
+    let plaintextDigest: Data
+    let account: CredentialAccount
+}
+
 /// The v2 snapshot of one unlocked vault.
 nonisolated struct StoreSnapshot: Sendable {
     let vaultID: UUID

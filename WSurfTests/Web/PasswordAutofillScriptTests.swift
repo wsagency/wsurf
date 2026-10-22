@@ -114,6 +114,30 @@ struct PasswordAutofillScriptTests {
         #expect(sink.body?["token"] as? String == nil)
     }
 
+    @Test(.boundedWebViews, arguments: [##"action="#x""##, ""])
+    func refusesFormsWhoseBaseMovesTheirActionToAnotherOrigin(attribute: String) async throws {
+        let (view, sink) = try await load(#"""
+        <base href="https://other.example/">
+        <form \#(attribute)><input id="username" autocomplete="username"><input id="password" type="password"></form>
+        """#)
+        _ = try await view.callAsyncJavaScript("password.focus();", arguments: [:], in: nil, contentWorld: PasswordAutofill.world)
+        #expect(try await fill(UUID().uuidString, in: view) == 0)
+        #expect(sink.body?["token"] as? String == nil)
+        #expect(try await view.evaluateJavaScript("username.value + password.value") as? String == "")
+    }
+
+    @Test(.boundedWebViews, arguments: [
+        #"<form><input id="username" autocomplete="username"><input id="password" type="password"><button formaction="https://other.example/post">Go</button></form>"#,
+        #"<form id="login"><input id="username" autocomplete="username"><input id="password" type="password"></form><button form="login" formaction="https://other.example/post">Go</button>"#,
+    ])
+    func refusesFormsWhoseSubmitButtonLeavesTheOrigin(markup: String) async throws {
+        let (view, sink) = try await load(markup)
+        _ = try await view.callAsyncJavaScript("password.focus();", arguments: [:], in: nil, contentWorld: PasswordAutofill.world)
+        #expect(try await fill(UUID().uuidString, in: view) == 0)
+        #expect(sink.body?["token"] as? String == nil)
+        #expect(try await view.evaluateJavaScript("username.value + password.value") as? String == "")
+    }
+
     @Test(.boundedWebViews) func componentInputsUseTheirOuterFormAndHostMetadata() async throws {
         let (view, sink) = try await load(#"""
         <form id="login" autocomplete="off" onsubmit="window.submitted=true; return false">
@@ -315,10 +339,6 @@ struct PasswordAutofillScriptTests {
         #expect(result as? Int == 1)
     }
 
-    private func setManager(_ on: Bool, in view: BrowserPage) async throws {
-        _ = try await view.callAsyncJavaScript("globalThis.__wsurfPasswords.setCredentialManager(\(on));", arguments: [:], in: nil, contentWorld: PasswordAutofill.world)
-    }
-
     private func fillCode(_ token: String, in view: BrowserPage) async throws -> Int {
         let result = try await view.callAsyncJavaScript(
             "return globalThis.__wsurfPasswords.fill(token,url,login);",
@@ -328,9 +348,8 @@ struct PasswordAutofillScriptTests {
         return try #require(result as? Int)
     }
 
-    @Test(.boundedWebViews) func managerModeFillsALoneVerificationCodeWithoutSubmitting() async throws {
+    @Test(.boundedWebViews) func aLoneVerificationCodeIsFilledWithoutSubmitting() async throws {
         let (view, sink) = try await load(#"<form onsubmit="window.submitted=true; return false"><input id="password" autocomplete="one-time-code"><button>Verify</button></form>"#)
-        try await setManager(true, in: view)
         let token = try await select(in: view, sink: sink)
         #expect(sink.body?["field"] as? String == "totp")
         #expect(try await fillCode(token, in: view) == 1)
@@ -339,21 +358,24 @@ struct PasswordAutofillScriptTests {
         #expect(try await fillCode(token, in: view) == 0, "a token is used once")
     }
 
-    @Test(.boundedWebViews) func aVerificationCodeIsNeverOfferedOrFilledOutsideManagerMode() async throws {
-        let (view, sink) = try await load(#"<form><input id="password" autocomplete="one-time-code"></form>"#)
-        try await setManager(true, in: view)
-        let token = try await select(in: view, sink: sink)
-        try await setManager(false, in: view)
-        #expect(try await fillCode(token, in: view) == 0)
-        #expect(try await view.evaluateJavaScript("password.value") as? String == "")
-    }
-
     @Test(.boundedWebViews) func aCodeNeverLandsInAGroupThatHasAPassword() async throws {
         let (view, sink) = try await load(#"<form><input id="code" autocomplete="one-time-code"><input id="password" type="password"></form>"#)
-        try await setManager(true, in: view)
         let token = try await select(in: view, sink: sink)
         #expect(sink.body?["field"] as? String == "password")
         #expect(try await fillCode(token, in: view) == 0)
         #expect(try await view.evaluateJavaScript("code.value + password.value") as? String == "")
+    }
+
+    @Test(.boundedWebViews) func selectReportsTheFieldKind() async throws {
+        let (view, sink) = try await load(#"""
+        <form><input id="username" autocomplete="username"><input id="password" type="password" autocomplete="current-password"></form>
+        <form><input id="code" autocomplete="one-time-code"></form>
+        """#)
+        for (id, kind) in [("username", "username"), ("password", "current-password"), ("code", "one-time-code")] {
+            sink.selections = []
+            _ = try await view.callAsyncJavaScript("document.getElementById(id).focus();", arguments: ["id": id], in: nil, contentWorld: PasswordAutofill.world)
+            #expect(await waitUntil { !sink.selections.isEmpty }, "\(id) is offered suggestions")
+            #expect(sink.selections.last?["kind"] as? String == kind, "\(id) reports its kind, which decides whether typing may start a search")
+        }
     }
 }

@@ -12,8 +12,8 @@ final class FaviconWatcher {
 
     @MainActor
     func install(in page: BrowserPage, onChange: @escaping () -> Void) {
-        page.installScript(Self.script, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        page.addScriptMessageHandler(name: Self.handlerName, in: .page) { message in
+        page.installScript(Self.script, in: BrowserPage.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        page.addScriptMessageHandler(name: Self.handlerName, in: BrowserPage.servicesWorld) { message in
             guard message.frameInfo.isMainFrame else { return }
             onChange()
         }

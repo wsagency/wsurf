@@ -100,7 +100,7 @@ private struct DownloadFlightMark: View {
         Image(systemName: "arrow.down.circle.fill")
             .font(.system(size: SidebarMetrics.controlHeight - 6, weight: .semibold))
             .foregroundStyle(Theme.accent)
-            .background(Circle().fill(.white).padding(3))
+            .background(Circle().fill(Theme.onAccent).padding(3))
             .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
             .scaleEffect(scale)
             .opacity(progress > 0.85 ? (1 - progress) / 0.15 : 1)

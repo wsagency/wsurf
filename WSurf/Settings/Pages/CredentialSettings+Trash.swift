@@ -16,6 +16,10 @@ extension RecordSubject {
             "Passkey"
         case .metadata:
             "Details"
+        case .note:
+            "Notes"
+        case .secureItem:
+            "Cards and other items"
         }
     }
 }
@@ -56,13 +60,19 @@ extension CredentialSettings {
             items: [.init(value: false, label: "Active"), .init(value: true, label: "Trash")],
             selection: showsTrash,
             onSelect: { next in
+                if !next {
+                    leaveTrash()
+                }
+                if next != showsTrash {
+                    selection.reset()
+                }
                 showsTrash = next
                 if next {
                     run { try await model.loadTrash() }
                 }
             }
         )
-        .fixedSize()
+        .frame(width: 176)
     }
 
     /// One vault's Trash, as the model lists it. A permanent delete is confirmed here and then needs a fresh passkey
@@ -72,6 +82,7 @@ extension CredentialSettings {
             title: "Trash",
             symbol: "trash",
             footnote: "Removed credentials stay here, encrypted, with their earlier versions, until you delete them permanently.",
+            isLongList: true,
             accessory: {
                 HStack(spacing: 10) {
                     listSwitch
@@ -83,25 +94,15 @@ extension CredentialSettings {
                 }
             },
             content: {
+                CredentialPageNotice(model: model, undo: { run { await model.undo() } })
+                if model.markedCount > 0 {
+                    markBar
+                }
                 if model.trashTotal == 0 {
                     SettingsEmptyState(symbol: "trash", title: "Trash is empty", caption: "Credentials you remove can be restored from here.")
                 }
                 ForEach(model.trashItems) { item in
-                    VStack(alignment: .leading, spacing: 6) {
-                        DetailRow(verbatimTitle: item.label, verbatimCaption: item.detail) {
-                            HStack(spacing: 8) {
-                                Button("Restore") { run { await model.restore(entryID: item.id) } }
-                                    .accessibilityLabel("Restore \(item.label)")
-                                Button("Delete…", role: .destructive) { model.requestPurge(entryIDs: [item.id], emptyAll: false) }
-                                    .accessibilityLabel("Delete \(item.label) permanently")
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(model.isBusy)
-                        }
-                        if let blocked = model.restoreBlocked, blocked.entryID == item.id {
-                            restoreBlockedRow(blocked)
-                        }
-                    }
+                    trashRow(item)
                     RowSeparator()
                 }
                 if model.trashHasMore {
@@ -117,6 +118,13 @@ extension CredentialSettings {
                 AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .password)
             }
         )
+        .background {
+            CredentialKeyboardHost(
+                selection: selection, inTrash: true, perform: performTrash, undo: { run { await model.undo() } },
+                redo: { run { await model.redo() } }, undoTitle: { model.undoMenuTitle }, redoTitle: { model.redoMenuTitle }
+            )
+        }
+        .background { CredentialTrashRowsSync(model: model, selection: selection) }
         .confirmationDialog(
             "Delete Permanently?",
             isPresented: Binding(get: { model.pendingPurge != nil && !model.isBusy }, set: { _ in }),
@@ -129,6 +137,87 @@ extension CredentialSettings {
         } message: { pending in
             purgeMessage(pending)
         }
+    }
+
+    private func trashRow(_ item: TrashItem) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            DetailRow(verbatimTitle: item.label, verbatimCaption: item.detail) {
+                HStack(spacing: 8) {
+                    Button("Restore") { run { await model.restore(entryID: item.id) } }
+                        .accessibilityLabel("Restore \(item.label)")
+                    Button("Delete…", role: .destructive) { model.requestPurge(entryIDs: [item.id], emptyAll: false) }
+                        .accessibilityLabel("Delete \(item.label) permanently")
+                }
+                .buttonStyle(.bordered)
+                .disabled(model.isBusy)
+            }
+            if let blocked = model.restoreBlocked, blocked.entryID == item.id {
+                restoreBlockedRow(blocked)
+            }
+        }
+        .credentialRowSelection(selection, id: item.id, remove: { markForDeletion([item.id]) }, removeName: "Delete Permanently")
+    }
+
+    /// Shown while X has marked entries: they are hidden, and leaving the Trash deletes them with one passkey or Touch ID prompt. There
+    /// is no dialog; this is the warning, and Undo shows them again.
+    private var markBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(model.markedCount.formatted()) item(s) will be deleted permanently when you leave Trash. You’ll confirm with an unlock passkey.")
+                .font(Theme.Font.row)
+            Text(verbatim: markWarning)
+                .font(Theme.Font.label)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Button("Delete Now", role: .destructive) {
+                    withWindow { window in await model.commitMarked(in: window) }
+                }
+                Button("Undo") { run { await model.undo() } }
+            }
+            .buttonStyle(.bordered)
+            .disabled(model.isBusy)
+        }
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .contain)
+    }
+
+    /// What a delete does not reach, as the confirmation of a single delete says.
+    private var markWarning: String {
+        var parts = [String(localized: "This removes the items from the vault only. It can’t reach copies of the vault saved elsewhere, such as backups.")]
+        if let backup = model.manager?.preMigrationBackup {
+            parts.append(String(localized: "A copy from before the vault was upgraded still exists at \(backup.path) and still holds them; delete it yourself if you want it gone."))
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private func markForDeletion(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        let next = selection.cursorAfterRemoving(ids)
+        model.markForDeletion(entryIDs: ids)
+        selection.clear()
+        selection.place(cursor: next)
+    }
+
+    /// What a key does in the Trash. X marks the selection (else the cursor row) for deletion; Return does nothing, as there is no editor.
+    private func performTrash(_ command: CredentialListKeys.Command) {
+        switch command {
+        case .move(let delta, let extending):
+            selection.moveCursor(by: delta, extending: extending)
+        case .toggle:
+            selection.toggleCursor()
+        case .clear:
+            selection.clear()
+        case .remove:
+            markForDeletion(selection.targets)
+        case .open, .none:
+            break
+        }
+    }
+
+    /// Leaving the Trash deletes what X marked there, with one passkey or Touch ID prompt. A lock, a quit, a closed page or another
+    /// vault deletes nothing: the entries stay in the Trash.
+    func leaveTrash() {
+        guard showsTrash, model.markedCount > 0 else { return }
+        withWindow { window in await model.commitMarked(in: window) }
     }
 
     /// The only two things a blocked restore offers, in the model's own order. Neither can restore under another id or
@@ -174,5 +263,19 @@ extension CredentialSettings {
             parts.append(String(localized: "A copy from before the vault was upgraded still exists at \(backup.path) and still holds them; delete it yourself if you want it gone."))
         }
         return Text(verbatim: parts.joined(separator: " "))
+    }
+}
+
+/// Tells the selection which Trash entries are listed. A view of its own: it reads the Trash, and the page's selection reads stay out
+/// of the page.
+private struct CredentialTrashRowsSync: View {
+    let model: CredentialSettingsModel
+    let selection: CredentialSelection
+
+    var body: some View {
+        let ids = model.trashItems.map(\.id)
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onChange(of: ids, initial: true) { selection.show(ids) }
     }
 }

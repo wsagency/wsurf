@@ -331,7 +331,7 @@ struct SiteNameTests {
 /// real destination.
 @MainActor
 struct SearchEngineHostTests {
-    private let settings = BrowserSettings(defaults: UserDefaults(suiteName: "SearchEngineHostTests.\(UUID())")!)
+    private let settings = BrowserSettings(defaults: UserDefaults(suiteName: AppDatabase.defaultsSuite("SearchEngineHostTests.\(UUID())"))!)
 
     @Test(arguments: [
         "duckduckgo.com",

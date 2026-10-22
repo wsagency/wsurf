@@ -40,6 +40,33 @@ struct SiteSettingsIndexTests {
         #expect(found[0].keepsActive)
     }
 
+    @Test func explicitAskCountsAsAChangedSite() {
+        let permissions = store()
+        permissions.setAssistantDefault(.control)
+        permissions.setAssistantAccess(.ask, for: "https://example.com")
+
+        let found = entries(permissions)
+        #expect(found.count == 1)
+        #expect(found[0].assistantAccess == .ask)
+        #expect(found[0].summary == "assistant asks first")
+    }
+
+    @Test func theDefaultAloneListsNoWebsite() {
+        let permissions = store()
+        permissions.setAssistantDefault(.control)
+
+        #expect(entries(permissions).isEmpty)
+    }
+
+    @Test func aWebsiteBackOnTheDefaultDropsOutOfTheList() {
+        let permissions = store()
+        permissions.setAssistantAccess(.readOnly, for: "https://example.com")
+        #expect(entries(permissions).count == 1)
+
+        permissions.setAssistantAccess(nil, for: "https://example.com")
+        #expect(entries(permissions).isEmpty)
+    }
+
     @Test func turningAutomaticPictureOffAloneStillGetsARow() {
         let permissions = store()
         permissions.setAllowsAutomaticPicture(false, for: "https://example.com")

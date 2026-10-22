@@ -150,6 +150,7 @@ extension ExtensionManager {
         completionHandler: @escaping (Set<URL>, Date?) -> Void
     ) {
         let name = extensionContext.webExtension.displayName ?? extensionContext.uniqueIdentifier
+        let id = extensionContext.uniqueIdentifier
         guard let window = permissionWindow(for: tab), let nativeWindow = window.nativeWindow else {
             completionHandler([], nil)
             return
@@ -160,7 +161,8 @@ extension ExtensionManager {
                 return
             }
             let granted = await ExtensionConsent.confirmRuntimeURLAccess(name: name, urls: urls, in: nativeWindow)
-            completionHandler(self.owns(window) && granted ? urls : [], nil)
+            completionHandler(self.owns(window) && granted ? self.withoutBlockedWebsites(urls, id: id) : [], nil)
+            self.reapplyBlocks(id: id)
         }
     }
 
@@ -172,6 +174,7 @@ extension ExtensionManager {
         completionHandler: @escaping (Set<WKWebExtension.MatchPattern>, Date?) -> Void
     ) {
         let name = extensionContext.webExtension.displayName ?? extensionContext.uniqueIdentifier
+        let id = extensionContext.uniqueIdentifier
         guard let window = permissionWindow(for: tab), let nativeWindow = window.nativeWindow else {
             completionHandler([], nil)
             return
@@ -187,7 +190,8 @@ extension ExtensionManager {
                 matchPatterns: matchPatterns,
                 in: nativeWindow
             )
-            completionHandler(self.owns(window) && granted ? matchPatterns : [], nil)
+            completionHandler(self.owns(window) && granted ? self.withoutBlockedWebsites(matchPatterns, id: id) : [], nil)
+            self.reapplyBlocks(id: id)
         }
     }
 
@@ -205,14 +209,16 @@ extension ExtensionManager {
         for context: WKWebExtensionContext,
         completionHandler: @escaping ((any Error)?) -> Void
     ) {
+        let id = context.uniqueIdentifier
         if let tab = action.associatedTab as? ExtensionTabAdapter {
             guard let browser = tab.browser, let window = tab.windowAdapter,
-                  window.browser === browser, owns(window),
-                  present(action, for: context.uniqueIdentifier, in: browser) else {
+                  window.browser === browser, owns(window), !blocksAction(of: id, for: tab),
+                  present(action, for: id, in: browser) else {
                 completionHandler(ExtensionWindowError.unavailable)
                 return
             }
-        } else if !present(action, for: context.uniqueIdentifier, in: nil) {
+        } else if blocksAction(of: id, for: preferredWindowAdapter?.browser?.activeTab.map { adapter(for: $0) })
+            || !present(action, for: id, in: nil) {
             completionHandler(ExtensionWindowError.unavailable)
             return
         }

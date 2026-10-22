@@ -98,7 +98,9 @@ nonisolated struct OpenAIMCPApproval: Sendable {
             }
             return nil
         }.joined(separator: "\n")
-        let accepted = text == "Q: \(question)\nA: \(Self.approve)"
+        // The model sees the transcript AgentQuestionModel writes, with every question and answer on one line, so the reply to
+        // match is that form: the question has line breaks of its own, and the raw text would never match, denying every call.
+        let accepted = text == "\(AgentQuestionModel.questionMark)\(AgentQuestionModel.oneLine(question))\n\(AgentQuestionModel.answerMark)\(Self.approve)"
         return ["type": "mcp_approval_response", "approval_request_id": .string(id), "approve": .bool(accepted)]
     }
 

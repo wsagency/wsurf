@@ -283,6 +283,7 @@ struct SettingsNavigator: View {
                     }
                 }
             }
+            .glassGroup()
             .padding(.vertical, 10)
         }
         .scrollBounceBehavior(.basedOnSize)
@@ -316,6 +317,7 @@ struct SettingsNavigator: View {
                         categoryList
                     }
                 }
+                .glassGroup()
                 .padding(.horizontal, 10)
                 .padding(.bottom, 14)
             }

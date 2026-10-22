@@ -16,7 +16,6 @@ final class GeolocationBridge: NSObject {
     /// the browser coordinator so a retired page can never claim a request.
     var tabResolver: ((BrowserPage) -> BrowserTab?)?
 
-    private static let world = WKContentWorld.page
     private let manager = CLLocationManager()
 
     private struct Request {
@@ -39,10 +38,11 @@ final class GeolocationBridge: NSObject {
 
     // MARK: - Installation
 
+    /// WebKit's own geolocation is reached only through a private delegate hook and could not be verified without location
+    /// access, so the page gets this stand-in (the one page-world script left here), reached through `PageStandInRelay`.
     @MainActor
     func install(in page: BrowserPage) {
-        page.installScript(Self.scriptSource, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        page.addScriptMessageHandler(name: Self.handlerName, in: Self.world) { [weak self] message in
+        PageStandInRelay.install(Self.scriptSource, name: Self.handlerName, in: page) { [weak self] message in
             guard let self, message.frameInfo.isMainFrame,
                   let parsed = Self.parse(message.body) else { return }
             self.handle(type: parsed.type, jsID: parsed.jsID, message: message)
@@ -53,9 +53,9 @@ final class GeolocationBridge: NSObject {
 
     nonisolated static let scriptSource = """
         (function () {
-          var send = globalThis.__wsurfSend;
-          if (typeof send !== 'function' || globalThis.__wsurfGeo) { return; }
-          var post = function (m) { send('wsurfgeo', m); };
+          var Custom = CustomEvent, dispatch = EventTarget.prototype.dispatchEvent;
+          var stringify = JSON.stringify, parse = JSON.parse;
+          var post = function (m) { dispatch.call(document, new Custom('wsurfgeo', { detail: stringify(m) })); };
           var nextId = 1;
           var pending = {};
           var geo = {
@@ -76,25 +76,21 @@ final class GeolocationBridge: NSObject {
             }
           };
           Object.defineProperty(navigator, 'geolocation', { value: geo, configurable: true });
-          window.__wsurfGeo = {
-            position: function (id, coords, timestamp) {
-              var p = pending[id];
-              if (!p) { return; }
-              if (!p.watch) { delete pending[id]; }
-              try { p.success({ coords: coords, timestamp: timestamp }); } catch (e) {}
-            },
-            failure: function (id, code, message) {
-              var p = pending[id];
-              if (!p) { return; }
-              if (!p.watch) { delete pending[id]; }
-              if (p.error) {
-                try {
-                  p.error({ code: code, message: message,
-                            PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3 });
-                } catch (e) {}
-              }
+          document.addEventListener('wsurfgeo-answer', function (event) {
+            var m;
+            try { m = parse(event.detail); } catch (e) { return; }
+            var p = m && pending[m.id];
+            if (!p) { return; }
+            if (!p.watch) { delete pending[m.id]; }
+            if (m.type === 'position') {
+              try { p.success({ coords: m.coords, timestamp: m.timestamp }); } catch (e) {}
+            } else if (m.type === 'failure' && p.error) {
+              try {
+                p.error({ code: m.code, message: m.message,
+                          PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3 });
+              } catch (e) {}
             }
-          };
+          });
         })();
         """
 
@@ -329,22 +325,18 @@ final class GeolocationBridge: NSObject {
                 await fail(request, code: 1, message: "Permission denied")
                 continue
             }
-            _ = try? await page.callAsyncJavaScript(
-                "globalThis.__wsurfGeo?.position(id, coords, timestamp);",
-                arguments: ["id": request.jsID, "coords": coords,
-                            "timestamp": Int(location.timestamp.timeIntervalSince1970 * 1000), ],
-                in: request.frame, contentWorld: Self.world
+            await PageStandInRelay.answer(
+                ["type": "position", "id": request.jsID, "coords": coords,
+                 "timestamp": Int(location.timestamp.timeIntervalSince1970 * 1000), ],
+                name: Self.handlerName, in: page, frame: request.frame
             )
         }
     }
 
     private func fail(_ request: Request, code: Int, message: String) async {
         guard await isCurrent(request), let page = request.page else { return }
-        _ = try? await page.callAsyncJavaScript(
-            "globalThis.__wsurfGeo?.failure(id, code, message);",
-            arguments: ["id": request.jsID, "code": code, "message": message],
-            in: request.frame, contentWorld: Self.world
-        )
+        await PageStandInRelay.answer(["type": "failure", "id": request.jsID, "code": code, "message": message],
+                                      name: Self.handlerName, in: page, frame: request.frame)
     }
 }
 

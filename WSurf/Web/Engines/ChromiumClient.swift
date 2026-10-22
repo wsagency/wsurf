@@ -640,6 +640,9 @@ final class ChromiumClient {
         let callback = raw.assumingMemoryBound(to: cef_media_access_callback_t.self)
         if allow {
             callback.pointee.cont?(callback, mediaMask)
+            if mediaMask & UInt32(CEF_MEDIA_PERMISSION_DESKTOP_VIDEO_CAPTURE.rawValue) != 0 {
+                page?.displayCaptureStarted?()
+            }
         } else {
             callback.pointee.cancel?(callback)
         }

@@ -48,6 +48,9 @@ final class BrowserProfileContext {
         settings: settings
     )
     lazy var history = HistoryStore(database: database)
+    lazy var tabArchive = TabArchive(database: database)
+    /// Nil in a private window: notes about the person are never kept there.
+    lazy var assistantFacts: AssistantFacts? = profile.isPrivate ? nil : AssistantFacts(database: database, settings: modelSettings)
     lazy var conversationLog = ConversationLog(database: database)
     lazy var extensions = ExtensionManager(profile: profile, dataStore: dataStore)
 
@@ -76,19 +79,6 @@ final class BrowserProfileContext {
         }
         webViewPool = WebViewPool(dataStore: dataStore, settings: settings, contentBlocker: contentBlocker)
         settings.onContentBlockingChanged = { [weak contentBlocker] in contentBlocker?.refresh() }
-        var provider = settings.passwordProvider
-        settings.onPasswordProviderChanged = { [weak self] in
-            // Synchronous on purpose: no pending request, ceremony or account pick of the old provider may outlive the switch.
-            guard let self else { return }
-            let previous = provider
-            provider = self.settings.passwordProvider
-            if previous == .credentialManager {
-                CredentialManager.lock(profileID: self.profile.id, reason: .manual)
-            }
-            WebAuthnAdapter.providerChanged(in: self)
-            AutofillSuggestions.shared.providerChanged(in: self)
-            PasswordAutofill.shared.providerChanged(in: self)
-        }
         sitePermissions.onEngineChanged = { [weak self] origin in
             guard let self, !self.privateSessionEnded else { return }
             for browser in self.browsers.allObjects
@@ -100,6 +90,14 @@ final class BrowserProfileContext {
                           browser.sessionClosedAt == nil
                     else { return }
                     await browser.applyStoredEngine(to: origin)
+                }
+            }
+        }
+        sitePermissions.onAssistantAccessChanged = { [weak self] in
+            guard let self else { return }
+            for browser in self.browsers.allObjects where browser.context === self && browser.sitePermissions === self.sitePermissions {
+                for tab in browser.tabs {
+                    tab.assistantAccess.onPolicyChanged?()
                 }
             }
         }

@@ -108,6 +108,7 @@ struct VoiceGlyph: View {
     var orbSize: CGFloat = 14
     @State private var pulsing = false
     @Environment(\.chromeIsLight) private var chromeIsLight
+    @Environment(\.windowColorScheme) private var windowColorScheme
 
     var body: some View {
         glyph
@@ -168,7 +169,7 @@ struct VoiceGlyph: View {
     }
 
     private var style: AnyShapeStyle {
-        if let override = Theme.controlOverride {
+        if let override = Theme.controlOverride(in: windowColorScheme) {
             return AnyShapeStyle(override)
         }
         return switch state {
@@ -177,7 +178,7 @@ struct VoiceGlyph: View {
         case .executing:
             AnyShapeStyle(Theme.accent)
         case .idle:
-            ChromeInk.glyph(onLight: chromeIsLight, hovering: isHighlighted)
+            ChromeInk.glyph(onLight: chromeIsLight, windowScheme: windowColorScheme, hovering: isHighlighted)
         }
     }
 }

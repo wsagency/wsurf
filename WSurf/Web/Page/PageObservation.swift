@@ -42,6 +42,14 @@ final class PageObservation {
 }
 
 extension PageDriver {
+    /// What an action returns once the page has settled. The in-app assistant gets a fresh snapshot of the page. An MCP
+    /// connection gets the status line only: it builds a compact report of what changed from digests taken around the action.
+    enum FeedbackMode: Sendable { case snapshot, delta }
+
+    @TaskLocal static var feedbackMode = FeedbackMode.snapshot
+    /// A ref stays valid for as long as its document does: each observation keeps the refs earlier ones listed for the same
+    /// document. Set for MCP calls; the in-app assistant keeps the refs of its latest observation only.
+    @TaskLocal static var accumulatesRefs = false
     @TaskLocal static var outputBudget = PageOutputBudget()
     @TaskLocal static var expectedObservation: String?
     static let observations = NSMapTable<BrowserPage, PageObservation>(keyOptions: .weakMemory, valueOptions: .strongMemory)
@@ -50,12 +58,14 @@ extension PageDriver {
         observations.object(forKey: view)
     }
 
-    static func validateObservation(in view: BrowserPage, ref: Int? = nil) async -> Bool {
+    /// `inspectable` also accepts refs only `findElements` registered. It exists for the one capture path that checks
+    /// development access itself; every action keeps the strict `matchesRef` check.
+    static func validateObservation(in view: BrowserPage, ref: Int? = nil, inspectable: Bool = false) async -> Bool {
         guard let prior = observation(in: view), ref.map({ prior.refs.contains($0) }) ?? true,
             expectedObservation == nil || expectedObservation == prior.id,
             await selectedFrameIsLive(in: view)
         else { return false }
-        let refState = ref.map { "window.__wsurf?.matchesRef(\($0)) ? 'valid' : 'changed'" } ?? "'valid'"
+        let refState = ref.map { "window.__wsurf?.\(inspectable ? "inspectableRef" : "matchesRef")(\($0)) ? 'valid' : 'changed'" } ?? "'valid'"
         let value =
             try? await view.evaluateJavaScript(
                 "[window.__wsurf?.documentID || '', window.__wsurfSnapshot || '', location.href, \(refState)]",
@@ -65,6 +75,13 @@ extension PageDriver {
         return await selectedFrameIsLive(in: view)
     }
 
+    /// Refusal for a ref that failed validation. Only an observation that is still current and never listed the ref
+    /// gets the specific message; every other failure returns `otherwise`.
+    static func referenceFailureMessage(ref: Int, in view: BrowserPage, otherwise: String = staleMessage) async -> String {
+        guard let current = observation(in: view), !current.refs.contains(ref), await validateObservation(in: view) else { return otherwise }
+        return "[\(ref)] was not listed in that observation. Use a ref it listed, or readPage with lookingFor to find the control."
+    }
+
     static func prepareAction(ref: Int, in view: BrowserPage) async -> String? {
         let deadline = ContinuousClock.now + .seconds(1)
         var previousBounds: [Double]?
@@ -72,7 +89,7 @@ extension PageDriver {
         var samples = 0
         var lastError = "The control did not become stable. Read the page again."
         repeat {
-            guard await validateObservation(in: view, ref: ref) else { return staleMessage }
+            guard await validateObservation(in: view, ref: ref) else { return await referenceFailureMessage(ref: ref, in: view) }
             let result = await evaluateJSON(
                 scripted(
                     """

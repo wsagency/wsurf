@@ -4,12 +4,11 @@
 
 import AppKit
 
+/// Which variant of the theme the window shows: the Mac's own setting, or always light or dark.
 enum AppearanceMode: String, CaseIterable, Identifiable {
     case system
     case light
     case dark
-    case lightCalm
-    case darkCalm
 
     var id: String {
         rawValue
@@ -18,15 +17,11 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
     var label: LocalizedStringResource {
         switch self {
         case .system:
-            "Auto"
+            "System"
         case .light:
             "Light"
         case .dark:
             "Dark"
-        case .lightCalm:
-            "Light Calm"
-        case .darkCalm:
-            "Dark Calm"
         }
     }
 
@@ -34,28 +29,10 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
         switch self {
         case .system:
             nil
-        case .light, .lightCalm:
+        case .light:
             NSAppearance(named: .aqua)
-        case .dark, .darkCalm:
+        case .dark:
             NSAppearance(named: .darkAqua)
-        }
-    }
-}
-
-enum LoomStyle: String, CaseIterable, Identifiable {
-    case standard
-    case transparent
-
-    var id: String {
-        rawValue
-    }
-
-    var label: LocalizedStringResource {
-        switch self {
-        case .standard:
-            "Standard"
-        case .transparent:
-            "Transparent"
         }
     }
 }
@@ -94,6 +71,12 @@ enum SidebarFontWeight: String, CaseIterable, Identifiable {
         case .bold:
             .bold
         }
+    }
+
+    /// The weight of a title that has to stand out, such as a new tab: never lighter than semibold, and never
+    /// lighter than the weight the user chose.
+    var emphasized: Self {
+        self == .bold ? .bold : .semibold
     }
 
     var appKitWeight: Int {

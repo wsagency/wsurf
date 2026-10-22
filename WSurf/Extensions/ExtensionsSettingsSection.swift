@@ -168,6 +168,14 @@ private struct ExtensionRow: View {
 
                 if let check = manager.updateChecks[record.id] {
                     ExtensionUpdateStatus(check: check)
+                } else if let version = manager.heldUpdate(for: record) {
+                    Button {
+                        Task { await manager.checkForUpdate(id: record.id) }
+                    } label: {
+                        Tag("Update needs approval")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Version \(version) asks for more access.")
                 } else if hovering, !record.version.isEmpty {
                     Text(verbatim: record.version)
                         .font(Theme.Font.caption)

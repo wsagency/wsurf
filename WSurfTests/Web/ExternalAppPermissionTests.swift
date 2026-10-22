@@ -99,9 +99,9 @@ struct ExternalAppPermissionTests {
     @Test func oldPermissionFilesStillLoad() throws {
         let file = URL.temporaryDirectory.appending(path: "ExternalAppTests-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: file) }
-        try Data("{\"assistantAccess\":{\"https://slack.com\":\"control\"}}".utf8).write(to: file)
+        try Data("{\"assistantAccess\":{\"https://slack.com\":\"deny\"}}".utf8).write(to: file)
         let store = SitePermissions(storageURL: file)
-        #expect(store.assistantAccess(for: origin) == .control)
+        #expect(store.assistantAccess(for: origin) == .deny)
         #expect(store.externalApps(for: origin).isEmpty)
     }
 

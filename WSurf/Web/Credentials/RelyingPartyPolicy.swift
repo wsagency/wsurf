@@ -5,7 +5,7 @@ import Darwin
 import Foundation
 
 nonisolated enum RelyingPartyPolicy {
-    private enum PolicyError: Error {
+    enum PolicyError: Error {
         case invalidOrigin
         case invalidRelyingParty
         case suffixListUnavailable
@@ -74,6 +74,17 @@ nonisolated enum RelyingPartyPolicy {
         guard rpLabels.count > suffixLabels else { throw PolicyError.invalidRelyingParty }
 
         return relyingParty
+    }
+
+    /// The registrable domain of `host`: its public suffix and the one label before it (`example.co.uk` for `www.example.co.uk`, and
+    /// `a.github.io` for `a.github.io`, since `github.io` is itself a suffix). `nil` for an address, for a name that is no more than a
+    /// public suffix, and when the bundled suffix list can't be read, so a caller falls back to the exact host.
+    static func registrableDomain(of host: String) -> String? {
+        guard let suffixRules, let canonical = canonicalDomain(host) else { return nil }
+        let labels = domainLabels(canonical)
+        let suffixLabels = suffixRules.publicSuffixLabelCount(for: canonical)
+        guard labels.count > suffixLabels else { return nil }
+        return labels.suffix(suffixLabels + 1).joined(separator: ".")
     }
 
     private static func canonicalRelyingParty(_ input: String) -> String? {

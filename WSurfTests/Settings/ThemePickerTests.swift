@@ -10,7 +10,7 @@ import Testing
 
 struct ThemePickerTests {
     @Test func tintDefaultsPreserveOptOutsUntilSettingsAreReset() throws {
-        let name = "TintDefaultsTests.\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("TintDefaultsTests.\(UUID().uuidString)")
         let suite = try #require(UserDefaults(suiteName: name))
         defer { suite.removePersistentDomain(forName: name) }
 
@@ -31,7 +31,7 @@ struct ThemePickerTests {
     }
 
     @Test func choosingAModePersistsIt() throws {
-        let name = "ThemePickerTests.\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("ThemePickerTests.\(UUID().uuidString)")
         let suite = try #require(UserDefaults(suiteName: name))
         let previousAppearance = NSApp.appearance
         defer {
@@ -41,52 +41,55 @@ struct ThemePickerTests {
 
         let settings = BrowserSettings(defaults: suite)
         for mode in AppearanceMode.allCases {
-            settings.appearance = mode
-            #expect(BrowserSettings(defaults: suite).appearance == mode)
+            settings.colorMode = mode
+            #expect(BrowserSettings(defaults: suite).colorMode == mode)
         }
     }
 
-    @Test func windowStyleDefaultsToStandardAndPersists() throws {
-        let suite = try #require(UserDefaults(suiteName: "WebsiteColorTests.\(UUID().uuidString)"))
-        defer { suite.removePersistentDomain(forName: suite.description) }
-
-        #expect(BrowserSettings(defaults: suite).loomStyle == .standard)
-        BrowserSettings(defaults: suite).loomStyle = .transparent
-        #expect(BrowserSettings(defaults: suite).loomStyle == .transparent)
-    }
-
-    @Test func websiteTintPersistsIndependentlyOfWindowStyle() throws {
-        let suite = try #require(UserDefaults(suiteName: "WebsiteTintTests.\(UUID().uuidString)"))
+    @Test func standardThemeMaterialDefaultsToPlainAndPersists() throws {
+        let suite = try #require(UserDefaults(suiteName: AppDatabase.defaultsSuite("WebsiteColorTests.\(UUID().uuidString)")))
         defer { suite.removePersistentDomain(forName: suite.description) }
 
         let settings = BrowserSettings(defaults: suite)
-        settings.loomStyle = .transparent
+        settings.themeID = "standard"
+        #expect(settings.themeMaterial == .plain)
+        settings.themeMaterial = .glass
+        #expect(BrowserSettings(defaults: suite).themeMaterial == .glass)
+    }
+
+    @Test func websiteTintPersistsIndependentlyOfWindowStyle() throws {
+        let suite = try #require(UserDefaults(suiteName: AppDatabase.defaultsSuite("WebsiteTintTests.\(UUID().uuidString)")))
+        defer { suite.removePersistentDomain(forName: suite.description) }
+
+        let settings = BrowserSettings(defaults: suite)
+        settings.themeID = "standard"
+        settings.themeMaterial = .glass
         settings.matchesWebsiteColor = true
 
         let restored = BrowserSettings(defaults: suite)
-        #expect(restored.loomStyle == .transparent)
+        #expect(restored.themeMaterial == .glass)
         #expect(restored.matchesWebsiteColor)
     }
 
     @Test func legacyWebsiteTintStyleMigratesToStandardWithTintEnabled() throws {
-        let suite = try #require(UserDefaults(suiteName: "WebsiteTintMigrationTests.\(UUID().uuidString)"))
+        let suite = try #require(UserDefaults(suiteName: AppDatabase.defaultsSuite("WebsiteTintMigrationTests.\(UUID().uuidString)")))
         defer { suite.removePersistentDomain(forName: suite.description) }
         suite.set("websiteTint", forKey: "appearance.loomStyle")
 
         let settings = BrowserSettings(defaults: suite)
-        #expect(settings.loomStyle == .standard)
+        #expect(settings.themeMaterial == .plain)
         #expect(settings.matchesWebsiteColor)
     }
 
     @Test func legacyTintOptOutSurvivesAWindowStyleChange() throws {
-        let name = "LegacyTintOptOutTests.\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("LegacyTintOptOutTests.\(UUID().uuidString)")
         let suite = try #require(UserDefaults(suiteName: name))
         defer { suite.removePersistentDomain(forName: name) }
         suite.set(false, forKey: "appearance.websiteColor")
 
         let settings = BrowserSettings(defaults: suite)
         #expect(!settings.matchesWebsiteColor)
-        settings.loomStyle = .transparent
+        settings.themeMaterial = .glass
         #expect(!BrowserSettings(defaults: suite).matchesWebsiteColor)
     }
 }

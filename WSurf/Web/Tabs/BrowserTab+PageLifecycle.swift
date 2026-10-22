@@ -59,6 +59,9 @@ extension BrowserTab {
             provisionalNavigation = nil
         }
         noteDocumentChanged()
+        translation.documentChanged()
+        reader.pageChanged()
+        probeReader()
         noteHoveredLink(nil)
         clearPageActivity()
         if isShowingRealPage, !hasPresentedContent {
@@ -67,6 +70,8 @@ extension BrowserTab {
         holdPageColorUntilLoaded()
         refreshChrome()
         invalidateSessionState()
+        developmentDocumentChanged()
+        dialogs.documentCommitted()
     }
 
     func navigationFinished(_ navigation: PageNavigation?) {
@@ -86,6 +91,8 @@ extension BrowserTab {
         releasePageColorHold()
         refreshPageColor(from: page)
         restoreScrollOffsetIfNeeded()
+        probeReader()
+        offerTranslation()
         onNavigationFinished?(wasRestore || isShowingError)
     }
 
@@ -130,14 +137,26 @@ extension BrowserTab {
         refreshChrome()
     }
 
+    /// Google sign-in completes only in WebKit. The navigations its pages make next (the redirect back to the service that
+    /// asked) stay there: a site set to Chromium would get them without the sign-in and send the tab back to sign in again.
+    /// A navigation the user starts ends the hold. `startedByUser` is false for those the engine asks a decision for.
+    func noteNavigation(to url: URL, startedByUser: Bool) {
+        if SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) {
+            signInEngine = .webKit
+        } else if startedByUser {
+            signInEngine = nil
+        }
+    }
+
     /// Only safe GET navigation is reissued in another engine; submitted requests stay in their original engine.
     func permitsEngineNavigation(_ request: URLRequest, isMainFrame: Bool) -> Bool {
         guard isMainFrame, let url = request.url,
-              SitePermissions.origin(for: url).isEmpty == false,
-              preferredEngine(for: url) != engine,
+              SitePermissions.origin(for: url).isEmpty == false else { return true }
+        noteNavigation(to: url, startedByUser: false)
+        guard preferredEngine(for: url) != engine,
               (request.httpMethod ?? "GET").uppercased() == "GET",
               request.httpBody == nil, request.httpBodyStream == nil else { return true }
-        load(url, transition: pendingTransition)
+        load(url, transition: pendingTransition, startedByUser: false)
         return false
     }
 
@@ -174,28 +193,52 @@ extension BrowserTab {
 
     private func offerChromiumExternalApp(_ url: URL, sourceURL: URL?, sourceFrame: BrowserFrame?) {
         let view = page
-        guard let chromium = view.chromium, let client = chromium.client,
-              let native = client.externalAppSnapshot(for: sourceFrame) else { return }
-        let source = native.sourceIsUnique ? sourceFrame : nil
+        guard let chromium = view.chromium, let client = chromium.client else {
+            ExternalApp.noteDropped(url, .stale)
+            return
+        }
+        let document = committedNavigation
+        let source: BrowserFrame?
+        let requestIsCurrent: () -> Bool
+        if document == nil, sourceFrame == nil {
+            // Nothing committed yet (a fresh tab's first redirect): no document can prove it, and the DevTools frame map
+            // can still be empty (the startup page may commit before Page.enable). No newer main-frame navigation is the
+            // proof, as WebKit's first redirect; the request names no site, so nothing can be remembered.
+            let generation = chromium.mainFrameGeneration
+            source = nil
+            requestIsCurrent = { chromium.mainFrameGeneration == generation }
+        } else {
+            guard let native = client.externalAppSnapshot(for: sourceFrame) else {
+                ExternalApp.noteDropped(url, .stale)
+                return
+            }
+            source = native.sourceIsUnique ? sourceFrame : nil
+            // ponytail: ambiguous initiators bind every live native document until CEF can prove the source.
+            let snapshot = source.map { [$0] } ?? chromium.devTools.frameSnapshot()
+            // DevTools renderer RPCs are suspended by an unrelated pending top-level navigation.
+            requestIsCurrent = {
+                client.isCurrentExternalAppSnapshot(native.documents) && chromium.devTools.isCurrent(snapshot: snapshot)
+            }
+        }
         let candidate = SitePermissions.webOrigin(for: sourceURL)
         let origin = source.map { ChromiumClient.sameOrigin(candidate, $0.securityOrigin) } == true ? candidate : ""
-        let document = committedNavigation
-        // ponytail: ambiguous initiators bind every live native document until CEF can prove the source.
-        let snapshot = source.map { [$0] } ?? chromium.devTools.frameSnapshot()
         Task { [weak self, weak view] in
-            guard let self, !isClosed, let view, liveView === view else { return }
+            guard let self, !isClosed, let view, liveView === view else {
+                ExternalApp.noteDropped(url, .tabClosed)
+                return
+            }
             await ExternalApp.offerToOpen(url, from: origin, policy: externalApps, in: view.window, isCurrent: {
-                // DevTools renderer RPCs are suspended by an unrelated pending top-level navigation.
-                client.isCurrentExternalAppSnapshot(native.documents)
-                    && chromium.devTools.isCurrent(snapshot: snapshot)
-                    && !self.isClosed && self.liveView === view && self.committedNavigation === document
+                requestIsCurrent() && !self.isClosed && self.liveView === view && self.committedNavigation === document
             })
         }
     }
 
     func adopt(_ view: BrowserPage) {
         precondition(view.context === context)
+        translation.documentChanged()
         liveView = view
+        view.dialogs = dialogs
+        dialogs.leaseHolder = { [weak self] in self?.dialogLeaseHolder }
         engine = view.engine
         Self.applyObscuredInsets(to: view)
         fullscreenObservation = view.observe(\.isFullscreen, options: [.new]) { view, _ in
@@ -214,6 +257,10 @@ extension BrowserTab {
         }
         view.onContentProcessTerminated = { [weak self] in self?.contentProcessDidTerminate() }
         view.onHistoryChanged = { [weak self] in self?.refreshChrome() }
+        view.onOpenInChromium = { [weak self, weak view] url in
+            guard let self, let view, !isClosed, liveView === view else { return }
+            onOpenInChromium?(url)
+        }
         view.onLinkHovered = { [weak self, weak view] url in
             guard let view else { return }
             self?.noteHoveredLink(url, modifiers: NSEvent.modifierFlags, at: TabNavigationDelegate.pointer(in: view))
@@ -255,14 +302,15 @@ extension BrowserTab {
             guard let view else { return }
             PageClickWatcher.shared.onClick?(view, point)
         }
-        SiteContentGuard.shared.install(in: view, permissions: sitePermissions, settings: context.settings) { [weak self] url in
-            self?.popups.note(url)
-        }
+        PullToRefreshMonitor.install(in: view)
+        SiteContentGuard.shared.install(in: view, permissions: sitePermissions, settings: context.settings)
         PaymentCardAutofill.shared.install(in: view)
         ContactAutofill.shared.install(in: view)
         PasswordAutofill.shared.install(in: view)
         WebAuthnAdapter.install(in: view)
+        autofillSave.isUnderAssistantControl = { [weak self] in self?.isUnderAssistantControl ?? false }
         AutofillSaveCoordinator.shared.install(in: view, session: autofillSave)
+        InputHistoryCapture.shared.install(in: view) { [weak self] in self?.isUnderAssistantControl ?? false }
         installPageObservations(for: view)
         installPermissionCallbacks(for: view)
         permissions.pageChanged(url: view.url ?? (urlString.isEmpty ? nil : URL(string: urlString)))
@@ -308,6 +356,17 @@ extension BrowserTab {
         microphoneObservation = native.observe(\.microphoneCaptureState, options: [.new, .initial]) { [weak self] view, _ in
             MainActor.assumeIsolated { self?.permissions.setLive(.microphone, view.microphoneCaptureState != .none) }
         }
+        displayCaptureObservation = DisplayCaptureObservation(native) { [weak self] isSharing in
+            self?.notePageActivity(PageActivitySignal(
+                kind: .screenShare, token: DisplayCaptureObservation.token, isActive: isSharing
+            ))
+        }
+    }
+
+    /// Chromium never reports a screen share ending, so one protects the tab for the rest of the document.
+    func noteChromiumDisplayCapture(in view: BrowserPage?) {
+        guard let view, liveView === view else { return }
+        notePageActivity(PageActivitySignal(kind: .screenShare, token: "chromium-display-capture", isActive: true))
     }
 
     private func installPermissionCallbacks(for view: BrowserPage) {
@@ -400,6 +459,7 @@ extension BrowserTab {
             permissions.setLive(.camera, camera)
             permissions.setLive(.microphone, microphone)
         }
+        chromium.displayCaptureStarted = { [weak self, weak view] in self?.noteChromiumDisplayCapture(in: view) }
         chromium.downloadDecision = { [weak self, weak view] download, name, completion in
             guard let self, let view, self.liveView === view, let handler = onChromiumDownload else {
                 completion(.deny)
@@ -427,12 +487,22 @@ extension BrowserTab {
         refreshFavicon()
         measureBandUnderBar()
         invalidateSessionState()
+        readerPageMoved(from: previous)
+        translationPageMoved()
         onSameDocumentNavigation?()
     }
     func contentProcessDidTerminate() {
         guard !isClosed else { return }
         isPlayingAudio = false
+        dialogs.cancelAll()
         onContentProcessTerminated?()
+        // Only a WebKit page can come back from its saved interaction state; a Chromium page
+        // reloads in place, as before, because unloading would drop its back/forward history.
+        if liveView?.webKit != nil, canDiscardWebContent, mayUnloadAfterTermination?() == true {
+            Pipeline.log.notice("web content process died in a background tab; restoring it when shown")
+            unloadUntilShown()
+            return
+        }
         if !processState.shouldReloadAfterUnexpectedTermination() {
             Pipeline.log.error("web content process died twice; leaving the tab alone")
             return

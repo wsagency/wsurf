@@ -32,35 +32,11 @@ nonisolated struct SavedPassword: Codable, Identifiable, Equatable, Sendable {
         return components.string
     }
 
-    var summary: Summary {
-        Summary(id: id, origin: origin, username: username)
-    }
-
-    nonisolated struct Summary: Identifiable, Equatable, Sendable {
-        let id: UUID
-        let origin: String
-        let username: String
-    }
-
     static func generate() throws -> String {
         let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".utf8)
         var bytes = [UInt8](repeating: 0, count: 24)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { throw AutofillVaultError.keychain(errSecNotAvailable) }
         return String(decoding: bytes.map { alphabet[Int($0 & 63)] }, as: UTF8.self)
-    }
-
-    static func merging(_ incoming: Self, into records: [Self]) -> [Self] {
-        var records = records
-        var incoming = incoming
-        if let index = records.firstIndex(where: { $0.id == incoming.id })
-            ?? records.firstIndex(where: { $0.origin == incoming.origin && $0.username == incoming.username }) {
-            incoming.id = records[index].id
-            records[index] = incoming
-            records.removeAll { $0.id != incoming.id && $0.origin == incoming.origin && $0.username == incoming.username }
-        } else {
-            records.append(incoming)
-        }
-        return records
     }
 }
 
@@ -91,15 +67,7 @@ enum PasswordExtensionPolicy {
         }
     }
 
-    static func provider(in records: [InstalledExtension], selectedID: String = "") -> InstalledExtension? {
-        let providers = availableProviders(in: records)
-        return providers.first { $0.id == selectedID } ?? providers.first
-    }
-
-    /// Whether a recognized password extension takes over password filling from WSurf's own store. Only the legacy
-    /// store yields to it; a profile that explicitly chose the credential manager keeps its own filling, and the
-    /// extension stays as independent as it was.
-    static func suppressesNativeFill(provider: PasswordProvider, in records: [InstalledExtension], selectedID: String = "") -> Bool {
-        provider == .legacy && self.provider(in: records, selectedID: selectedID) != nil
+    static func provider(in records: [InstalledExtension]) -> InstalledExtension? {
+        availableProviders(in: records).first
     }
 }

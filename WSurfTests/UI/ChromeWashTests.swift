@@ -25,6 +25,25 @@ struct ChromeWashTests {
         #expect(light.luminance > 0.9)
     }
 
+    /// The inverse row needs the actual color of the sidebar, not just how bright it is.
+    @Test func aWashRemembersTheGroundItWasMeasuredFrom() throws {
+        let slate = NSColor(srgbRed: 0.2, green: 0.25, blue: 0.4, alpha: 1)
+        let sidebar = NSColor(srgbRed: 0.1, green: 0.1, blue: 0.2, alpha: 1)
+
+        #expect(wash(slate, isLight: false).ground == slate)
+        #expect(ChromeWash.of(slate, isLight: false, ground: sidebar).ground == sidebar)
+        let measured = try #require(ChromeWash.of(slate, isLight: false, ground: sidebar).groundColor.usingColorSpace(.sRGB))
+        #expect(abs(measured.blueComponent - 0.2) < 0.001)
+    }
+
+    @Test func aWashWithoutAGroundStandsInWithAGrayOfItsLuminance() throws {
+        for luminance in [0.011, 0.12, 0.5, 0.87] {
+            let stand = ChromeWash(isLight: luminance > 0.5, luminance: luminance).groundColor
+            let rgb = try #require(stand.usingColorSpace(.sRGB))
+            #expect(abs(Double(PageInk.luminance(of: rgb)) - luminance) < 0.002, "luminance \(luminance)")
+        }
+    }
+
     /// The ink follows the page, the way the glyphs already do: a dark website
     /// under a light Mac still gets a light wash.
     @Test func theInkFollowsTheChromeNotTheMac() {

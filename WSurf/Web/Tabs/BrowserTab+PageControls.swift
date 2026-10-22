@@ -11,6 +11,11 @@ extension BrowserTab {
         return scheme != "about" && scheme != SystemPages.scheme
     }
 
+    /// Reload needs an address to load again; WSurf's own pages and an empty tab have none.
+    var canReload: Bool {
+        !urlString.isEmpty && !isShowingSystemPage
+    }
+
     var backList: [PageHistoryItem] {
         guard isMaterialised else { return [] }
         return page.backForwardList.backList
@@ -31,21 +36,37 @@ extension BrowserTab {
         return page.pageZoom
     }
 
+    /// While Reader shows the article, the zoom commands set its text size instead of the website's zoom.
     var isZoomed: Bool {
         _ = zoomChanges
+        if reader.isActive {
+            return context.settings.readerTextSize != ReaderAppearance.defaultTextSize
+        }
         return abs(page.pageZoom - context.settings.pageZoom) > 0.005
             || abs(page.magnification - 1) > 0.005
     }
 
     func zoomIn() {
+        if reader.isActive {
+            context.settings.readerTextSize = ReaderAppearance.larger(than: context.settings.readerTextSize)
+            return
+        }
         setPageZoom(page.pageZoom + TabWebView.zoomStep)
     }
 
     func zoomOut() {
+        if reader.isActive {
+            context.settings.readerTextSize = ReaderAppearance.smaller(than: context.settings.readerTextSize)
+            return
+        }
         setPageZoom(page.pageZoom - TabWebView.zoomStep)
     }
 
     func resetZoom() {
+        if reader.isActive {
+            context.settings.readerTextSize = ReaderAppearance.defaultTextSize
+            return
+        }
         page.magnification = 1
         page.pageZoom = context.settings.pageZoom
         zoomDidChange()

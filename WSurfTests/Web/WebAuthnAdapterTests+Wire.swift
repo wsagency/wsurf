@@ -25,9 +25,16 @@ extension WebAuthnAdapterTests {
 
         for bad: [String: Any] in [
             ["challenge": "not+base64url"], ["challenge": challenge, "timeout": -1], ["challenge": challenge, "userVerification": "maybe"],
-            ["challenge": WebAuthnWire.base64URL(Data(repeating: 0, count: 1_025))],
+            ["challenge": WebAuthnWire.base64URL(Data(repeating: 0, count: 64 * 1_024 + 1))],
         ] {
             #expect(throws: (any Error).self) { try WebAuthnWire.parse(body(bad)) }
+        }
+        // The page script's own BufferSource limit is the largest challenge native takes.
+        let largest = WebAuthnWire.base64URL(Data(repeating: 0, count: 64 * 1_024))
+        if case .assertion(let options) = try WebAuthnWire.parse(body(["challenge": largest])).request.options {
+            #expect(options.challenge.count == 64 * 1_024)
+        } else {
+            Issue.record("a get request parsed as something else")
         }
         #expect(throws: (any Error).self) { try WebAuthnWire.parse(body(["challenge": challenge], operation: "create", mediation: "conditional")) }
         #expect(throws: (any Error).self) { try WebAuthnWire.parse(["id": "", "operation": "get", "options": ["challenge": challenge]]) }
@@ -85,6 +92,26 @@ extension WebAuthnAdapterTests {
         #expect(options.publicKeyAlgorithms == [-7, -257] && options.excludeCredentials == [excluded])
         #expect(options.residentKey == .required && options.userVerification == .required)
         #expect(options.authenticatorAttachment == .platform && options.attestation == .direct && options.extensions.credProps)
+    }
+
+    /// `user.id` is kept up to `WebsitePasskey.userHandleLimit` bytes, well past the 64 WebAuthn recommends, and no further.
+    @Test func wireCarriesUserIDsUpToTheLimit() throws {
+        func parse(userID: Data) throws -> WebAuthnRequest {
+            try WebAuthnWire.parse([
+                "id": "c1", "operation": "create", "mediation": "optional",
+                "options": [
+                    "challenge": WebAuthnWire.base64URL(Data([1])),
+                    "rp": ["name": "Example", "id": "example.com"],
+                    "user": ["id": WebAuthnWire.base64URL(userID), "name": "ada", "displayName": "Ada"],
+                ] as [String: Any],
+            ]).request
+        }
+        for length in [1, 64, 65, 96, 512, WebsitePasskey.userHandleLimit] {
+            let userID = Data((0..<length).map { UInt8(truncatingIfNeeded: $0 &+ 3) })
+            guard case let .creation(options) = try parse(userID: userID).options else { Issue.record("not a creation request"); return }
+            #expect(options.userID == userID, "\(length) bytes")
+        }
+        #expect(throws: WebAuthnWire.Malformed.self) { try parse(userID: Data(repeating: 1, count: WebsitePasskey.userHandleLimit + 1)) }
     }
 
     @Test func nativeFailuresMapToTheDOMExceptionsTheSpecDefines() {

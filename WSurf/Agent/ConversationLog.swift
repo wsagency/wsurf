@@ -120,6 +120,8 @@ final class ConversationLog {
         var stopReason: AgentStopReason?
         var diagnostics = AgentRunDiagnostics()
         var checkpoint: AgentCheckpoint?
+        /// Tabs this task opened. The task shows in their Ask panel too.
+        var openedTabIDs: [UUID] = []
 
         var progressUpdates: [AgentProgressUpdate] {
             checkpoint?.progressUpdates ?? []
@@ -154,6 +156,7 @@ final class ConversationLog {
         var providerID: String?
         var stopReason: AgentStopReason?
         var diagnostics: Data?
+        var openedTabIDs: String?
     }
 
     private nonisolated struct MemoryRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -456,7 +459,15 @@ final class ConversationLog {
     }
 
     func traces(forTab tabID: UUID) -> [TaskTrace] {
-        traces.filter { $0.tabID == tabID }
+        traces.filter { $0.tabID == tabID || $0.openedTabIDs.contains(tabID) }
+    }
+
+    func noteOpenedTab(_ tabID: UUID, taskID: UUID) {
+        guard let index = traces.firstIndex(where: { $0.id == taskID }),
+              traces[index].tabID != tabID, !traces[index].openedTabIDs.contains(tabID)
+        else { return }
+        traces[index].openedTabIDs.append(tabID)
+        scheduleSave(trace: taskID)
     }
 
     func failureCount(forTab tabID: UUID) -> Int {
@@ -504,6 +515,12 @@ final class ConversationLog {
         var moved = false
         for index in traces.indices where traces[index].tabID == tabID {
             traces[index].tabID = newTabID
+            dirtyTraceIDs.insert(traces[index].id)
+            moved = true
+        }
+        for index in traces.indices {
+            guard let position = traces[index].openedTabIDs.firstIndex(of: tabID) else { continue }
+            traces[index].openedTabIDs[position] = newTabID
             dirtyTraceIDs.insert(traces[index].id)
             moved = true
         }
@@ -683,6 +700,7 @@ final class ConversationLog {
                 providerID: record.providerID
             )
             trace.stopReason = record.stopReason
+            trace.openedTabIDs = record.openedTabIDs.flatMap { try? JSONDecoder().decode([UUID].self, from: Data($0.utf8)) } ?? []
             trace.diagnostics = record.diagnostics.flatMap {
                 try? JSONDecoder().decode(AgentRunDiagnostics.self, from: $0)
             } ?? AgentRunDiagnostics()
@@ -754,7 +772,9 @@ final class ConversationLog {
             finishedAt: trace.finishedAt,
             providerID: trace.providerID,
             stopReason: trace.stopReason,
-            diagnostics: try? JSONEncoder().encode(trace.diagnostics)
+            diagnostics: try? JSONEncoder().encode(trace.diagnostics),
+            openedTabIDs: trace.openedTabIDs.isEmpty
+                ? nil : (try? JSONEncoder().encode(trace.openedTabIDs)).map { String(decoding: $0, as: UTF8.self) }
         )
     }
 

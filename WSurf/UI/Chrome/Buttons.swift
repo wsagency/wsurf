@@ -13,9 +13,10 @@ struct QuietIconButton: View {
     let action: () -> Void
 
     @State private var hovering = false
+    @Environment(\.windowColorScheme) private var windowColorScheme
 
     private var ink: AnyShapeStyle {
-        if let override = Theme.controlOverride {
+        if let override = Theme.controlOverride(in: windowColorScheme) {
             return AnyShapeStyle(override)
         }
         if let tint {
@@ -50,6 +51,7 @@ struct ToolbarButton: View {
 
     @State private var hovering = false
     @Environment(\.chromeIsLight) private var chromeIsLight
+    @Environment(\.windowColorScheme) private var windowColorScheme
 
     var body: some View {
         Button(action: action) {
@@ -64,6 +66,7 @@ struct ToolbarButton: View {
         .foregroundStyle(
             ChromeInk.glyph(
                 onLight: chromeIsLight,
+                windowScheme: windowColorScheme,
                 enabled: enabled,
                 hovering: hovering || (isOn && highlightsWhenOn)
             )

@@ -75,8 +75,9 @@ extension BrowserModel {
         let moved = Set(items)
         let rest = reconciledTree().root.filter { !moved.contains($0) }
         let boundary = pinnedBoundary(in: rest, ignoring: [])
-        move(items, into: nil, before: rest.indices.contains(boundary) ? rest[boundary] : nil)
+        // Pin first: a bookmark-less child of a pinned folder would otherwise leave the profile's pins for a moment.
         setPinned(true, for: items)
+        move(items, into: nil, before: rest.indices.contains(boundary) ? rest[boundary] : nil)
     }
 
     func setPinned(_ pinned: Bool, for items: some Sequence<SidebarItem>) {
@@ -149,17 +150,17 @@ extension BrowserModel {
         activeSplit?.contains(tab.id) == true
     }
 
-    func spaceID(of tabID: UUID) -> UUID {
+    func anchorID(of tabID: UUID) -> UUID {
         splits.split(containing: tabID)?.leader ?? tabID
     }
 
-    var activeSpaceID: UUID? {
-        activeTabID.map(spaceID(of:))
+    var activeAnchorID: UUID? {
+        activeTabID.map(anchorID(of:))
     }
 
-    func spaceTabs(_ spaceID: UUID) -> [BrowserTab] {
-        guard let split = splits.splitLed(by: spaceID) else {
-            return tabsByID[spaceID].map { [$0] } ?? []
+    func anchorTabs(_ anchorID: UUID) -> [BrowserTab] {
+        guard let split = splits.splitLed(by: anchorID) else {
+            return tabsByID[anchorID].map { [$0] } ?? []
         }
         return split.tabs.compactMap { tabsByID[$0] }
     }
@@ -248,7 +249,7 @@ extension BrowserModel {
             }
             gather(split.tabs)
         }
-        reconcileSpaces()
+        reconcileAnchors()
         scheduleSave()
     }
 
@@ -291,6 +292,7 @@ extension BrowserModel {
         storedTree = reconciledTree().removing([.tab(tab.id)])
         sidebarDidChange()
         lastVisitID[tab.id] = nil
+        openerByTab[tab.id] = nil
         recentlyActive.removeAll { $0 == tab.id }
         onTabClosed?(tab)
         scheduleSave()
@@ -320,8 +322,9 @@ extension BrowserModel {
         return (try? await webView.evaluateJavaScript(script)) as? Bool ?? false
     }
 
+    /// Pins, and what a pinned folder holds, stay: the person removes those one by one.
     func closeOthers(_ kept: BrowserTab) {
-        close(tabs.filter { $0 !== kept }.map { .tab($0.id) })
+        close(tabs.filter { $0 !== kept && $0.pinID == nil }.map { .tab($0.id) })
     }
 
     func closeActiveTab() {
@@ -347,6 +350,7 @@ extension BrowserModel {
         let pinnedURL: URL?
         let pinnedTitle: String
         let isFavorite: Bool
+        let pinID: UUID?
         let wasActive: Bool
         let folderID: UUID?
         let before: SidebarItem?
@@ -363,6 +367,7 @@ extension BrowserModel {
             pinnedURL = tab.pinnedURL
             pinnedTitle = tab.pinnedTitle
             isFavorite = tab.isFavorite
+            pinID = tab.pinID
             wasActive = model.activeTabID == tab.id
             folderID = model.folder(containing: tab)?.id
             before = model.sidebarTree.successor(of: .tab(tab.id))
@@ -612,21 +617,21 @@ extension BrowserModel {
         foldersByID = Dictionary(folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         sidebarTree = reconciledTree()
         splits = splits.reconciled(against: Set(tabsByID.keys))
-        reconcileSpaces()
+        reconcileAnchors()
     }
 
-    private func reconcileSpaces() {
-        let current = Dictionary(tabs.map { ($0.id, spaceID(of: $0.id)) }, uniquingKeysWith: { first, _ in first })
-        let previous = spaceAnchors
-        spaceAnchors = current
-        guard !previous.isEmpty, let onSpaceAnchorChanged else { return }
+    private func reconcileAnchors() {
+        let current = Dictionary(tabs.map { ($0.id, anchorID(of: $0.id)) }, uniquingKeysWith: { first, _ in first })
+        let previous = tabAnchors
+        tabAnchors = current
+        guard !previous.isEmpty, let onAnchorChanged else { return }
 
         let names = Set(current.values)
         for name in Set(previous.values) where !names.contains(name) {
             let members = previous.filter { $0.value == name }.keys
             let successors = Set(members.compactMap { current[$0] })
             guard successors.count == 1, let successor = successors.first, successor != name else { continue }
-            onSpaceAnchorChanged(name, successor)
+            onAnchorChanged(name, successor)
         }
     }
 

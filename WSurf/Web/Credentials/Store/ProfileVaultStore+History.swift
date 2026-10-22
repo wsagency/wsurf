@@ -35,6 +35,18 @@ nonisolated struct RevisionPage: Sendable {
     let next: Int?
 }
 
+/// A revision with the value it superseded: the canonical JSON of one typed value (`PasswordValue`, `TOTPGenerator`,
+/// `[CredentialNote]` or `MetadataProjection`), selected by `item.subject`. It holds a secret; keep it only in an authorized session.
+nonisolated struct RevisionValue: Equatable, Sendable {
+    let item: RevisionItem
+    let value: Data
+}
+
+nonisolated struct RevisionValuePage: Sendable {
+    let items: [RevisionValue]
+    let next: Int?
+}
+
 nonisolated extension HistoryCounts {
     /// Whether the stored rows of `vaultID` number exactly what this (head-authenticated) count says: three `COUNT(*)` reads, no row decoded.
     func matchesRows(_ db: Database, vaultID: UUID, ordinal: Int) throws -> Bool {
@@ -105,16 +117,35 @@ extension ProfileVaultStore {
     func revisionPage(vaultID: UUID, accountID: UUID, after: Int?, using access: VaultAccess) async throws -> RevisionPage {
         try await readHistory(vaultID, access) { db, grant, _ in
             let page = try Self.pageIDs(db, vaultID: vaultID, kind: .revision, ownerID: accountID, after: after, ordinal: grant.ordinal)
-            let items = try page.ids.map { id -> RevisionItem in
-                try mapIntegrity(grant.ordinal) {
-                    guard let row = try StoreTables.record(db, vaultID: vaultID, recordID: id), row.kind == .revision, row.ownerID == accountID else {
-                        throw CredentialStoreError.malformed
-                    }
-                    let body = try JSONDecoder().decode(RevisionBody.self, from: row.opened(key: grant.dek, ids: grant.ids))
-                    return RevisionItem(id: id, subject: row.subject, version: row.version, recordedAt: body.recordedAt, cause: body.cause)
-                }
-            }
+            let items = try page.ids.map { try Self.revision($0, db, vaultID: vaultID, accountID: accountID, grant: grant).item }
             return RevisionPage(items: items, next: page.next)
+        }
+    }
+
+    /// `revisionPage` with each row's superseded value, for rebuilding the earlier versions of one credential. Same owner guard and
+    /// paging. Only a password, code, notes or details row has a value to apply: any other subject is `malformed`.
+    func revisionValuePage(vaultID: UUID, accountID: UUID, after: Int?, using access: VaultAccess) async throws -> RevisionValuePage {
+        try await readHistory(vaultID, access) { db, grant, _ in
+            let page = try Self.pageIDs(db, vaultID: vaultID, kind: .revision, ownerID: accountID, after: after, ordinal: grant.ordinal)
+            let items = try page.ids.map {
+                try Self.revision($0, db, vaultID: vaultID, accountID: accountID, grant: grant, appliesToAnAccount: true)
+            }
+            return RevisionValuePage(items: items, next: page.next)
+        }
+    }
+
+    /// One revision row of `accountID`, opened. A row of another account or kind is `malformed`, and so is one whose subject
+    /// `applying` could not apply when `appliesToAnAccount`.
+    nonisolated private static func revision(
+        _ id: UUID, _ db: Database, vaultID: UUID, accountID: UUID, grant: VaultGrant, appliesToAnAccount: Bool = false
+    ) throws -> RevisionValue {
+        try mapIntegrity(grant.ordinal) {
+            guard let row = try StoreTables.record(db, vaultID: vaultID, recordID: id), row.kind == .revision, row.ownerID == accountID,
+                !appliesToAnAccount || row.subject.restoresFromEarlierVersions
+            else { throw CredentialStoreError.malformed }
+            let body = try JSONDecoder().decode(RevisionBody.self, from: row.opened(key: grant.dek, ids: grant.ids))
+            let item = RevisionItem(id: id, subject: row.subject, version: row.version, recordedAt: body.recordedAt, cause: body.cause)
+            return RevisionValue(item: item, value: body.value)
         }
     }
 
@@ -140,7 +171,11 @@ extension ProfileVaultStore {
                 throw CredentialStoreError.undeleteBlocked(block)
             }
             let restored = try Self.restoring(entry.body, into: snapshot.accounts)
-            try Self.validate(restored.accounts, blockedOrigins: transaction.opened.head.blockedOrigins)
+            // Every account but the one the entry returns to is the snapshot's own value (`restoring`).
+            let unchanged = try transaction.unchanged(
+                in: Proposal(accounts: restored.accounts, requires: nil, changing: [restored.account.id])
+            )
+            try Self.validate(restored.accounts, blockedOrigins: transaction.opened.head.blockedOrigins, unchanged: unchanged)
             try transaction.restore(entry, account: restored.account, stampsModifiedAt: entry.body.scope == .credential)
             return try transaction.finish()
         }.receipt
@@ -167,7 +202,8 @@ extension ProfileVaultStore {
             try transaction.verifyHistories()  // before the selected row is read or decoded
             let restored = try Self.restoringRevision(db, revisionID, snapshot: snapshot, grant: request.grant)
             return try Self.apply(
-                Proposal(accounts: restored.accounts, requires: nil, restoring: restored.owner), snapshot: snapshot, transaction, request,
+                Proposal(accounts: restored.accounts, requires: nil, restoring: restored.owner, changing: [restored.owner]),
+                snapshot: snapshot, transaction, request,
                 ledgerAttached: ledgerAttached
             )
         }.receipt
@@ -192,7 +228,8 @@ extension ProfileVaultStore {
                         items.append(
                             RemovedIdentifier(
                                 entryID: body.entryID, isTombstone: true, accountID: body.ownerID, exchangeAccountID: body.exchangeAccountID,
-                                exchangeItemID: body.exchangeItemID, passkeyCredentialID: body.passkeyCredentialID, rpID: body.rpID
+                                exchangeItemID: body.exchangeItemID, passkeyCredentialID: body.passkeyCredentialID, rpID: body.rpID,
+                                removedAt: body.purgedAt
                             )
                         )
                     case .account, .revision:
@@ -212,7 +249,7 @@ extension ProfileVaultStore {
         func row(accountID: Data?, itemID: Data?, passkey: WebsitePasskey?) -> RemovedIdentifier {
             RemovedIdentifier(
                 entryID: entryID, isTombstone: false, accountID: body.ownerID, exchangeAccountID: accountID, exchangeItemID: itemID,
-                passkeyCredentialID: passkey?.credentialID, rpID: passkey?.rpID
+                passkeyCredentialID: passkey?.credentialID, rpID: passkey?.rpID, removedAt: body.deletedAt
             )
         }
         switch (body.scope, body.subject) {
@@ -233,7 +270,7 @@ extension ProfileVaultStore {
 
     /// One read under the operation lock: the grant authorized, the vault opened against the entries the session verified, `body` run
     /// on a consistent snapshot.
-    private func readHistory<T>(
+    func readHistory<T>(
         _ vaultID: UUID, _ access: VaultAccess, _ body: (Database, VaultGrant, OpenedVault) throws -> T
     ) async throws -> T {
         _ = try authorizedGrant(vaultID, access)
@@ -317,16 +354,21 @@ extension ProfileVaultStore {
     // MARK: Collision rules (§11.3)
 
     /// The first clash restoring `body` into `accounts` would cause, or `nil`. Pure: nothing is read or written.
-    nonisolated static func block(_ body: TrashEntryBody, among accounts: [CredentialAccount]) throws -> UndeleteBlock? {
+    ///
+    /// `forUndo` is an undo putting back a state the user just had. It keeps every identity rule (the account id, the exporter item,
+    /// a live account that holds the entry as a merged item, an occupied slot, the passkey identity, a missing owner) and drops the two
+    /// rules that refuse a legal duplicate: the same username on the same website, which an editor or an import may create, and a
+    /// live account that only shares the exporter's account id (one export gives every item of it the same one).
+    nonisolated static func block(_ body: TrashEntryBody, among accounts: [CredentialAccount], forUndo: Bool = false) throws -> UndeleteBlock? {
         if body.scope == .account {
             guard let removed = body.snapshot else { throw CredentialStoreError.malformed }
             if accounts.contains(where: { $0.id == removed.id }) {
                 return .idCollision
             }
-            if sharesExchangeID(removed, with: accounts) {
+            if sharesExchangeID(removed, with: accounts, identityOnly: forUndo) {
                 return .exchangeIDCollision
             }
-            if overlaps(username: removed.username, origins: removed.origins, with: accounts) {
+            if !forUndo, overlaps(username: removed.username, origins: removed.origins, with: accounts) {
                 return .originUsernameOverlap
             }
             return try passkeyBlock(removed.passkeys, among: accounts)
@@ -339,6 +381,9 @@ extension ProfileVaultStore {
             let items = itemIDs.compactMap { $0 }
             if accounts.contains(where: { $0.id != owner.id && $0.exchangeItemID.map(items.contains) == true }) {
                 return .exchangeIDCollision
+            }
+            if forUndo {
+                return nil
             }
             return overlaps(username: username, origins: owner.origins, with: accounts, excluding: owner.id) ? .originUsernameOverlap : nil
         }
@@ -357,6 +402,19 @@ extension ProfileVaultStore {
             }
             // A one-time code has no username of its own: it belongs to the owner's login.
             return otherAccountBlock(itemIDs: [body.exchangeItemID], username: owner.username)
+        case .note:
+            _ = try Self.decode([CredentialNote].self, from: value)
+            if owner.notes != nil {
+                return .slotOccupied(.note)
+            }
+            // Notes have no username of their own either: they belong to the owner.
+            return otherAccountBlock(itemIDs: [body.exchangeItemID], username: owner.username)
+        case .secureItem:
+            _ = try Self.decode([SecureItem].self, from: value)
+            if owner.secureItems != nil {
+                return .slotOccupied(.secureItem)
+            }
+            return otherAccountBlock(itemIDs: [body.exchangeItemID], username: owner.username)
         case .passkey:
             let passkey = try Self.decode(WebsitePasskey.self, from: value)
             if let block = try passkeyBlock([passkey], among: accounts) {
@@ -369,11 +427,22 @@ extension ProfileVaultStore {
     }
 
     /// §11.3: any live `exchangeAccountID` or `exchangeItemID` equal to the entry's blocks a whole account (conservative: one exchange
-    /// account owns many items, so this can refuse more than strictly needed; the user removes the live item and retries).
-    nonisolated private static func sharesExchangeID(_ removed: CredentialAccount, with accounts: [CredentialAccount]) -> Bool {
-        accounts.contains {
+    /// account owns many items, so this can refuse more than strictly needed; the user removes the live item and retries). So does a
+    /// live account the entry was merged into (`MergedItemLink`): it holds the item now.
+    ///
+    /// `identityOnly` (an undo) asks only whether a live account claims the same exporter item (the pair of exporter account id and
+    /// item id, which is what the vault itself keeps unique) or holds the entry as a merged item.
+    nonisolated private static func sharesExchangeID(
+        _ removed: CredentialAccount, with accounts: [CredentialAccount], identityOnly: Bool = false
+    ) -> Bool {
+        if identityOnly {
+            guard let identity = try? CredentialExchangeCodec.externalItemID(for: removed) else { return true }
+            return accounts.contains { $0.holdsMergedItem(of: removed) || (try? CredentialExchangeCodec.externalItemID(for: $0)) == identity }
+        }
+        return accounts.contains {
             (removed.exchangeAccountID != nil && $0.exchangeAccountID == removed.exchangeAccountID)
                 || (removed.exchangeItemID != nil && $0.exchangeItemID == removed.exchangeItemID)
+                || $0.holdsMergedItem(of: removed)
         }
     }
 
@@ -410,7 +479,7 @@ extension ProfileVaultStore {
 
     /// Strict typed decode: the bytes must be the canonical JSON of exactly one `T` (a whole serialized account decodes as a
     /// `PasswordValue` leniently, but never re-encodes to the same bytes). Any failure is `invalidData`.
-    nonisolated private static func decode<T: Codable>(_ type: T.Type, from data: Data) throws -> T {
+    nonisolated static func decode<T: Codable>(_ type: T.Type, from data: Data) throws -> T {
         guard let value = try? JSONDecoder().decode(T.self, from: data), (try? CredentialContent.canonicalJSON(value)) == data else {
             throw CredentialVaultError.invalidData
         }
@@ -419,7 +488,7 @@ extension ProfileVaultStore {
 
     /// `accounts` with the entry applied: a whole account added unchanged, a credential put into its live owner's slot (only that typed
     /// value; a passkey never replaces an existing key).
-    nonisolated private static func restoring(
+    nonisolated static func restoring(
         _ body: TrashEntryBody, into accounts: [CredentialAccount]
     ) throws -> (accounts: [CredentialAccount], account: CredentialAccount) {
         if body.scope == .account {
@@ -438,6 +507,10 @@ extension ProfileVaultStore {
             owner.basicAuthenticationMetadata = password.basicAuthenticationMetadata
         case .totp:
             owner.totp = try decode(TOTPGenerator.self, from: value)
+        case .note:
+            owner.notes = try decode([CredentialNote].self, from: value)
+        case .secureItem:
+            owner.secureItems = try decode([SecureItem].self, from: value)
         case .passkey:
             owner.passkeys.append(try decode(WebsitePasskey.self, from: value))
         case .account, .metadata:
@@ -446,6 +519,35 @@ extension ProfileVaultStore {
         var result = accounts
         result[index] = owner
         return (result, owner)
+    }
+
+    /// `account` with one superseded typed value put back in its own slot, the way `restoreRevision` writes it and the History panel
+    /// rebuilds an earlier version. `value` must be the canonical JSON of exactly one typed value (`decode` is strict); a passkey and
+    /// the account itself are not revision subjects.
+    nonisolated static func applying(_ subject: RecordSubject, value: Data, to account: inout CredentialAccount) throws {
+        switch subject {
+        case .password:
+            let login = try decode(PasswordValue.self, from: value)
+            account.username = login.username
+            account.password = login.password
+            account.basicAuthenticationMetadata = login.basicAuthenticationMetadata
+        case .totp:
+            account.totp = try decode(TOTPGenerator.self, from: value)
+        case .note:
+            account.notes = try decode([CredentialNote].self, from: value)
+        case .secureItem:
+            account.secureItems = try decode([SecureItem].self, from: value)
+        case .metadata:
+            let details = try decode(MetadataProjection.self, from: value)
+            account.displayName = details.displayName
+            account.origins = details.origins
+            account.loginURLs = details.loginURLs
+            account.exchangeMetadata = details.exchange
+            account.exchangeAccountID = details.exchangeAccountID
+            account.exchangeItemID = details.exchangeItemID
+        case .account, .passkey:
+            throw CredentialVaultError.invalidData
+        }
     }
 
     /// The live accounts with the chosen earlier revision applied to its owner (only the typed value of the revision's subject), and
@@ -460,25 +562,7 @@ extension ProfileVaultStore {
             try JSONDecoder().decode(RevisionBody.self, from: row.opened(key: grant.dek, ids: grant.ids))
         }
         var account = snapshot.accounts[index]
-        switch row.subject {
-        case .password:
-            let value = try decode(PasswordValue.self, from: body.value)
-            account.username = value.username
-            account.password = value.password
-            account.basicAuthenticationMetadata = value.basicAuthenticationMetadata
-        case .totp:
-            account.totp = try decode(TOTPGenerator.self, from: body.value)
-        case .metadata:
-            let value = try decode(MetadataProjection.self, from: body.value)
-            account.displayName = value.displayName
-            account.origins = value.origins
-            account.loginURLs = value.loginURLs
-            account.exchangeMetadata = value.exchange
-            account.exchangeAccountID = value.exchangeAccountID
-            account.exchangeItemID = value.exchangeItemID
-        case .account, .passkey:
-            throw CredentialVaultError.invalidData
-        }
+        try applying(row.subject, value: body.value, to: &account)
         var accounts = snapshot.accounts
         accounts[index] = account
         return (accounts, account.id)

@@ -536,12 +536,12 @@ struct CredentialExchangeTests {
         #expect(try JSONEncoder().encode(exported).count <= CredentialVaultLimits.payloadBytes)
     }
 
-    @Test func importedPasskeyRejectsPublicSuffixRelyingParty() throws {
+    @Test func importedPasskeyOfAPublicSuffixRelyingPartyIsLeftOutNotStored() throws {
         let key = try PasskeyKeyEncoding.exportPKCS8(P256.Signing.PrivateKey())
         let input = data(scope: nil, credentials: [passkey(rpID: "com", key: key)])
-        #expect(throws: (any Error).self) {
-            try CredentialExchangeCodec.preview(input, against: snapshot([]))
-        }
+        let preview = try CredentialExchangeCodec.preview(input, against: snapshot([]))
+        #expect(preview.candidates.isEmpty)
+        #expect(preview.omitted.map(\.reason) == [.passkeyWebsiteNotAllowed, .nothingToKeep])
     }
 
     @Test func absentUsernameFieldStaysAbsentAcrossExchange() throws {

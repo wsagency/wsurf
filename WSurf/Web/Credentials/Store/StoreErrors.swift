@@ -3,7 +3,8 @@
 
 import Foundation
 
-nonisolated enum StoreLimit: Equatable, Sendable { case accounts, payloadBytes, fieldBytes, wrappers, historyRow, blockedOrigins }
+/// A live limit a write is refused over, named for the caller. Held in memory only; nothing persists it.
+nonisolated enum StoreLimit: Equatable, Sendable { case accounts, accountBytes, payloadBytes, fieldBytes, wrappers, historyRow, blockedOrigins }
 
 nonisolated enum UndeleteBlock: Equatable, Sendable {
     case ownerMissing, idCollision, exchangeIDCollision, originUsernameOverlap, passkeyCollision
@@ -27,4 +28,6 @@ nonisolated enum CredentialStoreError: Error, Equatable, Sendable {
     case renameSwapUnsupported
     case stateChanged  // the open state read under the lock is not the one the caller routed on
     case undeleteBlocked(UndeleteBlock), metadataUndecodable, invalidVaultName, tooManyVaults, noSuchVault
+    case lastVault  // a profile keeps at least one vault: the store needs an active head to hold the registry key
+    case vaultNotEmpty  // deleting without an assertion is for a vault that holds nothing
 }

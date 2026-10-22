@@ -6,29 +6,35 @@ import SwiftUI
 
 enum AutofillSuggestionLayout {
     static let footerHeight: CGFloat = 34
+    static let searchRowHeight: CGFloat = 34
     static let rowHeight: CGFloat = 46
     static let rowSpacing: CGFloat = 2
     static let listPadding: CGFloat = 5
     static let chromeHeight = footerHeight + 1
     static let minimumHeight = chromeHeight + rowHeight + listPadding * 2
 
-    static func height(for count: Int) -> CGFloat {
-        let rows = CGFloat(max(1, min(count, 5)))
-        return chromeHeight + listPadding * 2 + rows * rowHeight + (rows - 1) * rowSpacing
+    /// The panel's height for `count` rows. It never changes while the list is filtered.
+    static func height(for count: Int, searchable: Bool = false) -> CGFloat {
+        let rows = CGFloat(max(1, min(count, AutofillSuggestionSearch.threshold)))
+        let search = searchable ? searchRowHeight + 1 : 0
+        return chromeHeight + search + listPadding * 2 + rows * rowHeight + (rows - 1) * rowSpacing
     }
 }
 
 @Observable
 final class AutofillSuggestionSelection {
-    var keyboardID: UUID?
+    var state = AutofillSuggestionSearch.State(rowCount: 0)
 }
 
 struct AutofillSuggestionList: View {
     let kind: AutofillSaveKind
     let origin: String
     let suggestions: [AutofillSuggestion]
+    /// Whether the list has a search row (see `AutofillSuggestionSearch.Index`).
+    let searchable: Bool
     let selection: AutofillSuggestionSelection
     let choose: (UUID) -> Void
+    let beginSearch: () -> Void
     let manage: () -> Void
 
     private var symbol: String {
@@ -43,24 +49,36 @@ struct AutofillSuggestionList: View {
     }
 
     var body: some View {
+        let state = selection.state
         VStack(alignment: .leading, spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: AutofillSuggestionLayout.rowSpacing) {
-                        ForEach(suggestions) { suggestion in
-                            AutofillSuggestionRow(
-                                suggestion: suggestion, symbol: symbol,
-                                selected: selection.keyboardID == suggestion.id,
-                                choose: { choose(suggestion.id) }
-                            )
-                            .id(suggestion.id)
+            if searchable {
+                AutofillSuggestionSearchRow(
+                    query: state.query, isSearching: state.isSearching, count: suggestions.count, begin: beginSearch
+                )
+                Divider()
+            }
+            if state.matches.isEmpty {
+                Text("No matches")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: AutofillSuggestionLayout.rowSpacing) {
+                            ForEach(state.matches, id: \.self) { position in
+                                AutofillSuggestionRow(
+                                    suggestion: suggestions[position], symbol: symbol,
+                                    selected: state.keyboard == position,
+                                    choose: { choose(suggestions[position].id) }
+                                )
+                            }
                         }
+                        .padding(AutofillSuggestionLayout.listPadding)
                     }
-                    .padding(AutofillSuggestionLayout.listPadding)
-                }
-                .onChange(of: selection.keyboardID) { _, id in
-                    if let id {
-                        proxy.scrollTo(id)
+                    .onChange(of: state.keyboard) { _, position in
+                        if let position {
+                            proxy.scrollTo(position)
+                        }
                     }
                 }
             }
@@ -74,6 +92,57 @@ struct AutofillSuggestionList: View {
         .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(.primary.opacity(0.12)) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Autofill suggestions for \(origin)")
+        .onChange(of: state.matches.count) { _, count in
+            if state.isSearching {
+                AccessibilityNotification.Announcement(AutofillSuggestionSearch.announcement(matching: count)).post()
+            }
+        }
+    }
+}
+
+/// The top row of a long list. Before the first click it is a button that starts a search; once searching it shows the query and a
+/// caret. The page's field keeps the keyboard focus the whole time: what is typed is read by WSurf and never sent to the page.
+private struct AutofillSuggestionSearchRow: View {
+    let query: String
+    let isSearching: Bool
+    let count: Int
+    let begin: () -> Void
+
+    var body: some View {
+        if isSearching {
+            row
+                .accessibilityElement(children: .ignore)
+                .accessibilityAddTraits(.isSearchField)
+                .accessibilityLabel("Search credentials")
+                .accessibilityValue(query)
+        } else {
+            Button(action: begin) { row }
+                .buttonStyle(.plain).focusable(false)
+                .accessibilityLabel("Search credentials")
+                .accessibilityHint("Select, then type to filter the list. What you type is not sent to the page.")
+        }
+    }
+
+    private var row: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").frame(width: 20).foregroundStyle(.secondary).accessibilityHidden(true)
+            if isSearching {
+                if !query.isEmpty {
+                    Text(verbatim: query).font(.system(size: 13)).lineLimit(1).truncationMode(.head)
+                }
+                Rectangle().fill(Color.accentColor).frame(width: 1.5, height: 15).accessibilityHidden(true)
+                if query.isEmpty {
+                    Text("Search \(count) credentials").font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
+                }
+            } else {
+                Text("Search \(count) credentials").font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: AutofillSuggestionLayout.searchRowHeight)
+        .contentShape(.rect)
     }
 }
 

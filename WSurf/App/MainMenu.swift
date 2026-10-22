@@ -87,7 +87,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
 
     private func appMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(chain("About WSurf", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
+        menu.addItem(command("About WSurf", #selector(showAbout)))
         menu.addItem(.separator())
         menu.addItem(command("Check for Updates…", #selector(checkForUpdates)))
         menu.addItem(command("Release Notes…", #selector(showReleaseNotes)))
@@ -123,6 +123,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(command("Reopen Last Closed Window", #selector(reopenClosedWindow)))
         menu.addItem(.separator())
         menu.addItem(command("Unload Tab", #selector(unloadTab), key: "w"))
+        menu.addItem(command("Free Memory", #selector(freeMemory)))
         menu.addItem(.separator())
         menu.addItem(command("Pin This Page", #selector(pinPage), key: "d"))
         menu.addItem(command(
@@ -182,11 +183,20 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(command("Reload Page", #selector(reload), key: "r"))
         menu.addItem(command("Reload Page from Origin", #selector(hardReload), key: "r", modifiers: [.command, .shift]))
         menu.addItem(command("Stop", #selector(stopLoading), key: "."))
+        menu.addItem(command(
+            "Stop External Connections",
+            #selector(stopExternalConnections),
+            key: ".",
+            modifiers: [.command, .option]
+        ))
         menu.addItem(.separator())
         menu.addItem(command("Actual Size", #selector(actualSize), key: "0"))
         menu.addItem(command("Zoom In", #selector(zoomIn), key: "+"))
         menu.addItem(hidden(command("Zoom In", #selector(zoomIn), key: "=")))
         menu.addItem(command("Zoom Out", #selector(zoomOut), key: "-"))
+        menu.addItem(.separator())
+        menu.addItem(command("Translate Page", #selector(toggleTranslation)))
+        menu.addItem(command("Show Reader", #selector(toggleReader), key: "r", modifiers: [.command, .option]))
         menu.addItem(.separator())
         menu.addItem(chain(
             "Enter Full Screen",
@@ -267,6 +277,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
 
     // MARK: - Commands
 
+    @objc private func showAbout() {
+        BuildIdentity.showAboutPanel()
+    }
+
     @objc private func openSettings() {
         coordinator.openSettings()
     }
@@ -308,6 +322,9 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         }
         guard let tab = coordinator.browser.activeTab else { return }
         coordinator.unloadTab(tab)
+    }
+    @objc private func freeMemory() {
+        coordinator.freeMemory()
     }
     @objc private func reopenClosedTab() {
         if let application, application.activeCoordinator == nil {
@@ -377,6 +394,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func swapPanes() {
         coordinator.swapSplitPanes()
     }
+    @objc private func stopExternalConnections() {
+        coordinator.stopExternalConnections()
+    }
+
     @objc private func toggleSplitAxis() {
         coordinator.toggleSplitAxis()
     }
@@ -434,6 +455,15 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         coordinator.pageCommandTab?.zoomOut()
     }
 
+    @objc private func toggleTranslation() {
+        guard let tab = coordinator.pageCommandTab else { return }
+        coordinator.toggleTranslation(tab)
+    }
+
+    @objc private func toggleReader() {
+        coordinator.toggleReader()
+    }
+
     // MARK: - Validation
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {  // swiftlint:disable:this cyclomatic_complexity
@@ -443,7 +473,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         if let application, application.activeCoordinator == nil {
             return [
                 #selector(newWindow), #selector(newTab), #selector(newPrivateWindow),
-                #selector(openSettings), #selector(checkForUpdates), #selector(reopenClosedTab),
+                #selector(openSettings), #selector(checkForUpdates), #selector(reopenClosedTab), #selector(showAbout),
             ].contains(menuItem.action)
         }
         switch menuItem.action {
@@ -456,17 +486,29 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         case #selector(copyPageURL):
             guard let tab = coordinator.pageCommandTab else { return false }
             return coordinator.linkURL(for: tab) != nil
-        case #selector(reload), #selector(hardReload),
-             #selector(zoomIn), #selector(zoomOut), #selector(openFind), #selector(findNext),
+        case #selector(reload), #selector(hardReload):
+            return coordinator.pageCommandTab?.canReload ?? false
+        case #selector(zoomIn), #selector(zoomOut), #selector(openFind), #selector(findNext),
              #selector(findPrevious), #selector(printPage):
             return coordinator.pageCommandTab != nil
         case #selector(restartPage):
             guard let tab = coordinator.pageCommandTab else { return false }
             return tab.isMaterialised && !tab.isShowingSystemPage
+        case #selector(toggleTranslation):
+            let tab = coordinator.pageCommandTab
+            let translationTitle: LocalizedStringResource = tab?.shownTranslation.isActive == true ? "Show Original" : "Translate Page"
+            menuItem.title = String(localized: translationTitle)
+            return tab?.canToggleTranslation ?? false
+        case #selector(toggleReader):
+            let readerTitle: LocalizedStringResource = coordinator.readerTab?.reader.isActive == true ? "Hide Reader" : "Show Reader"
+            menuItem.title = String(localized: readerTitle)
+            return coordinator.readerTab?.reader.isAvailable ?? false
         case #selector(unloadTab):
             return coordinator.browser.activeTab != nil
         case #selector(stopLoading):
             return coordinator.pageCommandTab?.isLoading ?? false
+        case #selector(stopExternalConnections):
+            return coordinator.hasExternalConnections
         case #selector(splitRight), #selector(splitDown):
             guard coordinator.browser.activeTab != nil else { return false }
             return !(coordinator.browser.activeSplit?.isFull ?? false)

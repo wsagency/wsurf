@@ -38,6 +38,40 @@ struct GeneralSettings: View {
                 SettingsToggle($settings.sleepsInactiveTabs)
             }
             .settingsAnchor("general.sleepTabs")
+
+            if settings.sleepsInactiveTabs {
+                RowSeparator()
+
+                SleepAfterRow(settings: settings)
+            }
+
+            RowSeparator()
+
+            DetailRow(
+                title: "Archive unused tabs",
+                caption: "Archived tabs stay searchable from ⌘K. The newest 30 are kept."
+            ) {
+                SettingsMenu(
+                    options: TabArchiveDelay.allCases.map { .init(value: $0, label: String(localized: $0.label)) },
+                    selection: $settings.archiveTabsAfter
+                )
+            }
+            .settingsAnchor("general.archiveTabs")
+
+            RowSeparator()
+
+            DetailRow(
+                title: "Free memory",
+                caption: """
+                Unloads background tabs now, in WebKit and Chromium. They reload when you open them; Chromium tabs \
+                restore their address but not Back/Forward history. Chromium’s helper processes stay until you quit WSurf.
+                """
+            ) {
+                SettingsButton(title: "Free Memory") {
+                    coordinator.freeMemory()
+                }
+            }
+            .settingsAnchor("general.freeMemory")
         }
 
         SettingsSection(title: "Default browser", symbol: "arrow.up.forward.app") {
@@ -75,6 +109,8 @@ struct GeneralSettings: View {
             }
             .settingsAnchor("general.linkPreview")
         }
+
+        CommandPaletteSettings(settings: settings)
 
         SettingsSection(title: "Media", symbol: "play.rectangle", footnote: mediaFootnote) {
             DetailRow(

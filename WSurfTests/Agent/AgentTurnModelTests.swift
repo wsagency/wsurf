@@ -11,8 +11,8 @@ import Testing
 @Suite(.serialized)
 struct AgentTurnModelTests {
     @Test func turnKeepsItsSelectedModelAndToolGrantsAcrossSuspension() async throws {
-        let firstSuite = "turn-settings.first.\(UUID().uuidString)"
-        let secondSuite = "turn-settings.second.\(UUID().uuidString)"
+        let firstSuite = AppDatabase.defaultsSuite("turn-settings.first.\(UUID().uuidString)")
+        let secondSuite = AppDatabase.defaultsSuite("turn-settings.second.\(UUID().uuidString)")
         let firstDefaults = UserDefaults(suiteName: firstSuite)!
         let secondDefaults = UserDefaults(suiteName: secondSuite)!
         defer {
@@ -117,11 +117,11 @@ struct AgentTurnModelTests {
     @Test func aNewTurnCancelsManualCompactionAndClearsItsStatus() async throws {
         let fixture = Fixture()
         fixture.model.use(fixture.runner)
-        fixture.model.compactContext(inSpace: fixture.browser.tabID)
-        #expect(fixture.model.compactingSpaceID == fixture.browser.tabID)
+        fixture.model.compactContext(inAnchor: fixture.browser.tabID)
+        #expect(fixture.model.compactingAnchorID == fixture.browser.tabID)
         try #require(await waitUntil { fixture.runner.compactionStarted })
         #expect(fixture.model.run(utterance: "Continue working"))
-        #expect(fixture.model.compactingSpaceID == nil)
+        #expect(fixture.model.compactingAnchorID == nil)
         fixture.runner.releaseCompaction()
         try #require(await waitUntil { fixture.runner.compactionCancelled })
         #expect(fixture.model.compactionMessage == nil)
@@ -132,8 +132,8 @@ struct AgentTurnModelTests {
         fixture.runner.waitsForRelease = true
         fixture.model.use(fixture.runner)
         #expect(fixture.model.run(utterance: "Work"))
-        fixture.model.compactContext(inSpace: fixture.browser.tabID)
-        #expect(fixture.model.compactingSpaceID == nil)
+        fixture.model.compactContext(inAnchor: fixture.browser.tabID)
+        #expect(fixture.model.compactingAnchorID == nil)
         #expect(!fixture.runner.compactionStarted)
         try #require(await waitUntil { !fixture.runner.runs.isEmpty })
         fixture.runner.release(try #require(fixture.runner.runs.first).task.id)
@@ -175,9 +175,9 @@ struct AgentTurnModelTests {
         let tab = try #require(browser.tab(id: tabID))
         #expect(browser.agentContextSummary(mentionedTabIDs: [])?.contains("ACTIVE") == true)
 
-        browser.setAgentWorking(true, inSpace: tabID)
+        browser.setAgentWorking(true, inAnchor: tabID)
         #expect(tab.isAgentWorking)
-        browser.setAgentWorking(false, inSpace: tabID)
+        browser.setAgentWorking(false, inAnchor: tabID)
         #expect(!tab.isAgentWorking)
     }
 
@@ -296,7 +296,7 @@ struct AgentTurnModelTests {
         try #require(await waitUntil { fixture.runner.runs.count == 1 })
         let task = try #require(fixture.model.activeTask)
 
-        fixture.model.detachTab(task.tabID, inSpace: task.spaceID)
+        fixture.model.detachTab(task.tabID, inAnchor: task.anchorID)
         #expect(!fixture.model.isRunning)
         #expect(fixture.log.cancelled == [task.id])
         #expect(fixture.log.removedTabs.isEmpty)
@@ -348,6 +348,50 @@ struct AgentTurnModelTests {
         #expect(await waitUntil { !fixture.model.isRunning })
     }
 
+    @Test func notesAreWrittenOnlyAfterTheTurnHasFinished() async throws {
+        let fixture = Fixture()
+        fixture.model.use(fixture.runner)
+        var seen: (running: Bool, completed: Int)?
+        fixture.runner.onRememberFacts = { seen = (fixture.model.isRunning, fixture.log.completed.count) }
+
+        #expect(fixture.model.run(utterance: "My shoe size is 42"))
+        try #require(await waitUntil { fixture.runner.factWrites.count == 1 })
+
+        let task = try #require(fixture.log.completed.first)
+        #expect(fixture.runner.factWrites == [.init(taskID: task.id, cancelled: false)])
+        #expect(seen?.running == false)
+        #expect(seen?.completed == 1)
+    }
+
+    @Test func stopCancelsTheNoteWriter() async throws {
+        let fixture = Fixture()
+        fixture.runner.holdsFacts = true
+        fixture.model.use(fixture.runner)
+        #expect(fixture.model.run(utterance: "My shoe size is 42"))
+        try #require(await waitUntil { fixture.runner.factWritesStarted == 1 })
+
+        fixture.model.cancel()
+        fixture.runner.releaseFacts()
+
+        try #require(await waitUntil { fixture.runner.factWrites.count == 1 })
+        #expect(fixture.runner.factWrites.first?.cancelled == true)
+    }
+
+    @Test func aCancelledTurnNeverAsksForNotes() async throws {
+        let fixture = Fixture()
+        fixture.runner.waitsForRelease = true
+        fixture.model.use(fixture.runner)
+        #expect(fixture.model.run(utterance: "My shoe size is 42"))
+        try #require(await waitUntil { fixture.runner.runs.count == 1 })
+        let cancelled = try #require(fixture.model.activeTask)
+        fixture.model.cancel()
+        fixture.runner.release(cancelled.id)
+
+        fixture.runner.waitsForRelease = false
+        #expect(fixture.model.run(utterance: "I am vegetarian"))
+        try #require(await waitUntil { fixture.runner.factWrites.count == 1 })
+        #expect(fixture.runner.factWrites.map(\.taskID) == [fixture.runner.runs[1].task.id])
+    }
 }
 
 @MainActor
@@ -378,7 +422,7 @@ private final class FakeAgentTurnBrowser: AgentTurnBrowsing {
     }
 
     let tabID = UUID()
-    var spaceID: UUID?
+    var anchorID: UUID?
     var context: String?
     private(set) var ensureCount = 0
     private(set) var working: [WorkingEvent] = []
@@ -392,16 +436,16 @@ private final class FakeAgentTurnBrowser: AgentTurnBrowsing {
         return tabID
     }
 
-    func agentSpaceID(forTab tabID: UUID) -> UUID {
-        spaceID ?? tabID
+    func agentAnchorID(forTab tabID: UUID) -> UUID {
+        anchorID ?? tabID
     }
 
     func agentContextSummary(mentionedTabIDs: [UUID]) -> String? {
         context
     }
 
-    func setAgentWorking(_ isWorking: Bool, inSpace spaceID: UUID) {
-        working.append(.init(tabID: spaceID, isWorking: isWorking))
+    func setAgentWorking(_ isWorking: Bool, inAnchor anchorID: UUID) {
+        working.append(.init(tabID: anchorID, isWorking: isWorking))
     }
 }
 
@@ -537,6 +581,31 @@ private final class FakeAgentRunner: AgentRunner {
 
     func release(_ taskID: UUID) {
         continuations.removeValue(forKey: taskID)?.resume()
+    }
+
+    struct FactWrite: Equatable {
+        let taskID: UUID
+        let cancelled: Bool
+    }
+
+    var holdsFacts = false
+    var onRememberFacts: () -> Void = {}
+    private(set) var factWritesStarted = 0
+    private(set) var factWrites: [FactWrite] = []
+    private var factContinuation: CheckedContinuation<Void, Never>?
+
+    func rememberFacts(fromTask taskID: UUID) async {
+        factWritesStarted += 1
+        onRememberFacts()
+        if holdsFacts {
+            await withCheckedContinuation { factContinuation = $0 }
+        }
+        factWrites.append(FactWrite(taskID: taskID, cancelled: Task.isCancelled))
+    }
+
+    func releaseFacts() {
+        factContinuation?.resume()
+        factContinuation = nil
     }
 }
 

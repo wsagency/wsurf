@@ -107,6 +107,7 @@ final class AppCoordinator {
     let tabPreview = TabPreviewModel()
     let linkPeek = LinkPeek()
     let peek = PeekPanel()
+    let translationDownloads = TranslationDownloads()
     let sidebarDrag = SidebarDragModel()
     var settings: BrowserSettings {
         context.settings
@@ -135,7 +136,7 @@ final class AppCoordinator {
     var conversationVoice: OpenAIRealtimeConversation?
     var isVoiceConversationPresented = false
     var voiceConversationMessage: String?
-    @ObservationIgnored var conversationSpaceID: UUID?
+    @ObservationIgnored var conversationAnchorID: UUID?
     let voiceInput: VoiceInputModel
     let speech: ProviderSpeechOutput
     @ObservationIgnored var voiceConfigurationID: String?
@@ -151,6 +152,7 @@ final class AppCoordinator {
     let attention = AgentAttention()
     #endif
     let memoryPressure = MemoryPressureMonitor()
+    let sleepTimer = TabSleepTimer()
     private var host: BrowserHost?
     var mainMenu: MainMenu?
 
@@ -343,13 +345,13 @@ final class AppCoordinator {
     }
 
     var isSpeakingInChrome: Bool {
-        agentReply.isStreaming && agentReply.showsInChrome(inSpace: browser.activeSpaceID)
+        agentReply.isStreaming && agentReply.showsInChrome(inAnchor: browser.activeAnchorID)
     }
 
     func pendingAgentQuestion(inChrome: Bool) -> AgentQuestionModel.Ask? {
-        let spaceID = browser.activeSpaceID
-        guard agentReply.showsInChrome(inSpace: spaceID) == inChrome else { return nil }
-        return agentQuestions.ask(inSpace: spaceID)
+        let anchorID = browser.activeAnchorID
+        guard agentReply.showsInChrome(inAnchor: anchorID) == inChrome else { return nil }
+        return agentQuestions.ask(inAnchor: anchorID)
     }
 
     func readAloud(_ text: String) {
@@ -443,6 +445,9 @@ final class AppCoordinator {
         guard let category else { return }
         route(to: category, in: tab)
     }
+
+    /// A setting for the Settings page to reveal (see `openSettings(revealing:)`). The page takes it and clears it.
+    var pendingSettingsAnchor: String?
 
     func routeSettings(to category: SettingsCategory) {
         guard let tab = browser.tabs.first(where: { $0.internalPage == .settings }) else { return }
@@ -544,8 +549,8 @@ final class AppCoordinator {
     }
 
     func printActivePage() {
-        guard let page = pageCommandTab?.page else { return }
-        PagePrinting.begin(for: page)
+        guard let tab = pageCommandTab else { return }
+        PagePrinting.begin(for: tab.shownPage)
     }
 
     func toggleFullScreen() {
@@ -686,6 +691,8 @@ final class AppCoordinator {
                 message = String(localized: "This tab is using the camera or microphone.")
             case .agentWorking:
                 message = String(localized: "The assistant is working in this tab.")
+            case .externalControl:
+                message = String(localized: "A connected app controls this tab. Take it over first.")
             case .mediaPlayback:
                 message = String(localized: "This tab is playing media.")
             case .visibleInSplit:
@@ -898,7 +905,8 @@ final class AppCoordinator {
         do {
             try AttachmentRequest.validate(
                 attachments, message: text, textOnly: attachmentTextOnly,
-                windowTokens: ContextWindow.tokens(for: selectedProvider, model: selectedModel, settings: modelSettings)
+                windowTokens: ContextWindow.tokens(for: selectedProvider, model: selectedModel, settings: modelSettings),
+                imageTokens: AttachmentRequest.imageTokens(for: selectedProvider)
             )
         } catch {
             statusMessage = error.localizedDescription

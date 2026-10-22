@@ -12,7 +12,7 @@ nonisolated struct HeadChange: Sendable {
     var wrappers: [CredentialKeyWrapper]?
 }
 
-/// Head writes of an unlocked vault: wrapper list and password-save policy. Each is one `BEGIN IMMEDIATE` transaction on the pool's
+/// Head writes of an unlocked vault: wrapper list, password-save policy and name. Each is one `BEGIN IMMEDIATE` transaction on the pool's
 /// writer that re-reads the registry, checks the session still matches it, and rewrites only this vault's head, wrapper list and
 /// registry entry. `record` and `journal` are never touched.
 extension ProfileVaultStore {
@@ -71,6 +71,25 @@ extension ProfileVaultStore {
             next.blockedOrigins = origins
             return HeadChange(head: next, wrappers: nil)
         }
+    }
+
+    /// Replaces the vault's sealed name (spec §4.1) by the trimmed `name`, under the creation rule: 1 to `StoreFormat.nameLimit`
+    /// characters. The head is not compared with a revision: the name is one sealed field, and an autofill save made in between
+    /// must not fail a rename. An equal name writes nothing.
+    func renameVault(vaultID: UUID, name: String, using access: VaultAccess) async throws -> VaultCommitReceipt {
+        _ = try authorizedGrant(vaultID, access)
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= StoreFormat.nameLimit else { throw CredentialStoreError.invalidVaultName }
+        let receipt = try await commitHead(vaultID: vaultID, access: access) { head, _ in
+            guard head.name != trimmed else { return nil }
+            var next = head
+            next.name = trimmed
+            return HeadChange(head: next, wrappers: nil)
+        }
+        if grants[vaultID]?.access === access {
+            grants[vaultID]?.name = trimmed
+        }
+        return receipt
     }
 
     /// Runs `edit` on the freshly read head and wrapper list inside the write transaction; `nil` commits nothing.

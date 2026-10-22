@@ -15,7 +15,8 @@ struct FolderSection: View {
 
     @Environment(\.sidebarStyle) private var sidebarStyle
     @Environment(\.windowColorScheme) private var windowColorScheme
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.displayScale) private var displayScale
+    private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var windowFrame: CGRect = .zero
 
@@ -28,13 +29,21 @@ struct FolderSection: View {
     private var isSelected: Bool {
         context.isSelected(item)
     }
+    private var rowStyle: SidebarRowStyle {
+        browser.rowStyle(
+            of: folder,
+            isMarked: isSelected,
+            paletteOpen: context.coordinator.isNewTabPaletteOpen,
+            increasedContrast: inkSource.increasedContrast
+        )
+    }
 
     static let outlineInset: CGFloat = 2
     static let fillOpacity: Double = 0.08
     static let edgeOpacity: Double = 0.14
 
     static func outlineRadius(depth: Int) -> CGFloat {
-        var radius = Theme.Radius.control
+        var radius = Theme.Radius.row
         for _ in 0..<max(depth, 0) {
             radius = Theme.Radius.nested(in: radius, inset: outlineInset)
         }
@@ -43,6 +52,21 @@ struct FolderSection: View {
 
     static func rowRadius(depth: Int) -> CGFloat {
         Theme.Radius.nested(in: outlineRadius(depth: depth), inset: outlineInset)
+    }
+
+    /// The width of the outline's edge for the theme's row edge, or nil for none. Increase Contrast always draws 1 pt.
+    static func outlineEdgeWidth(_ frame: FrameStyle, increasedContrast: Bool, displayScale: CGFloat) -> CGFloat? {
+        if increasedContrast {
+            return 1
+        }
+        switch frame {
+        case .standard:
+            return 1
+        case .hairline:
+            return 1 / displayScale
+        case .none:
+            return nil
+        }
     }
 
     private var outlineRadius: CGFloat {
@@ -66,25 +90,42 @@ struct FolderSection: View {
     var body: some View {
         let rows = browser.rows(in: folder)
         let audible = audibleTab
+        let style = rowStyle
+        let ink = inkSource.ink(for: style)
         let showsOutline = folder.isExpanded && !rows.isEmpty
         VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
-            HStack(spacing: 7) {
+            HStack(spacing: SidebarMetrics.rowIconSpacing) {
                 Image(systemName: audible == nil
                     ? (folder.isExpanded ? "folder" : "folder.fill")
                     : "speaker.wave.2.fill")
-                    .font(Theme.Font.caption)
+                    // Theme.Font.caption at the 16 pt icon size; the glyph grows with the theme's tab icons.
+                    .font(.system(size: 10.5 * SidebarMetrics.rowIconSize / 16))
                     .foregroundStyle(folder.color.tint)
                     .contentTransition(.symbolEffect(.replace))
                     .animation(Theme.Motion.settle, value: audible?.id)
+                    .frame(width: SidebarMetrics.rowIconSize, height: SidebarMetrics.rowIconSize)
                     .help(audible.map { Text("“\($0.title)” is playing") } ?? Text(verbatim: ""))
+                    .overlay(alignment: .bottomTrailing) {
+                        // Icons only has no count badge, so a small inverse dot carries the current tab instead.
+                        if sidebarStyle == .icons, let badge = ink.badge {
+                            Circle()
+                                .fill(badge.fill)
+                                .frame(width: 7, height: 7)
+                                .offset(x: 3, y: 3)
+                        }
+                    }
+                    .sidebarNewMark(ink)
+                    .sidebarRowName(folder.name, style: style, isIconOnly: sidebarStyle == .icons)
 
                 if isRenaming && sidebarStyle == .full {
                     renameField
                 } else if sidebarStyle == .full {
                     Text(verbatim: folder.name)
                         .font(BrowserSettings.application.sidebarFont)
-                        .foregroundStyle(BrowserSettings.application.sidebarTextColor(scheme: colorScheme))
+                        .foregroundStyle(ink.resting)
                         .lineLimit(1)
+                        .sidebarRowAccessibility(style)
+                        .sidebarTitleCentered()
                 }
 
                 if sidebarStyle == .full {
@@ -107,20 +148,23 @@ struct FolderSection: View {
 
                     countBadge(rows.count)
                         .font(BrowserSettings.application.sidebarFont)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(ink.badge.map { AnyShapeStyle($0.text) } ?? AnyShapeStyle(.tertiary))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1.5)
-                        .background(Theme.Wash.hairline, in: Capsule())
+                        .background(
+                            ink.badge.map { AnyShapeStyle($0.fill) } ?? AnyShapeStyle(Theme.Wash.hairline),
+                            in: Capsule()
+                        )
                 }
             }
             .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: SidebarMetrics.rowHeight(settings: BrowserSettings.application))
             .sidebarRowSelectionEffect(
-                isSelected: isSelected,
+                isSelected: style.emphasis != .resting,
                 isHovering: hovering,
                 hoverTint: folder.color.tint,
-                radius: showsOutline ? Self.rowRadius(depth: depth) : Theme.Radius.hover
+                radius: showsOutline ? Self.rowRadius(depth: depth) : Theme.Radius.row
             )
             .contentShape(Rectangle())
             .onHover { over in
@@ -180,12 +224,18 @@ struct FolderSection: View {
                         Self.fillOpacity * BrowserSettings.application.sidebarFolderTint
                     ))
                     .overlay {
-                        shape.strokeBorder(
-                            folder.color.tint.opacity(
-                                Self.edgeOpacity * BrowserSettings.application.sidebarFolderTint
-                            ),
-                            lineWidth: 1
-                        )
+                        if let edge = Self.outlineEdgeWidth(
+                            BrowserSettings.application.chromeShape.rowFrame,
+                            increasedContrast: inkSource.increasedContrast,
+                            displayScale: displayScale
+                        ) {
+                            shape.strokeBorder(
+                                folder.color.tint.opacity(
+                                    Self.edgeOpacity * BrowserSettings.application.sidebarFolderTint
+                                ),
+                                lineWidth: edge
+                            )
+                        }
                     }
                 .environment(\.colorScheme, windowColorScheme)
             }
@@ -238,6 +288,7 @@ struct FolderSection: View {
             withAnimation(Theme.Motion.settle) {
                 folder.isExpanded.toggle()
             }
+            browser.scheduleSave()
         }
         context.selection.excludeFavorites(browser.favorites)
     }

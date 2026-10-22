@@ -487,6 +487,32 @@ struct PageComputerInputTests {
         #expect(try await view.evaluateJavaScript("getComputedStyle(target).backgroundColor") as? String == "rgb(255, 0, 0)")
     }
 
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WSURF_COMPUTER_FOREGROUND_TEST"] == "1"))
+    func hoverTriggersCssHover() async throws {
+        let (view, window) = await page("""
+            <style>#m:hover + #sub { display:block } #sub { display:none }</style>
+            <button id='m' style='position:absolute;left:20px;top:20px;width:120px;height:40px'>Menu</button><div id='sub' style='position:absolute;left:20px;top:80px'>Sub</div>
+            """)
+        defer { window.close() }
+        _ = await PageDriver.snapshot(view)
+        let result = await PageDriver.hover(ref: 1, in: view)
+        #expect(result.hasPrefix("Hovered."), "\(result)")
+        #expect(try await view.evaluateJavaScript("getComputedStyle(document.getElementById('sub')).display") as? String == "block")
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WSURF_COMPUTER_FOREGROUND_TEST"] == "1"))
+    func hoverFailsWhenCoveredOrOffscreen() async throws {
+        let (view, window) = await page("""
+            <button id='under' style='position:absolute;left:20px;top:20px;width:120px;height:40px'>Under</button>
+            <div style='position:absolute;left:0;top:0;width:200px;height:100px;background:#ccc'></div>
+            <button id='far' style='position:absolute;left:20px;top:2000px;width:120px;height:40px'>Far</button>
+            """)
+        defer { window.close() }
+        _ = await PageDriver.snapshot(view)
+        #expect(await PageDriver.hover(ref: 1, in: view) == "The element is offscreen or covered.")
+        #expect(await PageDriver.hover(ref: 2, in: view) == "The element is offscreen or covered.")
+    }
+
     @Test func backgroundHoverDoesNotClaimSuccess() async throws {
         let (view, window) = await page("<div style='height:300px' onmousemove='window.moved=true'>Target</div>")
         defer { window.close() }

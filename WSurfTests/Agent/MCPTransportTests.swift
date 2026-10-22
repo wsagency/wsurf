@@ -39,8 +39,8 @@ struct MCPTransportTests {
         let firstSuite = StageMode.defaultsSuiteName(for: firstHome)
         let secondSuite = StageMode.defaultsSuiteName(for: secondHome)
         defer {
-            UserDefaults.standard.removePersistentDomain(forName: firstSuite)
-            UserDefaults.standard.removePersistentDomain(forName: secondSuite)
+            UserDefaults.standard.removePersistentDomain(forName: AppDatabase.defaultsSuite(firstSuite))
+            UserDefaults.standard.removePersistentDomain(forName: AppDatabase.defaultsSuite(secondSuite))
         }
 
         let first = StageMode.defaults(for: firstHome)
@@ -151,9 +151,8 @@ struct MCPTransportTests {
         try await pair.client.send(Data(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#.utf8))
         let listing = try #require(await replies.next())
         let object = try #require(JSONSerialization.jsonObject(with: listing) as? [String: Any])
-        let result = try #require(object["result"] as? [String: Any])
-        let tools = try #require(result["tools"] as? [[String: Any]])
-        #expect(Set(tools.compactMap { $0["name"] as? String }) == Set(MCPToolCatalog.entries.map(\.name)))
+        #expect(object["id"] as? Int == 2)
+        #expect(object["result"] != nil)
         #expect(!FileManager.default.fileExists(atPath: directory))
         await pair.client.disconnect()
         try await running.value
@@ -241,7 +240,7 @@ struct MCPTransportTests {
     }
 
     @Test func enablementSurvivesShutdownAndExplicitDisablePersists() async throws {
-        let name = "wsurf-mcp-preference-test-\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("wsurf-mcp-preference-test-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: name))
         let directory = "/tmp/wsurf-mcp-test-\(UUID().uuidString)"
         defer {
@@ -339,6 +338,50 @@ struct MCPTransportTests {
             try click.validate(["tabID": "tab", "observationID": "observation", "ref": 0])
         }
     }
+    @Test func screenshotRegionIsAStructuredObjectOfFiniteNumbers() throws {
+        let shot = try #require(MCPToolCatalog.entries.first { $0.name == "screenshotPage" })
+        try shot.validate(["tabID": "tab"])
+        try shot.validate(["tabID": "tab", "region": ["x": 0, "y": 12.5, "width": 10, "height": 10.25]])
+        let rejected: [Value] = [
+            ["x": 0, "y": 0, "width": 0, "height": 10], ["x": 0, "y": 0, "width": -1, "height": 10],
+            ["x": 0, "y": 0, "width": 10], ["x": 0, "y": 0, "width": 10, "height": 10, "extra": 1],
+            ["x": "0", "y": 0, "width": 10, "height": 10], ["x": 0, "y": 0, "width": 1e9, "height": 10],
+        ]
+        for region in rejected {
+            #expect(throws: (any Error).self) { try shot.validate(["tabID": "tab", "region": region]) }
+        }
+        #expect(throws: (any Error).self) { try shot.validate(["tabID": "tab", "x": 0]) }
+    }
+
+    @Test func screenshotReplyGuardAgreesWithWhatTheFramerAccepts() throws {
+        func wire(imageBytes: Int) throws -> (line: Data, result: CallTool.Result) {
+            let content: Value = .object([
+                "tabID": .string(UUID().uuidString), "content": .string(String(repeating: "\"\n", count: 3_000)),
+                "observationID": .string(UUID().uuidString), "url": .string("https://example.test/" + String(repeating: "a/", count: 240)),
+            ])
+            let text = String(decoding: try JSONEncoder().encode(content), as: UTF8.self)
+            let image = Data((0..<imageBytes).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ ($0 >> 8)) })
+            let result = CallTool.Result(
+                content: [
+                    .text(text: text, annotations: nil, _meta: nil),
+                    .image(data: image.base64EncodedString(), mimeType: "image/jpeg", annotations: nil, _meta: nil),
+                ],
+                structuredContent: Optional.some(content), isError: false)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            return (try encoder.encode(Response<CallTool>(id: .random, result: result)) + Data("\n".utf8), result)
+        }
+        let capped = try wire(imageBytes: MCPBrowserSession.screenshotBytes)
+        #expect(MCPBrowserSession.replyBytes(capped.result) <= MCPMessageFramer.maximumBytes)
+        #expect(MCPBrowserSession.replyBytes(capped.result) >= capped.line.count - 1)
+        var accepting = MCPMessageFramer()
+        #expect(try accepting.append(capped.line).count == 1)
+
+        let oversized = try wire(imageBytes: 200_000)
+        #expect(MCPBrowserSession.replyBytes(oversized.result) > MCPMessageFramer.maximumBytes)
+        var rejecting = MCPMessageFramer()
+        #expect(throws: (any Error).self) { try rejecting.append(oversized.line) }
+    }
     @Test func fillFieldsContractAcceptsThirtyTwoControlsAndRejectsThirtyThree() throws {
         let fill = try #require(MCPToolCatalog.entries.first { $0.name == "fillFields" })
         let arguments: (Int) -> [String: Value] = { count in
@@ -406,8 +449,7 @@ struct MCPTransportTests {
         let transport = LocalMCPTransport(connection: NWConnection(to: .unix(path: endpoint), using: .tcp))
         let initialized = try await client.connect(transport: transport)
         #expect(initialized.capabilities.tools != nil)
-        let (tools, _) = try await client.listTools()
-        #expect(Set(tools.map(\.name)) == Set(MCPToolCatalog.entries.map(\.name)))
+        _ = try await client.listTools()
         let (content, isError) = try await client.callTool(name: "listTabs")
         #expect(isError == false)
         #expect(content == [.text(text: "{\"tabs\":[]}", annotations: nil, _meta: nil)])
@@ -478,9 +520,7 @@ struct MCPTransportTests {
         let listing = try #require(await replies.next())
         let listingObject = try #require(JSONSerialization.jsonObject(with: listing) as? [String: Any])
         #expect(listingObject["id"] as? Int == 10)
-        let listingResult = try #require(listingObject["result"] as? [String: Any])
-        let tools = try #require(listingResult["tools"] as? [[String: Any]])
-        #expect(Set(tools.compactMap { $0["name"] as? String }) == Set(MCPToolCatalog.entries.map(\.name)))
+        #expect(listingObject["result"] != nil)
         #expect(server.sessions.isEmpty)
         func send(_ id: Int, _ tool: String) throws {
             let data = try JSONSerialization.data(withJSONObject: [

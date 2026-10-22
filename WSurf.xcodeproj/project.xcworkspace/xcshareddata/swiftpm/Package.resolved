@@ -5,8 +5,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/AnyLanguageModel.git",
       "state" : {
-        "revision" : "c4a1acdbc8a2a9f967fada82208798b3a719a458",
-        "version" : "0.15.1"
+        "revision" : "80d50b0b22291d956d43f2c67ad1339c188084a3",
+        "version" : "1.0.0"
       }
     },
     {

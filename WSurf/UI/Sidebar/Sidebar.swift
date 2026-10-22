@@ -39,6 +39,15 @@ struct Sidebar: View {
         )
     }
 
+    /// What the sidebar surface really is: a preset colors a floating sidebar differently from the window.
+    private var groundColor: NSColor {
+        LoomChrome.sampledColor(
+            ChromeBand.measuredColor(browser: browser, coordinator: coordinator),
+            scheme: scheme,
+            isFloating: sidebar.isFloating
+        )
+    }
+
     private var inkIsLight: Bool {
         if !coordinator.isShowingSettings {
             return PageInk.isLight(
@@ -62,20 +71,12 @@ struct Sidebar: View {
     }
 
     private var contentInsets: EdgeInsets {
-        if sidebar.isFloating {
-            let inset = LoomChrome.canvasInset
-            return EdgeInsets(top: 0, leading: inset, bottom: 0, trailing: inset)
-        }
-        guard sidebarStyle == .full else {
-            return EdgeInsets(top: 0, leading: LoomChrome.canvasInset, bottom: 0, trailing: 0)
-        }
-        let inset = SidebarMetrics.fullContentInset
-        let balance = LoomChrome.sidebarContentBalanceOffset
-        return EdgeInsets(
-            top: 0,
-            leading: inset + balance,
-            bottom: 0,
-            trailing: inset - balance
+        let shape = BrowserSettings.application.chromeShape
+        return SidebarMetrics.contentInsets(
+            style: sidebarStyle,
+            isFloating: sidebar.isFloating,
+            margin: shape.sidebarMargin,
+            pageSpacing: shape.pageSpacing
         )
     }
 
@@ -119,7 +120,7 @@ struct Sidebar: View {
             }
         }
         .environment(\.chromeIsLight, inkIsLight)
-        .environment(\.chromeWash, .of(inkColor, isLight: inkIsLight))
+        .environment(\.chromeWash, .of(inkColor, isLight: inkIsLight, ground: groundColor))
         .environment(\.windowColorScheme, scheme)
         .environment(\.colorScheme, inkIsLight ? .light : .dark)
         .animation(nil, value: inkIsLight)
@@ -236,6 +237,7 @@ private struct SidebarPinnedCards: View {
             UpdateBanner(updates: coordinator.updates)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { measuredBanner = $0 }
         }
+        .glassGroup()
         .frame(maxWidth: .infinity)
         .zIndex(1)
         .onAppear { obscuredHeight = stackedHeight }
@@ -416,24 +418,43 @@ private struct SidebarFavorites: View {
     }
 }
 
-private struct SidebarFavoriteButton: View {
+struct SidebarFavoriteButton: View {
     let tab: BrowserTab
     let browser: BrowserModel
     let coordinator: AppCoordinator
 
     @State private var hovering = false
+    private var inkSource = SidebarRowInkSource()
+
+    private var style: SidebarRowStyle {
+        browser.rowStyle(
+            of: tab,
+            isMarked: false,
+            paletteOpen: coordinator.isNewTabPaletteOpen,
+            increasedContrast: inkSource.increasedContrast
+        )
+    }
+
+    private var favoriteValue: Text {
+        let loaded = tab.isDeferred ? Text("Unloaded") : Text("Loaded")
+        guard let status = style.spokenStatus else { return loaded }
+        return Text("\(status), \(loaded)")
+    }
 
     var body: some View {
+        let ink = inkSource.ink(for: style, isDeferred: tab.isDeferred)
         Button {
             coordinator.tabPreview.dismiss()
             coordinator.openTab(tab)
         } label: {
             TabIcon(tab: tab)
+                .sidebarNewMark(ink)
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
+                .sidebarInverse(ink, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
                 .sidebarRowSelectionEffect(
-                    isSelected: coordinator.sidebarDestination == .tab(tab.id) && !coordinator.isNewTabPaletteOpen,
-                    isHovering: hovering
+                    isSelected: style.emphasis == .lit,
+                    isHovering: hovering && style.emphasis != .current
                 )
                 .contentShape(Rectangle())
         }
@@ -441,8 +462,14 @@ private struct SidebarFavoriteButton: View {
         .onHover { hovering = $0 }
         .help(Text(verbatim: tab.title))
         .accessibilityLabel(Text(verbatim: tab.title))
-        .accessibilityValue(tab.isDeferred ? Text("Unloaded") : Text("Loaded"))
+        .accessibilityValue(favoriteValue)
+        .accessibilityAddTraits(style.isSelected ? .isSelected : [])
+        .overlay {
+            ExternalControlMark(tab: tab, coordinator: coordinator, isCompact: true)
+                .offset(x: 8, y: 8)
+        }
         .contextMenu {
+            ExternalControlMenuItems(tabs: [tab], coordinator: coordinator)
             SidebarLinkMenuItems(tabs: [tab], coordinator: coordinator)
             if !tab.isDeferred {
                 Button {

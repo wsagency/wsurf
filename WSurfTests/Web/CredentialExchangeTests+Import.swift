@@ -343,188 +343,26 @@ extension CredentialExchangeTests {
             let diagnostic = try #require(error as? CredentialExchangeError)
             #expect(diagnostic.record == .credential(account: 0, item: 0, credential: 0))
             #expect(diagnostic.reason == .oversized)
+            #expect(diagnostic.limit == .itemBytes)
         }
     }
 
-    @Test func invalidAndAmbiguousImportsRejectBeforeChangingSnapshot() throws {
-        let existing = account(externalID: accountExternalID, itemID: itemExternalID)
-        let base = snapshot([existing])
-        let malformedKey = data(credentials: [passkey(key: Data([0x30, 0x82, 0x01]))])
-        do {
-            _ = try CredentialExchangeCodec.preview(malformedKey, against: base)
-            Issue.record("Expected malformed key rejection")
-        } catch {
-            let diagnostic = try #require(error as? CredentialExchangeError)
-            #expect(diagnostic.record == .credential(account: 0, item: 0, credential: 0))
-            #expect(diagnostic.reason == .invalidData)
-        }
-
-        let invalidScope = data(
-            scope: ASImportableCredentialScope(urls: [URL(string: "javascript:alert(1)")!], androidApps: []),
-            credentials: [basicAuthentication(username: "other", password: "secret")]
-        )
-        #expect(throws: (any Error).self) { try CredentialExchangeCodec.preview(invalidScope, against: base) }
-
-        let secret = "must-not-appear-in-diagnostics"
-        let secretBearingInvalidInput = data(
-            scope: ASImportableCredentialScope(urls: [URL(string: "javascript:alert(1)")!], androidApps: []),
-            credentials: [basicAuthentication(username: "other", password: secret)]
-        )
-        do {
-            _ = try CredentialExchangeCodec.preview(secretBearingInvalidInput, against: base)
-            Issue.record("Expected malformed scope rejection")
-        } catch {
-            let diagnostic = try #require(error as? CredentialExchangeError)
-            #expect(diagnostic.record == .item(account: 0, item: 0))
-            #expect(diagnostic.reason == .invalidData)
-            let description = String(describing: error)
-            #expect(description.contains("account[0]/item[0]"))
-            #expect(!description.contains(secret))
-        }
-
-        let invalidTOTP = data(credentials: [totp(period: 0)])
-        #expect(throws: (any Error).self) { try CredentialExchangeCodec.preview(invalidTOTP, against: base) }
-
-        let unsupportedCredential = data(credentials: [
-            .generatedPassword(.init(password: "must-not-appear-in-diagnostics"))
-        ])
-        do {
-            _ = try CredentialExchangeCodec.preview(unsupportedCredential, against: base)
-            Issue.record("Expected unsupported credential rejection")
-        } catch {
-            let diagnostic = try #require(error as? CredentialExchangeError)
-            #expect(diagnostic.record == .credential(account: 0, item: 0, credential: 0))
-            #expect(diagnostic.reason == .unsupported)
-            let description = String(describing: error)
-            #expect(description.contains("account[0]/item[0]/credential[0]"))
-            #expect(!description.contains("must-not-appear-in-diagnostics"))
-        }
-        let unsupportedAPIKey = data(credentials: [
-            .apiKey(.init(
-                key: .init(id: Data([0x67]), fieldType: .concealedString, value: "unsupported-api-secret"),
-                userName: nil,
-                keyType: nil,
-                url: nil,
-                validFrom: nil,
-                expiryDate: nil
-            )),
-        ])
-        do {
-            _ = try CredentialExchangeCodec.preview(unsupportedAPIKey, against: base)
-            Issue.record("Expected unsupported API key rejection")
-        } catch {
-            let diagnostic = try #require(error as? CredentialExchangeError)
-            #expect(diagnostic.record == .credential(account: 0, item: 0, credential: 0))
-            #expect(diagnostic.reason == .unsupported)
-            let description = String(describing: error)
-            #expect(description.contains("account[0]/item[0]/credential[0]"))
-            #expect(!description.contains("unsupported-api-secret"))
-        }
-
-        let unsupportedWiFi = data(credentials: [
-            .wifi(.init(
-                ssid: .init(id: Data([0x68]), fieldType: .string, value: "unsupported-network"),
-                networkSecurityType: nil,
-                passphrase: .init(id: Data([0x69]), fieldType: .concealedString, value: "unsupported-wifi-secret")
-            )),
-        ])
-        #expect(throws: (any Error).self) { try CredentialExchangeCodec.preview(unsupportedWiFi, against: base) }
-
-        let duplicateFieldIDs = data(credentials: [
-            basicAuthentication(username: "same-id", password: "same-id", usernameID: Data([0x66]), passwordID: Data([0x66]))
-        ])
-        #expect(throws: (any Error).self) { try CredentialExchangeCodec.preview(duplicateFieldIDs, against: base) }
-
-        let oversized = data(credentials: [
-            totp(secret: Data(repeating: 0xA5, count: 4_000_001))
-        ])
-        #expect(throws: (any Error).self) { try CredentialExchangeCodec.preview(oversized, against: base) }
-
-        let unsupportedAlgorithm = data(credentials: [
-            passkey(key: try rsaPKCS8())
-        ])
-        #expect(throws: (any Error).self) { try CredentialExchangeCodec.preview(unsupportedAlgorithm, against: base) }
-
-        let duplicateAccountID = duplicateAccountIDInput()
-        #expect(throws: (any Error).self) { try CredentialExchangeCodec.preview(duplicateAccountID, against: base) }
-
-        let duplicateItemID = duplicateItemIDInput()
-        #expect(throws: (any Error).self) { try CredentialExchangeCodec.preview(duplicateItemID, against: base) }
-
-        let validThenInvalidItem = validThenInvalidItemInput()
-        #expect(throws: (any Error).self) { try CredentialExchangeCodec.preview(validThenInvalidItem, against: base) }
-    }
-
-    private func duplicateAccountIDInput() -> ASExportedCredentialData {
-        ASExportedCredentialData(
-            accounts: [
-                ASImportableAccount(id: accountExternalID, userName: "one", email: "", collections: [], items: []),
-                ASImportableAccount(id: accountExternalID, userName: "two", email: "", collections: [], items: []),
-            ],
-            formatVersion: .v1,
-            exporterRelyingPartyIdentifier: "example.test",
-            exporterDisplayName: "Fixture",
-            timestamp: Date(timeIntervalSince1970: 1_700_000_000)
-        )
-    }
-
-    private func duplicateItemIDInput() -> ASExportedCredentialData {
-        ASExportedCredentialData(
-            accounts: [
-                ASImportableAccount(
-                    id: Data([0xA0, 0x77]),
-                    userName: "duplicate-items",
-                    email: "",
-                    collections: [],
-                    items: [
-                        importableItem(id: itemExternalID, title: "first", credentials: [basicAuthentication(username: "one", password: "one")]),
-                        importableItem(id: itemExternalID, title: "second", credentials: [basicAuthentication(username: "two", password: "two")]),
-                    ]
-                ),
-            ],
-            formatVersion: .v1,
-            exporterRelyingPartyIdentifier: "example.test",
-            exporterDisplayName: "Fixture",
-            timestamp: Date(timeIntervalSince1970: 1_700_000_000)
-        )
-    }
-
-    private func validThenInvalidItemInput() -> ASExportedCredentialData {
-        ASExportedCredentialData(
-            accounts: [
-                ASImportableAccount(
-                    id: Data([0xA0, 0x78]),
-                    userName: "mixed",
-                    email: "",
-                    collections: [],
-                    items: [
-                        importableItem(id: Data([0xB0, 0x78]), title: "valid", credentials: [basicAuthentication(username: "valid", password: "valid")]),
-                        importableItem(id: Data([0xB0, 0x79]), title: "invalid", credentials: [totp(period: 0)]),
-                    ]
-                ),
-            ],
-            formatVersion: .v1,
-            exporterRelyingPartyIdentifier: "example.test",
-            exporterDisplayName: "Fixture",
-            timestamp: Date(timeIntervalSince1970: 1_700_000_000)
-        )
-    }
-
-    @Test func sharedCollectionAncestryReencodedPerItemIsBudgetedBeforeItIsRetained() throws {
+    /// A chain of 32 nested collections whose `titleBytes` titles are linked from every one of `itemCount` items. Each item
+    /// re-encodes the whole chain into its own metadata, so the chain is paid for once per item.
+    private func sharedAncestryTransfer(titleBytes: Int, itemCount: Int) -> ASExportedCredentialData {
         let providerID = Data([0xA0, 0x90])
-        let itemIDs = [Data([0xB0, 0x91]), Data([0xB0, 0x92]), Data([0xB0, 0x93])]
-        // 32 nested levels of 100 KB titles: ~3.2 MB, inside the raw budget, but linked from every item.
+        let itemIDs = (0..<itemCount).map { ExchangeScale.itemID($0) }
         var chain = ASImportableCollection(
-            id: Data([0xC0, 0]), created: nil, lastModified: nil, title: String(repeating: "a", count: 100_000),
+            id: Data([0xC0, 0]), created: nil, lastModified: nil, title: String(repeating: "a", count: titleBytes),
             subtitle: nil, items: itemIDs.map { ASImportableLinkedItem(item: $0, account: providerID) }, subcollections: []
         )
         for level in 1..<32 {
             chain = ASImportableCollection(
                 id: Data([0xC0, UInt8(level)]), created: nil, lastModified: nil,
-                title: String(repeating: "a", count: 100_000), subtitle: nil, items: [], subcollections: [chain]
+                title: String(repeating: "a", count: titleBytes), subtitle: nil, items: [], subcollections: [chain]
             )
         }
-        let exported = ASExportedCredentialData(
+        return ASExportedCredentialData(
             accounts: [
                 ASImportableAccount(
                     id: providerID, userName: "ada", email: "", collections: [chain],
@@ -538,61 +376,36 @@ extension CredentialExchangeTests {
             exporterDisplayName: "Fixture",
             timestamp: Date(timeIntervalSince1970: 1_700_000_000)
         )
+    }
+
+    @Test func sharedCollectionAncestryOverTheItemBoundIsRefusedAtThatItem() throws {
+        // 32 levels of 130 KB titles: 4.16 MB of metadata in every linked item, over the 4 MB an item may hold.
+        let exported = sharedAncestryTransfer(titleBytes: 130_000, itemCount: 3)
+        do {
+            _ = try CredentialExchangeCodec.preview(exported, against: snapshot([]))
+            Issue.record("Expected the item's metadata to be rejected")
+        } catch let error as CredentialExchangeError {
+            #expect(error.reason == .oversized)
+            #expect(error.limit == .itemBytes)
+            #expect(error.record == .item(account: 0, item: 0))
+        }
+    }
+
+    @Test func sharedCollectionAncestryReencodedPerItemIsBudgetedBeforeItIsRetained() throws {
+        // 32 levels of 120 KB titles: 3.84 MB per item, inside the item bound. The chain is re-encoded into every linked item,
+        // so the transfer reaches its 128 MB budget at about the 33rd item and is refused there, not after every item is kept.
+        let exported = sharedAncestryTransfer(titleBytes: 120_000, itemCount: 40)
         do {
             _ = try CredentialExchangeCodec.preview(exported, against: snapshot([]))
             Issue.record("Expected the multiplied metadata to be rejected")
         } catch let error as CredentialExchangeError {
-            // Rejected while the second item is built, not after every candidate has been retained.
             #expect(error.reason == .oversized)
-            #expect(error.record == .item(account: 0, item: 1))
-        }
-    }
-
-    @Test func unsupportedCredentialDiagnosticUsesExactRecordIndices() throws {
-        let secret = "must-not-appear-in-diagnostics"
-        let firstAccount = ASImportableAccount(
-            id: Data([0xA1]),
-            userName: "first",
-            email: "",
-            collections: [],
-            items: [
-                importableItem(id: Data([0xB1]), title: "first", credentials: [
-                    basicAuthentication(username: "first", password: "first")
-                ]),
-            ]
-        )
-        let secondAccount = ASImportableAccount(
-            id: Data([0xA2]),
-            userName: "second",
-            email: "",
-            collections: [],
-            items: [
-                importableItem(id: Data([0xB2]), title: "valid", credentials: [
-                    basicAuthentication(username: "valid", password: "valid")
-                ]),
-                importableItem(id: Data([0xB3]), title: "invalid", credentials: [
-                    basicAuthentication(username: "safe", password: "safe"),
-                    .generatedPassword(.init(password: secret)),
-                ]),
-            ]
-        )
-        let data = ASExportedCredentialData(
-            accounts: [firstAccount, secondAccount],
-            formatVersion: .v1,
-            exporterRelyingPartyIdentifier: "example.test",
-            exporterDisplayName: "Fixture",
-            timestamp: Date(timeIntervalSince1970: 1_700_000_000)
-        )
-
-        do {
-            _ = try CredentialExchangeCodec.preview(data, against: snapshot([]))
-            Issue.record("Expected unsupported credential rejection")
-        } catch {
-            let diagnostic = try #require(error as? CredentialExchangeError)
-            #expect(diagnostic.record == .credential(account: 1, item: 1, credential: 1))
-            let description = String(describing: error)
-            #expect(description.contains("account[1]/item[1]/credential[1]"))
-            #expect(!description.contains(secret))
+            #expect(error.limit == .transferBytes)
+            guard case let .item(account, item) = error.record else {
+                Issue.record("Expected the refusal at an item, got \(error.record)")
+                return
+            }
+            #expect(account == 0 && (30...34).contains(item))
         }
     }
 
@@ -713,5 +526,129 @@ extension CredentialExchangeTests {
             guard case CredentialVaultError.invalidData = error else { return false }
             return true
         }
+    }
+
+    /// Spec §13.2(a): what an import brought in is recorded, so the next one can tell which side changed. A part the user kept
+    /// different from the incoming one is not an observation of it.
+    @Test func appliedImportRecordsTheObservedBaseOfEachPart() throws {
+        let incoming = data(credentials: [basicAuthentication(username: "ada", password: "v1"), totp()])
+        let preview = try CredentialExchangeCodec.preview(incoming, against: snapshot([]))
+        let candidate = try #require(preview.candidates.first)
+        let imported = try #require(CredentialExchangeCodec.apply(preview, decisions: []).first)
+        #expect(imported.passwordBase == ExchangeBase(contentHash: try CredentialContent.hash(.password(candidate)), itemID: itemExternalID))
+        #expect(imported.totpBase == ExchangeBase(contentHash: try CredentialContent.hash(.totp(candidate)), itemID: itemExternalID))
+        #expect(imported.passwordEvents == nil && imported.totpEvents == nil, "no date is recorded: an unknown date is not now")
+
+        // The same item again, with another password. The code is the same, so it is a conflict too, and every conflict needs a decision.
+        let changed = try CredentialExchangeCodec.preview(
+            data(credentials: [basicAuthentication(username: "ada", password: "v2"), totp()]), against: snapshot([imported])
+        )
+        let login = try #require(changed.conflicts.first { if case .password = $0.incoming { true } else { false } })
+        let code = try #require(changed.conflicts.first { if case .totp = $0.incoming { true } else { false } })
+        let keepCode = CredentialImportDecision.keep(incoming: code.incoming)
+
+        // Kept out by the user: nothing changes, and the base is still the first one's.
+        #expect(try CredentialExchangeCodec.apply(changed, decisions: [.keep(incoming: login.incoming), keepCode]) == [imported])
+
+        // Replacing is an observation of the new version; adding it separately is a new item that is paired with nothing.
+        let replaced = try #require(
+            CredentialExchangeCodec.apply(changed, decisions: [.replace(incoming: login.incoming, target: login.existing), keepCode]).first
+        )
+        let newCandidate = try #require(changed.candidates.first)
+        let newHash = try CredentialContent.hash(.password(newCandidate))
+        #expect(replaced.password == "v2" && replaced.passwordBase?.contentHash == newHash)
+        #expect(replaced.passwordBase != imported.passwordBase)
+        let added = try CredentialExchangeCodec.apply(changed, decisions: [.add(incoming: login.incoming, targetAccountID: nil), keepCode])
+        #expect(added.count == 2 && added.first == imported && added.last?.passwordBase == nil)
+    }
+
+    // MARK: - Exact duplicates
+
+    /// A saved account that holds an exact copy of the incoming login takes what it lacks, keeps its own name and websites first, and
+    /// becomes the exporter's item, with the login's field descriptions the exporter sent so the recorded base is true.
+    @Test func applyingADuplicateMergeAddsOnlyWhatTheSavedAccountLacks() throws {
+        var saved = account(password: "same-password")
+        saved.displayName = "My name"
+        saved.origins = ["https://www.example.test"]
+        saved.notes = [CredentialNote(text: "mine", field: nil)]
+        let incoming = data(
+            title: "Their name", credentials: [basicAuthentication(username: "ada", password: "same-password"), totp()]
+        )
+        let preview = try CredentialExchangeCodec.preview(incoming, against: snapshot([saved]))
+        let candidate = try #require(preview.candidates.first)
+        let login = CredentialIdentity.password(accountID: candidate.id)
+        let code = CredentialIdentity.totp(accountID: candidate.id)
+        let decisions = [
+            CredentialImportDecision.add(incoming: login, targetAccountID: saved.id),
+            .add(incoming: code, targetAccountID: saved.id),
+        ]
+        // Without the duplicate named, the explicit merge of an identical login, or into a differently named account, is refused.
+        #expect(throws: (any Error).self) { try CredentialExchangeCodec.apply(preview, decisions: decisions) }
+
+        let merge = CredentialExchangeCodec.DuplicateMerge(target: saved.id, origins: [origin])
+        let merged = try #require(CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: [candidate.id: merge]).first)
+        #expect(merged.id == saved.id && merged.displayName == "My name" && merged.password == "same-password")
+        #expect(merged.origins == ["https://www.example.test", origin] && merged.notes?.map(\.text) == ["mine"])
+        #expect(merged.totp == candidate.totp)
+        #expect(merged.exchangeAccountID == accountExternalID && merged.exchangeItemID == itemExternalID)
+        #expect(merged.basicAuthenticationMetadata == candidate.basicAuthenticationMetadata)
+        #expect(merged.passwordBase?.itemID == itemExternalID && merged.totpBase?.itemID == itemExternalID)
+    }
+
+    /// An account that is the exporter's item already, or another item's, is not renamed or relinked by a duplicate merge.
+    @Test func aDuplicateMergeKeepsTheIdentityOfAnAccountThatHasOne() throws {
+        var saved = account(externalID: Data([0x01]), itemID: Data([0x02]), password: "same-password")
+        saved.displayName = "Mine"
+        let incoming = data(credentials: [basicAuthentication(username: "ada", password: "same-password")])
+        let preview = try CredentialExchangeCodec.preview(incoming, against: snapshot([saved]))
+        let candidate = try #require(preview.candidates.first)
+        #expect(!CredentialExchangeCodec.canLinkDuplicate(candidate, to: saved))
+        let decisions = [CredentialImportDecision.add(incoming: .password(accountID: candidate.id), targetAccountID: saved.id)]
+        let merge = CredentialExchangeCodec.DuplicateMerge(target: saved.id, origins: [])
+        let merged = try #require(CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: [candidate.id: merge]).first)
+        #expect(merged == saved, "an identical login adds nothing to an account that is another item's")
+    }
+
+    /// A merge never replaces: a login that is not the saved one is refused, even for a named duplicate.
+    @Test func aDuplicateMergeRefusesALoginThatIsNotTheSavedOne() throws {
+        let saved = account(password: "saved-password")
+        let incoming = data(credentials: [basicAuthentication(username: "ada", password: "another-password")])
+        let preview = try CredentialExchangeCodec.preview(incoming, against: snapshot([saved]))
+        let candidate = try #require(preview.candidates.first)
+        let decisions = [CredentialImportDecision.add(incoming: .password(accountID: candidate.id), targetAccountID: saved.id)]
+        #expect(throws: (any Error).self) {
+            try CredentialExchangeCodec.apply(
+                preview, decisions: decisions, duplicates: [candidate.id: .init(target: saved.id, origins: [])]
+            )
+        }
+    }
+
+    /// The websites a duplicate merge adds are the ones it names. A saved password is filled on its account's websites, so the
+    /// item's other sites are not added, whatever the item lists.
+    @Test func aDuplicateMergeAddsNoWebsiteItDoesNotName() throws {
+        var saved = account(password: "same-password")
+        saved.origins = ["https://www.example.test"]
+        let incoming = data(
+            scope: ASImportableCredentialScope(
+                urls: [URL(string: "https://example.test/login")!, URL(string: "https://other.test/login")!], androidApps: []
+            ),
+            credentials: [basicAuthentication(username: "ada", password: "same-password"), totp()]
+        )
+        let preview = try CredentialExchangeCodec.preview(incoming, against: snapshot([saved]))
+        let candidate = try #require(preview.candidates.first)
+        #expect(candidate.origins == ["https://example.test", "https://other.test"])
+        let decisions = [
+            CredentialImportDecision.add(incoming: .password(accountID: candidate.id), targetAccountID: saved.id),
+            .add(incoming: .totp(accountID: candidate.id), targetAccountID: saved.id),
+        ]
+        let merge = CredentialExchangeCodec.DuplicateMerge(target: saved.id, origins: ["https://example.test"])
+        let merged = try #require(CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: [candidate.id: merge]).first)
+        #expect(merged.origins == ["https://www.example.test", "https://example.test"])
+        #expect(merged.loginURLs.map(\.absoluteString) == ["https://example.test/login"], "nor the login address of a site it does not add")
+
+        // Named nothing, it adds nothing.
+        let none = CredentialExchangeCodec.DuplicateMerge(target: saved.id, origins: [])
+        let kept = try #require(CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: [candidate.id: none]).first)
+        #expect(kept.origins == ["https://www.example.test"] && kept.loginURLs.isEmpty)
     }
 }

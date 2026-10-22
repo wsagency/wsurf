@@ -88,7 +88,7 @@ struct OnboardingModelTests {
     }
 
     private func makeDefaults() -> (UserDefaults, String) {
-        let suite = "WSurf.OnboardingModelTests.\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("WSurf.OnboardingModelTests.\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
         return (defaults, suite)

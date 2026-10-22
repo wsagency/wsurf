@@ -50,6 +50,15 @@ struct AppDatabase: Sendable {
         return url
     }()
 
+    /// The name to give `UserDefaults(suiteName:)` and `removePersistentDomain(forName:)`. Under XCTest it is an absolute path in
+    /// the per-process test directory, which CFPreferences reads as the plist's location, so a test run adds nothing to the
+    /// user's ~/Library/Preferences (emptying a domain does not delete its plist, so tens of thousands of test files piled up
+    /// there). Otherwise it is `name` unchanged.
+    nonisolated static func defaultsSuite(_ name: String) -> String {
+        guard isRunningTests else { return name }
+        return testSupportDirectory.appendingPathComponent("Preferences", isDirectory: true).appendingPathComponent(name).path
+    }
+
     static var defaultURL: URL {
         supportDirectory.appendingPathComponent("WSurf.sqlite")
     }
@@ -136,6 +145,11 @@ struct AppDatabase: Sendable {
                 )
                 """)
         }
+        // The pins and Favorites of every window, open or closed, become the profile's, once and in one transaction.
+        migrator.registerMigration("v3-profile-pins") { db in
+            try defineSchema(in: db)
+            try ProfilePinMigration.run(in: db)
+        }
         return migrator
     }
 
@@ -220,6 +234,11 @@ struct AppDatabase: Sendable {
                 t.add(column: "diagnostics", .blob)
             }
         }
+        if !traceColumns.contains("openedTabIDs") {
+            try db.alter(table: "agentTrace") { t in
+                t.add(column: "openedTabIDs", .text)
+            }
+        }
         try db.create(table: "agentConversationMemory", options: .ifNotExists) { t in
             t.primaryKey("traceID", .blob).references("agentTrace", onDelete: .cascade)
             t.column("payload", .blob).notNull()
@@ -262,6 +281,58 @@ struct AppDatabase: Sendable {
         }
 
         try defineWindowSessions(in: db)
+        try defineProfilePins(in: db)
+        try defineTabArchive(in: db)
+        try defineAssistantFacts(in: db)
+    }
+
+    /// Notes the assistant keeps about the person, one per subject. History-class data in the profile's database; not
+    /// `agentConversationMemory`, which holds one conversation's payload.
+    private nonisolated static func defineAssistantFacts(in db: Database) throws {
+        try db.create(table: "assistantFact", options: .ifNotExists) { t in
+            t.primaryKey("id", .blob)
+            t.column("subject", .text).notNull().unique()
+            t.column("value", .text).notNull()
+            t.column("source", .text).notNull()
+            t.column("savedAt", .datetime).notNull().indexed()
+        }
+    }
+
+    /// Tabs closed for sitting unused. They are history-class data and live in the profile's database next to the
+    /// history.
+    private nonisolated static func defineTabArchive(in db: Database) throws {
+        try db.create(table: "archivedTab", options: .ifNotExists) { t in
+            t.primaryKey("id", .blob)
+            t.column("title", .text).notNull()
+            t.column("url", .text).notNull().indexed()
+            t.column("archivedAt", .datetime).notNull().indexed()
+        }
+    }
+
+    /// Pins, pinned folders and Favorites belong to the profile, not to a window. A window's tab and folder rows
+    /// keep a `pinID` for the profile row they stand for.
+    private nonisolated static func defineProfilePins(in db: Database) throws {
+        try db.create(table: "profilePin", options: .ifNotExists) { t in
+            t.primaryKey("id", .blob)
+            t.column("parentID", .blob).references("profilePin", onDelete: .cascade)
+            t.column("orderKey", .text).notNull()
+            t.column("kind", .text).notNull()
+            t.column("url", .text).notNull().defaults(to: "")
+            t.column("title", .text).notNull().defaults(to: "")
+            t.column("customTitle", .text)
+            t.column("pinnedURL", .text)
+            t.column("pinnedTitle", .text)
+            t.column("isFavorite", .boolean).notNull().defaults(to: false)
+            t.column("color", .text)
+            t.column("isExpanded", .boolean).notNull().defaults(to: true)
+            t.column("isPinned", .boolean).notNull().defaults(to: false)
+        }
+        for table in ["sessionTab", "sessionFolder"] {
+            guard try !db.columns(in: table).contains(where: { $0.name == "pinID" }) else { continue }
+            try db.alter(table: table) { t in
+                t.add(column: "pinID", .blob)
+            }
+        }
     }
 
     private nonisolated static func defineSessionSchema(in db: Database) throws {
@@ -277,6 +348,7 @@ struct AppDatabase: Sendable {
             t.column("internalPage", .text)
             t.column("isActive", .boolean).notNull().defaults(to: false)
             t.column("isFavorite", .boolean).notNull().defaults(to: false)
+            t.column("lastActiveAt", .datetime)
         }
 
         if try !db.columns(in: "sessionTab").contains(where: { $0.name == "customTitle" }) {
@@ -288,6 +360,13 @@ struct AppDatabase: Sendable {
         if try !db.columns(in: "sessionTab").contains(where: { $0.name == "isFavorite" }) {
             try db.alter(table: "sessionTab") { t in
                 t.add(column: "isFavorite", .boolean).notNull().defaults(to: false)
+            }
+        }
+
+        // A NULL means no use was recorded: the tab reads as used when the window restores.
+        if try !db.columns(in: "sessionTab").contains(where: { $0.name == "lastActiveAt" }) {
+            try db.alter(table: "sessionTab") { t in
+                t.add(column: "lastActiveAt", .datetime)
             }
         }
 

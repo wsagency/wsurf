@@ -26,12 +26,22 @@ struct AssistantSettings: View {
                 AgentToolsPage(model: model)
             case .grants:
                 AssistantGrantsPage(policy: model.actionPolicy, onBack: { model.showOverview() })
+            case .memory:
+                AssistantMemoryPage(facts: coordinator.context.assistantFacts, onBack: { model.showOverview() })
+            case .connectedApps:
+                ConnectedAppsPage(
+                    server: coordinator.mcpServer, permissions: coordinator.context.sitePermissions,
+                    isPrivateProfile: coordinator.context.profile.isPrivate, onBack: { model.showOverview() })
             }
         }
         .task { await model.onAppear() }
         .onChange(of: highlight, initial: true) { _, anchor in
             guard let anchor else { return }
-            if anchor == "provider.connected" || anchor == "privacy.assistant"
+            if anchor == "assistant.connectedApps" {
+                model.showConnectedApps()
+            } else if anchor == "assistant.memory" {
+                model.showMemory()
+            } else if anchor == "provider.connected" || anchor == "privacy.assistant"
                 || anchor.hasPrefix("voice.") || anchor.hasPrefix("assistant.") {
                 model.showOverview()
             } else if anchor.hasPrefix("provider.") {
@@ -79,11 +89,34 @@ private struct AssistantOverview: View {
 
         BehaviourSection(coordinator: coordinator)
 
+        AssistantMemoryPage.OverviewSection(facts: coordinator.context.assistantFacts) { model.showMemory() }
+
         AssistantExecutionSettings()
 
-        SettingsSection(title: "Acting on websites", symbol: "hand.raised") {
+        SettingsSection(
+            title: "Acting on websites",
+            symbol: "hand.raised",
+            footnote: "A website’s own Assistant Access setting wins over this default. Private windows always ask."
+        ) {
+            WebsiteAccessRow(
+                permissions: coordinator.context.sitePermissions,
+                isPrivate: coordinator.context.profile.isPrivate,
+                trust: coordinator.mcpServer.trustStore
+            )
+
+            if TabClosingRow.appears(
+                defaultAccess: coordinator.context.sitePermissions.assistantDefault,
+                isPrivate: coordinator.context.profile.isPrivate
+            ) {
+                RowSeparator()
+
+                TabClosingRow(permissions: coordinator.context.sitePermissions)
+            }
+
+            RowSeparator()
+
             DrillInRow(
-                title: "Allowed without asking",
+                title: "Approved actions",
                 detail: model.actionPolicy.grantsByHost.isEmpty
                     ? "None" : "\(model.actionPolicy.grantsByHost.count) websites"
             ) {
@@ -91,6 +124,8 @@ private struct AssistantOverview: View {
             }
             .settingsAnchor("privacy.assistant")
         }
+
+        ConnectedAppsSection(model: model, trustStore: coordinator.mcpServer.trustStore)
 
         Footnote(AIDisclosure.settingsCaption)
     }
@@ -926,27 +961,6 @@ private struct AgentToolsPage: View {
             "square.on.square"
         case .media:
             "play.rectangle"
-        }
-    }
-}
-
-// MARK: - Readiness
-
-enum ProviderReadiness: Equatable {
-    case ready(String)
-    case needsKey
-    case notRunning(String)
-    case checking
-    case unsupported(String)
-
-    var level: StatusLevel {
-        switch self {
-        case .ready:
-            .ready
-        case .needsKey, .notRunning, .unsupported:
-            .attention
-        case .checking:
-            .idle
         }
     }
 }

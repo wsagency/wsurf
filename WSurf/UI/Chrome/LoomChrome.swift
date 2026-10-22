@@ -6,47 +6,45 @@ import AppKit
 import SwiftUI
 
 enum LoomChrome {
-    /// The inset shared by chrome-owned surfaces.
+    /// The inset shared by chrome-owned surfaces, and the default page spacing of a theme.
     nonisolated static let canvasInset: CGFloat = 6
+    /// As wide as the widest page spacing, and a flush page keeps 4 pt of grab on each side of its edge.
     nonisolated static let resizeGrabWidth: CGFloat = 8
-
-    /// Visually balances sidebar rows against the canvas gutter without
-    /// changing the resize handle's position inside that gutter.
-    nonisolated static var sidebarContentBalanceOffset: CGFloat {
-        canvasInset / 2
-    }
 
     nonisolated static var canvasTop: CGFloat {
         Theme.topBarHeight
     }
 
+    /// The page's corner, from the theme's page spacing and corner rounding. The side panel and split panes follow it.
     static var canvasRadius: CGFloat {
-        Theme.Radius.nested(in: Theme.Radius.window, inset: canvasInset)
+        BrowserSettings.application.chromeShape.canvasRadius(window: Theme.Radius.window)
     }
 
     static var canvasShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: canvasRadius, style: .continuous)
     }
 
-    static func sampledColor(_ color: NSColor?, scheme: ColorScheme) -> NSColor {
-        let settings = BrowserSettings.application
-        if settings.themeCustomization(theme: settings.sidebarAppearance(scheme: scheme)).changesPalette {
-            var resolved = NSColor(Theme.windowBackground)
-            NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
-                resolved = NSColor(Theme.windowBackground).usingColorSpace(.sRGB) ?? resolved
-            }
-            return resolved
+    /// `isFloating` marks the sidebar surface, which a solid theme colors separately from the window.
+    static func sampledColor(_ color: NSColor?, scheme: ColorScheme, isFloating: Bool = false) -> NSColor {
+        let theme = BrowserSettings.application.resolvedTheme
+        let variant = theme.variant(scheme)
+        let appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua) ?? NSApp.effectiveAppearance
+        // A solid theme and a changed palette set the color themselves; the page does not tint them.
+        if theme.ground == .solid || variant.changesPalette {
+            let surface = isFloating && theme.ground == .solid ? variant.sidebar : variant.window
+            let resolved = surface.resolved(in: appearance)
+            return resolved.usingColorSpace(.sRGB) ?? resolved
         }
         let fallbackIsLight = scheme == .light
         guard let color = color?.usingColorSpace(.sRGB), color.alphaComponent > 0.05 else {
-            return neutral(isLight: fallbackIsLight)
+            return neutral(isLight: fallbackIsLight, theme: theme)
         }
 
         // A real page chooses the chrome's tonal family too. In particular,
         // black and grey headers carry useful appearance information; treating
         // them as "no colour" leaves a light Loom around dark sites.
-        let isLight = Theme.isCalm ? fallbackIsLight : PageInk.isLight(color, scheme: scheme)
-        let neutral = neutral(isLight: isLight)
+        let isLight = theme.isSoftTinted ? fallbackIsLight : PageInk.isLight(color, scheme: scheme)
+        let neutral = neutral(isLight: isLight, theme: theme)
 
         let floor: CGFloat = isLight ? 0.55 : 0.02
         let ceiling: CGFloat = isLight ? 1 : 0.82
@@ -56,17 +54,15 @@ enum LoomChrome {
             brightness: min(max(color.brightnessComponent, floor), ceiling),
             alpha: 1
         )
-        let tintFraction: CGFloat = Theme.isCalm ? 0.18 : 0.85
+        let tintFraction: CGFloat = theme.isSoftTinted ? 0.18 : 0.85
         return neutral.blended(withFraction: tintFraction, of: tint) ?? neutral
     }
 
-    private static func neutral(isLight: Bool) -> NSColor {
-        if Theme.isCalm {
-            var themed: NSColor?
-            NSAppearance(named: isLight ? .aqua : .darkAqua)?.performAsCurrentDrawingAppearance {
-                themed = NSColor(Theme.windowBackground).usingColorSpace(.sRGB)
-            }
-            if let themed {
+    private static func neutral(isLight: Bool, theme: ResolvedTheme) -> NSColor {
+        if theme.isSoftTinted {
+            let appearance = NSAppearance(named: isLight ? .aqua : .darkAqua) ?? NSApp.effectiveAppearance
+            let themed = theme.variant(isLight ? .light : .dark).window.resolved(in: appearance)
+            if let themed = themed.usingColorSpace(.sRGB) {
                 return themed
             }
         }
@@ -117,11 +113,13 @@ nonisolated struct LoomShellGeometry {
     let isSidebarVisible: Bool
     let isPanelVisible: Bool
     let isPanelExpanded: Bool
+    /// The theme's page spacing: the gap around the page and between the page and the side panel.
+    var pageSpacing = LoomChrome.canvasInset
 
     var panelWidth: CGFloat {
         guard isPanelExpanded else { return preferredPanelWidth }
         return max(
-            containerWidth - (isSidebarVisible ? sidebarWidth : 0) - LoomChrome.canvasInset * 2,
+            containerWidth - (isSidebarVisible ? sidebarWidth : 0) - pageSpacing * 2,
             0
         )
     }
@@ -130,16 +128,16 @@ nonisolated struct LoomShellGeometry {
     /// this value, so opening the panel cannot change toolbar geometry.
     var canvasTrailingInset: CGFloat {
         guard isPanelVisible, !isPanelExpanded else { return 0 }
-        return panelWidth + LoomChrome.canvasInset
+        return panelWidth + pageSpacing
     }
 
-    /// Leading edge for a resize hit target centred in the canvas gutter.
+    /// Leading edge for a resize hit target centred in the canvas gutter. With no gutter it straddles the page edge.
     var sidebarResizeLeading: CGFloat {
-        sidebarWidth + (LoomChrome.canvasInset - LoomChrome.resizeGrabWidth) / 2
+        sidebarWidth + (pageSpacing - LoomChrome.resizeGrabWidth) / 2
     }
 
     var panelLeading: CGFloat {
-        containerWidth - panelWidth - LoomChrome.canvasInset
+        containerWidth - panelWidth - pageSpacing
     }
 
     var panelCoversPage: Bool {
@@ -151,8 +149,8 @@ nonisolated struct LoomShellGeometry {
     var panelResizeLeading: CGFloat {
         containerWidth
             - panelWidth
-            - LoomChrome.canvasInset
-            - (LoomChrome.canvasInset + LoomChrome.resizeGrabWidth) / 2
+            - pageSpacing
+            - (pageSpacing + LoomChrome.resizeGrabWidth) / 2
     }
 }
 
@@ -160,15 +158,69 @@ struct LoomAmbientBackdrop: View {
     let sampledPageColor: NSColor?
     let settings: BrowserSettings
 
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
     var body: some View {
-        switch settings.loomStyle {
-        case .standard:
-            LoomTintedBackdrop(sampledPageColor: websiteTint, isFloating: false)
-        case .transparent:
+        LoomBackdrop(
+            sampledPageColor: sampledPageColor,
+            settings: settings,
+            isFloating: false,
+            fallsBack: GlassPolicy.fallsBack(reduceTransparency: reduceTransparency, contrast: contrast)
+        )
+    }
+}
+
+struct LoomFloatingFill: View {
+    let sampledPageColor: NSColor?
+    let settings: BrowserSettings
+
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        LoomBackdrop(
+            sampledPageColor: sampledPageColor,
+            settings: settings,
+            isFloating: true,
+            fallsBack: GlassPolicy.fallsBack(reduceTransparency: reduceTransparency, contrast: contrast)
+        )
+    }
+}
+
+/// Accessibility takes precedence over material. Glass works with every ground; Plain preserves Standard and
+/// Calm's tinted backdrops, while a solid theme needs no visual effect.
+struct LoomBackdrop: View {
+    let sampledPageColor: NSColor?
+    let settings: BrowserSettings
+    let isFloating: Bool
+    let fallsBack: Bool
+
+    enum Kind {
+        case solid, tinted, glass
+    }
+
+    static func kind(ground: ThemeGround, material: ThemeMaterial, fallsBack: Bool) -> Kind {
+        if fallsBack {
+            return .solid
+        }
+        if material == .glass {
+            return .glass
+        }
+        return ground == .solid ? .solid : .tinted
+    }
+
+    var body: some View {
+        switch Self.kind(ground: settings.resolvedTheme.ground, material: settings.themeMaterial, fallsBack: fallsBack) {
+        case .solid:
+            LoomSolidBackdrop(sampledPageColor: websiteTint, isFloating: isFloating)
+        case .tinted:
+            LoomTintedBackdrop(sampledPageColor: websiteTint, isFloating: isFloating)
+        case .glass:
             LoomTransparentBackdrop(
                 sampledPageColor: websiteTint,
                 opacity: settings.transparency,
-                isFloating: false
+                isFloating: isFloating
             )
         }
     }
@@ -178,25 +230,18 @@ struct LoomAmbientBackdrop: View {
     }
 }
 
-struct LoomFloatingFill: View {
+/// Plain solid themes and accessibility fallbacks draw an opaque ground, without a backdrop effect. Stored
+/// material and transparency choices are untouched by the accessibility override.
+private struct LoomSolidBackdrop: View {
     let sampledPageColor: NSColor?
-    let settings: BrowserSettings
+    let isFloating: Bool
+
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        switch settings.loomStyle {
-        case .standard:
-            LoomTintedBackdrop(sampledPageColor: websiteTint, isFloating: true)
-        case .transparent:
-            LoomTransparentBackdrop(
-                sampledPageColor: websiteTint,
-                opacity: settings.transparency,
-                isFloating: true
-            )
-        }
-    }
-
-    private var websiteTint: NSColor? {
-        settings.matchesWebsiteColor ? sampledPageColor : nil
+        Color(nsColor: LoomChrome.sampledColor(sampledPageColor, scheme: scheme, isFloating: isFloating))
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }
 
@@ -207,7 +252,7 @@ private struct LoomTintedBackdrop: View {
     @Environment(\.colorScheme) private var scheme
 
     private var sampled: NSColor {
-        LoomChrome.sampledColor(sampledPageColor, scheme: scheme)
+        LoomChrome.sampledColor(sampledPageColor, scheme: scheme, isFloating: isFloating)
     }
 
     private var washOpacity: CGFloat {
@@ -237,6 +282,8 @@ private struct LoomTintedBackdrop: View {
     }
 }
 
+/// The desktop blurred through the window, under a tint. This is a window backdrop, not a floating control, and
+/// glass cannot sample glass, so it carries no glass layer of its own: one effect samples the desktop once.
 private struct LoomTransparentBackdrop: View {
     let sampledPageColor: NSColor?
     let opacity: Double
@@ -245,7 +292,7 @@ private struct LoomTransparentBackdrop: View {
     @Environment(\.colorScheme) private var scheme
 
     private var sampled: NSColor {
-        LoomChrome.sampledColor(sampledPageColor, scheme: scheme)
+        LoomChrome.sampledColor(sampledPageColor, scheme: scheme, isFloating: isFloating)
     }
 
     private var isLight: Bool {
@@ -265,12 +312,6 @@ private struct LoomTransparentBackdrop: View {
         0.12 + 0.82 * intensity
     }
 
-    private var glassTintOpacity: CGFloat {
-        let resting = isFloating ? (isLight ? 0.025 : 0.035) : (isLight ? 0.02 : 0.03)
-        let maximum: CGFloat = isLight ? 0.32 : 0.38
-        return resting + (maximum - resting) * intensity
-    }
-
     private var tintWashOpacity: CGFloat {
         (isLight ? 0.34 : 0.42) * intensity
     }
@@ -283,11 +324,6 @@ private struct LoomTransparentBackdrop: View {
                 materialOpacity: substrateOpacity
             )
 
-            AppKitGlassEffectView(
-                style: .clear,
-                tintColor: sampled.withAlphaComponent(glassTintOpacity)
-            )
-
             Color(nsColor: sampled).opacity(tintWashOpacity)
         }
         .allowsHitTesting(false)
@@ -296,7 +332,7 @@ private struct LoomTransparentBackdrop: View {
 }
 
 /// Shared panel fill for the side panel, internal pages, and Settings.
-struct LoomPanelFill<S: Shape>: View {
+struct LoomPanelFill<S: InsettableShape>: View {
     let shape: S
     var isVisible = true
     var emphasis: Double = 1
@@ -316,7 +352,7 @@ struct LoomPanelFill<S: Shape>: View {
 
     var body: some View {
         Color.clear
-            .glassEffect(glass, in: shape)
+            .chromeGlass(glass, fill: tint ?? Theme.windowBackground, in: shape)
     }
 }
 
@@ -335,22 +371,40 @@ struct LoomPageCanvas<Content: View>: View {
         self.content = content()
     }
 
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.displayScale) private var displayScale
+
     var body: some View {
         let shape = LoomChrome.canvasShape
+        let chrome = BrowserSettings.application.chromeShape
+        let frame = chrome.pageFrame(contrast: contrast)
+        let hasShadow = frame == .standard
 
+        // The clip and the shadow stay in place for every edge, with values that draw nothing, so changing the edge
+        // never changes the identity of the web view inside.
         content
             .background {
                 LoomPanelFill(shape: shape, isVisible: showsPanelFill)
             }
             .clipShape(shape)
+            .overlay {
+                if frame == .hairline {
+                    shape
+                        .strokeBorder(
+                            Theme.chrome(GlassPolicy.borderOpacity(contrast: contrast)),
+                            lineWidth: contrast == .increased ? 1 : 1 / displayScale
+                        )
+                        .allowsHitTesting(false)
+                }
+            }
             .shadow(
-                color: .black.opacity(0.18),
-                radius: 12,
-                y: 4
+                color: .black.opacity(hasShadow ? 0.18 : 0),
+                radius: hasShadow ? 12 : 0,
+                y: hasShadow ? 4 : 0
             )
             .padding(.top, LoomChrome.canvasTop)
-            .padding(.leading, LoomChrome.canvasInset)
-            .padding(.trailing, LoomChrome.canvasInset + trailingInset)
-            .padding(.bottom, LoomChrome.canvasInset)
+            .padding(.leading, chrome.pageSpacing)
+            .padding(.trailing, chrome.pageSpacing + trailingInset)
+            .padding(.bottom, chrome.pageSpacing)
     }
 }

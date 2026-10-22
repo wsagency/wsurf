@@ -17,30 +17,47 @@ struct AppearancePickerFitTests {
         return renderer.nsImage?.size.width ?? 0
     }
 
-    @Test func theThemeCardsWrapIntoANarrowPage() {
+    @Test func theMaterialPickerFitsIntoANarrowPage() {
         let narrow = AppearanceThumbnailMetrics.width + 20
-        let picker = ThemePicker(selection: .system, onSelect: { _ in })
-
-        #expect(widthTaken(picker, proposing: narrow) <= narrow)
-    }
-
-    @Test func theWindowStyleCardsWrapIntoANarrowPage() {
-        let narrow = AppearanceThumbnailMetrics.width + 20
-        let picker = LoomStylePicker(
-            selection: .standard,
-            usesWebsiteTint: false,
-            tintsSelectedTab: false,
+        let picker = SegmentedControl(
+            items: [
+                .init(value: ThemeMaterial.plain, label: "Plain"),
+                .init(value: ThemeMaterial.glass, label: "Glass"),
+            ],
+            selection: .plain,
             onSelect: { _ in }
         )
 
         #expect(widthTaken(picker, proposing: narrow) <= narrow)
     }
 
-    @Test func theCardsStayInOneRowWhenThereIsRoom() {
-        let roomy = AppearanceThumbnailMetrics.width * 3
-            + AppearanceThumbnailMetrics.spacing * 2
-        let picker = ThemePicker(selection: .system, onSelect: { _ in })
+    private func sizeTaken(_ view: some View, proposing width: CGFloat) -> CGSize {
+        let renderer = ImageRenderer(content: view)
+        renderer.proposedSize = ProposedViewSize(width: width, height: 2000)
+        renderer.scale = 1
+        return renderer.nsImage?.size ?? .zero
+    }
 
-        #expect(widthTaken(picker, proposing: roomy) <= roomy)
+    private func gallery(mode: AppearanceMode = .system) -> ThemeGallery {
+        ThemeGallery(
+            themes: ThemeCatalog.builtIn + [ThemeDefinition(id: "mine", name: "Mine", basedOn: "nord", ground: .solid)],
+            selection: "standard", mode: mode, adjustments: [:], onSelect: { _ in }
+        )
+    }
+
+    @Test(arguments: [AppearanceMode.system, .light, .dark])
+    func theThemeCardsWrapIntoANarrowPage(mode: AppearanceMode) {
+        let narrow = AppearanceThumbnailMetrics.width + 20
+
+        #expect(sizeTaken(gallery(mode: mode), proposing: narrow).width <= narrow)
+    }
+
+    @Test func theThemeCardsShareRowsWhenThereIsRoom() {
+        let narrow = AppearanceThumbnailMetrics.width + 20
+        let roomy = AppearanceThumbnailMetrics.width * 4 + AppearanceThumbnailMetrics.spacing * 3
+
+        let wide = sizeTaken(gallery(), proposing: roomy)
+        #expect(wide.width <= roomy)
+        #expect(wide.height < sizeTaken(gallery(), proposing: narrow).height / 2)
     }
 }

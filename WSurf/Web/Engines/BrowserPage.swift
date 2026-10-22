@@ -27,8 +27,47 @@ final class BrowserPage: NSView {
         }
     }
 
+    /// MCP development viewport in CSS pixels; nil is normal layout. Never persisted. The real page is laid out at this size
+    /// (it may exceed the host, which clips it) so `innerWidth`/`innerHeight` are the requested values.
+    var developmentViewport: CGSize? {
+        didSet {
+            guard developmentViewport != oldValue else { return }
+            (superview as? WebViewContainer)?.layoutPage()
+        }
+    }
+
     func frameInViewport(_ viewport: CGRect) -> CGRect {
-        CGRect(x: viewport.minX, y: viewport.minY, width: viewport.width, height: max(1, viewport.height - topBarInset))
+        if let size = developmentViewport {
+            let zoom = pageZoom
+            let height = size.height * zoom
+            return CGRect(x: viewport.minX, y: viewport.maxY - topBarInset - height, width: size.width * zoom, height: height)
+        }
+        return CGRect(x: viewport.minX, y: viewport.minY, width: viewport.width, height: max(1, viewport.height - topBarInset))
+    }
+
+    /// True while the page waits off screen on its window's parking shelf. It still renders, but it must never take keyboard
+    /// focus: the person may be typing in the page the window shows.
+    var isParked: Bool {
+        superview is WebViewParkingShelf
+    }
+
+    /// Key-value coding finds the private getter `_windowOcclusionDetectionEnabled` and setter `_setWindowOcclusionDetectionEnabled:`
+    /// from this key; the underscored name as a key would match no setter and raise.
+    private static let occlusionKey = "windowOcclusionDetectionEnabled"
+
+    /// WebKit stops painting, pauses animation frames and throttles timers in a page whose window is covered by other apps.
+    /// A tab an external connection controls keeps rendering instead, so its screenshots and waits work with WSurf in the
+    /// background. Private API, used only where the view answers to it. Chromium gets the same from a process-wide switch
+    /// (`ChromiumRuntime.ensureInitialized`).
+    var ignoresWindowOcclusion: Bool {
+        get {
+            guard let webKit, webKit.responds(to: NSSelectorFromString("_windowOcclusionDetectionEnabled")) else { return false }
+            return webKit.value(forKey: Self.occlusionKey) as? Bool == false
+        }
+        set {
+            guard let webKit, webKit.responds(to: NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")) else { return }
+            webKit.setValue(!newValue, forKey: Self.occlusionKey)
+        }
     }
 
     @objc dynamic var url: URL?
@@ -50,6 +89,10 @@ final class BrowserPage: NSView {
     var onHistoryChanged: (() -> Void)?
     var onLinkHovered: ((URL?) -> Void)?
     var onZoomChanged: (() -> Void)?
+    /// Opens `url` in a new Chromium tab of the page's own profile ("Continue in Chromium" on a WebKit passkey sheet).
+    var onOpenInChromium: ((URL) -> Void)?
+    /// The tab's dialog queue, which the engine's dialog handler asks before it shows a sheet.
+    weak var dialogs: PageDialogQueue?
     private(set) var credentialGeneration: UInt64 = 0
     private var credentialInvalidationObservers: [UUID: @MainActor @Sendable (BrowserPage, String?) -> Void] = [:]
 
@@ -85,6 +128,10 @@ final class BrowserPage: NSView {
     var isClosed: Bool {
         closed || chromium?.isClosed == true
     }
+
+    /// Where WSurf's own DOM-only page scripts and their message handlers live, on both engines: an isolated world, so the
+    /// page sees none of their globals, wrappers, message handlers or `__wsurfSend`.
+    static let servicesWorld = WKContentWorld.world(name: "WSurfServices")
 
     init(webKit: WKWebView, context: BrowserProfileContext) {
         engine = .webKit
@@ -257,6 +304,9 @@ final class BrowserPage: NSView {
         set {
             webKit?.pageZoom = newValue
             chromium?.pageZoom = newValue
+            if developmentViewport != nil {
+                (superview as? WebViewContainer)?.layoutPage()
+            }
         }
     }
 
@@ -322,7 +372,16 @@ final class BrowserPage: NSView {
         try await evaluateJavaScript(script, in: nil, contentWorld: .page)
     }
 
-    func evaluateJavaScript(_ script: String, in frame: BrowserFrame?, contentWorld: WKContentWorld) async throws -> Any {
+    /// Script round trips made through this page, counted so a test can show that a wait asks the page once instead of polling.
+    private(set) var evaluations = 0
+    private(set) var asyncCalls = 0
+
+    /// Without a user gesture on either engine (`WKWebView.evaluate`; CDP `userGesture: false`); `userGesture` replays a
+    /// person's own action.
+    func evaluateJavaScript(
+        _ script: String, in frame: BrowserFrame?, contentWorld: WKContentWorld, userGesture: Bool = false
+    ) async throws -> Any {
+        evaluations += 1
         guard !closed else { throw ChromiumError.closed }
         if let webKit {
             if let frame, frame.webKit == nil {
@@ -339,7 +398,7 @@ final class BrowserPage: NSView {
                             throw ChromiumError.staleFrame
                         }
                     }
-                    webKit.evaluateJavaScript(script, in: frame?.webKit, in: contentWorld, completionHandler: {
+                    webKit.evaluate(script, asFunction: false, userGesture: userGesture, in: frame?.webKit, in: contentWorld, completionHandler: {
                         result = $0
                         continuation.resume()
                     })
@@ -352,10 +411,14 @@ final class BrowserPage: NSView {
         }
         guard let chromium else { throw ChromiumError.closed }
         try await chromium.ensureReady()
-        return try await chromium.devTools.evaluate(script, in: frame, world: contentWorld)
+        return try await chromium.devTools.evaluate(script, in: frame, world: contentWorld, userGesture: userGesture)
     }
 
-    func callAsyncJavaScript(_ body: String, arguments: [String: Any] = [:], in frame: BrowserFrame?, contentWorld: WKContentWorld) async throws -> Any {
+    func callAsyncJavaScript(
+        _ body: String, arguments: [String: Any] = [:], in frame: BrowserFrame?, contentWorld: WKContentWorld,
+        userGesture: Bool = false
+    ) async throws -> Any {
+        asyncCalls += 1
         guard !closed else { throw ChromiumError.closed }
         if let webKit {
             if let frame, frame.webKit == nil {
@@ -372,7 +435,8 @@ final class BrowserPage: NSView {
                             throw ChromiumError.staleFrame
                         }
                     }
-                    webKit.callAsyncJavaScript(body, arguments: arguments, in: frame?.webKit, in: contentWorld, completionHandler: {
+                    webKit.evaluate(body, asFunction: true, arguments: arguments, userGesture: userGesture,
+                                    in: frame?.webKit, in: contentWorld, completionHandler: {
                         result = $0
                         continuation.resume()
                     })
@@ -385,7 +449,8 @@ final class BrowserPage: NSView {
         }
         guard let chromium else { throw ChromiumError.closed }
         try await chromium.ensureReady()
-        return try await chromium.devTools.callAsync(body, arguments: arguments, in: frame, world: contentWorld)
+        return try await chromium.devTools.callAsync(
+            body, arguments: arguments, in: frame, world: contentWorld, userGesture: userGesture)
     }
 
     func capture(rect: CGRect? = nil, width: CGFloat? = nil, afterScreenUpdates: Bool = false) async throws -> NSImage {
@@ -424,16 +489,25 @@ final class BrowserPage: NSView {
         }
     }
 
-    func sendKeyEvent(_ event: NSEvent) {
-        if let webKit {
+    /// True when `responder` is this page's engine view or one of its descendants.
+    func ownsResponder(_ responder: NSResponder?) -> Bool {
+        guard let webKit else { return chromium?.ownsResponder(responder) == true }
+        return responder === webKit || (responder as? NSView)?.isDescendant(of: webKit) == true
+    }
+
+    /// True only when the engine's own responder held keyboard focus and was invoked. A key for a page that is not the
+    /// first responder is dropped, never reported as delivered.
+    func sendKeyEvent(_ event: NSEvent) -> Bool {
+        if webKit != nil {
+            guard let responder = window?.firstResponder, ownsResponder(responder) else { return false }
             if event.type == .keyUp {
-                webKit.keyUp(with: event)
+                responder.keyUp(with: event)
             } else {
-                webKit.keyDown(with: event)
+                responder.keyDown(with: event)
             }
-        } else {
-            chromium?.sendKeyEvent(event)
+            return true
         }
+        return chromium?.sendKeyEvent(event) ?? false
     }
 
     func callAsyncJavaScript(
@@ -459,7 +533,7 @@ final class BrowserPage: NSView {
             try dispatchCheck()
             var result: Result<Any, Error>!
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                webKit.callAsyncJavaScript(body, arguments: arguments, in: frame?.webKit, in: contentWorld, completionHandler: {
+                webKit.evaluate(body, asFunction: true, arguments: arguments, in: frame?.webKit, in: contentWorld, completionHandler: {
                     result = $0
                     continuation.resume()
                 })
@@ -478,7 +552,7 @@ final class BrowserPage: NSView {
         guard context.belongs(to: self) else { throw WebAuthnContextError.staleFrame }
         guard !isClosed else { throw WebAuthnContextError.closedPage }
         guard !isPrivate else { throw WebAuthnContextError.privateProfile }
-        guard !isLoading, context.credentialGeneration == credentialGeneration,
+        guard context.credentialGeneration == credentialGeneration,
               context.profileID == profileID, !context.isPrivate,
               context.frame.documentID == context.frameDocumentID,
               context.frame.securityOrigin == context.originEvidence,
@@ -520,14 +594,14 @@ final class BrowserPage: NSView {
                 context.frame, feature: context.policyFeature, in: self
             ) == true else { throw WebAuthnContextError.policyDenied }
         }
-        guard !isClosed, !isLoading, credentialGeneration == context.credentialGeneration else {
+        guard !isClosed, credentialGeneration == context.credentialGeneration else {
             throw WebAuthnContextError.staleFrame
         }
     }
 
     func validateCredentialContextForDispatch(_ context: WebAuthnContext) throws {
         guard context.belongs(to: self), !isClosed else { throw WebAuthnContextError.closedPage }
-        guard !isPrivate, !isLoading,
+        guard !isPrivate,
               credentialGeneration == context.credentialGeneration,
               context.profileID == profileID, !context.isPrivate,
               context.frame.documentID == context.frameDocumentID,
@@ -604,6 +678,12 @@ final class BrowserPage: NSView {
         })();
         """
 
+    /// What WebKit stores for `source`: an isolated world's script starts with the `__wsurfSend` relay. A page-world script
+    /// never does; one that needs native registers a handler (`addScriptMessageHandler`), which adds the relay on purpose.
+    private static func stored(_ source: String, in world: WKContentWorld) -> String {
+        world === WKContentWorld.page ? source : bridgeSource + "\n" + source
+    }
+
     static func installBridge(in controller: WKUserContentController, world: WKContentWorld) {
         guard !controller.userScripts.contains(where: {
             ($0.source == bridgeSource || $0.source.hasPrefix(bridgeSource + "\n")) &&
@@ -618,7 +698,7 @@ final class BrowserPage: NSView {
     func installScript(_ source: String, in world: WKContentWorld, injectionTime: WKUserScriptInjectionTime, forMainFrameOnly: Bool) {
         if let webKit {
             let controller = webKit.configuration.userContentController
-            let source = Self.bridgeSource + "\n" + source
+            let source = Self.stored(source, in: world)
             guard !controller.userScripts.contains(where: {
                 $0.source == source && Self.scriptWorlds.object(forKey: $0) === world &&
                 $0.injectionTime == injectionTime && $0.isForMainFrameOnly == forMainFrameOnly
@@ -636,8 +716,8 @@ final class BrowserPage: NSView {
         if let webKit {
             let controller = webKit.configuration.userContentController
             var scripts = controller.userScripts
-            let oldSource = Self.bridgeSource + "\n" + old
-            let newSource = Self.bridgeSource + "\n" + new
+            let oldSource = Self.stored(old, in: world)
+            let newSource = Self.stored(new, in: world)
             guard let index = scripts.firstIndex(where: {
                 $0.source == oldSource && Self.scriptWorlds.object(forKey: $0) === world
             }) else {
@@ -667,11 +747,29 @@ final class BrowserPage: NSView {
         }
     }
 
-    func addScriptMessageHandler(name: String, in world: WKContentWorld, handler: @escaping (BrowserScriptMessage) -> Void) {
+    /// Removes a script `installScript` added to this page's own WebKit content controller; later documents no longer run it.
+    /// Documents that already ran it keep what it did. Uses the retained-array mutation `replaceScript` does, so the scripts
+    /// that stay are re-added from the same objects.
+    func removeScript(_ source: String, in world: WKContentWorld) {
+        guard let controller = webKit?.configuration.userContentController else { return }
+        let source = Self.stored(source, in: world)
+        var scripts = controller.userScripts
+        guard let index = scripts.firstIndex(where: { $0.source == source && Self.scriptWorlds.object(forKey: $0) === world }) else { return }
+        scripts.remove(at: index)
+        controller.removeAllUserScripts()
+        for script in scripts {
+            controller.addUserScript(script)
+        }
+    }
+
+    /// `bridge: false` registers the handler without installing the page-callable `__wsurfSend` relay for that world.
+    func addScriptMessageHandler(name: String, in world: WKContentWorld, bridge: Bool = true, handler: @escaping (BrowserScriptMessage) -> Void) {
         handlers[Self.handlerKey(name: name, world: world)] = handler
         if let webKit {
             let controller = webKit.configuration.userContentController
-            Self.installBridge(in: controller, world: world)
+            if bridge {
+                Self.installBridge(in: controller, world: world)
+            }
             controller.removeScriptMessageHandler(forName: name, contentWorld: world)
             // Opener-created views can share a controller; route by the emitting native view, not the last installed tab.
             controller.add(MessageAdapter(world: world), contentWorld: world, name: name)
@@ -700,5 +798,53 @@ final class BrowserPage: NSView {
         }
         await chromium?.close()
         removeFromSuperview()
+    }
+}
+
+extension WKWebView {
+    private static let evaluation = NSSelectorFromString(
+        "_evaluateJavaScript:asAsyncFunction:withSourceURL:withArguments:forceUserGesture:inFrame:inWorld:completionHandler:"
+    )
+
+    /// Runs `source` (an async function body when `asFunction`) without the user gesture WebKit's public script calls grant:
+    /// with it, a page WSurf merely reads or answers could open pop-ups, start sound and pass `navigator.userActivation` as
+    /// if the person had acted. `userGesture` is only for replaying a person's own action. Uses WebKit's evaluation entry
+    /// point (internal, guarded); a WebKit without it keeps the public calls, gesture and all.
+    func evaluate(
+        _ source: String, asFunction: Bool, arguments: [String: Any] = [:], userGesture: Bool = false,
+        in frame: WKFrameInfo?, in world: WKContentWorld,
+        completionHandler: @escaping @MainActor (Result<Any, Error>) -> Void
+    ) {
+        typealias Evaluate = @convention(c) (
+            AnyObject, Selector, NSString, ObjCBool, NSURL?, NSDictionary?, ObjCBool, WKFrameInfo?, WKContentWorld,
+            @escaping @convention(block) (Any?, Error?) -> Void
+        ) -> Void
+        guard !userGesture, responds(to: Self.evaluation) else {
+            if asFunction {
+                callAsyncJavaScript(source, arguments: arguments, in: frame, in: world, completionHandler: completionHandler)
+            } else {
+                evaluateJavaScript(source, in: frame, in: world, completionHandler: completionHandler)
+            }
+            return
+        }
+        unsafeBitCast(method(for: Self.evaluation), to: Evaluate.self)(
+            self, Self.evaluation, source as NSString, ObjCBool(asFunction), nil,
+            asFunction ? arguments as NSDictionary : nil, false, frame, world
+        ) { value, error in
+            MainActor.assumeIsolated { completionHandler(error.map { .failure($0) } ?? .success(value as Any)) }
+        }
+    }
+
+    func evaluate(
+        _ source: String, asFunction: Bool, arguments: [String: Any] = [:], in frame: WKFrameInfo?, in world: WKContentWorld
+    ) async throws -> Any {
+        var result: Result<Any, Error>!
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            evaluate(source, asFunction: asFunction, arguments: arguments, in: frame, in: world) {
+                result = $0
+                continuation.resume()
+            }
+        }
+        return try result.get()
     }
 }

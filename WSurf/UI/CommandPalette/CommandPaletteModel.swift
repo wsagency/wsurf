@@ -135,6 +135,15 @@ enum CommandPaletteProjection {
         return agentOnly && Omnibox.location(for: input) == nil
     }
 
+    /// True for a query that starts spelling "archived tabs" or "show archived tabs". The longer phrase needs more
+    /// than "show " so that a word like "show" alone stays an ordinary search.
+    static func opensArchive(_ query: String) -> Bool {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard query.count >= 3 else { return false }
+        return "archived tabs".hasPrefix(query)
+            || query.count > "show ".count && "show archived tabs".hasPrefix(query)
+    }
+
     static func commandQuery(in query: String) -> String? {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard query.hasPrefix(commandPrefix) else { return nil }
@@ -168,7 +177,8 @@ enum CommandPaletteProjection {
                 tabs: tabs,
                 recentTabIDs: recentTabIDs,
                 commands: commands,
-                actions: actions
+                actions: actions,
+                order: settings.commandPaletteOrder
             )
         }
 
@@ -213,8 +223,8 @@ enum CommandPaletteProjection {
             openInCurrentTab: actions.openCurrent,
             open: actions.openNew
         )?.items ?? []
-        var slots = [
-            CommandPaletteBudget.Slot(
+        let slots: [CommandPaletteSection: CommandPaletteBudget.Slot] = [
+            .search: CommandPaletteBudget.Slot(
                 OmniboxSection(
                     id: "top",
                     title: "",
@@ -223,43 +233,58 @@ enum CommandPaletteProjection {
                 floor: 1,
                 quota: 2
             ),
+            .suggestions: CommandPaletteBudget.Slot(
+                Omnibox.phrasesSection(
+                    query: needle,
+                    phrases: phrases,
+                    limit: 3,
+                    settings: settings,
+                    openInCurrentTab: actions.openCurrent,
+                    open: actions.openNew
+                ),
+                floor: 2,
+                quota: 3
+            ),
+            .tabs: CommandPaletteBudget.Slot(
+                Omnibox.tabsSection(query: needle, tabs: tabs, limit: 4, switchTo: actions.switchTo),
+                floor: 2,
+                quota: 4
+            ),
+            .history: CommandPaletteBudget.Slot(
+                Omnibox.historySection(
+                    query: needle,
+                    store: history,
+                    limit: 5,
+                    openInCurrentTab: actions.openCurrent,
+                    open: actions.openNew
+                ),
+                floor: 2,
+                quota: 5
+            ),
+            .actions: CommandPaletteBudget.Slot(matched, floor: 1, quota: 3),
         ]
-        if promoted {
-            slots.append(CommandPaletteBudget.Slot(matched, floor: 1, quota: 3))
-        }
-        slots.append(CommandPaletteBudget.Slot(
-            Omnibox.phrasesSection(
-                query: needle,
-                phrases: phrases,
-                limit: 3,
-                settings: settings,
-                openInCurrentTab: actions.openCurrent,
-                open: actions.openNew
-            ),
-            floor: 2,
-            quota: 3
-        ))
-        slots.append(CommandPaletteBudget.Slot(
-            Omnibox.tabsSection(query: needle, tabs: tabs, limit: 4, switchTo: actions.switchTo),
-            floor: 2,
-            quota: 4
-        ))
-        slots.append(CommandPaletteBudget.Slot(
-            Omnibox.historySection(
-                query: needle,
-                store: history,
-                limit: 5,
-                openInCurrentTab: actions.openCurrent,
-                open: actions.openNew
-            ),
-            floor: 2,
-            quota: 5
-        ))
-        if !promoted {
-            slots.append(CommandPaletteBudget.Slot(matched, floor: 1, quota: 3))
-        }
+        let order = CommandPaletteSection.typingOrder(
+            settings.commandPaletteOrder,
+            isAddress: Omnibox.location(for: needle) != nil,
+            hasStrongCommand: promoted
+        )
+        return headingSearch(
+            CommandPaletteBudget.fit(order.compactMap { slots[$0] }, total: CommandPaletteBudget.typing)
+        )
+    }
 
-        return CommandPaletteBudget.fit(slots, total: CommandPaletteBudget.typing)
+    /// Search or ask opens the palette without a heading. Anywhere else its rows would read as the end of the
+    /// group above them, so they get one.
+    private static func headingSearch(_ sections: [OmniboxSection]) -> [OmniboxSection] {
+        sections.enumerated().map { index, section in
+            guard index > 0, section.id == "top" else { return section }
+            return OmniboxSection(
+                id: section.id,
+                title: String(localized: "Search or Ask"),
+                hint: section.hint,
+                items: section.items
+            )
+        }
     }
 
     private static func askSection(
@@ -305,7 +330,8 @@ enum CommandPaletteProjection {
         tabs: [BrowserTab],
         recentTabIDs: [UUID],
         commands: [CommandPaletteCommand],
-        actions: CommandPaletteActions
+        actions: CommandPaletteActions,
+        order: [CommandPaletteSection]
     ) -> [OmniboxSection] {
         let tabsByID = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })
         let recentlyUsedTabs = recentTabIDs.compactMap { tabsByID[$0] }
@@ -344,13 +370,13 @@ enum CommandPaletteProjection {
                 }
             }
 
-        let slots = [
-            CommandPaletteBudget.Slot(
+        let slots: [CommandPaletteSection: CommandPaletteBudget.Slot] = [
+            .tabs: CommandPaletteBudget.Slot(
                 OmniboxSection(id: "tabs", title: String(localized: "Open Tabs"), items: openTabs),
                 floor: 3,
                 quota: 5
             ),
-            CommandPaletteBudget.Slot(
+            .actions: CommandPaletteBudget.Slot(
                 actionsSection(
                     CommandPaletteCatalog.suggested(commands),
                     hint: String(localized: "Type > for commands")
@@ -358,13 +384,13 @@ enum CommandPaletteProjection {
                 floor: 3,
                 quota: 6
             ),
-            CommandPaletteBudget.Slot(
+            .recent: CommandPaletteBudget.Slot(
                 OmniboxSection(id: "recent", title: String(localized: "Recently Visited"), items: Array(recent)),
                 floor: 2,
                 quota: 4
             ),
         ]
-        return CommandPaletteBudget.fit(slots, total: CommandPaletteBudget.resting)
+        return CommandPaletteBudget.fit(order.compactMap { slots[$0] }, total: CommandPaletteBudget.resting)
     }
 }
 
@@ -380,7 +406,7 @@ final class CommandPaletteModel {
         didSet {
             guard interaction.query != oldValue.query, !isPreviewingSelection else { return }
             suggestionPreview.clear()
-            if searchSite == nil {
+            if !isScoped {
                 suggestions.update(
                     for: MentionText.stripped(
                         CommandPaletteProjection.suggestionQuery(for: interaction.query)
@@ -396,6 +422,7 @@ final class CommandPaletteModel {
     private(set) var sections: [OmniboxSection] = []
     private(set) var mentionedTabIDs: [UUID] = []
     private(set) var searchSite: SearchEngine?
+    private(set) var showsArchive = false
     private var isPreviewingSelection = false
     private var suggestionPreview = OmniboxSuggestionPreview()
 
@@ -417,16 +444,47 @@ final class CommandPaletteModel {
         if let searchSite {
             return String(localized: "Search \(searchSite.name)")
         }
+        if showsArchive {
+            return String(localized: "Search archived tabs")
+        }
         return CommandPaletteProjection.placeholder(agentOnly: Omnibox.isAgentOnly(settings: coordinator.context.settings))
     }
 
+    /// Searching one site, or only the archive, replaces the usual results.
+    private var isScoped: Bool {
+        searchSite != nil || showsArchive
+    }
+
+    /// A private window has no archive to offer, whatever its store holds.
+    private var archivedCount: Int {
+        browser.opensPrivately ? 0 : browser.tabArchive.entries.count
+    }
+
     var suggestedSite: SearchEngine? {
-        guard searchSite == nil, mentionedTabIDs.isEmpty else { return nil }
+        guard !isScoped, mentionedTabIDs.isEmpty else { return nil }
         return SiteSearch.match(interaction.query, customEngine: coordinator.context.settings.searchEngine)
+    }
+
+    /// A site name wins over the archive when a query could mean either. A private window has no archive to offer.
+    var suggestsArchive: Bool {
+        !isScoped && mentionedTabIDs.isEmpty && suggestedSite == nil
+            && archivedCount > 0
+            && CommandPaletteProjection.opensArchive(interaction.query)
+    }
+
+    var scopeHint: String? {
+        if let suggestedSite {
+            return String(localized: "Search \(suggestedSite.name)")
+        }
+        return suggestsArchive ? String(localized: "Search archived tabs") : nil
     }
 
     @discardableResult
     func activateSiteSearch() -> Bool {
+        if suggestsArchive {
+            showArchive()
+            return true
+        }
         guard let site = suggestedSite else { return false }
         searchSite = site
         suggestionPreview.clear()
@@ -438,8 +496,9 @@ final class CommandPaletteModel {
 
     @discardableResult
     func removeSearchSite() -> Bool {
-        guard searchSite != nil else { return false }
+        guard isScoped else { return false }
         searchSite = nil
+        showsArchive = false
         suggestionPreview.clear()
         interaction.selection = 0
         suggestions.update(
@@ -491,17 +550,17 @@ final class CommandPaletteModel {
     }
 
     func submit() {
-        guard searchSite == nil || !sections.isEmpty else { return }
+        guard !isScoped || !sections.isEmpty else { return }
         run(at: interaction.selection)
     }
 
     func submitInCurrentTab() {
-        guard searchSite == nil || !sections.isEmpty else { return }
+        guard !isScoped || !sections.isEmpty else { return }
         runAlternate(at: interaction.selection)
     }
 
     func askWhateverIsTyped() {
-        if searchSite != nil {
+        if isScoped {
             submit()
             return
         }
@@ -527,6 +586,19 @@ final class CommandPaletteModel {
         (item.alternate ?? item.run)()
     }
 
+    /// Deletes the row's entry from its store, then rebuilds the list and keeps the selection at the same position.
+    func remove(at index: Int) {
+        let items = sections.flattened
+        guard items.indices.contains(index), let removal = items[index].remove else { return }
+        removal()
+        if let typed = suggestionPreview.query {
+            suggestionPreview.clear()
+            interaction.query = typed
+        }
+        refreshSections()
+        interaction.selection = min(index, max(sections.flattened.count - 1, 0))
+    }
+
     var mentionedTabs: [BrowserTab] {
         mentionedTabIDs.compactMap { id in
             browser.tabs.first { $0.id == id }
@@ -540,7 +612,7 @@ final class CommandPaletteModel {
     }
 
     var contextPages: [AskContextPage] {
-        guard searchSite == nil, CommandPaletteProjection.isAssistantQuery(
+        guard !isScoped, CommandPaletteProjection.isAssistantQuery(
             interaction.query,
             hasMentions: !mentionedTabIDs.isEmpty,
             agentOnly: Omnibox.isAgentOnly(settings: coordinator.context.settings)
@@ -585,6 +657,19 @@ final class CommandPaletteModel {
             interaction.clampSelection(to: sections.flattened.count)
             return
         }
+        if showsArchive {
+            let archive = browser.tabArchive
+            let section = Omnibox.archivedSection(
+                query: interaction.query,
+                entries: archive.entries,
+                excluding: Set(browser.tabs.map(\.urlString)),
+                restore: { [weak self] entry in self?.restore(entry) },
+                remove: { archive.remove($0) }
+            )
+            sections = section.map { [$0] } ?? []
+            interaction.clampSelection(to: sections.flattened.count)
+            return
+        }
         sections = CommandPaletteProjection.sections(
             query: interaction.query,
             agentName: coordinator.agentDisplayName,
@@ -612,6 +697,7 @@ final class CommandPaletteModel {
             historyCount: browser.history.count,
             tabCount: browser.tabs.count,
             hasActiveTab: tab != nil,
+            canReload: page?.canReload ?? false,
             canGoBack: page?.canGoBack ?? false,
             canGoForward: page?.canGoForward ?? false,
             isLoading: page?.isLoading ?? false,
@@ -619,6 +705,7 @@ final class CommandPaletteModel {
             isShowingPin: tab?.isShowingPin ?? false,
             isAwayFromPin: tab?.isAwayFromPin ?? false,
             canReopenClosedTab: browser.canReopenClosedTab,
+            archivedCount: archivedCount,
             canSplit: tab != nil && !(split?.isFull ?? false),
             isSplit: coordinator.isSplit,
             canSwapPanes: browser.activeTabID.flatMap { split?.sibling(of: $0) } != nil,
@@ -629,7 +716,8 @@ final class CommandPaletteModel {
             isLyricsVisible: coordinator.sidePanel.isShowing(.lyrics),
             canShowLyrics: BrowserSettings.application.showsLyrics,
             isFullScreen: window?.styleMask.contains(.fullScreen) ?? false,
-            canCheckForUpdates: coordinator.updates.canCheck
+            canCheckForUpdates: coordinator.updates.canCheck,
+            hasExternalConnections: coordinator.hasExternalConnections
         )
     }
 
@@ -664,12 +752,31 @@ final class CommandPaletteModel {
         dismiss()
     }
 
+    private func restore(_ entry: TabArchive.Entry) {
+        browser.restore(entry)
+        dismiss()
+    }
+
     private func openNew(_ url: URL) {
         coordinator.openNewTab(url: url)
         dismiss()
     }
 
+    private func showArchive() {
+        guard archivedCount > 0 else { return }
+        showsArchive = true
+        mentionedTabIDs = []
+        suggestionPreview.clear()
+        suggestions.clear()
+        interaction.query = ""
+        refreshSections()
+    }
+
     private func perform(_ action: CommandPaletteAction) {  // swiftlint:disable:this cyclomatic_complexity
+        if action == .showArchivedTabs {
+            showArchive()
+            return
+        }
         dismiss()
         let tab = browser.activeTab
         let page = coordinator.pageCommandTab
@@ -688,8 +795,12 @@ final class CommandPaletteModel {
             if !coordinator.closePeek(), let tab {
                 coordinator.unloadTab(tab)
             }
+        case .freeMemory:
+            coordinator.freeMemory()
         case .reopenTab:
             browser.reopenLastClosedTab()
+        case .showArchivedTabs:
+            break
         case .duplicateTab:
             if let tab {
                 browser.duplicate(tab)
@@ -752,6 +863,16 @@ final class CommandPaletteModel {
             coordinator.exitSplit()
         case .closeOtherPanes:
             coordinator.closeOtherPanes()
+        case .toggleSidebar, .toggleActivity, .toggleLyrics, .toggleFullScreen, .closeWindow, .minimizeWindow,
+            .toggleSpeech, .toggleListening, .stopExternalConnections, .showHistory, .showDownloads, .clearHistory,
+            .settings, .extensions, .checkForUpdates, .releaseNotes, .aboutWSurf, .quitWSurf:
+            performApplicationAction(action)
+        }
+    }
+
+    /// The window, panel and app commands. `perform` forwards exactly these, so a new action still has to be placed there.
+    private func performApplicationAction(_ action: CommandPaletteAction) {
+        switch action {
         case .toggleSidebar:
             coordinator.toggleSidebar()
         case .toggleActivity:
@@ -768,6 +889,8 @@ final class CommandPaletteModel {
             coordinator.toggleSpeechMute()
         case .toggleListening:
             coordinator.toggleMicListening()
+        case .stopExternalConnections:
+            coordinator.stopExternalConnections()
         case .showHistory:
             coordinator.showHistory()
         case .showDownloads:
@@ -783,9 +906,11 @@ final class CommandPaletteModel {
         case .releaseNotes:
             coordinator.showReleaseNotes()
         case .aboutWSurf:
-            NSApp.orderFrontStandardAboutPanel(nil)
+            BuildIdentity.showAboutPanel()
         case .quitWSurf:
             NSApp.terminate(nil)
+        default:
+            break
         }
     }
 }

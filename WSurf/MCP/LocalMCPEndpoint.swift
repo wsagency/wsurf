@@ -56,7 +56,7 @@ nonisolated enum LocalMCPEndpoint {
 
     static func runStdioRelay(socketPath: String = path) -> Never {
         Task.detached {
-            let relay = MCPStdioRelay(socketPath: socketPath)
+            let relay = MCPStdioRelay(socketPath: socketPath, token: MCPPairing.environmentToken())
             do {
                 try await relay.run(transport: MCPStdioTransport())
                 exit(EXIT_SUCCESS)

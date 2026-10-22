@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 
 @testable import WSurf
@@ -44,6 +46,67 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                 }
             }
             browser.cancelPendingSave()
+        }
+    }
+
+    /// The sweep over 500 tabs when 50 of them have sat unused: the filter reads every tab, and the stale ones close
+    /// into the archive. Each run starts with a fresh set of 50, so the setup stays out of the measurement.
+    func testSweepingACrowdedSessionForStaleTabs() {
+        MainActor.assumeIsolated {
+            let browser = BrowserModel(database: .temporary())
+            browser.newTab()
+            for index in 0..<449 {
+                browser.addPage("https://fixture-\(index).example/")
+            }
+            let now = Date()
+            let options = XCTMeasureOptions()
+            options.invocationOptions = [.manuallyStart]
+
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: options) {
+                for index in 0..<50 {
+                    browser.addPage("https://stale-\(index).example/").lastActiveAt = now.addingTimeInterval(-3 * 86_400)
+                }
+                startMeasuring()
+                let archived = browser.archiveTabs(unusedFor: .day, now: now)
+                XCTAssertEqual(archived, 50)
+            }
+            XCTAssertEqual(browser.tabs.count, 450)
+            XCTAssertEqual(browser.tabArchive.entries.count, TabArchive.capacity)
+            browser.cancelPendingSave()
+        }
+    }
+
+    /// The ⌘K archive list while a query is typed: the full archive matched and ranked against it, minus the pages that
+    /// are open among 300 tabs. The open set is rebuilt in every run, as the palette does on each keystroke.
+    func testArchivedTabSearchProjection() {
+        MainActor.assumeIsolated {
+            let archive = TabArchive(database: .temporary())
+            archive.add((0..<TabArchive.capacity).map {
+                (title: "Archived page \($0)", url: "https://archive-\($0).example/page")
+            })
+            let tabs = (0..<300).map { index in
+                // Ranking reads metadata only; page loads are unrelated work. The first five tabs show archived pages.
+                let tab = BrowserTab(restoring: true)
+                tab.title = "Open tab \(index)"
+                tab.urlString = index < 5
+                    ? "https://archive-\(index).example/page"
+                    : "https://open-\(index).example/page"
+                return tab
+            }
+            XCTAssertEqual(archive.entries.count, TabArchive.capacity)
+            var section: OmniboxSection?
+
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                section = Omnibox.archivedSection(
+                    query: "archived page 2",
+                    entries: archive.entries,
+                    excluding: Set(tabs.map(\.urlString)),
+                    restore: { _ in }
+                )
+            }
+
+            // Pages 2 and 20 through 29 match; page 2 is open.
+            XCTAssertEqual(section?.items.count, 10)
         }
     }
 
@@ -133,7 +196,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                 )
             }
 
-            let settings = BrowserSettings(defaults: UserDefaults(suiteName: "BrowserPerformanceTests.\(UUID())")!)
+            let settings = BrowserSettings(defaults: UserDefaults(suiteName: AppDatabase.defaultsSuite("BrowserPerformanceTests.\(UUID())"))!)
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
                 let sites = StartPageSnapshot.frequentSites(
                     from: visits,
@@ -188,6 +251,205 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                 XCTAssertEqual(projected.map(\.id), ["top", "suggestions", "history", "ask"])
                 XCTAssertLessThanOrEqual(projected.flattened.count, 10)
                 XCTAssertFalse(tab.isMaterialised)
+            }
+        }
+    }
+
+    func testLayingOutACrowdedSidebar() {
+        MainActor.assumeIsolated {
+            let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
+            let browser = coordinator.browser
+            let tabs = (0..<300).map { _ in browser.newTab(activate: false) }
+            // Every tenth row is marked, the way Select All would mark them: each wears a glass layer.
+            for tab in tabs.enumerated() where tab.offset % 10 == 0 {
+                browser.sidebarSelection.toggle(.tab(tab.element.id))
+            }
+            let context = SidebarRowContext(
+                browser: browser,
+                coordinator: coordinator,
+                selection: browser.sidebarSelection,
+                drag: nil,
+                pinsCarried: false,
+                space: "BrowserPerformanceTests",
+                frames: SidebarFrames()
+            )
+            let rows = VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
+                ForEach(tabs) { SidebarTabRow(tab: $0, depth: 0, context: context) }
+            }
+            .glassGroup()
+            .frame(width: 220)
+            .environment(\.sidebarStyle, .full)
+            .environment(\.chromeWash, .of(NSColor(srgbRed: 0.105, green: 0.105, blue: 0.125, alpha: 1), isLight: false))
+            .environment(\.chromeIsLight, false)
+            .environment(\.colorScheme, .dark)
+            .environment(\.windowColorScheme, .dark)
+
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                let host = NSHostingView(rootView: rows)
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 220, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.contentView = host
+                host.layoutSubtreeIfNeeded()
+                host.displayIfNeeded()
+                window.close()
+            }
+            browser.cancelPendingSave()
+        }
+    }
+
+    /// The crowded sidebar under a theme that moves every layout knob: thin row edges instead of glass on the marked
+    /// rows, square corners, color favicons on every loaded row, and the spacing extremes (largest icons, least
+    /// padding and margin, a flush page). The knobs are a preview of the app-wide theme, so nothing is written to the
+    /// test host's defaults. Its memory samples spiked in an aged host, so it warms up first and each run releases
+    /// everything it built; the footprint after each run is printed to tell retained growth from a transient spike.
+    func testLayingOutACrowdedSidebarWithEveryLayoutOption() throws {
+        try MainActor.assumeIsolated {
+            let settings = BrowserSettings.application
+            guard settings.themePreview == nil else {
+                throw XCTSkip("Layout measurement must not replace an existing theme preview.")
+            }
+            settings.beginThemePreview()
+            defer { settings.cancelThemePreview() }
+            var adjustment = settings.themeAdjustment
+            adjustment.pageFrame = .hairline
+            adjustment.rowFrame = .hairline
+            adjustment.cornerScale = 0
+            adjustment.loadedFavicons = .color
+            adjustment.pageSpacing = ThemeAdjustment.pageSpacingRange.lowerBound
+            adjustment.sidebarMargin = ThemeAdjustment.sidebarMarginRange.lowerBound
+            adjustment.rowPadding = ThemeAdjustment.rowPaddingRange.lowerBound
+            adjustment.tabIconSize = ThemeAdjustment.tabIconSizeRange.upperBound
+            settings.previewThemeAdjustment(adjustment)
+            XCTAssertTrue(settings.chromeShape == ThemeShape(adjustment))
+
+            let favicon = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { bounds in
+                NSColor.systemOrange.setFill()
+                bounds.fill()
+                return true
+            }
+            let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
+            let browser = coordinator.browser
+            let tabs = (0..<300).map { _ in browser.newTab(activate: false) }
+            for tab in tabs.enumerated() {
+                tab.element.urlString = "https://fixture-\(tab.offset).example/"
+                tab.element.isLoading = false
+                tab.element.favicon = favicon
+                if tab.offset % 10 == 0 {
+                    browser.sidebarSelection.toggle(.tab(tab.element.id))
+                }
+            }
+            let context = SidebarRowContext(
+                browser: browser,
+                coordinator: coordinator,
+                selection: browser.sidebarSelection,
+                drag: nil,
+                pinsCarried: false,
+                space: "BrowserPerformanceTests",
+                frames: SidebarFrames()
+            )
+            let rows = VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: settings)) {
+                ForEach(tabs) { SidebarTabRow(tab: $0, depth: 0, context: context) }
+            }
+            .glassGroup()
+            .frame(width: 220)
+            .environment(\.sidebarStyle, .full)
+            .environment(\.chromeWash, .of(NSColor(srgbRed: 0.105, green: 0.105, blue: 0.125, alpha: 1), isLight: false))
+            .environment(\.chromeIsLight, false)
+            .environment(\.colorScheme, .dark)
+            .environment(\.windowColorScheme, .dark)
+
+            // Each run frees what it built before it ends, so a window, its backing store and the rows' graph from one
+            // run never land in another run's memory sample.
+            @MainActor func layOut() {
+                autoreleasepool {
+                    let host = NSHostingView(rootView: rows)
+                    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 220, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
+                    window.isReleasedWhenClosed = false
+                    window.contentView = host
+                    host.layoutSubtreeIfNeeded()
+                    host.displayIfNeeded()
+                    window.contentView = nil
+                    window.close()
+                }
+            }
+            // Two unmeasured runs fill the caches every layout knob touches once: the favicon at 24 pt, text layout,
+            // the inverse and edge colors of each row style.
+            layOut()
+            layOut()
+
+            var footprints: [UInt64] = []
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                layOut()
+                footprints.append(Self.physicalFootprint())
+            }
+            // Growth from run to run is retained memory; a single high sample that the next run gives back is not.
+            print("Layout option sidebar footprint after each run (kB): \(footprints.map { $0 / 1_024 })")
+            browser.cancelPendingSave()
+        }
+    }
+
+    /// The test host's physical footprint, the figure XCTMemoryMetric samples.
+    private static func physicalFootprint() -> UInt64 {
+        var usage = rusage_info_current()
+        let result = withUnsafeMutablePointer(to: &usage) { pointer in
+            pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+                proc_pid_rusage(getpid(), RUSAGE_INFO_CURRENT, $0)
+            }
+        }
+        return result == 0 ? usage.ri_phys_footprint : 0
+    }
+
+    /// What a 300-row sidebar asks the theme for while it draws: the loaded and unloaded text, the accent, and the
+    /// icon and URL inks, ten times over. With a copy that changes the palette, so no color is the plain default.
+    func testResolvingThemeColorsForACrowdedSidebar() {
+        MainActor.assumeIsolated {
+            let suite = AppDatabase.defaultsSuite("BrowserPerformanceTests-\(UUID().uuidString)")
+            guard let defaults = UserDefaults(suiteName: suite) else { return }
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let settings = BrowserSettings(defaults: defaults)
+            settings.editColors(scheme: .dark) {
+                $0.hue = 0.1
+                $0.primary = 0x3366FF
+                $0.icons = SidebarTextStyle(colorRGB: 0xFFAA00, opacity: 0.6)
+                $0.url = SidebarTextStyle(colorRGB: 0x88DDFF, opacity: 0.8)
+            }
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                var colors = 0
+                for _ in 0..<10 {
+                    for _ in 0..<300 {
+                        let theme = settings.resolvedTheme
+                        colors += settings.sidebarTextColor(scheme: .dark) == theme.dark.loadedInk ? 1 : 0
+                        colors += settings.sidebarTextColor(isDeferred: true, scheme: .dark) == theme.dark.unloadedInk ? 1 : 0
+                        colors += settings.resolvedTheme.accent == theme.accent ? 1 : 0
+                        colors += theme.dark.controlInk == nil ? 0 : 1
+                        colors += theme.dark.urlInk == nil ? 0 : 1
+                    }
+                }
+                XCTAssertEqual(colors, 15_000)
+            }
+        }
+    }
+
+    /// Choosing each built-in theme ten times: every choice rebuilds the cached colors once.
+    func testSwitchingThemes() {
+        MainActor.assumeIsolated {
+            let suite = AppDatabase.defaultsSuite("BrowserPerformanceTests-\(UUID().uuidString)")
+            guard let defaults = UserDefaults(suiteName: suite) else { return }
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let settings = BrowserSettings(defaults: defaults)
+            let ids = ThemeCatalog.builtIn.map(\.id)
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                var switched = 0
+                for _ in 0..<10 {
+                    for id in ids {
+                        settings.themeID = id
+                        let theme = settings.resolvedTheme
+                        if theme.id == id {
+                            switched += 1
+                        }
+                    }
+                }
+                XCTAssertEqual(switched, 10 * ids.count)
             }
         }
     }

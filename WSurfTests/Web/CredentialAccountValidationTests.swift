@@ -203,4 +203,203 @@ struct CredentialAccountValidationTests {
         record.basicAuthenticationMetadata?.password?.id = id
         #expect(throws: (any Error).self) { try record.validate() }
     }
+
+    // MARK: Notes
+
+    private func noteOnlyAccount(_ notes: [CredentialNote]?) -> CredentialAccount {
+        var account = CredentialAccount(
+            id: UUID(), username: "", displayName: nil, origins: [], loginURLs: [], password: nil, passkeys: [], totp: nil,
+            exchangeAccountID: nil, exchangeItemID: nil
+        )
+        account.notes = notes
+        return account
+    }
+
+    @Test func noteOnlyAccountValidates() throws {
+        try noteOnlyAccount([CredentialNote(text: "only a note", field: nil)]).validate()
+        try noteOnlyAccount([
+            CredentialNote(text: "first", field: CredentialEditableFieldMetadata(id: Data([1]), label: "Note", fieldType: .string)),
+            CredentialNote(text: "second", field: nil),
+        ]).validate()
+
+        // An account with nothing at all is still invalid.
+        #expect(throws: (any Error).self) { try noteOnlyAccount(nil).validate() }
+    }
+
+    @Test func emptyNotesArrayRejected() throws {
+        #expect(throws: (any Error).self) { try noteOnlyAccount([]).validate() }
+        var withLogin = VaultFixtures.account()
+        withLogin.notes = []
+        #expect(throws: (any Error).self) { try withLogin.validate() }
+    }
+
+    @Test func noteLimitsAreEnforced() throws {
+        #expect(throws: (any Error).self) { try noteOnlyAccount([CredentialNote(text: "", field: nil)]).validate() }
+
+        let atLimit = (0..<CredentialAccount.noteLimit).map { CredentialNote(text: "note \($0)", field: nil) }
+        try noteOnlyAccount(atLimit).validate()
+        #expect(throws: (any Error).self) { try noteOnlyAccount(atLimit + [CredentialNote(text: "one more", field: nil)]).validate() }
+
+        let oversizedField = CredentialEditableFieldMetadata(id: Data(count: 1_025), label: nil, fieldType: .string)
+        #expect(throws: (any Error).self) { try noteOnlyAccount([CredentialNote(text: "x", field: oversizedField)]).validate() }
+
+        let tooLong = String(repeating: "n", count: CredentialVaultLimits.payloadBytes + 1)
+        #expect(throws: (any Error).self) { try noteOnlyAccount([CredentialNote(text: tooLong, field: nil)]).validate() }
+    }
+
+    @Test func notesCountTowardThePayloadBudget() throws {
+        let half = String(repeating: "n", count: CredentialVaultLimits.payloadBytes / 2 + 1)
+        let account = noteOnlyAccount([CredentialNote(text: half, field: nil), CredentialNote(text: half, field: nil)])
+        try account.validate()
+        let payload = CredentialVaultPayload(revision: 0, accounts: [account], blockedPasswordOrigins: [])
+        #expect(throws: (any Error).self) { try CredentialVaultCrypto.validate(payload) }
+    }
+
+    // MARK: Live budgets
+
+    /// Accounts that all share one note string, so a vault of megabytes costs the test no memory.
+    private func noteAccounts(_ count: Int, bytes: Int) -> [CredentialAccount] {
+        let text = String(repeating: "n", count: bytes)
+        return (0..<count).map { _ in noteOnlyAccount([CredentialNote(text: text, field: nil)]) }
+    }
+
+    @Test func liveBytesCountEachVariableField() throws {
+        var account = VaultFixtures.account()
+        // username 3 + password 6 + origin 20 + login address 26
+        #expect(try CredentialVaultCrypto.liveBytes(of: account) == 55)
+        account.notes = [CredentialNote(text: "memo", field: CredentialEditableFieldMetadata(id: Data([1, 2]), label: "Note", fieldType: .string))]
+        account.totp = VaultFixtures.totp()
+        // note text 4 + field id 2 + label 4, then the code: secret 5 + issuer 7
+        #expect(try CredentialVaultCrypto.liveBytes(of: account) == 55 + 10 + 12)
+    }
+
+    /// A write checks an account the store holds byte for byte (`unchanged`) only towards the totals and the uniqueness rules; every
+    /// other account is checked one by one.
+    @Test func aWriteChecksOnlyItsChangedAccountsOneByOne() throws {
+        var stored = VaultFixtures.account(username: "ada")
+        stored.notes = []  // never valid: notes are nil or not empty
+        let other = VaultFixtures.account(username: "grace", origin: "https://b.example")
+        let payload = CredentialVaultPayload(revision: 0, accounts: [stored, other], blockedPasswordOrigins: [])
+        #expect(throws: CredentialVaultError.invalidData) { try CredentialVaultCrypto.validate(payload) }
+        try CredentialVaultCrypto.validate(payload, unchanged: [stored.id])
+        #expect(throws: CredentialVaultError.invalidData) { try CredentialVaultCrypto.validate(payload, unchanged: [other.id]) }
+
+        // An unchanged account still counts: no other account may hold its passkey's credential ID.
+        let holder = VaultFixtures.account(username: "linus", origin: "https://c.example", passkeys: [try VaultFixtures.passkey()])
+        let copy = VaultFixtures.account(username: "mary", origin: "https://d.example", passkeys: [try VaultFixtures.passkey()])
+        #expect(throws: CredentialVaultError.duplicateIdentifier) {
+            try CredentialVaultCrypto.validate(
+                CredentialVaultPayload(revision: 0, accounts: [holder, copy], blockedPasswordOrigins: []), unchanged: [holder.id]
+            )
+        }
+    }
+
+    /// An import plan checks one by one only the accounts it changes or adds: an account equal to the one already checked at its
+    /// position (the vault's own, left alone) counts towards the limits but is not checked again.
+    @Test func anImportChecksOnlyChangedOrAddedAccountsOneByOne() throws {
+        var stored = VaultFixtures.account(username: "ada")
+        stored.notes = []  // never valid: notes are nil or not empty
+        let other = VaultFixtures.account(username: "grace", origin: "https://b.example")
+        #expect(throws: CredentialVaultError.invalidData) { try CredentialExchangeCodec.validateAccounts([stored, other]) }
+        try CredentialExchangeCodec.validateAccounts([stored, other], checked: [stored])
+
+        var changed = stored
+        changed.username = "ada again"
+        #expect(throws: CredentialVaultError.invalidData) { try CredentialExchangeCodec.validateAccounts([changed, other], checked: [stored]) }
+        #expect(throws: CredentialVaultError.invalidData) { try CredentialExchangeCodec.validateAccounts([other, stored], checked: [other]) }
+    }
+
+    @Test func liveBytesAreCappedPerAccountAndInTotal() throws {
+        func payload(_ accounts: [CredentialAccount], origins: Set<String> = []) -> CredentialVaultPayload {
+            CredentialVaultPayload(revision: 0, accounts: accounts, blockedPasswordOrigins: origins)
+        }
+        // 32 accounts of 3.9 MB are 124.8 MB: inside the 128 MB total, and every account is inside its own 4 MB.
+        let fits = noteAccounts(32, bytes: 3_900_000)
+        try CredentialVaultCrypto.validate(payload(fits))
+        try ProfileVaultStore.validate(fits, blockedOrigins: [])
+
+        // The 33rd takes the total over 128 MB although no account is over its own cap.
+        let overTotal = noteAccounts(33, bytes: 3_900_000)
+        #expect(throws: CredentialVaultError.oversized) { try CredentialVaultCrypto.validate(payload(overTotal)) }
+        #expect(throws: CredentialStoreError.limit(.payloadBytes)) { try ProfileVaultStore.validate(overTotal, blockedOrigins: []) }
+
+        // One account of 4.1 MB is over its own cap, however small the vault is.
+        let bigNotes = [
+            CredentialNote(text: String(repeating: "n", count: 3_900_000), field: nil),
+            CredentialNote(text: String(repeating: "n", count: 200_000), field: nil),
+        ]
+        let overOne = [noteOnlyAccount(bigNotes)]
+        #expect(throws: CredentialVaultError.oversized) { try CredentialVaultCrypto.validate(payload(overOne)) }
+        #expect(throws: CredentialStoreError.limit(.accountBytes)) { try ProfileVaultStore.validate(overOne, blockedOrigins: []) }
+
+        // One account at exactly its cap is kept.
+        try CredentialVaultCrypto.validate(payload(noteAccounts(1, bytes: CredentialVaultLimits.accountBytes)))
+    }
+
+    @Test func blockedOriginsCountTowardTheTotal() throws {
+        // 32 accounts of 3,999,000 B are 127,968,000 B: 32,000 B of room.
+        let accounts = noteAccounts(32, bytes: 3_999_000)
+        let origins = Set((0..<2_000).map { "https://origin\($0).example.test" })
+        #expect(origins.reduce(0) { $0 + $1.utf8.count } > 32_000)
+
+        try ProfileVaultStore.validate(accounts, blockedOrigins: [])
+        #expect(throws: CredentialStoreError.limit(.payloadBytes)) {
+            try ProfileVaultStore.validate(accounts, blockedOrigins: Array(origins))
+        }
+    }
+
+    @Test func legacyPayloadOver1000AccountsIsRefused() throws {
+        func decoded(_ count: Int) throws -> CredentialVaultPayload {
+            let accounts = (0..<count).map { VaultFixtures.account(username: "user\($0)") }
+            let encoded = try JSONEncoder().encode(CredentialVaultPayload(revision: 1, accounts: accounts, blockedPasswordOrigins: []))
+            return try JSONDecoder().decode(CredentialVaultPayload.self, from: encoded)
+        }
+        #expect(CredentialVaultLimits.legacyAccounts == 1_000)
+        #expect(try decoded(CredentialVaultLimits.legacyAccounts).accounts.count == 1_000)
+        #expect(throws: CredentialVaultError.oversized) { try decoded(CredentialVaultLimits.legacyAccounts + 1) }
+    }
+
+    @Test func legacyFileStaysAtFourMegabytesWhateverTheLiveCaps() throws {
+        // An account of exactly 4 MB is inside the live caps, but its encoding is not inside the v1 file's 4 MB plaintext.
+        let account = noteOnlyAccount([
+            CredentialNote(text: String(repeating: "n", count: 3_000_000), field: nil),
+            CredentialNote(text: String(repeating: "m", count: 1_000_000), field: nil),
+        ])
+        let payload = CredentialVaultPayload(revision: 0, accounts: [account], blockedPasswordOrigins: [])
+        try CredentialVaultCrypto.validate(payload)
+        #expect(throws: CredentialVaultError.oversized) { try CredentialVaultCrypto.encodePayload(payload) }
+    }
+
+    // MARK: Stored size
+
+    /// A note of `count` control characters: one byte each as text, six once the store escapes them (`\u0001`).
+    private func controlNote(_ count: Int) -> CredentialNote {
+        CredentialNote(text: String(repeating: "\u{01}", count: count), field: nil)
+    }
+
+    @Test func aHistoryRowAlwaysHoldsAnAccountAtTheEncodedCap() {
+        // A removed account holds its encoding; a revision or a removed credential holds a part of it as base64 text (4/3).
+        let encoded = CredentialVaultLimits.encodedAccountBytes
+        #expect(encoded + StoreFormat.historyBodyBytes <= StoreFormat.historyRowBytes)
+        #expect(4 * ((encoded + 2) / 3) + StoreFormat.historyBodyBytes <= StoreFormat.historyRowBytes)
+        // Every raw cap is under it, so the encoded cap is the one that decides for text that escapes.
+        #expect(CredentialVaultLimits.accountBytes < encoded)
+    }
+
+    @Test func anAccountThatGrowsWhenEncodedIsRefusedWhateverItsRawSize() throws {
+        // 1.2 MB of control characters is under every raw cap but encodes to about 7.2 MB, more than a history row can carry.
+        let account = noteOnlyAccount([controlNote(1_200_000)])
+        #expect(try CredentialVaultCrypto.liveBytes(of: account) == 1_200_000)
+        #expect(try CredentialVaultCrypto.storedBytes(of: account) > CredentialVaultLimits.encodedAccountBytes)
+
+        let payload = CredentialVaultPayload(revision: 0, accounts: [account], blockedPasswordOrigins: [])
+        #expect(throws: CredentialVaultError.oversized) { try CredentialVaultCrypto.validate(payload) }
+        #expect(throws: CredentialStoreError.limit(.accountBytes)) { try ProfileVaultStore.validate([account], blockedOrigins: []) }
+        #expect(throws: CredentialVaultError.oversized) { try CredentialExchangeCodec.validateAccounts([account]) }
+
+        // 900,000 of them encode to 5.4 MB and are kept, by the store and by the import's check alike.
+        let kept = noteOnlyAccount([controlNote(900_000)])
+        try ProfileVaultStore.validate([kept], blockedOrigins: [])
+        try CredentialExchangeCodec.validateAccounts([kept])
+    }
 }

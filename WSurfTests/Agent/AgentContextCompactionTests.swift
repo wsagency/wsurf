@@ -290,4 +290,63 @@ struct AgentContextCompactionTests {
         #expect(trace.checkpoint?.summary.isEmpty == true)
         #expect(!fixture.reply.isCompacting)
     }
+
+    private static func reasoning(in transcript: Transcript) -> [Transcript.Reasoning] {
+        transcript.compactMap { if case .reasoning(let value) = $0 { value } else { nil } }
+    }
+
+    @Test(arguments: [false, true])
+    func reasoningReplaysInsideTheLiveRoundAndNeverAfterResume(isContinuation: Bool) async throws {
+        let fixture = HarnessFixture([.thinkingCalls("PRIVATE_THOUGHT", ["readPage"]), .text("Done.")])
+        await fixture.run(isContinuation ? "[Pages in context: Fixture]" : "Read the page", isContinuation: isContinuation)
+        let live = try #require(fixture.model.transcripts.dropFirst().first)
+        let replayed = try #require(Self.reasoning(in: live).first)
+        #expect(replayed.signature == Data("sig".utf8))
+        #expect(try replayed.metadata["provider"]?.value(String.self) == "anthropic")
+        let saved = try #require(fixture.log.checkpoint(forTab: fixture.tabID))
+        #expect(Self.reasoning(in: saved.transcript).isEmpty)
+        #expect(!HarnessFixture.flattened(saved.transcript).contains("PRIVATE_THOUGHT"))
+        let restored = HarnessFixture([.text("Resumed.")], database: fixture.database, tabID: fixture.tabID)
+        await restored.run("Continue")
+        let resumed = try #require(restored.model.transcripts.first)
+        #expect(Self.reasoning(in: resumed).isEmpty)
+        #expect(HarnessFixture.flattened(resumed).contains("Observed state 1"))
+    }
+
+    @Test func reasoningInTheActiveSessionTriggersCompactionAndCompactionDropsIt() async throws {
+        let budget = ContextBudget.resolve(windowTokens: 4_096, desiredResponseTokens: 700, toolCount: 3)
+        let small = HarnessFixture(
+            [.thinkingCalls("SMALL_REASONING", ["readPage"], callID: "call-original"), .text("Done.")], contextBudget: budget
+        )
+        await small.run()
+        let smallTrace = try #require(small.log.latestTrace(forTab: small.tabID))
+        #expect(smallTrace.diagnostics.compactions == 0)
+        #expect(!small.model.requests.contains { $0.hasPrefix("Create a historical checkpoint") })
+
+        let thought = "BIG_REASONING " + String(repeating: "x", count: 40_000)
+        let big = HarnessFixture(
+            [.thinkingCalls(thought, ["readPage"], callID: "call-original"), .text("Done.")], contextBudget: budget
+        )
+        await big.run()
+        let trace = try #require(big.log.latestTrace(forTab: big.tabID))
+        #expect(trace.state == .completed)
+        #expect(trace.diagnostics.compactions > 0)
+        let last = try #require(big.model.transcripts.last)
+        #expect(Self.reasoning(in: last).isEmpty)
+        #expect(Self.reasoning(in: try #require(trace.checkpoint).transcript).isEmpty)
+        let calls = last.flatMap { entry -> [String] in
+            if case .toolCalls(let calls) = entry {
+                return calls.map(\.id)
+            }
+            return []
+        }
+        let outputs = last.compactMap { entry -> String? in
+            if case .toolOutput(let output) = entry {
+                return output.id
+            }
+            return nil
+        }
+        #expect(calls.contains("call-original"))
+        #expect(outputs.contains("call-original"))
+    }
 }

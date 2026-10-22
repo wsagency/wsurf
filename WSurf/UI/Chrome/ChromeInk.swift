@@ -22,8 +22,15 @@ enum ChromeInk {
         return onLight ? 0.75 : 0.85
     }
 
-    static func glyph(onLight: Bool, enabled: Bool = true, hovering: Bool = false, subdued: Bool = false) -> AnyShapeStyle {
-        if let override = Theme.controlOverride {
+    static func glyph(
+        onLight: Bool,
+        windowScheme: ColorScheme,
+        enabled: Bool = true,
+        hovering: Bool = false,
+        subdued: Bool = false,
+        honorsOverride: Bool = true
+    ) -> AnyShapeStyle {
+        if honorsOverride, let override = Theme.controlOverride(in: windowScheme) {
             return AnyShapeStyle(override.opacity(enabled ? 1 : 0.35))
         }
         let base: Color = onLight ? .black : .white
@@ -51,7 +58,7 @@ enum ChromeInk {
     }
 }
 
-private struct GlassSurface<S: Shape>: ViewModifier {
+private struct GlassSurface<S: InsettableShape>: ViewModifier {
     let isActive: Bool
     let isEnabled: Bool
     let tint: Color?
@@ -65,14 +72,14 @@ private struct GlassSurface<S: Shape>: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .glassEffect(isEnabled ? .regular : .identity, in: shape)
+            .chromeGlass(isEnabled ? .regular : .identity, in: shape)
             .background { shape.fill(hoverFill) }
             .contentShape(shape)
     }
 }
 
 extension View {
-    func glassSurface<S: Shape>(
+    func glassSurface<S: InsettableShape>(
         isActive: Bool = false,
         isEnabled: Bool = true,
         tint: Color? = nil,
@@ -95,12 +102,12 @@ private struct ControlGlassSurface<S: InsettableShape>: ViewModifier {
 
     private var glass: Glass {
         if let tint {
-            return .clear.tint(tint.opacity(isActive ? 0.16 : 0.07))
+            return .regular.tint(tint.opacity(isActive ? 0.16 : 0.07))
         }
         if isLifted {
-            return .clear.tint(Theme.controlSurface.opacity(isActive ? 0.62 : 0.48))
+            return .regular.tint(Theme.controlSurface.opacity(isActive ? 0.62 : 0.48))
         }
-        return .clear.tint(Theme.windowBackground.opacity(isActive ? 0.34 : 0.26))
+        return .regular.tint(Theme.windowBackground.opacity(isActive ? 0.34 : 0.26))
     }
 
     private var surfaceWash: Color {
@@ -126,7 +133,7 @@ private struct ControlGlassSurface<S: InsettableShape>: ViewModifier {
                 ZStack {
                     shape
                         .fill(.clear)
-                        .glassEffect(glass, in: shape)
+                        .chromeGlass(glass, fill: isLifted ? Theme.controlSurface : Theme.windowBackground, in: shape)
 
                     shape.fill(surfaceWash)
                 }
@@ -181,7 +188,7 @@ extension View {
     }
 }
 
-private struct SelectionBackground<S: Shape>: ViewModifier {
+private struct SelectionBackground<S: InsettableShape>: ViewModifier {
     let isSelected: Bool
     let isHovering: Bool
     let hoverTint: Color?
@@ -218,12 +225,12 @@ private struct SelectionBackground<S: Shape>: ViewModifier {
                 shape
                     .fill(hoverFill)
             }
-            .glassEffect(glass, in: shape)
+            .chromeGlass(glass, fill: Theme.controlSurface, in: shape)
     }
 }
 
 extension View {
-    func selectionBackground<S: Shape>(
+    func selectionBackground<S: InsettableShape>(
         isSelected: Bool,
         isHovering: Bool,
         hoverTint: Color? = nil,
@@ -262,13 +269,15 @@ struct ChromeIcon: View {
     @State private var hovering = false
     @Environment(\.chromeIsLight) private var chromeIsLight
     @Environment(\.chromeIconExtent) private var inheritedExtent
+    @Environment(\.ignoresControlOverride) private var ignoresOverride
+    @Environment(\.windowColorScheme) private var windowColorScheme
 
     private var side: CGFloat {
         extent ?? inheritedExtent
     }
 
     private var style: AnyShapeStyle {
-        if let override = Theme.controlOverride {
+        if !ignoresOverride, let override = Theme.controlOverride(in: windowColorScheme) {
             return AnyShapeStyle(override.opacity(isEnabled ? 1 : 0.35))
         }
         if let tint {
@@ -276,9 +285,11 @@ struct ChromeIcon: View {
         }
         return ChromeInk.glyph(
             onLight: chromeIsLight,
+            windowScheme: windowColorScheme,
             enabled: isEnabled,
             hovering: hovering,
-            subdued: isSubdued
+            subdued: isSubdued,
+            honorsOverride: !ignoresOverride
         )
     }
 
@@ -328,14 +339,28 @@ struct CloseButton: View {
 struct ChromeWash: Equatable {
     var isLight = false
     var luminance: Double = 0.12
+    /// The color the chrome sits on, when it is known. `groundColor` stands in for it otherwise.
+    var ground: NSColor?
 
     static let neutral = ChromeWash()
 
-    static func of(_ color: NSColor?, isLight: Bool) -> ChromeWash {
+    /// `ground` is the color the chrome really draws on when that differs from the sampled `color`, such as a
+    /// preset's sidebar color under a floating sidebar.
+    static func of(_ color: NSColor?, isLight: Bool, ground: NSColor? = nil) -> ChromeWash {
+        let ground = (ground ?? color)?.usingColorSpace(.sRGB)
         guard let srgb = color?.usingColorSpace(.sRGB) else {
-            return ChromeWash(isLight: isLight, luminance: isLight ? 0.87 : 0.011)
+            return ChromeWash(isLight: isLight, luminance: isLight ? 0.87 : 0.011, ground: ground)
         }
-        return ChromeWash(isLight: isLight, luminance: Double(PageInk.luminance(of: srgb)))
+        return ChromeWash(isLight: isLight, luminance: Double(PageInk.luminance(of: srgb)), ground: ground)
+    }
+
+    /// A neutral gray of this wash's luminance when the ground color is not known.
+    var groundColor: NSColor {
+        if let ground {
+            return ground
+        }
+        let level = luminance <= 0.0031308 ? 12.92 * luminance : 1.055 * pow(luminance, 1 / 2.4) - 0.055
+        return NSColor(srgbRed: level, green: level, blue: level, alpha: 1)
     }
 
     var ink: Color {
@@ -383,6 +408,9 @@ extension EnvironmentValues {
 
     @Entry var chromeIsLight: Bool = false
     @Entry var chromeIconExtent: CGFloat = 16
+    /// Set inside a sidebar row drawn on an inverse fill, where the saved control color was chosen for the
+    /// sidebar ground and would vanish against the fill.
+    @Entry var ignoresControlOverride: Bool = false
 
     @Entry var windowColorScheme: ColorScheme = .dark
 }

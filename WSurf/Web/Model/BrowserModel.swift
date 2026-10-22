@@ -25,6 +25,7 @@ final class BrowserModel {
     var folders: [TabFolder] = []
     var storedTree = SidebarTree()
     var history: HistoryStore
+    var tabArchive: TabArchive
     var sitePermissions: SitePermissions
     var downloads: DownloadManager
     let sidebarUndoManager = UndoManager()
@@ -59,6 +60,11 @@ final class BrowserModel {
         } else {
             self.history = HistoryStore(database: selectedDatabase)
         }
+        if (selectedContext.database.writer as AnyObject) === (selectedDatabase.writer as AnyObject) {
+            tabArchive = selectedContext.tabArchive
+        } else {
+            tabArchive = TabArchive(database: selectedDatabase)
+        }
         self.sitePermissions = sitePermissions ?? selectedContext.sitePermissions
         self.downloads = downloads ?? context?.downloads ?? DownloadManager()
         sessionRevision = Self.savedRevision(in: selectedDatabase, windowID: windowID)
@@ -76,18 +82,24 @@ final class BrowserModel {
             }
             guard oldValue != activeTabID else { return }
             sidebarSelection.dropMarks()
+            noteUse(of: [oldValue, activeTabID])
             if let activeTabID {
                 noteActivation(activeTabID)
             }
             let previous = oldValue.flatMap { id in tabs.first { $0.id == id } }
+            let now = ContinuousClock.now
+            stampPanes(of: oldValue, in: splits, at: now)
+            stampForeground(at: now)
             if previous.map({ !isVisibleInSplit($0) }) ?? false {
                 previous?.refreshPreview()
                 previous?.noteHoveredLink(nil)
             }
             activeTab?.realizeDeferredSession()
+            activeTab?.probeReader()
             for id in activeSplit?.tabs ?? [] {
                 tabsByID[id]?.realizeDeferredSession()
             }
+            markVisibleTabsSeen()
             activeTab?.measureBandUnderBar()
             onActiveTabChanged?(activeTab, previous)
         }
@@ -100,7 +112,7 @@ final class BrowserModel {
     var onTabTransferredOut: ((BrowserTab, Int) -> Void)?
     var onTabTransferredIn: ((BrowserTab, BrowserModel, Int) -> Void)?
     var onActiveTabChanged: ((BrowserTab?, BrowserTab?) -> Void)?
-    var onSpaceAnchorChanged: ((UUID, UUID) -> Void)?
+    var onAnchorChanged: ((UUID, UUID) -> Void)?
     var onContentProcessTerminated: ((BrowserTab) -> Void)?
     var onPageRetired: ((BrowserTab, BrowserPage) -> Void)?
     var onPictureInPictureChanged: ((BrowserTab, Bool) -> Void)?
@@ -156,20 +168,26 @@ final class BrowserModel {
             guard let tab else { return }
             self?.onContentProcessTerminated?(tab)
         }
+        tab.mayUnloadAfterTermination = { [weak self, weak tab] in
+            guard let self, let tab else { return false }
+            return activeTab !== tab && !tab.isFavorite && protectionReason(for: tab) == nil
+        }
+        tab.isFrontTab = { [weak self, weak tab] in self?.activeTab === tab }
         tab.onNavigationOutsideExtension = { [weak self] url in
             self?.newTab(url: url)
         }
         tab.onNewWindow = { [weak self, weak tab] view, activate in
-            let opened = self?.newTab(activate: activate, adopting: view, after: tab)
-            guard let self, let opened, let tab, let origin = lastVisitID[tab.id] else { return }
-            lastVisitID[opened.id] = origin
+            guard let opened = self?.newTab(activate: activate, adopting: view, after: tab), let tab else { return }
+            self?.noteOpened(opened, by: tab)
         }
         tab.onOpenInNewTab = { [weak self, weak tab] url, activate in
             guard let self else { return }
             let opened = newTab(url: url, activate: activate, after: tab, transition: .link)
-            guard let tab, let origin = lastVisitID[tab.id] else { return }
-            lastVisitID[opened.id] = origin
+            if let tab {
+                noteOpened(opened, by: tab)
+            }
         }
+        tab.onOpenInChromium = { [weak self, weak tab] url in if let tab { self?.openInChromium(url, from: tab) } }
         tab.onOpenInNewWindow = { [weak self, weak tab] url, isPrivate in
             guard let tab, !tab.isClosed else { return }
             self?.onOpenInNewWindow?(tab, url, isPrivate)
@@ -182,7 +200,7 @@ final class BrowserModel {
         }
         tab.onCloseRequested = { [weak self, weak tab] in
             guard let tab else { return }
-            self?.close(tab)
+            self?.closeFromPage(tab)
         }
         tab.onPictureInPictureChanged = { [weak self, weak tab] isOut in
             guard let tab else { return }
@@ -257,6 +275,25 @@ final class BrowserModel {
 
     var lastVisitID: [UUID: Int64] = [:]
 
+    /// A page opened `opened`: the tab continues that page's visit, and the page is remembered as its opener.
+    /// "Continue in Chromium" on a WebKit passkey sheet: the page again, in a Chromium tab of this profile next to its tab. The
+    /// engine is that tab's own override, never written to the site's setting.
+    private func openInChromium(_ url: URL, from tab: BrowserTab) {
+        guard !tab.isClosed else { return }
+        noteOpened(newTab(url: url, after: tab, transition: .link, engine: .chromium), by: tab)
+    }
+
+    private func noteOpened(_ opened: BrowserTab, by tab: BrowserTab) {
+        openerByTab[opened.id] = tab.id
+        if let origin = lastVisitID[tab.id] {
+            lastVisitID[opened.id] = origin
+        }
+    }
+
+    /// For a tab a page opened (a popup, or a link opened in a new tab), the tab of that page. A tab a person, an extension
+    /// or an agent opened is absent, so an agent is told only about tabs its own page opened.
+    var openerByTab: [UUID: UUID] = [:]
+
     private func recordVisit(for tab: BrowserTab) {
         guard !tab.isPrivate, !tab.isClosed, tabsByID[tab.id] === tab else { return }
         let visitID = history.record(
@@ -287,10 +324,14 @@ final class BrowserModel {
         activate: Bool = true,
         adopting: WKWebView? = nil,
         after opener: BrowserTab? = nil,
-        transition: HistoryStore.Transition = .typed
+        transition: HistoryStore.Transition = .typed,
+        engine: BrowserEngine? = nil
     ) -> BrowserTab {
         let tab = makeTab(for: url, adopting: adopting)
+        tab.engineOverride = engine
         insert(tab, after: opener)
+        // With no active tab the first tab is the one on screen, so a tab inserted there is seen at once.
+        tab.isUnseen = !activate && activeTab !== tab
         onTabOpened?(tab)
         if activate {
             activeTabID = tab.id
@@ -300,6 +341,14 @@ final class BrowserModel {
         }
         scheduleSave()
         return tab
+    }
+
+    /// A tab on screen is no longer new, whether it is the active tab or a pane beside it.
+    func markVisibleTabsSeen() {
+        activeTab?.isUnseen = false
+        for id in activeSplit?.tabs ?? [] {
+            tabsByID[id]?.isUnseen = false
+        }
     }
 
     func insert(_ tab: BrowserTab, after opener: BrowserTab?) {
@@ -354,9 +403,9 @@ final class BrowserModel {
     }
 
     private func insertionAnchor(after opener: BrowserTab) -> BrowserTab? {
-        let space = Set(spaceTabs(spaceID(of: opener.id)).map(\.id))
-        guard !space.isEmpty else { return tabs.contains { $0 === opener } ? opener : nil }
-        return tabs.last { space.contains($0.id) }
+        let anchor = Set(anchorTabs(anchorID(of: opener.id)).map(\.id))
+        guard !anchor.isEmpty else { return tabs.contains { $0 === opener } ? opener : nil }
+        return tabs.last { anchor.contains($0.id) }
     }
 
     @discardableResult
@@ -405,9 +454,15 @@ final class BrowserModel {
         return copy
     }
 
-    var splits = TabSplits()
+    /// A pane that a change removes from the visible split leaves the foreground now.
+    var splits = TabSplits() {
+        didSet {
+            stampPanes(of: activeTabID, in: oldValue, at: .now)
+            markVisibleTabsSeen()
+        }
+    }
 
-    var spaceAnchors: [UUID: UUID] = [:]
+    var tabAnchors: [UUID: UUID] = [:]
 
     var paneInAir: UUID?
 
@@ -423,8 +478,15 @@ final class BrowserModel {
     @ObservationIgnored var saveChain: Task<Void, Never>?
     @ObservationIgnored var sessionRevision: Int64 = 0
     @ObservationIgnored var sessionClosedAt: Date?
+    @ObservationIgnored let archiveSweeper = TabArchiveSweeper()
 
     @ObservationIgnored var saveWaitingSince: ContinuousClock.Instant?
+
+    /// Set while this window shows and publishes the profile's pins, from restore until it closes or leaves the profile.
+    @ObservationIgnored var attachedPinStore: ProfilePinStore?
+    /// Folders of this window that are profile pins. They are saved with the profile, not with the window.
+    @ObservationIgnored var profileFolderIDs: Set<UUID> = []
+    @ObservationIgnored var isApplyingProfilePins = false
 
     @ObservationIgnored var saveDebounce: Duration = .seconds(2)
 

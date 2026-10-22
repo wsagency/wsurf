@@ -35,9 +35,17 @@ struct SidebarTabRow: View {
     private var isActive: Bool {
         coordinator.sidebarDestination == .tab(tab.id)
     }
+    private var style: SidebarRowStyle {
+        browser.rowStyle(
+            of: tab,
+            isMarked: isSelected,
+            paletteOpen: coordinator.isNewTabPaletteOpen,
+            increasedContrast: inkSource.increasedContrast
+        )
+    }
 
     @Environment(\.sidebarStyle) private var sidebarStyle
-    @Environment(\.colorScheme) private var windowColorScheme
+    private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var returnHovering = false
     @State private var isRenaming = false
@@ -45,6 +53,7 @@ struct SidebarTabRow: View {
     @FocusState private var renameFocused: Bool
     @State private var windowFrame: CGRect = .zero
     @State private var controlsWidth: CGFloat = 0
+    @State private var markWidth: CGFloat = 0
 
     private var showsTrailingControls: Bool {
         hovering && !isRenaming
@@ -58,8 +67,16 @@ struct SidebarTabRow: View {
         sidebarStyle == .full && (tab.isPlayingAudio || tab.isMuted)
     }
 
+    private var ink: SidebarRowInk {
+        inkSource.ink(for: style, isDeferred: tab.isDeferred)
+    }
+
     private var textColor: Color {
-        BrowserSettings.application.sidebarTextColor(isDeferred: tab.isDeferred, scheme: windowColorScheme)
+        ink.text
+    }
+
+    private var radius: CGFloat {
+        depth == 0 ? Theme.Radius.row : FolderSection.rowRadius(depth: depth - 1)
     }
 
     private var returnHelp: String {
@@ -127,7 +144,8 @@ struct SidebarTabRow: View {
 
     private var titleMask: some View {
         let badge = peekedTab == nil ? 0 : PeekRowBadge.extent + 4
-        let covered = (showsTrailingControls ? controlsWidth : 0) + badge
+        let mark = tab.processState.externalControllers.isEmpty ? 0 : markWidth + 4
+        let covered = (showsTrailingControls ? controlsWidth : 0) + badge + mark
         return HStack(spacing: 0) {
             Rectangle()
             LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
@@ -138,21 +156,26 @@ struct SidebarTabRow: View {
     }
 
     @ViewBuilder private var leadingIcon: some View {
+        let colorsFavicon = BrowserSettings.application.chromeShape.colorsFavicons
         if sidebarStyle == .full {
-            TabIcon(tab: tab, tint: textColor)
+            TabIcon(tab: tab, tint: textColor, colorsFavicon: colorsFavicon)
                 .frame(width: SidebarMetrics.rowIconSize)
+                .sidebarNewMark(ink)
         } else {
-            TabIcon(tab: tab, tint: textColor)
+            TabIcon(tab: tab, tint: textColor, colorsFavicon: colorsFavicon)
+                .sidebarNewMark(ink)
         }
     }
 
-    @ViewBuilder private var titleColumn: some View {
+    /// `color` is the row's text color. The rename popover of the icons-only sidebar sits outside the row, so it
+    /// takes the sidebar's own text color rather than the one on an inverse fill.
+    @ViewBuilder private func titleColumn(color: Color) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if isRenaming {
                 TextField("", text: $draftTitle)
                     .textFieldStyle(.plain)
                     .font(BrowserSettings.application.sidebarFont)
-                    .foregroundStyle(textColor)
+                    .foregroundStyle(color)
                     .focused($renameFocused)
                     .onSubmit(commitRename)
                     .onAppear { renameFocused = true }
@@ -174,9 +197,10 @@ struct SidebarTabRow: View {
             } else {
                 HStack(spacing: 0) {
                     Text(verbatim: tab.title)
-                        .font(BrowserSettings.application.sidebarFont)
-                        .foregroundStyle(textColor)
+                        .font(ink.titleFont)
+                        .foregroundStyle(color)
                         .lineLimit(1)
+                        .sidebarRowAccessibility(style)
                     Spacer(minLength: 0)
                 }
             }
@@ -190,6 +214,7 @@ struct SidebarTabRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .mask(alignment: .leading) { titleMask }
+        .sidebarTitleCentered(!returnHovering)
     }
 
     var body: some View {
@@ -206,6 +231,12 @@ struct SidebarTabRow: View {
 
             HStack(spacing: SidebarMetrics.rowIconSpacing) {
                 leadingIcon
+                    .sidebarRowName(tab.title, style: style, isIconOnly: sidebarStyle == .icons)
+                    .overlay(alignment: .bottomTrailing) {
+                        if sidebarStyle == .icons {
+                            ExternalControlMark(tab: tab, coordinator: coordinator, isCompact: true)
+                        }
+                    }
 
                 if showsSpeaker {
                     SidebarTabMuteButton(isMuted: tab.isMuted) {
@@ -215,13 +246,15 @@ struct SidebarTabRow: View {
                 }
 
                 if sidebarStyle == .full {
-                    titleColumn
+                    titleColumn(color: textColor)
                 }
             }
             .overlay(alignment: .trailing) {
                 if sidebarStyle == .full {
                     HStack(spacing: 4) {
                         trailingControls
+                        ExternalControlMark(tab: tab, coordinator: coordinator)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { markWidth = $0 }
                         if let peekedTab {
                             PeekRowBadge(tab: peekedTab, coordinator: coordinator)
                         }
@@ -237,13 +270,14 @@ struct SidebarTabRow: View {
         }
         .frame(height: SidebarMetrics.rowHeight(settings: BrowserSettings.application))
         .environment(\.chromeIconExtent, SidebarMetrics.rowControlExtent)
+        .sidebarInverse(ink, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
         .sidebarRowSelectionEffect(
-            isSelected: (isActive && !coordinator.isNewTabPaletteOpen) || isSelected,
-            isHovering: hovering,
+            isSelected: style.emphasis == .lit,
+            isHovering: hovering && style.emphasis != .current,
             glassTint: context.refractsTabColor
                 ? FaviconTint.of(tab.favicon, heldBy: tab.id)
                 : nil,
-            radius: depth == 0 ? Theme.Radius.hover : FolderSection.rowRadius(depth: depth - 1)
+            radius: radius
         )
         .opacity(isLifted ? 0 : 1)
         .contentShape(Rectangle())
@@ -273,7 +307,7 @@ struct SidebarTabRow: View {
             get: { isRenaming && sidebarStyle == .icons },
             set: { if !$0 { commitRename() } }
         )) {
-            titleColumn
+            titleColumn(color: ink.resting)
                 .frame(width: 220, height: 24)
                 .padding(12)
         }
@@ -288,6 +322,7 @@ struct SidebarTabRow: View {
 
     @ViewBuilder
     private var menu: some View {
+        ExternalControlMenuItems(tabs: [tab], coordinator: coordinator)
         SidebarLinkMenuItems(tabs: [tab], coordinator: coordinator)
 
         Button {
@@ -337,9 +372,10 @@ struct SidebarTabRow: View {
         } label: {
             Label("Remove Tab", systemImage: "xmark")
         }
-        if tab.pinnedURL == nil, browser.tabs.count > 1 {
+        let others = browser.tabs.filter { $0 !== tab && $0.pinID == nil }
+        if tab.pinnedURL == nil, !others.isEmpty {
             Button(role: .destructive) {
-                let count = browser.tabs.count - 1
+                let count = others.count
                 Task {
                     guard await ConfirmAlert.destructive(
                         "Remove \(count) tabs?",
@@ -354,7 +390,7 @@ struct SidebarTabRow: View {
     }
 }
 
-private struct PinReturnSegment: View {
+struct PinReturnSegment: View {
     let tab: BrowserTab
     let help: String
     let tint: Color
@@ -383,15 +419,16 @@ private struct PinReturnSegment: View {
                     .foregroundStyle(.secondary)
                     .opacity(hovering || isSameSite || pinnedFavicon == nil ? 1 : 0)
             }
-            .frame(width: 34, height: 32)
+            .frame(width: 34)
+            .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .sidebarHoverFill(
             isHovering: hovering,
             in: UnevenRoundedRectangle(
-                topLeadingRadius: Theme.Radius.hover,
-                bottomLeadingRadius: Theme.Radius.hover
+                topLeadingRadius: Theme.Radius.row,
+                bottomLeadingRadius: Theme.Radius.row
             )
         )
         .onHover { over in
@@ -553,6 +590,17 @@ struct TabIcon: View {
     var size: CGFloat = SidebarMetrics.rowIconSize
     var tint: Color?
     var loadingColor: Color = .secondary
+    /// A loaded tab shows its favicon's own colors instead of `tint`. Unloaded tabs and symbols keep the tint, so
+    /// loaded and unloaded tabs stay apart.
+    var colorsFavicon = false
+
+    /// nil draws the favicon in its own colors.
+    var faviconTint: Color? {
+        if colorsFavicon, !tab.isDeferred {
+            return nil
+        }
+        return tint ?? (tab.isDeferred ? .secondary : nil)
+    }
 
     var body: some View {
         Group {
@@ -568,7 +616,7 @@ struct TabIcon: View {
                     .font(.system(size: size * 0.66, weight: .medium))
                     .foregroundStyle(tint ?? .secondary)
             } else if let favicon = tab.favicon {
-                FaviconImage(image: favicon, tint: tint ?? (tab.isDeferred ? .secondary : nil))
+                FaviconImage(image: favicon, tint: faviconTint)
                     .frame(width: size - 1, height: size - 1)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.tight, style: .continuous))
             } else {

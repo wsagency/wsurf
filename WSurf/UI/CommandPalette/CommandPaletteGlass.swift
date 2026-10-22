@@ -10,7 +10,7 @@ struct CommandPaletteGlass: View {
         GeometryReader { geometry in
             Color.clear
                 .frame(width: geometry.size.width, height: max(referenceHeight, geometry.size.height))
-                .glassEffect(.regular, in: .rect(cornerRadius: Theme.Radius.panel, style: .continuous))
+                .chromeGlass(in: .rect(cornerRadius: Theme.Radius.panel, style: .continuous))
         }
         .clipShape(.rect(cornerRadius: Theme.Radius.panel, style: .continuous))
         .allowsHitTesting(false)

@@ -15,8 +15,8 @@ struct AssistantGrantsPage: View {
         SubPageHeader(backTitle: "Assistant", onBack: onBack)
 
         SettingsPageHeader(
-            title: "Allowed without asking",
-            caption: "Websites the assistant may act on without asking."
+            title: "Approved actions",
+            caption: "Actions the assistant may take on these websites without asking again, such as purchases or posting."
         )
 
         SettingsCard {

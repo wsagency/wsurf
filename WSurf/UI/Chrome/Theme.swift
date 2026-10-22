@@ -6,49 +6,36 @@ import AppKit
 import SwiftUI
 
 enum Theme {
-    private static let standardWindowBackground = adaptive(
-        dark: NSColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1),
-        light: NSColor(red: 0.98, green: 0.98, blue: 0.99, alpha: 1)
-    )
-    private static let calmWindowBackground = adaptive(
-        dark: NSColor(red: 0.125, green: 0.115, blue: 0.18, alpha: 1),
-        light: NSColor(red: 0.86, green: 0.80, blue: 0.79, alpha: 1)
-    )
+    private static var resolved: ResolvedTheme {
+        BrowserSettings.application.resolvedTheme
+    }
+
     static var windowBackground: Color {
-        palette(isCalm ? calmWindowBackground : standardWindowBackground)
+        resolved.windowBackground
     }
 
-    private static let standardControlSurface = adaptive(
-        dark: NSColor(white: 0.34, alpha: 1),
-        light: NSColor(white: 1, alpha: 1)
-    )
-    private static let calmControlSurface = adaptive(
-        dark: NSColor(red: 0.23, green: 0.20, blue: 0.29, alpha: 1),
-        light: NSColor(red: 0.91, green: 0.85, blue: 0.85, alpha: 1)
-    )
     static var controlSurface: Color {
-        palette(isCalm ? calmControlSurface : standardControlSurface)
+        resolved.controlSurface
     }
 
-    private static let standardSidebarTint = adaptive(
-        dark: NSColor(red: 0.05, green: 0.05, blue: 0.065, alpha: 1),
-        light: NSColor(red: 0.91, green: 0.91, blue: 0.93, alpha: 1)
-    )
-    private static let calmSidebarTint = adaptive(
-        dark: NSColor(red: 0.095, green: 0.085, blue: 0.14, alpha: 1),
-        light: NSColor(red: 0.78, green: 0.70, blue: 0.74, alpha: 1)
-    )
     static var sidebarTint: Color {
-        palette(isCalm ? calmSidebarTint : standardSidebarTint)
+        resolved.sidebarTint
     }
 
-    private static let standardAccent = Color.blue
-    private static let calmAccent = adaptive(
-        dark: NSColor(red: 0.82, green: 0.63, blue: 0.76, alpha: 1),
-        light: NSColor(red: 0.68, green: 0.39, blue: 0.54, alpha: 1)
-    )
     static var accent: Color {
-        palette(isCalm ? calmAccent : standardAccent, isAccent: true)
+        resolved.accent
+    }
+
+    static var assistant: Color {
+        resolved.assistant
+    }
+
+    static var accentText: Color {
+        resolved.accentText
+    }
+
+    static var onAccent: Color {
+        resolved.onAccent
     }
 
     private static let standardThinkingMax = adaptive(
@@ -63,16 +50,8 @@ enum Theme {
         isCalm ? calmThinkingMax : standardThinkingMax
     }
 
-    private static let standardSystemAccent = adaptive(
-        dark: .controlAccentColor,
-        light: .controlAccentColor
-    )
-    private static let calmSystemAccent = adaptive(
-        dark: NSColor(red: 0.82, green: 0.63, blue: 0.76, alpha: 1),
-        light: NSColor(red: 0.68, green: 0.39, blue: 0.54, alpha: 1)
-    )
     static var systemAccent: Color {
-        palette(isCalm ? calmSystemAccent : standardSystemAccent, isAccent: true)
+        resolved.systemAccent
     }
 
     static let danger = Color(nsColor: .systemRed)
@@ -110,12 +89,19 @@ enum Theme {
         }
         static let tight: CGFloat = 4
 
+        /// A radius `inset` points inside a container of radius `container`. It never rounds more than the container,
+        /// so a square container keeps square content.
         static func nested(in container: CGFloat, inset: CGFloat) -> CGFloat {
-            max(tight, container - inset)
+            min(container, max(tight, container - inset))
         }
 
         static var hover: CGFloat {
             control
+        }
+
+        /// Sidebar rows, their highlights and folder outlines: `control` scaled by the theme's corner rounding.
+        static var row: CGFloat {
+            BrowserSettings.application.chromeShape.rowRadius(control)
         }
     }
 
@@ -175,55 +161,45 @@ enum Theme {
         static let micro: SwiftUI.Font = .system(size: 10)
     }
 
+    /// True while the Calm look is on: a soft tint instead of the page's own color. It follows the theme's ground,
+    /// so a copy of Calm stays Calm.
     static var isCalm: Bool {
-        switch BrowserSettings.application.appearance {
-        case .lightCalm, .darkCalm:
-            true
-        case .system, .light, .dark:
-            false
-        }
+        resolved.isSoftTinted
     }
 
-    static func customized(_ base: NSColor, customization: ThemeCustomization, isAccent: Bool) -> NSColor {
-        guard customization.changesPalette, let rgb = base.usingColorSpace(.sRGB) else { return base }
-        let primary = customization.primary.color.flatMap { NSColor($0).usingColorSpace(.sRGB) }
+    /// `base` with the hue, primary color and brightness of `change` laid over it. The primary color replaces the hue
+    /// and, for an accent, the brightness too; surfaces keep their own and borrow at most a little of its saturation.
+    static func customized(_ base: NSColor, change: PaletteChange, isAccent: Bool) -> NSColor {
+        guard change.isActive, let rgb = base.usingColorSpace(.sRGB) else { return base }
+        let primary = change.primary.map {
+            NSColor(
+                srgbRed: CGFloat(($0 >> 16) & 255) / 255, green: CGFloat(($0 >> 8) & 255) / 255,
+                blue: CGFloat($0 & 255) / 255, alpha: 1
+            )
+        }
         let source = primary ?? rgb
-        let hue = (Double(source.hueComponent) + customization.hue + 1).truncatingRemainder(dividingBy: 1)
+        let hue = (Double(source.hueComponent) + change.hue + 1).truncatingRemainder(dividingBy: 1)
         let saturation = primary == nil ? rgb.saturationComponent
             : (isAccent ? source.saturationComponent : min(source.saturationComponent, 0.35))
         let brightness = (isAccent && primary != nil ? source.brightnessComponent : rgb.brightnessComponent)
-            + CGFloat(customization.brightness)
+            + CGFloat(change.brightness)
         return NSColor(
             hue: CGFloat(hue), saturation: saturation,
             brightness: min(max(brightness, 0), 1), alpha: rgb.alphaComponent
         )
     }
 
-    static func palette(_ base: Color, isAccent: Bool = false) -> Color {
-        let settings = BrowserSettings.application
-        let light = settings.themeCustomization(theme: settings.sidebarAppearance(scheme: .light))
-        let dark = settings.themeCustomization(theme: settings.sidebarAppearance(scheme: .dark))
-        guard light.changesPalette || dark.changesPalette else { return base }
-        return Color(nsColor: NSColor(name: nil) { appearance in
-            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            var resolved = NSColor(base)
-            appearance.performAsCurrentDrawingAppearance {
-                resolved = NSColor(base).usingColorSpace(.sRGB) ?? resolved
-            }
-            return customized(resolved, customization: isDark ? dark : light, isAccent: isAccent)
-        })
+    /// The ink a theme prescribes for control icons and for URL text, nil when a surface should draw its own.
+    static var controlOverride: Color? {
+        resolved.controlOverride
     }
 
-    static var controlOverride: Color? {
-        let style = BrowserSettings.application.currentThemeCustomization.controls
-        guard style.colorRGB != nil || style.opacity != 1 else { return nil }
-        return (style.color ?? .primary).opacity(style.opacity)
+    static func controlOverride(in windowScheme: ColorScheme) -> Color? {
+        resolved.controlOverride(in: windowScheme)
     }
 
     static var urlOverride: Color? {
-        let style = BrowserSettings.application.currentThemeCustomization.url
-        guard style.colorRGB != nil || style.opacity != 1 else { return nil }
-        return (style.color ?? .primary).opacity(style.opacity)
+        resolved.urlOverride
     }
 
     static func adaptive(dark: NSColor, light: NSColor) -> Color {
@@ -251,28 +227,5 @@ struct VisualEffectView: NSViewRepresentable {
         nsView.material = material
         nsView.blendingMode = blending
         nsView.alphaValue = materialOpacity
-    }
-}
-
-struct AppKitGlassEffectView: NSViewRepresentable {
-    var style: NSGlassEffectView.Style = .clear
-    var cornerRadius: CGFloat = 0
-    var tintColor: NSColor?
-
-    func makeNSView(context: Context) -> NSGlassEffectView {
-        let view = NSGlassEffectView()
-        view.contentView = NSView()
-        configure(view)
-        return view
-    }
-
-    func updateNSView(_ nsView: NSGlassEffectView, context: Context) {
-        configure(nsView)
-    }
-
-    private func configure(_ view: NSGlassEffectView) {
-        view.style = style
-        view.cornerRadius = cornerRadius
-        view.tintColor = tintColor
     }
 }

@@ -4,8 +4,20 @@
 
 import SwiftUI
 
+/// A key of its own, not `@Entry`: a scroll proxy is not `Sendable`, and a computed default keeps it out of global storage.
+nonisolated private struct SettingsScrollProxyKey: EnvironmentKey {
+    static var defaultValue: ScrollViewProxy? {
+        nil
+    }
+}
+
 extension EnvironmentValues {
     @Entry var settingsDescriptionLineLimit: Int?
+    /// The detail pane's scroll view, so a page can bring a row it moved a cursor to into view.
+    var settingsScrollProxy: ScrollViewProxy? {
+        get { self[SettingsScrollProxyKey.self] }
+        set { self[SettingsScrollProxyKey.self] = newValue }
+    }
 }
 
 enum SettingsMetrics {
@@ -306,11 +318,13 @@ struct DetailRow<Content: View>: View {
         verbatimTitle: String,
         verbatimCaption: String? = nil,
         layout: Layout = .trailing,
+        controlWidth: CGFloat? = SettingsMetrics.controlWidth,
         @ViewBuilder content: () -> Content
     ) {
         self.title = Text(verbatim: verbatimTitle)
         self.caption = verbatimCaption.map { Text(verbatim: $0) }
         self.layout = layout
+        self.controlWidth = controlWidth
         self.content = content()
     }
 
@@ -553,6 +567,7 @@ struct SegmentedControl<Value: Hashable>: View {
                 .disabled(!item.isEnabled)
                 .opacity(item.isEnabled ? 1 : 0.4)
                 .help(item.help.map(Text.init) ?? Text(verbatim: ""))
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
         .padding(2)

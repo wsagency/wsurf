@@ -40,7 +40,7 @@ struct ContextBudgetTests {
     }
 
     @Test func theWindowTableCoversEveryAdapter() {
-        #expect(ContextWindow.tokens(for: provider(adapter: .system), model: "") == 4_096)
+        #expect(ContextWindow.resolve(for: provider(adapter: .system), model: "", systemModelReportedTokens: 0).tokens == 4_096)
         #expect(ContextWindow.tokens(for: provider(adapter: .anthropic), model: "") == 200_000)
         #expect(ContextWindow.tokens(for: provider(adapter: .gemini), model: "") == 1_000_000)
         #expect(ContextWindow.tokens(for: provider(adapter: .openAIResponses), model: "") == 400_000)
@@ -48,6 +48,24 @@ struct ContextBudgetTests {
         #expect(
             ContextWindow.tokens(for: provider(adapter: .openAICompatible, isLocal: true), model: "")
                 == 4_096
+        )
+    }
+
+    @Test func theOnDeviceWindowIsWhatTheSystemModelReportsWhenItReportsOne() {
+        let system = provider(adapter: .system)
+        let reported = ContextWindow.resolve(for: system, model: "", systemModelReportedTokens: 8_192)
+        let none = ContextWindow.resolve(for: system, model: "", systemModelReportedTokens: 0)
+        let invalid = ContextWindow.resolve(for: system, model: "", systemModelReportedTokens: -1)
+
+        #expect(reported.tokens == 8_192)
+        #expect(reported.source == .discovered)
+        let fallbackTokens: [Int] = [none.tokens, invalid.tokens]
+        #expect(fallbackTokens == [4_096, 4_096])
+        #expect([none.source, invalid.source] == [.fallback, .fallback])
+        // Only the on-device provider reads the system capacity.
+        #expect(
+            ContextWindow.resolve(for: provider(adapter: .anthropic), model: "", systemModelReportedTokens: 8_192).tokens
+                == 200_000
         )
     }
 
@@ -82,7 +100,7 @@ struct ContextBudgetTests {
 @Suite(.serialized)
 struct ContextWindowOverrideTests {
     @Test func discoveredLimitsAreScopedToTheModelAndEndpoint() {
-        let suiteName = UUID().uuidString
+        let suiteName = AppDatabase.defaultsSuite(UUID().uuidString)
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let settings = LLMSettings(defaults: defaults)
@@ -110,7 +128,7 @@ struct ContextWindowOverrideTests {
     }
 
     @Test func aStoredOverrideWinsOverTheDefaultWindow() {
-        let suiteName = "context-window-override-tests.\(UUID().uuidString)"
+        let suiteName = AppDatabase.defaultsSuite("context-window-override-tests.\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -146,5 +164,19 @@ struct ContextWindowOverrideTests {
             settings.setDiscoveredContextWindow(nil, for: local, model: "qwen3.5")
             #expect(ContextWindow.tokens(for: local, model: "qwen3.5") == 4_096)
         }
+    }
+
+    @Test func aStoredOverrideWinsOverTheOnDeviceCapacity() {
+        let suiteName = AppDatabase.defaultsSuite("context-window-system-tests.\(UUID().uuidString)")
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = LLMSettings(defaults: defaults)
+        let system = ProviderCatalog.appleOnDevice
+
+        #expect(ContextWindow.resolve(for: system, model: "", settings: settings, systemModelReportedTokens: 8_192).tokens == 8_192)
+        settings.setContextWindow(6_000, for: system)
+        let configured = ContextWindow.resolve(for: system, model: "", settings: settings, systemModelReportedTokens: 8_192)
+        #expect(configured.tokens == 6_000)
+        #expect(configured.source == .configured)
     }
 }

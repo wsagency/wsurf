@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import GRDB
 import Testing
 
 @testable import WSurf
@@ -25,7 +26,7 @@ nonisolated enum CommitDuplicate: CaseIterable, Sendable {
 }
 
 nonisolated enum CommitLimit: CaseIterable, Sendable {
-    case accounts, payloadBytes
+    case accounts, accountBytes
 }
 
 struct VaultCommitTests {
@@ -161,6 +162,71 @@ struct VaultCommitTests {
             #expect(after.revision == before.revision + 1)
             #expect(after.stamps[owner.id]?.digest == entry.digest)
             #expect(after.stamps[other.id] == before.stamps[other.id])
+            try f.verify()
+        }
+    }
+
+    /// What a snapshot decoded is remembered for the next read, never instead of it: a live row changed on disk after the snapshot
+    /// still fails the next write of another account, whole-payload or per-account, and nothing is written.
+    @Test func aRowChangedAfterASnapshotStillFailsTheNextWrite() async throws {
+        let ada = VaultFixtures.account(username: "ada")
+        let grace = VaultFixtures.account(username: "grace", origin: "https://b.example")
+        try await VaultStoreFixture.with(accounts: [ada, grace], historyRows: 1) { f in
+            let (store, access) = try await f.unlocked()
+            let before = try await store.snapshot(vaultID: f.vaultID, using: access)
+            let row = try f.storedRecord(f.vaultID, grace.id)
+            try f.mutate { db in
+                try db.execute(
+                    sql: "UPDATE record SET sealed = ? WHERE vaultID = ? AND recordID = ?",
+                    arguments: [VaultStoreFixture.flipped(row.sealed), f.vaultID.lowerText, grace.id.lowerText]
+                )
+            }
+            let image = try f.headWriteImage()
+            let edited = commitEditing(before.accounts, ada.id) { $0.password = "changed" }
+
+            let whole = await store.vaultCommitFailure(vaultID: f.vaultID, edited, expectedRevision: before.revision, using: access)
+            var perAccount: (any Error)?
+            do {
+                let replacement = try #require(edited.first { $0.id == ada.id })
+                let stamp = try #require(before.stamps[ada.id])
+                _ = try await store.commitAccounts(
+                    vaultID: f.vaultID, [AccountWrite(accountID: ada.id, expected: .stamp(stamp), replacement: replacement)], cause: nil,
+                    using: access
+                )
+            } catch {
+                perAccount = error
+            }
+
+            #expect(whole as? CredentialStoreError == .integrityFailure(vaultOrdinal: 1))
+            #expect(perAccount as? CredentialStoreError == .integrityFailure(vaultOrdinal: 1))
+            #expect(try f.headWriteImage() == image)
+        }
+    }
+
+    /// A whole-vault commit names the accounts its caller edited. A named account is still compared on its bytes (a respelled
+    /// password is written), a real edit to an account it did not name is not `==` its stored value and is written too (only a
+    /// byte-only respelling there would keep the stored bytes), and an account nobody edited keeps its row.
+    @Test func aWholeVaultCommitThatNamesTooFewAccountsStillWritesEveryChange() async throws {
+        let ada = VaultFixtures.account(username: "ada", password: "\u{00E9}")
+        let grace = VaultFixtures.account(username: "grace", origin: "https://b.example")
+        let alan = VaultFixtures.account(username: "alan", origin: "https://c.example")
+        try await VaultStoreFixture.with(accounts: [ada, grace, alan]) { f in
+            let probe = CommitProbe(f: f)
+            let (store, access) = try await f.unlocked()
+            let before = try await store.snapshot(vaultID: f.vaultID, using: access)
+            let respelled = commitEditing(before.accounts, ada.id) { $0.password = "e\u{301}" }
+            let edited = commitEditing(respelled, grace.id) { $0.password = "changed" }
+
+            let receipt = try await store.commit(
+                vaultID: f.vaultID, edited, expectedRevision: before.revision, cause: nil, changing: [ada.id], using: access
+            )
+
+            #expect(receipt.revision == before.revision + 1)
+            #expect(try probe.liveRow(ada.id).account.password?.utf8.elementsEqual("e\u{301}".utf8) == true)
+            #expect(try probe.liveRow(grace.id).account.password == "changed")
+            let after = try await store.snapshot(vaultID: f.vaultID, using: access)
+            #expect(after.stamps[alan.id] == before.stamps[alan.id])
+            #expect(after.stamps[grace.id] != before.stamps[grace.id])
             try f.verify()
         }
     }
@@ -375,19 +441,49 @@ struct VaultCommitTests {
         }
     }
 
+    // MARK: scale
+
+    /// A transfer the size of a real Passwords library, read by the real codec and written by the real commit: the checks of the
+    /// preview, `apply` and the store agree, so what the codec accepted the store keeps.
+    @Test func importOf5000ItemsCommitsToTheStore() async throws {
+        let transfer = try ExchangeScale.transfer(items: 5_000)
+        let base = StoreSnapshot(vaultID: UUID(), revision: 0, accounts: [], blockedPasswordOrigins: [], stamps: [:])
+        let preview = try CredentialExchangeCodec.preview(transfer, against: base)
+        let imported = try CredentialExchangeCodec.apply(preview, decisions: [])
+        #expect(imported.count == 5_000)
+
+        try await VaultStoreFixture.with(accounts: [VaultFixtures.account(username: "stored")]) { f in
+            let (store, access) = try await f.unlocked()
+            let before = try await store.snapshot(vaultID: f.vaultID, using: access)
+
+            let receipt = try await store.commit(
+                vaultID: f.vaultID, before.accounts + imported, expectedRevision: before.revision, cause: nil, using: access
+            )
+
+            #expect(receipt.revision == before.revision + 1)
+            #expect(try f.recordIDs(of: f.vaultID, kind: .account).count == 5_001)
+            let after = try await store.snapshot(vaultID: f.vaultID, using: access)
+            #expect(after.accounts.count == 5_001)
+            #expect(Set(after.accounts.map(\.id)) == Set((before.accounts + imported).map(\.id)))
+            #expect(after.accounts.filter { !$0.passkeys.isEmpty }.count == 500)
+            #expect(after.accounts.filter { $0.notes != nil }.count == 5_000)
+            try f.verify()
+        }
+    }
+
     // MARK: limits
 
     @Test(arguments: CommitLimit.allCases)
     func liveLimitRefusalsNameTheLimit(_ limit: CommitLimit) async throws {
         switch limit {
         case .accounts:
-            try await refusesThe1001stAccount()
-        case .payloadBytes:
-            try await refusesAnOversizedPayload()
+            try await refusesOneAccountOverTheLiveCap()
+        case .accountBytes:
+            try await refusesAnOversizedAccount()
         }
     }
 
-    private func refusesThe1001stAccount() async throws {
+    private func refusesOneAccountOverTheLiveCap() async throws {
         let stored = (0..<CredentialVaultLimits.accounts).map { VaultFixtures.account(username: "user\($0)", password: "pw\($0)") }
         try await VaultStoreFixture.with(accounts: stored) { f in
             let (store, access) = try await f.unlocked()
@@ -400,7 +496,7 @@ struct VaultCommitTests {
             #expect(receipt.revision == before.revision + 1)
             let image = try f.headWriteImage()
 
-            // ... and the 1,001st account is refused by name, with nothing written.
+            // ... and one account over it is refused by name, with nothing written.
             let error = await store.vaultCommitFailure(
                 vaultID: f.vaultID, atCap + [VaultFixtures.account(username: "one too many")], expectedRevision: receipt.revision, using: access
             )
@@ -410,15 +506,15 @@ struct VaultCommitTests {
         }
     }
 
-    private func refusesAnOversizedPayload() async throws {
+    private func refusesAnOversizedAccount() async throws {
         let stored = VaultFixtures.account(username: "ada")
         try await VaultStoreFixture.with(accounts: [stored], historyRows: 1) { f in
             let (store, access) = try await f.unlocked()
             let before = try await store.snapshot(vaultID: f.vaultID, using: access)
             let image = try f.headWriteImage()
-            // Each field is within its own bound; together they exceed the payload cap.
+            // Each field is within its own bound; together they exceed the cap of one account.
             let big = String(repeating: "x", count: 2_500_000)
-            #expect(big.utf8.count * 2 > CredentialVaultLimits.payloadBytes)
+            #expect(big.utf8.count * 2 > CredentialVaultLimits.accountBytes)
             let proposed = commitEditing(before.accounts, stored.id) {
                 $0.username = big
                 $0.displayName = big
@@ -426,7 +522,7 @@ struct VaultCommitTests {
 
             let error = await store.vaultCommitFailure(vaultID: f.vaultID, proposed, expectedRevision: before.revision, using: access)
 
-            #expect(error as? CredentialStoreError == .limit(.payloadBytes))
+            #expect(error as? CredentialStoreError == .limit(.accountBytes))
             #expect(try f.headWriteImage() == image)
             let after = try await store.snapshot(vaultID: f.vaultID, using: access)
             #expect(after.revision == before.revision)
@@ -441,7 +537,7 @@ struct VaultCommitTests {
             let (store, access) = try await f.unlocked()
             let before = try await store.snapshot(vaultID: f.vaultID, using: access)
             let image = try f.headWriteImage()
-            let flood = (0..<5_000).map { VaultFixtures.account(username: "flood\($0)") }
+            let flood = (0..<CredentialVaultLimits.accounts).map { VaultFixtures.account(username: "flood\($0)") }
 
             let error = await store.vaultCommitFailure(
                 vaultID: f.vaultID, before.accounts + flood, expectedRevision: before.revision, using: access

@@ -16,11 +16,16 @@ struct CommandPaletteField: View {
     let onChipsChange: ([UUID]) -> Void
     let onDismiss: () -> Void
     let searchSite: SearchEngine?
-    let suggestedSite: SearchEngine?
+    let showsArchive: Bool
+    let scopeHint: String?
     let onActivateSite: () -> Bool
     let onRemoveSite: () -> Bool
 
     @State private var closeHovering = false
+
+    private var closes: Bool {
+        query.isEmpty && searchSite == nil && !showsArchive
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -29,21 +34,15 @@ struct CommandPaletteField: View {
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             if let searchSite {
-                Button {
+                SiteSearchChip(site: searchSite) {
                     _ = onRemoveSite()
                     focused = true
-                } label: {
-                    Text(searchSite.name)
-                        .lineLimit(1)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(SiteSearchAppearance(site: searchSite).foreground)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(SiteSearchAppearance(site: searchSite).background, in: Capsule())
                 }
-                .buttonStyle(.plain)
-                .help("Remove \(searchSite.name) search")
-                .accessibilityLabel("Remove \(searchSite.name) search")
+            } else if showsArchive {
+                CommandPaletteArchiveChip {
+                    _ = onRemoveSite()
+                    focused = true
+                }
             }
 
             MentionField(
@@ -53,7 +52,9 @@ struct CommandPaletteField: View {
                 fontSize: 19,
                 isFocused: focused,
                 accessibilityLabel: searchSite.map { String(localized: "Search \($0.name)") }
-                    ?? String(localized: "Search tabs, history, and actions"),
+                    ?? (showsArchive
+                        ? String(localized: "Search archived tabs")
+                        : String(localized: "Search tabs, history, and actions")),
                 onFocusChange: { focused = $0 },
                 onChipsChange: onChipsChange,
                 onSubmit: onSubmit,
@@ -70,28 +71,14 @@ struct CommandPaletteField: View {
                 onDeleteBackward: onRemoveSite
             )
 
-            if let suggestedSite {
-                Button {
+            if let scopeHint {
+                SearchScopeHint(title: scopeHint) {
                     _ = onActivateSite()
                     focused = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Search \(suggestedSite.name)")
-                            .lineLimit(1)
-                        Text("Tab")
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 3)
-                            .background(.quaternary, in: .rect(cornerRadius: 4))
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Search \(suggestedSite.name)")
-                .accessibilityHint("Press Tab to search this site")
             }
             Button {
-                if query.isEmpty && searchSite == nil {
+                if closes {
                     onDismiss()
                 } else {
                     query = ""
@@ -107,10 +94,77 @@ struct CommandPaletteField: View {
             }
             .buttonStyle(.plain)
             .onHover { closeHovering = $0 }
-            .help(query.isEmpty && searchSite == nil ? Text("Close (esc)") : Text("Clear"))
-            .accessibilityLabel(query.isEmpty && searchSite == nil ? Text("Close") : Text("Clear"))
+            .help(closes ? Text("Close (esc)") : Text("Clear"))
+            .accessibilityLabel(closes ? Text("Close") : Text("Clear"))
         }
         .padding(.horizontal, 20)
+    }
+}
+
+struct SiteSearchChip: View {
+    let site: SearchEngine
+    var fontSize: CGFloat = Self.referenceSize
+    let onRemove: () -> Void
+
+    /// Padding is 10 x 6 at this size and scales with `fontSize`.
+    private static let referenceSize: CGFloat = 14
+
+    var body: some View {
+        let appearance = SiteSearchAppearance(site: site)
+        Button(action: onRemove) {
+            Text(site.name)
+                .lineLimit(1)
+                .font(.system(size: fontSize, weight: .semibold))
+                .foregroundStyle(appearance.foreground)
+                .padding(.horizontal, 10 * fontSize / Self.referenceSize)
+                .padding(.vertical, 6 * fontSize / Self.referenceSize)
+                .background(appearance.background, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Remove \(site.name) search")
+        .accessibilityLabel("Remove \(site.name) search")
+    }
+}
+
+private struct CommandPaletteArchiveChip: View {
+    let onRemove: () -> Void
+
+    var body: some View {
+        Button(action: onRemove) {
+            Text("Archived Tabs")
+                .lineLimit(1)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.quaternary, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Show all results")
+        .accessibilityLabel("Show all results")
+    }
+}
+
+struct SearchScopeHint: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .lineLimit(1)
+                Text("Tab")
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .background(.quaternary, in: .rect(cornerRadius: 4))
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityHint("Press Tab to search")
     }
 }
 
@@ -124,6 +178,7 @@ struct CommandPaletteResultsView: View {
     let onSelect: (Int) -> Void
     let onRun: (Int) -> Void
     let onRunAlternate: (Int) -> Void
+    let onRemove: (Int) -> Void
 
     var body: some View {
         if !sections.isEmpty {
@@ -145,6 +200,7 @@ struct CommandPaletteResultsView: View {
                             onSelect: onSelect,
                             onRun: onRun,
                             onRunAlternate: onRunAlternate,
+                            onRemove: onRemove,
                             alternateClickModifier: .option
                         )
                     }

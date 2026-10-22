@@ -74,7 +74,7 @@ extension AppCoordinator {
         browser.onActiveTabChanged = { [weak self] newTab, previousTab in
             extensionTabChanged?(newTab, previousTab)
             guard let self else { return }
-            if conversationSpaceID != browser.activeSpaceID {
+            if conversationAnchorID != browser.activeAnchorID {
                 conversationVoice?.stop()
             }
             followMedia(to: newTab, from: previousTab)
@@ -143,17 +143,17 @@ extension AppCoordinator {
         if profiles.isPrivate {
             browser.context.favicons.schemeOverride = .dark
         } else {
-            switch settings.appearance {
+            switch settings.colorMode {
             case .system:
                 browser.context.favicons.schemeOverride = nil
-            case .light, .lightCalm:
+            case .light:
                 browser.context.favicons.schemeOverride = .light
-            case .dark, .darkCalm:
+            case .dark:
                 browser.context.favicons.schemeOverride = .dark
             }
         }
         nativeWindow?.appearance = profiles.isPrivate
-            ? NSAppearance(named: .darkAqua) : settings.appearance.nsAppearance
+            ? NSAppearance(named: .darkAqua) : settings.colorMode.nsAppearance
         nativeWindow?.title = windowTitle
         reloadFaviconsIfSchemeChanged()
     }
@@ -170,6 +170,7 @@ extension AppCoordinator {
         voicePreparation = nil
         activation.stop()
         memoryPressure.stop()
+        sleepTimer.stop()
         media.releaseControl()
         media.unwatch()
         downloadFlights.stopWatching()

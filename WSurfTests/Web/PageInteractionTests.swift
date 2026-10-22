@@ -60,11 +60,11 @@ struct PageInteractionTests {
         let view = await page("<button id='a' onclick='window.hit=true'>Ordinary action</button>")
         _ = await PageDriver.snapshot(view)
         _ = await js(view, "document.querySelector('button').textContent='Delete account'")
-        #expect(await PageDriver.click(ref: 1, label: "", in: view) == PageDriver.staleMessage)
+        _ = await PageDriver.click(ref: 1, label: "", in: view)
         #expect(await js(view, "window.hit === undefined") as? Bool == true)
         view.loadHTMLString("<button onclick='window.hit=true'>New document</button>", baseURL: nil)
         #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
-        #expect(await PageDriver.click(ref: 1, label: "", in: view) == PageDriver.staleMessage)
+        _ = await PageDriver.click(ref: 1, label: "", in: view)
         #expect(await js(view, "window.hit === undefined") as? Bool == true)
     }
 
@@ -158,7 +158,32 @@ struct PageInteractionTests {
         #expect(page.contains("[100]"))
         let observation = try #require(PageDriver.observation(in: view))
         #expect(!observation.refs.contains(1))
-        #expect(await PageDriver.click(ref: 1, label: "", in: view) == PageDriver.staleMessage)
+    }
+
+    @Test func clickingARefTheObservationOmittedActsOnlyOnceItIsListed() async throws {
+        let buttons = (1...12).map { "<button onclick='document.body.dataset.clicked=\"\($0)\"'>Choice \($0)</button>" }.joined()
+        let view = await page(buttons)
+        _ = await PageDriver.snapshot(view, textLimit: 0, controlLimit: 3)
+        #expect(!(try #require(PageDriver.observation(in: view)).refs.contains(9)))
+        _ = await PageDriver.click(ref: 9, label: "", in: view)
+        #expect(await js(view, "document.body.dataset.clicked === undefined") as? Bool == true)
+
+        _ = await PageDriver.snapshot(view, textLimit: 0, controlLimit: 12)
+        #expect(try #require(PageDriver.observation(in: view)).refs.contains(9))
+        _ = await PageDriver.click(ref: 9, label: "", in: view)
+        #expect(await js(view, "document.body.dataset.clicked") as? String == "9")
+    }
+
+    @Test func batchFillWritesListedFieldsAndLeavesAnOmittedOneUntouched() async throws {
+        let view = await page((1...12).map { "<input aria-label='Field \($0)'>" }.joined())
+        _ = await PageDriver.snapshot(view, textLimit: 0, controlLimit: 3)
+        let listed = try #require(PageDriver.observation(in: view)).refs
+        #expect(listed.contains(1) && !listed.contains(9))
+        _ = await PageDriver.fillFields([
+            .init(ref: 1, value: "kept", select: false), .init(ref: 9, value: "unseen", select: false),
+        ], in: view)
+        #expect(await js(view, "document.querySelectorAll('input')[0].value") as? String == "kept")
+        #expect(await js(view, "document.querySelectorAll('input')[8].value") as? String == "")
     }
 
     @Test func calendarPaginationRecoversFromRefOffsetsAndChangedQueries() async {
@@ -190,10 +215,9 @@ struct PageInteractionTests {
         let before = try #require(PageDriver.observation(in: view))
         view.loadHTMLString("<button onclick='window.hit=true'>29</button>", baseURL: nil)
         #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
-        let result = await PageDriver.$expectedObservation.withValue(before.id) {
+        _ = await PageDriver.$expectedObservation.withValue(before.id) {
             await PageDriver.click(ref: 0, label: "29", in: view)
         }
-        #expect(result == PageDriver.staleMessage)
         #expect(await js(view, "window.hit === undefined") as? Bool == true)
     }
 
@@ -303,6 +327,34 @@ struct PageInteractionTests {
         #expect((await PageDriver.waitForPage(condition: "text", value: "Missing", timeout: 1, in: view)).hasPrefix("Timed out"))
     }
 
+    @Test func waitsForElementStateAndRejectsBadSelectors() async {
+        let view = await page("<button id='go' disabled>Go</button><p id='gone'>Soon</p><p class='dup'>a</p><p class='dup'>b</p>")
+        _ = await js(view, "setTimeout(()=>{document.querySelector('#go').disabled=false;document.querySelector('#gone').remove()},180);true")
+        #expect((await PageDriver.waitForPage(condition: "elementEnabled", value: "#go", timeout: 2, in: view)).hasPrefix("Condition met."))
+        #expect((await PageDriver.waitForPage(condition: "elementHidden", value: "#gone", timeout: 2, in: view)).hasPrefix("Condition met."))
+        #expect((await PageDriver.waitForPage(condition: "elementVisible", value: "#missing", timeout: 1, in: view)).hasPrefix("Timed out"))
+        #expect((await PageDriver.waitForPage(condition: "elementVisible", value: ".dup", timeout: 1, in: view)) == "The selector matches more than one element.")
+        #expect((await PageDriver.waitForPage(condition: "elementVisible", value: "div[", timeout: 1, in: view)) == "Invalid selector.")
+    }
+
+    @Test func screenshotRegionMustBeFullyInsideTheViewport() async {
+        let view = await page("<p>Visible</p>")
+        let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 400, height: 300), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderBack(nil)
+        defer { window.contentView = nil; window.close() }
+        let width = view.bounds.width
+        if case .success(let capture) = await PageDriver.screenshot(.region(CGRect(x: 0, y: 0, width: 100, height: 20)), in: view) {
+            #expect(capture.bounds == CGRect(x: 0, y: 0, width: 100, height: 20))
+        } else {
+            Issue.record("inside region failed")
+        }
+        #expect(await PageDriver.screenshot(.region(CGRect(x: width - 10, y: 0, width: 100, height: 20)), in: view).failure == .offscreen)
+        #expect(await PageDriver.screenshot(.region(CGRect(x: width + 50, y: 0, width: 10, height: 10)), in: view).failure == .offscreen)
+        #expect(await PageDriver.screenshot(.region(CGRect(x: 0, y: 0, width: 1e-9, height: 10)), in: view).failure == .invalidGeometry)
+    }
+
     @Test func nestedHorizontalScrollReturnsFreshControls() async {
         let view = await page(
             "<div aria-label='Items' role='region' style='width:200px;overflow:auto'><div style='width:1500px'><button>First</button><button style='margin-left:900px'>Last</button></div></div>"
@@ -332,7 +384,50 @@ struct PageInteractionTests {
 
     @Test func screenshotsRefuseFilledSensitiveFields() async {
         let view = await page("<input type='password' value='secret'>")
-        #expect(await PageDriver.screenshot(in: view) == nil)
+        #expect(await PageDriver.screenshot(in: view).failure == .privacy)
+    }
+
+    @Test func boundedScreenshotsShrinkWhileUnboundedOnesKeepTheirPixels() async throws {
+        let view = await page(
+            """
+            <canvas id='c' width='500' height='400'></canvas>
+            <script>
+              const context = document.getElementById('c').getContext('2d'), noise = context.createImageData(500, 400);
+              for (let i = 0; i < noise.data.length; i++) noise.data[i] = i % 4 === 3 ? 255 : Math.random() * 256;
+              context.putImageData(noise, 0, 0);
+            </script>
+            """)
+        let limit = 30_000
+        let full = try await PageDriver.screenshot(in: view).get()
+        let bounded = try await PageDriver.screenshot(maximumBytes: limit, in: view).get()
+        #expect(full.jpeg.count > limit)
+        #expect(bounded.jpeg.count <= limit)
+        let fullWidth = try #require(NSBitmapImageRep(data: full.jpeg)).pixelsWide
+        let boundedWidth = try #require(NSBitmapImageRep(data: bounded.jpeg)).pixelsWide
+        #expect(boundedWidth < fullWidth)
+        // The reported scale describes the image that was returned, not the one that was captured.
+        #expect(abs(bounded.scale * bounded.bounds.width - CGFloat(boundedWidth)) < 1)
+        #expect(abs(full.scale * full.bounds.width - CGFloat(fullWidth)) < 1)
+    }
+
+    @Test func scopeCoversEveryMatchingElement() async {
+        let view = await page(
+            "<button>Outside</button><section><input aria-label='First'></section><section><textarea aria-label='Second'></textarea></section>")
+        let sections = await PageDriver.snapshot(view, scope: "section")
+        #expect(sections.contains("\"First\"") && sections.contains("\"Second\""), "\(sections)")
+        #expect(!sections.contains("button \"Outside\""))
+        let fields = await PageDriver.snapshot(view, scope: "textarea, input")
+        #expect(fields.contains("\"First\"") && fields.contains("\"Second\""), "\(fields)")
+        #expect(!(await PageDriver.snapshot(view, scope: "article")).hasPrefix("PAGE TEXT:"))
+        #expect(!(await PageDriver.snapshot(view, scope: "section[")).hasPrefix("PAGE TEXT:"))
+
+        let shadow = await page(
+            """
+            <div class='host'></div><button>Outside</button>
+            <script>document.querySelector('.host').attachShadow({ mode: 'open' }).innerHTML = '<button>Inside shadow</button>';</script>
+            """)
+        let hosted = await PageDriver.snapshot(shadow, scope: ".host")
+        #expect(hosted.contains("button \"Inside shadow\"") && !hosted.contains("button \"Outside\""), "\(hosted)")
     }
 
     @Test func sensitiveEditableTextIsRedactedAndCannotBeOverwritten() async {
@@ -341,10 +436,10 @@ struct PageInteractionTests {
         #expect(!output.contains("hidden-recovery-words"))
         #expect(output.contains("filled, hidden"))
         #expect(!(await PageDriver.type(text: "replacement", intoField: "", ref: 1, submit: false, in: view)).hasPrefix("Typed"))
-        #expect(await PageDriver.screenshot(in: view) == nil)
+        #expect(await PageDriver.screenshot(in: view).failure == .privacy)
     }
 
-    @Test func hoverHandlersAndNativeKeyboardReachWebKit() async {
+    @Test func backgroundHoverIsUnavailableAndNativeKeyboardReachesWebKit() async {
         let view = await page(
             """
             <style>#hover:hover + #revealed { display:block } #revealed { display:none }</style>
@@ -363,12 +458,104 @@ struct PageInteractionTests {
         }
         _ = await PageDriver.snapshot(view)
         let hover = await PageDriver.hover(ref: 1, in: view)
-        #expect(hover.contains("Hover details"), "\(hover)")
-        #expect(hover.contains("CSS-only hover is unavailable"))
+        // A background window is not hoverable: the move is refused, never claimed, and no handler ran.
+        #expect(hover.hasPrefix("Hover needs"), "\(hover)")
+        #expect(await js(view, "document.querySelector('#revealed').style.display") as? String == "")
         let key = await PageDriver.pressKey("ArrowDown", ref: 2, in: view)
         #expect(key.hasPrefix("Sent ArrowDown"), "\(key)")
         #expect(await js(view, "window.lastKey") as? String == "ArrowDown")
-        #expect(await PageDriver.screenshot(in: view) != nil)
+        if case .failure(let failure) = await PageDriver.screenshot(in: view) { Issue.record("screenshot failed: \(failure)") }
+    }
+
+    /// Native, not run by the headless component package. A ref inside a same-origin iframe is captured where it really is:
+    /// through the frame's border and padding, and only the part the frame shows, never the neighbouring page.
+    @Test func anElementInsideAnIframeIsCroppedThroughTheFrameGeometry() async {
+        let view = await page(
+            """
+            <iframe id='f' style='position:absolute;left:30px;top:40px;width:200px;height:100px;border:5px solid black;padding:20px'
+              srcdoc="<body style='margin:0'><button style='position:absolute;left:10px;top:12px;width:60px;height:24px'>Go</button>\
+            <button style='position:absolute;left:180px;top:12px;width:60px;height:24px'>Edge</button></body>"></iframe>
+            """)
+        let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderBack(nil)
+        defer { window.contentView = nil; window.close() }
+        var loaded = false
+        for _ in 0..<50 where !loaded {
+            loaded = await js(view, "!!document.getElementById('f').contentDocument?.querySelector('button')") as? Bool == true
+            if !loaded {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+        _ = await PageDriver.snapshot(view)
+        // The frame's content box starts at its border box (30, 40) plus 5 px border plus 20 px padding.
+        func check(_ ref: Int, _ expected: CGRect) async {
+            switch await PageDriver.screenshot(.element(ref: ref), in: view) {
+            case .success(let capture):
+                #expect(abs(capture.bounds.minX - expected.minX) <= 0.5 && abs(capture.bounds.minY - expected.minY) <= 0.5, "\(capture.bounds)")
+                #expect(abs(capture.bounds.width - expected.width) <= 0.5 && abs(capture.bounds.height - expected.height) <= 0.5, "\(capture.bounds)")
+            case .failure(let failure):
+                Issue.record("ref \(ref): \(failure)")
+            }
+        }
+        await check(1, CGRect(x: 65, y: 77, width: 60, height: 24))
+        await check(2, CGRect(x: 235, y: 77, width: 20, height: 24))
+    }
+
+    /// Native, not run by the headless component package. A key is never reported as delivered to a page that does not hold
+    /// keyboard focus.
+    @Test func aKeyIsRefusedWhenThePageIsNotTheFirstResponder() async throws {
+        let view = await page("<input aria-label='Input' onkeydown='window.lastKey=event.key'>")
+        let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderBack(nil)
+        defer { window.contentView = nil; window.close() }
+        func event() throws -> NSEvent {
+            try #require(NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, characters: "a", charactersIgnoringModifiers: "a", isARepeat: false, keyCode: 0))
+        }
+        #expect(window.makeFirstResponder(nil))
+        #expect(!view.sendKeyEvent(try event()))
+        #expect(window.makeFirstResponder(view))
+        #expect(view.sendKeyEvent(try event()))
+    }
+
+    /// Native, not run by the headless component package. A non-interactive element that only `findElements` registered
+    /// is captured under development access and refused otherwise; control refs keep working without it; a vanished
+    /// element stays stale rather than reading as a permission failure.
+    @Test func foundOnlyElementsNeedDevelopmentAccessToBeCaptured() async throws {
+        let view = await page("<div id='box' style='width:80px;height:30px;background:red'>Box</div><button>Go</button>")
+        let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderBack(nil)
+        defer { window.contentView = nil; window.close() }
+        let found = await PageDriver.findElements(selector: "#box", offset: 0, limit: 5, in: view)
+        let ref = try #require(found.components(separatedBy: "\"r\":").dropFirst().first.flatMap { Int($0.prefix { $0.isNumber }) }, "\(found)")
+        #expect(await PageDriver.screenshot(.element(ref: ref), in: view).failure == .needsDevelopment)
+        if case .failure(let failure) = await PageDriver.screenshot(.element(ref: ref), developmentAllowed: { true }, in: view) {
+            Issue.record("development capture failed: \(failure)")
+        }
+        // Access dropping during the capture is caught before the pixels are returned.
+        var asked = 0
+        let dropped = await PageDriver.screenshot(.element(ref: ref), developmentAllowed: { asked += 1; return asked == 1 }, in: view)
+        #expect(dropped.failure == .needsDevelopment)
+        _ = await js(view, "document.getElementById('box').remove(); true")
+        #expect(await PageDriver.screenshot(.element(ref: ref), developmentAllowed: { true }, in: view).failure == .stale)
+    }
+
+    @Test func aControlRefIsCapturedWithoutDevelopmentAccess() async {
+        let view = await page("<button style='width:80px;height:30px'>Go</button>")
+        let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 500, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderBack(nil)
+        defer { window.contentView = nil; window.close() }
+        _ = await PageDriver.snapshot(view)
+        if case .failure(let failure) = await PageDriver.screenshot(.element(ref: 1), in: view) { Issue.record("control capture failed: \(failure)") }
     }
 }
 
@@ -525,6 +712,219 @@ extension PageInteractionTests {
             #expect(await js(view, "document.querySelector('#target').checked") as? Bool == false)
         } else {
             #expect(await js(view, "document.querySelector('#target').value") as? String == "A")
+        }
+    }
+
+    // Slice 1 native probes (docs/superpowers/plans/2026-10-14-mcp-development-mode.md, Task 1).
+    // They assert the shared contract on both engines; a failure on one engine reproduces a static risk.
+    @Test(arguments: BrowserEngine.allCases)
+    func pressKeyDeliversKeyDownAndKeyUpToFocusedControl(engine: BrowserEngine) async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("""
+                <input aria-label="Input" onkeydown="window.keys=(window.keys||'')+'d'" onkeyup="window.keys+='u'">
+                """),
+        ])
+        defer { withExtendedLifetime(server) {} }
+        try await withPage(engine: engine, url: server.url()) { view in
+            _ = await PageDriver.readRenderedPage(view)
+            let ref = try #require(PageDriver.observation(in: view)?.refs.sorted().first)
+            let result = await PageDriver.pressKey("ArrowDown", ref: ref, in: view)
+            let delivered = try await view.evaluateJavaScript("window.keys || ''") as? String
+            #expect(delivered == "du", "engine \(engine): result \(result)")
+            #expect(result.hasPrefix("Sent ArrowDown") == (delivered == "du"), "reported success must match delivery: \(result)")
+            #expect(try await view.evaluateJavaScript("document.activeElement.tagName") as? String == "INPUT")
+        }
+    }
+
+    @Test(arguments: BrowserEngine.allCases)
+    func goBackReportsActualNavigation(engine: BrowserEngine) async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/a": .html("<h1>Page A</h1>"), "/b": .html("<h1>Page B</h1>"),
+        ])
+        defer { withExtendedLifetime(server) {} }
+        let first = try server.url("/a")
+        let second = try server.url("/b")
+        try await withPage(engine: engine, url: first) { view in
+            let none = await PageDriver.goBack(in: view)
+            #expect(none == "There is no page to go back to.", "engine \(engine): \(none)")
+            // The startup page is not a history entry. The list is read asynchronously, so wait for the first page to appear in it.
+            #expect(await waitUntil {
+                let list = view.backForwardList
+                return list.currentItem?.url == first && list.backList.isEmpty
+            }, "engine \(engine): \(view.backForwardList.backList.map(\.url))")
+            view.load(URLRequest(url: second))
+            try #require(await waitUntil { view.url == second && !view.isLoading })
+            let back = await PageDriver.goBack(in: view)
+            #expect(back.hasPrefix("Went back."), "engine \(engine): \(back)")
+            #expect(view.url == first, "engine \(engine): url \(String(describing: view.url))")
+            #expect(back.contains("Page A"), "engine \(engine): \(back)")
+        }
+    }
+
+    /// Holds the startup-entry reset open from a test: Chromium has answered it, the page has not yet applied the answer.
+    @MainActor
+    private final class StartupResetGate {
+        private(set) var reached = false
+        private let stream: AsyncStream<Void>
+        private let release: AsyncStream<Void>.Continuation
+
+        init() {
+            (stream, release) = AsyncStream.makeStream(of: Void.self)
+        }
+
+        func wait() async {
+            reached = true
+            for await _ in stream {}
+        }
+
+        func open() {
+            release.finish()
+        }
+    }
+
+    private func freshChromiumTab(
+        resetCommand: @escaping @MainActor (ChromiumPage) async throws -> Void,
+        body: (BrowserPage, URL, URL) async throws -> Void
+    ) async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/a": .html("<h1>Page A</h1>"), "/b": .html("<h1>Page B</h1>")])
+        defer { withExtendedLifetime(server) {} }
+        let first = try server.url("/a")
+        let second = try server.url("/b")
+        try await withPage(
+            engine: .chromium, url: first,
+            configure: { view in
+                view.chromium?.startupResetCommand = { [weak chromium = view.chromium] in
+                    if let chromium {
+                        try await resetCommand(chromium)
+                    }
+                }
+            }
+        ) { view in
+            try await body(view, first, second)
+        }
+    }
+
+    /// The window the report describes: Chromium counts the startup page until its history reset has been applied, and may
+    /// report that on any loading change meanwhile.
+    @Test func goBackOnAFreshChromiumTabNeverReachesTheStartupPage() async throws {
+        let gate = StartupResetGate()
+        defer { gate.open() }
+        try await freshChromiumTab(resetCommand: { chromium in
+            _ = try await chromium.command("Page.resetNavigationHistory")
+            await gate.wait()
+        }) { view, first, second in
+            let chromium = try #require(view.chromium)
+            try #require(await waitUntil { gate.reached })
+            chromium.didChangeLoading(false, canGoBack: true, canGoForward: false)
+            #expect(!view.canGoBack, "Back must not see the startup page while the reset is pending")
+            let none = await PageDriver.goBack(in: view)
+            #expect(none == "There is no page to go back to.", "\(none)")
+            #expect(view.url == first, "url \(String(describing: view.url))")
+            gate.open()
+            #expect(await waitUntil {
+                let list = view.backForwardList
+                return list.currentItem?.url == first && list.backList.isEmpty
+            }, "\(view.backForwardList.backList.map(\.url))")
+            #expect(!view.canGoBack)
+            // Once the reset has landed, Back is driven by real history again.
+            view.load(URLRequest(url: second))
+            try #require(await waitUntil { view.url == second && !view.isLoading && view.canGoBack })
+            let back = await PageDriver.goBack(in: view)
+            #expect(back.hasPrefix("Went back."), "\(back)")
+            #expect(view.url == first, "url \(String(describing: view.url))")
+        }
+    }
+
+    /// Chromium refuses the reset ("Not attached to an active page") when it arrives while the first commit is still swapping
+    /// renderers. The page asks again, and Back stays closed until a reset has landed.
+    @Test func aRefusedStartupResetIsRetriedUntilTheStartupPageIsGone() async throws {
+        let gate = StartupResetGate()
+        defer { gate.open() }
+        var attempts = 0
+        try await freshChromiumTab(resetCommand: { chromium in
+            attempts += 1
+            if attempts < 3 {
+                throw ChromiumError.protocolFailure("Not attached to an active page")
+            }
+            _ = try await chromium.command("Page.resetNavigationHistory")
+            await gate.wait()
+        }) { view, first, second in
+            let chromium = try #require(view.chromium)
+            try #require(await waitUntil { gate.reached })
+            #expect(attempts == 3)
+            chromium.didChangeLoading(false, canGoBack: true, canGoForward: false)
+            #expect(!view.canGoBack, "Back stays closed while the reset is being retried")
+            gate.open()
+            #expect(await waitUntil {
+                let list = view.backForwardList
+                return list.currentItem?.url == first && list.backList.isEmpty
+            }, "\(view.backForwardList.backList.map(\.url))")
+            #expect(!view.canGoBack)
+            view.load(URLRequest(url: second))
+            try #require(await waitUntil { view.url == second && !view.isLoading && view.canGoBack })
+        }
+    }
+
+    /// A page can add a history entry (here `pushState`) before the startup reset lands, for instance while a refused reset
+    /// waits for its retry. The reset keeps only the committed entry, so it would then drop the page the entry was pushed
+    /// from. The retry finds the grown history and leaves it alone: Back reaches that page, and still never the startup page.
+    @Test func aStartupResetNeverDropsAnEntryAddedBeforeItLands() async throws {
+        let gate = StartupResetGate()
+        defer { gate.open() }
+        var attempts = 0
+        try await freshChromiumTab(resetCommand: { chromium in
+            attempts += 1
+            if attempts == 1 {
+                await gate.wait()
+                throw ChromiumError.protocolFailure("Not attached to an active page")
+            }
+            _ = try await chromium.command("Page.resetNavigationHistory")
+        }) { view, first, _ in
+            let chromium = try #require(view.chromium)
+            try #require(await waitUntil { gate.reached })
+            _ = try await view.evaluateJavaScript("history.pushState({}, '', '/pushed'); 0", in: nil, contentWorld: .page, userGesture: true)
+            try #require(await waitUntil { view.url?.path == "/pushed" })
+            #expect(view.canGoBack, "Back reaches the page the entry was pushed from while the reset is pending")
+            gate.open()
+            try #require(await waitUntil { chromium.startupEntry == .kept })
+            #expect(attempts == 1, "the retry must not reset a history that grew")
+            #expect(await waitUntil { view.backForwardList.backList.map(\.url) == [first] },
+                    "\(view.backForwardList.backList.map(\.url))")
+            let back = await PageDriver.goBack(in: view)
+            #expect(back.hasPrefix("Went back."), "\(back)")
+            #expect(await waitUntil { view.url == first }, "url \(String(describing: view.url))")
+            // The startup page is still Chromium's first entry, one step behind the first page; Back never goes there.
+            #expect(await waitUntil { !view.canGoBack && view.backForwardList.backList.isEmpty },
+                    "\(view.backForwardList.backList.map(\.url))")
+            #expect(await PageDriver.goBack(in: view) == "There is no page to go back to.")
+        }
+    }
+
+    @Test(arguments: BrowserEngine.allCases)
+    func goBackHandlesSameDocumentHistory(engine: BrowserEngine) async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html("<h1>Same doc</h1>")])
+        defer { withExtendedLifetime(server) {} }
+        try await withPage(engine: engine, url: server.url()) { view in
+            if let chromium = view.chromium {
+                // This test is about same-document history; the race with the startup reset has its own test
+                // (`aStartupResetNeverDropsAnEntryAddedBeforeItLands`).
+                try #require(await waitUntil { chromium.startupEntry == .dropped || chromium.startupEntry == .kept })
+            }
+            _ = try await view.evaluateJavaScript("history.pushState({}, '', '/pushed'); 0", in: nil, contentWorld: .page, userGesture: true)
+            try #require(await waitUntil { view.url?.path == "/pushed" })
+            let back = await PageDriver.goBack(in: view)
+            #expect(back.hasPrefix("Went back."), "engine \(engine): \(back)")
+            #expect(await waitUntil { view.url?.path == "/" }, "engine \(engine): url \(String(describing: view.url))")
+        }
+    }
+}
+
+private extension Result {
+    var failure: Failure? {
+        if case .failure(let error) = self {
+            error
+        } else {
+            nil
         }
     }
 }

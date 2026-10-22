@@ -42,7 +42,12 @@ struct ContentNavBar: View {
     private var extensionBudget: CGFloat? {
         guard barWidth > 0 else { return nil }
         let sideRoom = (barWidth - Self.addressBarMinWidth) / 2
-        return max(0, sideRoom - Self.barInset - Self.clusterGap - Self.buttonSlot)
+        return max(0, sideRoom - Self.barInset - Self.clusterGap - Self.buttonSlot - externalBadgeReserve)
+    }
+
+    /// Room the external-connection badge takes from the extension icons while it shows.
+    private var externalBadgeReserve: CGFloat {
+        coordinator.mcpServer.controllers(in: browser).isEmpty ? 0 : ExternalConnectionChip.maximumWidth + 6
     }
 
     private var toolbarLeadingPadding: CGFloat {
@@ -152,7 +157,7 @@ struct ContentNavBar: View {
             }
             ToolbarButton(
                 symbol: (browser.activeTab?.isLoading ?? false) ? "xmark" : "arrow.clockwise",
-                enabled: !(browser.activeTab?.urlString.isEmpty ?? true),
+                enabled: browser.activeTab.map { $0.isLoading || $0.canReload } ?? false,
                 help: String(localized: reloadHelp),
                 heldMenu: {
                     guard let tab = browser.activeTab else { return nil }
@@ -171,6 +176,7 @@ struct ContentNavBar: View {
 
     private var trailingControls: some View {
         HStack(spacing: 6) {
+            ExternalConnectionBadge(server: coordinator.mcpServer, browser: browser)
             if !coordinator.isShowingSettings {
                 StoreInstallButton(manager: coordinator.extensions, browser: browser)
             }
@@ -194,6 +200,11 @@ enum ChromeBand {
     static func pageColor(browser: BrowserModel, coordinator: AppCoordinator) -> NSColor? {
         guard !coordinator.isShowingSettings, !showsStartPage(browser: browser) else { return nil }
         guard browser.activeSplit == nil else { return nil }
+        // Reader covers the page, so the bar takes the color of the article's page instead.
+        if let tab = browser.activeTab, tab.reader.isActive {
+            let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return BrowserSettings.application.readerPalette.resolved(isDark: isDark).background
+        }
         return browser.activeTab?.pageColor
     }
 

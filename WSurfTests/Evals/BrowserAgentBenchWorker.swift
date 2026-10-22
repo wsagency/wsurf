@@ -26,7 +26,7 @@ struct BrowserAgentBenchWorker {
     }
 
     private func execute(_ start: BenchStart, client: BenchClient) async throws {
-        let preferences = "WSurf.Benchmark.\(UUID().uuidString)"
+        let preferences = AppDatabase.defaultsSuite("WSurf.Benchmark.\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: preferences))
         defer { defaults.removePersistentDomain(forName: preferences) }
         try await run(start, client: client, modelSettings: LLMSettings(defaults: defaults))

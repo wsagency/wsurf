@@ -28,18 +28,21 @@ nonisolated enum CredentialManagerError: Error {
 }
 
 /// The native passkey calls a manager (or a vault creation) makes, as closures so a test drives the real manager with a stub.
-/// `.native` is the only production value.
+/// `.native` is the only production value. Each takes its presentation anchor lazily: only a prompt that is shown asks for the
+/// window, so a manager driven by a stub never needs one.
 struct VaultNativeUnlock {
-    var register: (ASPresentationAnchor) async throws -> VaultUnlockRegistration
-    var verifyRegistration: (VaultUnlockRegistration, ASPresentationAnchor, () throws -> Void) async throws -> VaultUnlockProof
-    var assert: ([VaultUnlock], ASPresentationAnchor) async throws -> VaultUnlockProof
+    var register: (_ anchor: () -> ASPresentationAnchor) async throws -> VaultUnlockRegistration
+    var verifyRegistration: (VaultUnlockRegistration, _ anchor: () -> ASPresentationAnchor, () throws -> Void) async throws -> VaultUnlockProof
+    var assert: ([VaultUnlock], _ anchor: () -> ASPresentationAnchor) async throws -> VaultUnlockProof
     var cancel: () -> Void
 
     static func native(_ unlocker: PasskeyVaultUnlocker) -> VaultNativeUnlock {
         VaultNativeUnlock(
-            register: { try await unlocker.register(in: $0) },
-            verifyRegistration: { try await unlocker.verifyRegistration($0, in: $1, beforeAssertion: $2) },
-            assert: { try await unlocker.assert(among: $0, in: $1) },
+            register: { anchor in try await unlocker.register(in: anchor()) },
+            verifyRegistration: { registration, anchor, beforeAssertion in
+                try await unlocker.verifyRegistration(registration, in: anchor(), beforeAssertion: beforeAssertion)
+            },
+            assert: { unlocks, anchor in try await unlocker.assert(among: unlocks, in: anchor()) },
             cancel: { unlocker.cancel() }
         )
     }
@@ -50,6 +53,24 @@ enum NewVaultChoice {
     case newPasskey(authorizedBy: CredentialManager?)
     /// An enrolled passkey of another vault, asserted again for this creation.
     case existing(sourceVaultID: UUID, credentialID: Data, prfInput: Data)
+}
+
+/// Counts the unlocks and locks of each profile's vault managers, in memory only. A vault's name is listed only while that vault is
+/// unlocked, so a page that lists a profile's vaults reads the list again whenever its count changes, including for a vault it has
+/// not selected. Observing it fires for any profile; a reader compares only its own profile's count.
+@MainActor
+@Observable
+final class VaultStateChanges {
+    static let shared = VaultStateChanges()
+    private var counts: [UUID: UInt64] = [:]
+
+    func count(for profileID: UUID) -> UInt64 {
+        counts[profileID, default: 0]
+    }
+
+    fileprivate func note(_ profileID: UUID) {
+        counts[profileID, default: 0] &+= 1
+    }
 }
 
 /// Per-vault unlock state: one manager per (profile, vault). Every await re-checks the captured `VaultAccess` *before* a durable
@@ -73,6 +94,9 @@ final class CredentialManager {
     }
     private(set) var unlockCredentials: [VaultUnlock] = []
     private(set) var lastLockReason: CredentialLockReason?
+    /// How long this vault's next unlock lasts. The lease in force keeps the length it began with, except that a shorter choice
+    /// applies to it at once (`setAutoLock`).
+    private(set) var autoLock: CredentialAutoLock
     /// Registrations saved to the vault whose delivery to the website could not be confirmed (page closed, navigated or
     /// locked after the commit, or the outcome is unknown). Memory only and bounded: a restart forgets them, and nothing
     /// here is a secret. Settings shows the details only while unlocked.
@@ -106,6 +130,8 @@ final class CredentialManager {
     @ObservationIgnored private var pending: [VaultAccess] = []
     private var current: VaultAccess?
     @ObservationIgnored private var timer: Task<Void, Never>?
+    /// When the current lease began, which is when the unlock completed. A shorter choice counts from here.
+    @ObservationIgnored private var leaseStart: ContinuousClock.Instant?
     @ObservationIgnored private var isRetired = false
     /// Counts vault writes between their start and their end, and changes whenever one starts or ends.
     @ObservationIgnored private var writesInFlight = 0
@@ -125,6 +151,7 @@ final class CredentialManager {
         self.store = store
         self.now = now
         self.native = native ?? .native(PasskeyVaultUnlocker())
+        autoLock = CredentialAutoLock.stored(for: vaultID, in: ProfileSettingsStore.defaults(for: profile))
     }
 
     // MARK: - Registry
@@ -201,6 +228,8 @@ final class CredentialManager {
         for profileID in Set(stores.keys).union(managers.keys).union(creations.keys) {
             lock(profileID: profileID, reason: reason)
         }
+        // A profile with no vault state is not in that set, and its Input History can be open all the same.
+        InputHistory.shared.lockAll()
     }
 
     /// Locks one profile's vault managers, creations and ceremonies, and withdraws its pending autofill vault choices. A profile
@@ -212,6 +241,7 @@ final class CredentialManager {
         revokeCreations(profileID)
         WebAuthnAdapter.cancel(profileID: profileID)
         AutofillSaveCoordinator.shared.vaultAccessEnded(profileID: profileID)
+        InputHistory.shared.lock(profileID: profileID)
     }
 
     private static func revokeCreations(_ profileID: UUID) {
@@ -232,6 +262,7 @@ final class CredentialManager {
         revokeCreations(profileID)
         WebAuthnAdapter.cancel(profileID: profileID)
         AutofillSaveCoordinator.shared.vaultAccessEnded(profileID: profileID)
+        InputHistory.shared.lock(profileID: profileID)
         await stores.removeValue(forKey: profileID)?.close()
     }
 
@@ -240,7 +271,7 @@ final class CredentialManager {
         profile: Profile,
         name: String,
         choice: NewVaultChoice,
-        in anchor: ASPresentationAnchor,
+        in anchor: @autoclosure () -> ASPresentationAnchor,
         native: VaultNativeUnlock? = nil
     ) async throws -> UUID {
         let store = try store(for: profile)
@@ -297,21 +328,26 @@ final class CredentialManager {
         }
     }
 
-    private static func installObserversOnce() {
+    /// Observes the events that lock the whole session (sleep, screen lock, termination). Input History calls it too, so a profile
+    /// that never opened a vault still locks on them.
+    static func installObserversOnce() {
         guard observers.isEmpty else { return }
         func observe(_ center: NotificationCenter, _ name: Notification.Name, _ reason: CredentialLockReason) -> any NSObjectProtocol {
             center.addObserver(forName: name, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { lockAll(reason: reason) }
             }
         }
-        let workspace = NSWorkspace.shared.notificationCenter
-        observers = [
-            observe(workspace, NSWorkspace.willSleepNotification, .sleep),
-            // Login-session switch-out; NSApplication focus loss would cancel ceremonies behind provider UI.
-            observe(workspace, NSWorkspace.sessionDidResignActiveNotification, .screenLock),
-            observe(DistributedNotificationCenter.default(), Notification.Name("com.apple.screenIsLocked"), .screenLock),
-            observe(.default, NSApplication.willTerminateNotification, .termination),
-        ]
+        observers = CredentialLockEvent.all.map { event -> any NSObjectProtocol in
+            let center: NotificationCenter = switch event.center {
+            case .workspace:
+                NSWorkspace.shared.notificationCenter
+            case .distributed:
+                DistributedNotificationCenter.default()
+            case .application:
+                .default
+            }
+            return observe(center, event.name, event.reason)
+        }
     }
 
     // MARK: - Access epochs
@@ -373,6 +409,8 @@ final class CredentialManager {
             try requirePending(access)
             try activate(access)
             unlockCredentials = unlocks
+            VaultStateChanges.shared.note(profile.id)
+            AutofillSuggestions.shared.vaultUnlocked(profileID: profile.id)
         } catch {
             publishScratch()
             discard(access)
@@ -382,7 +420,9 @@ final class CredentialManager {
 
     // MARK: - Native unlock management
 
-    func unlock(in anchor: ASPresentationAnchor, confirmMigration: Bool = false, verifying: (@Sendable (Bool) -> Void)? = nil) async throws {
+    func unlock(
+        in anchor: @autoclosure () -> ASPresentationAnchor, confirmMigration: Bool = false, verifying: (@Sendable (Bool) -> Void)? = nil
+    ) async throws {
         let access = beginAccess()
         do {
             try requirePending(access)
@@ -405,7 +445,7 @@ final class CredentialManager {
         }
     }
 
-    func addUnlock(in anchor: ASPresentationAnchor) async throws -> VaultCommitReceipt {
+    func addUnlock(in anchor: @autoclosure () -> ASPresentationAnchor) async throws -> VaultCommitReceipt {
         let access = try currentAccess()
         _ = try await preflightAddingUnlock(using: access)
         try requireCurrent(access)
@@ -477,7 +517,7 @@ final class CredentialManager {
         return receipt
     }
 
-    func removeUnlock(credentialID: Data, in anchor: ASPresentationAnchor) async throws -> VaultCommitReceipt {
+    func removeUnlock(credentialID: Data, in anchor: @autoclosure () -> ASPresentationAnchor) async throws -> VaultCommitReceipt {
         let access = try currentAccess()
         guard unlockCredentials.contains(where: { $0.credentialID == credentialID }) else { throw CredentialVaultError.invalidData }
         let remaining = unlockCredentials.filter { $0.credentialID != credentialID }
@@ -491,6 +531,31 @@ final class CredentialManager {
         )
     }
 
+    /// Renames the vault under the lease the caller decided under (`authorizedEpoch`). The name is sealed in the head, so a
+    /// locked vault cannot be renamed.
+    func renameVault(_ name: String, authorizedEpoch: UInt64) async throws -> VaultCommitReceipt {
+        try await authorizedWrite(epoch: authorizedEpoch) { access in
+            try await store.renameVault(vaultID: vaultID, name: name, using: access)
+        }
+    }
+
+    /// Stores the vault's choice, and applies it to the running lease only when it is shorter: the lease then ends at the unlock plus
+    /// the new time, at once when that has passed. A longer choice, or "When WSurf quits", applies from the next unlock, so no
+    /// choice ever extends a lease. Only an unlocked vault accepts it.
+    func setAutoLock(_ choice: CredentialAutoLock) throws {
+        let instant = now()
+        guard let access = current, let start = leaseStart, access.isAuthorized(at: instant) else { throw CredentialVaultError.unauthorized }
+        CredentialAutoLock.store(choice, for: vaultID, in: ProfileSettingsStore.defaults(for: profile))
+        autoLock = choice
+        guard let end = choice.lifetime.map({ start.advanced(by: $0) }), end < access.deadline else { return }
+        if end <= instant {
+            lock(reason: .timeout)
+        } else {
+            access.shorten(to: end)
+            arm(timerFor: access, until: end, from: instant)
+        }
+    }
+
     // MARK: - Vault access
 
     func snapshot() async throws -> StoreSnapshot {
@@ -499,21 +564,26 @@ final class CredentialManager {
 
     /// `authorizedEpoch` is the lease the caller's decision was made under. It is compared with the current access in the
     /// same main-actor segment that captures it, before any write starts, so a lock and re-unlock that landed after the
-    /// decision (for example while a task was queued) can never carry the write into the newer lease.
+    /// decision (for example while a task was queued) can never carry the write into the newer lease. `changing` names the accounts
+    /// the caller edited, so the store does not encode the other 20,000 to find them; `nil` compares every account on its bytes.
     func commit(
-        _ accounts: [CredentialAccount], expectedRevision: UInt64, authorizedEpoch: UInt64, cause: String? = nil
+        _ accounts: [CredentialAccount], expectedRevision: UInt64, authorizedEpoch: UInt64, cause: String? = nil, changing: Set<UUID>? = nil
     ) async throws -> VaultCommitReceipt {
         try await authorizedWrite(epoch: authorizedEpoch) { access in
-            try await store.commit(vaultID: vaultID, accounts, expectedRevision: expectedRevision, cause: cause, using: access)
+            try await store.commit(
+                vaultID: vaultID, accounts, expectedRevision: expectedRevision, cause: cause, changing: changing, using: access
+            )
         }
     }
 
     /// The per-account write of spec §13.5: only the touched accounts are compared and written, so an unrelated concurrent
     /// write survives. The lease and epoch rules are `commit`'s: a caller whose decision was made under another lease is refused
-    /// before anything starts.
-    func commitAccounts(_ writes: [AccountWrite], authorizedEpoch: UInt64, cause: String? = nil) async throws -> VaultCommitReceipt {
+    /// before anything starts. `removing` moves live accounts to Trash in the same write, each bound to its stamp.
+    func commitAccounts(
+        _ writes: [AccountWrite], removing: [UUID: AccountStamp] = [:], authorizedEpoch: UInt64, cause: String? = nil
+    ) async throws -> VaultCommitReceipt {
         try await authorizedWrite(epoch: authorizedEpoch) { access in
-            try await store.commitAccounts(vaultID: vaultID, writes, cause: cause, using: access)
+            try await store.commitAccounts(vaultID: vaultID, writes, removing: removing, cause: cause, using: access)
         }
     }
 
@@ -545,6 +615,10 @@ final class CredentialManager {
         try await reading { access in try await store.revisionPage(vaultID: vaultID, accountID: accountID, after: after, using: access) }
     }
 
+    func revisionValuePage(accountID: UUID, after: Int?) async throws -> RevisionValuePage {
+        try await reading { access in try await store.revisionValuePage(vaultID: vaultID, accountID: accountID, after: after, using: access) }
+    }
+
     /// Verified Trash and earlier-version counts: integers from the sealed heads, each checked against the stored rows.
     func historyCounts() async throws -> (live: HistoryCounts, trash: HistoryCounts) {
         try await reading { access in try await store.historyCounts(vaultID: vaultID, using: access) }
@@ -564,6 +638,15 @@ final class CredentialManager {
         }
     }
 
+    /// Undo of the page's own last action (`ProfileVaultStore.undo`), as one write under the lease the caller decided under.
+    func undo(
+        writes: [AccountWrite], returning: [RemovalScope], removing: [UUID: AccountStamp], authorizedEpoch: UInt64
+    ) async throws -> VaultCommitReceipt {
+        try await authorizedWrite(epoch: authorizedEpoch) { access in
+            try await store.undo(vaultID: vaultID, writes: writes, returning: returning, removing: removing, using: access)
+        }
+    }
+
     func previewRestoreRevision(revisionID: UUID) async throws -> CredentialAccount {
         try await reading { access in try await store.previewRestoreRevision(vaultID: vaultID, revisionID: revisionID, using: access) }
     }
@@ -578,8 +661,14 @@ final class CredentialManager {
         try await reading { access in try await store.removedIdentifiers(vaultID: vaultID, using: access) }
     }
 
+    /// When and by what cause each saved credential's earlier versions were made, by credential. No value is read out: the import report
+    /// shows which parts changed and when, never what they were.
+    func revisionLog() async throws -> [UUID: [RevisionItem]] {
+        try await reading { access in try await store.revisionLog(vaultID: vaultID, using: access) }
+    }
+
     /// A purge needs a fresh assertion of an enrolled passkey on top of the unlock: a cached lease alone never purges.
-    func purge(entryIDs: [UUID], emptyAll: Bool, in anchor: ASPresentationAnchor) async throws -> PurgeReceipt {
+    func purge(entryIDs: [UUID], emptyAll: Bool, in anchor: @autoclosure () -> ASPresentationAnchor) async throws -> PurgeReceipt {
         let access = try currentAccess()
         let unlocks = try await guarded(using: access) { try await store.discovery(vaultID: vaultID) }.unlocks
         try requireCurrent(access)
@@ -595,6 +684,49 @@ final class CredentialManager {
         }
     }
 
+    /// Deletes this vault and its Trash for good. Like a purge it needs a fresh assertion of a passkey enrolled in THIS vault on top of
+    /// the unlock, and it is bound to `authorizedEpoch`, the lease the user confirmed under: a lock or re-unlock since, a declined
+    /// prompt and another vault's passkey delete nothing. Once it has committed the manager is retired: unregistered, locked, and
+    /// unable to unlock again.
+    func deleteVault(authorizedEpoch: UInt64, in anchor: @autoclosure () -> ASPresentationAnchor) async throws {
+        let access = try currentAccess()
+        guard access.epoch == authorizedEpoch else { throw CredentialVaultError.unauthorized }
+        let unlocks = try await guarded(using: access) { try await store.discovery(vaultID: vaultID) }.unlocks
+        try requireCurrent(access)
+        let proof = try await native.assert(unlocks, anchor)
+        try requireCurrent(access)
+        try await writing {
+            try await guarded(using: access) {
+                try await store.deleteVault(
+                    vaultID: vaultID, authorization: FreshAuthorization(credentialID: proof.credentialID, prf: proof.prf), using: access
+                )
+            }
+        }
+        retireAfterDeletion()
+    }
+
+    /// Deletes this vault when it holds nothing to lose: no credential, no Trash entry, no earlier version and no excluded website
+    /// (tombstones do not count), as the store reads its rows inside the deleting transaction. No passkey is asked for; it
+    /// still needs the unlock and the lease the caller decided under, and the last vault is still refused. A vault that holds
+    /// anything throws `vaultNotEmpty` with nothing written.
+    func deleteEmptyVault(authorizedEpoch: UInt64) async throws {
+        let access = try currentAccess()
+        guard access.epoch == authorizedEpoch else { throw CredentialVaultError.unauthorized }
+        try await writing { try await guarded(using: access) { try await store.deleteEmptyVault(vaultID: vaultID, using: access) } }
+        retireAfterDeletion()
+    }
+
+    /// After the store committed the deletion: unregistered, locked, unable to unlock again. Nothing here throws.
+    private func retireAfterDeletion() {
+        if Self.managers[profile.id]?[vaultID] === self {
+            Self.managers[profile.id]?[vaultID] = nil
+        }
+        isRetired = true
+        unlockCredentials = []
+        lock(reason: .manual)
+        AutofillSaveCoordinator.shared.vaultAccessEnded(profileID: profile.id)
+    }
+
     /// Synchronous revocation is the security boundary; actor cleanup is conditional on the exact
     /// revoked identities so a delayed cleanup can never clear a newer unlock.
     func lock(reason: CredentialLockReason) {
@@ -608,9 +740,11 @@ final class CredentialManager {
         // Ceremonies bound to this vault stop here, synchronously, before any suspension can let one continue.
         WebAuthnAdapter.cancel(manager: self)
         lastLockReason = reason
+        leaseStart = nil
         timer?.cancel()
         timer = nil
         native.cancel()
+        VaultStateChanges.shared.note(profile.id)
         let store = store
         Task { for access in revoked { await store.lock(ifUsing: access) } }
     }
@@ -703,9 +837,22 @@ final class CredentialManager {
             previous.revoke()
         }
         current = access
+        // The length is read once, here, from this vault's own setting; the unlock itself was bounded by five minutes (`beginAccess`).
+        autoLock = CredentialAutoLock.stored(for: vaultID, in: ProfileSettingsStore.defaults(for: profile))
+        let end = autoLock.lifetime.map { instant.advanced(by: $0) }
+        // ponytail: "When WSurf quits" is a ten-year deadline and no timer; a lock event is its only end. Upgrade: an optional deadline.
+        access.beginLease(until: end ?? instant.advanced(by: .seconds(315_360_000)))
+        leaseStart = instant
+        arm(timerFor: access, until: end, from: instant)
+    }
+
+    /// The one timer that ends `access` at `end`; none when the vault stays open until a lock event.
+    private func arm(timerFor access: VaultAccess, until end: ContinuousClock.Instant?, from instant: ContinuousClock.Instant) {
         timer?.cancel()
+        timer = nil
+        guard let end else { return }
         timer = Task { [weak self] in
-            try? await ContinuousClock().sleep(for: access.deadline - instant)
+            try? await ContinuousClock().sleep(for: end - instant)
             guard !Task.isCancelled, let self, self.current === access else { return }
             self.lock(reason: .timeout)
         }

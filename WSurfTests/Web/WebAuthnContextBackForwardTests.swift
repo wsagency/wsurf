@@ -610,7 +610,6 @@ extension WebAuthnContextTests {
             }
         }
         try await withPage(page, window: window, tab: tab) {
-            page.context.settings.passwordProvider = .credentialManager
             outcome.track(page.load(URLRequest(url: try localURL(server, path: "/"))))
             #expect(await PageSettle.untilIdle(page, timeout: .seconds(30)))
             // `untilIdle` is also true after a failed or cancelled load; the navigation's own outcome is what proves this one.
@@ -697,13 +696,15 @@ extension WebAuthnContextTests {
             "[typeof globalThis.__wsurfWebAuthnFence, typeof globalThis.__wsurfNativeFrameReady, typeof globalThis.__wsurfNativeFrameNonce].join(',')",
             in: PageAutomationGuard.world
         )
-        let pageScript = await probe("String(navigator.credentials?.__wsurfWebAuthn)", in: .page)
+        let pageScript = await probe(
+            "String(!Function.prototype.toString.call(navigator.credentials?.get).includes('[native code]'))", in: .page
+        )
         let scriptsNow = page.webKit?.configuration.userContentController.userScripts.count ?? -1
         return """
         The initial route never became manager. lastRoute=\(lastRoute ?? "nil") lastRouteError=\(lastRouteError ?? "none") \
         visibleURL=\(page.url?.absoluteString ?? "nil") isLoading=\(page.isLoading) document=\(document) \
         isolated[fence,frameReady,frameNonce]=\(isolated) pageScriptInstalled=\(pageScript) \
-        provider=\(page.context.settings.passwordProvider) mainFrameRegistered=\(PageFrameRegistry.shared.mainFrame(in: page) != nil) \
+        mainFrameRegistered=\(PageFrameRegistry.shared.mainFrame(in: page) != nil) \
         userScripts[atAdoption=\(scriptsAtAdoption),now=\(scriptsNow)] \(outcome.summary)
         """
     }

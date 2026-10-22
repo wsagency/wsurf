@@ -9,6 +9,11 @@ struct UpdateBanner: View {
 
     @Environment(\.sidebarStyle) private var sidebarStyle
 
+    /// The banner's accent tint on an opaque ground, for Reduce Transparency and Increase Contrast.
+    private static var solidFill: Color {
+        Theme.windowBackground.mix(with: Theme.accent, by: 0.38)
+    }
+
     private var model: UpdateModel {
         updates.model
     }
@@ -42,8 +47,9 @@ struct UpdateBanner: View {
         .padding(.trailing, 5)
         .padding(.vertical, 5)
         .frame(maxWidth: .infinity)
-        .glassEffect(
+        .chromeGlass(
             .regular.tint(Theme.accent.opacity(0.38)),
+            fill: Self.solidFill,
             in: RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
         )
         .transition(.identity)
@@ -74,7 +80,7 @@ struct UpdateBanner: View {
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(.primary)
                 .frame(width: 22, height: 22)
-                .glassEffect(.regular.tint(Theme.accent.opacity(0.38)), in: Circle())
+                .chromeGlass(.regular.tint(Theme.accent.opacity(0.38)), fill: Self.solidFill, in: Circle())
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }

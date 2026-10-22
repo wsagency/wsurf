@@ -28,6 +28,15 @@ merged into `main` through a PR and wait for CI to pass on that commit. Never
 deploy a feature branch or an uncommitted working tree. Release tags must point
 to commits on `main`. See [Releasing](RELEASING.md) for the existing release and
 preview gates.
+Every candidate build increments `CURRENT_PROJECT_VERSION` and, while the version
+is 0.x, the patch number with it: build 123 is `0.1.123`. It adds its own
+`## <version> (build <n>) — <date>` section to `CHANGELOG.md`;
+`Tools/check-changelog.sh` runs in the candidate gate and fails unless the patch
+number equals the build number. Every candidate build also
+passes `WSURF_CANDIDATE=<label>` (for now the version, for example `0.1.4`) and
+`WSURF_COMMIT=$(git rev-parse --short=8 HEAD)` to `xcodebuild`, so its About panel
+and Settings › About show which candidate it is. Without them the build is a `dev`
+build and shows no candidate line.
 
 ## Set up the project
 
@@ -132,6 +141,28 @@ identify a real format, service, import source, or compatibility contract.
 - Do not hide a persistent failure with `withKnownIssue`. Either make the test
   deterministic or keep the unsupported check out of the automated suite.
 
+Some checks need more than the default run:
+
+- **Both engines.** A test that takes `(engine:)` runs once on WebKit and once on the
+  embedded Chromium. The CEF framework is part of the normal test host, so
+  `-only-testing:WSurfTests/MCPDevelopmentOwnershipTests` covers both. A Chromium
+  page loads only after it is attached to a window, so host it before you wait for it.
+- **Repeated runs.** Prove a fix for a timing race by running its test many times:
+  add `-test-iterations 20 -run-tests-until-failure` to the `test-without-building`
+  command. Also make the race deterministic: hold the slow step open from the test, as
+  `goBackOnAFreshChromiumTabNeverReachesTheStartupPage` does, so the test fails
+  without the fix on every run.
+- **Foreground input.** `Tools/run-foreground-tests.sh` runs the three native hover tests in
+  `PageComputerInputTests` and the Chromium cases that resize a page (the development viewport and
+  the phone profile in `MCPDevelopmentOwnershipTests`). Hover moves the real pointer, and a
+  Chromium page in a window behind another app keeps its old size, so the suites skip these
+  unless `WSURF_COMPUTER_FOREGROUND_TEST=1` reaches the test host (the script sets it as
+  `TEST_RUNNER_WSURF_COMPUTER_FOREGROUND_TEST`). Run it from a logged-in, unlocked desktop
+  session with the display awake and nothing else in front; the test windows take focus. The
+  script needs the `build-for-testing` output and the `WSURF_BUNDLE_ID_SUFFIX` of that build.
+- **A real MCP client.** MCP.md, "Verify with a real client", lists the steps a person
+  runs against a Stage app. No automated gate covers that path.
+
 Run the full suite before opening a pull request. CI also measures app-target
 line coverage and rejects regressions below the repository floor. CI runs
 `Tools/check-format.sh`, which fails on SwiftLint violations. CI pins SwiftLint
@@ -140,11 +171,11 @@ switch case’s body on the line after the label. Do not write a declaration or
 control-flow body inside single-line braces; short closures, `guard … else
 { return }` and accessor lists (`{ get set }`) stay inline. Coverage thresholds
 do not replace meaningful assertions. CI also checks the
-blank-tab, tab-switching, command-palette, Start Page and Ask surface budgets in
-`Tools/check-performance.sh`. Each budget is about twice the measured
-baseline to allow for roughly 50% variation on shared runners. These checks
-detect large regressions rather than small percentage changes. Change a budget
-only with measurements that justify it.
+blank-tab, tab-switching, command-palette, Start Page, Ask surface and
+crowded-sidebar budgets in `Tools/check-performance.sh`. Each budget is about
+twice the measured baseline to allow for roughly 50% variation on shared
+runners. These checks detect large regressions rather than small percentage
+changes. Change a budget only with measurements that justify it.
 
 Debug builds take their bundle identifier from `WSURF_BUNDLE_ID_SUFFIX`, empty by
 default, so a Debug app is `io.wsagency.wsurf` and its extension
@@ -161,9 +192,12 @@ that exact file. Do the same from your own `build-for-testing` output: export
 check, and launch only that file. The tests then use that identifier's
 standard preferences and default WebKit data instead of the installed app's. A
 one-off check on a build made with a unique suffix confirmed this for a preferences
-key and a `localStorage` key. Only the favicon cache is known to move under the
-per-process test directory; other profile test preference domains use random UUID
-names, not per-process ones. The Pro machine's Gitea runners are distinct from this GitHub
+key and a `localStorage` key. The favicon cache and every preference suite a test
+creates (named profiles, stage homes, and each test's own suite) move under the
+per-process test directory: pass every suite name through
+`AppDatabase.defaultsSuite(_:)`, which turns it into an absolute path there.
+`Tools/list-leaked-test-prefs.sh` lists, without deleting, the files older runs
+left in `~/Library/Preferences`. The Pro machine's Gitea runners are distinct from this GitHub
 Actions job, and the job's own account and OS isolation are not verified, so this is namespacing, not OS isolation. The last CI step
 removes only that exact identifier's preferences, WebKit, Caches, HTTPStorages and
 Saved Application State, and unregisters its app and extension when present. It
@@ -207,6 +241,51 @@ plan lists the target, not its tests.
 Tests get their own support directory, so a test can create profiles, write
 permissions or fill the download list without reaching the files of an installed
 copy.
+
+### Parallel and serial tests
+
+Three more plans at the repository root split the full suite so that part of it
+can run in parallel test-host clones:
+
+- `WSurf-Parallel.xctestplan` selects the Swift Testing suites that are safe in
+  parallel clones. It runs with `-parallel-testing-enabled YES` and six workers.
+- `WSurf-Performance.xctestplan` selects the budgeted suites: the classes that
+  `Tools/check-performance.sh` reads and every `*PerformanceTests` suite. It runs
+  alone, after the others, so the measurements see a quiet machine.
+- `WSurf-Serial.xctestplan` skips exactly the suites of the other two plans, so
+  it runs everything else serially, as the full suite ran before.
+
+The plans are not in the `WSurf` scheme, because more plans there would make
+`build-for-testing` write more than the one `.xctestrun` that CI and
+`Tools/check-built-identity.py` accept. Run a plan against that `.xctestrun` with
+the arguments that `python3 -I Tools/check-test-partition.py --args <plan>`
+prints, one per line; they include the four OCR exclusions. CI still runs the
+whole suite serially.
+
+**A new suite is serial by default.** Do not list it anywhere: the serial plan
+runs every suite that the other plans do not select. Move a suite to the parallel
+plan only when it is a Swift Testing suite (XCTest classes stay serial) and none
+of its tests, or the helpers they call:
+
+- opens a window, hosts a view, or uses the pasteboard, the screen or other
+  system UI;
+- creates a `WKWebView`, a Chromium page, a `BrowserTab`, `BrowserPage` or
+  `BrowserModel`, or starts an `HTTPFixtureServer`;
+- reaches the MCP socket, the network or the real Keychain;
+- writes the standard defaults domain (use `AppDatabase.defaultsSuite(_:)`) or a
+  fixed path (use a directory named with a UUID);
+- changes a process-wide singleton, a static stub or another shared value;
+- asserts a wall-clock upper bound or waits for another task with a sleep.
+
+Then add the name, in sorted order, to `selectedTests` in
+`WSurf-Parallel.xctestplan` and to `skippedTests` in `WSurf-Serial.xctestplan`,
+and run `python3 -I Tools/check-test-partition.py`. It fails when a plan names
+something that is not a suite, when the serial plan's list differs from the
+other two, when the performance plan misses a budgeted suite, and when a parallel
+suite's own source names a window, engine, socket, Keychain, shared-defaults,
+singleton or timing marker. It does not follow helpers in other files, so review
+those yourself. The cases of a parallel suite also run at the same time as each
+other: add `.serialized` when they share state.
 
 ## Keep copy and design consistent
 

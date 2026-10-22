@@ -33,7 +33,7 @@ struct SiteControlsMenu: View {
         } label: {
             Image(systemName: "slider.horizontal.3")
                 .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(ChromeInk.glyph(onLight: chromeIsLight, hovering: hovering))
+                .foregroundStyle(ChromeInk.glyph(onLight: chromeIsLight, windowScheme: windowColorScheme, hovering: hovering))
                 .frame(width: extent, height: extent)
                 .hoverBackground(isActive: hovering || isPresented)
         }
@@ -258,9 +258,15 @@ private struct SiteHandlingSection: View {
                     ) { engine in
                         Task { _ = await browser.setEngine(engine, for: siteOrigin) }
                     }
+                    .disabled(SitePermissions.webKitOnlyOrigins.contains(siteOrigin))
                 }
                 .help("Changing engines reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL.")
-                if tab.isMaterialised, tab.engine != browser.engine(for: tab) {
+                if SitePermissions.webKitOnlyOrigins.contains(siteOrigin) {
+                    Text("Google blocks sign-in from embedded Chromium, so this page always opens in WebKit.")
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, SiteControlsMetrics.inset)
+                } else if tab.isMaterialised, tab.engine != browser.engine(for: tab) {
                     Text("Current page: \(String(localized: tab.engine.label)). Submitted requests stay in their original engine.")
                         .font(Theme.Font.caption)
                         .foregroundStyle(.secondary)
@@ -618,31 +624,63 @@ private struct TrackerInfoCaption: View {
 private struct AssistantAccessMenu: View {
     let tab: BrowserTab
 
+    private var access: TabAssistantAccessCenter {
+        tab.assistantAccess
+    }
+
+    /// A private tab ignores the default, so it has nothing to follow.
+    private var followsDefault: Bool {
+        access.persistsAnswers
+    }
+
+    private var currentLabel: String {
+        guard let explicit = access.explicitPolicy else {
+            return followsDefault
+                ? AssistantAccessPolicy.followsDefaultLabel(access.defaultPolicy)
+                : String(localized: AssistantAccessPolicy.ask.label)
+        }
+        return String(localized: explicit.label)
+    }
+
     var body: some View {
         Menu {
+            if followsDefault {
+                choice(nil, label: AssistantAccessPolicy.followsDefaultLabel(access.defaultPolicy))
+            }
             ForEach(AssistantAccessPolicy.allCases, id: \.self) { policy in
-                Button {
-                    tab.assistantAccess.set(policy)
-                } label: {
-                    if tab.assistantAccess.effectivePolicy == policy {
-                        Label {
-                            Text(policy.label)
-                        } icon: {
-                            Image(systemName: "checkmark")
-                        }
-                    } else {
-                        Text(policy.label)
-                    }
-                }
+                choice(policy, label: String(localized: policy.label))
             }
         } label: {
-            Text(tab.assistantAccess.effectivePolicy.label)
+            Text(currentLabel)
                 .font(Theme.Font.label)
         }
         .menuStyle(.borderlessButton)
         .foregroundStyle(.secondary)
         .controlSize(.small)
         .fixedSize()
+    }
+
+    private func choice(_ policy: AssistantAccessPolicy?, label: String) -> some View {
+        Button {
+            access.set(policy)
+        } label: {
+            if isCurrent(policy) {
+                Label {
+                    Text(verbatim: label)
+                } icon: {
+                    Image(systemName: "checkmark")
+                }
+            } else {
+                Text(verbatim: label)
+            }
+        }
+    }
+
+    private func isCurrent(_ policy: AssistantAccessPolicy?) -> Bool {
+        if let explicit = access.explicitPolicy {
+            return explicit == policy
+        }
+        return followsDefault ? policy == nil : policy == .ask
     }
 }
 

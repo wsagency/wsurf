@@ -59,14 +59,28 @@ versions.
 - In the command palette, type a supported site name or domain and press Tab
   to search that site. Enter opens results in a new tab; Option-Enter uses the
   current tab. Backspace in an empty query removes the site chip; its remove
-  button preserves a query you have already typed.
+  button preserves a query you have already typed. Settings › General › Command
+  palette › Section order lets you move result sections up or down or reset
+  them. A typed address keeps Search or ask first.
+- The address field and the Start Page field search a site the same way: type a
+  supported site name, press Tab, then type your query. Enter opens the results
+  in the current tab. Backspace in an empty field, Escape, or leaving the field
+  ends the site search. A page's own address never offers a site.
 - **Choose a website engine:** Website Settings › Browser Engine selects
   WebKit (default) or embedded Chromium. Changing engines reloads the website
   and resets its Back/Forward history; cookies, storage, and sign-ins are separate.
-- **Choose a theme:** Settings › Appearance offers Auto, Light, Dark, pastel
-  Light Calm, and Dark Calm. Theme customization previews brightness, hue, and
-  a primary-derived palette live. Control icons and URL text have independent
-  colors and opacity, saved per theme; Reset restores that theme's defaults.
+- **Choose a theme:** Settings › Appearance separates System, Light, or Dark
+  appearance from the theme. WSurf, Standard, Calm, Catppuccin, Gruvbox, Rosé Pine,
+  Nord, and Dracula each have light and dark variants. WSurf is the default only
+  for a fresh install; existing choices and customizations migrate. Each theme
+  remembers Plain or Glass, transparency, and separate light/dark brightness.
+  Sliders and colors preview before committing; changing a built-in theme's
+  colors makes a saved copy, and you can save, rename, duplicate, and delete
+  your own themes. Settings › Appearance also chooses the Dock icon. Control
+  icons and URL text have independent colors and opacity, and Reset restores the original colors of the variant you edit.
+  Unreadable text and control-icon colors are adjusted at drawing time without
+  replacing their saved values. Controls inside a glass card use solid fills;
+  Reduce Transparency or Increase Contrast uses solid stand-ins.
 - **Tune the sidebar:** Settings › Appearance › Sidebar controls the installed
   font family, text size and weight, row spacing, and folder tint (including none).
   Loaded and unloaded text/icon colors and opacity are saved separately for each
@@ -78,6 +92,11 @@ versions.
   Right-click › Unload Tab retains the link, pin, and folder membership.
   Middle-click and ⌘W also unload. A folder's curved-down arrow unloads all
   descendant tabs; X is reserved for removal. Existing unload protections remain.
+- **Free memory:** File › Free Memory unloads every background tab in every
+  window, in WebKit and Chromium. They reload when you open them, and pins and
+  folders keep their links. Each window's current tab, favorites, private tabs,
+  and tabs that play audio, use the camera or microphone, download, or hold
+  unsaved form input stay loaded.
 - **Keep favorites:** Right-click a tab › Add to Favorites promotes its existing
   link into the icon-only strip above the sidebar without a duplicate row.
   Favorites belong to the current profile and never sleep automatically.
@@ -100,10 +119,27 @@ versions.
   then choose Continue rather than repeating completed browser actions.
 - **Preview links:** hold Shift over a link for a summary, or Shift-click to
   open a preview.
-- Use macOS Passwords-compatible password autofill, and save payment cards and
-  contact details in Settings › Autofill. Unlock saved passwords and cards with
-  Touch ID or your Mac password. Passkeys use the macOS sign-in prompt.
+- **Fill forms:** save and fill passwords, passkeys and verification codes in
+  Credential Manager, an encrypted per-profile vault you unlock with a passkey.
+  Its Credentials and Settings tabs separate searchable, filtered credentials
+  from vault naming, per-vault lock times and statistics. A sectioned editor
+  keeps sign-in details, websites, verification codes, passkeys and notes together.
+  History beside the editor shows a credential's earlier versions; a value copied
+  back from it is written only when you save. Credentials can be grouped by site
+  and merged. The review of an import from Passwords also names what you changed
+  in WSurf and lists saved credentials Passwords no longer has, which stay unless
+  you choose to move them to Trash. The native fill dropdown can search the
+  logins already authorized for the site without sending the query to the page.
+  When none is saved for the exact site, it can offer logins saved for other
+  websites of the same domain, add the website to such a credential after you
+  confirm, and unlock a locked vault from the dropdown. Any credential value
+  can be copied. Several credentials can be selected to move to Trash or merge,
+  the last five actions can be undone, and a vault that is not the last can be
+  deleted after you type its name and confirm with its passkey (an empty one is deleted at once).
+  Save payment cards and contact details in Settings › Autofill;
+  unlock cards with Touch ID or your Mac password.
 - **Add WebKit extensions:** install from the Chrome Web Store or Firefox Add-ons.
+  An update that asks for more permissions or websites is held until you approve it.
 - Use profiles to keep cookies, history, tabs, permissions, and extensions
   separate. Regular windows of one profile share these services but keep their
   tab selection and assistant task independent. Press ⇧⌘N for a new private
@@ -116,21 +152,27 @@ branding. Source fixtures and extension parsing are covered, but real Apple
 Passwords PIN, fill, save, OTP, 15-minute idle, lock, and sleep behavior has
 not been verified in an own signed WSurf build.
 
-Settings › Autofill › Password provider also offers a separate, opt-in
-Credential Manager. Passwords stays the default and its data stays intact; there
-is no automatic migration or read-through. Only one built-in password writer is
-active. Installed extensions still act until you turn them off in Extensions,
-and Settings warns you. The Credential Manager keeps passwords, ES256 passkeys,
-and one-time codes in an encrypted per-profile store unlocked by a passkey. If
-any window leaves the profile, every window of that profile locks. It is
-unavailable in private browsing. WSurf makes no promise to zero memory, and
-there is no recovery key, master password, or Keychain fallback: losing every
-unlock passkey loses the store. The source also adds an exchange-only
+Credential Manager is WSurf’s only built-in password store. Passwords saved by
+earlier builds are imported once, after you review them, in Settings › Autofill
+› Credential Manager. The old list is deleted only after that import and your
+confirmation. Installed extensions still act until you turn them off in
+Extensions, and Settings warns you. Credential Manager keeps passwords, ES256
+passkeys, and one-time codes in an encrypted per-profile store unlocked by a
+passkey. If any window leaves the profile, every window of that profile locks.
+It is unavailable in private browsing. WSurf makes no promise to zero memory,
+and there is no recovery key, master password, or Keychain fallback: losing
+every unlock passkey loses the store. The source also adds an exchange-only
 credential-exchange extension. This feature is in source and not released.
 Native PRF, real user presence and verification, the six Apple Passwords
-transfers, Settings keyboard and VoiceOver behavior, and Stage are not
-verified. A WebKit iframe credential request currently fails closed as
-unsupported; Chromium requires native effective policy.
+transfers, Settings keyboard and VoiceOver behavior, and Stage are not verified.
+A WebKit iframe credential request currently fails closed as unsupported;
+Chromium requires native effective policy.
+
+Login-save attempts last 120 seconds, or 300 seconds when a verification step
+has been seen, counted from the attempt rather than extended by later activity.
+Completion detection handles redirects and in-page forms but is not proof that
+the server accepted a login. Only explicit Save or Update writes credentials;
+a save refused because the page changed says that nothing was saved.
 
 ### Choose a model
 
@@ -138,8 +180,16 @@ Use Apple Intelligence on your Mac, add a provider API key, or connect to a loca
 server such as Ollama or LM Studio. Supported providers include OpenAI,
 Anthropic, Gemini, DeepSeek, Groq, Mistral, OpenRouter, and xAI.
 
-External assistants can access only the tabs you share through WSurf's
-[MCP server](MCP.md). Each connection stays bound to its original regular window.
+### Assistant and MCP
+
+External assistants such as Claude Code or Codex connect through WSurf's
+[MCP server](MCP.md) and can use only the tabs you share. Each connection stays
+bound to its original regular window, shows a badge with a Stop button, and can
+be paired so you can revoke it later. For development and QA you can give a
+paired app Developer access on developer sites such as localhost: it can read
+console and network detail, type test passwords, run scripts and compare a page in
+WebKit and Chromium. [MCP.md](MCP.md) lists the tools, the access levels and what
+is never shared.
 
 ## Privacy and control
 
@@ -167,15 +217,25 @@ Report vulnerabilities privately through [Security](SECURITY.md).
   an HTML export in Settings › General; history is not imported.
 - Website notifications require WSurf to be running. There is no background web
   push.
-- Chromium is loaded only when needed, but its runtime remains initialized
-  until quit. Adding it does not guarantee lower RAM, CPU, or faster websites.
-  Unloaded Chromium tabs restore their URL, not a WebKit history stack.
+- Chromium starts only when a website needs it. Closing or unloading its last
+  tab ends its page processes, but Chromium's graphics, network and storage
+  helper processes and its runtime stay until you quit WSurf, because the
+  embedded Chromium cannot be restarted inside a running app. Quit and reopen
+  WSurf to release them fully. Adding Chromium does not guarantee lower RAM,
+  CPU, or faster websites. Unloaded Chromium tabs restore their address, not
+  their Back/Forward history.
 - Extension integration and native WebKit Picture in Picture remain WebKit-only.
 - WSurf intentionally does not request Apple's managed browser passkey
-  entitlement. Native WebKit passkeys for arbitrary relying parties are not
-  guaranteed in legacy or private tabs; security-key and Chromium behavior is
-  unverified. Vault-managed WebAuthn and Apple Passwords exchange use separate
-  paths. See [Releasing](RELEASING.md).
+  entitlement. Passkeys kept by the system (Apple Passwords, a phone, a
+  security key) are not guaranteed to work for arbitrary websites in WebKit,
+  which is where a normal tab's Use Another Device or Key… and every private
+  tab send the request. Security-key and Chromium behavior is unverified.
+  Vault-managed WebAuthn and Apple Passwords exchange use separate paths. See
+  [Releasing](RELEASING.md).
+- In a normal tab every passkey request is shown to you first. Choose
+  Credential Manager, or Use Another Device or Key… to hand the same request to
+  the system’s authenticator (Apple Passwords, a phone, a security key). Private
+  tabs use the system’s authenticator directly.
 
 WSurf keeps its own data in `~/Library/Application Support/WSurf` and uses
 separate WSurf defaults, stage, native-host, MCP, logger, and `WSURF_*`

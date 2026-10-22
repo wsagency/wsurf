@@ -11,6 +11,10 @@ nonisolated enum AutofillDiagnostics {
         case lookupFailed, lookupCompleted, dropdownShown
         case editNoScope, editDisabled, editRecorded, submitNoEdits, submitInvalid, submitCaptured, saveOffered
         case submissionPending, submissionCompleted
+        // Why a save offer did not appear. The tab-side reasons are native, the capture reasons come from the page script.
+        case offerDroppedNotLive, offerDroppedAmbiguous, offerDroppedBlocked, offerDroppedDismissed, offerDroppedUnchanged
+        case attemptExpired, completionBlockedByField, stageDroppedUnknownDocument
+        case captureAbandonedByLink, captureUnsafeAction
     }
 
     private static let log = Logger(subsystem: "io.wsagency.wsurf", category: "autofill")

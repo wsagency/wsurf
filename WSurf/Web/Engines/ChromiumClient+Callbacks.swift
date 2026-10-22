@@ -51,30 +51,26 @@ extension ChromiumClient {
             drop(raw)
             return
         }
+        let request = PageDialogQueue.Request(
+            kind: kind == 0 ? .alert : (kind == 1 ? .confirm : .prompt), message: message,
+            origin: PageDialogText.origin(ofURL: origin), defaultText: kind == 2 ? prompt : nil)
+        completeDialog(raw, request, in: window) { Self.jsDialogAlert(kind: kind, origin: origin, message: message, prompt: prompt) }
+    }
+
+    /// The sheet for an alert (0), confirm (1) or prompt (2). A prompt takes plain text, like WebKit's.
+    static func jsDialogAlert(kind: Int, origin: String, message: String, prompt: String) -> NSAlert {
         let alert = NSAlert()
         alert.messageText = origin.isEmpty ? "JavaScript" : origin
         alert.informativeText = message
-        switch kind {
-        case 0:
-            alert.addButton(withTitle: String(localized: "OK"))
-        case 1:
-            alert.addButton(withTitle: String(localized: "OK"))
-            alert.addButton(withTitle: String(localized: "Cancel"))
-        default:
-            let field = NSSecureTextField(string: prompt)
+        alert.addButton(withTitle: String(localized: "OK"))
+        guard kind != 0 else { return alert }
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        if kind == 2 {
+            let field = NSTextField(string: prompt)
             field.frame.size = NSSize(width: 260, height: 24)
             alert.accessoryView = field
-            alert.addButton(withTitle: String(localized: "OK"))
-            alert.addButton(withTitle: String(localized: "Cancel"))
         }
-        alert.beginSheetModal(for: window) { [weak self, weak alert] response in
-            guard let self, self.finish(raw), !self.isClosed else { return }
-            let success = response == .alertFirstButtonReturn
-            let input = (alert?.accessoryView as? NSSecureTextField)?.stringValue
-            let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
-            ChromiumInterop.withString(input ?? "") { value in callback.pointee.cont?(callback, success ? 1 : 0, value) }
-            self.drop(raw)
-        }
+        return alert
     }
 
     private func presentBeforeUnload(_ raw: UnsafeMutableRawPointer, message: String, isReload: Bool) {
@@ -87,15 +83,37 @@ extension ChromiumClient {
             drop(raw)
             return
         }
-        let alert = NSAlert()
-        alert.messageText = isReload ? String(localized: "Reload page?") : String(localized: "Leave page?")
-        alert.informativeText = message
-        alert.addButton(withTitle: String(localized: "Leave"))
-        alert.addButton(withTitle: String(localized: "Stay"))
-        alert.beginSheetModal(for: window) { [weak self] response in
+        let request = PageDialogQueue.Request(
+            kind: .beforeUnload, message: message, origin: PageDialogText.origin(ofURL: page?.owner?.url?.absoluteString ?? ""),
+            isReload: isReload)
+        completeDialog(raw, request, in: window) {
+            let alert = NSAlert()
+            alert.messageText = isReload ? String(localized: "Reload page?") : String(localized: "Leave page?")
+            alert.informativeText = message
+            alert.addButton(withTitle: String(localized: "Leave"))
+            alert.addButton(withTitle: String(localized: "Stay"))
+            return alert
+        }
+    }
+
+    /// Hands the dialog to the tab's queue, which shows `makeSheet` to the user unless a connection answers first, then
+    /// completes CEF's callback. Nothing is sent once the browser has closed.
+    private func completeDialog(
+        _ raw: UnsafeMutableRawPointer, _ request: PageDialogQueue.Request, in window: NSWindow,
+        makeSheet: @escaping @MainActor () -> NSAlert
+    ) {
+        let queue = page?.owner?.dialogs
+        Task { @MainActor [weak self] in
+            let answer = await PageDialogs.routed(request, via: queue) {
+                let alert = makeSheet()
+                let response = await PageDialogs.present(alert, in: window)
+                return .init(accepted: response == .alertFirstButtonReturn, text: (alert.accessoryView as? NSTextField)?.stringValue)
+            }
             guard let self, self.finish(raw), !self.isClosed else { return }
             let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
-            callback.pointee.cont?(callback, response == .alertFirstButtonReturn ? 1 : 0, nil)
+            ChromiumInterop.withString(answer?.text ?? "") { value in
+                callback.pointee.cont?(callback, answer?.accepted == true ? 1 : 0, value)
+            }
             self.drop(raw)
         }
     }

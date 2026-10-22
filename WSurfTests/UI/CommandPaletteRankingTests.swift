@@ -140,6 +140,7 @@ struct CommandPaletteRankingTests {
         #expect(!ids.contains("action-stopLoading"))
         #expect(!ids.contains("action-clearHistory"))
         #expect(!ids.contains("action-exitSplit"))
+        #expect(!ids.contains("action-showArchivedTabs"))
         #expect(ids.contains("action-openStartPage"))
         #expect(ids.contains("action-settings"))
 
@@ -150,6 +151,7 @@ struct CommandPaletteRankingTests {
                 hasActiveTab: true,
                 canGoBack: true,
                 isLoading: true,
+                archivedCount: 2,
                 isSplit: true
             ),
             perform: { _ in }
@@ -158,9 +160,38 @@ struct CommandPaletteRankingTests {
 
         #expect(loadedIDs.isSuperset(of: [
             unloadID, "action-goBack", "action-stopLoading", "action-clearHistory", "action-exitSplit",
+            "action-showArchivedTabs",
         ]))
         #expect(!loadedIDs.contains("action-goForward"))
     }
+
+    @Test func showArchivedTabsIsFoundByTheWordsForOldTabsAndPerformsItsAction() throws {
+        var performed: [CommandPaletteAction] = []
+        let commands = CommandPaletteCatalog.commands(context: CommandPaletteContext(archivedCount: 2)) {
+            performed.append($0)
+        }
+        let command = try #require(commands.first { $0.id == "action-showArchivedTabs" })
+
+        #expect(command.title == "Show Archived Tabs")
+        #expect(command.symbol == "archivebox")
+        #expect(command.group == .tabs)
+        command.run()
+        #expect(performed == [.showArchivedTabs])
+        for query in ["archive", "archived", "auto archived", "old tabs"] {
+            #expect(CommandPaletteCatalog.matching(query, in: commands).first?.id == "action-showArchivedTabs", "\(query)")
+        }
+    }
+
+    @Test func reloadIsOfferedOnlyForAPageThatCanReload() {
+        func ids(canReload: Bool) -> Set<String> {
+            let context = CommandPaletteContext(tabCount: 1, hasActiveTab: true, canReload: canReload)
+            return Set(CommandPaletteCatalog.commands(context: context, perform: { _ in }).map(\.id))
+        }
+
+        #expect(ids(canReload: true).isSuperset(of: ["action-reload", "action-hardReload"]))
+        #expect(ids(canReload: false).isDisjoint(with: ["action-reload", "action-hardReload"]))
+    }
+
     @Test func aToggleIsNamedForWhatItWillDo() {
         let quiet = CommandPaletteCatalog.commands(
             context: CommandPaletteContext(isSpeechMuted: true),
@@ -212,6 +243,6 @@ struct CommandPaletteRankingTests {
     }
 
     private func fixtureContext() -> CommandPaletteContext {
-        CommandPaletteContext(historyCount: 12, tabCount: 4, hasActiveTab: true)
+        CommandPaletteContext(historyCount: 12, tabCount: 4, hasActiveTab: true, canReload: true)
     }
 }

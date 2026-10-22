@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
+import AppKit
 import Foundation
 import Testing
 
@@ -154,7 +155,8 @@ struct VaultSettingsRoutingTests {
             await model.unlock(in: VaultManagerFixture.anchor())
             let epoch = try #require(model.authorizationEpoch)
             let unknown = CredentialExportSelection(accountID: UUID(), password: true, passkeyIDs: [], totp: false)
-            #expect(await model.exportCredentials(selection: [unknown], epoch: epoch, in: VaultManagerFixture.anchor()) == nil)
+            // The system's own export manager is reached here and takes a real window (it is never shown).
+            #expect(await model.exportCredentials(selection: [unknown], epoch: epoch, in: NSWindow()) == nil)
             let ending = try #require(model.transferMessage)
 
             await model.createVault(name: "Second", choice: .newPasskey(authorizedBy: nil), in: VaultManagerFixture.anchor())

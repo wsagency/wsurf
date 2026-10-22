@@ -2,7 +2,7 @@
 
 Date: 2026-10-05
 
-Status: Approved architectural design; this workstream's binding 2026-10-09 direction supersedes the historical PRF-first and legacy-cutover decisions below. Existing Keychain `SavedPassword`/`SecureAutofillVault`, password settings/autofill, and data remain unchanged and active by default. The new encrypted manager is developed alongside them, with no automatic migration/deletion/cutover. No native/provider success is implied.
+Status: Approved architectural design; this workstream's binding 2026-10-09 direction supersedes the historical PRF-first and legacy-cutover decisions below. Superseded in part on 2026-10-17: the legacy Passwords provider is removed and Credential Manager is the only password store; passwords saved by earlier builds move through a reviewed, user-confirmed import, and the old Keychain list is erased only after it. Statements below that the legacy store stays active, unchanged or selectable describe the earlier state. No native/provider success is implied.
 
 ## Intent and agreed scope
 
@@ -111,8 +111,8 @@ Keep the PRF input stable for each external credential. Repeating an assertion f
 - Adding an unlock credential requires an already unlocked vault and successful verification of the new wrapper before committing it.
 - Removing an unlock wrapper must leave at least one valid unlock path. It does not delete the external Apple credential automatically.
 - Removing a wrapper affects the current vault state only. It denies that wrapper's normal unlock of the current manifest, but the vault data key is unchanged (`CredentialVault.removeUnlock` re-seals the payload under the same key). A removed wrapper and its PRF output can still recover that key from any copy of the vault file that contains the wrapper, and with it decrypt later envelopes obtained from the same vault, not only an old backup. This is a stated boundary, not forward revocation: there is no key rotation, and no anti-rollback, power-loss durability or cross-process guarantee is claimed.
-- Manual lock, profile switch, screen lock, sleep, exit, and authentication timeout invalidate credential access and pending operations. A late callback cannot reopen or mutate a different/currently locked profile.
-- Keep the existing five-minute authentication/context ceiling; webpage activity does not silently prolong authorization.
+- Manual lock, profile switch, screen lock, sleep, display sleep, exit, and authentication timeout invalidate credential access and pending operations. A late callback cannot reopen or mutate a different/currently locked profile.
+- Each vault locks the time chosen for it after it unlocks: 1, 5 (the default), 15 or 30 minutes, 1 hour, or only when WSurf quits. The time counts from the unlock and is read once, then. A shorter choice applies to a vault that is already open; a longer one applies from the next unlock. Webpage activity and use of the vault do not silently prolong authorization. Sleep, display sleep, screen lock, user switch, profile switch, a manual lock and quit lock in every choice. The unlock itself stays bounded by five minutes.
 
 Store the encrypted payload and manifest consistently with atomic replacement. Failed decoding, authentication, validation, or pre-commit writes preserve the previous valid state. A callback canceled after a successful commit must not pretend no mutation occurred.
 

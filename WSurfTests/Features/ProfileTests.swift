@@ -39,6 +39,54 @@ struct ProfileTests {
         #expect(!files.fileExists(atPath: try #require(profile.databaseURL).deletingLastPathComponent().path))
     }
 
+    /// A named profile's settings live in their own preferences domain. Test runs used to write those domains into the real
+    /// ~/Library/Preferences, and emptying a domain does not unlink its plist, so tens of thousands of empty
+    /// `io.wsagency.wsurf.profile.<UUID>.plist` files piled up on the Macs that ran the suite.
+    @Test func aProfileMadeAndDeletedByATestLeavesNoRealPreferencesFile() async {
+        let preferences = URL.libraryDirectory.appending(path: "Preferences", directoryHint: .isDirectory)
+        let files = FileManager.default
+        func realFiles(naming id: UUID) -> Set<String> {
+            Set(((try? files.contentsOfDirectory(atPath: preferences.path)) ?? []).filter { $0.contains(id.uuidString) })
+        }
+        let (store, file) = makeStore()
+        defer { try? files.removeItem(at: file) }
+        let work = store.add(name: "Work")
+        let before = realFiles(naming: work.id)
+        let isolated = ProfileSettingsStore.suiteName(for: work.id) + ".plist"
+
+        let defaults = ProfileSettingsStore.defaults(for: work)
+        defaults.set("kagi", forKey: "search.engine")
+        defaults.synchronize()
+        #expect(await waitUntil(timeout: .seconds(5)) { files.fileExists(atPath: isolated) })
+        #expect(realFiles(naming: work.id) == before)
+
+        await store.remove(work)
+
+        #expect(before.isEmpty)
+        #expect(realFiles(naming: work.id) == before)
+        #expect(!files.fileExists(atPath: isolated))
+        #expect(ProfileSettingsStore.defaults(for: work).string(forKey: "search.engine") == nil)
+    }
+
+    /// Forgetting a profile deletes the plist its domain leaves, in the app too: the file it removes is the profile suite's own
+    /// (`<name>.plist` in ~/Library/Preferences for the app's bare name, the path itself for a test run's), and nothing else.
+    @Test func forgettingAProfileDeletesOnlyItsOwnPreferencesFile() {
+        let id = UUID()
+        let name = "io.wsagency.wsurf.profile.\(id.uuidString)"
+        let preferences = URL.libraryDirectory.appending(path: "Preferences", directoryHint: .isDirectory)
+
+        #expect(ProfileSettingsStore.plistURL(forSuite: name) == preferences.appending(path: name + ".plist"))
+        #expect(ProfileSettingsStore.plistURL(forSuite: "/Run/Preferences/" + name) == URL(filePath: "/Run/Preferences/\(name).plist"))
+        #expect(ProfileSettingsStore.plistURL(forSuite: ProfileSettingsStore.suiteName(for: id))?.lastPathComponent == name + ".plist")
+        let others = [
+            "io.wsagency.wsurf", "io.wsagency.wsurf.profile.", "io.wsagency.wsurf.profile.not-a-uuid", "com.apple.Safari",
+            "/Run/Preferences/io.wsagency.wsurf", "io.wsagency.wsurf.stage.\(id.uuidString)",
+        ]
+        for other in others {
+            #expect(ProfileSettingsStore.plistURL(forSuite: other) == nil, "\(other)")
+        }
+    }
+
     @Test func afirstLaunchHasOneProfileHoldingEverything() {
         let (store, _) = makeStore()
 

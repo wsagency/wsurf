@@ -184,8 +184,11 @@ final class FaviconLoader {
               l => (l.type || '').includes('svg') || /\\.svg(\\?|$)/i.test(l.href)
             );
             if (vector.length) { return vector[vector.length - 1]; }
-            const sized = list.filter(l => side(l) >= 32).sort((a, b) => side(a) - side(b));
+            // 48 px covers the largest tab icon (24 pt) at 2x. A site that stops below it keeps its largest 32 px+.
+            const sized = list.filter(l => side(l) >= 48).sort((a, b) => side(a) - side(b));
             if (sized.length) { return sized[0]; }
+            const small = list.filter(l => side(l) >= 32).sort((a, b) => side(b) - side(a));
+            if (small.length) { return small[0]; }
             return list[list.length - 1];
           };
 
@@ -199,7 +202,7 @@ final class FaviconLoader {
         })()
         """
         if webView.url?.host()?.lowercased() == host,
-           let answer = (try? await webView.evaluateJavaScript(script)) as? String,
+           let answer = await webView.evaluateJavaScript(script, within: .seconds(5), as: String.self),
            webView.url?.host()?.lowercased() == host,
            let answered = Self.declaredIconURL(fromAnswer: answer, requestedHost: host, pageURL: pageURL) {
             candidates.append(answered)
@@ -240,7 +243,7 @@ final class FaviconLoader {
     private func fetch(_ url: URL) async -> Data? {
         guard Self.isFetchable(url) else { return nil }
         let session = persistsToDisk ? session : ephemeralSession
-        guard let (data, response) = try? await session.data(from: url),
+        guard let (data, response) = try? await session.data(for: URLRequest(url: url, timeoutInterval: 10)),
               !Task.isCancelled,
               (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true
         else { return nil }

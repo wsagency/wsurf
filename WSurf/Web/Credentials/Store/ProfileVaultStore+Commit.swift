@@ -40,6 +40,10 @@ nonisolated struct Proposal {
     let requires: RemovalScope?
     /// The account an explicit earlier-revision restore applies to: its changes are revisions, never removals (see `CredentialDiff.plan`).
     var restoring: UUID?
+    /// The live accounts this write can have changed. Every other account of `accounts` that is `==` the value read in this
+    /// transaction is neither compared nor checked again; one that is not is compared on its bytes, so naming too few still writes
+    /// every change. `nil` compares every account with its stored row on its bytes.
+    var changing: Set<UUID>?
 }
 
 /// `entry == nil` means nothing was written (a true no-op).
@@ -47,6 +51,8 @@ nonisolated struct CommitOutcome {
     let receipt: VaultCommitReceipt
     let entry: RegistryEntry?
     let trashEntry: RegistryEntry?
+    /// What the transaction's read decoded, kept for the next read under the same grant.
+    var decoded: [UUID: DecodedRow]?
 }
 
 /// A plan with a removal reached `transact` on a connection without the verification scratch. Thrown before anything is written, so
@@ -58,11 +64,13 @@ private nonisolated struct LedgerRequired: Error {}
 /// heads, rewrite the registry. `CommitTransaction.write` is the one internal write contract (`commit`, `delete`, and later the
 /// per-account and restore paths all route through it).
 extension ProfileVaultStore {
+    /// `changing` names the accounts the caller edited in `accounts` (`Proposal.changing`); `nil` compares every account on its bytes.
     func commit(
-        vaultID: UUID, _ accounts: [CredentialAccount], expectedRevision: UInt64, cause: String?, using access: VaultAccess
+        vaultID: UUID, _ accounts: [CredentialAccount], expectedRevision: UInt64, cause: String?, changing: Set<UUID>? = nil,
+        using access: VaultAccess
     ) async throws -> VaultCommitReceipt {
         let intent = CommitIntent(vaultID: vaultID, access: access, expectedRevision: expectedRevision, cause: cause, isCommit: true)
-        return try await perform(intent) { _ in Proposal(accounts: accounts, requires: nil) }
+        return try await perform(intent) { _ in Proposal(accounts: accounts, requires: nil, changing: changing) }
     }
 
     func delete(vaultID: UUID, scope: RemovalScope, expectedRevision: UInt64, using access: VaultAccess) async throws -> VaultCommitReceipt {
@@ -128,6 +136,9 @@ extension ProfileVaultStore {
                 grants[intent.vaultID]?.trashEntry = trashEntry
             }
         }
+        if let decoded = outcome.decoded {
+            remember(decoded, vaultID: intent.vaultID, access: intent.access)
+        }
         return outcome
     }
 
@@ -149,8 +160,8 @@ extension ProfileVaultStore {
             throw CredentialVaultError.staleRevision
         }
         guard opened.head.revision < UInt64(Int64.max), opened.catalog.revision < UInt64(Int64.max) else { throw CredentialVaultError.invalidData }
-        let snapshot = try readSnapshot(db, grant: request.grant, vaultID: intent.vaultID)
-        return (CommitTransaction(db, request: request, opened: opened, snapshot: snapshot), snapshot)
+        let (snapshot, decoded) = try readLive(db, grant: request.grant, vaultID: intent.vaultID)
+        return (CommitTransaction(db, request: request, opened: opened, snapshot: snapshot, decoded: decoded), snapshot)
     }
 
     /// Plan, (a removal) verify both histories, write, seal. A caller that already ran `verifyHistories` is not charged twice.
@@ -158,11 +169,16 @@ extension ProfileVaultStore {
         _ proposal: Proposal, snapshot: StoreSnapshot, _ transaction: CommitTransaction, _ request: CommitRequest, ledgerAttached: Bool
     ) throws -> CommitOutcome {
         let intent = request.intent
+        let unchanged = try transaction.unchanged(in: proposal)
         if intent.isCommit {
-            try validate(proposal.accounts, blockedOrigins: transaction.opened.head.blockedOrigins)
+            // An unchanged account stays as stored, so the limits count the stored value (`==` does not see a respelling).
+            let live = proposal.accounts.map { unchanged.contains($0.id) ? transaction.decoded[$0.id]?.account ?? $0 : $0 }
+            try validate(live, blockedOrigins: transaction.opened.head.blockedOrigins, unchanged: unchanged)
         }
         // §11.1: the plan is classified on the complete payload bytes, never on `==`.
-        let plan = try CredentialDiff.plan(old: snapshot.accounts, new: proposal.accounts, restoring: proposal.restoring)
+        let plan = try CredentialDiff.plan(
+            old: snapshot.accounts, new: proposal.accounts, restoring: proposal.restoring, removing: proposal.requires, unchanged: unchanged
+        )
         if let required = proposal.requires {
             guard plan.removals.contains(required) else { throw CredentialVaultError.invalidData }
         }
@@ -180,14 +196,29 @@ extension ProfileVaultStore {
         return try transaction.finish()
     }
 
-    /// The v1 payload rules at the boundary: distinct ids, `CredentialAccount.validate()`, the live byte budget (blocked origins
-    /// included). A live limit names itself.
-    nonisolated static func validate(_ accounts: [CredentialAccount], blockedOrigins: [String]) throws {
+    /// The payload rules at the boundary: distinct ids, `CredentialAccount.validate()`, the live byte budgets (blocked origins
+    /// included). A live limit names itself. `unchanged` accounts are byte for byte stored rows, checked when they were written: they
+    /// count towards every total and uniqueness rule, but are not checked one by one again.
+    nonisolated static func validate(_ accounts: [CredentialAccount], blockedOrigins: [String], unchanged: Set<UUID> = []) throws {
         do {
-            try CredentialVaultCrypto.validate(CredentialVaultPayload(revision: 0, accounts: accounts, blockedPasswordOrigins: Set(blockedOrigins)))
+            try CredentialVaultCrypto.validate(
+                CredentialVaultPayload(revision: 0, accounts: accounts, blockedPasswordOrigins: Set(blockedOrigins)), unchanged: unchanged
+            )
         } catch CredentialVaultError.oversized {
-            throw CredentialStoreError.limit(accounts.count > CredentialVaultLimits.accounts ? .accounts : .payloadBytes)
+            throw CredentialStoreError.limit(overLimit(accounts))
         }
+    }
+
+    /// Which live limit `accounts` is over: the count, else one account's bytes (raw or encoded), else the total.
+    private nonisolated static func overLimit(_ accounts: [CredentialAccount]) -> StoreLimit {
+        if accounts.count > CredentialVaultLimits.accounts {
+            return .accounts
+        }
+        let overOne = accounts.contains {
+            ((try? CredentialVaultCrypto.liveBytes(of: $0)) ?? .max) > CredentialVaultLimits.accountBytes
+                || ((try? CredentialVaultCrypto.storedBytes(of: $0)) ?? .max) > CredentialVaultLimits.encodedAccountBytes
+        }
+        return overOne ? .accountBytes : .payloadBytes
     }
 
     /// The accounts a delete leaves live. A credential whose removal leaves nothing valid (`A:43`) takes the whole-account path.
@@ -195,7 +226,7 @@ extension ProfileVaultStore {
         switch scope {
         case .account(let id):
             guard old.contains(where: { $0.id == id }) else { throw CredentialVaultError.invalidData }
-            return Proposal(accounts: old.filter { $0.id != id }, requires: .account(id))
+            return Proposal(accounts: old.filter { $0.id != id }, requires: .account(id), changing: [id])
         case .credential(let ownerID, let subject, let passkeyID):
             guard let index = old.firstIndex(where: { $0.id == ownerID }) else { throw CredentialVaultError.invalidData }
             var account = old[index]
@@ -209,6 +240,12 @@ extension ProfileVaultStore {
             case .totp:
                 guard account.totp != nil else { throw CredentialVaultError.invalidData }
                 account.totp = nil
+            case .note:
+                guard account.notes != nil else { throw CredentialVaultError.invalidData }
+                account.notes = nil
+            case .secureItem:
+                guard account.secureItems != nil else { throw CredentialVaultError.invalidData }
+                account.secureItems = nil
             case .passkey:
                 guard let passkeyID, account.passkeys.contains(where: { $0.id == passkeyID }) else { throw CredentialVaultError.invalidData }
                 account.passkeys.removeAll { $0.id == passkeyID }
@@ -216,12 +253,14 @@ extension ProfileVaultStore {
             case .account, .metadata:
                 throw CredentialVaultError.invalidData
             }
-            if account.username.isEmpty, account.password == nil, account.passkeys.isEmpty, account.totp == nil {
-                return Proposal(accounts: old.filter { $0.id != ownerID }, requires: .account(ownerID))
+            // ponytail-merge: kinds' `secureItems` emptiness check plus vault-scale's `changing`; an items delete names its owner too.
+            if account.username.isEmpty, account.password == nil, account.passkeys.isEmpty, account.totp == nil, account.notes == nil,
+               account.secureItems == nil {
+                return Proposal(accounts: old.filter { $0.id != ownerID }, requires: .account(ownerID), changing: [ownerID])
             }
             var accounts = old
             accounts[index] = account
-            return Proposal(accounts: accounts, requires: required)
+            return Proposal(accounts: accounts, requires: required, changing: [ownerID])
         }
     }
 
@@ -296,6 +335,8 @@ nonisolated final class CommitTransaction {
     var live: [UUID: LiveEntry] = [:]
     /// The accounts as stored when the transaction began (a MOVE copies the removed value from here).
     let previous: [UUID: CredentialAccount]
+    /// What the transaction's read decoded from each live row.
+    let decoded: [UUID: DecodedRow]
 
     var ids: StoreIDs {
         grant.ids
@@ -305,11 +346,12 @@ nonisolated final class CommitTransaction {
         .integrityFailure(vaultOrdinal: grant.ordinal)
     }
 
-    init(_ db: Database, request: CommitRequest, opened: OpenedVault, snapshot: StoreSnapshot) {
+    init(_ db: Database, request: CommitRequest, opened: OpenedVault, snapshot: StoreSnapshot, decoded: [UUID: DecodedRow]) {
         self.db = db
         self.grant = request.grant
         self.opened = opened
         self.wall = request.wall
+        self.decoded = decoded
         self.trash = nil
         self.source = WriteSide(
             vaultID: opened.head.vaultID, key: request.grant.dek, journalSeq: opened.head.journalSeq, chainTip: opened.head.chainTip,
@@ -323,6 +365,31 @@ nonisolated final class CommitTransaction {
             }
         }
         self.previous = previous
+    }
+
+    /// The proposed accounts that are their stored rows, which the plan and the checks then skip. One `proposal.changing` names is
+    /// never in it (the plan compares its bytes). One outside a named set is in it when `==` the value read here: the caller's copy
+    /// of that value, so one pointer or buffer compare per field, never an encode. Anything else (no set named, or a copy that is not
+    /// `==`) is in it when its canonical JSON has the stored plaintext's digest. An id the proposal repeats is never in it, so the
+    /// checks that refuse a repeat still see every copy.
+    func unchanged(in proposal: Proposal) throws -> Set<UUID> {
+        var seen = Set<UUID>(minimumCapacity: proposal.accounts.count)
+        var repeated = Set<UUID>()
+        for account in proposal.accounts where !seen.insert(account.id).inserted {
+            repeated.insert(account.id)
+        }
+        var unchanged = Set<UUID>(minimumCapacity: proposal.accounts.count)
+        for account in proposal.accounts where !repeated.contains(account.id) {
+            guard let stored = decoded[account.id], proposal.changing?.contains(account.id) != true else { continue }
+            // `==` is canonical equivalence, so it only ever skips an account the caller did not name: a byte-only respelling there
+            // keeps the stored bytes. A named account, or every account when none is named, is compared on its bytes.
+            if proposal.changing != nil, account == stored.account {
+                unchanged.insert(account.id)
+            } else if try StoreSeal.digest(CredentialContent.canonicalJSON(account)) == stored.plaintextDigest {
+                unchanged.insert(account.id)
+            }
+        }
+        return unchanged
     }
 
     /// §7/§11 write of one plan: the touched live rows, a revision row per superseded value, one MOVE per removal. No heads and no
@@ -391,7 +458,7 @@ nonisolated final class CommitTransaction {
         }
         var next = opened.head
         next.revision += 1
-        next.liveCatalog = live.values.sorted { $0.recordID.uuidString < $1.recordID.uuidString }
+        next.liveCatalog = live.values.map { ($0.recordID.uuidString, $0) }.sorted { $0.0 < $1.0 }.map { $0.1 }
         next.journalSeq = source.journalSeq
         next.chainTip = source.chainTip
         next.historyCounts = source.counts
@@ -422,7 +489,7 @@ nonisolated final class CommitTransaction {
             entries.append(moved)
         }
         try ProfileVaultStore.storeRegistry(db, grant: grant, catalog: opened.catalog, replacing: entries)
-        return CommitOutcome(receipt: VaultCommitReceipt(revision: next.revision), entry: entry, trashEntry: trashEntry)
+        return CommitOutcome(receipt: VaultCommitReceipt(revision: next.revision), entry: entry, trashEntry: trashEntry, decoded: decoded)
     }
 
     private func reconcileHistory(_ side: WriteSide) throws {

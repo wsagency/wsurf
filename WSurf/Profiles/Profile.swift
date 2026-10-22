@@ -108,7 +108,8 @@ extension Profile {
             try? await WKWebsiteDataStore.remove(forIdentifier: profile.id)
             try? await AutofillVaults.cards(for: profile.id).erase()
             try? await AutofillVaults.contacts(for: profile.id).erase()
-            try? await AutofillVaults.passwords(for: profile.id).erase()
+            try? await AutofillVaults.legacyPasswords(for: profile.id).erase()
+            await InputHistory.shared.erase(profile)
             _ = await Task.detached { try? AutofillSaveIndex.erase(profileID: profile.id) }.value
             do {
                 try await ChromiumRuntime.shared.erase(profile: profile)

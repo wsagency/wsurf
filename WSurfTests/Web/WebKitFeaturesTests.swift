@@ -10,7 +10,7 @@ import Testing
 @MainActor
 struct WebKitFeaturesTests {
     private func withOwnDefaults(_ body: () throws -> Void) rethrows {
-        let name = "webkit.features.\(UUID().uuidString)"
+        let name = AppDatabase.defaultsSuite("webkit.features.\(UUID().uuidString)")
         let suite = UserDefaults(suiteName: name)!
         let previous = WebKitFeatures.defaults
         WebKitFeatures.defaults = suite

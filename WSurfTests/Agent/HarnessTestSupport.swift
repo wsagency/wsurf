@@ -11,6 +11,7 @@ final class HarnessScript: LanguageModel, @unchecked Sendable {
     enum Action {
         case text(String)
         case calls([String])
+        case thinkingCalls(String, [String], callID: String? = nil)
         case commentary(String, [String])
         case progress(String)
         case failure(any Error)
@@ -60,12 +61,23 @@ final class HarnessScript: LanguageModel, @unchecked Sendable {
             throw error
         case .text(let value):
             text = value
-        case .calls(let names), .commentary(_, let names):
+        case .calls(let names), .commentary(_, let names), .thinkingCalls(_, let names, _):
+            var fixedID: String?
+            if case .thinkingCalls(_, _, let callID) = action {
+                fixedID = callID
+            }
             let calls = names.map { name in
-                Transcript.ToolCall(id: UUID().uuidString, toolName: name,
+                Transcript.ToolCall(id: fixedID ?? UUID().uuidString, toolName: name,
                                     arguments: GeneratedContent(properties: ["value": GeneratedContent("fixture-value")]))
             }
             entries = [.toolCalls(.init(calls))]
+            if case .thinkingCalls(let thought, _, _) = action {
+                entries.insert(.reasoning(.init(
+                    metadata: ["provider": GeneratedContent("anthropic")],
+                    segments: [.text(.init(content: thought))],
+                    signature: Data("sig".utf8)
+                )), at: 0)
+            }
             if case .commentary(let message, _) = action { text = message } else { text = "" }
         case .progress(let message):
             entries = [.toolCalls(.init([Transcript.ToolCall(
@@ -155,7 +167,8 @@ struct HarnessFixture {
         _ actions: [HarnessScript.Action], policy: AgentExecutionPolicy = .init(requiresOutcomeVerification: false),
         inputTokens: Int = 100_000, database: AppDatabase? = nil, tabID: UUID = UUID(),
         state: HarnessToolState? = nil, contextBudget: ContextBudget? = nil,
-        openAI: OpenAIResponsesClient? = nil
+        openAI: OpenAIResponsesClient? = nil, browser: BrowserModel? = nil,
+        questions: AgentQuestionModel? = nil, factModel: (() -> (any LanguageModel)?)? = nil
     ) {
         let database = database ?? .temporary()
         self.database = database
@@ -177,8 +190,11 @@ struct HarnessFixture {
                 toolSchemaTokens: 0, instructionTier: .compact, toolTier: .full,
                 toolOutput: .standard, retainedExchanges: 12, retainedToolRounds: 1
             ),
-            toolkit: AgentToolkit(browser: BrowserModel(database: .temporary()), media: MediaCenter(), log: log),
-            log: log
+            toolkit: AgentToolkit(
+                browser: browser ?? BrowserModel(database: .temporary()), media: MediaCenter(), log: log, questions: questions
+            ),
+            log: log,
+            factModel: factModel
         )
     }
 

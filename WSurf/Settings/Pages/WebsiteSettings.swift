@@ -254,6 +254,18 @@ private struct PermissionDetailPage: View {
     }
 }
 
+/// What resetting one website clears. Assistant Access belongs to the whole website, so resetting a subdomain's page resets
+/// it for every page of that site, and the confirmation says so.
+enum WebsiteReset {
+    static func message(for origin: String) -> String {
+        let site = SitePermissions.displayName(for: SitePermissions.site(for: origin))
+        return String(localized: """
+            The website will ask again to use your camera, microphone, location, or notifications. \
+            The assistant will ask again before reading any page on \(site).
+            """)
+    }
+}
+
 private struct SiteDetailPage: View {
     let origin: String
     let settings: BrowserSettings
@@ -324,6 +336,14 @@ private struct SiteDetailPage: View {
         grants.grantsByHost.first { $0.host == host }?.categories ?? []
     }
 
+    private var assistantAccessOptions: [SettingsMenu<AssistantAccessPolicy?>.Option] {
+        var options: [SettingsMenu<AssistantAccessPolicy?>.Option] = [
+            .init(value: nil, label: AssistantAccessPolicy.followsDefaultLabel(permissions.assistantDefault)),
+        ]
+        options += AssistantAccessPolicy.allCases.map { .init(value: $0, label: String(localized: $0.label)) }
+        return options
+    }
+
     private var popupFallback: PopupPolicy {
         settings.blocksPopups ? .blockAndNotify : .allow
     }
@@ -345,7 +365,7 @@ private struct SiteDetailPage: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("The website will ask again to use your camera, microphone, location, or notifications. The assistant will ask again before reading the website.")
+                Text(WebsiteReset.message(for: origin))
             }
         }
 
@@ -357,7 +377,9 @@ private struct SiteDetailPage: View {
         SettingsCard {
             DetailRow(
                 title: "Browser engine",
-                caption: "Changing this reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL."
+                caption: SitePermissions.webKitOnlyOrigins.contains(origin)
+                    ? "Google blocks sign-in from embedded Chromium, so this page always opens in WebKit." as LocalizedStringResource
+                    : "Changing this reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL."
             ) {
                 SettingsMenu(
                     options: BrowserEngine.allCases.map {
@@ -370,16 +392,18 @@ private struct SiteDetailPage: View {
                         }
                     )
                 )
+                .disabled(SitePermissions.webKitOnlyOrigins.contains(origin))
             }
             .settingsAnchor("websites.engine")
             RowSeparator()
-            DetailRow(title: "Assistant access") {
+            DetailRow(
+                title: "Assistant access",
+                caption: "Applies to every page on \(SitePermissions.displayName(for: SitePermissions.site(for: origin)))."
+            ) {
                 SettingsMenu(
-                    options: AssistantAccessPolicy.allCases.map {
-                        .init(value: $0, label: String(localized: $0.label))
-                    },
+                    options: assistantAccessOptions,
                     selection: Binding(
-                        get: { permissions.assistantAccess(for: origin) },
+                        get: { permissions.assistantRecord(for: origin) },
                         set: { permissions.setAssistantAccess($0, for: origin) }
                     )
                 )
@@ -517,7 +541,7 @@ private struct SiteDetailPage: View {
         for permission in WebPermission.allCases {
             permissions.set(.ask, for: origin, permission)
         }
-        permissions.setAssistantAccess(.ask, for: origin)
+        permissions.setAssistantAccess(nil, for: origin)
         permissions.setKeepsActive(false, for: origin)
         permissions.setAllowsAutomaticPicture(true, for: origin)
         permissions.setAutoplay(nil, for: origin)

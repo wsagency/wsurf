@@ -39,6 +39,14 @@ struct VaultExchangeClassificationTests {
         return try #require(imported.first)
     }
 
+    /// An account saved before imports recorded what they brought in: linked to the item, but with no base for any part.
+    func unbound(_ data: ASExportedCredentialData) throws -> CredentialAccount {
+        var account = try stored(data)
+        account.passwordBase = nil
+        account.totpBase = nil
+        return account
+    }
+
     func isInvalidData(_ error: any Error) -> Bool {
         guard case CredentialVaultError.invalidData = error else { return false }
         return true
@@ -231,13 +239,40 @@ struct VaultExchangeClassificationTests {
 
     // MARK: Identity
 
+    /// An id match without an accepted pairing is only a hint: content that differs is the user's call, and nothing says who changed it.
     @Test func idMatchWithoutBoundPairingIsAmbiguous() throws {
-        let unbound = try stored(h.data(credentials: [login("v1")]))
+        let unbound = try unbound(h.data(credentials: [login("v1")]))
         #expect(try classify(h.data(credentials: [login("v2")]), .password, against: [unbound]) == .ambiguous)
-        #expect(try classify(h.data(credentials: [login("v1")]), .password, against: [unbound]) == .ambiguous)
-        // Identical TOTP seed and parameters are not "unchanged" without a bound pairing.
-        let unboundTOTP = try stored(h.data(credentials: [login("v1"), h.totp()]))
-        #expect(try classify(h.data(credentials: [login("v1"), h.totp()]), .totp, against: [unboundTOTP]) == .ambiguous)
+        let unboundTOTP = try self.unbound(h.data(credentials: [login("v1"), h.totp()]))
+        #expect(try classify(h.data(credentials: [login("v2"), h.totp()]), .password, against: [unboundTOTP]) == .ambiguous)
+        // A code the saved item doesn't hold yet: with no pairing there is nothing to compare it with, so it is not called new either.
+        #expect(try classify(h.data(credentials: [login("v1"), h.totp()]), .totp, against: [unbound]) == .ambiguous)
+    }
+
+    /// An item saved before imports recorded what they brought in has no base. A login or code that equals what is sent is the same
+    /// credential whoever pairs it, so it is unchanged and the next import records the base; it is not a question.
+    @Test func anUnboundLinkedItemWithIdenticalContentIsUnchanged() throws {
+        let data = h.data(credentials: [login("v1"), h.totp()])
+        let unbound = try unbound(data)
+        #expect(try classify(data, .password, against: [unbound]) == .unchanged)
+        #expect(try classify(data, .totp, against: [unbound]) == .unchanged)
+    }
+
+    /// What an import records is what the next one compares with (§13.2a): applying a transfer binds every login and code it brought
+    /// in, and a later transfer is unchanged, changed in the other app, changed here, or both, by content hash alone.
+    @Test func reimportClassifiesAgainstTheRecordedBase() throws {
+        let v1 = h.data(credentials: [login("v1"), h.totp()])
+        let v2 = h.data(credentials: [login("v2"), h.totp()])
+        let imported = try stored(v1)
+        #expect(imported.passwordBase?.itemID == imported.exchangeItemID && imported.totpBase?.itemID == imported.exchangeItemID)
+        var editedLocally = imported
+        editedLocally.password = "local"
+
+        #expect(try classify(v1, .password, against: [imported]) == .unchanged)
+        #expect(try classify(v2, .password, against: [imported]) == .remoteChanged)
+        #expect(try classify(v1, .password, against: [editedLocally]) == .localChanged)
+        #expect(try classify(v2, .password, against: [editedLocally]) == .bothChanged)
+        #expect(try classify(v1, .totp, against: [imported]) == .unchanged)
     }
 
     @Test func idMatchSeveralLocalIsAmbiguous() throws {
@@ -372,7 +407,7 @@ struct VaultExchangeClassificationTests {
     }
 
     @Test func usernameOnlyIncomingNeverRemovesAStoredPassword() throws {
-        let local = try stored(h.data(credentials: [login("keep-me")]))
+        let local = try unbound(h.data(credentials: [login("keep-me")]))
         let usernameOnly = h.data(credentials: [
             .basicAuthentication(.init(
                 userName: .init(id: Data([0x11]), fieldType: .string, value: "ada", label: "Login"),
@@ -416,7 +451,7 @@ struct VaultExchangeClassificationTests {
     }
 
     @Test func defaultMergeThatWouldThrowInvalidDataBecomesAConflict() throws {
-        let local = try stored(h.data(credentials: [login("keep-me")]))
+        let local = try unbound(h.data(credentials: [login("keep-me")]))
         let incoming = h.data(credentials: [login("another-secret")])
         let preview = try CredentialExchangeCodec.preview(incoming, against: h.snapshot([local]))
         // The default merge into the linked account would throw `invalidData`; the user is asked instead.
@@ -428,11 +463,11 @@ struct VaultExchangeClassificationTests {
     @Test func malformedPayloadStillFailsClosedWholeWithPositionOnly() throws {
         let secret = "must-not-appear-in-diagnostics"
         let good = h.importableItem(id: Data([0xB0, 0x01]), title: "Good", credentials: [login("fine")])
+        // One field id for the username and the password cannot be told apart, which no import keeps.
         let bad = h.importableItem(
             id: Data([0xB0, 0x02]),
             title: "Bad",
-            scope: ASImportableCredentialScope(urls: [URL(string: "javascript:alert(1)")!], androidApps: []),
-            credentials: [h.basicAuthentication(username: "other", password: secret)]
+            credentials: [h.basicAuthentication(username: "other", password: secret, usernameID: Data([0x66]), passwordID: Data([0x66]))]
         )
         let payload = ASExportedCredentialData(
             accounts: [ASImportableAccount(id: h.accountExternalID, userName: "ada", email: "ada@example.test", collections: [], items: [good, bad])],
@@ -446,7 +481,8 @@ struct VaultExchangeClassificationTests {
             Issue.record("Expected the whole payload to be rejected")
         } catch {
             let diagnostic = try #require(error as? CredentialExchangeError)
-            #expect(diagnostic.record == .item(account: 0, item: 1))
+            #expect(diagnostic.record == .credential(account: 0, item: 1, credential: 0))
+            #expect(diagnostic.reason == .duplicateIdentifier)
             #expect(!String(describing: error).contains(secret))
         }
     }

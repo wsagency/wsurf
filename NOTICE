@@ -10,7 +10,8 @@ are retained. WSurf is not endorsed by Kavoye or Apple.
 Modified for WSurf by wsagency in 2026:
 - Product, module, project, repository, application identifiers, storage,
   localizations, build/release tooling, and documentation use WSurf branding.
-- The application and repository use a new WSurf wave mark and icon.
+- The application and repository use the new WSurf Tandem mark and icon, two
+  discs drawn for WSurf and not derived from Linen's artwork.
 - Extension tab metadata no longer creates dormant web views; popup actions
   follow WebKit's readiness lifecycle without reloading the whole extension.
 - Native ports are owned and closed by extension context identity.
@@ -29,6 +30,14 @@ WSurf/Web/Credentials/public_suffix_list.dat, from https://publicsuffix.org/list
 The list is licensed under the Mozilla Public License 2.0,
 https://mozilla.org/MPL/2.0/, and the file keeps its license header. The list
 is refreshed with WSurf releases, not at run time.
+
+The Appearance color presets in WSurf/Settings/ThemePreset.swift use color
+values from the Catppuccin, Nord, Dracula, and Rosé Pine palettes and from the
+Gruvbox schemes published by Tinted Theming (tinted-theming/schemes, MIT).
+Their notices are in WSurf/Support/Acknowledgements.json and Tools/vendored;
+the Gruvbox entry is Tinted Theming's license and credits the palette's
+original authors as that project does. Names are used only to identify the
+palettes; WSurf is not endorsed by their authors.
 
 Apple's iCloud Passwords extension is a separately licensed product. Its
 resources, the Apple credential vault, private signing keys, and provisioning

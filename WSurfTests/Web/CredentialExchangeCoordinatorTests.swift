@@ -418,20 +418,27 @@ struct CredentialExchangeCoordinatorTests {
             try await f.seed(neighbours(3))
             let before = try f.diskBytes()
 
+            // One field id for both the username and the password: the vault cannot tell them apart, so nothing is imported.
+            let sharedID = Data([0x09])
+            let ambiguousLogin = ASImportableCredential.basicAuthentication(.init(
+                userName: .init(id: sharedID, fieldType: .string, value: "ada", label: nil),
+                password: .init(id: sharedID, fieldType: .concealedString, value: "pw", label: nil)
+            ))
             let mixed = handBuilt([
                 item(id: 1, scoped: true, [password("valid")]),
-                item(id: 2, scoped: true, [totpCredential(period: 0)]),
+                item(id: 2, scoped: true, [ambiguousLogin]),
             ])
             do {
                 try await f.stage(mixed)
                 Issue.record("A malformed record must abort the whole import")
             } catch let failure as CredentialTransferFailure {
-                // The message carries the position only, never the credential's content.
-                guard case let .malformed(record?) = failure.message.kind else {
+                // The message carries the position, reason and kind only, never the credential's content.
+                guard case let .malformed(error) = failure.message.kind else {
                     Issue.record("A malformed record must end the transfer as malformed, with its position")
                     return
                 }
-                #expect(record.description.hasPrefix("account[0]/item[1]"))
+                #expect(error.record.description.hasPrefix("account[0]/item[1]"))
+                #expect(error.reason == .duplicateIdentifier && error.credentialKind == .basicAuthentication)
             }
             #expect(!f.coordinator.hasStagedImport(for: f.manager, owner: f.owner))
             #expect(try f.diskBytes() == before)
@@ -514,7 +521,7 @@ struct CredentialExchangeCoordinatorTests {
 
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.revision == 2 && review.candidates.count == 2 && review.isResolved)
-            #expect(counts(review.outcome) == [2, 0])
+            #expect(counts(planned(f)) == [2, 0])
 
             let receipt = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             #expect(receipt.revision == 3)
@@ -575,12 +582,12 @@ struct CredentialExchangeCoordinatorTests {
 
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             #expect(review.isResolved && review.conflicts.isEmpty)
-            #expect(counts(review.outcome) == [1, 0] && review.outcome?.results.map(\.action) == [.added])
+            #expect(counts(planned(f)) == [1, 0] && planned(f)?.results.map(\.action) == [.added])
 
             let record = try #require(review.candidates.first?.records.first)
             try f.coordinator.choose(.skip, for: record.incoming, owner: f.owner)
-            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [0, 0])
-            #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome?.results.map(\.action) == [.skipped])
+            #expect(counts(planned(f)) == [0, 0])
+            #expect(planned(f)?.results.map(\.action) == [.skipped])
             let failure = await #expect(throws: CredentialTransferFailure.self) {
                 _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             }
@@ -604,7 +611,7 @@ struct CredentialExchangeCoordinatorTests {
             #expect(targets.first?.allowedOrigins == [Self.origin, "https://other.test"])
 
             try f.coordinator.choose(.merge(into: bare.id), for: record.incoming, owner: f.owner)
-            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [0, 1])
+            #expect(counts(planned(f)) == [0, 1])
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
 
             let after = try await f.stored().accounts
@@ -624,6 +631,7 @@ struct CredentialExchangeCoordinatorTests {
             try await f.stage(try exported([account(username: "grace", password: "incoming")]))
             let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
             let record = try #require(review.candidates.first?.records.first)
+            let planned = planned(f)
 
             // Not a conflict, an unknown account, and an account that already has a login.
             for refused: CredentialImportChoice in [.replace, .merge(into: UUID()), .merge(into: neighbour[0].id)] {
@@ -631,7 +639,7 @@ struct CredentialExchangeCoordinatorTests {
                     try f.coordinator.choose(refused, for: record.incoming, owner: f.owner)
                 }
             }
-            #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome == review.outcome)
+            #expect(self.planned(f) == planned && f.coordinator.importReview(for: f.manager, owner: f.owner)?.tally == review.tally)
             #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.candidates.first?.records.first?.choice == nil)
         }
     }
@@ -709,7 +717,7 @@ struct CredentialExchangeCoordinatorTests {
             #expect(throws: CredentialExchangeCoordinatorError.invalidChoice) {
                 try f.coordinator.choose(.merge(into: first.id), for: record.incoming, owner: f.owner)
             }
-            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [1, 0])
+            #expect(counts(planned(f)) == [1, 0])
         }
     }
 
@@ -724,7 +732,7 @@ struct CredentialExchangeCoordinatorTests {
             #expect(f.coordinator.mergeTargets(for: login.incoming, owner: f.owner).map(\.accountID) == [destination.id])
             // The full plan, with the code left to import by itself, is valid: the choice is accepted.
             try f.coordinator.choose(.merge(into: destination.id), for: login.incoming, owner: f.owner)
-            #expect(counts(f.coordinator.importReview(for: f.manager, owner: f.owner)?.outcome) == [1, 1])
+            #expect(counts(planned(f)) == [1, 1])
 
             _ = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             let stored = try await f.stored().accounts
@@ -778,7 +786,9 @@ struct CredentialExchangeCoordinatorTests {
                     try f.coordinator.choose(refused, for: record.incoming, owner: f.owner)
                 }
             }
-            #expect(f.coordinator.importReview(for: f.manager, owner: f.owner)?.isResolved == false)
+            // It starts skipped: the refusals changed nothing, and the user was never asked.
+            let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
+            #expect(review.isResolved && review.conflicts.first?.choice == .skip && review.tally.skipped == 1)
 
             try f.coordinator.choose(.skip, for: record.incoming, owner: f.owner)
             // Skipping the only conflict leaves nothing to write: the vault is untouched.

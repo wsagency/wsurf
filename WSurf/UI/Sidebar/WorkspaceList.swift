@@ -137,6 +137,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
                     .contextMenu { emptySpaceMenu }
                     .animation(Theme.Motion.drift, value: bottomClearance)
             }
+            .glassGroup()
             .padding(.leading, contentInsets.leading)
             .padding(.trailing, contentInsets.trailing)
         }
@@ -288,6 +289,10 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             pinDrop.isArmed = false
             for id in reopening {
                 browser.folder(id: id)?.isExpanded = true
+            }
+            if !reopening.isEmpty {
+                // A drop saved the folders collapsed; the profile keeps whether a folder is open.
+                browser.scheduleSave()
             }
             reopening = []
             coordinator.tabPreview.endSuppression()
@@ -507,7 +512,7 @@ private struct SidebarDragStack: View {
             if !drag.isSingle {
                 Text(drag.items.count, format: .number)
                     .font(Theme.Font.badge)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.onAccent)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1.5)
                     .background(Theme.accent, in: Capsule())
@@ -525,7 +530,7 @@ struct SidebarDragChip: View {
     @Environment(\.windowColorScheme) private var windowColorScheme
 
     private var glass: Glass {
-        .clear.tint(Theme.controlSurface.opacity(SidebarDragGhost.chipFillOpacity))
+        .regular.tint(Theme.controlSurface.opacity(SidebarDragGhost.chipFillOpacity))
     }
 
     var body: some View {
@@ -533,7 +538,7 @@ struct SidebarDragChip: View {
         content
             .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .glassEffect(glass, in: shape)
+            .chromeGlass(glass, fill: Theme.controlSurface, in: shape)
             .overlay {
                 shape.strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5)
             }
@@ -546,7 +551,7 @@ struct SidebarDragChip: View {
         switch item {
         case .tab(let id):
             if let tab = browser.tab(id: id) {
-                HStack(spacing: 8) {
+                HStack(spacing: SidebarMetrics.rowIconSpacing) {
                     TabIcon(tab: tab, tint: BrowserSettings.application.sidebarTextColor(
                         isDeferred: tab.isDeferred,
                         scheme: windowColorScheme
@@ -559,20 +564,23 @@ struct SidebarDragChip: View {
                                 scheme: windowColorScheme
                             ))
                             .lineLimit(1)
+                            .sidebarTitleCentered()
                         Spacer(minLength: 0)
                     }
                 }
             }
         case .folder(let id):
             if let folder = browser.folder(id: id) {
-                HStack(spacing: 7) {
+                HStack(spacing: SidebarMetrics.rowIconSpacing) {
                     Image(systemName: "folder.fill")
                         .font(Theme.Font.caption)
                         .foregroundStyle(folder.color.tint)
+                        .frame(width: SidebarMetrics.rowIconSize, height: SidebarMetrics.rowIconSize)
                     if sidebarStyle == .full {
                         Text(verbatim: folder.name)
                             .font(BrowserSettings.application.sidebarFont)
                             .foregroundStyle(BrowserSettings.application.sidebarTextColor(scheme: windowColorScheme))
+                            .sidebarTitleCentered()
                         Spacer(minLength: 0)
                     }
                 }

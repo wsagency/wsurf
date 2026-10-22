@@ -18,8 +18,11 @@ final class AgentToolkit {
     private var discoveredDestinations: Set<String> = []
     private var seededContextTabIDs: Set<UUID> = []
     private var agentOpenedTabIDs: Set<UUID> = []
+    /// The person chose "Don't ask again" for closing tabs in this task.
+    private var closingWasConfirmed = false
     private(set) var lastToolFailed = false
     var taskLedger = AgentTaskLedger()
+    var givenAnswers: [String] = [] // The person's own askUser answers in this run, for the note writer; the run resets it.
     var fileSelection: ((PageFileSelection.Parameters) async -> [URL]?)? {
         services.chooseFiles
     }
@@ -136,7 +139,7 @@ final class AgentToolkit {
         remember(links: links(in: output))
         let succeeded = [
             "CONTROL:", "Condition met.", "Clicked", "Typed", "Selected", "Set checked", "Checked state",
-            "Screenshot captured.", "Scrolled", "Already at", "Dispatched hover", "Sent ",
+            "Screenshot captured.", "Scrolled", "Already at", "Hovered.", "Sent ",
         ].contains { output.hasPrefix($0) }
         completeTool(step, output: output, failed: !succeeded)
         return fencedPageOutput(output)
@@ -165,8 +168,8 @@ final class AgentToolkit {
             guard let self, let view, self.postflightDenial(for: authorization, in: view) == nil else { return false }
             guard let authorization else { return false }
             guard let tab = self.browser.tabs.first(where: { $0.id == authorization.tabID }) else { return false }
-            let policy = tab.assistantAccess.effectivePolicy
-            return policy.allows(capability) && (capability == .read || self.onScreenTab(for: view) === tab)
+            return tab.assistantAccess.decision(for: capability) == .allow
+                && (capability == .read || self.onScreenTab(for: view) === tab)
         }
         return await PageAutomationGuard.$current.withValue(scope) {
             await PageDriver.$outputBudget.withValue(outputBudget.driverBudget) { await operation() }
@@ -181,13 +184,16 @@ final class AgentToolkit {
         hasSeenUntrustedContent = false
         discoveredDestinations = []
         searchCache = [:]
+        releaseOpenedTabs(keeping: task.anchorID)
         self.task = task
         seededContextTabIDs = Set(onScreenTabs.map(\.id))
         agentOpenedTabIDs = []
+        closingWasConfirmed = false
     }
 
     func finishTask(_ completedTask: AgentTaskContext) {
         guard task?.id == completedTask.id else { return }
+        releaseOpenedTabs(keeping: nil)
         computerObservation = nil
         task = nil
     }
@@ -372,7 +378,7 @@ final class AgentToolkit {
                 return output
             }
             let tab = browser.newTab(url: url, transition: .agent)
-            agentOpenedTabIDs.insert(tab.id)
+            adoptOpened(tab)
             tab.assistantAccess.pageChanged(url: url)
             let access = await authorize(.read, in: tab.page, requiresTaskTab: false)
             if let output = cancellationOutput(for: step) {
@@ -411,7 +417,7 @@ final class AgentToolkit {
             return fencedPageOutput(output)
         }
         let tab = browser.newTab()
-        agentOpenedTabIDs.insert(tab.id)
+        adoptOpened(tab)
         let output = "New empty tab opened and active."
         completeTool(step, output: output)
         return output
@@ -433,7 +439,11 @@ final class AgentToolkit {
         return output
     }
 
-    func closeTab(matching reference: String?) -> String {
+    private static let pinnedTabRefusal = "Pinned tabs must be closed by the user."
+
+    /// Closes a tab of the conversation. Pinned tabs never close. An ordinary tab closes only after the person says yes,
+    /// unless the assistant opened it in this task or the settings allow closing (see `closingRefusal`).
+    func closeTab(matching reference: String?) async -> String {
         let step = beginTool(
             name: "closeTab",
             title: reference.map { "Close tab “\($0)”" } ?? "Close the active tab"
@@ -441,31 +451,61 @@ final class AgentToolkit {
         if let output = cancellationOutput(for: step) {
             return output
         }
+        let tab: BrowserTab
+        let namesTab: Bool
         if let reference, !reference.isEmpty {
-            guard let tab = contextTab(matching: reference) else {
+            guard let matched = contextTab(matching: reference) else {
                 let output = "No tab in this conversation matches that."
                 completeTool(step, output: output, failed: true)
                 return output
             }
-            browser.close(tab)
-            let output = "Closed “\(tab.title)”."
-            completeTool(step, output: output)
+            tab = matched
+            namesTab = true
+        } else {
+            guard let active = browser.activeTab else {
+                let output = "There are no tabs open."
+                completeTool(step, output: output, failed: true)
+                return output
+            }
+            guard contextTabIDs.contains(active.id) else {
+                let output = String(localized: "The active tab changed before the assistant could use it.")
+                completeTool(step, output: output, failed: true)
+                return output
+            }
+            tab = active
+            namesTab = false
+        }
+        let refusal = await closingRefusal(for: tab)
+        if let output = cancellationOutput(for: step) {
             return output
         }
-        guard let active = browser.activeTab else {
-            let output = "There are no tabs open."
-            completeTool(step, output: output, failed: true)
-            return output
+        if let refusal {
+            completeTool(step, output: refusal, failed: true)
+            return refusal
         }
-        guard contextTabIDs.contains(active.id) else {
-            let output = String(localized: "The active tab changed before the assistant could use it.")
-            completeTool(step, output: output, failed: true)
-            return output
-        }
-        browser.close(active)
-        let output = "Closed the active tab."
+        browser.close(tab)
+        let output = namesTab ? "Closed “\(tab.title)”." : "Closed the active tab."
         completeTool(step, output: output)
         return output
+    }
+
+    /// Why `tab` stays open, or nil when it may close now. The question comes before any change and the tab is checked
+    /// again after it, because the sheet can stay open while the tab is pinned, closed, or the task is stopped.
+    private func closingRefusal(for tab: BrowserTab) async -> String? {
+        guard !tab.isPinnedForProfile else { return Self.pinnedTabRefusal }
+        let needsQuestion = !agentOpenedTabIDs.contains(tab.id) && !closingWasConfirmed
+            && !browser.sitePermissions.allowsClosingTabsWithoutAsking
+        guard needsQuestion else { return nil }
+        switch await AgentTabClosing.ask(title: tab.title, isPrivate: tab.isPrivate) {
+        case .keepOpen:
+            return "The user chose to keep “\(tab.title)” open. Do not ask again unless they ask for it to be closed."
+        case .closeAndStopAsking:
+            closingWasConfirmed = true
+        case .close:
+            break
+        }
+        guard !Task.isCancelled, browser.tabs.contains(where: { $0 === tab }) else { return "That tab is already closed." }
+        return tab.isPinnedForProfile ? Self.pinnedTabRefusal : nil
     }
 
     func playVideo(topic: String) async -> String {
@@ -485,7 +525,7 @@ final class AgentToolkit {
         }
         if let videoID = resolved.videoID, let watch = Self.watchURL(videoID: videoID) {
             let tab = browser.newTab(url: watch, activate: !media.isEnabled, transition: .agent)
-            agentOpenedTabIDs.insert(tab.id)
+            adoptOpened(tab)
             media.controlTab(
                 page: tab.page,
                 title: topic,
@@ -504,7 +544,7 @@ final class AgentToolkit {
             return output
         }
         let fallbackTab = browser.newTab(url: fallbackURL, transition: .agent)
-        agentOpenedTabIDs.insert(fallbackTab.id)
+        adoptOpened(fallbackTab)
         let output = "Couldn't resolve a video directly; opened the results in a tab instead."
         completeTool(
             step,
@@ -577,7 +617,7 @@ final class AgentToolkit {
     private var visibleTaskTab: BrowserTab? {
         guard let tab = browser.activeTab else { return nil }
         guard let task else { return tab }
-        guard browser.spaceID(of: tab.id) == task.spaceID || agentOpenedTabIDs.contains(tab.id) else { return nil }
+        guard browser.anchorID(of: tab.id) == task.anchorID || agentOpenedTabIDs.contains(tab.id) else { return nil }
         return tab
     }
 
@@ -733,7 +773,7 @@ final class AgentToolkit {
             return (nil, String(localized: "The active tab changed before the assistant could use it."))
         }
         if requiresTaskTab, mentioned == nil, let task,
-           browser.spaceID(of: tab.id) != task.spaceID,
+           browser.anchorID(of: tab.id) != task.anchorID,
            !agentOpenedTabIDs.contains(tab.id) {
             return (nil, String(localized: "The active tab changed before the assistant could use it."))
         }
@@ -831,7 +871,6 @@ final class AgentToolkit {
         completeTool(stepID, output: output, failed: true)
         return output
     }
-
 }
 
 extension AgentToolkit {
@@ -851,8 +890,9 @@ extension AgentToolkit {
         if let output = cancellationOutput(for: step) {
             return output
         }
-        let answers = await questions.put(put, inSpace: task?.spaceID)
-        let trimmed = answers.trimmingCharacters(in: .whitespacesAndNewlines)
+        let answered = await questions.put(put, inAnchor: task?.anchorID)
+        givenAnswers += Task.isCancelled ? [] : answered.given
+        let trimmed = answered.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             let output = "Nothing was answered. Carry on with what you have."
             completeTool(step, output: output, failed: true)
@@ -937,5 +977,24 @@ extension AgentToolkit {
         var components = URLComponents(string: "https://www.youtube.com/watch")
         components?.queryItems = [URLQueryItem(name: "v", value: videoID)]
         return components?.url
+    }
+
+    /// A tab the assistant opened: the task shows in its Ask panel, and the tab shows its work until this task ends or the next begins.
+    private func adoptOpened(_ tab: BrowserTab) {
+        agentOpenedTabIDs.insert(tab.id)
+        guard let task else { return }
+        log.noteOpenedTab(browser.anchorID(of: tab.id), taskID: task.id)
+        browser.setAgentWorking(true, inAnchor: browser.anchorID(of: tab.id))
+    }
+
+    private func releaseOpenedTabs(keeping anchor: UUID?) {
+        for anchorID in agentOpenedTabIDs.map({ browser.anchorID(of: $0) }) where anchorID != anchor {
+            browser.setAgentWorking(false, inAnchor: anchorID)
+        }
+    }
+
+    /// The profile's notes about the person, nil in a private window. Only the in-app assistant reads them.
+    var assistantFacts: AssistantFacts? {
+        browser.context.assistantFacts
     }
 }

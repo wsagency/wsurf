@@ -23,7 +23,7 @@ private struct StubCatalog: LyricsSource {
 }
 
 private func scratchDefaults() -> UserDefaults {
-    UserDefaults(suiteName: "lyrics-tests-\(UUID().uuidString)")!
+    UserDefaults(suiteName: AppDatabase.defaultsSuite("lyrics-tests-\(UUID().uuidString)"))!
 }
 
 private func match(

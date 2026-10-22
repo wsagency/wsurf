@@ -452,4 +452,52 @@ struct VaultRevisionTests {
             try f.verify()
         }
     }
+
+    // MARK: Reading the values
+
+    @Test func revisionValuePageReturnsSupersededValuesNewestFirst() async throws {
+        let account = VaultFixtures.account(username: "ada", password: "pw-1")
+        try await VaultStoreFixture.withRig(accounts: [account]) { rig in
+            var second = try await rig.snapshot().account(account.id)
+            second.password = "pw-2"
+            _ = try await rig.commit([second], cause: "rotated")
+            var third = try await rig.snapshot().account(account.id)
+            third.password = "pw-3"
+            third.displayName = "Renamed"
+            _ = try await rig.commit([third], cause: CredentialChangeCause.import)
+
+            let page = try await rig.store.revisionValuePage(vaultID: rig.f.vaultID, accountID: account.id, after: nil, using: rig.access)
+            let listing = try await rig.store.revisionPage(vaultID: rig.f.vaultID, accountID: account.id, after: nil, using: rig.access)
+            #expect(page.items.map(\.item) == listing.items)
+            #expect(page.next == nil && page.items.count == 3)
+            // The commit that made pw-3 comes first, then the one that made pw-2.
+            let passwords = try page.items.filter { $0.item.subject == .password }
+                .map { try JSONDecoder().decode(PasswordValue.self, from: $0.value).password }
+            #expect(passwords == ["pw-2", "pw-1"])
+            #expect(page.items.map(\.item.cause).prefix(2).allSatisfy { $0 == CredentialChangeCause.import })
+            #expect(page.items.last?.item.cause == "rotated")
+            let details = try #require(page.items.first { $0.item.subject == .metadata })
+            #expect(try JSONDecoder().decode(MetadataProjection.self, from: details.value).displayName == nil)
+        }
+    }
+
+    @Test func revisionValuePageRefusesAnotherAccountsRow() async throws {
+        let first = VaultFixtures.account(username: "ada", password: "ada-1")
+        let other = VaultFixtures.account(username: "grace", password: "grace-1")
+        try await VaultStoreFixture.withRig(accounts: [first, other]) { rig in
+            var edited = try await rig.snapshot().accounts
+            for index in edited.indices {
+                edited[index].password = (edited[index].password ?? "") + "-edited"
+            }
+            _ = try await rig.commit(edited)
+
+            let page = try await rig.store.revisionValuePage(vaultID: rig.f.vaultID, accountID: first.id, after: nil, using: rig.access)
+            let owned = try rig.f.revisions().filter { $0.ownerID == first.id }.map(\.recordID)
+            #expect(page.items.map(\.item.id) == owned)
+            let values = try page.items.map { try JSONDecoder().decode(PasswordValue.self, from: $0.value).password }
+            #expect(values == ["ada-1"])
+            let unknown = try await rig.store.revisionValuePage(vaultID: rig.f.vaultID, accountID: UUID(), after: nil, using: rig.access)
+            #expect(unknown.items.isEmpty && unknown.next == nil)
+        }
+    }
 }

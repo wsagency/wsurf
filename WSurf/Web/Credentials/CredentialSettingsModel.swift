@@ -22,34 +22,54 @@ final class CredentialSettingsModel {
     /// Set when unlocking was refused because the vault is a v1 file (or an interrupted migration) and the user has not
     /// yet agreed to migrate it; no passkey prompt happened. Unlock again with `confirmMigration: true` after consent.
     private(set) var needsMigrationConfirmation = false
-    /// The profile's active vaults as the last discovery listed them (names stay `nil` until a vault is unlocked).
-    private(set) var vaults: [VaultListing] = []
+    /// The profile's active vaults as the last discovery listed them (names stay `nil` until a vault is unlocked). Internal for the model's extensions.
+    var vaults: [VaultListing] = []
     /// The open state the last discovery read; `nil` before it and for a test-injected manager. Creating a vault is offered
     /// only from a confirmed state, never inferred from an empty list.
     private(set) var openState: StoreOpenState?
     /// Set when the store refused to open, or a later read found it closed. The page then shows only the exact paths and a re-check.
     private(set) var failClosed: StoreFailClosed?
-    /// Every enrolled unlock passkey of every listed vault (plaintext discovery, no secret): the pair is the identity.
-    private(set) var existingPasskeys: [(vault: VaultListing, unlock: VaultUnlock)] = []
+    /// Every enrolled unlock passkey of every listed vault (plaintext discovery, no secret): the pair is the identity. Only the vault's
+    /// id is kept; its name is read from `vaults` when asked, so a lock or an unlock cannot leave a second copy of it behind.
+    private var enrolledPasskeys: [(vaultID: UUID, unlock: VaultUnlock)] = []
     private var storedDefaultVaultID: UUID?
     /// True while an unlock is verifying the vault (it took longer than the store's threshold); only meaningful during `unlock`.
     private(set) var isVerifying = false
     @ObservationIgnored private var unlockInFlight = false
+    /// True from the page's creation (and from `close()`) until its first `load()` ends. A vault whose lease is still valid is not locked,
+    /// but this model learns that only by loading, so until then the page shows neither "locked" nor content. See `presentation`.
+    private(set) var isOpening = false
+    @ObservationIgnored private var openingBound: Task<Void, Never>?
+    /// How long `isOpening` may last without a load ending; a seam so a test does not wait for the real time.
+    @ObservationIgnored private let openingDuration: Duration
 
     /// The one vault this page operates on; `nil` until discovery selects one, and while the profile has no vault.
     /// Read by `CredentialSettingsModel+Export`; only this class sets it.
     private(set) var manager: CredentialManager?
-    /// `nil` for private browsing and for a test-injected manager (which owns its own store).
-    @ObservationIgnored private let store: ProfileVaultStore?
+    /// `nil` for private browsing and for a test-injected manager (which owns its own store). Internal for the model's extensions.
+    @ObservationIgnored let store: ProfileVaultStore?
     /// Test seam: managers made here use it instead of the system passkey UI, which the shared registry's managers always use.
     @ObservationIgnored private let native: VaultNativeUnlock?
-    @ObservationIgnored private let pasteboard: NSPasteboard
+    /// Internal for `CredentialSettingsModel+Copy`, the one clipboard exit.
+    @ObservationIgnored let pasteboard: NSPasteboard
+    /// How long a copy confirmation stays, and how long one that offers Undo does; seams so a test does not wait for the real time.
+    @ObservationIgnored private let noticeDuration: Duration
+    @ObservationIgnored private let undoNoticeDuration: Duration
+    /// Fresh device-owner authentication (Touch ID or the Mac password) before a card's or an ID document's hidden values are shown,
+    /// copied or opened in the editor. Returns only on success. A seam so a test decides the answer; internal for the extensions.
+    @ObservationIgnored let verifyUser: @MainActor (String) async throws -> Void
+    @ObservationIgnored private var noticeGeneration = 0
+    /// What the last copy or list action did, for a moment ("Password Copied", "Moved 3 credentials to Trash."): the name of the
+    /// part or a count, never a value.
+    private(set) var notice: CredentialNotice?
     private var session: CredentialVaultSession?
     /// Internal for `CredentialSettingsModel+Export`.
     @ObservationIgnored let exchange: CredentialExchangeCoordinator
     /// Identifies this model to the exchange coordinator. One profile has one shared manager but every settings page
     /// builds its own model, so the import this model began is the only one it may see, decide, commit or cancel.
     @ObservationIgnored let owner = UUID()
+    /// The one-time move of the passwords saved before Credential Manager (`CredentialSettingsModel+LegacyPasswords`).
+    @ObservationIgnored let legacy: LegacyPasswordImport
     /// The finished import's per-credential results, bound to the authorization they were produced under.
     private var importResult: (outcome: CredentialImportOutcome, epoch: UInt64)?
     /// What the last import did to each credential (titles and sites, never secret values). Dropped when the vault locks
@@ -61,6 +81,8 @@ final class CredentialSettingsModel {
     /// that vault is selected. `nil` before any, or after the user dismisses it.
     /// Internal for `CredentialSettingsModel+Export`, which records its own endings.
     var ownMessage: (message: CredentialTransferMessage, vaultID: UUID?)?
+    /// The vault this page deleted last, until the user dismisses it. Internal for `CredentialSettingsModel+VaultDeletion`.
+    var deletedVault: DeletedVault?
 
     /// `manager` and `native` are seams for tests that need their own clock or passkeys; production selects the profile's
     /// default vault (else the lowest-ordinal one) through the shared registry once `load()` has listed the vaults.
@@ -69,12 +91,21 @@ final class CredentialSettingsModel {
         pasteboard: NSPasteboard = .general,
         exchange: CredentialExchangeCoordinator = .shared,
         manager: CredentialManager? = nil,
-        native: VaultNativeUnlock? = nil
+        native: VaultNativeUnlock? = nil,
+        noticeDuration: Duration = .seconds(1.6),
+        undoNoticeDuration: Duration = .seconds(4),
+        openingDuration: Duration = .seconds(2),
+        verifyUser: @escaping @MainActor (String) async throws -> Void = { try await NativeWebAuthnInteraction().verifyUser(reason: $0, until: nil) }
     ) {
         self.profile = profile
+        self.verifyUser = verifyUser
         self.exchange = exchange
         self.pasteboard = pasteboard
+        self.noticeDuration = noticeDuration
+        self.undoNoticeDuration = undoNoticeDuration
+        self.openingDuration = openingDuration
         self.native = native
+        legacy = LegacyPasswordImport(profile: profile)
         if profile.isPrivate {
             self.manager = nil
             store = nil
@@ -83,9 +114,35 @@ final class CredentialSettingsModel {
             store = manager == nil ? try? CredentialManager.store(for: profile) : nil
         }
         watchAuthorization()
+        watchListing()
+        startOpening()
     }
 
     // MARK: Observable state
+
+    enum Presentation: Equatable {
+        /// The first load has not ended: it is not yet known whether the vault is locked.
+        case opening
+        /// A session the manager's current authorization backs.
+        case content
+        case locked
+    }
+
+    /// What the page draws. `.content` is exactly `isLoaded`, so nothing is shown before the vault really is unlocked; `.opening` shows
+    /// nothing of the vault either, and the first load decides what follows it: content, or the lock the vault really has.
+    var presentation: Presentation {
+        if isLoaded {
+            return .content
+        }
+        return isOpening ? .opening : .locked
+    }
+
+    /// The enrolled passkeys of the vaults the page lists now, each with that vault's current listing.
+    var existingPasskeys: [(vault: VaultListing, unlock: VaultUnlock)] {
+        enrolledPasskeys.compactMap { item in
+            vaults.first { $0.vaultID == item.vaultID }.map { (vault: $0, unlock: item.unlock) }
+        }
+    }
 
     var isAvailable: Bool {
         manager != nil || store != nil
@@ -130,9 +187,6 @@ final class CredentialSettingsModel {
     func dismissUnconfirmedPasskeys() {
         manager?.dismissUnconfirmedPasskeys()
     }
-    var pendingRemoval: PendingRemoval? {
-        live?.pendingRemoval
-    }
     var pendingUnlockRemoval: PendingUnlockRemoval? {
         live?.pendingUnlockRemoval
     }
@@ -167,14 +221,21 @@ final class CredentialSettingsModel {
         ) ?? false
     }
 
-    // MARK: Trash and earlier versions (state)
+    // MARK: Trash and editing (state)
 
+    /// The loaded Trash entries, without the ones marked for deletion.
     var trashItems: [TrashItem] {
-        live?.trash ?? []
+        guard let live else { return [] }
+        let marked = Set(live.markedForDeletion)
+        return marked.isEmpty ? live.trash : live.trash.filter { !marked.contains($0.id) }
     }
-    /// The vault's verified Trash count, not the rows on screen; `nil` until the Trash has been loaded.
+    /// The vault's verified Trash count without the entries marked for deletion, not the rows on screen; `nil` until the Trash has been loaded.
     var trashTotal: Int? {
-        live?.counts?.trash.trashEntry
+        live?.counts.map { max($0.trash.trashEntry - (live?.markedForDeletion.count ?? 0), 0) }
+    }
+    /// How many Trash entries X has marked for deletion in this session.
+    var markedCount: Int {
+        live?.markedForDeletion.count ?? 0
     }
     var trashHasMore: Bool {
         live?.trashNext != nil
@@ -184,15 +245,6 @@ final class CredentialSettingsModel {
     }
     var pendingPurge: PendingPurge? {
         live?.pendingPurge
-    }
-    var revisionItems: [RevisionItem] {
-        live?.revisions ?? []
-    }
-    var revisionHasMore: Bool {
-        live?.revisionNext != nil
-    }
-    var versionsAccountID: UUID? {
-        live?.versionsAccountID
     }
 
     var draft: CredentialDraft? {
@@ -217,9 +269,31 @@ final class CredentialSettingsModel {
         }
     }
 
-    /// Forgets everything shown without touching the manager's authorization.
+    /// Forgets everything shown without touching the manager's authorization. The page may come back before the next `load()`
+    /// has read the session again, and that gap is not a lock.
     func close() {
         session = nil
+        startOpening()
+    }
+
+    /// A manager that is bound and locked has nothing to wait for; an unlocked one is about to be read, and one not bound yet
+    /// (production, before discovery) may be either. The bound is a fail-safe: past it the page says locked, never content.
+    private func startOpening() {
+        openingBound?.cancel()
+        openingBound = nil
+        isOpening = isAvailable && manager?.isUnlocked != false
+        guard isOpening else { return }
+        openingBound = Task { [weak self, duration = openingDuration] in
+            try? await Task.sleep(for: duration)
+            guard !Task.isCancelled else { return }
+            self?.finishOpening()
+        }
+    }
+
+    private func finishOpening() {
+        openingBound?.cancel()
+        openingBound = nil
+        isOpening = false
     }
 
     func lock() {
@@ -231,6 +305,13 @@ final class CredentialSettingsModel {
 
     func load() async {
         guard isAvailable else { return }
+        // A load the page cancelled (its authorization changed under it) is followed by another one, so only a load that ran to its
+        // end has seen the vault.
+        defer {
+            if !Task.isCancelled {
+                finishOpening()
+            }
+        }
         if manager?.isUnlocked != true {
             session = nil
             await discoverVault()
@@ -267,6 +348,8 @@ final class CredentialSettingsModel {
             return
         }
         await load()
+        // An already unlocked vault is not discovered again by `load`, so its listing is read here.
+        await refreshListing()
     }
 
     /// Reads the store again from the start. It writes nothing: a closed store is only looked at, never repaired or reset.
@@ -297,7 +380,7 @@ final class CredentialSettingsModel {
                 case .firstRun:
                     failClosed = nil
                     vaults = []
-                    existingPasskeys = []
+                    enrolledPasskeys = []
                     bind(nil)
                     vaultExists = false
                     error = nil
@@ -316,7 +399,7 @@ final class CredentialSettingsModel {
                 guard !Task.isCancelled else { return }
                 failClosed = nil
                 vaults = listing
-                existingPasskeys = enrolled
+                enrolledPasskeys = enrolled.map { (vaultID: $0.vault.vaultID, unlock: $0.unlock) }
                 storedDefaultVaultID = preferred
                 // Past a first run a store holds at least one vault: an empty list is a read the page can't trust.
                 guard let lowest = listing.min(by: { $0.ordinal < $1.ordinal }) else { throw CredentialStoreError.stateChanged }
@@ -351,7 +434,7 @@ final class CredentialSettingsModel {
     private func enterFailClosed(_ closed: StoreFailClosed) {
         failClosed = closed
         vaults = []
-        existingPasskeys = []
+        enrolledPasskeys = []
         bind(nil)
         vaultExists = nil
         error = nil
@@ -397,6 +480,7 @@ final class CredentialSettingsModel {
                 throw CredentialVaultError.invalidData
             }
             existing = account
+            try await verifySensitiveItems(of: account)
         }
         let draft = CredentialDraft(editing: existing, revision: snapshot.revision)
         try update(epoch) {
@@ -414,8 +498,11 @@ final class CredentialSettingsModel {
             try? update(session.epoch) { $0.draft = nil }
             return VaultCommitReceipt(revision: draft.revision)
         }
-        let receipt = try await save(draft.account(), expectedRevision: draft.revision)
+        let saved = try draft.account()
+        let started = session.knownStamps?[saved.id]
+        let receipt = try await save(saved, expectedRevision: draft.revision)
         try? update(session.epoch) { $0.draft = nil }
+        await recordSave(of: saved, from: draft.original, started: started, receipt: receipt, epoch: session.epoch)
         return receipt
     }
 
@@ -430,14 +517,16 @@ final class CredentialSettingsModel {
         } else {
             accounts.append(account)
         }
-        return try await write(accounts, expectedRevision: expectedRevision, epoch: epoch)
+        return try await write(accounts, expectedRevision: expectedRevision, epoch: epoch, changing: [account.id])
     }
 
     func remove(accountID: UUID, expectedRevision: UInt64, epoch bound: UInt64? = nil) async throws -> VaultCommitReceipt {
         let (epoch, snapshot) = try await authorizedSnapshot(epoch: bound)
         guard snapshot.revision == expectedRevision else { throw CredentialVaultError.staleRevision }
         guard snapshot.accounts.contains(where: { $0.id == accountID }) else { throw CredentialVaultError.invalidData }
-        return try await write(snapshot.accounts.filter { $0.id != accountID }, expectedRevision: expectedRevision, epoch: epoch)
+        return try await write(
+            snapshot.accounts.filter { $0.id != accountID }, expectedRevision: expectedRevision, epoch: epoch, changing: [accountID]
+        )
     }
 
     // MARK: Reveal and copy
@@ -467,11 +556,7 @@ final class CredentialSettingsModel {
     }
 
     func copyPassword(accountID: UUID) async throws {
-        let (epoch, snapshot) = try await authorizedSnapshot()
-        guard let password = snapshot.accounts.first(where: { $0.id == accountID })?.password else {
-            throw CredentialVaultError.invalidData
-        }
-        try deliver(epoch: epoch) { password }
+        try await copy(.password, of: .stored(accountID))
     }
 
     /// `now` is read after the last suspension so a step boundary crossed while waiting yields the new code.
@@ -479,11 +564,7 @@ final class CredentialSettingsModel {
         accountID: UUID,
         now: @MainActor () -> TimeInterval = { Date().timeIntervalSince1970 }
     ) async throws {
-        let (epoch, snapshot) = try await authorizedSnapshot()
-        guard let generator = snapshot.accounts.first(where: { $0.id == accountID })?.totp else {
-            throw CredentialVaultError.invalidData
-        }
-        try deliver(epoch: epoch) { try TOTP.code(generator, at: now()).value }
+        try await copy(.code, of: .stored(accountID), now: now)
     }
 
     // MARK: Native unlock management
@@ -493,14 +574,14 @@ final class CredentialSettingsModel {
     /// an existing passkey that is no longer enrolled in its vault is refused, never swapped for another. The first vault is
     /// created only from a confirmed first run; a further one is authorized by the selected vault if it is unlocked, else the
     /// lowest-numbered unlocked one. A v1 vault or interrupted migration is listed, so it never offers Create.
-    func createVault(name: String, choice: NewVaultChoice, in anchor: ASPresentationAnchor) async {
+    func createVault(name: String, choice: NewVaultChoice, in anchor: @autoclosure () -> ASPresentationAnchor) async {
         guard let store else { return }
         var created: UUID?
         let succeeded = await guarded {
             let chosen = try await store.creationChoice(for: choice) {
                 CredentialManager.unlockedAuthorizer(in: $0, selected: manager, profile: profile)
             }
-            created = try await CredentialManager.createVault(profile: profile, name: name, choice: chosen, in: anchor, native: native)
+            created = try await CredentialManager.createVault(profile: profile, name: name, choice: chosen, in: anchor(), native: native)
         }
         guard succeeded, let created else { return }
         do {
@@ -514,7 +595,9 @@ final class CredentialSettingsModel {
 
     /// `confirmMigration` is the user's explicit consent to migrate a v1 vault; without it the manager refuses before any
     /// passkey prompt and `needsMigrationConfirmation` is set.
-    func unlock(in anchor: ASPresentationAnchor, confirmMigration: Bool = false, verifying: (@Sendable (Bool) -> Void)? = nil) async {
+    func unlock(
+        in anchor: @autoclosure () -> ASPresentationAnchor, confirmMigration: Bool = false, verifying: (@Sendable (Bool) -> Void)? = nil
+    ) async {
         unlockInFlight = true
         defer {
             unlockInFlight = false
@@ -528,17 +611,18 @@ final class CredentialSettingsModel {
                 }
             }
         }
-        if await perform({ try await $0.unlock(in: anchor, confirmMigration: confirmMigration, verifying: report) }) {
+        if await perform({ try await $0.unlock(in: anchor(), confirmMigration: confirmMigration, verifying: report) }) {
             // An upgraded vault is a new state of the store: read it again before the page offers anything from the old one.
             if store != nil, openState?.isProvisional != true {
                 await discoverVault()
             }
+            await refreshListing()
             await load()
         }
     }
 
-    func addUnlock(in anchor: ASPresentationAnchor) async {
-        _ = await perform { _ = try await $0.addUnlock(in: anchor) }
+    func addUnlock(in anchor: @autoclosure () -> ASPresentationAnchor) async {
+        _ = await perform { _ = try await $0.addUnlock(in: anchor()) }
     }
 
     /// Marks one of the profile's vaults as the one autofill and saving use without asking. Only a listed vault can be chosen.
@@ -546,194 +630,6 @@ final class CredentialSettingsModel {
         guard let store, vaults.contains(where: { $0.vaultID == vaultID }) else { return }
         await store.setDefaultVault(vaultID)
         storedDefaultVaultID = await store.defaultVaultID()
-    }
-
-    // MARK: Trash and earlier versions
-
-    /// The first page of the vault's Trash and its verified counts. Everything lives in the authorization session, so a lock,
-    /// a re-unlock or another vault starts again from nothing.
-    func loadTrash() async throws {
-        guard let live else { throw CredentialVaultError.unauthorized }
-        try await fetchTrash(epoch: live.epoch)
-    }
-
-    func loadMoreTrash() async throws {
-        guard let live, let after = live.trashNext, let manager else { return }
-        let page = try await manager.trashPage(after: after)
-        try Task.checkCancellation()
-        try update(live.epoch) {
-            guard $0.trashNext == after else { return }
-            let known = Set($0.trash.map(\.id))
-            $0.trash += page.items.filter { !known.contains($0.id) }
-            $0.trashNext = page.next
-        }
-    }
-
-    /// Restores a removed credential, or one removed password, code or passkey, as it was. The vault checks what the copy would
-    /// collide with; a refusal writes nothing and is shown on the entry, which offers the same copy again or dismissing it.
-    func restore(entryID: UUID) async {
-        guard let live, let manager else { return }
-        _ = await guarded {
-            let (epoch, snapshot) = try await authorizedSnapshot(epoch: live.epoch)
-            @MainActor func refuse(_ block: UndeleteBlock) throws {
-                try update(epoch) { $0.restoreBlocked = RestoreBlocked(entryID: entryID, block: block) }
-            }
-            if let block = try await manager.previewUndelete(entryID: entryID).block {
-                try refuse(block)
-                return
-            }
-            do {
-                _ = try await manager.undelete(entryID: entryID, expectedRevision: snapshot.revision, authorizedEpoch: epoch)
-            } catch CredentialStoreError.undeleteBlocked(let block) {
-                try refuse(block)
-                return
-            }
-            try update(epoch) { $0.restoreBlocked = nil }
-            try await reloadAfterWrite(epoch: epoch)
-        }
-    }
-
-    func dismissRestoreBlock() {
-        if live != nil {
-            session?.restoreBlocked = nil
-        }
-    }
-
-    /// `entryIDs` are Trash entries already listed; `emptyAll` ignores them and purges everything the Trash holds when the
-    /// write happens. Nothing is deleted until `confirmPurge`, which asks for a fresh passkey assertion.
-    func requestPurge(entryIDs: [UUID], emptyAll: Bool) {
-        guard let live, let manager, let counts = live.counts else { return }
-        let total = counts.trash.trashEntry
-        let ids = emptyAll ? [] : entryIDs
-        guard emptyAll ? total > 0 : !ids.isEmpty && ids.allSatisfy({ id in live.trash.contains { $0.id == id } }) else { return }
-        session?.pendingPurge = PendingPurge(
-            entryIDs: ids, emptyAll: emptyAll, count: emptyAll ? total : ids.count, vaultID: manager.vaultID, epoch: live.epoch,
-            warning: PendingPurge.Warning(logicalOnly: true, preMigrationBackup: manager.preMigrationBackup)
-        )
-    }
-
-    func cancelPurge() {
-        if live != nil {
-            session?.pendingPurge = nil
-        }
-    }
-
-    /// The confirmation stays until the purge has actually run: a declined, cancelled or failed passkey assertion leaves it
-    /// shown so the same purge can be confirmed again or cancelled. A tap while the purge is in flight does nothing, a success
-    /// consumes the confirmation, and a lock, re-unlock or another vault drops it with the session.
-    func confirmPurge(in anchor: ASPresentationAnchor) async {
-        guard !isBusy else { return }
-        guard let live, let pending = live.pendingPurge, pending.epoch == live.epoch, pending.vaultID == manager?.vaultID else {
-            session?.pendingPurge = nil
-            error = Self.message(for: CredentialVaultError.unauthorized)
-            return
-        }
-        let purged = await perform(epoch: pending.epoch) {
-            _ = try await $0.purge(entryIDs: pending.entryIDs, emptyAll: pending.emptyAll, in: anchor)
-        }
-        guard purged else { return }
-        if self.live?.pendingPurge == pending {
-            session?.pendingPurge = nil
-        }
-        _ = await guarded { try await reloadAfterWrite(epoch: pending.epoch) }
-    }
-
-    /// The first page of one credential's earlier versions.
-    func loadVersions(accountID: UUID) async throws {
-        guard let live else { throw CredentialVaultError.unauthorized }
-        try await fetchVersions(accountID: accountID, epoch: live.epoch)
-    }
-
-    func loadMoreVersions() async throws {
-        guard let live, let accountID = live.versionsAccountID, let after = live.revisionNext, let manager else { return }
-        let page = try await manager.revisionPage(accountID: accountID, after: after)
-        try Task.checkCancellation()
-        try update(live.epoch) {
-            guard $0.versionsAccountID == accountID, $0.revisionNext == after else { return }
-            let known = Set($0.revisions.map(\.id))
-            $0.revisions += page.items.filter { !known.contains($0.id) }
-            $0.revisionNext = page.next
-        }
-    }
-
-    func closeVersions() {
-        if live != nil {
-            session?.versionsAccountID = nil
-            session?.revisions = []
-            session?.revisionNext = nil
-        }
-    }
-
-    /// Only a listed version of a password, one-time code or website details restores; a passkey never does, so this refuses
-    /// before the vault is asked. The value being replaced is kept as a new earlier version.
-    func restoreVersion(revisionID: UUID) async {
-        guard let live, let manager, let item = live.revisions.first(where: { $0.id == revisionID }) else { return }
-        guard item.subject.restoresFromEarlierVersions else {
-            error = String(localized: "A passkey can’t be restored from an earlier version.")
-            return
-        }
-        _ = await guarded {
-            let (epoch, snapshot) = try await authorizedSnapshot(epoch: live.epoch)
-            _ = try await manager.restoreRevision(revisionID: revisionID, expectedRevision: snapshot.revision, authorizedEpoch: epoch)
-            try await reloadAfterWrite(epoch: epoch)
-        }
-    }
-
-    private func fetchTrash(epoch: UInt64) async throws {
-        guard let manager, manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-        let page = try await manager.trashPage(after: nil)
-        let counts = try await manager.historyCounts()
-        try Task.checkCancellation()
-        try update(epoch) {
-            $0.trash = page.items
-            $0.trashNext = page.next
-            $0.counts = counts
-            $0.restoreBlocked = nil
-            $0.pendingPurge = nil
-        }
-    }
-
-    private func fetchVersions(accountID: UUID, epoch: UInt64) async throws {
-        guard let manager, manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-        let page = try await manager.revisionPage(accountID: accountID, after: nil)
-        try Task.checkCancellation()
-        try update(epoch) {
-            $0.versionsAccountID = accountID
-            $0.revisions = page.items
-            $0.revisionNext = page.next
-        }
-    }
-
-    /// After a write this page made: the accounts as stored, and whichever history list is open, from its first page.
-    private func reloadAfterWrite(epoch: UInt64) async throws {
-        let (_, snapshot) = try await authorizedSnapshot(epoch: epoch)
-        try update(epoch) { $0.refresh(snapshot) }
-        if live?.counts != nil {
-            try await fetchTrash(epoch: epoch)
-        }
-        if let accountID = live?.versionsAccountID {
-            try await fetchVersions(accountID: accountID, epoch: epoch)
-        }
-    }
-
-    /// Presents a removal for confirmation, capturing the revision and authorization it is shown at.
-    func requestRemoval(accountID: UUID) {
-        guard let live, let summary = live.summaries.first(where: { $0.id == accountID }) else { return }
-        session?.pendingRemoval = PendingRemoval(summary: summary, revision: live.revision, epoch: live.epoch)
-    }
-
-    func cancelRemoval() {
-        if live != nil {
-            session?.pendingRemoval = nil
-        }
-    }
-
-    /// Writes against the revision and epoch captured when the removal was presented, never confirmation time.
-    func confirmRemoval(_ pending: PendingRemoval) async throws -> VaultCommitReceipt {
-        if live?.pendingRemoval == pending {
-            session?.pendingRemoval = nil
-        }
-        return try await remove(accountID: pending.summary.id, expectedRevision: pending.revision, epoch: pending.epoch)
     }
 
     /// The last unlock passkey can't be removed: the vault would have no way to open.
@@ -754,9 +650,9 @@ final class CredentialSettingsModel {
 
     /// Like the purge: the confirmation is kept until the removal has run, so a declined or failed assertion with one of the
     /// remaining passkeys can be retried. A removal that no longer applies (the passkey is already gone) is dropped.
-    func confirmUnlockRemoval(_ pending: PendingUnlockRemoval, in anchor: ASPresentationAnchor) async {
+    func confirmUnlockRemoval(_ pending: PendingUnlockRemoval, in anchor: @autoclosure () -> ASPresentationAnchor) async {
         guard !isBusy, live?.pendingUnlockRemoval == pending else { return }
-        let removed = await perform(epoch: pending.epoch) { _ = try await $0.removeUnlock(credentialID: pending.credentialID, in: anchor) }
+        let removed = await perform(epoch: pending.epoch) { _ = try await $0.removeUnlock(credentialID: pending.credentialID, in: anchor()) }
         guard live?.pendingUnlockRemoval == pending else { return }
         if removed || !(manager?.unlockCredentials.contains { $0.credentialID == pending.credentialID } ?? false) {
             session?.pendingUnlockRemoval = nil
@@ -795,9 +691,10 @@ final class CredentialSettingsModel {
         { [weak self, vault = manager.vaultID] in self?.ownMessage = ($0, vault) }
     }
 
-    /// The unlocked vault's name, for the transfer header; `nil` while it is locked.
+    /// The unlocked vault's name, for the transfer header; `nil` while it is locked, whatever an older listing still holds.
     var vaultName: String? {
-        vaults.first { $0.vaultID == manager?.vaultID }?.name
+        guard isUnlocked else { return nil }
+        return vaults.first { $0.vaultID == manager?.vaultID }?.name
     }
 
     func beginImport() async {
@@ -807,17 +704,8 @@ final class CredentialSettingsModel {
         _ = await perform(describe: { self.importMessage(for: $0) }) { try await self.exchange.beginImport(token: token, into: $0, owner: self.owner, onEnding: self.importEnding(in: $0)) }
     }
 
-    func chooseImport(_ choice: CredentialImportChoice, for incoming: CredentialIdentity) {
-        do { try exchange.choose(choice, for: incoming, owner: owner) } catch { self.error = importMessage(for: error, origin: currentImportOrigin()) }
-    }
-
-    /// Stored accounts the credential can be merged into, each with every website it would then work on.
-    func mergeTargets(for incoming: CredentialIdentity) -> [CredentialImportReview.Target] {
-        exchange.mergeTargets(for: incoming, owner: owner)
-    }
-
     func commitImport() async {
-        let expected = importReview?.outcome
+        let expected = plannedImportOutcome()
         let epoch = manager?.authorizationEpoch
         var receipt: VaultCommitReceipt?
         let vault = manager?.vaultID
@@ -829,8 +717,9 @@ final class CredentialSettingsModel {
         if let epoch, epoch == manager?.authorizationEpoch {
             importResult = (expected, epoch)
         }
-        ownMessage = (.succeeded(expected, receipt: receipt), vault)
+        ownMessage = (.succeeded(expected, receipt: receipt, origin: origin), vault)
         await load()
+        await legacyImportCommitted(origin)
     }
 
     /// Ends the review. The system's token for it was used up when the import began, so the message says the import was
@@ -896,7 +785,44 @@ final class CredentialSettingsModel {
                 self?.session = nil
                 self?.importResult = nil
             }
-            Task { @MainActor [weak self] in if self?.manager === manager { self?.watchAuthorization() } }
+            Task { @MainActor [weak self] in
+                guard self?.manager === manager else { return }
+                self?.watchAuthorization()
+                await self?.refreshListing()
+            }
+        }
+    }
+
+    /// A lock or an unlock of ANY of the profile's vaults changes what the listing may show, and this page observes only its selected
+    /// manager. So it also observes the shared counter: a lock drops the names of vaults that are no longer open at once, and every
+    /// change reads the list again.
+    private func watchListing() {
+        withObservationTracking {
+            _ = VaultStateChanges.shared.count(for: profile.id)
+        } onChange: { [weak self] in
+            MainActor.assumeIsolated { self?.hideNamesOfLockedVaults() }
+            // Re-armed once the change has landed, so a second change in the same turn is caught here, not by the observation.
+            Task { @MainActor [weak self] in
+                self?.watchListing()
+                self?.hideNamesOfLockedVaults()
+                await self?.refreshListing()
+            }
+        }
+    }
+
+    /// A name is sealed while its vault is locked, so it does not stay in memory until the next read of the list.
+    private func hideNamesOfLockedVaults() {
+        var open = Set(CredentialManager.unlockedManagers(for: profile).map(\.vaultID))
+        if let manager, manager.isUnlocked {
+            open.insert(manager.vaultID)
+        }
+        let hidden = vaults.map { listing in
+            open.contains(listing.vaultID) ? listing : VaultListing(
+                vaultID: listing.vaultID, ordinal: listing.ordinal, name: nil, isUnlocked: false, isVerified: listing.isVerified
+            )
+        }
+        if hidden != vaults {
+            vaults = hidden
         }
     }
 
@@ -911,34 +837,37 @@ final class CredentialSettingsModel {
         return (epoch, snapshot)
     }
 
-    private func update(_ epoch: UInt64, _ change: (inout CredentialVaultSession) -> Void) throws {
+    func update(_ epoch: UInt64, _ change: (inout CredentialVaultSession) -> Void) throws {
         guard session?.epoch == epoch, manager?.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
         change(&session!)
     }
 
     /// Nothing throws once the vault has committed: the receipt reflects what is on disk, and a lock that
     /// landed meanwhile has already dropped the session.
-    private func write(_ accounts: [CredentialAccount], expectedRevision: UInt64, epoch: UInt64) async throws -> VaultCommitReceipt {
+    /// `changing` names the accounts the caller replaced in `accounts`; every other one is the snapshot's own.
+    private func write(
+        _ accounts: [CredentialAccount], expectedRevision: UInt64, epoch: UInt64, changing: Set<UUID>
+    ) async throws -> VaultCommitReceipt {
         guard let manager, manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
         // Last point before the durable write: a cancelled task or a changed authorization never commits.
         try Task.checkCancellation()
-        let receipt = try await manager.commit(accounts, expectedRevision: expectedRevision, authorizedEpoch: epoch)
+        let receipt = try await manager.commit(accounts, expectedRevision: expectedRevision, authorizedEpoch: epoch, changing: changing)
         try? update(epoch) { $0.committed(accounts, revision: receipt.revision) }
         return receipt
     }
 
-    /// The one clipboard exit. `produce` runs first, so whatever it costs (a code calculation, a clock read)
-    /// is over before the last authorization and cancellation check; a failure leaves the pasteboard untouched.
-    private func deliver(epoch: UInt64, _ produce: () throws -> String) throws {
-        let value = try produce()
-        try Task.checkCancellation()
-        guard manager?.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-        pasteboard.declareTypes([.string, Self.concealedType], owner: nil)
-        pasteboard.setString(value, forType: .string)
-        pasteboard.setString("", forType: Self.concealedType)
+    /// Shows `text` above the list for a moment; the latest one wins. A notice that offers Undo stays longer. Internal for the model's extensions.
+    func showNotice(_ text: LocalizedStringResource, undo: Bool = false, duration: Duration? = nil) {
+        notice = CredentialNotice(text: String(localized: text), offersUndo: undo)
+        noticeGeneration += 1
+        let generation = noticeGeneration
+        let lasts = duration ?? (undo ? undoNoticeDuration : noticeDuration)
+        Task { [weak self] in
+            try? await Task.sleep(for: lasts)
+            guard let self, noticeGeneration == generation else { return }
+            notice = nil
+        }
     }
-
-    private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
 
     /// Internal for `CredentialSettingsModel+Export`.
     func perform(
@@ -954,8 +883,8 @@ final class CredentialSettingsModel {
         return await guarded(describe: describe) { try await operation(manager) }
     }
 
-    /// The busy flag, the error and the migration-consent flag around one user action.
-    private func guarded(
+    /// The busy flag, the error and the migration-consent flag around one user action. Internal for the model's extensions.
+    func guarded(
         describe: (any Error) -> String? = { CredentialSettingsModel.message(for: $0) },
         _ work: () async throws -> Void
     ) async -> Bool {
@@ -980,14 +909,15 @@ final class CredentialSettingsModel {
     }
 
     /// Where this window's open import came from, which decides what a failed one tells the user to do to retry.
-    private func currentImportOrigin() -> CredentialTransferMessage.Origin {
+    /// Internal for `CredentialSettingsModel+ImportReview`.
+    func currentImportOrigin() -> CredentialTransferMessage.Origin {
         manager.map { exchange.importOrigin(for: $0, owner: owner) } ?? .system
     }
 
     /// The system's token is used up once an import is claimed, and a review that ends takes its data with it. So
     /// a failure that leaves neither a queued token nor an open review can only be redone from the other app, or, for a
     /// CSV file, by choosing the file again.
-    private func importMessage(for error: any Error, origin: CredentialTransferMessage.Origin = .system) -> String? {
+    func importMessage(for error: any Error, origin: CredentialTransferMessage.Origin = .system) -> String? {
         let staged = manager.map { exchange.hasStagedImport(for: $0, owner: owner) } ?? false
         return Self.importMessage(for: error, tokenSpent: exchange.pendingToken == nil && !staged, origin: origin)
     }

@@ -43,6 +43,210 @@ struct AskSurfaceModelTests {
         }
     }
 
+    @Test(.boundedWebViews, arguments: [AskSurface.Placement.toolbar, .startPage])
+    func tabScopesTheFieldToASiteAndEnterSearchesIt(placement: AskSurface.Placement) throws {
+        try Omnibox.$agentOnlyForTesting.withValue(true) {
+            let model = model(placement: placement)
+            let tab = model.browser.newTab()
+            let count = model.browser.tabs.count
+            model.fieldFocusDidChange(true)
+            model.interaction.text = "You"
+
+            #expect(model.suggestedSite != nil)
+            #expect(model.activateSiteSearch())
+            #expect(model.interaction.text.isEmpty)
+            #expect(model.suggestedSite == nil)
+            #expect(model.resultSections().isEmpty)
+            model.submit(in: model.resultSections())
+            #expect(model.searchSite != nil)
+
+            model.interaction.text = "lofi beats"
+            #expect(model.resultSections().flattened.count == 1)
+            model.submit(in: model.resultSections())
+
+            let site = try #require(SiteSearch.match("you"))
+            #expect(tab.urlString == site.searchURL(for: "lofi beats")?.absoluteString)
+            #expect(model.browser.tabs.count == count)
+            #expect(model.searchSite == nil)
+            #expect(!model.isFocused)
+        }
+    }
+
+    @Test(.boundedWebViews)
+    func commandReturnInSiteModeSearchesTheSiteInsteadOfAsking() throws {
+        try Omnibox.$agentOnlyForTesting.withValue(true) {
+            let model = model()
+            let tab = model.browser.newTab()
+            model.fieldFocusDidChange(true)
+            model.interaction.text = "git"
+            #expect(model.activateSiteSearch())
+            model.interaction.text = "swift"
+
+            model.askWhateverIsTyped()
+
+            let site = try #require(SiteSearch.match("git"))
+            #expect(tab.urlString == site.searchURL(for: "swift")?.absoluteString)
+            #expect(model.searchSite == nil)
+        }
+    }
+
+    @Test func submittingAnEmptySiteQueryStaysInSiteMode() {
+        Omnibox.$agentOnlyForTesting.withValue(true) {
+            let model = model()
+            let tab = model.browser.newTab()
+            let address = tab.urlString
+            model.fieldFocusDidChange(true)
+            model.interaction.text = "red"
+            #expect(model.activateSiteSearch())
+            model.interaction.text = "   "
+
+            model.submit(in: model.resultSections())
+            model.askWhateverIsTyped()
+
+            #expect(model.searchSite != nil)
+            #expect(model.isFocused)
+            #expect(tab.urlString == address)
+        }
+    }
+
+    @Test func removingTheSiteKeepsTheTypedQueryAndNormalResults() {
+        Omnibox.$agentOnlyForTesting.withValue(true) {
+            let model = model(placement: .startPage)
+            model.fieldFocusDidChange(true)
+            // The normal results come from open tabs and shared history, so this test supplies the tab they must find.
+            let tab = model.browser.newTab()
+            tab.urlString = "https://radio.example/lofi"
+            tab.title = "Lofi radio"
+            model.interaction.text = "youtube"
+            #expect(model.activateSiteSearch())
+            model.interaction.text = "lofi"
+            #expect(model.resultSections().flattened.count == 1)
+
+            #expect(model.removeSearchSite())
+            #expect(model.searchSite == nil)
+            #expect(model.interaction.text == "lofi")
+            let ids = model.resultSections().flattened.map(\.id)
+            #expect(ids.contains("ask-agent"), "\(ids)")
+            #expect(ids.contains("omnibox-tab-\(tab.id)"), "\(ids)")
+            #expect(!ids.contains { $0.hasPrefix("site-search-") }, "\(ids)")
+            #expect(!model.removeSearchSite())
+        }
+    }
+
+    /// Cached suggestions are applied synchronously when a query is offered for
+    /// completion, so a cache hit shows whether the typed text was offered to
+    /// the default engine without a request.
+    @Test func textTypedInSiteModeIsNotOfferedToTheDefaultEngineForCompletion() {
+        Omnibox.$agentOnlyForTesting.withValue(false) {
+            let model = model(placement: .startPage)
+            let settings = model.coordinator.context.settings
+            let previousEngine = settings.searchEngineID
+            let previousSuggestions = settings.showsSearchSuggestions
+            defer {
+                settings.searchEngineID = previousEngine
+                settings.showsSearchSuggestions = previousSuggestions
+            }
+            settings.searchEngineID = SearchEngine.duckDuckGo.id
+            settings.showsSearchSuggestions = true
+            model.suggestions.store(["youtube music"], for: "youtube", engine: .duckDuckGo)
+            model.suggestions.store(["private lofi mix"], for: "private lofi", engine: .duckDuckGo)
+            model.fieldFocusDidChange(true)
+
+            model.interaction.text = "private lofi"
+            #expect(!model.suggestions.phrases.isEmpty)
+
+            model.interaction.text = "youtube"
+            #expect(model.activateSiteSearch())
+            model.interaction.text = "private lofi"
+            #expect(model.suggestions.phrases.isEmpty)
+
+            #expect(model.removeSearchSite())
+            #expect(!model.suggestions.phrases.isEmpty)
+        }
+    }
+
+    @Test func leavingTheFieldDropsTheSite() {
+        Omnibox.$agentOnlyForTesting.withValue(true) {
+            let model = model()
+            model.fieldFocusDidChange(true)
+            model.interaction.text = "red"
+            #expect(model.activateSiteSearch())
+            model.cancelEditing()
+            #expect(model.searchSite == nil)
+
+            model.fieldFocusDidChange(true)
+            model.interaction.text = "red"
+            #expect(model.activateSiteSearch())
+            model.fieldFocusDidChange(false)
+            #expect(model.searchSite == nil)
+        }
+    }
+
+    @Test func theAddressCommandDropsTheSiteInsteadOfSearchingTheCurrentAddress() {
+        Omnibox.$agentOnlyForTesting.withValue(true) {
+            let model = model()
+            let tab = model.browser.newTab()
+            tab.urlString = "https://example.com/page"
+            model.fieldFocusDidChange(true)
+            model.interaction.text = "red"
+            #expect(model.activateSiteSearch())
+
+            model.focusFromAddressCommand()
+
+            #expect(model.searchSite == nil)
+            #expect(model.interaction.text == tab.urlString)
+        }
+    }
+
+    @Test func anEmptySiteSearchStaysVisibleOverRestingMessages() {
+        Omnibox.$agentOnlyForTesting.withValue(true) {
+            let model = model()
+            model.coordinator.statusMessage = "Working"
+            defer { model.coordinator.statusMessage = nil }
+            model.fieldFocusDidChange(true)
+            model.interaction.text = "red"
+            #expect(model.restingContent == nil)
+            #expect(model.activateSiteSearch())
+            #expect(model.interaction.text.isEmpty)
+            #expect(model.restingContent == nil)
+
+            model.removeSearchSite()
+            model.interaction.text = ""
+            #expect(model.restingContent != nil)
+        }
+    }
+
+    @Test func theCurrentAddressIsNotASiteRequestUntilTheTextChanges() {
+        Omnibox.$agentOnlyForTesting.withValue(true) {
+            let model = model()
+            let tab = model.browser.newTab()
+            tab.urlString = "https://www.youtube.com/"
+            model.focusFromAddressCommand()
+
+            #expect(model.interaction.text == tab.urlString)
+            #expect(model.suggestedSite == nil)
+            #expect(!model.activateSiteSearch())
+
+            model.interaction.text = "you"
+            #expect(model.suggestedSite != nil)
+        }
+    }
+
+    @Test func attachedTabsAndAnUnfocusedFieldOfferNoSite() {
+        Omnibox.$agentOnlyForTesting.withValue(true) {
+            let model = model(placement: .startPage)
+            model.interaction.text = "you"
+            #expect(model.suggestedSite == nil)
+
+            model.fieldFocusDidChange(true)
+            #expect(model.suggestedSite != nil)
+            model.mention(model.browser.newTab())
+            model.interaction.text = "you"
+            #expect(model.suggestedSite == nil)
+            #expect(!model.activateSiteSearch())
+        }
+    }
+
     private func model(placement: AskSurface.Placement = .toolbar) -> AskSurfaceModel {
         let coordinator = AppCoordinator()
         return AskSurfaceModel(
@@ -59,11 +263,11 @@ struct AskSurfaceModelTests {
         let model = model(placement: placement)
         defer { model.coordinator.closeWindow() }
         model.browser.newTab()
-        let spaceID = try #require(model.activeSpaceID)
+        let anchorID = try #require(model.activeAnchorID)
         let coordinator = model.coordinator
-        coordinator.agentReply.bind(toSpace: spaceID, showsInChrome: showsInChrome)
+        coordinator.agentReply.bind(toAnchor: anchorID, showsInChrome: showsInChrome)
         let question = coordinator.agentQuestions.present(
-            [.init(text: "Which color?", options: [])], inSpace: spaceID
+            [.init(text: "Which color?", options: [])], inAnchor: anchorID
         )
 
         #expect(model.pendingQuestion == (showsInChrome ? question : nil))
@@ -75,15 +279,15 @@ struct AskSurfaceModelTests {
     }
 
     @Test(arguments: [true, false])
-    func questionsFromAnotherSpaceStayHidden(showsInChrome: Bool) throws {
+    func questionsFromAnotherAnchorStayHidden(showsInChrome: Bool) throws {
         let model = model()
         defer { model.coordinator.closeWindow() }
         let origin = model.browser.newTab()
-        let spaceID = try #require(model.activeSpaceID)
+        let anchorID = try #require(model.activeAnchorID)
         let coordinator = model.coordinator
-        coordinator.agentReply.bind(toSpace: spaceID, showsInChrome: showsInChrome)
+        coordinator.agentReply.bind(toAnchor: anchorID, showsInChrome: showsInChrome)
         let question = coordinator.agentQuestions.present(
-            [.init(text: "Which color?", options: [])], inSpace: spaceID
+            [.init(text: "Which color?", options: [])], inAnchor: anchorID
         )
         model.browser.newTab()
 

@@ -269,7 +269,7 @@ struct ExtensionActionButton: View {
                 if !badge.isEmpty {
                     Text(verbatim: badge)
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.onAccent)
                         .padding(.horizontal, 3)
                         .padding(.vertical, 1)
                         .background(Theme.accent, in: Capsule())
@@ -304,6 +304,7 @@ struct ExtensionOverflowButton: View {
 
     @State private var hovering = false
     @Environment(\.chromeIsLight) private var chromeIsLight
+    @Environment(\.windowColorScheme) private var windowColorScheme
 
     var body: some View {
         Button {
@@ -323,7 +324,7 @@ struct ExtensionOverflowButton: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(
-            ChromeInk.glyph(onLight: chromeIsLight, hovering: hovering || isPresented)
+            ChromeInk.glyph(onLight: chromeIsLight, windowScheme: windowColorScheme, hovering: hovering || isPresented)
         )
         .onHover { hovering = $0 }
         .animation(Theme.Motion.quick, value: hovering)
@@ -679,7 +680,7 @@ struct StoreInstallButton: View {
                     .help("Already installed in WSurf")
             } else {
                 Button { Task { await manager.install(id: id, from: store) } } label: {
-                    label(symbol: "arrow.down.circle.fill", text: "Install", tint: Theme.accent)
+                    label(symbol: "arrow.down.circle.fill", text: "Install", tint: Theme.accent, textTint: Theme.accentText)
                 }
                 .buttonStyle(.plain)
                 .onHover { hovering = $0 }
@@ -692,6 +693,7 @@ struct StoreInstallButton: View {
         symbol: String?,
         text: LocalizedStringResource,
         tint: Color,
+        textTint: Color? = nil,
         spinning: Bool = false
     ) -> some View {
         HStack(spacing: 4) {
@@ -703,6 +705,7 @@ struct StoreInstallButton: View {
             }
             Text(text)
                 .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(textTint ?? tint)
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 9)

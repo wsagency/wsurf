@@ -77,7 +77,7 @@ extension PageDriver {
         let deadline = ContinuousClock.now + .seconds(1)
         repeat {
             let before = await evaluateJSON(scripted(computerContext + "return JSON.stringify({ document: R.documentID, revision: window.__wsurfComputer.revision });"), in: view)
-            guard let data = await screenshot(in: view), let bitmap = NSBitmapImageRep(data: data), bitmap.pixelsWide > 0, bitmap.pixelsHigh > 0,
+            guard case .success(let capture) = await screenshot(in: view), case let data = capture.jpeg, let bitmap = NSBitmapImageRep(data: data), bitmap.pixelsWide > 0, bitmap.pixelsHigh > 0,
                   let document = before?["document"] as? String, let revision = before?["revision"] as? Int else { throw PageComputerFailure.unavailable }
             let after = await evaluateJSON(scripted("return JSON.stringify({ document: R.documentID, revision: window.__wsurfComputer?.revision });"), in: view)
             guard after?["document"] as? String == document else { throw PageComputerFailure.stale }
@@ -214,7 +214,7 @@ extension PageDriver {
         guard current["signature"] as? String == target["signature"] as? String else { throw PageComputerFailure.stale }
         guard let window = view.window, window.attachedSheet == nil else { throw PageComputerFailure.unavailable }
         if type == "move", !NSApp.isActive || !window.isKeyWindow { throw PageComputerFailure.unavailable }
-        guard window.makeFirstResponder(view) else { throw PageComputerFailure.unavailable }
+        guard focusForKeyboard(view, in: window) else { throw PageComputerFailure.unavailable }
         let acceptedMoves = window.acceptsMouseMovedEvents
         if type == "move" { window.acceptsMouseMovedEvents = true }
         defer { window.acceptsMouseMovedEvents = acceptedMoves }
@@ -256,7 +256,7 @@ extension PageDriver {
         }
     }
 
-    private static func installComputerReceipt(_ event: String, in view: BrowserPage) async throws {
+    static func installComputerReceipt(_ event: String, in view: BrowserPage) async throws {
         let encoded = try OpenAIJSON.string(event).text()
         let result = await evaluateJSON(scripted("""
             window.__wsurfComputerAck?.dispose();
@@ -280,7 +280,7 @@ extension PageDriver {
         guard result?["ok"] as? Bool == true else { throw PageComputerFailure.unavailable }
     }
 
-    private static func awaitComputerReceipt(in view: BrowserPage, documentURL: URL?) async throws {
+    static func awaitComputerReceipt(in view: BrowserPage, documentURL: URL?) async throws {
         let deadline = ContinuousClock.now + .seconds(1)
         while true {
             try Task.checkCancellation()
@@ -323,7 +323,7 @@ extension PageDriver {
             try await performComputerClick(action, type: type, point: point, modifiers: modifiers, in: view, window: window)
         case "move":
             guard let point else { throw PageComputerFailure.unavailable }
-            try computerMouse(point: point, button: "left", phase: "move", modifiers: modifiers, in: view, window: window)
+            try movePointer(to: point, modifiers: modifiers, in: view, window: window)
         case "drag_events":
             let path = try (action["path"].array ?? []).map { try computerPoint($0, frame: frame) }
             guard (2...50).contains(path.count), let end = path.last else { throw PageComputerFailure.unavailable }
@@ -361,7 +361,7 @@ extension PageDriver {
                 """), in: view)
             guard result?["ok"] as? Bool == true else { throw PageComputerFailure.unavailable }
         case "type":
-            guard current["editable"] as? Bool == true, window.makeFirstResponder(view), let text = action["text"].string else {
+            guard current["editable"] as? Bool == true, focusForKeyboard(view, in: window), let text = action["text"].string else {
                 throw PageComputerFailure.unavailable
             }
             try await view.insertText(text)
@@ -417,7 +417,21 @@ extension PageDriver {
         }
     }
 
-    private static func computerMouse(point: CGPoint, button: String, phase: String, count: Int = 1, modifiers: NSEvent.ModifierFlags = [], in view: BrowserPage, window: NSWindow) throws {
+    /// Moves the pointer to `point` (view points, top-left origin) exactly as the computer `move` action does.
+    static func movePointer(to point: CGPoint, modifiers: NSEvent.ModifierFlags = [], in view: BrowserPage, window: NSWindow) throws {
+        try computerMouse(point: point, button: "left", phase: "move", modifiers: modifiers, in: view, window: window)
+    }
+
+    /// True when the topmost view at a window point belongs to the page and no sheet intercepts. False for a point the page
+    /// draws but another view or a clipping ancestor (a development-viewport pane smaller than the page) hides.
+    static func pageReceivesPointer(at locationInWindow: CGPoint, in view: BrowserPage, window: NSWindow) -> Bool {
+        guard let content = window.contentView,
+              let hit = content.hitTest(content.superview?.convert(locationInWindow, from: nil) ?? locationInWindow),
+              hit.isDescendant(of: view), window.attachedSheet == nil else { return false }
+        return true
+    }
+
+    static func computerMouse(point: CGPoint, button: String, phase: String, count: Int = 1, modifiers: NSEvent.ModifierFlags = [], in view: BrowserPage, window: NSWindow) throws {
         guard PageAutomationGuard.allowsExecution, view.window === window else { throw PageComputerFailure.stale }
         let local = CGPoint(x: point.x, y: view.isFlipped ? point.y : view.bounds.height - point.y)
         let type: NSEvent.EventType
@@ -444,9 +458,7 @@ extension PageDriver {
             clickCount: phase == "move" ? 0 : count, pressure: phase == "up" || phase == "move" ? 0 : 1) else {
             throw PageComputerFailure.unavailable
         }
-        guard let content = window.contentView,
-              let hit = content.hitTest(content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow),
-              hit.isDescendant(of: view), window.attachedSheet == nil else { throw PageComputerFailure.unavailable }
+        guard pageReceivesPointer(at: event.locationInWindow, in: view, window: window) else { throw PageComputerFailure.unavailable }
         if phase == "move" {
             if let chromium = view.chromium {
                 chromium.sendMouseMove(to: chromium.convert(local, from: view), modifiers: modifiers)
@@ -494,19 +506,12 @@ extension PageDriver {
         guard ordinary.count == 1, let key = ordinary.first,
               flags.isDisjoint(with: [.command, .control]) || (key == "A" && flags.isDisjoint(with: [.shift, .option]))
         else { throw PageComputerFailure.unsupportedKey }
-        let named: [String: (UInt16, String)] = [
-            "ENTER": (36, "\r"), "RETURN": (36, "\r"), "TAB": (48, "\t"), "ESC": (53, "\u{1b}"), "ESCAPE": (53, "\u{1b}"),
-            "SPACE": (49, " "), "ARROWLEFT": (123, "\u{f702}"), "ARROWRIGHT": (124, "\u{f703}"),
-            "ARROWDOWN": (125, "\u{f701}"), "ARROWUP": (126, "\u{f700}"), "HOME": (115, "\u{f729}"), "END": (119, "\u{f72b}"),
-            "BACKSPACE": (51, "\u{7f}"), "DELETE": (117, "\u{f728}"), "PAGEDOWN": (121, "\u{f72d}"), "PAGEUP": (116, "\u{f72c}"),
-        ]
-        let aliases = ["UP": "ARROWUP", "DOWN": "ARROWDOWN", "LEFT": "ARROWLEFT", "RIGHT": "ARROWRIGHT"]
-        var entry = named[aliases[key] ?? key]
-        if let code = computerLetterCodes[key] {
+        var entry = PageKeyChord.namedKey(key)
+        if let code = PageKeyChord.letterCodes[key] {
             entry = (UInt16(code), flags.contains(.shift) ? key : key.lowercased())
-        } else if let printable = computerPrintableKeys[key] {
+        } else if let printable = PageKeyChord.printableKeys[key] {
             entry = (UInt16(printable.code), flags.contains(.shift) ? printable.shifted : key)
-        } else if let shifted = computerPrintableKeys.first(where: { $0.value.shifted == key }) {
+        } else if let shifted = PageKeyChord.printableKeys.first(where: { $0.value.shifted == key }) {
             flags.insert(.shift)
             entry = (UInt16(shifted.value.code), key)
         }
@@ -514,25 +519,34 @@ extension PageDriver {
         if key == "A", flags.contains(.control) {
             flags.remove(.control); flags.insert(.command)
         }
-        guard window.attachedSheet == nil, window.makeFirstResponder(view) else { throw PageComputerFailure.unavailable }
+        guard window.attachedSheet == nil, focusForKeyboard(view, in: window) else { throw PageComputerFailure.unavailable }
         // Complete the native key pair before yielding to the editing fallback.
         for type in [NSEvent.EventType.keyDown, .keyUp] {
             guard PageAutomationGuard.allowsExecution,
                   let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                       windowNumber: window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
             else { throw PageComputerFailure.stale }
-            view.sendKeyEvent(event)
+            guard view.sendKeyEvent(event) else { throw PageComputerFailure.unavailable }
         }
         if flags.contains(.command) {
             try await computerSelectAll(frame: frame, in: view, window: window)
         }
     }
 
-    private static func computerSelectAll(frame: PageComputerFrame, in view: BrowserPage, window: NSWindow) async throws {
+    /// Completes Command+A once the page has received and not consumed the key. `frame` is the screenshot the caller acted on;
+    /// without one, only the automation scope guards the page.
+    static func computerSelectAll(frame: PageComputerFrame?, in view: BrowserPage, window: NSWindow) async throws {
+        func checkPage() async throws {
+            if let frame {
+                try await validateComputerFrame(frame, in: view, checkRevision: false)
+            } else if !PageAutomationGuard.allowsExecution {
+                throw PageComputerFailure.stale
+            }
+        }
         let deadline = ContinuousClock.now + .seconds(1)
         repeat {
             try Task.checkCancellation()
-            try await validateComputerFrame(frame, in: view, checkRevision: false)
+            try await checkPage()
             let result = await evaluateJSON(scripted("""
                 const e = window.__wsurfComputerAck?.keyDown;
                 return JSON.stringify({ received: !!e && e.key === 'a' && e.code === 'KeyA'
@@ -541,15 +555,10 @@ extension PageDriver {
             if result?["received"] as? Bool == true {
                 if result?["prevented"] as? Bool != true {
                     _ = try await computerTarget(point: nil, in: view)
-                    try await validateComputerFrame(frame, in: view, checkRevision: false)
-                    let responder = window.firstResponder
-                    let ownsResponder: Bool
-                    if let webKit = view.webKit {
-                        ownsResponder = responder === webKit
-                    } else {
-                        ownsResponder = view.chromium?.ownsResponder(responder) == true
+                    try await checkPage()
+                    guard window.attachedSheet == nil, view.window === window, view.ownsResponder(window.firstResponder) else {
+                        throw PageComputerFailure.unavailable
                     }
-                    guard window.attachedSheet == nil, view.window === window, ownsResponder else { throw PageComputerFailure.unavailable }
                     if let webKit = view.webKit {
                         webKit.selectAll(nil)
                     } else if let chromium = view.chromium {
@@ -564,21 +573,4 @@ extension PageDriver {
         } while ContinuousClock.now < deadline
         throw PageComputerFailure.unavailable
     }
-
-    private static let computerLetterCodes: [String: Int] = [
-        "A": kVK_ANSI_A, "B": kVK_ANSI_B, "C": kVK_ANSI_C, "D": kVK_ANSI_D, "E": kVK_ANSI_E, "F": kVK_ANSI_F,
-        "G": kVK_ANSI_G, "H": kVK_ANSI_H, "I": kVK_ANSI_I, "J": kVK_ANSI_J, "K": kVK_ANSI_K, "L": kVK_ANSI_L,
-        "M": kVK_ANSI_M, "N": kVK_ANSI_N, "O": kVK_ANSI_O, "P": kVK_ANSI_P, "Q": kVK_ANSI_Q, "R": kVK_ANSI_R,
-        "S": kVK_ANSI_S, "T": kVK_ANSI_T, "U": kVK_ANSI_U, "V": kVK_ANSI_V, "W": kVK_ANSI_W, "X": kVK_ANSI_X,
-        "Y": kVK_ANSI_Y, "Z": kVK_ANSI_Z,
-    ]
-
-    private static let computerPrintableKeys: [String: (code: Int, shifted: String)] = [
-        "0": (kVK_ANSI_0, ")"), "1": (kVK_ANSI_1, "!"), "2": (kVK_ANSI_2, "@"), "3": (kVK_ANSI_3, "#"), "4": (kVK_ANSI_4, "$"),
-        "5": (kVK_ANSI_5, "%"), "6": (kVK_ANSI_6, "^"), "7": (kVK_ANSI_7, "&"), "8": (kVK_ANSI_8, "*"), "9": (kVK_ANSI_9, "("),
-        "-": (kVK_ANSI_Minus, "_"), "=": (kVK_ANSI_Equal, "+"), "[": (kVK_ANSI_LeftBracket, "{"), "]": (kVK_ANSI_RightBracket, "}"),
-        "\\": (kVK_ANSI_Backslash, "|"), ";": (kVK_ANSI_Semicolon, ":"), "'": (kVK_ANSI_Quote, "\""),
-        ",": (kVK_ANSI_Comma, "<"), ".": (kVK_ANSI_Period, ">"), "/": (kVK_ANSI_Slash, "?"), "`": (kVK_ANSI_Grave, "~"),
-        " ": (kVK_Space, " "),
-    ]
 }

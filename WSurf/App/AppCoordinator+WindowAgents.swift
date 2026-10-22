@@ -10,11 +10,13 @@ extension AppCoordinator {
         browser.onTabWillTransferOut = { [weak self] tab in
             previous?(tab)
             guard let self else { return }
-            let spaceID = browser.spaceID(of: tab.id)
+            let anchorID = browser.anchorID(of: tab.id)
             endVoiceConversation()
             voiceInput.cancel()
-            agentTurns.detachTab(tab.id, inSpace: spaceID)
+            agentTurns.detachTab(tab.id, inAnchor: anchorID)
             tab.setAgentWorking(false)
+            // A connection stays bound to this window, so a tab that leaves it leaves the connection, with its AI mark.
+            mcpServer.takeOver(tab, in: browser)
             statusMessage = nil
             linkPeek.dismiss()
             if peek.belongs(to: tab.id) {

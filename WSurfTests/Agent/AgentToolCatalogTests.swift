@@ -56,7 +56,7 @@ struct AgentToolCatalogTests {
 @Suite(.serialized)
 struct AgentToolPreferencesTests {
     @Test func aStoredSelectionWinsOverTheTierDefault() {
-        let suiteName = "agent-tool-preferences-tests"
+        let suiteName = AppDatabase.defaultsSuite("agent-tool-preferences-tests")
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         let settings = LLMSettings(defaults: defaults)

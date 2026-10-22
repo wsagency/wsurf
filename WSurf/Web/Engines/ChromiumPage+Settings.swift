@@ -38,7 +38,23 @@ extension ChromiumPage {
             let custom = settings.customUserAgent.trimmingCharacters(in: .whitespacesAndNewlines)
             userAgent = custom.isEmpty ? genuineUserAgent : custom
         }
-        _ = try await command("Network.setUserAgentOverride", params: ["userAgent": userAgent])
+        // An override without metadata makes Chromium drop every Sec-CH-UA header and empty `navigator.userAgentData`, a
+        // classic spoofing signal. So the engine's own string is never overridden, and any other carries client hints.
+        // Known gap: service workers keep the engine's string. Chromium fixes a service worker's `navigator.userAgent` from
+        // the browser's own user agent when it starts, which no DevTools session reaches, and a launch-time `--user-agent`
+        // would instead blank the high-entropy client hints (platform version, architecture, full versions) everywhere.
+        if userAgent != genuineUserAgent {
+            var params: [String: Any] = ["userAgent": userAgent]
+            if let metadata = Self.userAgentMetadata(product: version["product"] as? String, userAgent: userAgent) {
+                params["userAgentMetadata"] = metadata
+            }
+            _ = try await command("Network.setUserAgentOverride", params: params)
+            hasUserAgentOverride = true
+        } else if hasUserAgentOverride {
+            // An empty string removes the override and its metadata.
+            _ = try await command("Network.setUserAgentOverride", params: ["userAgent": ""])
+            hasUserAgentOverride = false
+        }
         _ = try await command(
             "Emulation.setScriptExecutionDisabled",
             params: ["value": !settings.javaScriptEnabled]
@@ -62,5 +78,23 @@ extension ChromiumPage {
                 autoplayValue
             )
         }
+    }
+
+    /// Client hints for a user agent that keeps the engine's own Chrome version (`product` is `Chrome/<full version>`), or
+    /// nil for any other string, which then sends none, as a browser of another family does. Chromium fills in its own
+    /// brands, full versions, bitness and form factors for the fields left out; the required fields are the values it
+    /// reports without an override.
+    nonisolated static func userAgentMetadata(product: String?, userAgent: String) -> [String: Any]? {
+        guard let product, product.hasPrefix("Chrome/"),
+              let major = product.dropFirst("Chrome/".count).split(separator: ".").first,
+              userAgent.contains("Chrome/\(major).") else { return nil }
+        let system = ProcessInfo.processInfo.operatingSystemVersion
+        return [
+            "platform": "macOS",
+            "platformVersion": "\(system.majorVersion).\(system.minorVersion).\(system.patchVersion)",
+            "architecture": "arm",
+            "model": "",
+            "mobile": false,
+        ]
     }
 }

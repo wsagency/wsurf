@@ -64,6 +64,7 @@ enum StageRun {
     @discardableResult
     private static func open(_ site: StageSet.Site, in browser: BrowserModel) -> BrowserTab {
         let tab = browser.newTab(url: site.url, activate: false)
+        tab.isUnseen = StageSet.unseen.contains(site.address)
         tab.title = site.title
         tabs[site.address] = tab
         return tab

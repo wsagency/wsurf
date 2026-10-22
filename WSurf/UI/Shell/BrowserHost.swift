@@ -145,8 +145,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         created.toolbar = frameToolbar
         created.toolbarStyle = .unified
         created.titlebarSeparatorStyle = .none
-        created.isOpaque = false
-        created.backgroundColor = .clear
+        applyTransparencyPreference(to: created)
         created.minSize = NSSize(width: BrowserWindowMetrics.minWidth, height: 580)
         created.preservesContentDuringLiveResize = true
         created.collectionBehavior = [.fullScreenPrimary]
@@ -181,10 +180,40 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         Self.hideTitlebarDecoration(of: created)
 
         window = created
+        observeTheme()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(accessibilityDisplayOptionsDidChange),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil
+        )
         if let coordinator {
             coordinator.extensions.register(browser: coordinator.browser, window: created)
         }
         return created
+    }
+
+    /// Plain solid themes and accessibility fallbacks spare WindowServer from compositing the desktop.
+    func applyTransparencyPreference(to window: NSWindow, isOpaque: Bool = WindowOpacity.isOpaqueForThemeNow) {
+        window.isOpaque = isOpaque
+        window.backgroundColor = isOpaque ? NSColor(Theme.windowBackground) : .clear
+    }
+
+    private func observeTheme() {
+        withObservationTracking {
+            _ = BrowserSettings.application.resolvedTheme
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, let window = self.window else { return }
+                self.observeTheme()
+                self.applyTransparencyPreference(to: window)
+            }
+        }
+    }
+
+    @objc private func accessibilityDisplayOptionsDidChange(_ notification: Notification) {
+        guard let window else { return }
+        applyTransparencyPreference(to: window)
     }
 
     /// Answers false when it hid nothing: the decoration is matched by private
@@ -333,7 +362,7 @@ enum SystemWindowShape {
         return radius
     }
 
-    private static func radius(of window: NSWindow) -> CGFloat? {
+    static func radius(of window: NSWindow) -> CGFloat? {
         guard let frameView = window.contentView?.superview else { return nil }
         for key in ["cornerRadius", "_cornerRadius"] {
             guard frameView.responds(to: NSSelectorFromString(key)),

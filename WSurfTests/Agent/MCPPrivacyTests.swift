@@ -19,6 +19,7 @@ struct MCPPrivacyTests {
         <button onclick="document.body.dataset.clicked='yes'">Ordinary action</button>
         <button onclick="document.body.dataset.published='yes'">Publish post</button>
         <a href="/next">Next page</a>
+        <button onclick="document.body.dataset.signedIn='yes'">Continue with Google</button>
         """
 
     private func fixture() async throws -> (HTTPFixtureServer, BrowserModel, BrowserTab) {
@@ -41,7 +42,7 @@ struct MCPPrivacyTests {
     }
 
     private func session(_ browser: BrowserModel, access: MCPAccessConsent.Access = .control) -> MCPBrowserSession {
-        MCPBrowserSession(browser: browser, available: { true }, consent: { _, _ in access })
+        MCPBrowserSession(browser: browser, available: { true }, consent: { _, _, _ in access })
     }
 
     private func text(_ result: CallTool.Result) -> String {
@@ -154,6 +155,28 @@ struct MCPPrivacyTests {
         #expect(browser.sitePermissions.assistantAccess(for: tab.assistantAccess.origin) == .ask)
     }
 
+    @Test func aPageInAPinnedFolderIsNotClosedByAnExternalClient() async throws {
+        let (server, browser, tab) = try await fixture()
+        defer { _ = server }
+        let subject = session(browser)
+        _ = try await call(subject, "requestAccess")
+        _ = try await observation(subject, tab: tab)
+        // A page inside a pinned folder has a pin but no bookmark of its own.
+        tab.pinID = UUID()
+
+        let refused = try await call(subject, "closeTab", tab: tab)
+        #expect(refused.isError == true)
+        #expect(text(refused).contains("Pinned tabs must be closed by the user."))
+        #expect(browser.tabs.contains { $0 === tab })
+
+        tab.pinID = nil
+        let closed = try await AgentTabClosing.$decisionForTesting.withValue(.init { _ in .close }) {
+            try await call(subject, "closeTab", tab: tab)
+        }
+        #expect(closed.isError == false)
+        #expect(browser.tabs.isEmpty)
+    }
+
     @Test func readOnlyConnectionCannotControlAnOtherwiseAllowedSite() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
@@ -188,7 +211,7 @@ struct MCPPrivacyTests {
         browser.tabs = [privateTab]
         browser.activeTabID = privateTab.id
         var asked = false
-        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, pages in
+        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, pages, _ in
             asked = true
             #expect(pages.isEmpty)
             return .control
@@ -204,7 +227,7 @@ struct MCPPrivacyTests {
         browser.tabs = []
         browser.activeTabID = nil
         var prompts = 0
-        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, pages in
+        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, pages, _ in
             prompts += 1
             return pages.isEmpty ? nil : .readOnly
         })
@@ -219,7 +242,7 @@ struct MCPPrivacyTests {
     @Test func changingPagesDuringConsentDoesNotShareTheReplacement() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
-        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, _ in
+        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, _, _ in
             tab.loadHTML("<p>Replacement secret</p>", baseURL: URL(string: "https://replacement.invalid/"))
             _ = await waitUntil { tab.page.url?.host() == "replacement.invalid" }
             return .control
@@ -315,6 +338,32 @@ struct MCPPrivacyTests {
         #expect(try await tab.page.evaluateJavaScript("document.body.dataset.published || ''") as? String == "")
     }
 
+    /// The sign-in question is the page driver's, so an external connection gets it exactly like the assistant does.
+    @Test func signingInAsksForAnExternalConnectionToo() async throws {
+        let (server, browser, tab) = try await fixture()
+        defer { _ = server }
+        let subject = session(browser)
+        _ = try await call(subject, "requestAccess")
+        let id = try await observation(subject, tab: tab)
+        var asked: [SensitiveAction.Category] = []
+        let declined = try await AgentActionConsent.$decisionForTesting.withValue(.init { _, category, _, _ in
+            asked.append(category)
+            return .decline
+        }) {
+            try await call(subject, "clickOnPage", tab: tab, arguments: ["observationID": .string(id), "ref": 6])
+        }
+        #expect(asked == [.accountAccess])
+        #expect(declined.isError == true)
+        #expect(try await tab.page.evaluateJavaScript("document.body.dataset.signedIn || ''") as? String == "")
+
+        let fresh = try await observation(subject, tab: tab)
+        let allowed = try await AgentActionConsent.$decisionForTesting.withValue(.init { _, _, _, _ in .allowOnce }) {
+            try await call(subject, "clickOnPage", tab: tab, arguments: ["observationID": .string(fresh), "ref": 6])
+        }
+        #expect(allowed.isError == false, "\(text(allowed))")
+        #expect(try await tab.page.evaluateJavaScript("document.body.dataset.signedIn") as? String == "yes")
+    }
+
     @Test func pageContentCannotSupplyAnUnobservedOutboundAddress() async throws {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
@@ -346,7 +395,7 @@ struct MCPPrivacyTests {
         let (server, browser, tab) = try await fixture()
         defer { _ = server }
         var opens = 0
-        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, _ in .control }, openConsent: { _, _ in
+        let subject = MCPBrowserSession(browser: browser, available: { true }, consent: { _, _, _ in .control }, openConsent: { _, _ in
             opens += 1
             return true
         })
@@ -357,8 +406,8 @@ struct MCPPrivacyTests {
         let opened = try await call(subject, "newTab", arguments: ["url": .string(destination.absoluteString)])
         #expect(opened.isError == false)
         #expect(opens == 1)
-        let newTab = try #require(browser.activeTab)
-        #expect(newTab !== tab)
+        let newTab = try #require(browser.tabs.first { $0 !== tab })
+        #expect(browser.activeTab === tab, "the new tab opens behind the person's tab")
         #expect(await settled(newTab, at: destination))
         #expect(try await call(subject, "readPage", tab: newTab).isError == false)
         #expect(try await call(other, "readPage", tab: newTab).isError == true)

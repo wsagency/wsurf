@@ -9,6 +9,7 @@ enum TabProtectionReason: Equatable {
     case activeDownload
     case deviceAccess
     case agentWorking
+    case externalControl
     case mediaPlayback
     case visibleInSplit
     case alwaysKeepActive

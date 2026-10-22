@@ -36,31 +36,50 @@ struct AskSurfaceRow: View {
                 .frame(width: placement.iconSlot, height: placement.rowHeight)
 
             ZStack(alignment: .leading) {
-                MentionField(
-                    text: $model.interaction.text,
-                    chips: model.mentionChips,
-                    placeholder: placeholder,
-                    fontSize: placement.textSize,
-                    isFocused: model.isFocused,
-                    selectAllToken: model.selectAllToken,
-                    accessibilityLabel: String(localized: placement.accessibilityLabel),
-                    textColor: placement == .toolbar ? Theme.urlOverride.map { NSColor($0) } : nil,
-                    onFocusChange: { model.fieldFocusDidChange($0) },
-                    onChipsChange: { model.mentionsDidChange($0) },
-                    onSubmit: { model.submit(in: sections) },
-                    onCommandSubmit: { model.askWhateverIsTyped() },
-                    onCancel: { model.cancelEditing() },
-                    onMove: { delta, bySection in
-                        if bySection {
-                            model.moveSection(by: delta, in: sections)
-                        } else {
-                            model.moveSelection(by: delta, in: sections)
+                HStack(spacing: 8) {
+                    if let site = model.searchSite, restingContent == nil {
+                        SiteSearchChip(site: site, fontSize: placement.textSize - 1) {
+                            model.removeSearchSite()
+                            model.focusForEditing()
                         }
                     }
-                )
-                .opacity(restingContent == nil ? 1 : 0)
-                .allowsHitTesting(restingContent == nil)
-                .accessibilityValue(Text(verbatim: accessibilityValue))
+
+                    MentionField(
+                        text: $model.interaction.text,
+                        chips: model.mentionChips,
+                        placeholder: placeholder,
+                        fontSize: placement.textSize,
+                        isFocused: model.isFocused,
+                        selectAllToken: model.selectAllToken,
+                        accessibilityLabel: model.searchSite.map { String(localized: "Search \($0.name)") }
+                            ?? String(localized: placement.accessibilityLabel),
+                        textColor: placement == .toolbar ? Theme.urlOverride.map { NSColor($0) } : nil,
+                        onFocusChange: { model.fieldFocusDidChange($0) },
+                        onChipsChange: { model.mentionsDidChange($0) },
+                        onSubmit: { model.submit(in: sections) },
+                        onCommandSubmit: { model.askWhateverIsTyped() },
+                        onCancel: { model.cancelEditing() },
+                        onMove: { delta, bySection in
+                            if bySection {
+                                model.moveSection(by: delta, in: sections)
+                            } else {
+                                model.moveSelection(by: delta, in: sections)
+                            }
+                        },
+                        onTab: { model.activateSiteSearch() },
+                        onDeleteBackward: { model.removeSearchSite() }
+                    )
+                    .opacity(restingContent == nil ? 1 : 0)
+                    .allowsHitTesting(restingContent == nil)
+                    .accessibilityValue(Text(verbatim: accessibilityValue))
+
+                    if let site = model.suggestedSite, restingContent == nil {
+                        SearchScopeHint(title: String(localized: "Search \(site.name)")) {
+                            model.activateSiteSearch()
+                            model.focusForEditing()
+                        }
+                    }
+                }
 
                 if let restingContent, !restingContent.isCentred {
                     AskRestingLine(
@@ -84,6 +103,7 @@ struct AskSurfaceRow: View {
             HStack(spacing: placement.controlSpacing) {
                 if placement.showsSiteControls {
                     AutofillSaveBadge(browser: model.browser, coordinator: model.coordinator)
+                    InputHistoryBadge(browser: model.browser, coordinator: model.coordinator)
                     TabAudioBadge(browser: model.browser, coordinator: model.coordinator)
                         .frame(width: placement.iconSlot)
                     TabPictureBadge(browser: model.browser, coordinator: model.coordinator)
@@ -91,6 +111,8 @@ struct AskSurfaceRow: View {
                     PermissionBadge(browser: model.browser)
                         .frame(width: placement.iconSlot)
                     PopupBadge(browser: model.browser, coordinator: model.coordinator)
+                    ReaderBadge(coordinator: model.coordinator)
+                    TranslationBadge(browser: model.browser, coordinator: model.coordinator)
                     PinBadge(browser: model.browser)
                         .frame(width: placement.iconSlot)
                     SiteControlsMenu(browser: model.browser)

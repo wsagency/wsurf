@@ -9,8 +9,7 @@ import WebKit
 extension ExtensionManager {
     func action(for id: String, inWindow window: ExtensionWindowAdapter) -> WKWebExtension.Action? {
         guard owns(window), let context = contexts[id] else { return nil }
-        let tab = window.browser?.activeTab.map { adapter(for: $0) }
-        return context.action(for: tab)
+        return context.action(for: actionTab(window.browser?.activeTab.map { adapter(for: $0) }, id: id))
     }
 
     func registerAnchor(_ view: NSView?, for id: String, inWindow window: ExtensionWindowAdapter) {
@@ -26,7 +25,7 @@ extension ExtensionManager {
     func performAction(for id: String, inWindow window: ExtensionWindowAdapter) {
         guard owns(window), let context = contexts[id] else { return }
         let tab = window.browser?.activeTab.map { adapter(for: $0) }
-        guard let action = context.action(for: tab) else { return }
+        guard !blocksAction(of: id, for: tab), let action = context.action(for: tab) else { return }
         if let popover = presentedPopup, presentedPopupWindow === window,
            presentedPopupID == id, popover.isShown {
             popover.performClose(nil)
@@ -72,6 +71,8 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     private(set) var actionRevision = 0
     var installState: StoreInstallState = .idle
     var updateChecks: [String: UpdateCheck] = [:]
+    /// Versions this profile holds back because they ask for more access than it approved.
+    var heldUpdates: [String: String]
 
     @ObservationIgnored private static var systemCatalogue: [SafariExtension]?
     @ObservationIgnored private static let liveManagers = NSHashTable<ExtensionManager>.weakObjects()
@@ -79,8 +80,10 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     /// The application owns window creation; the complete configuration includes all URLs and moved tabs.
     var onOpenWindow: ((WKWebExtension.WindowConfiguration) -> ExtensionWindowAdapter?)?
 
-    private let library: ExtensionLibrary
+    let library: ExtensionLibrary
     let profile: Profile?
+    /// A private window's blocked websites per extension. They last for the private session and are never written.
+    @ObservationIgnored var sessionBlockedHosts: [String: [String]] = [:]
 
     @ObservationIgnored var windows: [ObjectIdentifier: ExtensionWindowAdapter] = [:]
     @ObservationIgnored var windowOrder: [ObjectIdentifier] = []
@@ -111,6 +114,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     ) {
         self.profile = profile
         self.library = library ?? ExtensionLibrary(profile: profile ?? .original())
+        heldUpdates = Self.savedHeldUpdates(for: profile)
         controller = WKWebExtensionController(
             configuration: Self.controllerConfiguration(for: profile, dataStore: dataStore)
         )
@@ -174,6 +178,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         library.load()
         let ids = library.records.map(\.id)
         library.forgetThisProfile()
+        forgetHeldUpdates(for: profile)
         guard !ids.isEmpty else { return }
 
         let controller = WKWebExtensionController(configuration: controllerConfiguration(for: profile))
@@ -240,6 +245,15 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         controller.delegate = nil
         onOpenWindow = nil
         hasStarted = false
+    }
+
+    /// Whether this profile switched any extension on. Until `start()` loads them the saved library answers, so the first
+    /// pages of a launch already get the extension page scripts.
+    var hasEnabledExtensions: Bool {
+        if !hasStarted {
+            library.refresh()
+        }
+        return library.hasEnabledExtension
     }
 
     func start() async {
@@ -347,6 +361,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
             for pattern in webExtension.allRequestedMatchPatterns {
                 context.setPermissionStatus(.grantedExplicitly, for: pattern)
             }
+            applyBlocks(to: context, id: record.id)
 
             try controller.load(context)
             contexts[record.id] = context
@@ -577,8 +592,8 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         await load(refreshed)
     }
 
-    func grantedPermissions(id: String) -> Set<String> {
-        Set(contexts[id]?.webExtension.requestedPermissions.map(\.rawValue) ?? [])
+    func packageURL(for id: String) -> URL {
+        library.packageURL(for: id)
     }
 
     func installedRecord(id: String) -> InstalledExtension? {
@@ -641,6 +656,8 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
             anchors[key]?[id] = nil
         }
         iconCache[id] = nil
+        sessionBlockedHosts[id] = nil
+        setHeldUpdate(nil, id: id)
         Pipeline.log.notice("Extension uninstalled")
     }
 
@@ -696,7 +713,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     func performAction(for id: String, in browser: BrowserModel? = nil) {
         guard let window = registeredWindow(in: browser), let context = contexts[id] else { return }
         let tab = window.browser?.activeTab.map { adapter(for: $0) }
-        guard let action = context.action(for: tab) else { return }
+        guard !blocksAction(of: id, for: tab), let action = context.action(for: tab) else { return }
 
         if let popover = presentedPopup, presentedPopupWindow === window,
            presentedPopupID == id, popover.isShown {
@@ -796,7 +813,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         let tab = owner.activeTab.map { adapter(for: $0) }
         let menu = NSMenu()
 
-        for item in context.action(for: tab)?.menuItems ?? [] {
+        for item in blocksAction(of: id, for: tab) ? [] : context.action(for: tab)?.menuItems ?? [] {
             item.menu?.removeItem(item)
             menu.addItem(item)
         }

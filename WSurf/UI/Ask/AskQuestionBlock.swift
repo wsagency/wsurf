@@ -170,7 +170,7 @@ private struct OptionRow: View {
                     if isChosen {
                         Image(systemName: "checkmark")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Theme.onAccent)
                     } else {
                         Text(number, format: .number)
                             .font(Theme.Font.caption)

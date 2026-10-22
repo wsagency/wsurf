@@ -23,27 +23,42 @@ extension ProfileVaultStore {
     /// the touched ids replaced or added, plus the current head's blocked origins) is validated before any write, and an exchange
     /// item identity (`exchangeAccountID` + `exchangeItemID`, as the codec derives it) that two accounts would share is
     /// `duplicateIdentifier`. Untouched rows and the head's policy are never rewritten; an all-unchanged write changes nothing.
-    func commitAccounts(vaultID: UUID, _ writes: [AccountWrite], cause: String?, using access: VaultAccess) async throws -> VaultCommitReceipt {
-        guard !writes.isEmpty else { throw CredentialStoreError.malformed }
+    ///
+    /// `removing` names live accounts to move to Trash in the same transaction, each bound to the stamp the caller read: the whole
+    /// account goes with its earlier versions, as an ordinary delete does, and a stamp that no longer holds is `staleRevision` with
+    /// nothing written. An account is either written or removed, never both.
+    func commitAccounts(
+        vaultID: UUID, _ writes: [AccountWrite], removing: [UUID: AccountStamp] = [:], cause: String?, using access: VaultAccess
+    ) async throws -> VaultCommitReceipt {
+        guard !writes.isEmpty || !removing.isEmpty else { throw CredentialStoreError.malformed }
         var ids = Set<UUID>(minimumCapacity: writes.count)
         for write in writes {
-            guard ids.insert(write.accountID).inserted, write.replacement.id == write.accountID else { throw CredentialStoreError.malformed }
+            guard ids.insert(write.accountID).inserted, write.replacement.id == write.accountID, removing[write.accountID] == nil else {
+                throw CredentialStoreError.malformed
+            }
         }
         let intent = CommitIntent(vaultID: vaultID, access: access, expectedRevision: nil, cause: cause, isCommit: true)
         // The scratch is attached up front (`ledgerOnDemand: false`): a removal inside a write verifies in this one transaction and
         // nothing is ever retried.
         return try await run(intent, ledgerOnDemand: false) { db, request, ledgerAttached in
             let (transaction, snapshot) = try Self.begin(db, request)
-            let accounts = try Self.candidates(applying: writes, to: snapshot)
+            let accounts = try Self.candidates(applying: writes, removing: removing, to: snapshot)
+            // Every account but the written ones is the snapshot's own value (`candidates`); a removed one is absent from `accounts`.
             return try Self.apply(
-                Proposal(accounts: accounts, requires: nil), snapshot: snapshot, transaction, request, ledgerAttached: ledgerAttached
+                Proposal(accounts: accounts, requires: nil, changing: ids), snapshot: snapshot, transaction, request, ledgerAttached: ledgerAttached
             )
         }.receipt
     }
 
-    /// The accounts the write would leave live. Throws `staleRevision` for any write whose expectation no longer holds and
-    /// `duplicateIdentifier` for two accounts with one exchange item identity.
-    nonisolated static func candidates(applying writes: [AccountWrite], to snapshot: StoreSnapshot) throws -> [CredentialAccount] {
+    /// The accounts the write would leave live. Throws `staleRevision` for any write or removal whose expectation no longer holds
+    /// and `duplicateIdentifier` for two accounts with one exchange item identity. A removed account is left out of the result,
+    /// which `CredentialDiff` turns into a move of the whole account to Trash.
+    nonisolated static func candidates(
+        applying writes: [AccountWrite], removing: [UUID: AccountStamp] = [:], to snapshot: StoreSnapshot
+    ) throws -> [CredentialAccount] {
+        for (id, stamp) in removing {
+            guard snapshot.stamps[id] == stamp else { throw CredentialVaultError.staleRevision }
+        }
         var replacements: [UUID: CredentialAccount] = [:]
         replacements.reserveCapacity(writes.count)
         for write in writes {
@@ -59,7 +74,7 @@ extension ProfileVaultStore {
         var accounts: [CredentialAccount] = []
         accounts.reserveCapacity(snapshot.accounts.count + writes.count)
         var identities = Set<CredentialExchangeCodec.ExternalItemID>(minimumCapacity: snapshot.accounts.count + writes.count)
-        for account in snapshot.accounts {
+        for account in snapshot.accounts where removing[account.id] == nil {
             accounts.append(replacements[account.id] ?? account)
         }
         for write in writes where write.expected == .absent {

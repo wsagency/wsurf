@@ -18,7 +18,7 @@ nonisolated struct VaultTestEnvironment: @unchecked Sendable {
     static func make() throws -> VaultTestEnvironment {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let suiteName = UUID().uuidString
+        let suiteName = AppDatabase.defaultsSuite(UUID().uuidString)
         return VaultTestEnvironment(
             directory: directory,
             defaults: UserDefaults(suiteName: suiteName)!,
@@ -30,6 +30,7 @@ nonisolated struct VaultTestEnvironment: @unchecked Sendable {
 
     func cleanUp() {
         defaults.removePersistentDomain(forName: suiteName)
+        try? FileManager.default.removeItem(atPath: suiteName + ".plist")
         try? FileManager.default.removeItem(at: directory)
     }
 }
