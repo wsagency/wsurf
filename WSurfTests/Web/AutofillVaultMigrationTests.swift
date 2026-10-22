@@ -135,6 +135,42 @@ struct AutofillVaultMigrationTests {
         #expect(offers.map(\.value.email) == ["only@example.test"])
     }
 
+    // MARK: - Digest
+
+    /// The confirmation compares the lists read again with the ones the person saw: the same lists must give the same digest every
+    /// time, and any change of a value a different one.
+    @Test func theDigestOfTheSameListsIsStableAndAnyChangeAltersIt() async throws {
+        try await with { h in
+            let cards = [try card(), try card(Self.mastercard, holder: "Charles Babbage", code: nil)]
+            let contacts = [contact(), contact(street: "2 Other Road", email: "work@example.test")]
+            try await h.seed(cards: cards, contacts: contacts)
+            let first = try await h.sources()
+            let second = try await h.sources()
+            let digest = AutofillVaultMigration.digest(first)
+            #expect(AutofillVaultMigration.digest(second) == digest, "two reads of the same lists")
+            for _ in 0..<20 {
+                let copy = try JSONDecoder().decode(AutofillVaultMigration.Sources.self, from: JSONEncoder().encode(first))
+                #expect(AutofillVaultMigration.digest(copy) == digest, "a copy encoded and decoded again")
+            }
+            #expect(
+                try await h.migration().report(for: first, in: h.manager, epoch: try h.epoch)
+                    == h.migration().report(for: second, in: h.manager, epoch: try h.epoch)
+            )
+
+            var code = first
+            code.cards[0].securityCode = "123"
+            var city = first
+            city.contacts[1].city = "Elsewhere"
+            var label = first
+            label.contacts[0].label = "Work"
+            var fewer = first
+            fewer.contacts.removeLast()
+            let changed = [code, city, label, fewer].map(AutofillVaultMigration.digest)
+            #expect(!changed.contains(digest), "every change gives another digest")
+            #expect(Set(changed).count == changed.count)
+        }
+    }
+
     // MARK: - Detection
 
     @Test func nothingSavedOnThisMacIsDoneWithoutReadingAnything() async throws {

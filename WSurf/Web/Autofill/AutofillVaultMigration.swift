@@ -214,8 +214,17 @@ struct AutofillVaultMigration {
         return report
     }
 
-    private static func digest(_ sources: Sources) -> Data {
-        Data(SHA256.hash(data: (try? JSONEncoder().encode(sources)) ?? Data()))
+    /// SHA-256 of a canonical field list of the old copies, in list order: per card its number, name, expiry and security code, per
+    /// contact its label and values. The JSON of the structs themselves is never hashed: its key order differs between two encodings of
+    /// the same value, so a confirmation would never match the lists read again.
+    static func digest(_ sources: Sources) -> Data {
+        let cards = sources.cards.map { card in
+            [card.number, card.cardholder, card.month.map(String.init) ?? "", card.year.map(String.init) ?? "", card.securityCode ?? ""]
+        }
+        let contacts = sources.contacts.map { [$0.label] + AutofillSaveCandidate.contact($0).values }
+        let fields = [["cards", String(cards.count)]] + cards + [["contacts", String(contacts.count)]] + contacts
+        // An array of string arrays encodes the same way every time; it cannot fail to encode.
+        return Data(SHA256.hash(data: (try? JSONEncoder().encode(fields)) ?? Data()))
     }
 
     // MARK: Moving
