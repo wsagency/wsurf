@@ -343,7 +343,6 @@ enum CommandPaletteCatalog {
                     group: .tabs,
                     title: "Unload Tab",
                     symbol: "moon.zzz",
-                    shortcut: "⌘W",
                     aliases: ["close page", "sleep tab"],
                     isAvailable: context.hasActiveTab
                 ),

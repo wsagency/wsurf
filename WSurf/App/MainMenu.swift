@@ -122,7 +122,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(command("Reopen Last Closed Tab", #selector(reopenClosedTab), key: "t", modifiers: [.command, .shift]))
         menu.addItem(command("Reopen Last Closed Window", #selector(reopenClosedWindow)))
         menu.addItem(.separator())
-        menu.addItem(command("Unload Tab", #selector(unloadTab), key: "w"))
+        menu.addItem(command("Close Tab", #selector(closeOrUnloadTab), key: "w"))
         menu.addItem(command("Free Memory", #selector(freeMemory)))
         menu.addItem(.separator())
         menu.addItem(command("Pin This Page", #selector(pinPage), key: "d"))
@@ -337,12 +337,17 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func reopenClosedWindow() {
         application?.reopenLastClosedWindow()
     }
-    @objc private func unloadTab() {
+    /// ⌘W: a Peek closes first; a pin, favorite or page in a pinned folder unloads; any other tab closes like its sidebar X.
+    @objc private func closeOrUnloadTab() {
         if coordinator.closePeek() {
             return
         }
         guard let tab = coordinator.browser.activeTab else { return }
-        coordinator.unloadTab(tab)
+        if tab.isPinnedForProfile {
+            coordinator.unloadTab(tab)
+        } else {
+            coordinator.browser.close([.tab(tab.id)])
+        }
     }
     @objc private func freeMemory() {
         coordinator.freeMemory()
@@ -568,8 +573,11 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             let watching = coordinator.watchMenuState
             menuItem.isHidden = !watching.isShown
             return watching.isEnabled
-        case #selector(unloadTab):
-            return coordinator.browser.activeTab != nil
+        case #selector(closeOrUnloadTab):
+            let tab = coordinator.browser.activeTab
+            let closeTitle: LocalizedStringResource = tab?.isPinnedForProfile == true ? "Unload Tab" : "Close Tab"
+            menuItem.title = String(localized: closeTitle)
+            return tab != nil
         case #selector(stopLoading):
             return coordinator.pageCommandTab?.isLoading ?? false
         case #selector(stopExternalConnections):

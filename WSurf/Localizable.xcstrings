@@ -455,7 +455,7 @@
       "comment" : "Sidebar Play-button action that reloads an unloaded tab without changing its saved link, pin, or folder."
     },
     "Unload Tab" : {
-      "comment" : "Releases a tab's web content without removing its sidebar link or pin. Menu command and tooltip for sidebar minus/X controls."
+      "comment" : "Releases a tab's web content without removing its sidebar link or pin. Menu command and tooltip for sidebar minus/X controls, and the File menu item (⌘W) while the tab is pinned."
     },
     "Unload Folder Tabs" : {
       "comment" : "Tooltip and accessibility label for the X beside a sidebar folder's item count. Unloads its nested tabs while retaining links, pins and the folder."
@@ -2168,7 +2168,7 @@
       "comment" : "Tooltip on the button in the corner of the card that says what a linked page is about, which puts the card away. Title Case."
     },
     "Close Tab" : {
-      "comment" : "Command that closes the current tab: a File menu item and a tab context-menu item. Title Case, as menu commands are."
+      "comment" : "Command that closes the current tab: the File menu item (⌘W) while the tab is not pinned, and a tab context-menu item. Title Case, as menu commands are."
     },
     "Close Tabs" : {
       "comment" : "Button that goes ahead and closes them, in the confirmation alert raised by “Close N Tabs”. Title Case. It names the action rather than saying OK."
@@ -6505,7 +6505,7 @@
       "comment" : "Sidebar Play-button action that reloads an unloaded tab without changing its saved link, pin, or folder."
     },
     "Unload Tab" : {
-      "comment" : "Releases a tab's web content without removing its sidebar link or pin. Menu command and tooltip for sidebar minus/X controls."
+      "comment" : "Releases a tab's web content without removing its sidebar link or pin. Menu command and tooltip for sidebar minus/X controls, and the File menu item (⌘W) while the tab is pinned."
     },
     "Unload Folder Tabs" : {
       "comment" : "Tooltip and accessibility label for the X beside a sidebar folder's item count. Unloads its nested tabs while retaining links, pins and the folder."
