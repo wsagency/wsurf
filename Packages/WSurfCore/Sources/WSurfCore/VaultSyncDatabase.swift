@@ -233,6 +233,12 @@ nonisolated final class VaultSyncDatabase: Sendable {
             try accountIDs("conflict", vault)
         }
 
+        /// The accounts whose record this Mac has seen: a change tag is stored for each.
+        func recordedAccounts(_ vault: UUID) throws -> Set<UUID> {
+            Set(try String.fetchAll(db, sql: "SELECT name FROM record WHERE vaultID = ?", arguments: [vault.sqlText])
+                .compactMap { UUID(uuidString: $0) })
+        }
+
         /// The version of every row of `table` for the vault, without the sealed bytes.
         private func versions(_ table: String, _ vault: UUID) throws -> [UUID: UInt64] {
             var found: [UUID: UInt64] = [:]

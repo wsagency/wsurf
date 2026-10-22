@@ -85,4 +85,61 @@ struct VaultSyncDeleteRaceTests {
         #expect(waiting.map(\.kind) == [.previouslyRemoved] && waiting.first?.incoming?.password == "from A")
         #expect(rig.cloud.writeCount == writes && va.account(entry.id) != nil, "and nothing is deleted on A")
     }
+
+    // MARK: Entries removed before sync was on
+
+    @Test func dismissingARowForAnEntryRemovedBeforeSyncNeverSendsItsRemovalOverTheNewerRecord() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let entry = SyncVaultFixtures.account(username: "ada", password: "v1", origin: "https://example.test")
+        let (a, va) = try await rig.syncedMac(holding: [entry])
+        for password in ["v2", "v3", "v4"] {
+            va.edit(syncChanging(entry, password: password))
+            await a.wrote(va)
+            try await a.pump()
+        }
+        // B held the entry and deleted it before sync was on. It turns sync on now: the entry arrives, live, at version 4.
+        let (b, vb) = try rig.mac(holding: [entry])
+        vb.remove(entry.id)
+        try await b.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await b.pump()
+        #expect(try await b.sync.conflicts(profileID: rig.profile, vaultID: rig.vaultID).map(\.kind) == [.previouslyRemoved])
+
+        // The owner chooses Restore, B’s vault refuses it, and the owner dismisses the refusal.
+        vb.commitFailure = CredentialVaultError.invalidData
+        try await b.sync.resolve(profileID: rig.profile, vaultID: rig.vaultID, accountIDs: [entry.id], keepLocal: false)
+        vb.commitFailure = nil
+        #expect(try await b.sync.conflicts(profileID: rig.profile, vaultID: rig.vaultID).map(\.kind) == [.refused])
+        try await b.sync.resolve(profileID: rig.profile, vaultID: rig.vaultID, accountIDs: [entry.id], keepLocal: true)
+        try await converge([a, b])
+
+        // Its removal as it was before sync is not sent over a record this Mac has seen: iCloud keeps version 4.
+        let held = try VaultSyncCodec.openItem(#require(rig.item(entry)).payload, accountID: entry.id, key: va.syncKey)
+        #expect(held.version == 4 && held.account?.password == "v4")
+        #expect(va.account(entry.id)?.password == "v4" && rig.status(a) == .synced)
+    }
+
+    @Test func manyEntriesDeletedBeforeSyncAreToldOnceAndAreNotAHeldDeletion() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let entries = syncAccounts(35)
+        let (a, va) = try rig.mac(holding: entries)
+        for entry in entries.prefix(30) {
+            va.remove(entry.id)
+        }
+
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+
+        #expect(rig.status(a) == .synced, "they remove nothing anywhere, so they are not a large deletion")
+        for entry in entries.prefix(30) {
+            let told = try VaultSyncCodec.openItem(#require(rig.item(entry)).payload, accountID: entry.id, key: va.syncKey)
+            #expect(told.version == 1 && told.account == nil)
+        }
+        // A Mac that adds the vault later keeps what they stood for, and holds none of them.
+        let (b, vb) = try await rig.addedMac()
+        try await converge([a, b])
+        #expect(vb.accounts.count == 5 && vb.trash.isEmpty && vb.tombstones.count == 30)
+        #expect(rig.status(a) == .synced && rig.status(b) == .synced)
+    }
 }

@@ -149,7 +149,42 @@ struct VaultSyncResurrectionTests {
             // Putting the entry back beside a survivor that holds its item would make two holders: the row says so, and nothing moves.
             #expect(try await kinds(a, rig) == [.ambiguous])
             #expect(va.account(gone.id) == nil && va.trash[gone.id]?.password == "older" && vb.account(gone.id)?.password == "B edit")
+
+            // Dismissing that row does not delete the entry on the Mac that has it: A does not hold it, so nothing is sent for it.
+            try await a.sync.resolve(profileID: rig.profile, vaultID: rig.vaultID, accountIDs: [gone.id], keepLocal: true)
+            try await entries.rounds()
+            #expect(try await kinds(a, rig).isEmpty)
+            #expect(vb.account(gone.id)?.password == "B edit", "B’s edit survives the dismissal")
+            #expect(vb.trash[gone.id] == nil, "and nothing of it went to B’s Trash")
         }
+    }
+
+    @Test func dismissingTheRefusalOfARestoreDoesNotDeleteTheEntryOnTheMacThatHasIt() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let entries = try await MergedEntries.synced(rig)
+        let (a, va, b, vb, gone) = (entries.a, entries.va, entries.b, entries.vb, entries.gone)
+        // A deletes the entry; B edits it before it has fetched, and its edit lands first.
+        va.remove(gone.id)
+        await a.wrote(va)
+        vb.edit(syncChanging(gone, password: "B edit"))
+        await b.wrote(vb)
+        try await b.pump()
+        try await a.pump()
+        try await entries.rounds()
+        #expect(try await kinds(a, rig) == [.changedThereDeletedHere])
+
+        // A restores it into a vault that refuses it (a full vault), and then dismisses the refusal.
+        va.commitFailure = CredentialVaultError.invalidData
+        try await a.sync.resolve(profileID: rig.profile, vaultID: rig.vaultID, accountIDs: [gone.id], keepLocal: false)
+        va.commitFailure = nil
+        #expect(try await kinds(a, rig) == [.refused])
+        try await a.sync.resolve(profileID: rig.profile, vaultID: rig.vaultID, accountIDs: [gone.id], keepLocal: true)
+        try await entries.rounds()
+
+        #expect(try await kinds(a, rig).isEmpty && va.account(gone.id) == nil)
+        #expect(vb.account(gone.id)?.password == "B edit", "B’s edit survives the dismissal")
+        #expect(vb.trash[gone.id] == nil, "and nothing of it went to B’s Trash")
     }
 
     @Test(arguments: [true, false])

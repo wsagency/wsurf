@@ -347,14 +347,16 @@ public nonisolated enum CredentialSyncMerge {
     /// The decision for a review row the person answered: keep this Mac's version or take iCloud's. `base` is the base the row was
     /// made against. The answer follows what is there now, not only what the row was made for, so an entry deleted or restored since
     /// still has one. A row that is only information is dismissed by either answer, and nothing is written. With a base, the base takes the
-    /// version of the row and keeps its parts: this Mac has seen that version, so what it sends next is the version after it, on its
-    /// change tag, and does not overwrite it; and nothing was agreed, so a dismissal never turns into a deletion elsewhere.
+    /// version of the row: this Mac has seen that version, so what it sends next is the version after it, on its change tag, and does not
+    /// overwrite it. It keeps the parts of the base when this Mac holds the entry. When it does not, the entry is taken as removed at that
+    /// version: keeping live parts for an entry this Mac does not have would read as its deletion and delete it on the Mac that has it.
+    /// Nothing was agreed, so a dismissal never turns into a deletion elsewhere.
     public static func resolve(
         _ item: SyncItem, kind: SyncConflictKind, local: CredentialAccount?, base: SyncBase?, keepLocal: Bool, index: SyncLocalIndex
     ) throws -> SyncDecision {
         if kind == .ambiguous || kind == .refused {
             guard let base else { return .ignore }
-            return .keep(SyncBase(version: item.version, parts: base.parts))
+            return .keep(SyncBase(version: item.version, parts: local == nil ? .removedParts : base.parts))
         }
         let incoming = try item.parts()
         let accepted = SyncBase(version: item.version, parts: incoming)

@@ -499,14 +499,15 @@ extension VaultSync {
 
     /// Entries removed before this vault synced (a Trash entry or a tombstone that was never sent): their removed state, with what they
     /// stood for, so a Mac that adds the vault later keeps an import from bringing them back. It removes nothing anywhere (a Mac that
-    /// holds such an entry is asked first, `deletedThereChangedHere`), so it never counts towards the large-deletion hold.
+    /// holds such an entry is asked first, `deletedThereChangedHere`), so it never counts towards the large-deletion hold. Never for an
+    /// entry whose record this Mac has seen: it would be sent on that record's change tag and overwrite it.
     private func sendRemovedBefore(
         _ traces: [UUID: ImportTrace], inputs: ProduceState, live: Set<UUID>, key: VaultKey, syncKey: VaultSyncKey, into work: inout ProduceWork
     ) {
         let handed = handedOut[key] ?? []
         for (id, trace) in traces.sorted(by: { $0.key.uuidString < $1.key.uuidString })
         where inputs.bases[id] == nil && !live.contains(id) && !inputs.reviewed.contains(id) && !inputs.parked.contains(id)
-            && !inputs.outgoing.contains(id) && !handed.contains(id) {
+            && !inputs.outgoing.contains(id) && !handed.contains(id) && !inputs.recorded.contains(id) {
             guard let envelope = try? VaultSyncCodec.sealItem(SyncItem(accountID: id, version: 1, account: nil, trace: trace), key: syncKey),
                   let parts = try? VaultSyncCodec.sealParts(.removedParts, accountID: id, version: 1, key: syncKey)
             else { continue }
@@ -529,6 +530,8 @@ extension VaultSync {
         var reviewed: Set<UUID>
         /// Accounts whose record a newer WSurf wrote: nothing is sealed for them until this build reads it.
         var parked: Set<UUID>
+        /// Accounts whose record this Mac has seen. An entry removed before sync is told only for one it has not seen.
+        var recorded: Set<UUID>
     }
 
     private nonisolated struct ProduceRows {
@@ -536,18 +539,21 @@ extension VaultSync {
         var outgoing: Set<UUID>
         var reviewed: Set<UUID>
         var parked: Set<UUID>
+        var recorded: Set<UUID>
     }
 
     private func produceState(_ key: VaultKey, database: VaultSyncDatabase, syncKey: VaultSyncKey) -> ProduceState {
         let loaded = try? database.read { tx in
             ProduceRows(
                 versions: try tx.baseVersions(key.vaultID), outgoing: try tx.outboxAccounts(key.vaultID),
-                reviewed: try tx.conflictAccounts(key.vaultID), parked: try tx.parkedAccounts(key.vaultID)
+                reviewed: try tx.conflictAccounts(key.vaultID), parked: try tx.parkedAccounts(key.vaultID),
+                recorded: try tx.recordedAccounts(key.vaultID)
             )
         }
         return ProduceState(
             bases: openedBases(key, database: database, syncKey: syncKey), versions: loaded?.versions ?? [:],
-            outgoing: loaded?.outgoing ?? [], reviewed: loaded?.reviewed ?? [], parked: loaded?.parked ?? []
+            outgoing: loaded?.outgoing ?? [], reviewed: loaded?.reviewed ?? [], parked: loaded?.parked ?? [],
+            recorded: loaded?.recorded ?? []
         )
     }
 
