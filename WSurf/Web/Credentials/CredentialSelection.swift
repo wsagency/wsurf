@@ -4,18 +4,31 @@
 import Foundation
 import Observation
 
+/// What one row shows of the selection. A row reads only its own (`CredentialSelection.state(of:)`), never the selected set or the
+/// cursor, so a change redraws only the rows whose state it changes: a cursor move redraws two rows, not every row that is built.
+@MainActor
+@Observable
+final class CredentialRowState {
+    fileprivate(set) var isSelected = false
+    fileprivate(set) var isCursor = false
+}
+
 /// Which rows of the credential list, or of the Trash, are selected, and where the keyboard cursor is. Pure state, shared by both lists.
 ///
-/// The list tells it the rows it shows (`show`) once per refresh. Every other operation is O(1) except a range (`extend`), which is
-/// O(range), and select all, which is O(rows). Rows read `selected` and `cursor` themselves, so a change redraws only the rows that
-/// are built. A row the list stops showing (a search, a filter, a removal) leaves the selection, so an action never acts on rows
-/// you cannot see.
+/// The list tells it the rows it shows (`show`) once per refresh. A cursor move or a toggle is O(1) plus the row states it changes; a
+/// range (`extend`), select all and clear also update every row state handed out (one per row that was built). Rows read their own
+/// `CredentialRowState` and the two flags `showsCheckboxes` and `hasSeveralSelected`, which change only when they flip. A row the list
+/// stops showing (a search, a filter, a removal) leaves the selection, so an action never acts on rows you cannot see.
 @MainActor
 @Observable
 final class CredentialSelection {
     private(set) var selected: Set<UUID> = []
     /// The row the keyboard acts on when nothing is selected, and where an arrow key starts.
     private(set) var cursor: UUID?
+    /// Rows show a checkbox in selection mode and whenever something is selected. Set only when it flips.
+    private(set) var showsCheckboxes = false
+    /// Two or more rows are selected, so a selected row's menu acts on all of them. Set only when it flips.
+    private(set) var hasSeveralSelected = false
     /// Where a range from the keyboard or a shift-click starts.
     private(set) var anchor: UUID?
     /// Selection mode, started by Select in a row's menu: every row shows a checkbox and a plain click toggles a row. It ends with
@@ -30,14 +43,23 @@ final class CredentialSelection {
     /// The rows in the order the list shows them: the flat list, or the groups one after another with "By Site".
     @ObservationIgnored private(set) var order: [UUID] = []
     @ObservationIgnored private var position: [UUID: Int] = [:]
+    /// The state each built row reads, made on first read and kept, so a row that is not redrawn never holds a stale one.
+    @ObservationIgnored private var rows: [UUID: CredentialRowState] = [:]
 
     var isEmpty: Bool {
         selected.isEmpty
     }
 
-    /// Rows show a checkbox in selection mode and whenever something is selected.
-    var showsCheckboxes: Bool {
-        isSelecting || !selected.isEmpty
+    /// The selection as row `id` shows it. Read in the row's body: only a change to this row's state redraws it.
+    func state(of id: UUID) -> CredentialRowState {
+        if let state = rows[id] {
+            return state
+        }
+        let state = CredentialRowState()
+        state.isSelected = selected.contains(id)
+        state.isCursor = cursor == id
+        rows[id] = state
+        return state
     }
 
     /// The selected rows in list order; empty when nothing is selected (unlike `targets`, never the cursor row).
@@ -60,10 +82,10 @@ final class CredentialSelection {
         order = ids
         position = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
         if selected.contains(where: { position[$0] == nil }) {
-            selected = selected.filter { position[$0] != nil }
+            select(selected.filter { position[$0] != nil })
         }
         if let cursor, position[cursor] == nil {
-            self.cursor = nil
+            moveCursor(to: nil)
         }
         if let anchor, position[anchor] == nil {
             self.anchor = nil
@@ -72,9 +94,9 @@ final class CredentialSelection {
 
     /// Back to nothing, for another vault, a lock or another list.
     func reset() {
-        selected = []
         isSelecting = false
-        cursor = nil
+        select([])
+        moveCursor(to: nil)
         anchor = nil
         ownsKeyboard = false
         order = []
@@ -96,7 +118,7 @@ final class CredentialSelection {
         if extending {
             extend(to: id)
         } else {
-            cursor = id
+            moveCursor(to: id)
             anchor = id
         }
         scrollRequestID += 1
@@ -110,17 +132,18 @@ final class CredentialSelection {
     }
 
     func selectAll() {
-        selected = Set(order)
+        select(Set(order))
     }
 
     /// Deselects everything and ends selection mode. The cursor stays.
     func clear() {
-        if !selected.isEmpty {
-            selected = []
-        }
         if isSelecting {
             isSelecting = false
         }
+        if !selected.isEmpty {
+            select([])
+        }
+        refreshFlags()
         anchor = cursor
     }
 
@@ -128,10 +151,13 @@ final class CredentialSelection {
     func beginSelecting(with id: UUID?) {
         isSelecting = true
         if let id, position[id] != nil {
-            selected.insert(id)
-            cursor = id
+            if !selected.contains(id) {
+                flip(id)
+            }
+            moveCursor(to: id)
             anchor = id
         }
+        refreshFlags()
         takeKeyboard()
     }
 
@@ -142,7 +168,7 @@ final class CredentialSelection {
         if isSelecting {
             toggle(id)
         } else {
-            cursor = id
+            moveCursor(to: id)
             anchor = id
         }
         takeKeyboard()
@@ -150,12 +176,8 @@ final class CredentialSelection {
 
     /// Command-click: toggles the row.
     func toggle(_ id: UUID) {
-        if selected.contains(id) {
-            selected.remove(id)
-        } else {
-            selected.insert(id)
-        }
-        cursor = id
+        flip(id)
+        moveCursor(to: id)
         anchor = id
     }
 
@@ -166,8 +188,8 @@ final class CredentialSelection {
         if anchor == nil {
             anchor = cursor ?? id
         }
-        selected = Set(order[min(start, end)...max(start, end)])
-        cursor = id
+        select(Set(order[min(start, end)...max(start, end)]))
+        moveCursor(to: id)
     }
 
     // MARK: Focus
@@ -175,10 +197,10 @@ final class CredentialSelection {
     /// The list takes the keyboard. With a row it starts there; without, the cursor stays or starts on the first row.
     func takeKeyboard(cursor row: UUID? = nil) {
         if let row, position[row] != nil {
-            cursor = row
+            moveCursor(to: row)
             anchor = row
         } else if cursor == nil, let first = order.first {
-            cursor = first
+            moveCursor(to: first)
             anchor = first
         }
         ownsKeyboard = true
@@ -204,8 +226,51 @@ final class CredentialSelection {
 
     /// Puts the cursor on `id` (or nowhere) without selecting it, for the row that takes over after a removal.
     func place(cursor id: UUID?) {
-        cursor = id
+        moveCursor(to: id)
         anchor = id
+    }
+
+    // MARK: Row states
+
+    /// The one place the cursor changes: the row it leaves and the row it reaches are told, no other.
+    private func moveCursor(to id: UUID?) {
+        guard id != cursor else { return }
+        if let old = cursor {
+            rows[old]?.isCursor = false
+        }
+        cursor = id
+        if let id {
+            rows[id]?.isCursor = true
+        }
+    }
+
+    /// Selects exactly `ids`; each handed-out row state whose answer changed is told.
+    private func select(_ ids: Set<UUID>) {
+        selected = ids
+        for (id, state) in rows where state.isSelected != ids.contains(id) {
+            state.isSelected.toggle()
+        }
+        refreshFlags()
+    }
+
+    /// Selects or deselects one row; only its state is told.
+    private func flip(_ id: UUID) {
+        if selected.remove(id) == nil {
+            selected.insert(id)
+        }
+        rows[id]?.isSelected = selected.contains(id)
+        refreshFlags()
+    }
+
+    private func refreshFlags() {
+        let shows = isSelecting || !selected.isEmpty
+        if showsCheckboxes != shows {
+            showsCheckboxes = shows
+        }
+        let several = selected.count > 1
+        if hasSeveralSelected != several {
+            hasSeveralSelected = several
+        }
     }
 }
 
@@ -218,9 +283,10 @@ nonisolated enum CredentialRowMenuItem: Hashable, Sendable {
     case copyUsername
     case copyPassword
     case edit
-    /// The credentials it merges: the selection when the row is part of it, else the row alone (its suggestion, or Select to pick more).
-    case merge([UUID])
-    case moveToTrash([UUID])
+    /// `ofSelection`: the row is one of several selected rows, so the entry acts on all of them (`menuTargets(for:)`, read on click).
+    /// Otherwise it acts on the row alone (merge: its suggestion, or Select to pick more).
+    case merge(ofSelection: Bool)
+    case moveToTrash(ofSelection: Bool)
     case select
     case deselect
 }
@@ -231,7 +297,8 @@ extension CredentialSelection {
         selected.count > 1 && selected.contains(id) ? selectedInOrder : [id]
     }
 
-    /// The entries of `summary`'s right-click menu, in order.
+    /// The entries of `summary`'s right-click menu, in order. O(1): it reads this row's state and one flag, never the selected set, so
+    /// building it in a row's body redraws the row only when its own answer changes.
     func menu(for summary: CredentialSummary) -> [CredentialRowMenuItem] {
         var items: [CredentialRowMenuItem] = []
         if let website = summary.website {
@@ -243,8 +310,9 @@ extension CredentialSelection {
         if summary.hasPassword {
             items.append(.copyPassword)
         }
-        let targets = menuTargets(for: summary.id)
-        items += [.edit, .merge(targets), .moveToTrash(targets), selected.contains(summary.id) ? .deselect : .select]
+        let isSelected = state(of: summary.id).isSelected
+        let ofSelection = isSelected && hasSeveralSelected
+        items += [.edit, .merge(ofSelection: ofSelection), .moveToTrash(ofSelection: ofSelection), isSelected ? .deselect : .select]
         return items
     }
 }

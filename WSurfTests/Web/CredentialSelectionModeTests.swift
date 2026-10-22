@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import Observation
 import Testing
 
 @testable import WSurf
@@ -79,13 +80,57 @@ struct CredentialSelectionModeTests {
         let full = summary(ids[0])
         let website = try #require(full.website)
         #expect(selection.menu(for: full) == [
-            .openWebsite(website), .copyUsername, .copyPassword, .edit, .merge([ids[0]]), .moveToTrash([ids[0]]), .select,
+            .openWebsite(website), .copyUsername, .copyPassword, .edit, .merge(ofSelection: false), .moveToTrash(ofSelection: false), .select,
         ])
         let bare = summary(ids[1], username: nil, password: nil, website: false)
-        #expect(selection.menu(for: bare) == [.edit, .merge([ids[1]]), .moveToTrash([ids[1]]), .select])
+        #expect(selection.menu(for: bare) == [.edit, .merge(ofSelection: false), .moveToTrash(ofSelection: false), .select])
 
         selection.toggle(ids[0])
+        #expect(selection.menu(for: full).suffix(3) == [.merge(ofSelection: false), .moveToTrash(ofSelection: false), .deselect])
         selection.toggle(ids[1])
-        #expect(selection.menu(for: bare).suffix(3) == [.merge([ids[0], ids[1]]), .moveToTrash([ids[0], ids[1]]), .deselect])
+        #expect(selection.menu(for: bare).suffix(3) == [.merge(ofSelection: true), .moveToTrash(ofSelection: true), .deselect])
+        #expect(selection.menuTargets(for: ids[1]) == [ids[0], ids[1]], "read when the entry is chosen")
+    }
+
+    private final class Changed: @unchecked Sendable {
+        var rows = Set<Int>()
+    }
+
+    /// Records which rows' states (as a row's body reads them) a change invalidates.
+    private func watch(_ selection: CredentialSelection) -> Changed {
+        let changed = Changed()
+        for (index, id) in ids.enumerated() {
+            let state = selection.state(of: id)
+            withObservationTracking {
+                _ = (state.isSelected, state.isCursor, selection.showsCheckboxes, selection.hasSeveralSelected)
+                _ = selection.menu(for: summary(id))
+            } onChange: {
+                changed.rows.insert(index)
+            }
+        }
+        return changed
+    }
+
+    @Test func aCursorMoveRedrawsOnlyTheTwoRowsItTouches() {
+        let selection = makeSelection()
+        selection.selectAll()
+        selection.place(cursor: ids[1])
+        let changed = watch(selection)
+        selection.moveCursor(by: 1, extending: false)
+        #expect(changed.rows == [1, 2], "the row the cursor left and the row it reached")
+    }
+
+    @Test func aToggleRedrawsOnlyItsRowUntilAFlagFlips() {
+        let selection = makeSelection()
+        selection.toggle(ids[0])
+        selection.toggle(ids[1])
+        selection.place(cursor: ids[3])
+        let changed = watch(selection)
+        selection.toggle(ids[3])
+        #expect(changed.rows == [3], "two were selected already: no flag flips, only the toggled row changes")
+
+        let all = watch(selection)
+        selection.selectAll()
+        #expect(all.rows == [2, 4], "select all changes only the rows that were not selected")
     }
 }
