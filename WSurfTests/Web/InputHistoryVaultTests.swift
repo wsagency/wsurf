@@ -131,6 +131,11 @@ struct InputHistoryVaultFixture {
     }
 }
 
+/// Whether the vault that keeps Input History stayed unlocked until Delete Vault, or a lock event came in between.
+nonisolated enum InputHistoryVaultAtDeletion: CaseIterable, Sendable {
+    case stayedUnlocked, lockedInBetween
+}
+
 /// What a test's vault key source answers, and what it was asked.
 final class InputHistoryVaultAnswers {
     var answer: Result<InputHistoryVaultKey?, InputHistoryError> = .success(nil)
@@ -649,22 +654,37 @@ struct InputHistoryVaultTests {
         }
     }
 
-    @Test func deletingTheVaultInCredentialsNamesAndDeletesWhatItKept() async throws {
+    /// The page is built over the registered managers, as the app's is. Given its own `native` seam it would unlock a manager of its
+    /// own, which Input History never sees, and opening Input History would stay `vaultLocked`. The wipe itself needs no key: it runs
+    /// after the vault was locked and retired, and reads only which vault the binding names.
+    @Test(arguments: InputHistoryVaultAtDeletion.allCases)
+    func deletingTheVaultInCredentialsNamesAndDeletesWhatItKept(state: InputHistoryVaultAtDeletion) async throws {
         try await VaultManagerFixture.exclusive {
-            try await VaultManagerFixture.with(vaults: [.locked, .locked]) { profile, passkeys, vaults in
+            try await VaultManagerFixture.with(vaults: [.locked, .locked]) { profile, _, vaults in
                 let harness = InputHistoryHarness(vaultKey: InputHistory.liveVaultKey)
                 let saved = InputHistory.shared
                 InputHistory.shared = harness.history
                 defer { InputHistory.shared = saved }
-                let model = CredentialSettingsModel(profile: profile, exchange: CredentialExchangeCoordinator(), native: passkeys.native)
+                let model = CredentialSettingsModel(profile: profile, exchange: CredentialExchangeCoordinator())
                 await model.load()
-                await model.select(vaultID: vaults[0].vaultID)
+                #expect(model.selectedVaultID == vaults[0].vaultID)
                 await model.unlock(in: VaultManagerFixture.anchor())
-                #expect(model.isUnlocked)
+                #expect(model.isUnlocked && vaults[0].manager.isUnlocked, "the page unlocked the manager Input History asks")
 
                 try await harness.seed(profile, ["one", "two"])
                 try await harness.history.unlock(profile)
                 #expect(harness.history.unlocked[profile.id]?.count == 2)
+                #expect(await harness.history.keptVault(of: profile) == vaults[0].vaultID)
+
+                if state == .lockedInBetween {
+                    // A lock event locks the vault and Input History: the entries can't be opened, the inbox key is out of reach.
+                    CredentialManager.lock(profileID: profile.id, reason: .manual)
+                    #expect(harness.history.unlocked[profile.id] == nil)
+                    await #expect(throws: InputHistoryError.vaultLocked) { try await harness.history.unlock(profile) }
+                    // Delete Vault needs the vault unlocked, as it does for any vault; Input History stays locked.
+                    await model.unlock(in: VaultManagerFixture.anchor())
+                    #expect(model.isUnlocked && harness.history.unlocked[profile.id] == nil)
+                }
                 #expect(await harness.history.entries(keptWith: vaults[0].vaultID, in: profile) == 2)
                 #expect(await harness.history.entries(keptWith: vaults[1].vaultID, in: profile) == 0)
 
@@ -676,9 +696,16 @@ struct InputHistoryVaultTests {
 
                 #expect(await model.confirmVaultDeletion(typedName: pending.name, in: VaultManagerFixture.anchor()))
                 await harness.history.drain(profileID: profile.id)
+                // The vault was locked and retired before the wipe, and its key is gone: the wipe did not need it.
+                #expect(!vaults[0].manager.isUnlocked)
+                await #expect(throws: CredentialVaultError.self) { _ = try await vaults[0].manager.inputHistoryKey() }
                 #expect(harness.history.count(for: profile.id) == 0)
                 #expect(harness.history.unlocked[profile.id] == nil)
                 #expect(!harness.exists(profile))
+                #expect(await harness.history.keptVault(of: profile) == nil)
+                // Opening again finds nothing and asks for no vault.
+                try await harness.history.unlock(profile)
+                #expect(harness.history.unlocked[profile.id]?.isEmpty == true)
             }
         }
     }
