@@ -107,19 +107,24 @@ struct ContentNavBar: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { barWidth = $0 }
         .background { WindowDragArea() }
         .onDrop(of: [.url, .fileURL], isTargeted: nil) { providers in
-            guard let provider = providers.first else { return false }
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                guard let url else { return }
-                Task { @MainActor in
-                    if let tab = browser.activeTab {
-                        tab.load(url)
-                    } else {
-                        coordinator.openNewTab(url: url)
-                    }
+            Self.openDropped(providers) { url in
+                if let tab = browser.activeTab {
+                    tab.load(url)
+                } else {
+                    coordinator.openNewTab(url: url)
                 }
             }
-            return true
         }
+    }
+
+    /// Opens the first dropped link or file. A dropped file loads like a typed `file:` address: with read access to that file only.
+    static func openDropped(_ providers: [NSItemProvider], open: @escaping @MainActor (URL) -> Void) -> Bool {
+        guard let provider = providers.first else { return false }
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            guard let url else { return }
+            Task { @MainActor in open(url) }
+        }
+        return true
     }
 
     private var addressSurface: some View {

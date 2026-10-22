@@ -42,6 +42,13 @@ nonisolated final class ChromiumTrackerPolicy: @unchecked Sendable {
             exemptHosts: exemptHosts
         )
     }
+
+    /// A `file:` subresource the `file:` page in front may not read (`FileAccessScope`).
+    func blocksOutOfScopeFile(_ resourceURL: URL) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !FileAccessScope.allows(resourceURL, from: topLevelURL)
+    }
 }
 
 /// CEF's UI request has no ID, and its IO request ID is not a navigation ID.
@@ -724,7 +731,8 @@ final class ChromiumClient {
             defer { cef_string_userfree_utf16_free(rawURL) }
             guard request.pointee.get_resource_type?(request) != RT_MAIN_FRAME else { return RV_CONTINUE }
             guard let url = URL(string: ChromiumClient.string(UnsafePointer(rawURL))) else { return RV_CONTINUE }
-            return client.trackerPolicy.shouldBlock(url) ? RV_CANCEL : RV_CONTINUE
+            return client.trackerPolicy.shouldBlock(url) || client.trackerPolicy.blocksOutOfScopeFile(url)
+                ? RV_CANCEL : RV_CONTINUE
         }
         handler.pointee.on_resource_response = { handlerSelf, browser, frame, request, response in
             defer {
