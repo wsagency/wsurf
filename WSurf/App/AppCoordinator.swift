@@ -166,6 +166,7 @@ final class AppCoordinator {
 
     private(set) var browserVisible = false
     private(set) var windowControlsInset: CGFloat = 0
+    private(set) var titleStripInset: CGFloat = 0
     private(set) var addressBarFocusToken = 0
     private(set) var isPaletteOpen = false
     private(set) var isNewTabPaletteOpen = false
@@ -758,9 +759,10 @@ final class AppCoordinator {
         }
     }
 
-    func hostDidChange(visible: Bool, controlsInset: CGFloat) {
+    func hostDidChange(visible: Bool, controlsInset: CGFloat, titleStripInset: CGFloat) {
         browserVisible = visible
         windowControlsInset = controlsInset
+        self.titleStripInset = titleStripInset
     }
 
     func prepareWindowBloom() {

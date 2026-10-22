@@ -48,8 +48,12 @@ struct IslandBar: View {
         )
     }
 
+    private var showsTabList: Bool {
+        coordinator.isMinimalTabListOpen || coordinator.keepsMinimalSidebarOpen
+    }
+
     private var tabListLabel: LocalizedStringResource {
-        coordinator.isMinimalTabListOpen ? "Hide Tabs" : "Show Tabs"
+        showsTabList ? "Hide Tabs" : "Show Tabs"
     }
 
     var body: some View {
@@ -63,10 +67,10 @@ struct IslandBar: View {
             ToolbarButton(
                 symbol: Self.tabCountSymbol(browser.tabs.count),
                 enabled: true,
-                isOn: coordinator.isMinimalTabListOpen,
+                isOn: showsTabList,
                 help: String(localized: tabListLabel)
             ) {
-                coordinator.isMinimalTabListOpen.toggle()
+                coordinator.toggleSidebar()
             }
             .accessibilityLabel(Text(tabListLabel))
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onTabButtonFrame($0) }

@@ -93,6 +93,8 @@ final class BrowserSettings {
     @ObservationIgnored lazy var storedMinimalBarEdge: MinimalBarEdge? =
         appDefaults.string(forKey: Key.minimalBarEdge).flatMap(MinimalBarEdge.init(rawValue:)) ?? .bottom
     @ObservationIgnored lazy var storedHidesMinimalBar: Bool? = appDefaults.object(forKey: Key.minimalBarAutoHide) as? Bool ?? false
+    @ObservationIgnored lazy var storedKeepsMinimalSidebarOpen: Bool? =
+        appDefaults.object(forKey: Key.minimalSidebarPinned) as? Bool ?? false
 
     @ObservationIgnored var onWebPreferencesChanged: (() -> Void)?
     @ObservationIgnored var onContentBlockingChanged: (() -> Void)?

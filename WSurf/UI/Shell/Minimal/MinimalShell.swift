@@ -8,9 +8,13 @@ import SwiftUI
 /// The chrome of the Minimal window style, drawn over the page `BrowserView` lays out: the floating bar, and the tab list
 /// that slides in from the left. The tab list is the real sidebar (Favorites, folders, splits, AI marks, profile, downloads,
 /// media), floating. Its open state is `AppCoordinator.isMinimalTabListOpen`; the Standard sidebar's state is never touched.
+/// Kept open (`BrowserSettings.keepsMinimalSidebarOpen`) the list stays where it slides to, `pinnedInset` wide with its
+/// margin, `BrowserView` lays the page out beside it and the bar centers over the page.
 struct MinimalShell: View {
     let browser: BrowserModel
     let coordinator: AppCoordinator
+    /// How far from the window's leading edge the page starts while the tab list is kept open; 0 while it floats.
+    var pinnedInset: CGFloat = 0
 
     @State private var isIslandRaised = true
     /// Opened by pointing at the left edge, so it closes again when the pointer leaves it.
@@ -19,8 +23,13 @@ struct MinimalShell: View {
     @State private var tabButtonFrame: CGRect = .zero
     @State private var tabListFrame: CGRect = .zero
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.titleStripInset) private var titleStripInset
 
     private static let edgeSensorWidth: CGFloat = 10
+
+    private var isPinned: Bool {
+        pinnedInset > 0
+    }
 
     private var settings: BrowserSettings {
         BrowserSettings.application
@@ -52,8 +61,8 @@ struct MinimalShell: View {
                         raiseIsland(towardTop)
                     },
                     onEdge: { if $0 == edge { raiseIsland(true) } },
-                    onPointerDown: { closeTabList(unlessAt: $0, height: proxy.size.height) },
-                    pinsWindowControls: coordinator.isMinimalTabListOpen
+                    onPointerDown: { closeTabList(unlessAt: $0, height: proxy.size.height + titleStripInset) },
+                    pinsWindowControls: coordinator.isMinimalTabListOpen || isPinned
                 )
                 .allowsHitTesting(false)
 
@@ -65,13 +74,14 @@ struct MinimalShell: View {
                 IslandBar(browser: browser, coordinator: coordinator, edge: edge) { tabButtonFrame = $0 }
                     .frame(width: IslandBar.width(
                         fullAddress: settings.showsFullAddress,
-                        available: proxy.size.width - 2 * gap
+                        available: proxy.size.width - pinnedInset - 2 * gap
                     ))
                     .padding(edge == .top ? .top : .bottom, gap)
                     .offset(y: isIslandRaised ? 0 : (edge == .top ? -1 : 1) * (IslandBar.height + gap + 24))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: edge == .top ? .top : .bottom)
+                    .padding(.leading, pinnedInset)
 
-                if coordinator.isMinimalTabListOpen {
+                if isPinned || coordinator.isMinimalTabListOpen {
                     tabList(width: SidebarMetrics.clampWidth(coordinator.sidebar.width, container: proxy.size.width), inset: spacing)
                         .transition(.move(edge: .leading))
                 } else {
@@ -89,6 +99,7 @@ struct MinimalShell: View {
             }
         }
         .animation(motion, value: coordinator.isMinimalTabListOpen)
+        .animation(motion, value: isPinned)
         .animation(motion, value: isIslandRaised)
         .onChange(of: browser.activeTab?.id) { old, _ in
             raiseIsland(true)
@@ -132,7 +143,8 @@ struct MinimalShell: View {
             .environment(\.sidebarIsFloating, true)
             .clipShape(LoomChrome.canvasShape)
             .compositingGroup()
-            .shadow(color: .black.opacity(0.45), radius: 22, x: 6)
+            // Beside the page the card needs no shadow to tell it apart from the page it floats over.
+            .shadow(color: .black.opacity(isPinned ? 0 : 0.45), radius: 22, x: 6)
             .padding(inset)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tabListFrame = $0 }
             .onHover { inside in
@@ -147,7 +159,7 @@ struct MinimalShell: View {
     }
 
     /// A click beside the open list closes it, unless it lands on the bar's tab button (which toggles it itself) or the
-    /// profile switcher the list opened.
+    /// profile switcher the list opened. `height` is the window's, strip included: the point is a window point.
     private func closeTabList(unlessAt windowPoint: CGPoint, height: CGFloat) {
         guard coordinator.isMinimalTabListOpen, !coordinator.isProfileSwitcherOpen else { return }
         let point = CGPoint(x: windowPoint.x, y: height - windowPoint.y)

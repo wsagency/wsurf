@@ -712,7 +712,9 @@ final class CommandPaletteModel {
             canSwapPanes: browser.activeTabID.flatMap { split?.sibling(of: $0) } != nil,
             isStacked: split?.axis == .stacked,
             hasSplitAxis: split?.axis != nil,
-            isSidebarVisible: coordinator.isMinimal ? coordinator.isMinimalTabListOpen : coordinator.sidebar.isVisible,
+            isSidebarVisible: coordinator.isMinimal
+                ? coordinator.isMinimalTabListOpen || coordinator.keepsMinimalSidebarOpen
+                : coordinator.sidebar.isVisible,
             isActivityVisible: coordinator.sidePanel.isShowing(.activity),
             isLyricsVisible: coordinator.sidePanel.isShowing(.lyrics),
             canShowLyrics: BrowserSettings.application.showsLyrics,

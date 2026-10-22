@@ -12,11 +12,19 @@ struct BrowserView: View {
     @State private var settingsWorkspace: SettingsWorkspace
     /// The window style to draw; nil follows the app-wide setting. Tests pass one so they never write the setting.
     private let style: BrowserWindowStyle?
+    /// Whether the Minimal tab list is kept open; nil follows the app-wide setting. Tests pass one for the same reason.
+    private let keepsSidebarOpen: Bool?
 
-    init(browser: BrowserModel, coordinator: AppCoordinator, style: BrowserWindowStyle? = nil) {
+    init(
+        browser: BrowserModel,
+        coordinator: AppCoordinator,
+        style: BrowserWindowStyle? = nil,
+        keepsSidebarOpen: Bool? = nil
+    ) {
         self.browser = browser
         self.coordinator = coordinator
         self.style = style
+        self.keepsSidebarOpen = keepsSidebarOpen
         let workspace = SettingsWorkspace(coordinator: coordinator)
         workspace.onRoute = { [weak coordinator] category in
             coordinator?.routeSettings(to: category)
@@ -30,9 +38,15 @@ struct BrowserView: View {
     @State private var containerWidth: CGFloat = 0
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.titleStripInset) private var titleStripInset
 
     private var isMinimal: Bool {
         (style ?? BrowserSettings.application.windowStyle) == .minimal
+    }
+
+    /// The Minimal window docks its tab list beside the page instead of floating it over the page.
+    private var pinsTabList: Bool {
+        isMinimal && (keepsSidebarOpen ?? BrowserSettings.application.keepsMinimalSidebarOpen)
     }
 
     private var chromeSitsOnALightPage: Bool {
@@ -55,12 +69,18 @@ struct BrowserView: View {
 
     var body: some View {
         let isMinimal = self.isMinimal
-        // The Minimal window has no docked sidebar and no toolbar: the page and the side panel take the whole window.
-        let docksSidebar = sidebar.isVisible && !isMinimal
-        let width = sidebar.openWidth(in: containerWidth)
-        let roomBesideSidebar = containerWidth - (docksSidebar ? width : 0)
+        // The Minimal window has no toolbar and no Standard sidebar: the page and the side panel take the whole window,
+        // beside its tab list while that is kept open.
         let isExpanded = showsPanel && panel.isExpanded
         let spacing = BrowserSettings.application.chromeShape.pageSpacing
+        let pinsTabList = self.pinsTabList
+        let docksSidebar = isMinimal ? pinsTabList : sidebar.isVisible
+        let width = isMinimal
+            ? SidebarMetrics.pinnedTabListInset(
+                isPinned: pinsTabList, sidebarWidth: sidebar.width, container: containerWidth, pageSpacing: spacing
+            )
+            : sidebar.openWidth(in: containerWidth)
+        let roomBesideSidebar = containerWidth - (docksSidebar ? width : 0)
         let top = isMinimal ? spacing : LoomChrome.canvasTop
         let shell = LoomShellGeometry(
             containerWidth: containerWidth,
@@ -73,14 +93,6 @@ struct BrowserView: View {
         )
 
         ZStack(alignment: .leading) {
-            LoomAmbientBackdrop(
-                sampledPageColor: ChromeBand.pageColor(
-                    browser: browser,
-                    coordinator: coordinator
-                ),
-                settings: BrowserSettings.application
-            )
-
             ContentArea(
                 browser: browser,
                 coordinator: coordinator,
@@ -122,7 +134,7 @@ struct BrowserView: View {
             }
 
             if isMinimal {
-                MinimalShell(browser: browser, coordinator: coordinator)
+                MinimalShell(browser: browser, coordinator: coordinator, pinnedInset: docksSidebar ? width : 0)
                     .transition(.opacity)
             } else {
                 standardChrome(width: width, shell: shell, spacing: spacing)
@@ -132,14 +144,16 @@ struct BrowserView: View {
             TabPreviewOverlay(
                 browser: browser,
                 model: coordinator.tabPreview,
-                sidebarEdge: sidebarEdge(width: width, isMinimal: isMinimal)
+                sidebarEdge: sidebarEdge(width: width, isMinimal: isMinimal, isPinned: pinsTabList)
             )
 
             SidebarDragOverlay(browser: browser, model: coordinator.sidebarDrag)
                 .environment(\.sidebarStyle, isMinimal ? .full : sidebar.style)
 
+            // Flights fly between window points, so the layer is lifted back to the window's top.
             DownloadFlightLayer(flights: coordinator.downloadFlights)
                 .environment(\.sidebarStyle, isMinimal ? .full : sidebar.style)
+                .offset(y: -titleStripInset)
 
             PaneDragOverlay(browser: browser, model: coordinator.sidebarDrag)
                 .environment(\.sidebarStyle, isMinimal ? .full : sidebar.style)
@@ -184,7 +198,7 @@ struct BrowserView: View {
                             coordinator.isProfileSwitcherOpen = false
                         }
                         .padding(.leading, anchor.minX)
-                        .padding(.bottom, max(0, proxy.size.height - anchor.minY + 6))
+                        .padding(.bottom, max(0, proxy.size.height + titleStripInset - anchor.minY + 6))
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                 }
@@ -195,6 +209,17 @@ struct BrowserView: View {
                 OnboardingOverlay(coordinator: coordinator, model: coordinator.onboarding)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+        // Full screen: every layout starts below the system's title strip; the backdrop still fills the window.
+        .padding(.top, titleStripInset)
+        .background {
+            LoomAmbientBackdrop(
+                sampledPageColor: ChromeBand.pageColor(
+                    browser: browser,
+                    coordinator: coordinator
+                ),
+                settings: BrowserSettings.application
+            )
         }
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .global)
@@ -213,6 +238,7 @@ struct BrowserView: View {
         .environment(\.chromeWash, .of(nil, isLight: scheme == .light))
         .environment(\.windowColorScheme, scheme)
         .animation(chromeMotion, value: sidebar.isVisible)
+        .animation(chromeMotion, value: pinsTabList)
         .animation(reduceMotion ? nil : chromeMotion, value: isMinimal)
         .animation(nil, value: sidebar.isPeeking)
         .animation(chromeMotion, value: showsPanel)
@@ -281,10 +307,11 @@ struct BrowserView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
-    /// Where tab previews open: beside the Standard sidebar while it shows, or beside the Minimal tab list while it is open.
-    private func sidebarEdge(width: CGFloat, isMinimal: Bool) -> CGFloat {
+    /// Where tab previews open: beside the Standard sidebar while it shows, or beside the Minimal tab list while it is open
+    /// or kept open.
+    private func sidebarEdge(width: CGFloat, isMinimal: Bool, isPinned: Bool) -> CGFloat {
         guard isMinimal else { return sidebar.isShowing ? width : 0 }
-        guard coordinator.isMinimalTabListOpen else { return 0 }
+        guard isPinned || coordinator.isMinimalTabListOpen else { return 0 }
         let spacing = BrowserSettings.application.chromeShape.pageSpacing
         return SidebarMetrics.clampWidth(sidebar.width, container: containerWidth) + 2 * spacing
     }

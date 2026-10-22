@@ -88,10 +88,21 @@ extension BrowserSettings {
         }
     }
 
+    /// The Minimal window's tab list stays docked open beside the page instead of sliding in over it. App-wide like the
+    /// window style, off by default; it changes nothing outside the Minimal window.
+    var keepsMinimalSidebarOpen: Bool {
+        get { globalValue(\.keepsMinimalSidebarOpen, storage: storedKeepsMinimalSidebarOpen) }
+        set {
+            setGlobal(\BrowserSettings.keepsMinimalSidebarOpen, storage: \BrowserSettings.storedKeepsMinimalSidebarOpen,
+                      value: newValue, key: Key.minimalSidebarPinned)
+        }
+    }
+
     func resetWindowStyle() {
         showsFullAddress = false
         windowStyle = .standard
         minimalBarEdge = .bottom
         hidesMinimalBar = false
+        keepsMinimalSidebarOpen = false
     }
 }
