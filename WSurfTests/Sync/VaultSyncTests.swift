@@ -781,7 +781,13 @@ struct VaultSyncTests {
         await a.wrote(va)
         try await a.pump()
 
-        #expect(rig.item(huge) == nil, "an entry that was never synced is not reported removed")
+        // Nothing was ever there to remove: if the deletion is told at all, it is a removed state at version 1 that carries digests only,
+        // for a Mac whose import might bring the entry back, and never content.
+        if let record = rig.item(huge) {
+            let told = try VaultSyncCodec.openItem(record.payload, accountID: huge.id, key: va.syncKey)
+            #expect(told.account == nil && told.version == 1, "an entry that was never synced is not reported as removed content")
+        }
+        #expect(rig.item(normal) != nil)
     }
 
     // MARK: Nothing secret leaves

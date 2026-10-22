@@ -48,6 +48,8 @@ final class FakeVault {
     private(set) var accounts: [UUID: CredentialAccount] = [:]
     private(set) var trash: [UUID: CredentialAccount] = [:]
     private(set) var tombstones: Set<UUID> = []
+    /// What each tombstone kept of the entry it stands for: keyed digests, as the store keeps them. An old tombstone has none.
+    private(set) var tombstoneTraces: [UUID: ImportTrace] = [:]
     private(set) var history: [UUID: [Revision]] = [:]
     private(set) var isLocked = true
     private(set) var lease: UInt64 = 0
@@ -116,9 +118,20 @@ final class FakeVault {
 
     /// Emptying the Trash entry: nothing live changes, and a tombstone remains.
     func purge(_ id: UUID) {
-        guard trash.removeValue(forKey: id) != nil else { return }
+        guard let old = trash.removeValue(forKey: id) else { return }
         tombstones.insert(id)
+        tombstoneTraces[id] = memory.removedTrace(of: old)
         revision += 1
+    }
+
+    /// A tombstone from before imports kept digests: it knows the ID and nothing else.
+    func addOldTombstone(_ id: UUID) {
+        tombstones.insert(id)
+    }
+
+    /// The vault's import memory key, derived as the store does: from the vault key, bound to the profile and the vault.
+    private var memory: ImportMemoryKey {
+        ImportMemoryKey.derive(dek: dek, profileID: profileID, vaultID: vaultID)
     }
 
     func account(_ id: UUID) -> CredentialAccount? {
@@ -134,24 +147,27 @@ final class FakeVault {
         for account in live {
             stamps[account.id] = stamp(account.id)
         }
-        let removed = trash.values.map { Self.removed($0, tombstone: false) } + tombstones.map { Self.removed(id: $0, tombstone: true) }
+        let removed = trash.values.map { removed($0) } + tombstones.map { removed(id: $0) }
         return VaultSyncSnapshot(
             lease: lease, revision: revision, accounts: live, stamps: stamps, removed: RemovedIdentifiers(items: removed), name: name,
             wrappers: wrappers
         )
     }
 
-    private static func removed(_ account: CredentialAccount, tombstone: Bool) -> RemovedIdentifier {
+    /// A Trash entry's row: the ids and what the entry stood for, as the store reads them from the entry.
+    private func removed(_ account: CredentialAccount) -> RemovedIdentifier {
         RemovedIdentifier(
-            entryID: UUID(), isTombstone: tombstone, accountID: account.id, exchangeAccountID: account.exchangeAccountID,
-            exchangeItemID: account.exchangeItemID, passkeyCredentialID: nil, rpID: nil, removedAt: nil
+            entryID: UUID(), isTombstone: false, accountID: account.id, exchangeAccountID: account.exchangeAccountID,
+            exchangeItemID: account.exchangeItemID, passkeyCredentialID: nil, rpID: nil, removedAt: nil,
+            trace: memory.removedTrace(of: account)
         )
     }
 
-    private static func removed(id: UUID, tombstone: Bool) -> RemovedIdentifier {
+    /// A tombstone's row: the ID and the digests it kept, if it kept any.
+    private func removed(id: UUID) -> RemovedIdentifier {
         RemovedIdentifier(
-            entryID: UUID(), isTombstone: tombstone, accountID: id, exchangeAccountID: nil, exchangeItemID: nil, passkeyCredentialID: nil,
-            rpID: nil, removedAt: nil
+            entryID: UUID(), isTombstone: true, accountID: id, exchangeAccountID: nil, exchangeItemID: nil, passkeyCredentialID: nil,
+            rpID: nil, removedAt: nil, trace: tombstoneTraces[id]
         )
     }
 
@@ -159,6 +175,7 @@ final class FakeVault {
     func remember(lease: UInt64, traces: [UUID: ImportTrace]) throws -> UInt64 {
         guard !isLocked, lease == self.lease else { throw CredentialVaultError.expired }
         tombstones.formUnion(traces.keys)
+        tombstoneTraces.merge(traces) { _, new in new }
         revision += 1
         return revision
     }
