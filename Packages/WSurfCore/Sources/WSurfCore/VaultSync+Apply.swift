@@ -75,6 +75,8 @@ extension VaultSync {
                 guard mine == token(key), record(pass, key: key, database: database, syncKey: syncKey, revision: max(revision ?? 0, snapshot.revision)) else {
                     return
                 }
+                // Rows this build cannot read stay in the inbox: going round again would meet them again.
+                guard pass.newerFormat.isEmpty else { return }
                 staleRetries = 0
             case .stale:
                 staleRetries += 1
