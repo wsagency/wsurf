@@ -49,6 +49,33 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
         }
     }
 
+    /// Switching among five spaces of 60 tabs each: every switch settles and filters all 300 rows of the window and
+    /// activates the space's last tab.
+    func testSwitchingSpacesInACrowdedSession() {
+        MainActor.assumeIsolated {
+            let browser = BrowserModel(database: .temporary())
+            let spaces = (0..<5).map { _ in UUID() }
+            browser.adoptSpaces(spaces)
+            browser.newTab()
+            for space in spaces {
+                browser.switchSpace(to: space)
+                for index in 0..<59 {
+                    browser.addPage("https://fixture-\(index).example/\(space.uuidString)")
+                }
+            }
+            XCTAssertEqual(browser.tabs.count, 300)
+
+            // ponytail-merge: written before the robust gate; six runs so the memory gate drops the warm-up and judges five.
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
+                for index in 0..<50 {
+                    browser.switchSpace(to: spaces[index % spaces.count])
+                }
+            }
+            XCTAssertEqual(browser.sidebarTree.root.count, 60)
+            browser.cancelPendingSave()
+        }
+    }
+
     /// The sweep over 500 tabs when 50 of them have sat unused: the filter reads every tab, and the stale ones close
     /// into the archive. Each run starts with a fresh set of 50, so the setup stays out of the measurement.
     func testSweepingACrowdedSessionForStaleTabs() {
@@ -404,7 +431,8 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             window.contentView = host
             host.layoutSubtreeIfNeeded()
 
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+            // ponytail-merge: written before the robust gate; six runs so the memory gate drops the warm-up and judges five.
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 for _ in 0..<5 {
                     for style in [BrowserWindowStyle.minimal, .standard] {
                         host.rootView = AnyView(BrowserView(browser: browser, coordinator: coordinator, style: style))
@@ -429,7 +457,8 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                 browser.newTab(activate: false).urlString = "https://fixture-\(index).example/"
             }
 
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+            // ponytail-merge: written before the robust gate; six runs so the memory gate drops the warm-up and judges five.
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 autoreleasepool {
                     coordinator.isMinimalTabListOpen = true
                     let host = NSHostingView(rootView: MinimalShell(browser: browser, coordinator: coordinator))

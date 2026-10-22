@@ -372,7 +372,7 @@ struct SidebarTabRow: View {
         } label: {
             Label("Remove Tab", systemImage: "xmark")
         }
-        let others = browser.tabs.filter { $0 !== tab && $0.pinID == nil }
+        let others = browser.tabs.filter { $0 !== tab && $0.pinID == nil && browser.isShown($0) }
         if tab.pinnedURL == nil, !others.isEmpty {
             Button(role: .destructive) {
                 let count = others.count

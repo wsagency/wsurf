@@ -695,7 +695,7 @@ final class CommandPaletteModel {
             isSpeechMuted: coordinator.isSpeechMuted,
             isListening: coordinator.voiceInput.phase == .listening,
             historyCount: browser.history.count,
-            tabCount: browser.tabs.count,
+            tabCount: browser.currentSpaceTabs.count,
             hasActiveTab: tab != nil,
             canReload: page?.canReload ?? false,
             canGoBack: page?.canGoBack ?? false,
@@ -706,6 +706,7 @@ final class CommandPaletteModel {
             isAwayFromPin: tab?.isAwayFromPin ?? false,
             canReopenClosedTab: browser.canReopenClosedTab,
             archivedCount: archivedCount,
+            hasSpaces: coordinator.spaceStore != nil,
             canSplit: tab != nil && !(split?.isFull ?? false),
             isSplit: coordinator.isSplit,
             canSwapPanes: browser.activeTabID.flatMap { split?.sibling(of: $0) } != nil,
@@ -792,6 +793,8 @@ final class CommandPaletteModel {
             coordinator.focusAddressBar()
         case .privateBrowsing:
             coordinator.requestNewWindow(isPrivate: true)
+        case .newSpace:
+            coordinator.showNewSpaceEditor()
         case .unloadTab:
             if !coordinator.closePeek(), let tab {
                 coordinator.unloadTab(tab)

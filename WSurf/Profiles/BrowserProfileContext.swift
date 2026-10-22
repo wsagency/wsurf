@@ -54,6 +54,10 @@ final class BrowserProfileContext {
     lazy var conversationLog = ConversationLog(database: database)
     /// Nil in a private window: nothing is watched there.
     lazy var pageWatches: PageWatchCenter? = profile.isPrivate ? nil : PageWatchCenter.live(for: self)
+    /// Nil in a private window, which has no spaces.
+    var spaces: SpaceStore? {
+        SpaceStore.shared(for: profile)
+    }
     lazy var extensions = ExtensionManager(profile: profile, dataStore: dataStore)
 
     private var browsers = NSHashTable<BrowserModel>.weakObjects()

@@ -146,6 +146,9 @@ final class BrowserTab: Identifiable {
     var pinnedTitle = ""
     /// The profile pin this tab is the window's page for. Nil when the tab is not part of the profile's pins.
     var pinID: UUID?
+    /// The space of the window this tab belongs to. Nil while it is a pin or inside a pinned folder, which every space
+    /// shows, and for a tab that has not joined a space yet.
+    var spaceID: UUID?
 
     @ObservationIgnored var liveView: BrowserPage? {
         didSet {

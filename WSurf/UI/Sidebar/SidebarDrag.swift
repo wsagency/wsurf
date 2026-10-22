@@ -69,6 +69,15 @@ final class SidebarDragModel {
 
     var listOriginInWindow: CGPoint = .zero
 
+    /// The space switcher's icons, in global coordinates, so a dragged row can be dropped on one.
+    @ObservationIgnored var spaceDotFrames: [UUID: CGRect] = [:]
+    /// The space whose icon a dragged row is over; dropping moves the row there.
+    var armedSpaceID: UUID?
+
+    func spaceDot(at point: CGPoint) -> UUID? {
+        spaceDotFrames.first { $0.value.contains(point) }?.key
+    }
+
     var contentFrameInWindow: CGRect = .zero
 
     var dropFrameInWindow: CGRect {

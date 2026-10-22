@@ -200,6 +200,19 @@ check_average \
   '8192' \
   'Tab activation memory growth' \
   'kB'
+# Provisional (no native run when added): replace with twice the five-sample Pro mean, memory at least 4096 kB.
+check_average \
+  'BrowserPerformanceTests/testSwitchingSpacesInACrowdedSession()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.400' \
+  '50 space switches among 300 tabs' \
+  's'
+check_average \
+  'BrowserPerformanceTests/testSwitchingSpacesInACrowdedSession()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '8192' \
+  'Space switching memory growth' \
+  'kB'
 # Five-sample Pro baseline: 0.123550 s to archive 50 stale tabs among 500; memory growth was not above zero.
 check_average \
   'BrowserPerformanceTests/testSweepingACrowdedSessionForStaleTabs()' \
