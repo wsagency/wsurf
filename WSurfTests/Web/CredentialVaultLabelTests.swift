@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // One vault is called the same thing on every surface, and what a lock or an unlock of any vault of the profile changes is seen
 // without the user doing anything: the name is sealed while the vault is locked and must not outlive the lock in memory.

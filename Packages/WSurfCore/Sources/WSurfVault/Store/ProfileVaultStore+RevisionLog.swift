@@ -7,7 +7,7 @@ extension ProfileVaultStore {
     /// The earlier versions of every live account of `vaultID`, by account: which part, when and why (`RevisionItem`). One pass over the
     /// vault's history rows, each opened for its date and cause only; the superseded value is decoded with the row and dropped, never
     /// returned. The import report reads it to say what was changed in WSurf, so it asks for it once and not once per credential.
-    func revisionLog(vaultID: UUID, using access: VaultAccess) async throws -> [UUID: [RevisionItem]] {
+    public func revisionLog(vaultID: UUID, using access: VaultAccess) async throws -> [UUID: [RevisionItem]] {
         try await readHistory(vaultID, access) { db, grant, _ in
             var log: [UUID: [RevisionItem]] = [:]
             try mapIntegrity(grant.ordinal) {

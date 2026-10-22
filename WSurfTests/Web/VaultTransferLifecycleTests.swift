@@ -8,6 +8,7 @@ import Synchronization
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// How an import or export ends, through the real coordinator, manager and store (spec §13.5). The tests assert kinds,
 /// actions, receipts and store bytes; the wording is production code's and never asserted here.

@@ -12,7 +12,7 @@ import SQLite3
 /// durable write and again at the commit point, so a revocation that lands while creation waits or runs writes nothing more. For
 /// `.unlockedVault` that access is the source vault's own grant (never revoked or extended here); for the other two it is a lease the
 /// store never keeps.
-enum VaultCreationAuthority: Sendable {
+public enum VaultCreationAuthority: Sendable {
     case firstVault(lease: VaultAccess)
     case unlockedVault(vaultID: UUID, access: VaultAccess)
     case existingPasskey(vaultID: UUID, credentialID: Data, prf: SymmetricKey, lease: VaultAccess)
@@ -214,7 +214,7 @@ extension ProfileVaultStore {
     // MARK: Default vault
 
     /// A plaintext non-secret preference (spec §8 item 6); it may name a locked vault and is not validated against the store.
-    func setDefaultVault(_ vaultID: UUID?) {
+    public func setDefaultVault(_ vaultID: UUID?) {
         if let vaultID {
             defaults.set(vaultID.uuidString, forKey: Self.defaultVaultKey)
         } else {
@@ -222,14 +222,14 @@ extension ProfileVaultStore {
         }
     }
 
-    func defaultVaultID() -> UUID? {
+    public func defaultVaultID() -> UUID? {
         defaults.string(forKey: Self.defaultVaultKey).flatMap { UUID(uuidString: $0) }
     }
 
     // MARK: Creation
 
     /// Spec §8. The new vault's id; no grant is published for it or for the authorizing vault.
-    func createVault(name: String, unlock proof: VaultUnlockProof, authorizedBy: VaultCreationAuthority) async throws -> UUID {
+    public func createVault(name: String, unlock proof: VaultUnlockProof, authorizedBy: VaultCreationAuthority) async throws -> UUID {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count <= StoreFormat.nameLimit else { throw CredentialStoreError.invalidVaultName }
         try CredentialVaultCrypto.validateProof(proof)

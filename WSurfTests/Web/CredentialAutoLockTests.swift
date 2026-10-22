@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // A vault's lease lasts the time chosen for that vault, counted from the unlock. Every case drives an injected clock, never wall time:
 // the manager checks the lease against it on each use, so a vault is locked the moment the clock passes the deadline.

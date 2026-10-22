@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // One account is bounded by what the store writes for it (its canonical JSON), not only by its raw field bytes. A history row, which
 // carries the account encoded, or a part of it as base64 text, is capped at 8 MB, so even the largest account the store accepts has to

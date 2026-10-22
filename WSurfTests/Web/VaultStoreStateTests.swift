@@ -8,6 +8,7 @@ import Synchronization
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 private nonisolated enum Names {
     static let store = "Credentials.store"

@@ -69,7 +69,7 @@ private nonisolated struct LedgerRequired: Error {}
 extension ProfileVaultStore {
     /// `changing` names the accounts the caller edited in `accounts` (`Proposal.changing`); `nil` compares every account on its bytes.
     /// `merging` maps each account a merge takes away to the one it was merged into (`Proposal.merging`).
-    func commit(
+    public func commit(
         vaultID: UUID, _ accounts: [CredentialAccount], expectedRevision: UInt64, cause: String?, changing: Set<UUID>? = nil,
         merging: [UUID: UUID] = [:], using access: VaultAccess
     ) async throws -> VaultCommitReceipt {
@@ -89,7 +89,7 @@ extension ProfileVaultStore {
         }
     }
 
-    func delete(vaultID: UUID, scope: RemovalScope, expectedRevision: UInt64, using access: VaultAccess) async throws -> VaultCommitReceipt {
+    public func delete(vaultID: UUID, scope: RemovalScope, expectedRevision: UInt64, using access: VaultAccess) async throws -> VaultCommitReceipt {
         let intent = CommitIntent(vaultID: vaultID, access: access, expectedRevision: expectedRevision, cause: nil, isCommit: false)
         return try await perform(intent) { old in try Self.removing(scope, from: old) }
     }
@@ -216,7 +216,7 @@ extension ProfileVaultStore {
     /// The payload rules at the boundary: distinct ids, `CredentialAccount.validate()`, the live byte budgets (blocked origins
     /// included) and the vault's file budget. A live limit names itself. `unchanged` accounts are byte for byte stored rows, checked when they were written: they
     /// count towards every total and uniqueness rule, but are not checked one by one again.
-    nonisolated static func validate(_ accounts: [CredentialAccount], blockedOrigins: [String], unchanged: Set<UUID> = []) throws {
+    public nonisolated static func validate(_ accounts: [CredentialAccount], blockedOrigins: [String], unchanged: Set<UUID> = []) throws {
         do {
             try CredentialVaultCrypto.validate(
                 CredentialVaultPayload(revision: 0, accounts: accounts, blockedPasswordOrigins: Set(blockedOrigins)), unchanged: unchanged

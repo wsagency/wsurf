@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // X in the Trash marks entries for deletion: they are hidden at once, Undo shows them again, and leaving the Trash deletes the whole
 // batch with one fresh assertion. A lock, a declined prompt or a closed page deletes nothing. Test-only in-memory unlock keys and

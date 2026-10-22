@@ -3,7 +3,12 @@ included:
   - WSurf
   - WSurfCredentialExchange
   - WSurfTests
+  - Packages
   - Tools
+
+# A standalone `swift build` of a local package leaves its dependency checkouts here.
+excluded:
+  - Packages/*/.build
 
 disabled_rules:
   # The test suites pass a decision closure and a body closure on purpose;

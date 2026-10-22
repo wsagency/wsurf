@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Secure items are an optional credential part: validated on their own, hashed as their own part, diffed and removed like notes, and
 /// united (never doubled, never dropped) by a merge. Pure: no store. Synthetic values only.

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// A merge as the sheet shows it: what it would do, bound to the revision and authorization it was read at. It holds ids, the
 /// picks and a preview without secrets, so a lock or a change to the vault makes it stale and the confirmation refuses it.

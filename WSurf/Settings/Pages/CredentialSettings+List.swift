@@ -3,6 +3,7 @@
 
 import Observation
 import SwiftUI
+import WSurfVault
 
 /// The two tabs of the Autofill page: everything the vault holds (and, until it moves into the vault, Input History), and every
 /// setting.

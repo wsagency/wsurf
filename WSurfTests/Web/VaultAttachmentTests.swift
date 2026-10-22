@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// The vault's encrypted files without a store (`VaultBlob`), their limits, and the private folder of decrypted copies. Synthetic bytes
 /// in a temporary folder only.

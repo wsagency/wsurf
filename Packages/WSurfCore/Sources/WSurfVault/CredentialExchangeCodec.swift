@@ -4,7 +4,7 @@
 import AuthenticationServices
 import Foundation
 
-nonisolated enum CredentialIdentity: Hashable, Sendable {
+public nonisolated enum CredentialIdentity: Hashable, Sendable {
     case password(accountID: UUID)
     case passkey(accountID: UUID, passkeyID: UUID)
     case totp(accountID: UUID)
@@ -13,40 +13,75 @@ nonisolated enum CredentialIdentity: Hashable, Sendable {
     case secureItems(accountID: UUID)
 }
 
-nonisolated struct CredentialImportConflict: Sendable {
-    var incoming: CredentialIdentity
-    var existing: CredentialIdentity
+public nonisolated struct CredentialImportConflict: Sendable {
+    public var incoming: CredentialIdentity
+    public var existing: CredentialIdentity
+
+    public init(incoming: CredentialIdentity, existing: CredentialIdentity) {
+        self.incoming = incoming
+        self.existing = existing
+    }
 }
 
-nonisolated enum CredentialImportDecision: Sendable {
+public nonisolated enum CredentialImportDecision: Sendable {
     case keep(incoming: CredentialIdentity)
     case add(incoming: CredentialIdentity, targetAccountID: UUID?)
     case replace(incoming: CredentialIdentity, target: CredentialIdentity)
 }
 
-nonisolated struct CredentialImportPreview: Sendable {
-    let base: StoreSnapshot
-    let candidates: [CredentialAccount]
-    let conflicts: [CredentialImportConflict]
+public nonisolated struct CredentialImportPreview: Sendable {
+    public let base: StoreSnapshot
+    public let candidates: [CredentialAccount]
+    public let conflicts: [CredentialImportConflict]
     /// What the transfer held that WSurf did not keep. It never refuses a transfer.
-    var omitted: [CredentialImportOmission] = []
+    public var omitted: [CredentialImportOmission] = []
     /// For each omission, the `id` of the candidate it belongs to; `nil` when its item was not kept. Empty for a preview that
     /// doesn't say (a CSV file has no omissions), otherwise as long as `omitted`.
-    var omittedItems: [UUID?] = []
+    public var omittedItems: [UUID?] = []
 
-    var revision: UInt64 {
+    public init(
+        base: StoreSnapshot,
+        candidates: [CredentialAccount],
+        conflicts: [CredentialImportConflict],
+        omitted: [CredentialImportOmission] = [],
+        omittedItems: [UUID?] = []
+    ) {
+        self.base = base
+        self.candidates = candidates
+        self.conflicts = conflicts
+        self.omitted = omitted
+        self.omittedItems = omittedItems
+    }
+
+    public var revision: UInt64 {
         base.revision
     }
 }
 
-nonisolated struct CredentialExportSelection: Sendable {
-    var accountID: UUID
-    var password: Bool
-    var passkeyIDs: Set<UUID>
-    var totp: Bool
-    var notes = false
+public nonisolated struct CredentialExportSelection: Sendable {
+    public var accountID: UUID
+    public var password: Bool
+    public var passkeyIDs: Set<UUID>
+    public var totp: Bool
+    public var notes = false
     /// The credential's cards, addresses and other items, all of them, as one part (like its notes).
-    var secureItems = false
+    public var secureItems = false
+
+    public init(
+        accountID: UUID,
+        password: Bool,
+        passkeyIDs: Set<UUID>,
+        totp: Bool,
+        notes: Bool = false,
+        secureItems: Bool = false
+    ) {
+        self.accountID = accountID
+        self.password = password
+        self.passkeyIDs = passkeyIDs
+        self.totp = totp
+        self.notes = notes
+        self.secureItems = secureItems
+    }
 }
 
 /// An import size limit was exceeded. Only `CredentialExchangeError` reads it, to name the limit in the refusal.
@@ -58,19 +93,19 @@ private nonisolated struct ImportLimitExceeded: Error {
     }
 }
 
-nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringConvertible, Sendable, Equatable {
-    enum Reason: String, Equatable, Sendable {
+public nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringConvertible, Sendable, Equatable {
+    public enum Reason: String, Equatable, Sendable {
         case invalidData
         case duplicateIdentifier
         case oversized
     }
 
     /// The size limit an `.oversized` refusal hit. A fixed vocabulary: it names a bound, never a title, a value or an amount.
-    enum Limit: String, Equatable, Sendable, CaseIterable {
+    public enum Limit: String, Equatable, Sendable, CaseIterable {
         case items, credentials, collections, nesting, websites, notes, keyBytes, itemBytes, itemEncodedBytes, transferBytes
     }
 
-    enum Record: CustomStringConvertible, Sendable, Equatable {
+    public enum Record: CustomStringConvertible, Sendable, Equatable {
         case exporter
         case account(index: Int)
         case item(account: Int, item: Int)
@@ -78,7 +113,7 @@ nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringC
         case collection(account: Int, path: [Int])
         case payload
 
-        var description: String {
+        public var description: String {
             switch self {
             case .exporter:
                 return "exporter"
@@ -99,7 +134,7 @@ nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringC
 
     /// The kind of credential an error was raised on: the SDK case name only, never a value. It lets an unsupported or
     /// invalid record be told apart when its index alone cannot.
-    enum CredentialKind: String, Equatable, Sendable {
+    public enum CredentialKind: String, Equatable, Sendable {
         case address, apiKey, basicAuthentication, creditCard, customFields, driversLicense, generatedPassword
         case identityDocument, itemReference, note, passkey, passport, personName, sshKey, totp, wifi, unknown
 
@@ -143,18 +178,18 @@ nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringC
         }
     }
 
-    let record: Record
-    let reason: Reason
+    public let record: Record
+    public let reason: Reason
     /// Set only for an `.oversized` refusal that knows which limit it hit.
-    var limit: Limit?
+    public var limit: Limit?
     /// Set only when `record` is a credential.
-    var credentialKind: CredentialKind?
+    public var credentialKind: CredentialKind?
 
-    var description: String {
+    public var description: String {
         let name = limit.map { "\(reason.rawValue)(\($0.rawValue))" } ?? reason.rawValue
         return credentialKind.map { "\(name) at \(record.description) (\($0.rawValue))" } ?? "\(name) at \(record.description)"
     }
-    var errorDescription: String? {
+    public var errorDescription: String? {
         description
     }
 
@@ -179,16 +214,16 @@ nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringC
     }
 }
 
-nonisolated enum CredentialExchangeCodec {
+public nonisolated enum CredentialExchangeCodec {
     /// Deepest nesting of collections an import accepts.
-    static let maximumCollectionDepth = 32
+    public static let maximumCollectionDepth = 32
     /// Most websites one item may list in a transfer before the transfer is refused. An item keeps its first
     /// `CredentialAccount.websiteLimit` and the rest are named as left out, so this only bounds the work.
-    static let maximumWebsites = 1_024
+    public static let maximumWebsites = 1_024
 
-    struct ExternalItemID: Hashable {
-        let account: Data
-        let item: Data
+    public struct ExternalItemID: Hashable, Sendable {
+        public let account: Data
+        public let item: Data
     }
     private struct ExternalPasskeyID: Hashable {
         let relyingPartyID: String
@@ -207,13 +242,13 @@ nonisolated enum CredentialExchangeCodec {
         var items: [ExchangeLink]
         var subcollections: [ExchangeCollection]
     }
-    struct ExchangeMetadata: Codable {
+    public struct ExchangeMetadata: Codable, Sendable {
         var accountName: String
         var email: String
         var fullName: String?
         var collections: [ExchangeCollection]
         var subtitle: String?
-        var created: Date?
+        public var created: Date?
         var lastModified: Date?
         var favorite: Bool
         var tags: [String]
@@ -267,7 +302,7 @@ nonisolated enum CredentialExchangeCodec {
         var credentialKind: CredentialExchangeError.CredentialKind?
     }
 
-    static func preview(_ data: ASExportedCredentialData, against base: StoreSnapshot) throws -> CredentialImportPreview {
+    public static func preview(_ data: ASExportedCredentialData, against base: StoreSnapshot) throws -> CredentialImportPreview {
         guard data.formatVersion == .v1 else { throw CredentialVaultError.invalidData }
         try validateAccounts(base.accounts, blockedOrigins: base.blockedPasswordOrigins)
         guard base.accounts.count <= CredentialVaultLimits.accounts,
@@ -850,7 +885,7 @@ nonisolated enum CredentialExchangeCodec {
         return conflicts
     }
 
-    static func identities(in account: CredentialAccount) -> [CredentialIdentity] {
+    public static func identities(in account: CredentialAccount) -> [CredentialIdentity] {
         var result: [CredentialIdentity] = []
         if hasBasicAuthentication(account) {
             result.append(.password(accountID: account.id))
@@ -869,15 +904,15 @@ nonisolated enum CredentialExchangeCodec {
     }
 
     /// The identity notes and items follow when nobody decided them: the item's login, else its first passkey, else its code.
-    static func leadIdentity(of account: CredentialAccount) -> CredentialIdentity? {
+    public static func leadIdentity(of account: CredentialAccount) -> CredentialIdentity? {
         identities(in: account).first { !$0.followsLogin }
     }
 
-    static func hasBasicAuthentication(_ account: CredentialAccount) -> Bool {
+    public static func hasBasicAuthentication(_ account: CredentialAccount) -> Bool {
         account.password != nil || account.basicAuthenticationMetadata != nil || !account.username.isEmpty
     }
 
-    static func externalItemID(for account: CredentialAccount) throws -> ExternalItemID {
+    public static func externalItemID(for account: CredentialAccount) throws -> ExternalItemID {
         ExternalItemID(
             account: try externalID(account.exchangeAccountID, fallback: account.id),
             item: try externalID(account.exchangeItemID, fallback: account.id)

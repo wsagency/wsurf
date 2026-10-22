@@ -7,6 +7,7 @@ import Foundation
 import XCTest
 
 @testable import WSurf
+@testable import WSurfVault
 
 // A vault of 20,000 synthetic credentials (every tenth with a passkey) behind the real manager and store: one saved edit, through
 // the per-account write, the whole-vault commit and each caller of it, plus one undo and one restore from the Trash. Nothing here is

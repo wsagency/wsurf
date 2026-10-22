@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Exports name duplicates "ada@example.test (1)", "(2)" …: those are one login, suggested and merged as one. Pure and synthetic.
 struct CredentialNumberedCopiesTests {

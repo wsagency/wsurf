@@ -5,6 +5,7 @@ import AppKit
 import AuthenticationServices
 import Foundation
 import Observation
+import WSurfVault
 
 // MARK: - Coordinator
 

@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// What a credential's cards, addresses and other items add to the list row, the filters and the editor's draft. Pure values: no vault
 /// is read. Everything is synthetic; the card number is a published test number. The account id is fixed so a short secret such as a

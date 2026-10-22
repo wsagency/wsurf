@@ -97,13 +97,13 @@ nonisolated func storeError(_ error: DatabaseError, ordinal: Int?) -> any Error 
 /// The profile's v2 credential store (spec §5-§7): unlock pipeline, grants, wrapper and password-save-policy writes. Every database
 /// operation (spec §15) takes the operation lock, re-reads the anchors under it, opens its own pool, runs, and closes the pool while
 /// still holding the lock. Only grants and keys outlive an operation, never a connection.
-actor ProfileVaultStore {
+public actor ProfileVaultStore {
     let profileID: UUID
     let directory: URL
     let defaults: UserDefaults
     let fileOps: StoreFileOps
     let lockWait: Duration
-    let now: @Sendable () -> ContinuousClock.Instant
+    public nonisolated let now: @Sendable () -> ContinuousClock.Instant
     let wall: @Sendable () -> Date
 
     /// At most one grant per vault: a later unlock of the same vault replaces it and revokes the previous access.
@@ -116,7 +116,7 @@ actor ProfileVaultStore {
     /// Set by `close()`, never cleared: this instance serves no operation afterwards.
     private var closed = false
 
-    init(
+    public init(
         profileID: UUID,
         directory: URL,
         defaults: UserDefaults,
@@ -137,7 +137,7 @@ actor ProfileVaultStore {
     // MARK: State
 
     /// `StoreAnchors.evaluate`; never writes.
-    func openState() -> StoreOpenState {
+    public func openState() -> StoreOpenState {
         StoreAnchors.evaluate(directory: directory, profileID: profileID, defaults: defaults)
     }
 
@@ -317,7 +317,7 @@ actor ProfileVaultStore {
 
     /// Ordinals of the active vaults; the name only once that vault is unlocked. A v1 file or an interrupted migration lists its one
     /// vault, locked.
-    func listing() async throws -> [VaultListing] {
+    public func listing() async throws -> [VaultListing] {
         try await rerouting {
             if let locked = try await lockedVaults() {
                 return locked.map { VaultListing(vaultID: $0.vaultID, ordinal: $0.ordinal, name: nil, isUnlocked: false, isVerified: false) }
@@ -345,7 +345,7 @@ actor ProfileVaultStore {
     }
 
     /// The wrapper plaintext (credential id, PRF input) of one active vault, in stored order; no secret and no grant needed.
-    func discovery(vaultID: UUID) async throws -> VaultDiscovery {
+    public func discovery(vaultID: UUID) async throws -> VaultDiscovery {
         try await rerouting {
             if let locked = try await lockedVaults() {
                 guard let vault = locked.first(where: { $0.vaultID == vaultID }) else { throw CredentialStoreError.noSuchVault }
@@ -365,7 +365,7 @@ actor ProfileVaultStore {
         grants.removeValue(forKey: vaultID)?.access.revoke()
     }
 
-    func lock(ifUsing access: VaultAccess) {
+    public func lock(ifUsing access: VaultAccess) {
         for (vaultID, grant) in grants where grant.access === access {
             lock(vaultID: vaultID)
         }
@@ -379,7 +379,7 @@ actor ProfileVaultStore {
 
     /// Input History's key for `vaultID` under its current grant: HKDF-SHA256 of the DEK, bound to the profile and the vault. Only this
     /// subkey leaves the store, never the DEK. Agents and the MCP server never reach it (`InputHistoryIsolationTests`).
-    func inputHistoryKey(vaultID: UUID, using access: VaultAccess) throws -> InputHistoryVaultKey {
+    public func inputHistoryKey(vaultID: UUID, using access: VaultAccess) throws -> InputHistoryVaultKey {
         let grant = try authorizedGrant(vaultID, access)
         let info = Data("wsurf.input-history.v2|\(profileID.uuidString)|\(vaultID.uuidString)".utf8)
         return InputHistoryVaultKey(vaultID: vaultID, key: HKDF<SHA256>.deriveKey(inputKeyMaterial: grant.dek, info: info, outputByteCount: 32))
@@ -389,7 +389,7 @@ actor ProfileVaultStore {
     /// `closed` is set, but only after its lock wait ends: it acquires the flock and gives it back at once, or `lockWait` runs out with
     /// `storeBusy`. An operation already holding the lock runs to completion, so a caller about to erase the directory must first drain
     /// the operations it started (the manager's retire does); `close()` alone does not stop them. No connection outlives an operation.
-    func close() {
+    public func close() {
         closed = true
         lockAll()
     }

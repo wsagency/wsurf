@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import SwiftUI
+import WSurfVault
 
 extension CredentialSettings {
     /// The one button a locked page offers. Create appears only for a definite miss (`vaultExists == false`); a store that

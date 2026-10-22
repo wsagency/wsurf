@@ -7,6 +7,7 @@ import Testing
 import WebKit
 
 @testable import WSurf
+@testable import WSurfVault
 
 @Suite(.boundedWebViews)
 @MainActor

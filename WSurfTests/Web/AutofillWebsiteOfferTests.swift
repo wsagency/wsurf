@@ -6,6 +6,7 @@ import Testing
 import WebKit
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// A login of a sibling website used on this page is offered this page's website instead of a saved copy. Real managers in the
 /// registry, the real session and the vault's ordinary commit; only the page's document proof is replaced.

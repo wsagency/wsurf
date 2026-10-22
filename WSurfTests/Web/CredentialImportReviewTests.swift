@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The rules of the import review that need no vault: what each classification does by default, where an item sits, and what it
 // does. The review built from a real transfer is in `CredentialExchangeCoordinatorTests+ImportReview`.

@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Copying one part of an earlier version into the editor's draft: only the draft changes.
 

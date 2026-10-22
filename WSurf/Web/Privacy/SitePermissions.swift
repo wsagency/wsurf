@@ -5,6 +5,7 @@
 import Foundation
 import Observation
 import SwiftUI
+import WSurfVault
 
 nonisolated enum WebPermission: String, Codable, CaseIterable, Sendable {
     case location

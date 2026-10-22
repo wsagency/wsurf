@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import SwiftUI
+import WSurfVault
 
 /// Above the list while credentials are selected or the list is in selection mode: what the selection can do. Move to Trash needs no
 /// confirmation (the Trash keeps everything, and the notice offers Undo); Merge… opens the merge sheet to review the choice first.

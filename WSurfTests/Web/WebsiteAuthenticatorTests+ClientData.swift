@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// The client data is a wire format: a relying party that cannot parse JSON verifies it by prefix
 /// (WebAuthn Level 3 §5.8.1.2), so the field order and escaping are part of the contract.

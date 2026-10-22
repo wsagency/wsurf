@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 nonisolated extension CredentialImportReview {
     /// A saved credential that already holds an incoming item that no saved credential is linked to (spec §13.3). The item is an exact

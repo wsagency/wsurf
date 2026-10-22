@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// What the Credentials tab keeps between keystrokes: the query, the kind and the rows they leave.
 @MainActor

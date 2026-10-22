@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // A passkey as Apple Passwords sends it. CXF 3.3.12 fixes the key as PKCS#8 DER and the user handle as the relying party's
 // user.id, which WebAuthn asks to keep to 64 bytes or fewer and which real relying parties (PayPal) make longer; WSurf keeps up

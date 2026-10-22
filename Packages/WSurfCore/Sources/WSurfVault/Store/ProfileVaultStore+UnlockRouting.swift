@@ -11,7 +11,7 @@ extension ProfileVaultStore {
     /// and `.legacy`/`.resumeMigration` need `confirmMigration` (else `migrationNeedsConfirmation`, before any lock or write). A state
     /// that changed between the route and the lock is re-routed once; a second change is `stateChanged`. `afterMigrationStep(0)` is the test
     /// seam for exactly that boundary: it fires after a route that will take the lock and before the lock is requested.
-    func unlock(
+    public func unlock(
         vaultID: UUID,
         credentialID: Data,
         prf: SymmetricKey,

@@ -4,6 +4,7 @@
 import Foundation
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Synthetic items only. The card number is a published test number (it passes the Luhn check); nothing here is real.
 nonisolated enum SecureItemFixtures {

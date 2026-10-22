@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// What the Add menu starts a new entry from. A template fills only the new draft with empty values; nothing is stored before Save,
 /// and empty values are dropped then, as for any new entry.

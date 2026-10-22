@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The import review as the user meets it: which credentials need a decision, what is decided for them, and what a decision costs.
 // Synthetic data only (`example.test` hosts, hand-built transfers).

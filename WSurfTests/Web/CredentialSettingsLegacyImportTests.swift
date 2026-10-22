@@ -7,6 +7,7 @@ import Security
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The page's side of moving the passwords saved before Credential Manager: when the move counts as imported, when the removal is
 // offered, and what the user is told. The coordinator and the vault are real; the old list is a `MemoryAutofillStorage`, the state

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// What a re-read vault did to the parts the user chose for export. The export sheet applies it to the selection it
 /// shows, so what the next click sends is exactly what the sheet then displays: a part that no longer exists is dropped

@@ -4,16 +4,22 @@
 import Foundation
 
 /// What a write requires of one account when the transaction opens: the stamp it was bound to, or that the id is not live.
-nonisolated enum AccountExpectation: Equatable, Sendable {
+public nonisolated enum AccountExpectation: Equatable, Sendable {
     case stamp(AccountStamp)
     case absent
 }
 
 /// One touched account of a per-account write. `replacement.id == accountID`.
-nonisolated struct AccountWrite: Sendable {
+public nonisolated struct AccountWrite: Sendable {
     let accountID: UUID
     let expected: AccountExpectation
     let replacement: CredentialAccount
+
+    public init(accountID: UUID, expected: AccountExpectation, replacement: CredentialAccount) {
+        self.accountID = accountID
+        self.expected = expected
+        self.replacement = replacement
+    }
 }
 
 extension ProfileVaultStore {
@@ -27,7 +33,7 @@ extension ProfileVaultStore {
     /// `removing` names live accounts to move to Trash in the same transaction, each bound to the stamp the caller read: the whole
     /// account goes with its earlier versions, as an ordinary delete does, and a stamp that no longer holds is `staleRevision` with
     /// nothing written. An account is either written or removed, never both.
-    func commitAccounts(
+    public func commitAccounts(
         vaultID: UUID, _ writes: [AccountWrite], removing: [UUID: AccountStamp] = [:], cause: String?, using access: VaultAccess
     ) async throws -> VaultCommitReceipt {
         guard !writes.isEmpty || !removing.isEmpty else { throw CredentialStoreError.malformed }

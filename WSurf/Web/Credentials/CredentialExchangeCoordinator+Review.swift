@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// The review of a staged import: how it is built once, and how one decision updates only the item it belongs to. Nothing here
 /// writes to the vault; `commitImport` does, from the choices kept in the session.

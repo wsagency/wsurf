@@ -3,6 +3,7 @@
 
 import CryptoKit
 import Foundation
+import WSurfVault
 
 nonisolated enum WebAuthnResidentKeyRequirement: String, Sendable {
     case required

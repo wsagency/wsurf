@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Grouping by site is pure and reads only a summary: no vault, no secret.
 struct CredentialSiteGroupsTests {

@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The credential editor's draft and what saving it leaves behind, through the settings model. Test-only in-memory unlock keys;
 // no native ceremony and nothing here is evidence of Apple provider behavior.

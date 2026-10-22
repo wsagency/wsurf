@@ -34,7 +34,7 @@ nonisolated extension MetadataProjection {
     }
 }
 
-nonisolated enum CredentialPart: Equatable, Sendable {
+public nonisolated enum CredentialPart: Equatable, Sendable {
     case password(CredentialAccount)
     case totp(CredentialAccount)
     case passkey(WebsitePasskey)
@@ -45,7 +45,7 @@ nonisolated enum CredentialPart: Equatable, Sendable {
 }
 
 /// §12.3 content hash: SHA-256 over `StoreWriter` bytes (u8 part tag, then the fields in a fixed order). No JSON is hashed.
-nonisolated enum CredentialContent {
+public nonisolated enum CredentialContent {
     /// The persisted-payload convention (same as `CredentialVaultCrypto.encodePayload`): sorted keys, default strategies.
     static func canonicalJSON<T: Encodable>(_ value: T) throws -> Data {
         let encoder = JSONEncoder()
@@ -58,7 +58,7 @@ nonisolated enum CredentialContent {
     }
 
     /// The typed exchange metadata, `nil` when the account has none. Throws `metadataUndecodable` for any other bytes.
-    static func exchangeMetadata(_ account: CredentialAccount) throws -> CredentialExchangeCodec.ExchangeMetadata? {
+    public static func exchangeMetadata(_ account: CredentialAccount) throws -> CredentialExchangeCodec.ExchangeMetadata? {
         guard let raw = account.exchangeMetadata else { return nil }
         do {
             return try JSONDecoder().decode(CredentialExchangeCodec.ExchangeMetadata.self, from: raw)
@@ -67,7 +67,7 @@ nonisolated enum CredentialContent {
         }
     }
 
-    static func hash(_ part: CredentialPart) throws -> Data {
+    public static func hash(_ part: CredentialPart) throws -> Data {
         var writer = StoreWriter()
         switch part {
         case let .password(account):

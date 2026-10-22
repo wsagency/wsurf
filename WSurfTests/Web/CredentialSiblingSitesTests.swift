@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Logins of sibling websites: accounts saved for another website of the page's registrable domain. Pure: no vault, no page.
 /// Public-suffix names are rule names here, not user data.

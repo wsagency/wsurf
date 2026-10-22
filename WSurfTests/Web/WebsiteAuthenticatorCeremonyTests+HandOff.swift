@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // How the native ceremony ends when the request is not the vault's to answer: the vault has no passkey for it, or the user chose
 // "Use Another Device or Key…" on one of our sheets. The fixture, the scripted user and the helpers live in

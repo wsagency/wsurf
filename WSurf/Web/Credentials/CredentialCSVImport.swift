@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// What a CSV file holds beyond what will be imported, shown in the review BEFORE the user confirms. Line numbers and fixed
 /// reasons only: no field, header text or password is ever kept here. These are counts of the file as read (staged); what was

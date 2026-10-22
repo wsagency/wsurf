@@ -3,7 +3,7 @@
 
 import Foundation
 
-nonisolated enum StoreFormat {
+public nonisolated enum StoreFormat {
     /// The format every row, head, journal and registry is sealed and authenticated under. Frozen: the AADs carry it.
     static let schema = 2, wrapperFormat = 1
     /// What the registry and `store_meta` say once a vault of the store has saved a file (owner decision 8). A build that predates files
@@ -11,12 +11,13 @@ nonisolated enum StoreFormat {
     /// store that says more than this is from a newer WSurf and is refused here (`StoreFailCause.newerVersion`).
     static let fileSchema = 3
     static let rowLabel = "WSurf credential store", registryLabel = "WSurf registry v1"
-    static let busyTimeoutMS = 5000, historyPage = 50, nameLimit = 64, activeVaultLimit = 16
+    public static let busyTimeoutMS = 5000, historyPage = 50, nameLimit = 64, activeVaultLimit = 16
     static let journalOpsPerRow = 1000, historyRowBytes = 8_000_000, blockedOriginLimit = 4_096
     /// What a history row holds beside the account data it carries: provenance and envelope fields (spec section 5, 4,096 B) and a
     /// display label (512 B).
     static let historyBodyBytes = 4_608
-    static let lockWait: Duration = .seconds(5), verifyingThreshold: Duration = .milliseconds(250)
+    public static let lockWait: Duration = .seconds(5)
+    static let verifyingThreshold: Duration = .milliseconds(250)
 }
 
 // The SQL spellings below are the persisted format (§5): frozen strings, deliberately not derived from the Swift case names.
@@ -76,7 +77,7 @@ nonisolated enum RecordKind: UInt8, Sendable {
     }
 }
 
-nonisolated enum RecordSubject: UInt8, Codable, Sendable {
+public nonisolated enum RecordSubject: UInt8, Codable, Sendable {
     case account = 1, password, totp, passkey, metadata, note, secureItem, attachment
 
     var sqlName: String {
@@ -126,4 +127,4 @@ nonisolated enum RecordSubject: UInt8, Codable, Sendable {
 
 nonisolated enum JournalOpKind: UInt8, Sendable { case add = 1, remove }
 nonisolated enum TransferDirection: UInt8, Sendable { case `in` = 1, out }
-nonisolated enum TransferScope: UInt8, Codable, Sendable { case account = 1, credential }
+public nonisolated enum TransferScope: UInt8, Codable, Sendable { case account = 1, credential }

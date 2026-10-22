@@ -4,6 +4,7 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import WSurfVault
 
 /// Settings > Autofill: a vault picker, then two tabs. Vault holds every entry of the selected vault by section (Logins, Identities,
 /// Cards, Addresses, Contacts, Notes…) with Trash, plus Input History and, until they are moved, the offer to move the cards and

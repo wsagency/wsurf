@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 nonisolated extension SecureItemKind {
     /// What the kind is called on a row, in the editor and in a menu.

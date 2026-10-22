@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 8: plumbing shared by `VaultTrashTests`, `VaultPurgeTests` and `VaultResidueTests`. Rows are read back through the fixture; the
 // store's own public API does every write under test.

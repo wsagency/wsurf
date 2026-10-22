@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// The cards and addresses of the credentials vault, as the fill panel offers them and the page receives them, and as a save offer or
 /// the move from the old Keychain lists writes them. Pure: the caller reads the vault under its own lease and checks it again before

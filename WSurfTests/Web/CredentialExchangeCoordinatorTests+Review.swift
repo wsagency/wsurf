@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Export, review scope and ownership tests of `CredentialExchangeCoordinatorTests`; the fixture and builders live
 // in the main file.

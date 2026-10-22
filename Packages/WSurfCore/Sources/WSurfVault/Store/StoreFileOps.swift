@@ -7,7 +7,7 @@ import Foundation
 nonisolated enum StoreFileError: Error, Equatable, Sendable { case exists, unsupported, io(Int32) }
 
 /// Filesystem primitives the store's atomic commits depend on, injectable so tests can fail one step.
-nonisolated struct StoreFileOps: Sendable {
+public nonisolated struct StoreFileOps: Sendable {
     var renameExclusive: @Sendable (_ from: URL, _ to: URL) throws -> Void  // RENAME_EXCL; existing destination ⇒ .exists
     var renameSwap: @Sendable (_ a: URL, _ b: URL) throws -> Void  // RENAME_SWAP; ENOTSUP/EINVAL ⇒ .unsupported
     var fullFsync: @Sendable (_ file: URL) throws -> Void  // open + fcntl(F_FULLFSYNC)
@@ -15,7 +15,7 @@ nonisolated struct StoreFileOps: Sendable {
     var afterMigrationStep: (@Sendable (_ step: Int) throws -> Void)?  // test seam, nil in production; Task 9: 0 = after route, before lock; 1-10 = migration steps
 
     // ponytail: directories also use F_FULLFSYNC; a filesystem that refuses it surfaces as .io, add an fsync(2) fallback if one ever does.
-    static let live = StoreFileOps(
+    public static let live = StoreFileOps(
         renameExclusive: { try renameNode($0, $1, flags: UInt32(RENAME_EXCL), unsupported: []) },
         renameSwap: { try renameNode($0, $1, flags: UInt32(RENAME_SWAP), unsupported: [ENOTSUP, EINVAL]) },
         fullFsync: { try flush($0, openFlags: O_RDONLY) },

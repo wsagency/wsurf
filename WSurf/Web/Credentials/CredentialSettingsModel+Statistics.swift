@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 extension CredentialSettingsModel {
     /// The vault's verified Trash and earlier-version counts, for the Statistics section. They live in the authorization session like

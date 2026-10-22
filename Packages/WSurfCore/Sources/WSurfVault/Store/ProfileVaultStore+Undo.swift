@@ -14,7 +14,7 @@ extension ProfileVaultStore {
     ///   once.
     /// - `removing` moves accounts the action added or restored back to the Trash, each bound to its stamp.
     /// Merging the pieces of `CredentialDiff.plan` is what makes undoing a merge return the absorbed items and the survivor together.
-    func undo(
+    public func undo(
         vaultID: UUID, writes: [AccountWrite], returning: [RemovalScope], removing: [UUID: AccountStamp], using access: VaultAccess
     ) async throws -> VaultCommitReceipt {
         guard !writes.isEmpty || !returning.isEmpty || !removing.isEmpty else { throw CredentialStoreError.malformed }

@@ -16,7 +16,7 @@ nonisolated struct HeadChange: Sendable {
 /// writer that re-reads the registry, checks the session still matches it, and rewrites only this vault's head, wrapper list and
 /// registry entry. `record` and `journal` are never touched.
 extension ProfileVaultStore {
-    func addUnlock(vaultID: UUID, _ proof: VaultUnlockProof, using access: VaultAccess) async throws -> VaultCommitReceipt {
+    public func addUnlock(vaultID: UUID, _ proof: VaultUnlockProof, using access: VaultAccess) async throws -> VaultCommitReceipt {
         let grant = try authorizedGrant(vaultID, access)
         try CredentialVaultCrypto.validateProof(proof)
         let profile = profileID
@@ -28,7 +28,7 @@ extension ProfileVaultStore {
         }
     }
 
-    func removeUnlock(
+    public func removeUnlock(
         vaultID: UUID, credentialID: Data, verifiedRemaining: VaultUnlockProof, using access: VaultAccess
     ) async throws -> VaultCommitReceipt {
         let grant = try authorizedGrant(vaultID, access)
@@ -55,7 +55,7 @@ extension ProfileVaultStore {
         return receipt
     }
 
-    func updatePasswordSavePolicy(
+    public func updatePasswordSavePolicy(
         vaultID: UUID, _ blocked: Set<String>, expectedRevision: UInt64, using access: VaultAccess
     ) async throws -> VaultCommitReceipt {
         _ = try authorizedGrant(vaultID, access)
@@ -76,7 +76,7 @@ extension ProfileVaultStore {
     /// Replaces the vault's sealed name (spec §4.1) by the trimmed `name`, under the creation rule: 1 to `StoreFormat.nameLimit`
     /// characters. The head is not compared with a revision: the name is one sealed field, and an autofill save made in between
     /// must not fail a rename. An equal name writes nothing.
-    func renameVault(vaultID: UUID, name: String, using access: VaultAccess) async throws -> VaultCommitReceipt {
+    public func renameVault(vaultID: UUID, name: String, using access: VaultAccess) async throws -> VaultCommitReceipt {
         _ = try authorizedGrant(vaultID, access)
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count <= StoreFormat.nameLimit else { throw CredentialStoreError.invalidVaultName }

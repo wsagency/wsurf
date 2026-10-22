@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // A vault's name is one sealed field of its head (spec §4.1). Renaming rewrites that head and nothing else, needs the unlocked vault,
 // and a locked vault is listed by its number again afterwards.

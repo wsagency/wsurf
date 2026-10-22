@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // What real relying parties check in an assertion besides the signature: the backup state the provider registered (GitHub), the
 // FIDO AppID extension sent for old U2F keys (GitHub), and how RP IDs and credential IDs match (Hetzner). The public key is

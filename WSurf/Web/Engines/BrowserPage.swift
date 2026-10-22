@@ -4,6 +4,7 @@
 import AppKit
 import Foundation
 import WebKit
+import WSurfVault
 
 @MainActor
 final class BrowserPage: NSView {

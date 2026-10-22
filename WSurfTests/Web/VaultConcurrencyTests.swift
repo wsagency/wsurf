@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 16: real stores on ONE directory racing through the real operation lock (spec §6.8/§7/§8/§10/§15). Every worker owns its own
 // `ProfileVaultStore` (so the lock, not an in-process actor, is what orders them) and starts behind a barrier, with no sleeps. The contract

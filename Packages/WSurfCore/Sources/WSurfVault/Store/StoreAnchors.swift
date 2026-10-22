@@ -4,11 +4,11 @@
 import Foundation
 import GRDB
 
-nonisolated enum StoreOpenState: Equatable, Sendable {
+public nonisolated enum StoreOpenState: Equatable, Sendable {
     case legacy(vaultID: UUID), firstRun, provisional(storeID: UUID, stubMissing: Bool), resumeMigration(storeID: UUID)
     case failClosed(StoreFailClosed)
 
-    var isProvisional: Bool {
+    public var isProvisional: Bool {
         if case .provisional = self {
             true
         } else {
@@ -17,7 +17,7 @@ nonisolated enum StoreOpenState: Equatable, Sendable {
     }
 
     /// A first run creates the first vault; past it a new passkey needs room for another vault and an unlocked one to approve it.
-    func allowsNewPasskey(vaultCount: Int, hasAuthorizer: @autoclosure () -> Bool) -> Bool {
+    public func allowsNewPasskey(vaultCount: Int, hasAuthorizer: @autoclosure () -> Bool) -> Bool {
         switch self {
         case .firstRun:
             true
@@ -29,7 +29,7 @@ nonisolated enum StoreOpenState: Equatable, Sendable {
     }
 
     /// Past a first run, a vault is also created with an enrolled passkey of another vault, while there is room.
-    func allowsCreate(vaultCount: Int, newPasskey: Bool, hasEnrolledPasskey: Bool) -> Bool {
+    public func allowsCreate(vaultCount: Int, newPasskey: Bool, hasEnrolledPasskey: Bool) -> Bool {
         switch self {
         case .firstRun:
             true

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import SwiftUI
+import WSurfVault
 
 extension CredentialSettings {
     /// Switching vaults only rebinds the page: a locked vault stays locked, shows no content and offers its own Unlock.

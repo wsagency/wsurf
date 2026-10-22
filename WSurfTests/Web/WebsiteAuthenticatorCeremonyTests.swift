@@ -9,6 +9,7 @@ import Testing
 import WebKit
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Native ceremony invariants against a real encrypted vault, a real WebKit page and the independent verifier. The
 // native context is the engine's own `WebAuthnContext` for a fixture page served from localhost; the only scripted

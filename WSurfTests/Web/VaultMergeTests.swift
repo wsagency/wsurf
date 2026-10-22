@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // A merge is one ordinary commit: the survivor is replaced and the absorbed credentials leave the vault, which moves them to the
 // Trash with their history. Test-only in-memory unlock keys; nothing here is evidence of Apple provider behavior.

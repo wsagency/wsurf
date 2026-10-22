@@ -5,46 +5,46 @@ import CryptoKit
 import Foundation
 import GRDB
 
-nonisolated struct TrashItem: Identifiable, Equatable, Sendable {
-    let id: UUID
-    let scope: TransferScope
-    let ownerID: UUID
-    let subject: RecordSubject?
-    let label: String
-    let revisionCount: Int
+public nonisolated struct TrashItem: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let scope: TransferScope
+    public let ownerID: UUID
+    public let subject: RecordSubject?
+    public let label: String
+    public let revisionCount: Int
 }
 
-nonisolated struct RevisionItem: Identifiable, Equatable, Sendable {
-    let id: UUID
-    let subject: RecordSubject
+public nonisolated struct RevisionItem: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let subject: RecordSubject
     let version: UInt64
-    let recordedAt: Date
-    let cause: String?
+    public let recordedAt: Date
+    public let cause: String?
 }
 
 /// `next` is the cursor of the following page (`nil` on the last). A cursor is the SQLite `rowid` of the last row shown, newest row
 /// first: a row written or removed between two pages never repeats or hides a row that existed throughout.
 /// ponytail: a `VACUUM` would renumber rowids (WSurf never runs one); the worst outcome is a skipped or repeated line in a listing.
-nonisolated struct TrashPage: Sendable {
-    let items: [TrashItem]
-    let next: Int?
+public nonisolated struct TrashPage: Sendable {
+    public let items: [TrashItem]
+    public let next: Int?
 }
 
-nonisolated struct RevisionPage: Sendable {
+public nonisolated struct RevisionPage: Sendable {
     let items: [RevisionItem]
     let next: Int?
 }
 
 /// A revision with the value it superseded: the canonical JSON of one typed value (`PasswordValue`, `TOTPGenerator`,
 /// `[CredentialNote]` or `MetadataProjection`), selected by `item.subject`. It holds a secret; keep it only in an authorized session.
-nonisolated struct RevisionValue: Equatable, Sendable {
-    let item: RevisionItem
+public nonisolated struct RevisionValue: Equatable, Sendable {
+    public let item: RevisionItem
     let value: Data
 }
 
-nonisolated struct RevisionValuePage: Sendable {
-    let items: [RevisionValue]
-    let next: Int?
+public nonisolated struct RevisionValuePage: Sendable {
+    public let items: [RevisionValue]
+    public let next: Int?
 }
 
 nonisolated extension HistoryCounts {
@@ -57,9 +57,9 @@ nonisolated extension HistoryCounts {
     }
 }
 
-nonisolated struct UndeletePreview: Sendable {
+public nonisolated struct UndeletePreview: Sendable {
     let entry: TrashItem
-    let block: UndeleteBlock?
+    public let block: UndeleteBlock?
 }
 
 /// A Trash entry as a write transaction reads it.
@@ -84,7 +84,7 @@ nonisolated extension StoreTables.RecordRow {
 extension ProfileVaultStore {
     // MARK: Listings
 
-    func trashPage(vaultID: UUID, after: Int?, using access: VaultAccess) async throws -> TrashPage {
+    public func trashPage(vaultID: UUID, after: Int?, using access: VaultAccess) async throws -> TrashPage {
         try await readHistory(vaultID, access) { db, grant, opened in
             let trash = try Self.openTrash(db, grant: grant, opened: opened)
             let page = try Self.pageIDs(db, vaultID: trash.side.vaultID, kind: .trashEntry, ownerID: nil, after: after, ordinal: grant.ordinal)
@@ -98,7 +98,7 @@ extension ProfileVaultStore {
     /// How many earlier versions, Trash entries and purge tombstones the vault and its Trash hold, as the authenticated heads count
     /// them. Each head's count is checked against the stored rows (three `COUNT(*)` reads per side, no decoding), so a missing or
     /// extra row is an integrity failure, not a number. Integers only: no content, and not bounded by the page size.
-    func historyCounts(vaultID: UUID, using access: VaultAccess) async throws -> (live: HistoryCounts, trash: HistoryCounts) {
+    public func historyCounts(vaultID: UUID, using access: VaultAccess) async throws -> (live: HistoryCounts, trash: HistoryCounts) {
         try await readHistory(vaultID, access) { db, grant, opened in
             let trash = try Self.openTrash(db, grant: grant, opened: opened)
             guard try opened.head.historyCounts.matchesRows(db, vaultID: opened.head.vaultID, ordinal: grant.ordinal),
@@ -109,12 +109,12 @@ extension ProfileVaultStore {
     }
 
     /// The copy kept from before this vault was upgraded, if one is still on disk. It still holds whatever a purge removes from the vault.
-    nonisolated func preMigrationBackup() -> URL? {
+    public nonisolated func preMigrationBackup() -> URL? {
         let backup = file(StoreAnchors.Names.preV2)
         return StoreAnchors.exists(backup) ? backup : nil
     }
 
-    func revisionPage(vaultID: UUID, accountID: UUID, after: Int?, using access: VaultAccess) async throws -> RevisionPage {
+    public func revisionPage(vaultID: UUID, accountID: UUID, after: Int?, using access: VaultAccess) async throws -> RevisionPage {
         try await readHistory(vaultID, access) { db, grant, _ in
             let page = try Self.pageIDs(db, vaultID: vaultID, kind: .revision, ownerID: accountID, after: after, ordinal: grant.ordinal)
             let items = try page.ids.map { try Self.revision($0, db, vaultID: vaultID, accountID: accountID, grant: grant).item }
@@ -124,7 +124,7 @@ extension ProfileVaultStore {
 
     /// `revisionPage` with each row's superseded value, for rebuilding the earlier versions of one credential. Same owner guard and
     /// paging. Only a password, code, notes or details row has a value to apply: any other subject is `malformed`.
-    func revisionValuePage(vaultID: UUID, accountID: UUID, after: Int?, using access: VaultAccess) async throws -> RevisionValuePage {
+    public func revisionValuePage(vaultID: UUID, accountID: UUID, after: Int?, using access: VaultAccess) async throws -> RevisionValuePage {
         try await readHistory(vaultID, access) { db, grant, _ in
             let page = try Self.pageIDs(db, vaultID: vaultID, kind: .revision, ownerID: accountID, after: after, ordinal: grant.ordinal)
             let items = try page.ids.map {
@@ -151,7 +151,7 @@ extension ProfileVaultStore {
 
     // MARK: Undelete
 
-    func previewUndelete(vaultID: UUID, entryID: UUID, using access: VaultAccess) async throws -> UndeletePreview {
+    public func previewUndelete(vaultID: UUID, entryID: UUID, using access: VaultAccess) async throws -> UndeletePreview {
         try await readHistory(vaultID, access) { db, grant, opened in
             let trash = try Self.openTrash(db, grant: grant, opened: opened)
             let entry = try Self.storedEntry(db, entryID, trash: trash, grant: grant)
@@ -161,7 +161,7 @@ extension ProfileVaultStore {
     }
 
     /// Throws `.undeleteBlocked(block)` with nothing written when `previewUndelete` names a block. There is no alternative restore.
-    func undelete(vaultID: UUID, entryID: UUID, expectedRevision: UInt64, using access: VaultAccess) async throws -> VaultCommitReceipt {
+    public func undelete(vaultID: UUID, entryID: UUID, expectedRevision: UInt64, using access: VaultAccess) async throws -> VaultCommitReceipt {
         let intent = CommitIntent(vaultID: vaultID, access: access, expectedRevision: expectedRevision, cause: nil, isCommit: true)
         return try await run(intent, ledgerOnDemand: false) { db, request, _ in
             let (transaction, snapshot) = try Self.begin(db, request)
@@ -184,7 +184,7 @@ extension ProfileVaultStore {
     // MARK: Earlier versions
 
     /// The account `restoreRevision` would leave live. Refuses what `restoreRevision` would refuse (a decode failure, an invalid result).
-    func previewRestoreRevision(vaultID: UUID, revisionID: UUID, using access: VaultAccess) async throws -> CredentialAccount {
+    public func previewRestoreRevision(vaultID: UUID, revisionID: UUID, using access: VaultAccess) async throws -> CredentialAccount {
         try await readHistory(vaultID, access) { db, grant, opened in
             let snapshot = try Self.readSnapshot(db, grant: grant, vaultID: vaultID)
             let restored = try Self.restoringRevision(db, revisionID, snapshot: snapshot, grant: grant)
@@ -195,7 +195,7 @@ extension ProfileVaultStore {
     }
 
     /// An ordinary semantic commit (§11.1): the current value becomes a new revision, the chosen revision row is untouched.
-    func restoreRevision(vaultID: UUID, revisionID: UUID, expectedRevision: UInt64, using access: VaultAccess) async throws -> VaultCommitReceipt {
+    public func restoreRevision(vaultID: UUID, revisionID: UUID, expectedRevision: UInt64, using access: VaultAccess) async throws -> VaultCommitReceipt {
         let intent = CommitIntent(vaultID: vaultID, access: access, expectedRevision: expectedRevision, cause: nil, isCommit: true)
         return try await run(intent, ledgerOnDemand: false) { db, request, ledgerAttached in
             let (transaction, snapshot) = try Self.begin(db, request)
@@ -213,7 +213,7 @@ extension ProfileVaultStore {
 
     /// Ids only, one Trash row at a time, never a secret (§13.3). One account-level row per removed account plus one row per passkey
     /// of it; a stored empty exchange id is invalid data, never `nil`.
-    func removedIdentifiers(vaultID: UUID, using access: VaultAccess) async throws -> RemovedIdentifiers {
+    public func removedIdentifiers(vaultID: UUID, using access: VaultAccess) async throws -> RemovedIdentifiers {
         let items = try await readHistory(vaultID, access) { db, grant, opened -> [RemovedIdentifier] in
             let trash = try Self.openTrash(db, grant: grant, opened: opened)
             var items: [RemovedIdentifier] = []

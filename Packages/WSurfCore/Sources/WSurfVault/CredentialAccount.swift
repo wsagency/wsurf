@@ -6,7 +6,7 @@ import Foundation
 /// The raw values are the persisted format (hashed into a credential's content), not the Credential Exchange's: the exchange's are
 /// kebab-case, and `init(exchange:)` and `exchangeType` map between the two. Logins and notes keep only the first three; the values
 /// of a `SecureItem` keep any of them.
-nonisolated enum CredentialEditableFieldType: String, Codable, Sendable {
+public nonisolated enum CredentialEditableFieldType: String, Codable, Sendable {
     case string
     case concealedString
     case email
@@ -19,10 +19,16 @@ nonisolated enum CredentialEditableFieldType: String, Codable, Sendable {
     case subdivisionCode
 }
 
-nonisolated struct CredentialEditableFieldMetadata: Codable, Sendable, Equatable {
-    var id: Data?
-    var label: String?
-    var fieldType: CredentialEditableFieldType
+public nonisolated struct CredentialEditableFieldMetadata: Codable, Sendable, Equatable {
+    public var id: Data?
+    public var label: String?
+    public var fieldType: CredentialEditableFieldType
+
+    public init(id: Data? = nil, label: String? = nil, fieldType: CredentialEditableFieldType) {
+        self.id = id
+        self.label = label
+        self.fieldType = fieldType
+    }
 
     func validate() throws {
         guard (id?.count ?? 0) <= 1_024,
@@ -30,19 +36,31 @@ nonisolated struct CredentialEditableFieldMetadata: Codable, Sendable, Equatable
     }
 }
 
-nonisolated struct CredentialBasicAuthenticationMetadata: Codable, Sendable, Equatable {
-    var username: CredentialEditableFieldMetadata?
-    var password: CredentialEditableFieldMetadata?
+public nonisolated struct CredentialBasicAuthenticationMetadata: Codable, Sendable, Equatable {
+    public var username: CredentialEditableFieldMetadata?
+    public var password: CredentialEditableFieldMetadata?
 }
 
 /// Observations that never change a credential's content hash (§11.1 "never" row).
-nonisolated struct CredentialEvents: Codable, Equatable, Sendable {
-    var lastImportedAt: Date?
-    var lastExportHandoffAt: Date?
+public nonisolated struct CredentialEvents: Codable, Equatable, Sendable {
+    public var lastImportedAt: Date?
+    public var lastExportHandoffAt: Date?
     var remoteLastObservedAt: Date?
     /// `CredentialContent.hash` of the part last handed to the system exchange sheet. Local handoff evidence only: never an
     /// accepted remote base, so it advances no `*Base` and no content/history state.
-    var lastExportHandoffHash: Data?
+    public var lastExportHandoffHash: Data?
+
+    public init(
+        lastImportedAt: Date? = nil,
+        lastExportHandoffAt: Date? = nil,
+        remoteLastObservedAt: Date? = nil,
+        lastExportHandoffHash: Data? = nil
+    ) {
+        self.lastImportedAt = lastImportedAt
+        self.lastExportHandoffAt = lastExportHandoffAt
+        self.remoteLastObservedAt = remoteLastObservedAt
+        self.lastExportHandoffHash = lastExportHandoffHash
+    }
 
     func validate() throws {
         guard lastExportHandoffHash == nil || lastExportHandoffHash?.count == 32 else { throw CredentialVaultError.invalidData }
@@ -50,7 +68,7 @@ nonisolated struct CredentialEvents: Codable, Equatable, Sendable {
 }
 
 /// The accepted remote observation of a credential (§13.2a): its content hash and the remote item it came from.
-nonisolated struct ExchangeBase: Codable, Equatable, Sendable {
+public nonisolated struct ExchangeBase: Codable, Equatable, Sendable {
     var contentHash: Data
     var itemID: Data?
 }
@@ -73,7 +91,7 @@ nonisolated extension CredentialAccount {
 
     /// This account with every observed base put back as `old` had it: the login's and the code's, and those of the items merged
     /// into it. What is left differs from `old` only in what an import changed besides recording bases.
-    func withBases(of old: CredentialAccount) -> CredentialAccount {
+    public func withBases(of old: CredentialAccount) -> CredentialAccount {
         var result = self
         result.passwordBase = old.passwordBase
         result.totpBase = old.totpBase
@@ -95,7 +113,7 @@ nonisolated extension CredentialAccount {
 /// the content hash the other app last sent for the item's login and for its code. Passkeys carry their own `base`, and notes keep
 /// none. The identity is the one the item was exported under (`CredentialExchangeCodec.externalItemID`): the stored ids, else the ones
 /// its own id gives.
-nonisolated struct MergedItemLink: Codable, Sendable, Equatable {
+public nonisolated struct MergedItemLink: Codable, Sendable, Equatable {
     /// The merged credential's own id, which names its entry in the Trash.
     var accountID: UUID
     var exchangeAccountID: Data
@@ -103,21 +121,40 @@ nonisolated struct MergedItemLink: Codable, Sendable, Equatable {
     var passwordBase: ExchangeBase?
     var totpBase: ExchangeBase?
 
+    public init(
+        accountID: UUID,
+        exchangeAccountID: Data,
+        exchangeItemID: Data,
+        passwordBase: ExchangeBase? = nil,
+        totpBase: ExchangeBase? = nil
+    ) {
+        self.accountID = accountID
+        self.exchangeAccountID = exchangeAccountID
+        self.exchangeItemID = exchangeItemID
+        self.passwordBase = passwordBase
+        self.totpBase = totpBase
+    }
+
     func validate() throws {
         guard !exchangeAccountID.isEmpty, !exchangeItemID.isEmpty,
               exchangeAccountID.count <= CredentialVaultLimits.payloadBytes,
               exchangeItemID.count <= CredentialVaultLimits.payloadBytes else { throw CredentialVaultError.invalidData }
     }
 
-    var identity: CredentialExchangeCodec.ExternalItemID {
+    public var identity: CredentialExchangeCodec.ExternalItemID {
         CredentialExchangeCodec.ExternalItemID(account: exchangeAccountID, item: exchangeItemID)
     }
 }
 
 /// One free-text note. `field` keeps how the exporter described it (id, label, type) so a note round-trips unchanged.
-nonisolated struct CredentialNote: Codable, Sendable, Equatable {
-    var text: String
+public nonisolated struct CredentialNote: Codable, Sendable, Equatable {
+    public var text: String
     var field: CredentialEditableFieldMetadata?
+
+    public init(text: String, field: CredentialEditableFieldMetadata? = nil) {
+        self.text = text
+        self.field = field
+    }
 
     func validate() throws {
         guard !text.isEmpty, text.utf8.count <= CredentialVaultLimits.payloadBytes else { throw CredentialVaultError.invalidData }
@@ -125,41 +162,93 @@ nonisolated struct CredentialNote: Codable, Sendable, Equatable {
     }
 }
 
-nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable {
-    var id: UUID
-    var username: String
-    var displayName: String?
-    var origins: [String]
-    var loginURLs: [URL]
-    var password: String?
-    var passkeys: [WebsitePasskey]
-    var totp: TOTPGenerator?
+public nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable {
+    public var id: UUID
+    public var username: String
+    public var displayName: String?
+    public var origins: [String]
+    public var loginURLs: [URL]
+    public var password: String?
+    public var passkeys: [WebsitePasskey]
+    public var totp: TOTPGenerator?
     /// Free-text notes, in order. `nil` means none: an empty array is never stored. Notes can hold secrets, so they live in
     /// their own encrypted part with their own history, never in `exchangeMetadata`.
-    var notes: [CredentialNote]?
+    public var notes: [CredentialNote]?
     /// Cards, addresses, Wi-Fi networks, keys and the other `SecureItemKind`s, in order. `nil` means none: an empty array is never
     /// stored. Like notes, they are one encrypted part with their own history.
-    var secureItems: [SecureItem]?
-    var exchangeAccountID: Data?
-    var exchangeItemID: Data?
-    var exchangeMetadata: Data?
-    var basicAuthenticationMetadata: CredentialBasicAuthenticationMetadata?
-    var createdAt: Date?
-    var modifiedAt: Date?
-    var migratedAt: Date?
-    var passwordEvents: CredentialEvents?
-    var totpEvents: CredentialEvents?
-    var passwordBase: ExchangeBase?
-    var totpBase: ExchangeBase?
+    public var secureItems: [SecureItem]?
+    public var exchangeAccountID: Data?
+    public var exchangeItemID: Data?
+    public var exchangeMetadata: Data?
+    public var basicAuthenticationMetadata: CredentialBasicAuthenticationMetadata?
+    public var createdAt: Date?
+    public var modifiedAt: Date?
+    public var migratedAt: Date?
+    public var passwordEvents: CredentialEvents?
+    public var totpEvents: CredentialEvents?
+    public var passwordBase: ExchangeBase?
+    public var totpBase: ExchangeBase?
     /// What the other app last sent for this credential's items (`secureItems`), like `totpBase` for its code.
     var secureItemsBase: ExchangeBase?
     /// The other app's items that were merged into this credential. `nil` means none: an empty array is never stored.
-    var mergedFrom: [MergedItemLink]?
+    public var mergedFrom: [MergedItemLink]?
     /// Files kept with the entry, in order: references to encrypted files in the vault's folder, never the bytes. `nil` means none: an
     /// empty array is never stored. A store holding any is `StoreFormat.fileSchema`, so a build that would drop them refuses it.
-    var attachments: [CredentialAttachment]?
+    public var attachments: [CredentialAttachment]?
 
-    func validate() throws {
+    public init(
+        id: UUID,
+        username: String,
+        displayName: String? = nil,
+        origins: [String],
+        loginURLs: [URL],
+        password: String? = nil,
+        passkeys: [WebsitePasskey],
+        totp: TOTPGenerator? = nil,
+        notes: [CredentialNote]? = nil,
+        secureItems: [SecureItem]? = nil,
+        exchangeAccountID: Data? = nil,
+        exchangeItemID: Data? = nil,
+        exchangeMetadata: Data? = nil,
+        basicAuthenticationMetadata: CredentialBasicAuthenticationMetadata? = nil,
+        createdAt: Date? = nil,
+        modifiedAt: Date? = nil,
+        migratedAt: Date? = nil,
+        passwordEvents: CredentialEvents? = nil,
+        totpEvents: CredentialEvents? = nil,
+        passwordBase: ExchangeBase? = nil,
+        totpBase: ExchangeBase? = nil,
+        secureItemsBase: ExchangeBase? = nil,
+        mergedFrom: [MergedItemLink]? = nil,
+        attachments: [CredentialAttachment]? = nil
+    ) {
+        self.id = id
+        self.username = username
+        self.displayName = displayName
+        self.origins = origins
+        self.loginURLs = loginURLs
+        self.password = password
+        self.passkeys = passkeys
+        self.totp = totp
+        self.notes = notes
+        self.secureItems = secureItems
+        self.exchangeAccountID = exchangeAccountID
+        self.exchangeItemID = exchangeItemID
+        self.exchangeMetadata = exchangeMetadata
+        self.basicAuthenticationMetadata = basicAuthenticationMetadata
+        self.createdAt = createdAt
+        self.modifiedAt = modifiedAt
+        self.migratedAt = migratedAt
+        self.passwordEvents = passwordEvents
+        self.totpEvents = totpEvents
+        self.passwordBase = passwordBase
+        self.totpBase = totpBase
+        self.secureItemsBase = secureItemsBase
+        self.mergedFrom = mergedFrom
+        self.attachments = attachments
+    }
+
+    public func validate() throws {
         guard !username.isEmpty || password != nil || !passkeys.isEmpty || totp != nil || notes != nil || secureItems != nil
                 || attachments != nil,
               username.utf8.count <= CredentialVaultLimits.payloadBytes,
@@ -242,15 +331,15 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
     }
 
     /// Most notes one credential keeps.
-    static let noteLimit = 64
+    public static let noteLimit = 64
 
     /// Most websites (origins, and login addresses) one account keeps.
-    static let websiteLimit = 64
+    public static let websiteLimit = 64
 
     /// Most items of the other app one credential remembers as merged into it.
-    static let mergedFromLimit = 64
+    public static let mergedFromLimit = 64
 
-    static func origin(for url: URL) -> String? {
+    public static func origin(for url: URL) -> String? {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme?.lowercased() == "https",
               let host = components.host, !host.isEmpty,
@@ -266,7 +355,7 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
         return components.string
     }
 
-    static func sanitizedLoginURL(_ url: URL) throws -> URL {
+    public static func sanitizedLoginURL(_ url: URL) throws -> URL {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme?.lowercased() == "https",
               let host = components.host, !host.isEmpty else { throw CredentialVaultError.invalidData }
@@ -284,28 +373,64 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
     }
 }
 
-nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
-    var id: UUID
-    var credentialID: Data
-    var rpID: String
-    var userHandle: Data
-    var userName: String
-    var userDisplayName: String
-    var algorithm: Int
-    var privateKeyPKCS8: Data
-    var backupEligible: Bool
+public nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
+    public var id: UUID
+    public var credentialID: Data
+    public var rpID: String
+    public var userHandle: Data
+    public var userName: String
+    public var userDisplayName: String
+    public var algorithm: Int
+    public var privateKeyPKCS8: Data
+    public var backupEligible: Bool
     var backupState: Bool
     var exchangeFIDO2Metadata: Data?
-    var createdAt: Date?
-    var source: WebsitePasskeySource?
-    var lastSignedAt: Date?
-    var events: CredentialEvents?
+    public var createdAt: Date?
+    public var source: WebsitePasskeySource?
+    public var lastSignedAt: Date?
+    public var events: CredentialEvents?
     var base: ExchangeBase?
+
+    public init(
+        id: UUID,
+        credentialID: Data,
+        rpID: String,
+        userHandle: Data,
+        userName: String,
+        userDisplayName: String,
+        algorithm: Int,
+        privateKeyPKCS8: Data,
+        backupEligible: Bool,
+        backupState: Bool,
+        exchangeFIDO2Metadata: Data? = nil,
+        createdAt: Date? = nil,
+        source: WebsitePasskeySource? = nil,
+        lastSignedAt: Date? = nil,
+        events: CredentialEvents? = nil,
+        base: ExchangeBase? = nil
+    ) {
+        self.id = id
+        self.credentialID = credentialID
+        self.rpID = rpID
+        self.userHandle = userHandle
+        self.userName = userName
+        self.userDisplayName = userDisplayName
+        self.algorithm = algorithm
+        self.privateKeyPKCS8 = privateKeyPKCS8
+        self.backupEligible = backupEligible
+        self.backupState = backupState
+        self.exchangeFIDO2Metadata = exchangeFIDO2Metadata
+        self.createdAt = createdAt
+        self.source = source
+        self.lastSignedAt = lastSignedAt
+        self.events = events
+        self.base = base
+    }
 
     /// The BS flag an assertion reports. A passkey imported from another provider (Apple Passwords) is still kept there, synced,
     /// so it is backed up whatever this vault does, and the provider registered it with BS set: some relying parties refuse an
     /// assertion whose backup state changed from that.
-    var isBackedUp: Bool {
+    public var isBackedUp: Bool {
         backupEligible && (backupState || source == .imported)
     }
 
@@ -314,7 +439,7 @@ nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
     /// the handle to 64 bytes or fewer, and CTAP2 only requires an authenticator to hold that many. Real relying parties send
     /// more (PayPal's passkey in Apple Passwords has one), so WSurf accepts up to this bound on import, on registration and
     /// on the way back out in an assertion or an export. A handle is stored and hashed length-prefixed, so no format depends on it.
-    static let userHandleLimit = 1_024
+    public static let userHandleLimit = 1_024
     /// The most UTF-8 bytes in a user name or a display name.
     static let nameLimit = 2_048
 
@@ -351,7 +476,7 @@ nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
         return nil
     }
 
-    func validate() throws {
+    public func validate() throws {
         guard algorithm == -7, backupEligible || !backupState, problem == nil else {
             throw CredentialVaultError.invalidData
         }
@@ -359,13 +484,13 @@ nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equatable {
     }
 }
 
-nonisolated enum WebsitePasskeySource: String, Codable, Sendable, Equatable {
+public nonisolated enum WebsitePasskeySource: String, Codable, Sendable, Equatable {
     case created
     case imported
 }
 
 extension UUID {
-    nonisolated func shortestUniquePrefix(in identifiers: [UUID]) -> String {
+    public nonisolated func shortestUniquePrefix(in identifiers: [UUID]) -> String {
         let value = uuidString
         var length = 4
         while length < value.count,
@@ -376,19 +501,19 @@ extension UUID {
     }
 }
 
-nonisolated enum TOTPAlgorithm: String, Codable, Sendable {
+public nonisolated enum TOTPAlgorithm: String, Codable, Sendable {
     case sha1
     case sha256
     case sha512
 }
 
-nonisolated struct TOTPGenerator: Codable, Sendable, Equatable {
-    var secret: Data
-    var algorithm: TOTPAlgorithm
-    var period: UInt16
-    var digits: UInt16
-    var issuer: String?
-    var userName: String?
+public nonisolated struct TOTPGenerator: Codable, Sendable, Equatable {
+    public var secret: Data
+    public var algorithm: TOTPAlgorithm
+    public var period: UInt16
+    public var digits: UInt16
+    public var issuer: String?
+    public var userName: String?
 
     func validate() throws {
         let limit = CredentialVaultLimits.payloadBytes

@@ -9,6 +9,7 @@ import Testing
 import WebKit
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// A passkey imported from Apple Passwords signs in the way Google's sign-in asks for it: from the page's own script, while
 /// the page is still loading, after earlier navigations in the same tab, and with a long challenge. Each case runs the

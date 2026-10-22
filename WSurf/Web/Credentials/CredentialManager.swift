@@ -7,6 +7,7 @@ import CryptoKit
 import Foundation
 import Observation
 import Synchronization
+import WSurfVault
 
 nonisolated enum CredentialLockReason: Sendable {
     case manual, profileSwitch, screenLock, sleep, termination, timeout

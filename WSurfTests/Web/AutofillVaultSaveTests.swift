@@ -6,6 +6,7 @@ import Testing
 import WebKit
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// A card or an address typed into a form is saved into the vault through the save offer, and filled back from it. Real managers in
 /// the registry, the real session and the vault's ordinary per-entry write; only the page's document proof is replaced. Synthetic

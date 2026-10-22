@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Account/passkey/TOTP validation and the v1 envelope field decoders: pure value checks with no vault, store or manager.
 struct CredentialAccountValidationTests {

@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 extension CredentialExchangeTests {
     @Test func sameOriginDoesNotReplaceNeighboursAndExplicitConflictDecisionIsLocal() throws {

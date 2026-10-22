@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// A live account row read back from the file and opened under the held DEK.
 nonisolated struct CommitLiveRow {

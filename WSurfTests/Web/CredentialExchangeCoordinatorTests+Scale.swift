@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // A real Passwords library through the real coordinator and a real store: stage (preview, classify, review), commit, reopen, stage the
 // same transfer again against the committed vault, and save one edit. Synthetic data only (`ExchangeScale`).

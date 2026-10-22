@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// Bounded conversion between the page-facing JSON messages and the native authenticator types. Nothing here grants
-/// authority: origin, frame, policy and profile come from native context, never from these messages.
-nonisolated enum WebAuthnWire {
+/// authority: origin, frame, policy and profile come from native context, never from these messages. The enum and its
+/// base64url helpers are declared in `WSurfVault`, because the vault stores an SSH key's bytes as base64url.
+nonisolated extension WebAuthnWire {
     enum Mediation: String, Sendable { case optional, required, conditional }
 
     struct Parsed: Sendable {
@@ -14,9 +16,6 @@ nonisolated enum WebAuthnWire {
         let mediation: Mediation
         let request: WebAuthnRequest
     }
-
-    /// A malformed message maps to `TypeError`; the page script already rejects most of these before sending.
-    struct Malformed: Error { let reason: String }
 
     struct PageError: Error, Sendable, Equatable {
         let name: String
@@ -33,21 +32,6 @@ nonisolated enum WebAuthnWire {
     private static func isBoolean(_ value: Any) -> Bool {
         guard let number = value as? NSNumber else { return false }
         return CFGetTypeID(number) == CFBooleanGetTypeID()
-    }
-
-    static func base64URLDecode(_ value: Any?, maximum: Int = 65_536) throws -> Data {
-        guard let value = value as? String, value.utf8.count <= maximum * 2,
-              value.utf8.allSatisfy({ $0 != 0x2B && $0 != 0x2F && $0 != 0x3D }) else { throw Malformed(reason: "buffer") }
-        var standard = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        standard += String(repeating: "=", count: (4 - standard.count % 4) % 4)
-        guard let data = Data(base64Encoded: standard), data.count <= maximum,
-              base64URL(data) == value else { throw Malformed(reason: "buffer") }
-        return data
-    }
-
-    static func base64URL(_ data: Data) -> String {
-        data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
     }
 
     /// Parses a relay `request` message. `now` is injectable so deadline arithmetic is testable.

@@ -4,6 +4,7 @@
 import CryptoKit
 import Foundation
 import LocalAuthentication
+import WSurfVault
 
 // The encrypted store behind Input History: one directory per profile, one file per remembered field.
 //
@@ -70,13 +71,6 @@ nonisolated enum InputHistoryError: Error, Equatable {
     case vaultLocked
     /// The vault Input History was kept with was deleted, so nothing it kept could be opened again. Everything was deleted.
     case vaultDeleted
-}
-
-/// Input History's key for one vault: HKDF-SHA256 of the vault's key, bound to the profile and the vault
-/// (`ProfileVaultStore.inputHistoryKey`). It is never the vault's key, and only an unlocked vault gives it.
-nonisolated struct InputHistoryVaultKey: Sendable {
-    let vaultID: UUID
-    let key: SymmetricKey
 }
 
 nonisolated struct InputHistoryStatus: Sendable, Equatable {

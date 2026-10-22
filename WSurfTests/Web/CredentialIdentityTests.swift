@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Identities and typed custom fields: the Add menu's templates, the type menu of a custom field, Touch ID for a hidden one, and an
 // identity saved, edited, read back from History and taken back with Undo. Touch ID is a counting stub, the vault uses test-only

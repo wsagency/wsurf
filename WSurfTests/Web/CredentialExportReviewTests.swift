@@ -8,6 +8,7 @@ import Synchronization
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// What the export sheet does with a selection after the vault moved under it: it names what changed or vanished, keeps what is
 /// still valid, and the retry sends exactly the reconciled selection.

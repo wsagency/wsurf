@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 struct VaultDiffTests {
     private nonisolated static let undecodable = Data("not json".utf8)

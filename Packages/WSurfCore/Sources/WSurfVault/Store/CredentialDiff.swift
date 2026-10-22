@@ -15,15 +15,15 @@ nonisolated struct RevisionDraft: Equatable, Sendable {
     let superseded: Data
 }
 
-nonisolated enum RemovalScope: Equatable, Sendable {
+public nonisolated enum RemovalScope: Equatable, Sendable {
     case account(UUID)
     case credential(ownerID: UUID, subject: RecordSubject, passkeyID: UUID?)
 }
 
-nonisolated struct CredentialChangePlan: Equatable, Sendable {
+public nonisolated struct CredentialChangePlan: Equatable, Sendable {
     let persistence: PersistenceClass
     let revisions: [RevisionDraft]
-    let removals: [RemovalScope]
+    public let removals: [RemovalScope]
     /// Accounts whose live row differs (added, removed or changed).
     let touched: Set<UUID>
     /// Accounts whose content `modifiedAt` the commit stamps: existing accounts with a semantic change.
@@ -32,7 +32,7 @@ nonisolated struct CredentialChangePlan: Equatable, Sendable {
 
 /// §11.1: what a commit supersedes, removes and persists. The blocked-origin policy is not an account property and is
 /// never part of a plan.
-nonisolated enum CredentialDiff {
+public nonisolated enum CredentialDiff {
     /// Throws `CredentialVaultError.invalidData` for duplicate account ids in either list or duplicate passkey ids within an
     /// account (never first-wins, even when the lists are byte-identical, and without validating keys or metadata, so the
     /// byte-identical bypass stays intact); `CredentialStoreError.metadataUndecodable` when a metadata change would
@@ -51,7 +51,7 @@ nonisolated enum CredentialDiff {
     ///
     /// `unchanged` names accounts that stay as stored (the store's own rows read in the same transaction, or a caller's `==` copy of
     /// one): they are not compared or encoded again. Every other pair is compared on its bytes, and the identity checks above still cover every account.
-    static func plan(
+    public static func plan(
         old: [CredentialAccount], new: [CredentialAccount], restoring: UUID? = nil, removing: RemovalScope? = nil,
         returning: [CredentialAccount] = [], unchanged: Set<UUID> = []
     ) throws -> CredentialChangePlan {

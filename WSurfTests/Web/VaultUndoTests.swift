@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Undo (spec §11.3b) as the store and manager do it: one commit with the cause `undo` puts back what an earlier action changed.
 // Test-only in-memory unlock keys and synthetic credentials; nothing here is evidence of Apple provider behavior.

@@ -8,6 +8,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Crypto/settings verification only: unlock keys are test-only in-memory PRF material handed to the shared
 // `completeUnlock` transition. Nothing here is evidence of Apple provider behavior, and no

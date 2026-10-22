@@ -7,6 +7,7 @@ import GRDB
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 7: the MOVE-to-Trash engine behind `delete` and the removals of `commit`, read back through `StoreTables`, `StoreSeal` and
 // `StoreVerifier` (via the fixture). Shared plumbing lives in VaultMoveSupport.swift.

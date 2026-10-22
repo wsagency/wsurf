@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // A real Passwords library is thousands of items, many with a note or a passkey beside the login. The transfer is sized for that.
 // All data is synthetic (`ExchangeScale`): `example.test` hosts and generated keys.

@@ -5,6 +5,7 @@ import AppKit
 import AuthenticationServices
 import CryptoKit
 import Foundation
+import WSurfVault
 
 nonisolated enum PasskeyUnlockError: Error {
     case busy
@@ -38,7 +39,7 @@ nonisolated struct VaultUnlockRegistration: Sendable {
 /// Results are never forwarded after `cancel()`; the vault key is only ever a real native PRF output.
 @MainActor
 final class PasskeyVaultUnlocker: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
-    nonisolated static let relyingParty = "wsurf.app"
+    nonisolated static let relyingParty = RelyingPartyPolicy.vaultUnlockRelyingParty
     private typealias PRFValues = ASAuthorizationPublicKeyCredentialPRFAssertionInput.InputValues
 
     private final class Ceremony {

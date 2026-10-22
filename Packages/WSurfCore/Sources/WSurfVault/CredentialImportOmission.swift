@@ -6,7 +6,7 @@ import Foundation
 /// A part of a transfer that WSurf did not keep, shown in the review before anything is saved. Only the position, the item's
 /// title, the kind of credential and a fixed reason: never a value, so the list can be shown and logged safely. Everything else in
 /// the transfer is still imported; only the checks that protect the vault refuse a whole transfer.
-nonisolated struct CredentialImportOmission: Equatable, Sendable {
+public nonisolated struct CredentialImportOmission: Equatable, Sendable {
     enum Reason: Equatable, Sendable {
         /// A kind of credential WSurf has no place for yet.
         case unsupportedKind
@@ -58,7 +58,7 @@ nonisolated struct CredentialImportOmission: Equatable, Sendable {
     let reason: Reason
 
     /// Fixed wording, built from the kind and the reason only.
-    var text: String {
+    public var text: String {
         let name = title.isEmpty ? String(localized: "Untitled item") : title
         return "\(name): \(detail)"
     }

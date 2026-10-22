@@ -7,6 +7,7 @@ import GRDB
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Delete Vault: one transaction removes a vault and its linked Trash, needs a fresh assertion of that vault's own passkey, and never
 // touches the other vaults or anything outside the store file.

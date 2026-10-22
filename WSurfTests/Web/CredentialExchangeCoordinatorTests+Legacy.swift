@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The review and commit of the passwords saved before Credential Manager, through the real coordinator and a real fixture vault.
 // The old list is a `MemoryAutofillStorage`; the fixture builders live in `CredentialExchangeCoordinatorTests`.

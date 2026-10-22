@@ -8,13 +8,13 @@ import Foundation
 /// vault's file key (`wrappedKey`, whose tag binds it to `id`, `size` and `sha256`). So a vault read, which opens every record, never
 /// opens a file, and a file is decrypted only when someone asks for it. Like every other part of a record it is never named in a log
 /// and never reaches the assistant or an MCP client.
-nonisolated struct CredentialAttachment: Codable, Sendable, Equatable, Identifiable {
+public nonisolated struct CredentialAttachment: Codable, Sendable, Equatable, Identifiable {
     /// The encrypted file's random name. Two copies of the same document get different ids, so nothing on disk links them.
-    var id: UUID
-    var name: String
+    public var id: UUID
+    public var name: String
     /// The uniform type identifier (`public.jpeg`, `com.adobe.pdf`…), for the icon and the apps that open it.
-    var contentType: String
-    var size: Int64
+    public var contentType: String
+    public var size: Int64
     /// SHA-256 of the plaintext, checked every time the file is decrypted.
     var sha256: Data
     /// The file's own AES-256 key, sealed with AES-GCM under the vault's file key: 12-byte nonce, 32 bytes, 16-byte tag.
@@ -22,9 +22,9 @@ nonisolated struct CredentialAttachment: Codable, Sendable, Equatable, Identifia
     var addedAt: Date?
 
     /// Owner decision 3. Decimal megabytes and gigabytes, as Finder counts them.
-    static let fileBytes: Int64 = 50_000_000
-    static let vaultBytes: Int64 = 2_000_000_000
-    static let entryLimit = 64
+    public static let fileBytes: Int64 = 50_000_000
+    public static let vaultBytes: Int64 = 2_000_000_000
+    public static let entryLimit = 64
     static let nameBytes = 1_024
     static let wrappedKeyBytes = 60
 
@@ -49,7 +49,7 @@ nonisolated struct CredentialAttachment: Codable, Sendable, Equatable, Identifia
 }
 
 /// Why a file was not added, saved or opened. It names the rule or the file's own name, never its content.
-nonisolated enum VaultFileError: Error, Equatable, Sendable {
+public nonisolated enum VaultFileError: Error, Equatable, Sendable {
     /// Over `CredentialAttachment.fileBytes`.
     case tooLarge(name: String)
     /// The entry already holds `CredentialAttachment.entryLimit` files.
@@ -65,7 +65,7 @@ nonisolated enum VaultFileError: Error, Equatable, Sendable {
 }
 
 nonisolated extension VaultFileError {
-    var message: String {
+    public var message: String {
         let limit = ByteCountFormatter.string(fromByteCount: CredentialAttachment.fileBytes, countStyle: .file)
         let vault = ByteCountFormatter.string(fromByteCount: CredentialAttachment.vaultBytes, countStyle: .file)
         switch self {

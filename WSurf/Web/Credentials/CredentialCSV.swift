@@ -3,6 +3,7 @@
 
 import Darwin
 import Foundation
+import WSurfVault
 
 /// Why a CSV file could not be used as a whole. Carries a line number or nothing: never a field, a header or the
 /// system's own error text, since any of them can contain a password.

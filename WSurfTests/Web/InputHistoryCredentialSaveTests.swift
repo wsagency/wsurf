@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Save as Credential from Input History: the vault is written only after the person confirms, through the same backend as a
 /// save offer, and only into the account they were shown. Vaults are the registry-backed fixtures; values are synthetic.

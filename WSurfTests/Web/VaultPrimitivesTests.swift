@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 struct VaultPrimitivesTests {
     nonisolated enum MalformedCase: CaseIterable, Sendable {

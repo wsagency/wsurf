@@ -169,7 +169,7 @@ nonisolated extension CredentialExchangeCodec {
 
 nonisolated extension CredentialIdentity {
     /// Notes and items go where their item's login goes when nobody decided them (`CredentialExchangeCodec.leadIdentity`).
-    var followsLogin: Bool {
+    public var followsLogin: Bool {
         switch self {
         case .note, .secureItems:
             true

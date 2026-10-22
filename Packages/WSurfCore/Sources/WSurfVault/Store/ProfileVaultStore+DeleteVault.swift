@@ -12,7 +12,7 @@ import GRDB
 /// (`VaultBlob`) is removed. The other vaults' rows, wrappers and files, the registry key (sealed in every active head), the stub, the
 /// A3 witness and every other file are not touched.
 extension ProfileVaultStore {
-    func deleteVault(vaultID: UUID, authorization: FreshAuthorization, using access: VaultAccess) async throws {
+    public func deleteVault(vaultID: UUID, authorization: FreshAuthorization, using access: VaultAccess) async throws {
         try await authorize(vaultID: vaultID, authorization, using: access)
         try await commitDeletion(vaultID: vaultID, using: access, requireEmpty: false)
     }
@@ -20,7 +20,7 @@ extension ProfileVaultStore {
     /// A vault that holds nothing to lose goes with the unlock alone: nothing can be lost, so there is no assertion to ask for. The
     /// store decides what "nothing" is, inside the same transaction that deletes (`vaultNotEmpty` otherwise, with nothing written),
     /// so a credential saved a moment earlier can never be deleted this way. Every other rule is `deleteVault`'s.
-    func deleteEmptyVault(vaultID: UUID, using access: VaultAccess) async throws {
+    public func deleteEmptyVault(vaultID: UUID, using access: VaultAccess) async throws {
         _ = try authorizedGrant(vaultID, access)
         try await commitDeletion(vaultID: vaultID, using: access, requireEmpty: true)
     }

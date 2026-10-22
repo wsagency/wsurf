@@ -5,7 +5,7 @@ import Foundation
 
 /// How one incoming credential relates to the destination vault (§13.3). Never decided by a clock, by site and
 /// username, or by an exchange id alone.
-nonisolated enum CredentialImportClass: Equatable, Sendable {
+public nonisolated enum CredentialImportClass: Equatable, Sendable {
     case new
     case unchanged
     case remoteChanged
@@ -20,7 +20,7 @@ nonisolated enum CredentialImportClass: Equatable, Sendable {
 /// The destination vault as classification sees it: its live accounts and the identifiers of what it removed. The accounts are
 /// indexed once, by exporter item and by passkey identity, so classifying every credential of a transfer costs the size of the
 /// transfer and not the transfer times the vault.
-nonisolated struct ImportDestinationView: Sendable {
+public nonisolated struct ImportDestinationView: Sendable {
     let accounts: [CredentialAccount]
     let removed: RemovedIdentifiers
     /// Positions in `accounts`, in order, of the accounts that hold each exporter item.
@@ -38,7 +38,7 @@ nonisolated struct ImportDestinationView: Sendable {
         let credentialID: Data
     }
 
-    init(accounts: [CredentialAccount], removed: RemovedIdentifiers) {
+    public init(accounts: [CredentialAccount], removed: RemovedIdentifiers) {
         self.accounts = accounts
         self.removed = removed
         var positions: [CredentialExchangeCodec.ExternalItemID: [Int]] = [:]
@@ -77,7 +77,7 @@ nonisolated extension CredentialExchangeCodec {
 
     /// The same, for a caller that already holds the candidate `incoming` belongs to (a loop over the preview's candidates), so
     /// the preview is not searched for it again.
-    static func classify(
+    public static func classify(
         _ incoming: CredentialIdentity,
         of candidate: CredentialAccount,
         destination: ImportDestinationView

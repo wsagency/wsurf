@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Files kept in the credentials vault (scans, PDFs, documents of the family) are for the person at the keyboard, like the vault's cards
 // and passwords. No tool of the assistant, no MCP tool and nothing they call may read one, so the code behind them must not even name

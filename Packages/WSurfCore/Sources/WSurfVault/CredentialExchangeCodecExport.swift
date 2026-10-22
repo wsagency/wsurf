@@ -5,7 +5,7 @@ import AuthenticationServices
 import Foundation
 
 nonisolated extension CredentialExchangeCodec {
-    static func export(
+    public static func export(
         _ snapshot: StoreSnapshot,
         selection: [CredentialExportSelection],
         format: ASExportedCredentialData.FormatVersion
@@ -124,7 +124,7 @@ nonisolated extension CredentialExchangeCodec {
         let data = ASExportedCredentialData(
             accounts: accounts,
             formatVersion: format,
-            exporterRelyingPartyIdentifier: PasskeyVaultUnlocker.relyingParty,
+            exporterRelyingPartyIdentifier: RelyingPartyPolicy.vaultUnlockRelyingParty,
             exporterDisplayName: "WSurf",
             timestamp: Date()
         )

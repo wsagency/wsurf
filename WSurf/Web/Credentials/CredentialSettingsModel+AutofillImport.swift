@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// Cards from a Safari export, or contacts chosen in Contacts, reviewed before anything is written: the review shows titles only (a
 /// card's network and last four digits, a contact's title). The values stay in memory until Import or Cancel.

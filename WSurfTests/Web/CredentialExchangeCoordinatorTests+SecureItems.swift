@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Cards and other items in the import review: they are reviewed before Import, follow their login, and are written only by Import.
 // Synthetic values only.

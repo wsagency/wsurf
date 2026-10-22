@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 nonisolated extension CredentialImportReview {
     /// One thing done to a saved credential in WSurf since the other app's copy of it was imported. It names a field and, when the

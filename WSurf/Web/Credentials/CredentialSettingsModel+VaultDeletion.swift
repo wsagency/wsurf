@@ -3,6 +3,7 @@
 
 import AuthenticationServices
 import Foundation
+import WSurfVault
 
 /// A vault deletion the user was shown. It lives in the authorization session, so a lock, a re-unlock or a change of vault drops
 /// it: a confirmation shown for one vault can never delete another. The counts are only what the vault held when it was shown.

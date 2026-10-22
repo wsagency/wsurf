@@ -7,6 +7,7 @@ import Testing
 import WebKit
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Account choice, step carry-over and save planning for the credential manager. Vault state comes from the real
 // encrypted vault with test-only in-memory unlock material; no native ceremony or provider is involved.

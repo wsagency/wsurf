@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The Autofill page's structure: a vault picker, the Vault and Settings tabs, the Vault tab's sections, every Settings search result
 // and deep link landing on a tab and section, and switching vaults with the picker. Pure values and a source scan, plus one model over

@@ -5,6 +5,7 @@ import CryptoKit
 import Foundation
 
 @testable import WSurf
+@testable import WSurfVault
 
 // @unchecked: every field is an immutable `let`; Foundation documents UserDefaults as thread-safe and TestClock is itself checked
 // `Sendable` (Mutex-guarded). The SDK just does not annotate UserDefaults `Sendable`.

@@ -3,6 +3,7 @@
 
 import AuthenticationServices
 import Foundation
+import WSurfVault
 
 /// What the page says for an error, by cause: the vault and its passkeys, then the store, then the exchange. `nil` is a
 /// user cancel, which says nothing.

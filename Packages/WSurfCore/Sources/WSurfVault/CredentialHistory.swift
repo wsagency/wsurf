@@ -7,21 +7,21 @@ import Foundation
 
 /// The `cause` a writer records on the revisions its commit creates (spec §11.1). Only the writers named here pass one; any other
 /// token is shown exactly as written.
-nonisolated enum CredentialChangeCause {
-    static let `import` = "import"
+public nonisolated enum CredentialChangeCause: Sendable {
+    public static let `import` = "import"
     /// Written by the merge of two saved credentials (Credential Manager v3, PR E).
-    static let merge = "merge"
+    public static let merge = "merge"
     /// A password or code a merge kept in the merged credential's History from a credential it merged away.
     static let mergedFrom = "merged-from"
     /// Written when the person adds the page's website to a credential from an autofill offer.
-    static let addWebsite = "add-website"
+    public static let addWebsite = "add-website"
     /// Written by Undo (and Redo), which puts back what an earlier action of the same page changed.
     static let undo = "undo"
     /// Written by the move of the cards and addresses saved on this Mac into the vault, and by its Undo (`AutofillVaultMigration`).
-    static let autofillMigration = "autofill-migration"
+    public static let autofillMigration = "autofill-migration"
 
     /// What the History panel says, `nil` when the writer said nothing.
-    static func text(for cause: String?) -> String? {
+    public static func text(for cause: String?) -> String? {
         guard let cause, !cause.isEmpty else { return nil }
         return switch cause {
         case Self.import:
@@ -45,15 +45,15 @@ nonisolated enum CredentialChangeCause {
 // MARK: - Versions
 
 /// One whole-credential state, rebuilt from the credential as stored now and the values later changes replaced.
-nonisolated struct CredentialVersion: Identifiable, Equatable, Sendable {
+public nonisolated struct CredentialVersion: Identifiable, Equatable, Sendable {
     /// The newest revision row this version was rebuilt from; `nil` for the credential as stored now.
-    let id: UUID?
-    let account: CredentialAccount
+    public let id: UUID?
+    public let account: CredentialAccount
     /// When the next change replaced this version; `nil` for the credential as stored now.
-    let replacedAt: Date?
+    public let replacedAt: Date?
     /// The parts that change replaced (empty for the current one).
-    let changed: Set<RecordSubject>
-    let cause: String?
+    public let changed: Set<RecordSubject>
+    public let cause: String?
 
     var isCurrent: Bool {
         id == nil
@@ -61,19 +61,19 @@ nonisolated struct CredentialVersion: Identifiable, Equatable, Sendable {
 }
 
 /// One website line of a credential: a login address, or an HTTPS origin no login address covers.
-nonisolated struct HistoryWebsite: Equatable, Sendable {
-    let text: String
-    let isOtherOrigin: Bool
+public nonisolated struct HistoryWebsite: Equatable, Sendable {
+    public let text: String
+    public let isOtherOrigin: Bool
 
     /// What `CredentialDraft.take` adds for this line; `nil` for an address that is not a URL.
-    var field: CredentialHistoryField? {
+    public var field: CredentialHistoryField? {
         isOtherOrigin ? .origin(text) : URL(string: text).map(CredentialHistoryField.website)
     }
 }
 
-nonisolated enum CredentialHistory {
+public nonisolated enum CredentialHistory {
     /// The login addresses, then the other origins, as the editor lists them.
-    static func websites(of account: CredentialAccount) -> [HistoryWebsite] {
+    public static func websites(of account: CredentialAccount) -> [HistoryWebsite] {
         let covered = Set(account.loginURLs.compactMap { CredentialAccount.origin(for: $0) })
         return account.loginURLs.map { HistoryWebsite(text: $0.absoluteString, isOtherOrigin: false) }
             + account.origins.filter { !covered.contains($0) }.map { HistoryWebsite(text: $0, isOtherOrigin: true) }
@@ -86,7 +86,7 @@ nonisolated enum CredentialHistory {
     /// A part that was added (nothing replaced) or removed to Trash wrote no revision, and a passkey never has one. Those parts
     /// are shown as they are now in every earlier version.
     /// ponytail: a commit whose rows straddle two pages shows its last loaded row as a version until the next page completes it.
-    static func versions(current: CredentialAccount, revisions: [RevisionValue]) throws -> [CredentialVersion] {
+    public static func versions(current: CredentialAccount, revisions: [RevisionValue]) throws -> [CredentialVersion] {
         var versions = [CredentialVersion(id: nil, account: current, replacedAt: nil, changed: [], cause: nil)]
         var state = current
         var index = revisions.startIndex
@@ -107,21 +107,21 @@ nonisolated enum CredentialHistory {
 
 /// One credential's earlier values and the versions rebuilt from them, as the open editor shows them. It holds secrets, so it lives
 /// in the authorization session only: a lock drops it, and `revealsSecrets` keeps them masked until the user shows them.
-nonisolated struct HistoryState: Sendable {
-    let accountID: UUID
+public nonisolated struct HistoryState: Sendable {
+    public let accountID: UUID
     /// The vault revision the draft and these versions were both read at.
-    let revision: UInt64
+    public let revision: UInt64
     /// Every page read so far, newest first.
-    var values: [RevisionValue]
+    public var values: [RevisionValue]
     /// The cursor of the next page of older values; only meaningful inside this session.
-    var next: Int?
+    public var next: Int?
     /// `versions[0]` is the credential as stored when History opened.
-    var versions: [CredentialVersion]
+    public var versions: [CredentialVersion]
     /// The version shown against the draft; `nil` is the current one.
-    var selected: UUID?
-    var revealsSecrets = false
+    public var selected: UUID?
+    public var revealsSecrets = false
 
-    init(accountID: UUID, revision: UInt64, values: [RevisionValue], next: Int?, versions: [CredentialVersion]) {
+    public init(accountID: UUID, revision: UInt64, values: [RevisionValue], next: Int?, versions: [CredentialVersion]) {
         self.accountID = accountID
         self.revision = revision
         self.values = values
@@ -130,13 +130,13 @@ nonisolated struct HistoryState: Sendable {
         selected = versions.dropFirst().first?.id
     }
 
-    var shown: CredentialVersion? {
+    public var shown: CredentialVersion? {
         versions.first { $0.id == selected }
     }
 }
 
 /// The part of an earlier version that "Use This" or "Add" puts into the draft (`CredentialDraft.take`).
-nonisolated enum CredentialHistoryField: Equatable, Sendable {
+public nonisolated enum CredentialHistoryField: Equatable, Sendable {
     case name
     /// Username and password together.
     case login

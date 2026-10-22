@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// What a focused field on a login page is asking for.
 nonisolated enum CredentialAutofillField: Sendable {

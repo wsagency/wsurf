@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The page's Undo: which actions keep a step, how long steps live, and what taking one back does. Test-only in-memory unlock keys,
 // a private pasteboard and synthetic credentials.

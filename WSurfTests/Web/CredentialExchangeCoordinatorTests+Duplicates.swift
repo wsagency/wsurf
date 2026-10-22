@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Exact duplicates in a system import (spec §13.3): an item no saved credential is linked to, whose login is the same site, username
 // and password as a saved one, or whose passkey is saved already. Synthetic data only (`example.test` hosts).

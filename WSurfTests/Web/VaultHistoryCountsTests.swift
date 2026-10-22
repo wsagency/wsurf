@@ -6,6 +6,7 @@ import GRDB
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// `historyCounts` is what Settings shows as "how many" (Trash entries, earlier versions) without paging: the head-authenticated counts,
 /// each checked against the stored rows. Every expectation here is against the real store and the sealed heads read back by the fixture.

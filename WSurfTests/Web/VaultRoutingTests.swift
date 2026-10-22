@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Which vault a page's save or lookup belongs to, asserted through the real registry, managers and store of a profile. Only the
 // native passkey prompt is stubbed (`VaultPasskeys`); a locked vault is never read, ambiguity is a choice, never a guess.

@@ -22,9 +22,9 @@ nonisolated struct LiveEntry: Equatable, Sendable {
     let digest: Data
 }
 
-nonisolated struct HistoryCounts: Equatable, Sendable {
-    var revision = 0
-    var trashEntry = 0
+public nonisolated struct HistoryCounts: Equatable, Sendable {
+    public var revision = 0
+    public var trashEntry = 0
     var tombstone = 0
 }
 

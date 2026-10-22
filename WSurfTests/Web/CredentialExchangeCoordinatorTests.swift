@@ -9,6 +9,7 @@ import Synchronization
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Real codec and real vault transitions, driven through the coordinator's production state machine. The
 // native `ASCredentialImportManager`/`ASCredentialExportManager` calls are the only steps not exercised here:

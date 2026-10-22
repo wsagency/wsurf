@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// What an import does with the choices made in its review: which stored accounts a credential can join, which choices the
 /// codec is given, and which accounts the commit writes. Pure functions of the staged preview, no state.

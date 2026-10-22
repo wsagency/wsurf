@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 extension WebAuthnAdapterTests {
     // MARK: Wire

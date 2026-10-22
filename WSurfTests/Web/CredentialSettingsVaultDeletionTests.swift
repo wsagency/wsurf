@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The page's side of Delete Vault: what the first confirmation shows, that the typed name and the vault's own passkey both gate the
 // deletion, and that a lock, a declined prompt, the last vault and an open import review each delete nothing. The store, the managers

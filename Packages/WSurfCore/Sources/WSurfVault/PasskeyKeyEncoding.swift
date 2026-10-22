@@ -4,13 +4,13 @@
 import CryptoKit
 import Foundation
 
-nonisolated enum PasskeyKeyEncoding {
-    static let maximumDERBytes = 4_096
+public nonisolated enum PasskeyKeyEncoding {
+    public static let maximumDERBytes = 4_096
 
     private static let ecPublicKeyOID = Data([0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01])
     private static let p256OID = Data([0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07])
 
-    static func importPKCS8(_ data: Data) throws -> P256.Signing.PrivateKey {
+    public static func importPKCS8(_ data: Data) throws -> P256.Signing.PrivateKey {
         guard !data.isEmpty, data.count <= maximumDERBytes else { throw CredentialVaultError.invalidData }
         do {
             var document = DERReader(data)
@@ -99,7 +99,7 @@ nonisolated enum PasskeyKeyEncoding {
         return (try? algorithm.read(0x06)).map { $0 != p256OID } ?? false
     }
 
-    static func exportPKCS8(_ key: P256.Signing.PrivateKey) throws -> Data {
+    public static func exportPKCS8(_ key: P256.Signing.PrivateKey) throws -> Data {
         let scalar = key.rawRepresentation
         let publicKey = key.publicKey.x963Representation
         guard scalar.count == 32, publicKey.count == 65 else { throw CredentialVaultError.invalidData }

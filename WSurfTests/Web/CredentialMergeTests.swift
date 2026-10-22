@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// The merge rules are pure: accounts in, one account out. Nothing is written and no secret is returned by the preview.
 struct CredentialMergeTests {

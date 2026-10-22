@@ -10,8 +10,8 @@ import Foundation
 /// removed passkey (`passkeyCredentialID`/`rpID` set). `exchangeAccountID`/`exchangeItemID` are the account's stored
 /// values as they are, `nil` for a native account: the classifier derives the same fallback (the account's own UUID
 /// bytes, `CredentialExchangeCodec.externalID`) that live accounts and exports use, then matches exactly.
-nonisolated struct RemovedIdentifier: Equatable, Sendable {
-    let entryID: UUID
+public nonisolated struct RemovedIdentifier: Equatable, Sendable {
+    public let entryID: UUID
     let isTombstone: Bool
     let accountID: UUID
     let exchangeAccountID: Data?
@@ -20,9 +20,9 @@ nonisolated struct RemovedIdentifier: Equatable, Sendable {
     let rpID: String?
     /// When the entry went to Trash, or, for a tombstone, when it was purged. A date only, read from the body that is opened for the
     /// identifiers anyway; the import report shows it and nothing else uses it.
-    var removedAt: Date?
+    public var removedAt: Date?
 }
 
-nonisolated struct RemovedIdentifiers: Equatable, Sendable {
-    let items: [RemovedIdentifier]
+public nonisolated struct RemovedIdentifiers: Equatable, Sendable {
+    public let items: [RemovedIdentifier]
 }

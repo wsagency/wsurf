@@ -5,34 +5,34 @@ import CryptoKit
 import Foundation
 import Synchronization
 
-nonisolated enum CredentialVaultLimits {
+public nonisolated enum CredentialVaultLimits {
     /// The v1 file format (`Credentials.vault`): its sealed payload and its plaintext. Also the cap on every single field.
-    static let payloadBytes = 4_000_000
+    public static let payloadBytes = 4_000_000
     /// The v1 file format only: the whole file.
     static let fileBytes = 8_000_000
     /// The v1 file format only: accounts in one legacy payload, so a migrated vault always fits the live caps below.
     static let legacyAccounts = 1_000
     /// Live accounts in one vault. Also the kept items, and the collections, in one transfer.
-    static let accounts = 25_000
+    public static let accounts = 25_000
     /// Credentials in one transfer, imported or exported.
-    static let credentials = 100_000
+    public static let credentials = 100_000
     /// Plaintext bytes of one account (the store) or of one item (an import). It is the old whole-vault cap, so a history row,
     /// which holds at most one account, stays inside the 8 MB bound of the spec by the same argument as before.
-    static let accountBytes = 4_000_000
+    public static let accountBytes = 4_000_000
     /// Plaintext bytes of all live accounts plus the blocked origins (the store), or of one whole transfer (an import).
-    static let liveBytes = 128_000_000
+    public static let liveBytes = 128_000_000
     /// The most bytes one account may take once encoded as canonical JSON (with the room `CredentialVaultCrypto.storedBytes(of:)`
     /// keeps for what is set later), which is what the store writes. Escaping makes a string up to six times its size and base64
     /// makes data a third larger, so this is checked on the encoding and not on `accountBytes`. A revision or a removed credential
     /// carries part of an account as base64 text inside its row (4/3 of the encoding), and a removed account carries the encoding
     /// itself: 4/3 of this bound plus `StoreFormat.historyBodyBytes` stays inside the 8 MB history row, so no valid account can
     /// become one that cannot be edited, removed or purged.
-    static let encodedAccountBytes = 5_900_000
+    public static let encodedAccountBytes = 5_900_000
     // ponytail: cap wrappers at 32 to bound manifest hashing and rewrites; raise only if measured use needs it.
-    static let wrappers = 32
+    public static let wrappers = 32
 }
 
-nonisolated enum CredentialVaultError: Error {
+public nonisolated enum CredentialVaultError: Error {
     case privateBrowsing
     case invalidData
     case corruptVault
@@ -48,23 +48,29 @@ nonisolated enum CredentialVaultError: Error {
     case oversized
 }
 
-nonisolated struct VaultUnlockProof: Sendable {
-    let credentialID: Data
-    let prfInput: Data
-    let prf: SymmetricKey
+public nonisolated struct VaultUnlockProof: Sendable {
+    public let credentialID: Data
+    public let prfInput: Data
+    public let prf: SymmetricKey
+
+    public init(credentialID: Data, prfInput: Data, prf: SymmetricKey) {
+        self.credentialID = credentialID
+        self.prfInput = prfInput
+        self.prf = prf
+    }
 }
-nonisolated final class VaultAccess: Sendable {
+public nonisolated final class VaultAccess: Sendable {
     let profileID: UUID
-    let epoch: UInt64
+    public let epoch: UInt64
     /// The end of the access. It starts as the bound on the unlock itself; `beginLease` sets the lease's own end once the unlock
     /// has completed, and from then on it can only move earlier.
-    var deadline: ContinuousClock.Instant {
+    public var deadline: ContinuousClock.Instant {
         limit.withLock { $0.deadline }
     }
     private let revoked = Mutex(false)
     private let limit: Mutex<(deadline: ContinuousClock.Instant, leaseBegun: Bool)>
 
-    init(profileID: UUID, epoch: UInt64, deadline: ContinuousClock.Instant) {
+    public init(profileID: UUID, epoch: UInt64, deadline: ContinuousClock.Instant) {
         self.profileID = profileID
         self.epoch = epoch
         limit = Mutex((deadline, false))
@@ -72,7 +78,7 @@ nonisolated final class VaultAccess: Sendable {
 
     /// Ends the access at `instant`, which may be later than the bound on the unlock. Only the first call counts: it is the moment
     /// the vault opens, and nothing afterwards lengthens the access.
-    func beginLease(until instant: ContinuousClock.Instant) {
+    public func beginLease(until instant: ContinuousClock.Instant) {
         limit.withLock { state in
             guard !state.leaseBegun else { return }
             state.leaseBegun = true
@@ -81,26 +87,26 @@ nonisolated final class VaultAccess: Sendable {
     }
 
     /// Brings the end forward to `instant`; a later one changes nothing.
-    func shorten(to instant: ContinuousClock.Instant) {
+    public func shorten(to instant: ContinuousClock.Instant) {
         limit.withLock { $0.deadline = min($0.deadline, instant) }
     }
 
-    func revoke() {
+    public func revoke() {
         revoked.withLock { $0 = true }
     }
 
-    func isAuthorized(at instant: ContinuousClock.Instant) -> Bool {
+    public func isAuthorized(at instant: ContinuousClock.Instant) -> Bool {
         revoked.withLock { !$0 && instant < deadline }
     }
 
-    func checkAuthorization(at instant: ContinuousClock.Instant) throws {
+    public func checkAuthorization(at instant: ContinuousClock.Instant) throws {
         try revoked.withLock { isRevoked in
             guard !isRevoked else { throw CredentialVaultError.unauthorized }
             guard instant < deadline else { throw CredentialVaultError.expired }
         }
     }
 
-    func withAuthorization<T>(
+    public func withAuthorization<T>(
         now: @Sendable () -> ContinuousClock.Instant,
         operation: () throws -> T
     ) throws -> T {
@@ -113,18 +119,27 @@ nonisolated final class VaultAccess: Sendable {
     }
 }
 
-nonisolated struct VaultCommitReceipt: Sendable, Equatable {
-    let revision: UInt64
+public nonisolated struct VaultCommitReceipt: Sendable, Equatable {
+    public let revision: UInt64
+
+    public init(revision: UInt64) {
+        self.revision = revision
+    }
 }
 
-nonisolated struct VaultUnlock: Codable, Sendable {
-    let credentialID: Data
-    let prfInput: Data
+public nonisolated struct VaultUnlock: Codable, Sendable {
+    public let credentialID: Data
+    public let prfInput: Data
+
+    public init(credentialID: Data, prfInput: Data) {
+        self.credentialID = credentialID
+        self.prfInput = prfInput
+    }
 }
 
-nonisolated struct VaultDiscovery: Sendable {
+public nonisolated struct VaultDiscovery: Sendable {
     let vaultID: UUID
-    let unlocks: [VaultUnlock]
+    public let unlocks: [VaultUnlock]
 }
 
 nonisolated struct CredentialVaultPayload: Codable, Sendable {

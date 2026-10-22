@@ -6,6 +6,7 @@ import Synchronization
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Synthetic data only: example.test websites, invented usernames and passwords. The old list lives in `MemoryAutofillStorage`, the
 // vault accounts in a fixture vault of a throwaway profile, and the state in a throwaway defaults suite. Nothing here reaches the

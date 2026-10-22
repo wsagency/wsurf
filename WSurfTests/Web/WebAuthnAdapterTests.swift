@@ -6,6 +6,7 @@ import Testing
 import WebKit
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The page-facing contract of the real relay/adapter scripts in a real WKWebView, with a native side that answers with
 // genuine ES256 ceremony output. Engine-specific context/dispatch evidence belongs to WebAuthnContextTests; Chromium page

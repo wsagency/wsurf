@@ -6,6 +6,7 @@ import AppKit
 import CryptoKit
 import Observation
 import WebKit
+import WSurfVault
 
 @MainActor
 @Observable

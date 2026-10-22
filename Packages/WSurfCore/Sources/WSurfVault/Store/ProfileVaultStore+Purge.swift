@@ -4,7 +4,7 @@
 import Foundation
 import GRDB
 
-nonisolated struct PurgeReceipt: Equatable, Sendable {
+public nonisolated struct PurgeReceipt: Equatable, Sendable {
     let removedEntries: Int
     let revision: UInt64
 }
@@ -16,7 +16,7 @@ nonisolated struct PurgeReceipt: Equatable, Sendable {
 extension ProfileVaultStore {
     /// `emptyAll` purges every entry (`entryIDs` is then ignored). An unknown id is `invalidData` with nothing written; nothing to
     /// purge writes nothing. `.diskFull` leaves the logical state unchanged.
-    func purge(
+    public func purge(
         vaultID: UUID, entryIDs: [UUID], emptyAll: Bool, authorization: FreshAuthorization, using access: VaultAccess
     ) async throws -> PurgeReceipt {
         try await authorize(vaultID: vaultID, authorization, using: access)

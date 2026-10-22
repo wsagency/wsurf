@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // A merge keeps every value. The primary's name, login, code and notes win; every other password and verification code, with
 // each earlier version of it, is copied into the merged credential's History in the merge's one commit; passkeys (with their

@@ -6,6 +6,7 @@ import GRDB
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 private nonisolated enum TableFixtures {
     static func id(_ first: UInt8, _ last: UInt8 = 0) -> UUID {

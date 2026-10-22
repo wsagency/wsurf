@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// The editor's Files section through the page model: add, save, preview, Save Copy…, remove, History and Cancel, on a real vault of a
 /// fresh profile. Synthetic text files; decrypted copies go to a folder of the test's own.

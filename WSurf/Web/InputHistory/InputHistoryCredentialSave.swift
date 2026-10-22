@@ -5,6 +5,7 @@ import AppKit
 import AuthenticationServices
 import Foundation
 import Observation
+import WSurfVault
 
 /// Saves a password from Input History into Credential Manager, only when the person asks and then confirms what is written.
 ///

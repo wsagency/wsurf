@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// After two imported items are merged into one credential, a later import of either item finds that credential, not the Trash the
 /// absorbed one left for: what changed in the other app is told from what changed here by the base recorded for the item that

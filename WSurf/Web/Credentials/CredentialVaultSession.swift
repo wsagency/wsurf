@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// Everything the settings page holds about one unlocked vault, secrets included, tied to one manager authorization epoch.
 /// The model keeps the only instance and drops it the moment that epoch ends.

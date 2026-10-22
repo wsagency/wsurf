@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // A re-import after local work: what the review says was changed in WSurf and kept, and what the transfer no longer holds. Real codec
 // and a real vault, driven through the coordinator. Synthetic data only (`example.test` hosts, hand-built transfers).

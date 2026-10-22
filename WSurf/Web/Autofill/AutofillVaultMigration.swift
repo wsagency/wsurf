@@ -3,6 +3,7 @@
 
 import CryptoKit
 import Foundation
+import WSurfVault
 
 /// The one-time move of the payment cards, contacts and addresses that autofill kept in this Mac's Keychain, outside the vault, into a
 /// vault the person has unlocked. This type holds the rules; `AutofillMigrationCard` drives them and shows every step.

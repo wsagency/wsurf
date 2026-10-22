@@ -16,7 +16,7 @@ nonisolated extension CredentialExchangeCodec {
     ///
     /// `inputsValidated` says the caller already ran `validateAccounts` on this preview's stored accounts and candidates (`preview`
     /// does), so a review that plans the same transfer again does not check the whole vault and transfer every time.
-    static func apply(
+    public static func apply(
         _ preview: CredentialImportPreview, decisions: [CredentialImportDecision], duplicates: [UUID: DuplicateMerge] = [:],
         inputsValidated: Bool = false
     ) throws -> [CredentialAccount] {
@@ -104,9 +104,14 @@ nonisolated extension CredentialExchangeCodec {
     }
 
     /// Where an exact duplicate is merged: the saved account, and the only websites of the item the merge may add to it.
-    struct DuplicateMerge: Sendable, Equatable {
-        let target: UUID
+    public struct DuplicateMerge: Sendable, Equatable {
+        public let target: UUID
         let origins: [String]
+
+        public init(target: UUID, origins: [String]) {
+            self.target = target
+            self.origins = origins
+        }
     }
 
     private static func incomingIdentity(of decision: CredentialImportDecision) -> CredentialIdentity {
@@ -300,7 +305,7 @@ nonisolated extension CredentialExchangeCodec {
     /// Whether the exporter's item can become the identity of the saved account `target`, which holds an exact copy of its login: the
     /// account has no identity of its own, and its login reads as the exporter's, so the base the import records is true. A login the
     /// account keeps without field descriptions takes the exporter's.
-    static func canLinkDuplicate(_ source: CredentialAccount, to target: CredentialAccount) -> Bool {
+    public static func canLinkDuplicate(_ source: CredentialAccount, to target: CredentialAccount) -> Bool {
         guard target.exchangeAccountID == nil, target.exchangeItemID == nil, target.exchangeMetadata == nil else { return false }
         return !hasBasicAuthentication(source) || target.basicAuthenticationMetadata == nil
             || target.basicAuthenticationMetadata == source.basicAuthenticationMetadata
@@ -408,7 +413,7 @@ nonisolated extension CredentialExchangeCodec {
 
     /// The first stored account that holds each exporter item: where a candidate's credentials go unless the user decides
     /// otherwise. An item that is not in the result is new here.
-    static func linkedAccountIDs(in accounts: [CredentialAccount]) -> [ExternalItemID: UUID] {
+    public static func linkedAccountIDs(in accounts: [CredentialAccount]) -> [ExternalItemID: UUID] {
         var linked: [ExternalItemID: UUID] = [:]
         for account in accounts {
             if let key = try? externalItemID(for: account), linked[key] == nil {
@@ -428,7 +433,7 @@ nonisolated extension CredentialExchangeCodec {
     /// is the same one (its metadata is refreshed), or `target` is a plain account with no exchange identity
     /// of its own and no different name, which then takes the item's name and metadata. Another imported item,
     /// or an account the user has named differently, is refused rather than silently overwritten.
-    static func canMerge(_ source: CredentialAccount, into target: CredentialAccount) -> Bool {
+    public static func canMerge(_ source: CredentialAccount, into target: CredentialAccount) -> Bool {
         if isSameItem(source, target) {
             return true
         }

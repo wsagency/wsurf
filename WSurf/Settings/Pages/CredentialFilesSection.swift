@@ -5,6 +5,7 @@ import AppKit
 import QuickLook
 import SwiftUI
 import UniformTypeIdentifiers
+import WSurfVault
 
 /// The editor's Files section: Add File…, and for each file Preview, Save Copy…, Open With… and Remove. A file is encrypted into the
 /// vault as soon as it is added; it belongs to the entry once Save stores it. Preview and Open With decrypt a copy into this run's

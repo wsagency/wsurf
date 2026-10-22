@@ -4,16 +4,16 @@
 import CryptoKit
 import Foundation
 
-nonisolated struct TOTPCode: Sendable, Equatable {
-    let value: String
-    let remainingSeconds: TimeInterval
+public nonisolated struct TOTPCode: Sendable, Equatable {
+    public let value: String
+    public let remainingSeconds: TimeInterval
     let expiresAt: TimeInterval
 }
 
-nonisolated enum TOTP {
+public nonisolated enum TOTP {
     private static let maximumSetupBytes = CredentialVaultLimits.payloadBytes
 
-    static func parse(
+    public static func parse(
         _ input: String,
         algorithm: TOTPAlgorithm = .sha1,
         period: UInt16 = 30,
@@ -43,7 +43,7 @@ nonisolated enum TOTP {
         return generator
     }
 
-    static func code(_ generator: TOTPGenerator, at unixTime: TimeInterval) throws -> TOTPCode {
+    public static func code(_ generator: TOTPGenerator, at unixTime: TimeInterval) throws -> TOTPCode {
         try generator.validate()
         guard unixTime.isFinite, unixTime >= 0 else { throw CredentialVaultError.invalidData }
         let period = TimeInterval(generator.period)

@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Cards and addresses of the credentials vault, as the fill panel offers them and the page receives them. Synthetic values only.
 struct VaultItemAutofillTests {

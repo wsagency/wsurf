@@ -4,7 +4,10 @@
 import Darwin
 import Foundation
 
-nonisolated enum RelyingPartyPolicy {
+public nonisolated enum RelyingPartyPolicy {
+    /// The relying party of the vault's own unlock passkey (`PasskeyVaultUnlocker.relyingParty`). A Credential Exchange export names it as the exporter.
+    public static let vaultUnlockRelyingParty = "wsurf.app"
+
     enum PolicyError: Error {
         case invalidOrigin
         case invalidRelyingParty
@@ -42,7 +45,7 @@ nonisolated enum RelyingPartyPolicy {
     // ponytail: bundled PSL refreshes only with app releases; update the snapshot when refreshing dependencies.
     private static let suffixRules = loadSuffixRules()
 
-    static func validate(rpID: String?, origin: URL) throws -> String {
+    public static func validate(rpID: String?, origin: URL) throws -> String {
         guard let rawHost = origin.host,
               let host = canonicalDomain(rawHost),
               let scheme = origin.scheme?.lowercased(),
@@ -79,7 +82,7 @@ nonisolated enum RelyingPartyPolicy {
     /// The registrable domain of `host`: its public suffix and the one label before it (`example.co.uk` for `www.example.co.uk`, and
     /// `a.github.io` for `a.github.io`, since `github.io` is itself a suffix). `nil` for an address, for a name that is no more than a
     /// public suffix, and when the bundled suffix list can't be read, so a caller falls back to the exact host.
-    static func registrableDomain(of host: String) -> String? {
+    public static func registrableDomain(of host: String) -> String? {
         guard let suffixRules, let canonical = canonicalDomain(host) else { return nil }
         let labels = domainLabels(canonical)
         let suffixLabels = suffixRules.publicSuffixLabelCount(for: canonical)
@@ -95,7 +98,7 @@ nonisolated enum RelyingPartyPolicy {
         return canonicalDomain(input)
     }
 
-    static func canonicalDomain(_ input: String) -> String? {
+    public static func canonicalDomain(_ input: String) -> String? {
         guard !input.isEmpty, input.utf8.count <= 1_024,
               !input.contains(where: { "/?#@\\%".contains($0) || $0.isWhitespace || $0.isNewline })
         else { return nil }
@@ -132,6 +135,7 @@ nonisolated enum RelyingPartyPolicy {
     }
 
     private static func loadSuffixRules() -> SuffixRules? {
+        // The list is a resource of the app that links this package, so it is found in the main bundle.
         guard let url = Bundle.main.url(forResource: "public_suffix_list", withExtension: "dat"),
               let data = try? Data(contentsOf: url), data.count <= 1_000_000,
               let source = String(data: data, encoding: .utf8)

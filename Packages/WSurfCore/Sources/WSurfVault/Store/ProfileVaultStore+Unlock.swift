@@ -283,7 +283,7 @@ extension ProfileVaultStore {
     // MARK: Snapshot
 
     /// The live accounts of one unlocked vault, read from the file and checked against the head's `liveCatalog`.
-    func snapshot(vaultID: UUID, using access: VaultAccess) async throws -> StoreSnapshot {
+    public func snapshot(vaultID: UUID, using access: VaultAccess) async throws -> StoreSnapshot {
         _ = try authorizedGrant(vaultID, access)
         let (snapshot, decoded) = try await withOperation { pool in
             let grant = try authorizedGrant(vaultID, access)

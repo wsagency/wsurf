@@ -14,13 +14,13 @@ extension ProfileVaultStore {
     }
 
     /// Whether the encrypted file of `file` is on disk: a stat, nothing is read.
-    nonisolated func hasBlob(_ file: CredentialAttachment, vaultID: UUID) -> Bool {
+    public nonisolated func hasBlob(_ file: CredentialAttachment, vaultID: UUID) -> Bool {
         StoreAnchors.exists(VaultBlob.file(file.id, in: blobFolder(vaultID)))
     }
 
     /// Encrypts `source` into the vault's folder and returns the record a commit then stores. Until that commit, or until
     /// `sweepAttachments(only:)` discards it, no sweep removes the file.
-    func addAttachment(vaultID: UUID, from source: URL, using access: VaultAccess) async throws -> CredentialAttachment {
+    public func addAttachment(vaultID: UUID, from source: URL, using access: VaultAccess) async throws -> CredentialAttachment {
         let grant = try authorizedGrant(vaultID, access)
         let fileKey = VaultBlob.fileKey(dek: grant.dek, ids: grant.ids, vaultID: vaultID)
         let id = UUID()
@@ -34,7 +34,7 @@ extension ProfileVaultStore {
     }
 
     /// Decrypts `file` into `destination`. A lock that lands meanwhile removes what was written: nothing decrypted outlives the lease.
-    func readAttachment(vaultID: UUID, _ file: CredentialAttachment, to destination: URL, using access: VaultAccess) async throws {
+    public func readAttachment(vaultID: UUID, _ file: CredentialAttachment, to destination: URL, using access: VaultAccess) async throws {
         let grant = try authorizedGrant(vaultID, access)
         let fileKey = VaultBlob.fileKey(dek: grant.dek, ids: grant.ids, vaultID: vaultID)
         try await VaultBlob.read(file, in: blobFolder(vaultID), fileKey: fileKey, to: destination)
@@ -50,7 +50,7 @@ extension ProfileVaultStore {
     /// only those of `candidates` when given (an editor discarding what it added, which then stops being pending). A file another
     /// editor added and has not saved yet is never removed. Returns how many finished files went.
     @discardableResult
-    func sweepAttachments(vaultID: UUID, only candidates: Set<UUID>? = nil, using access: VaultAccess) async throws -> Int {
+    public func sweepAttachments(vaultID: UUID, only candidates: Set<UUID>? = nil, using access: VaultAccess) async throws -> Int {
         if let candidates {
             pendingBlobs.subtract(candidates)
         }

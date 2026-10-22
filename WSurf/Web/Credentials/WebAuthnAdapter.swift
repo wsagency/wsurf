@@ -6,6 +6,7 @@ import AuthenticationServices
 import Foundation
 import os
 import WebKit
+import WSurfVault
 
 /// The passkey diagnostics: a request's shape, each way it ends without a result, and a signed assertion's flags. Never a
 /// credential ID, user name, user handle or page text. Which sites a person has passkeys for is private too: the RP ID (always

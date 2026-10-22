@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// What a review does for the user before they click anything, and where each item sits (spec §13.3). The one table: a record's
 /// classification decides both its default choice and its group, so what the row says and what Import does cannot drift apart.
