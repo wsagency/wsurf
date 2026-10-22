@@ -135,6 +135,7 @@ struct VaultSyncRaceTests {
             await lockout.a.engine.simulateAccount(.signIn(user: "user-1"))
         }
         await lockout.a.sync.settle()
+        #expect(lockout.a.sync.record(for: lockout.id) == nil, "the hold, not the order of events, keeps the row back")
         try await lockout.a.engine.sendNow()
         await lockout.a.sync.settle()
 
@@ -224,5 +225,40 @@ struct VaultSyncRaceTests {
 
         #expect(a.sync.state.accountUser == "user-1" && rig.status(a) == .synced)
         #expect(rig.cloud.names(in: rig.zone).count == 2 && va.accounts.count == 1)
+    }
+
+    @Test func aZoneWhoseCreationWasLostIsCreatedAgainOnlyForAVaultThatNeverUploaded() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let (a, _) = try rig.mac(holding: syncAccounts(1))
+        // Sync was turned on and the engine’s queue was lost (a sign-out) before the zone was ever created.
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        await a.engine.simulateAccount(.signOut)
+
+        await a.engine.simulateAccount(.signIn(user: "user-1"))
+        try await a.pump()
+
+        #expect(rig.cloud.zones[rig.zone] != nil && rig.cloud.names(in: rig.zone).count == 2)
+        #expect(rig.status(a) == .synced)
+    }
+
+    @Test func nothingIsHandedToTheEngineBeforeTheCheckOfTheVaultsAtLaunchHasRun() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let entry = syncAccounts(1)[0]
+        let (a, va) = try await rig.syncedMac(holding: [entry])
+        va.edit(syncChanging(entry, password: "sealed before the quit"))
+        await a.wrote(va)
+        let id = SyncRecordID(zone: rig.zone, name: entry.id.uuidString)
+        #expect(a.sync.record(for: id) != nil)
+
+        // The next launch: a vault deleted while sync was off may still have rows, so none is sent until they are checked.
+        a.sync.attach(a.engine)
+        #expect(a.sync.record(for: id) == nil)
+        await a.sync.settle()
+        try await a.pump()
+
+        let sent = try VaultSyncCodec.openItem(#require(rig.item(entry)).payload, accountID: entry.id, key: va.syncKey)
+        #expect(sent.account?.password == "sealed before the quit", "and it is sent once they are")
     }
 }

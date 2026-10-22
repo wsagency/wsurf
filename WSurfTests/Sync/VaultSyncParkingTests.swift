@@ -31,6 +31,25 @@ struct VaultSyncParkingTests {
         #expect(known != newer, "a value sealed for one format never opens as another")
     }
 
+    @Test func anItemSealedForAnotherFormatNeverOpensAsThisOne() throws {
+        let key = VaultSyncKey.derive(dek: SymmetricKey(size: .bits256), profileID: UUID(), vaultID: UUID())
+        let account = UUID()
+        func envelope(sealedFor format: UInt8) throws -> Data {
+            var header = StoreWriter()
+            header.u8(VaultSyncCodec.itemFormat)
+            header.u8(VaultSyncCodec.removedState)
+            header.u64(1)
+            let aad = VaultSyncCodec.itemAAD(key: key, accountID: account, format: format, state: VaultSyncCodec.removedState, version: 1)
+            return header.data + (try #require(try AES.GCM.seal(Data(), using: key.key, authenticating: aad).combined))
+        }
+
+        #expect(try VaultSyncCodec.openItem(envelope(sealedFor: VaultSyncCodec.itemFormat), accountID: account, key: key).account == nil)
+        // The header says this format and the seal was made for another: it does not open.
+        #expect(throws: VaultSyncError.authenticationFailed) {
+            _ = try VaultSyncCodec.openItem(envelope(sealedFor: VaultSyncCodec.itemFormat + 1), accountID: account, key: key)
+        }
+    }
+
     @Test func aRecordInANewerFormatParksOnlyThatEntry() async throws {
         let rig = Rig()
         defer { rig.finish() }

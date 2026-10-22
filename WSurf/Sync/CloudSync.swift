@@ -66,9 +66,15 @@ final class CloudSync {
         let restored = (try? Data(contentsOf: stateFile)).flatMap { try? JSONDecoder().decode(SyncRouterState.self, from: $0) }
             ?? SyncRouterState()
         let keeper = RouterBox()
+        // An account the tabs already saw is the account the vaults sync with: without it, a sign-out and sign-in of the same account would
+        // read as another account the first time the vaults hear of it.
+        var vaultState = restored.vaults
+        if vaultState.accountUser == nil {
+            vaultState.accountUser = tabs?.sync.state.accountUser
+        }
         let vaults = allowsVaults
             ? VaultSync(
-                host: host(), state: restored.vaults, persist: { keeper.router?.setVaults($0) }, excludedProfiles: [Profile.privateID],
+                host: host(), state: vaultState, persist: { keeper.router?.setVaults($0) }, excludedProfiles: [Profile.privateID],
                 clock: clock
             )
             : nil

@@ -103,7 +103,12 @@ public final class VaultSync: SyncEngineDelegate {
     @ObservationIgnored var queued: [VaultKey: Set<UUID>] = [:]
     /// Vaults whose last pass held back this many removed states, and the vaults whose owner agreed to send them in the next pass.
     @ObservationIgnored var holding: [VaultKey: Int] = [:]
-    @ObservationIgnored var releasing: Set<VaultKey> = []
+    @ObservationIgnored var releasing: [VaultKey: Int] = [:]
+    /// Vaults whose owed second read of the zone was started in this run, and how many records the last read of each skipped.
+    @ObservationIgnored var rereadTried: Set<VaultKey> = []
+    @ObservationIgnored var skippedRecords: [VaultKey: Int] = [:]
+    /// Set from `attach` until the vaults the profiles no longer list are dropped: nothing is handed to the engine before that.
+    @ObservationIgnored var launchCheck = false
     /// Checks that wait for the host and are not steps of a vault's chain; `settle` waits for them too.
     @ObservationIgnored var housekeeping: [Task<Void, Never>] = []
     @ObservationIgnored var tallies: [VaultKey: (notSyncable: Int, unreadable: Int)] = [:]
@@ -134,6 +139,7 @@ public final class VaultSync: SyncEngineDelegate {
     /// Hands the engine everything this Mac still has to send: the sealed rows of every vault it syncs, and their `Vault` records.
     public func attach(_ engine: any SyncEngine) {
         self.engine = engine
+        launchCheck = true
         loadDatabases()
         for key in enabledKeys {
             retryAfterUpdate(key)
@@ -143,10 +149,12 @@ public final class VaultSync: SyncEngineDelegate {
                     try? await self?.fetchAllNow(key)
                 }
             }
+            rereadSkipped(key)
         }
         // What waits to go up is handed to the engine once rows of vaults that are gone are dropped.
         housekeeping.append(Task { [weak self] in
             await self?.pruneVanished()
+            self?.launchCheck = false
             for key in self?.enabledKeys ?? [] {
                 self?.readd(key)
             }
@@ -198,6 +206,15 @@ public final class VaultSync: SyncEngineDelegate {
         next.needsFetch = true
         try? database.write { try $0.save(next) }
         refresh(key)
+    }
+
+    /// A full read that skipped records owes one more, at the next launch or the next heartbeat, whichever comes first, and not at every
+    /// heartbeat after it. It holds nothing back: produce does not wait for it.
+    private func rereadSkipped(_ key: VaultKey) {
+        guard let (_, row) = enabledRow(key), row.rereadOwed, !row.needsFetch, rereadTried.insert(key).inserted else { return }
+        enqueue(key) { [weak self] in
+            try? await self?.fetchAllNow(key, force: true)
+        }
     }
 
     /// Settles every step queued so far. A test waits on it; the app never needs to.
@@ -402,6 +419,7 @@ public final class VaultSync: SyncEngineDelegate {
         baseCache[key] = nil
         pendingBases[key] = nil
         sumCache[key] = nil
+        releasing[key] = nil
         refresh(key)
     }
 
@@ -437,11 +455,17 @@ public final class VaultSync: SyncEngineDelegate {
         databases[profileID] = nil
     }
 
-    /// The owner confirmed the deletions held back: the next pass sends them, and only that pass.
+    /// How many entries deleted here wait for the owner before their deletion is sent, whatever else the status says.
+    public func heldRemovals(profileID: UUID, vaultID: UUID) -> Int {
+        summaries[VaultKey(profileID: profileID, vaultID: vaultID)]?.holding ?? 0
+    }
+
+    /// The owner confirmed the deletions held back: the next pass sends them if there are no more than were confirmed, and only that pass.
+    /// A lock ends the answer.
     public func releaseRemovals(profileID: UUID, vaultID: UUID) {
         let key = VaultKey(profileID: profileID, vaultID: vaultID)
-        guard summaries[key]?.enabled == true, (holding[key] ?? 0) > 0 else { return }
-        releasing.insert(key)
+        guard summaries[key]?.enabled == true, let confirmed = holding[key], confirmed > 0 else { return }
+        releasing[key] = confirmed
         enqueue(key) { [weak self] in
             await self?.produce(key)
         }
@@ -453,6 +477,7 @@ public final class VaultSync: SyncEngineDelegate {
         let keys = enabledKeys
         for (position, key) in keys.enumerated() {
             readd(key)
+            rereadSkipped(key)
             enqueue(key) { [weak self] in
                 await self?.cycle(key, fetch: position == 0)
             }
@@ -467,7 +492,7 @@ public final class VaultSync: SyncEngineDelegate {
     // MARK: - SyncEngineDelegate
 
     public func record(for id: SyncRecordID) -> SyncRecord? {
-        guard let ids = SyncZone.vaultIDs(id.zone), !excluded.contains(ids.profileID) else { return nil }
+        guard !launchCheck, let ids = SyncZone.vaultIDs(id.zone), !excluded.contains(ids.profileID) else { return nil }
         let key = VaultKey(ids)
         guard let (database, row) = runningRow(key) else { return nil }
         let fields = (try? database.read { try $0.systemFields(key.vaultID, id.name) }) ?? nil
@@ -598,7 +623,9 @@ public final class VaultSync: SyncEngineDelegate {
         queued[key] = nil
         tallies[key] = nil
         holding[key] = nil
-        releasing.remove(key)
+        releasing[key] = nil
+        rereadTried.remove(key)
+        skippedRecords[key] = nil
     }
 
     func refreshAll() {
@@ -677,9 +704,13 @@ public final class VaultSync: SyncEngineDelegate {
     func readd(_ key: VaultKey) {
         guard let engine, let (database, row) = runningRow(key) else { return }
         let waiting = (try? database.read { try $0.outbox(key.vaultID).map(\.accountID) }) ?? []
-        // Never a zone: only turning sync on creates one. A zone another Mac removed must not come back because this Mac signed in again.
+        // A zone is created only for a vault that never uploaded its `Vault` record: the one case where this Mac made the zone and the queue
+        // that held its creation was lost. A zone another Mac removed must not come back because this Mac signed in again.
         var changes: [SyncChange] = []
         if row.pendingVault != nil {
+            if row.uploadedMark == nil {
+                changes.append(.saveZone(key.zone))
+            }
             changes.append(.saveRecord(key.vaultRecord))
         }
         changes += waiting.map { .saveRecord(key.itemRecord($0)) }

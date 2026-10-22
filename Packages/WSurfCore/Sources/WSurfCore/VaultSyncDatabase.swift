@@ -21,6 +21,9 @@ nonisolated struct VaultRow: Equatable {
     var needsFetch = false
     /// The highest head revision this Mac has seen of the vault's store. A lower one means the store was restored from a backup.
     var lastHeadRevision: UInt64 = 0
+    /// The last full read of the zone skipped records the server could not return: one more read is owed. Unlike `needsFetch`, it holds
+    /// nothing back.
+    var rereadOwed = false
 
     init(vaultID: UUID, enabled: Bool = true, status: VaultSyncStatus.Stored = .active, needsFetch: Bool = false) {
         self.vaultID = vaultID
@@ -115,6 +118,9 @@ nonisolated final class VaultSyncDatabase: Sendable {
         migrator.registerMigration("v1") { (db: Database) throws in
             try db.execute(sql: schema)
         }
+        migrator.registerMigration("v2") { (db: Database) throws in
+            try db.execute(sql: "ALTER TABLE vault ADD COLUMN rereadOwed INTEGER NOT NULL DEFAULT 0")
+        }
         try migrator.migrate(queue)
         return VaultSyncDatabase(queue: queue)
     }
@@ -149,11 +155,11 @@ nonisolated final class VaultSyncDatabase: Sendable {
             try db.execute(
                 sql: """
                     INSERT OR REPLACE INTO vault(vaultID, enabled, status, uploadedMark, pendingVaultPayload, pendingMark, dirty,
-                        needsFetch, lastHeadRevision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        needsFetch, lastHeadRevision, rereadOwed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                 arguments: [
                     row.vaultID.sqlText, row.enabled, row.status.rawValue, row.uploadedMark, row.pendingVault, row.pendingMark,
-                    row.dirty, row.needsFetch, Int64(clamping: row.lastHeadRevision),
+                    row.dirty, row.needsFetch, Int64(clamping: row.lastHeadRevision), row.rereadOwed,
                 ]
             )
         }
@@ -179,6 +185,7 @@ nonisolated final class VaultSyncDatabase: Sendable {
             result.dirty = row["dirty"]
             result.needsFetch = row["needsFetch"]
             result.lastHeadRevision = UInt64(clamping: row["lastHeadRevision"] as Int64)
+            result.rereadOwed = row["rereadOwed"]
             return result
         }
 

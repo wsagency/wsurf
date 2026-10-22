@@ -136,8 +136,15 @@ private nonisolated final class Bridge: CKSyncEngineDelegate {
             if !sent.failedZoneSaves.isEmpty || !sent.failedZoneDeletes.isEmpty {
                 SyncLog.logger.error("sync: \(sent.failedZoneSaves.count + sent.failedZoneDeletes.count) zone changes failed")
             }
-            if !sent.failedZoneDeletes.isEmpty {
-                await delegate.handle(.zoneDeletesFailed(sent.failedZoneDeletes.keys.map(\.zoneName).sorted()))
+            // A zone that is gone is a zone that is deleted, whether this delete did it or the zone was not there to delete.
+            let gone = sent.deletedZoneIDs + sent.failedZoneDeletes.filter { $0.value.code == .zoneNotFound }.map(\.key)
+            let removed = gone.map(\.zoneName).filter(SyncZone.isVault)
+            if !removed.isEmpty {
+                await delegate.handle(.zonesDeleted(Dictionary(removed.map { ($0, SyncZoneDeletionReason.deleted) }) { first, _ in first }))
+            }
+            let failed = sent.failedZoneDeletes.filter { $0.value.code != .zoneNotFound }.keys.map(\.zoneName).sorted()
+            if !failed.isEmpty {
+                await delegate.handle(.zoneDeletesFailed(failed))
             }
         case .willFetchChanges, .willFetchRecordZoneChanges, .didFetchRecordZoneChanges, .didFetchChanges,
              .willSendChanges, .didSendChanges:

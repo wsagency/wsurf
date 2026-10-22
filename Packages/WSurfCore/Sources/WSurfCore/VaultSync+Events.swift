@@ -327,7 +327,16 @@ extension VaultSync {
         guard let ids = SyncZone.vaultIDs(zone), !excluded.contains(ids.profileID) else { return }
         let key = VaultKey(ids)
         state.remote[zone] = nil
-        guard let (database, row) = enabledRow(key) else { return }
+        guard let (database, row) = enabledRow(key) else {
+            // A removal this Mac asked for that failed is done now that the zone is gone.
+            if let database = database(ids.profileID), var left = (try? database.read { try $0.vault(ids.vaultID) }) ?? nil,
+               !left.enabled, left.status == .removalFailed {
+                left.status = .removedDeleted
+                try? database.write { try $0.save(left) }
+                refresh(key)
+            }
+            return
+        }
         leave(key, database: database, row: row, status: .removed(reason))
     }
 
@@ -448,21 +457,22 @@ extension VaultSync {
     }
 
     /// Reads the whole zone into the inbox: what a Mac that joins or adds a vault missed before it was one of its writers.
-    func fetchAllNow(_ key: VaultKey) async throws {
-        guard let engine, let (database, row) = runningRow(key), row.needsFetch else { return }
+    func fetchAllNow(_ key: VaultKey, force: Bool = false) async throws {
+        guard let engine, let (database, row) = runningRow(key), row.needsFetch || (force && row.rereadOwed) else { return }
         let mine = token(key)
         let read = try await engine.fetchAll(zone: key.zone)
         guard mine == token(key) else { return }
         incomplete.remove(key)
         applyFetched(modified: read.records, deleted: [])
-        if read.skipped > 0 {
-            tallies[key, default: (0, 0)].unreadable += read.skipped
-        }
-        // A read that could not keep every record is still owed.
+        // The count is of the records the last read skipped, not of every read added up.
+        tallies[key, default: (0, 0)].unreadable += read.skipped - (skippedRecords[key] ?? 0)
+        skippedRecords[key] = read.skipped
+        // A read that could not keep every record is still owed. A read that skipped some owes one more, which holds nothing back.
         if !incomplete.contains(key) {
             try? database.write { tx in
                 if var current = try tx.vault(key.vaultID) {
                     current.needsFetch = false
+                    current.rereadOwed = read.skipped > 0
                     try tx.save(current)
                 }
             }

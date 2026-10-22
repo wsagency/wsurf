@@ -463,12 +463,12 @@ extension VaultSync {
         let gone = inputs.bases.sorted { $0.key.uuidString < $1.key.uuidString }.filter { id, base in
             !base.parts.removed && !live.contains(id) && !inputs.reviewed.contains(id) && !inputs.parked.contains(id)
         }
-        let released = releasing.remove(key) != nil
+        let confirmed = releasing.removeValue(forKey: key)
         // What each removed entry stood for goes with its removed state, when an import could match it.
         let traces = snapshot.removed.traces
         let sending = gone.filter { id, _ in !(inputs.outgoing.contains(id) && pendingBases[key]?[id]?.parts.removed == true) }
         let limit = max(Self.removalFloor, inputs.bases.values.filter { !$0.parts.removed }.count / 4)
-        let holds = sending.count > limit && !released
+        let holds = sending.count > limit && !(confirmed.map { sending.count <= $0 } ?? false)
         holding[key] = holds ? sending.count : nil
         for (id, base) in gone where !holds {
             guard !(handedOut[key]?.contains(id) ?? false) else {
@@ -726,7 +726,10 @@ extension VaultSync {
         do {
             return try await host.snapshot(profileID: key.profileID, vaultID: key.vaultID)
         } catch {
-            locked(key)
+            // A read can fail with the vault still unlocked: only a vault that has no key now is locked.
+            if await host.syncKey(profileID: key.profileID, vaultID: key.vaultID) == nil {
+                locked(key)
+            }
             return nil
         }
     }
@@ -744,6 +747,7 @@ extension VaultSync {
 
     func locked(_ key: VaultKey) {
         unlocked.remove(key)
+        releasing[key] = nil
         baseCache[key] = nil
         pendingBases[key] = nil
         sumCache[key] = nil

@@ -19,11 +19,12 @@ struct CloudVaultRow: View {
         if let sync = model.vaultSync, let vaultID = model.selectedVaultID {
             let status = sync.status(profileID: model.profile.id, vaultID: vaultID)
             let tally = sync.tally(profileID: model.profile.id, vaultID: vaultID)
+            let held = sync.heldRemovals(profileID: model.profile.id, vaultID: vaultID)
             let isOn = Self.isOn(status)
             RowSeparator()
             DetailRow(
                 verbatimTitle: String(localized: "Sync with iCloud"),
-                verbatimCaption: caption(status: status, isUnlocked: model.isUnlocked, tally: tally)
+                verbatimCaption: Self.caption(status: status, held: held, isUnlocked: model.isUnlocked, tally: tally)
             ) {
                 SettingsToggle(Binding(get: { isOn }, set: { turn($0, from: status) }))
                     .disabled(model.isBusy || (!isOn && !model.isUnlocked))
@@ -37,7 +38,7 @@ struct CloudVaultRow: View {
             } message: {
                 Text("This Mac’s copy is encrypted and uploaded. Entries that differ from iCloud wait for your review.")
             }
-            if case .holdingRemovals(let count) = status {
+            if held > 0 {
                 RowSeparator()
                 DetailRow(title: "Delete on other devices") {
                     Button("Delete on Other Devices…", role: .destructive) { confirmsDeletion = true }
@@ -45,7 +46,7 @@ struct CloudVaultRow: View {
                         .disabled(model.isBusy || !model.isUnlocked)
                 }
                 .confirmationDialog(
-                    Text("Delete \(count) entries on your other devices?"), isPresented: $confirmsDeletion
+                    Text("Delete \(held) entries on your other devices?"), isPresented: $confirmsDeletion
                 ) {
                     Button("Delete on Other Devices", role: .destructive) { model.releaseSyncRemovals() }
                     Button("Cancel", role: .cancel) {}
@@ -120,8 +121,12 @@ struct CloudVaultRow: View {
         }
     }
 
-    private func caption(status: VaultSyncStatus, isUnlocked: Bool, tally: VaultSyncTally) -> String {
+    /// The status in words, and what else is true of the vault: deletions that wait for the owner, whatever the status is.
+    static func caption(status: VaultSyncStatus, held: Int, isUnlocked: Bool, tally: VaultSyncTally) -> String {
         var parts = [Self.statusText(status, isUnlocked: isUnlocked)]
+        if held > 0, status != .holdingRemovals(held) {
+            parts.append(Self.statusText(.holdingRemovals(held), isUnlocked: isUnlocked))
+        }
         if Self.isOn(status) {
             if tally.notSyncable > 0 {
                 parts.append(String(localized: "\(tally.notSyncable) entries are too large to sync or hold only files, so they stay on this Mac."))

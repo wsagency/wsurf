@@ -135,4 +135,59 @@ struct VaultSyncRemovalGuardTests {
         #expect(rig.status(deleted.a) == .synced)
         #expect(rig.cloud.writeCount == writes && deleted.vb.accounts.count == 60, "the entries never left the other Mac")
     }
+
+    @Test func aConfirmationDoesNotCoverALargerDeletionMadeBeforeThePassRuns() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let deleted = try await deleting(30, of: 60, rig)
+        #expect(rig.status(deleted.a) == .holdingRemovals(30))
+
+        // The owner confirms 30 entries; ten more are deleted before the pass that sends them has run.
+        deleted.a.sync.releaseRemovals(profileID: rig.profile, vaultID: rig.vaultID)
+        for account in deleted.held.dropFirst(30).prefix(10) {
+            deleted.va.remove(account.id)
+        }
+        await deleted.a.sync.settle()
+        try await converge([deleted.a, deleted.b])
+
+        #expect(rig.status(deleted.a) == .holdingRemovals(40), "the answer was about 30")
+        #expect(deleted.vb.accounts.count == 60)
+    }
+
+    @Test func aLockEndsTheAllowanceOfAnAnswerThatHasNotBeenUsed() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let deleted = try await deleting(30, of: 60, rig)
+
+        // The owner confirms and the vault is locked before the pass runs; more entries are deleted before the next unlock.
+        deleted.a.sync.releaseRemovals(profileID: rig.profile, vaultID: rig.vaultID)
+        deleted.a.lock(deleted.va)
+        for account in deleted.held.dropFirst(30).prefix(10) {
+            deleted.va.remove(account.id)
+        }
+        await deleted.a.unlock(deleted.va)
+        try await converge([deleted.a, deleted.b])
+
+        #expect(rig.status(deleted.a) == .holdingRemovals(40), "a new unlock starts without the old answer")
+        #expect(deleted.vb.accounts.count == 60)
+    }
+
+    @Test func aHeldDeletionIsReportedWhateverTheStatusIs() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let deleted = try await deleting(30, of: 60, rig)
+        let (a, va, b, vb) = (deleted.a, deleted.va, deleted.b, deleted.vb)
+        // An entry changed on both Macs waits for a choice on A, which the status reports before the held deletion.
+        let target = deleted.held[59]
+        va.edit(syncChanging(target, password: "from A"))
+        vb.edit(syncChanging(target, password: "from B"))
+        await b.wrote(vb)
+        try await b.pump()
+        await a.wrote(va)
+        try await converge([a, b])
+
+        #expect(rig.status(a) == .needsReview(1))
+        #expect(a.sync.heldRemovals(profileID: rig.profile, vaultID: rig.vaultID) == 30, "the deletion still waits, and the row can say so")
+        #expect(b.sync.heldRemovals(profileID: rig.profile, vaultID: rig.vaultID) == 0)
+    }
 }

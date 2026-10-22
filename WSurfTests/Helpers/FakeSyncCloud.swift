@@ -211,6 +211,7 @@ final class FakeSyncEngine: SyncEngine {
     }
     private(set) var sendCount = 0
     private(set) var fetchCount = 0
+    private(set) var fetchAllCount = 0
     private var fetchedAt = 0
     private var stateRevision = 0
 
@@ -271,6 +272,7 @@ final class FakeSyncEngine: SyncEngine {
     /// The whole zone, as the real engine's full read returns it: a record the server cannot return is skipped and counted. A zone
     /// that is gone is an error.
     func fetchAll(zone: String) async throws -> SyncZoneRead {
+        fetchAllCount += 1
         if offline {
             throw URLError(.notConnectedToInternet)
         }
@@ -299,22 +301,32 @@ final class FakeSyncEngine: SyncEngine {
 
     private func send(_ batch: [SyncChange]) async {
         var refused: [String] = []
+        var removedZones: [String] = []
         for change in batch {
             switch change {
             case .saveZone(let zone):
                 cloud.createZone(zone)
             case .deleteZone(let zone):
-                if failsZoneDeletes {
+                if cloud.zones[zone] == nil {
+                    // A zone that is already gone is a zone that is deleted, as the real engine reports it.
+                    removedZones.append(zone)
+                } else if failsZoneDeletes {
                     refused.append(zone)
                 } else {
                     cloud.deleteZone(zone, reason: .deleted)
+                    removedZones.append(zone)
                 }
             case .saveRecord, .deleteRecord:
                 break
             }
         }
         if !refused.isEmpty {
+            // The engine keeps a delete it could not do and tries again.
+            add(refused.map { .deleteZone($0) })
             await delegate?.handle(.zoneDeletesFailed(refused))
+        }
+        if !removedZones.isEmpty {
+            await delegate?.handle(.zonesDeleted(Dictionary(removedZones.map { ($0, .deleted) }) { first, _ in first }))
         }
         var saved: [SyncRecord] = []
         var deleted: [SyncRecordID] = []

@@ -647,6 +647,34 @@ struct VaultSyncDeviceTests {
         cloudSync.prepareToTerminate()
     }
 
+    @Test func theVaultsKnowTheAccountTheTabsAlreadySawWhenTheyStart() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "cloud-sync-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appending(path: "iCloudSync.json")
+        // The tabs ran before the vault flag was turned on, and know the account; the vaults’ own state does not.
+        var tabState = TabSyncState()
+        tabState.accountUser = "user-1"
+        try JSONEncoder().encode(tabState).write(to: CloudTabs.stateFile(besides: file))
+        let defaults = UserDefaults(suiteName: AppDatabase.defaultsSuite(UUID().uuidString))!
+        let cloud = FakeSyncCloud()
+        var engines: [FakeSyncEngine] = []
+
+        let started = CloudSync.start(
+            gate: Self.gate(tabs: true, vaults: true), installIDs: MemoryInstallIDStorage(), stateFile: file, profiles: [.original()],
+            host: { CredentialVaultSyncHost(profiles: { [] }) }, optInDefaults: { _ in defaults }, windows: { [] }, clock: TestClock(),
+            makeEngine: { delegate, _ in
+                let engine = FakeSyncEngine(cloud: cloud, delegate: delegate)
+                engines.append(engine)
+                return engine
+            }
+        )
+
+        let cloudSync = try #require(started)
+        #expect(cloudSync.vaults?.state.accountUser == "user-1")
+        cloudSync.prepareToTerminate()
+    }
+
     @Test func onlyTheFlagsThatAreOnStartAFeature() throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "cloud-sync-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -800,6 +828,13 @@ struct VaultSyncDeviceTests {
         for status in statuses {
             #expect(!CloudVaultRow.statusText(status, isUnlocked: true).isEmpty)
         }
+        // A deletion that waits for the owner is said whatever the status is, so a review does not hide it.
+        let none = VaultSyncTally(notSyncable: 0, unreadable: 0, newer: 0)
+        let asked = CloudVaultRow.statusText(.holdingRemovals(30), isUnlocked: true)
+        for status in [VaultSyncStatus.needsReview(1), .synced, .sending(3), .holdingRemovals(30)] {
+            #expect(CloudVaultRow.caption(status: status, held: 30, isUnlocked: true, tally: none).contains(asked))
+        }
+        #expect(!CloudVaultRow.caption(status: .needsReview(1), held: 0, isUnlocked: true, tally: none).contains(asked))
         await VaultManagerFixture.cleanup(profile)
     }
 }

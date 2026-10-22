@@ -252,6 +252,10 @@ final class FakeVaultHost: VaultSyncHost {
     var pauseAfterSnapshot: HostPause?
     /// How many times the vault was read in full, by any vault of this Mac.
     private(set) var snapshotCount = 0
+    /// The next reads of a vault fail, as a read can, while the vault stays unlocked.
+    var failSnapshots = 0
+    /// The profile’s vaults cannot be listed.
+    var listingUnavailable = false
 
     init(root: URL) {
         self.root = root
@@ -314,6 +318,10 @@ final class FakeVaultHost: VaultSyncHost {
 
     func snapshot(profileID: UUID, vaultID: UUID) async throws -> VaultSyncSnapshot {
         guard let vault = vault(profile: profileID, vault: vaultID) else { throw CredentialVaultError.missingVault }
+        if failSnapshots > 0 {
+            failSnapshots -= 1
+            throw CredentialVaultError.expired
+        }
         let snapshot = try vault.snapshot()
         snapshotCount += 1
         if let pause = pauseAfterSnapshot {
@@ -325,7 +333,8 @@ final class FakeVaultHost: VaultSyncHost {
 
     /// The vaults the profile still lists, locked or not.
     func vaultIDs(profileID: UUID) async -> [UUID]? {
-        vaults.keys.filter { $0.profileID == profileID }.map(\.vaultID).sorted { $0.uuidString < $1.uuidString }
+        guard !listingUnavailable else { return nil }
+        return vaults.keys.filter { $0.profileID == profileID }.map(\.vaultID).sorted { $0.uuidString < $1.uuidString }
     }
 
     func commit(profileID: UUID, vaultID: UUID, lease: UInt64, writes: [AccountWrite], removing: [UUID: AccountStamp]) async throws -> UInt64 {

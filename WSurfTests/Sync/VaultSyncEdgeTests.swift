@@ -115,16 +115,24 @@ struct VaultSyncEdgeTests {
         #expect(a.sync.status(profileID: rig.profile, vaultID: otherID) == .synced, "the vault that is still there is untouched")
     }
 
-    @Test func aListingThatIsEmptyOrMissingDropsNothing() async throws {
+    @Test(arguments: [false, true])
+    private func aListingThatIsEmptyOrMissingDropsNothing(missing: Bool) async throws {
         let rig = Rig()
         defer { rig.finish() }
         let (a, _) = try await rig.syncedMac(holding: syncAccounts(1))
-        a.host.removeVault(profile: rig.profile, vault: rig.vaultID)
+        if missing {
+            // The profile still has its vaults; the host cannot list them now.
+            _ = try a.host.addVault(profile: rig.profile, name: "Other")
+            a.host.removeVault(profile: rig.profile, vault: rig.vaultID)
+            a.host.listingUnavailable = true
+        } else {
+            a.host.removeVault(profile: rig.profile, vault: rig.vaultID)
+        }
 
         a.sync.attach(a.engine)
         await a.sync.settle()
 
-        #expect(rig.status(a) == .synced, "an empty listing is not trusted as 'every vault is gone'")
+        #expect(rig.status(a) == .synced, "a listing that is empty or missing is not trusted as “every vault is gone”")
     }
 
     // MARK: Rows that wait for the owner
@@ -234,5 +242,102 @@ struct VaultSyncEdgeTests {
         #expect(va.account(entry.id)?.notes?.first?.text == "from B")
         #expect(va.history[entry.id]?.contains { $0.account.password == "from A" } == true, "A’s own version is in its History")
         #expect(rig.status(a) == .synced && rig.status(b) == .synced)
+    }
+
+    @Test func aFailedReadOfTheVaultDoesNotMarkItLocked() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let entry = syncAccounts(1)[0]
+        let (a, va) = try await rig.syncedMac(holding: [entry])
+        va.edit(syncChanging(entry, password: "typed"))
+
+        // One read fails while the vault is unlocked: that pass seals nothing, and the next one does.
+        a.host.failSnapshots = 1
+        await a.wrote(va)
+        #expect(a.engine.pending.isEmpty)
+        await a.wrote(va)
+
+        #expect(a.engine.pending == [.saveRecord(SyncRecordID(zone: rig.zone, name: entry.id.uuidString))])
+    }
+
+    @Test func aSkippedRecordIsReadAgainAtTheNextHeartbeatOnceAndNeverHoldsProduce() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(3)
+        _ = try await rig.syncedMac(holding: held)
+        let (b, vb) = try rig.mac(unlocked: false)
+        b.engine.unreadable = [held[2].id.uuidString]
+        await b.sync.adopted(profileID: rig.profile, vaultID: rig.vaultID)
+        await b.unlock(vb)
+        try await b.pump()
+        #expect(Set(vb.accounts.keys) == [held[0].id, held[1].id])
+        let reads = b.engine.fetchAllCount
+
+        // The server can return it now: the heartbeat reads the zone once more, and the entry arrives.
+        b.engine.unreadable = []
+        b.sync.beat()
+        await b.sync.settle()
+        try await b.pump()
+
+        #expect(b.engine.fetchAllCount == reads + 1)
+        #expect(Set(vb.accounts.keys) == Set(held.map(\.id)))
+        // Once it is read, it is not read again.
+        b.sync.beat()
+        await b.sync.settle()
+        #expect(b.engine.fetchAllCount == reads + 1)
+    }
+
+    @Test func aRecordThatStaysUnreadableIsReadAgainOncePerRunNotAtEveryHeartbeat() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(2)
+        _ = try await rig.syncedMac(holding: held)
+        let (b, vb) = try rig.mac(unlocked: false)
+        b.engine.unreadable = [held[1].id.uuidString]
+        await b.sync.adopted(profileID: rig.profile, vaultID: rig.vaultID)
+        await b.unlock(vb)
+        let reads = b.engine.fetchAllCount
+
+        for _ in 0..<3 {
+            b.sync.beat()
+            await b.sync.settle()
+        }
+
+        #expect(b.engine.fetchAllCount == reads + 1, "one more read in this run, not one per heartbeat")
+        #expect(Set(vb.accounts.keys) == [held[0].id])
+    }
+
+    @Test func aRemovalThatFailedClearsWhenTheEngineGetsItDoneLaterWithoutTryAgain() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let (a, _) = try await rig.syncedMac(holding: syncAccounts(1))
+        a.engine.failsZoneDeletes = true
+        a.sync.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+        #expect(rig.status(a) == .removalFailed)
+
+        a.engine.failsZoneDeletes = false
+        try await a.engine.sendNow()
+        await a.sync.settle()
+
+        #expect(rig.cloud.zones[rig.zone] == nil)
+        #expect(rig.status(a) == .removed(.deleted), "it did get done")
+    }
+
+    @Test func aZoneThatIsAlreadyGoneCountsAsRemoved() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let (a, _) = try await rig.syncedMac(holding: syncAccounts(1))
+        a.engine.failsZoneDeletes = true
+        a.sync.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+        #expect(rig.status(a) == .removalFailed)
+
+        // Another Mac removes the zone meanwhile, so the engine’s delete finds nothing to delete.
+        rig.cloud.deleteZone(rig.zone, reason: .deleted)
+        try await a.engine.sendNow()
+        await a.sync.settle()
+
+        #expect(rig.status(a) == .removed(.deleted))
     }
 }
