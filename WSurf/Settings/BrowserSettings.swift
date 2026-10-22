@@ -84,6 +84,9 @@ final class BrowserSettings {
     @ObservationIgnored lazy var storedReaderTextSize: Int? =
         (appDefaults.object(forKey: Key.readerTextSize) as? NSNumber).map { ReaderAppearance.clampedTextSize($0.doubleValue) }
         ?? ReaderAppearance.defaultTextSize
+    @ObservationIgnored lazy var storedReaderSpeechRate: Float? =
+        (appDefaults.object(forKey: Key.readerSpeechRate) as? NSNumber).map { ReaderSpeech.clampedRate($0.floatValue) }
+        ?? ReaderSpeech.defaultRate
 
     @ObservationIgnored var onWebPreferencesChanged: (() -> Void)?
     @ObservationIgnored var onContentBlockingChanged: (() -> Void)?
@@ -633,6 +636,7 @@ final class BrowserSettings {
         translationTargetID = ""
         alwaysTranslatedLanguages = []
         resetReaderAppearance()
+        readerSpeechRate = ReaderSpeech.defaultRate
         onWebPreferencesChanged?()
     }
 }

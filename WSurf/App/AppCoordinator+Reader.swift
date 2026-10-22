@@ -14,4 +14,13 @@ extension AppCoordinator {
     func toggleReader() {
         readerTab?.reader.toggle()
     }
+
+    /// Read Aloud, Pause Reading and Resume Reading are one command, as the button in Reader's bar is one button.
+    func toggleReadAloud() {
+        readerTab?.reader.toggleListening()
+    }
+
+    func stopReadAloud() {
+        readerTab?.reader.stopListening()
+    }
 }

@@ -6715,6 +6715,27 @@
     },
     "Notes about you that the assistant keeps on this Mac. See, edit or forget them." : {
       "comment" : "Settings search result detail for the Remember things about me switch."
+    },
+    "Read Aloud" : {
+      "comment" : "Menu command in View, and the button in Reader's floating bar that reads the article aloud with this Mac's voice, one sentence at a time, marking the sentence being read. It becomes “Pause Reading” and then “Resume Reading” once reading has begun. Title Case."
+    },
+    "Pause Reading" : {
+      "comment" : "Menu command in View, and tooltip and accessibility label of the play/pause button in Reader's floating bar while the article is being read aloud. Pairs with “Resume Reading”. Title Case."
+    },
+    "Resume Reading" : {
+      "comment" : "Menu command in View, and tooltip and accessibility label of the play/pause button in Reader's floating bar while reading aloud is paused. Pairs with “Pause Reading”. Title Case."
+    },
+    "Stop Reading" : {
+      "comment" : "Menu command in View, and tooltip and accessibility label of the stop button in Reader's floating bar. It ends reading aloud and removes the mark from the article. Title Case."
+    },
+    "Playback speed" : {
+      "comment" : "Tooltip and accessibility label of the button in Reader's floating bar that shows how fast the article is read aloud, for example 1.5×, and the label of the slider it opens. The speed goes from 0.5× to 1.5× of the voice's normal pace. Sentence case."
+    },
+    "Previous Sentence" : {
+      "comment" : "Tooltip and accessibility label of the back button in Reader's floating bar while the article is read aloud; it goes to the sentence before. Title Case. Pairs with “Next Sentence”."
+    },
+    "Next Sentence" : {
+      "comment" : "Tooltip and accessibility label of the forward button in Reader's floating bar while the article is read aloud; it goes to the next sentence. Title Case. Pairs with “Previous Sentence”."
     }
   },
   "version" : "1.0"

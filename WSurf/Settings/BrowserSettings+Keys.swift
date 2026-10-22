@@ -73,5 +73,6 @@ extension BrowserSettings {
         static let readerTypeface = "reader.typeface"
         static let readerTheme = "reader.theme"
         static let readerTextSize = "reader.textSize"
+        static let readerSpeechRate = "reader.speechRate"
     }
 }
