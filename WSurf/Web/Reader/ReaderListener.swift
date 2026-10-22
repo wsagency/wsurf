@@ -29,8 +29,8 @@ final class ReaderListener {
     private var sentences: [ReaderSpeech.Sentence] = []
     private var sentence = 0
 
-    /// Marks the sentence being read in the article's view; nil clears the mark.
-    @ObservationIgnored var mark: (ReaderSpeech.Spot?) -> Void = { _ in }
+    /// Marks the sentence being read in the article's view; nil clears the mark. Whoever owns the listener sets it once.
+    @ObservationIgnored var mark: ((ReaderSpeech.Spot?) -> Void)?
     @ObservationIgnored let output: any SpeechOutput
     @ObservationIgnored private let settings: BrowserSettings
     @ObservationIgnored private var source: Source = { _ in nil }
@@ -113,7 +113,7 @@ final class ReaderListener {
         spot = nil
         awaitingStart = false
         output.stopSpeaking()
-        mark(nil)
+        mark?(nil)
     }
 
     /// Asks for the text of block `next`, then speaks its first sentence, or its last when going back. A block with nothing to say
@@ -154,7 +154,7 @@ final class ReaderListener {
     private func move(to index: Int) {
         sentence = index
         spot = ReaderSpeech.Spot(block: blocks[position], range: sentences[index].range)
-        mark(spot)
+        mark?(spot)
         guard state == .playing else { return }
         awaitingStart = true
         output.stopSpeaking()

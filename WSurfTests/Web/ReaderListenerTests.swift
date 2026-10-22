@@ -62,12 +62,15 @@ private final class ListeningFixture {
     let listener: ReaderListener
     private(set) var marks: [ReaderSpeech.Spot?] = []
 
-    /// The defaults are in the per-process test directory (`AppDatabase.defaultsSuite`), which a test run removes.
-    init() {
+    /// The defaults are in the per-process test directory (`AppDatabase.defaultsSuite`), which a test run removes. `recordsMarks`
+    /// false leaves the sink to the session that owns the listener, which marks the article's view.
+    init(recordsMarks: Bool = true) {
         defaults = UserDefaults(suiteName: AppDatabase.defaultsSuite("ReaderListener-\(UUID().uuidString)"))!
         settings = BrowserSettings(defaults: defaults)
         listener = ReaderListener(output: speech, settings: settings)
-        listener.mark = { [weak self] spot in self?.marks.append(spot) }
+        if recordsMarks {
+            listener.mark = { [weak self] spot in self?.marks.append(spot) }
+        }
     }
 
     /// The sentence marked now, nil when the mark was cleared or nothing was marked.
@@ -648,6 +651,7 @@ struct ReaderListeningTests {
         let session = await openedSession(reading)
         session.listen()
         #expect(await reading.speech.untilSpoken(1))
+        #expect(reading.marked != nil, "the sentence was marked")
         let marks = reading.marks.count
 
         session.close()
@@ -671,9 +675,15 @@ struct ReaderListeningTests {
         #expect(reading.speech.spoken == ["The tide clock"])
     }
 
+    /// A tab with no start page: a document that commits in a tab ends its Reader, and with it the listening, so a tab that loads
+    /// one while a test waits for the voice ends the test's Reader from under it.
+    private func tabWithoutAPage() -> BrowserTab {
+        BrowserTab(opensBlank: false, privately: true, context: BrowserProfileContext(profile: .privateBrowsing()))
+    }
+
     @Test(.boundedWebViews) func closingTheTabStopsListening() async {
         let reading = ListeningFixture()
-        let tab = BrowserTab(context: BrowserProfileContext(profile: .privateBrowsing()))
+        let tab = tabWithoutAPage()
         let stub = StubReader()
         stub.article = article()
         tab.reader.driver = stub.driver
@@ -681,6 +691,7 @@ struct ReaderListeningTests {
         #expect(await tab.reader.open())
         tab.reader.listen()
         #expect(await reading.speech.untilSpoken(1))
+        #expect(reading.marked != nil)
 
         tab.detach()
 
@@ -690,7 +701,7 @@ struct ReaderListeningTests {
 
     @Test(.boundedWebViews) func leavingTheTabOrReplacingTheViewStopsListening() async {
         let reading = ListeningFixture()
-        let tab = BrowserTab(context: BrowserProfileContext(profile: .privateBrowsing()))
+        let tab = tabWithoutAPage()
         defer { tab.detach() }
         let first = BrowserPage(webKit: ReaderPageController.makeWebView(dataStore: tab.context.dataStore), context: tab.context)
         let second = BrowserPage(webKit: ReaderPageController.makeWebView(dataStore: tab.context.dataStore), context: tab.context)
@@ -754,6 +765,7 @@ struct ReaderListeningTests {
 
         coordinator.toggleReadAloud()
         #expect(reading.listener.state == .paused)
+        #expect(menu.validateMenuItem(read), "the title is set when the menu validates, as it does each time it opens")
         #expect(read.title == String(localized: "Resume Reading"))
         #expect(menu.validateMenuItem(stop))
 
@@ -913,6 +925,32 @@ struct ReaderMarkTests {
             await ReaderSpeech.mark(sentence(0), in: page)
             #expect(await marked(in: page) == "First sentence.", "only one mark at a time")
             #expect(await run("String(CSS.highlights.size)", in: page) == "1")
+        }
+    }
+
+    /// A session marks what it reads in the view that shows the article, and hiding Reader takes the mark away.
+    @Test(.boundedWebViews) func readingMarksTheSentenceInTheArticlesViewAndHidingReaderClearsIt() async throws {
+        try await withArticleView { page in
+            let reading = ListeningFixture(recordsMarks: false)
+            let stub = StubReader()
+            stub.article = Self.article
+            let session = ReaderSession()
+            session.driver = stub.driver
+            session.speaker = reading.listener
+            #expect(await session.open())
+            session.presentedPage = page
+
+            session.listen()
+            #expect(await reading.speech.untilSpoken(1))
+            #expect(reading.speech.spoken == ["Tide."], "the headline, read from the view")
+            #expect(await waitUntil { await marked(in: page) == "Tide." })
+
+            reading.speech.finishCurrent()
+            #expect(await waitUntil { await marked(in: page) == "Clock." })
+
+            session.close()
+            #expect(reading.listener.state == .idle)
+            #expect(await waitUntil { await run("String(CSS.highlights.size)", in: page) == "0" }, "the mark stayed")
         }
     }
 

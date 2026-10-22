@@ -151,7 +151,10 @@ final class ReaderSession {
     func listen() {
         guard isActive, let article else { return }
         let blocks = (article.title.isEmpty ? [] : [ReaderPage.titleBlock]) + Array(article.blocks.indices)
-        listener.mark = { [weak self] spot in self?.mark(spot) }
+        // Wired once. A listener that came with a sink of its own (a test's) keeps it.
+        if listener.mark == nil {
+            listener.mark = { [weak self] spot in self?.mark(spot) }
+        }
         listener.start(blocks: blocks) { [weak self] block in await self?.passage(block) }
     }
 
