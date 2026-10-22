@@ -312,6 +312,16 @@ window backdrops read; it is rebuilt only when the selected theme, a saved theme
 or an adjustment changes. The appearance keys from before themes stay in place:
 `ThemeMigration` reads them once, and an older build still finds them.
 
+## Shared packages
+
+`Packages/WSurfCore` holds platform-neutral code that an iOS app can share with the Mac app. Its one target, `WSurfVault`,
+holds the profile vault: the store, its crypto, the Credential Exchange codec, TOTP and passkey key encoding. It imports no
+AppKit, SwiftUI, WebKit or CefKit, and it builds for iOS. It uses the app target's Swift settings (Main Actor default
+isolation, Member Import Visibility), so code behaves the same on either side of the boundary. The app links the product
+statically, which adds no framework to the bundle. The tests stay in `WSurfTests` and use `@testable import WSurfVault`
+without linking it, so the app is the only copy of the vault code in a test process. A resource the package reads through
+`Bundle.main`, such as the public suffix list, stays in the app.
+
 ## Tests
 
 Tests use Swift Testing, with XCTest for the two things it cannot express:
