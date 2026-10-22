@@ -93,6 +93,9 @@ final class InputHistoryListModel {
     var selection: String?
     private(set) var revealedID: String?
     private(set) var isUnlocking = false
+    /// The vault the entries are kept with, as last read (`refreshKeptVault`). Nil while none keeps them.
+    private(set) var keptVaultID: UUID?
+    private(set) var isMoving = false
     private(set) var error: String?
     /// The result of the last action that has no visible effect on the list, such as copying.
     private(set) var notice: String?
@@ -155,6 +158,36 @@ final class InputHistoryListModel {
         } catch {
             self.error = Self.message(for: error)
         }
+        // The first opening with a vault binds the entries to it.
+        await refreshKeptVault()
+    }
+
+    func refreshKeptVault() async {
+        let kept = await history.keptVault(of: profile)
+        if keptVaultID != kept {
+            keptVaultID = kept
+        }
+    }
+
+    /// "Keep Input History in this vault": moves the entries to `vaultID`, which is named `label` in the message. Both that vault and
+    /// the one keeping them now must be unlocked; nothing changes otherwise.
+    func keep(in vaultID: UUID, label: String) async {
+        guard !isMoving else { return }
+        isMoving = true
+        error = nil
+        notice = nil
+        defer { isMoving = false }
+        do {
+            try await history.keep(in: vaultID, profile: profile)
+            notice = String(localized: "Input History is now kept in \(label).")
+        } catch InputHistoryError.vaultLocked {
+            error = String(localized: "Moving Input History needs both vaults unlocked: the one that keeps it now and \(label). Unlock them with the vault picker, then try again.")
+        } catch InputHistoryError.vaultDeleted {
+            error = Self.message(for: InputHistoryError.vaultDeleted)
+        } catch {
+            self.error = String(localized: "Couldn’t move Input History. It is still kept where it was.")
+        }
+        await refreshKeptVault()
     }
 
     nonisolated static func message(for error: any Error) -> String? {
@@ -164,8 +197,10 @@ final class InputHistoryListModel {
         case InputHistoryError.keysUnusable:
             String(localized: "Input History couldn’t be opened, so it was cleared.")
         case InputHistoryError.vaultLocked:
-            // ponytail-merge: P3 named "Settings › Credentials"; with P1 the vault and its Unlock live on Settings › Autofill.
-            String(localized: "Input History is kept with your vault. Unlock it in Settings › Autofill, then show the entries again.")
+            String(localized: """
+                Input History is kept in a vault that is locked. Unlock that vault with the vault picker, then show the entries: \
+                Touch ID or your Mac password is asked for next.
+                """)
         case InputHistoryError.vaultDeleted:
             String(localized: "Input History was cleared because the vault it was kept with was deleted.")
         case InputHistoryError.unavailable:

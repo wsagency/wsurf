@@ -212,6 +212,13 @@ again. It is off by default. Source behavior:
   failure). From then on, opening needs that vault unlocked plus Touch ID, and
   recording still never prompts, also while the vault is locked. Deleting the
   vault deletes the entries; Delete Vault names them first.
+- "Keep Input History in this vault" (the Input History section, for the vault
+  the page's picker shows) moves it to another vault: with both vaults
+  unlocked, the inbox key is sealed again under the target's key
+  (`InputHistoryStore.keep(with:from:)`). The private key, the entries and
+  Touch ID are untouched; the new binding is read back and opened before it
+  counts, and the old one is written back on any failure. Not bound yet, the
+  chosen vault is bound at once and today's key moves at the next opening.
 - The list decrypts only on Show Entries, masks passwords until one row is
   revealed, copies with the concealed pasteboard type for 60 s, and locks two
   minutes after the page closes or on any vault lock event.

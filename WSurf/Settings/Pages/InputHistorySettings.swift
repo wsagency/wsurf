@@ -29,23 +29,34 @@ extension InputHistoryRetention {
     }
 }
 
-/// The Input History section of the Autofill page's Vault tab: the switch, how long entries stay, the excluded websites, and the
-/// entries themselves. It belongs to the profile, not to a vault, so it works whether or not a vault exists or is unlocked.
+/// The Input History section of the Autofill page's Vault tab: the switch, how long entries stay, the excluded websites, the vault
+/// that keeps the entries, and the entries themselves. Once the profile has a vault, the entries are kept in one of its vaults (the
+/// default one, or the one chosen here with the page's vault picker): showing them needs that vault unlocked, then Touch ID or the Mac
+/// password. Recording, the switch and the settings work whether or not a vault exists or is unlocked.
 ///
-/// Opening the page asks for nothing. The entries stay encrypted until the person asks to see them, which needs Touch ID or the
-/// Mac password. They are dropped two minutes after the page closes, and at once on any vault lock event.
+/// Opening the page asks for nothing. The entries stay encrypted until the person asks to see them. They are dropped two minutes after
+/// the page closes, and at once on any vault lock event.
 struct InputHistorySettings: View {
     @Bindable var settings: BrowserSettings
     let profile: Profile
+    /// The profile's vaults and the one the page's picker shows, for "Keep Input History in this vault". Empty without a vault.
+    let vaults: [VaultListing]
+    let selectedVaultID: UUID?
     @State private var model: InputHistoryListModel
     @State private var asksConsent = false
     @State private var asksTurnOff = false
     @State private var asksUntilDeleted = false
 
-    init(context: BrowserProfileContext) {
+    init(context: BrowserProfileContext, vaults: [VaultListing], selectedVaultID: UUID?) {
         settings = context.settings
         profile = context.profile
+        self.vaults = vaults
+        self.selectedVaultID = selectedVaultID
         _model = State(initialValue: InputHistoryListModel(profile: context.profile, settings: context.settings))
+    }
+
+    private var selectedVault: VaultListing? {
+        vaults.first { $0.vaultID == selectedVaultID }
     }
 
     /// The switch only moves after the person has answered: on needs consent, off deletes everything.
@@ -89,7 +100,8 @@ struct InputHistorySettings: View {
                 title: "Remember what I type",
                 caption: """
                 Keeps what you type on websites, including passwords, encrypted on this Mac for the time you choose. \
-                Opening it needs Touch ID or your Mac password. Private windows are never recorded.
+                Opening it needs the vault that keeps it unlocked, then Touch ID or your Mac password; without a vault, Touch ID or \
+                your Mac password alone. Private windows are never recorded.
                 """
             ) {
                 SettingsToggle(recording)
@@ -110,9 +122,14 @@ struct InputHistorySettings: View {
             ) {
                 WebsiteListField(kind: .websites, label: "Excluded websites (one per line)", lineLimit: 2...6, text: excludedSites)
             }
+            if let selectedVault {
+                RowSeparator()
+                InputHistoryVaultRow(model: model, selected: selectedVault, vaults: vaults)
+            }
         }
         .disabled(profile.isPrivate)
-        InputHistoryEntries(model: model, isRecording: settings.recordsInputHistory)
+        .task(id: selectedVaultID) { await model.refreshKeptVault() }
+        InputHistoryEntries(model: model, isRecording: settings.recordsInputHistory, hasVault: !vaults.isEmpty)
             .disabled(profile.isPrivate)
             .alert("Turn on Input History?", isPresented: $asksConsent) {
                 Button("Turn On") { settings.recordsInputHistory = true }
@@ -140,6 +157,44 @@ struct InputHistorySettings: View {
     }
 }
 
+/// "Keep Input History in this vault", for the vault the page's picker shows. Moving needs that vault and the one keeping the entries
+/// now unlocked; the entries themselves are not encrypted again and no Touch ID is asked for.
+private struct InputHistoryVaultRow: View {
+    let model: InputHistoryListModel
+    let selected: VaultListing
+    let vaults: [VaultListing]
+
+    private var keptHere: Bool {
+        model.keptVaultID == selected.vaultID
+    }
+
+    private var caption: LocalizedStringResource {
+        if keptHere {
+            return "Showing the entries needs \(selected.label) unlocked, then Touch ID or your Mac password."
+        }
+        if let kept = model.keptVaultID {
+            let current = vaults.first { $0.vaultID == kept }?.label ?? String(localized: "another vault")
+            return "Kept in \(current). Moving it needs both vaults unlocked. No entry is lost or encrypted again."
+        }
+        return "Not kept in a vault yet: your default vault keeps it the first time you show the entries. Keeping it here needs this vault unlocked."
+    }
+
+    var body: some View {
+        DetailRow(title: keptHere ? "Kept in this vault" : "Keep Input History in this vault", caption: caption) {
+            if keptHere {
+                Image(systemName: "checkmark.circle")
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Kept in \(selected.label)")
+            } else {
+                Button("Keep Here") { Task { await model.keep(in: selected.vaultID, label: selected.label) } }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isMoving)
+                    .accessibilityLabel("Keep Input History in \(selected.label)")
+            }
+        }
+    }
+}
+
 enum InputHistoryRowAction {
     case select, copy, reveal, save, exclude, delete
 }
@@ -149,6 +204,7 @@ enum InputHistoryRowAction {
 private struct InputHistoryEntries: View {
     @Bindable var model: InputHistoryListModel
     let isRecording: Bool
+    let hasVault: Bool
     @State private var saving: InputHistoryCredentialSave?
     @State private var asksClearAll = false
     @FocusState private var searching: Bool
@@ -247,9 +303,11 @@ private struct InputHistoryEntries: View {
                 .accessibilityHidden(true)
             Text("Input History is locked")
                 .font(.headline)
-            Text("Opening it needs Touch ID or your Mac password.")
+            Text(lockedCaption)
                 .font(Theme.Font.secondary)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
             Button("Show Entries") {
                 Task {
                     await model.unlock()
@@ -261,6 +319,17 @@ private struct InputHistoryEntries: View {
         }
         .frame(maxWidth: .infinity, minHeight: 140)
         .padding(24)
+    }
+
+    /// What showing the entries will ask for: the vault that keeps them (or the default vault, which will), then Touch ID.
+    private var lockedCaption: LocalizedStringResource {
+        if model.keptVaultID != nil {
+            return "Opening it needs the vault that keeps it unlocked, then Touch ID or your Mac password."
+        }
+        if hasVault {
+            return "Opening it needs your default vault unlocked, then Touch ID or your Mac password."
+        }
+        return "Opening it needs Touch ID or your Mac password."
     }
 
     private var searchField: some View {

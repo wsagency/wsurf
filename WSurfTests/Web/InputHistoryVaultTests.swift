@@ -144,6 +144,29 @@ final class InputHistoryVaultAnswers {
     }
 }
 
+/// A key source over several made-up vaults, any of which can be locked: the vault named, or `defaultVault` when none is.
+final class InputHistoryVaultChoices {
+    var keys: [UUID: InputHistoryVaultKey] = [:]
+    var locked: Set<UUID> = []
+    var defaultVault: UUID?
+    var asked: [UUID?] = []
+
+    var source: InputHistory.VaultKeySource {
+        { [self] _, vault in
+            asked.append(vault)
+            guard let id = vault ?? defaultVault else { return nil }
+            guard !locked.contains(id) else { throw InputHistoryError.vaultLocked }
+            guard let key = keys[id] else { throw InputHistoryError.vaultDeleted }
+            return key
+        }
+    }
+
+    func add(_ key: InputHistoryVaultKey) {
+        keys[key.vaultID] = key
+        defaultVault = defaultVault ?? key.vaultID
+    }
+}
+
 struct InputHistoryVaultTests {
     private let reason = "Test"
 
@@ -265,6 +288,183 @@ struct InputHistoryVaultTests {
         #expect(values(try await fixture.store.unlock(reason: reason, vault: fixture.vault)) == ["kept"])
         #expect(try fixture.storedPrivateKey()?.first == 2)
         #expect(values(try await fixture.store.unlock(reason: reason, vault: fixture.vault)) == ["kept"])
+    }
+
+    // MARK: - Keeping it in another vault
+
+    @Test func keepingItInAnotherVaultMovesOnlyTheInboxKey() async throws {
+        let fixture = InputHistoryVaultFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.record(["one", "two"])
+        _ = try await fixture.store.unlock(reason: reason, vault: fixture.vault)
+        try await fixture.record(["three"])
+        let bodies = try fixture.files.map { try Data(contentsOf: $0) }
+        let privateKey = try #require(try fixture.storedPrivateKey())
+        let before = try #require(try fixture.storedBinding())
+        let target = InputHistoryVaultFixture.key()
+        let reads = (fixture.privateKeys.memory.readCount, fixture.privateKeys.memory.writeCount, fixture.publicKeys.promptableReads)
+
+        try await fixture.store.keep(with: target, from: fixture.vault)
+
+        #expect(try await fixture.store.boundVault() == target.vaultID)
+        let after = try #require(try fixture.storedBinding())
+        #expect(after.dropFirst().prefix(36) == Data(target.vaultID.uuidString.utf8))
+        #expect(after.dropFirst(37).prefix(32) == before.dropFirst(37).prefix(32), "the same inbox key: what is recorded next is sealed as before")
+        #expect(try fixture.storedPrivateKey() == privateKey, "the private key and its Touch ID item are untouched")
+        #expect(try fixture.files.map { try Data(contentsOf: $0) } == bodies, "no entry is encrypted again")
+        #expect(fixture.privateKeys.memory.readCount == reads.0 && fixture.privateKeys.memory.writeCount == reads.1, "no Touch ID")
+        #expect(fixture.publicKeys.promptableReads == reads.2)
+
+        // The vault that kept it opens nothing now; the new one opens every entry.
+        await #expect(throws: InputHistoryError.vaultLocked) { _ = try await fixture.store.unlock(reason: reason, vault: fixture.vault) }
+        #expect(values(try await fixture.store.unlock(reason: reason, vault: target)) == ["three", "two", "one"])
+        try await fixture.record(["four"])
+        #expect(values(try await fixture.store.unlock(reason: reason, vault: target)).first == "four")
+
+        // Keeping it where it is writes nothing.
+        let writes = fixture.publicKeys.memory.writeCount
+        try await fixture.store.keep(with: target, from: nil)
+        #expect(fixture.publicKeys.memory.writeCount == writes)
+    }
+
+    @Test func movingNeedsTheVaultThatKeepsItNow() async throws {
+        let fixture = InputHistoryVaultFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.record(["kept"])
+        _ = try await fixture.store.unlock(reason: reason, vault: fixture.vault)
+        let before = try fixture.storedBinding()
+        let target = InputHistoryVaultFixture.key()
+
+        await #expect(throws: InputHistoryError.vaultLocked) { try await fixture.store.keep(with: target, from: nil) }
+        await #expect(throws: InputHistoryError.vaultLocked) { try await fixture.store.keep(with: target, from: InputHistoryVaultFixture.key()) }
+        // A forged key for the right vault does not open the inbox key, and changes nothing.
+        await #expect(throws: (any Error).self) {
+            try await fixture.store.keep(with: target, from: InputHistoryVaultFixture.key(fixture.vault.vaultID))
+        }
+        #expect(try fixture.storedBinding() == before)
+        #expect(values(try await fixture.store.unlock(reason: reason, vault: fixture.vault)) == ["kept"])
+    }
+
+    @Test func aMoveThatFailsPutsTheBindingBackAndLosesNothing() async throws {
+        let fixture = InputHistoryVaultFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.record(["one", "two"])
+        _ = try await fixture.store.unlock(reason: reason, vault: fixture.vault)
+        let before = try fixture.storedBinding()
+        let target = InputHistoryVaultFixture.key()
+
+        // The write is refused.
+        fixture.publicKeys.failWrites(true)
+        await #expect(throws: (any Error).self) { try await fixture.store.keep(with: target, from: fixture.vault) }
+        fixture.publicKeys.failWrites(false)
+        #expect(try fixture.storedBinding() == before)
+
+        // The write lands damaged: reading it back finds that, and the binding as it was is written back.
+        fixture.publicKeys.damageNextWrite()
+        await #expect(throws: InputHistoryError.invalid) { try await fixture.store.keep(with: target, from: fixture.vault) }
+        #expect(try fixture.storedBinding() == before)
+        #expect(try await fixture.store.boundVault() == fixture.vault.vaultID)
+        #expect(values(try await fixture.store.unlock(reason: reason, vault: fixture.vault)) == ["two", "one"])
+        await #expect(throws: InputHistoryError.vaultLocked) { _ = try await fixture.store.unlock(reason: reason, vault: target) }
+
+        // Tried again, it moves.
+        try await fixture.store.keep(with: target, from: fixture.vault)
+        #expect(values(try await fixture.store.unlock(reason: reason, vault: target)) == ["two", "one"])
+    }
+
+    @Test func notKeptYetItIsBoundToTheChosenVaultAndTodaysKeyMovesAtTheNextOpening() async throws {
+        let fixture = InputHistoryVaultFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.record(["one"])
+        let raw = try #require(try fixture.storedPrivateKey())
+        let chosen = InputHistoryVaultFixture.key()
+
+        try await fixture.store.keep(with: chosen, from: nil)
+        #expect(try await fixture.store.boundVault() == chosen.vaultID)
+        #expect(try fixture.storedPrivateKey() == raw, "nothing is read with Touch ID to bind it")
+
+        // The default vault no longer decides.
+        await #expect(throws: InputHistoryError.vaultLocked) { _ = try await fixture.store.unlock(reason: reason, vault: fixture.vault) }
+        #expect(values(try await fixture.store.unlock(reason: reason, vault: chosen)) == ["one"])
+        #expect(try fixture.storedPrivateKey()?.first == 2)
+
+        // A binding that fails to land is removed again, so the default vault still decides.
+        let other = InputHistoryVaultFixture()
+        defer { other.cleanUp() }
+        try await other.record(["two"])
+        other.publicKeys.damageNextWrite()
+        await #expect(throws: InputHistoryError.invalid) { try await other.store.keep(with: chosen, from: nil) }
+        #expect(try other.storedBinding() == nil)
+        #expect(values(try await other.store.unlock(reason: reason, vault: other.vault)) == ["two"])
+    }
+
+    @Test func keepingItInAVaultAsksForBothVaultsAndLeavesTheOpenListOpen() async throws {
+        let choices = InputHistoryVaultChoices()
+        let first = InputHistoryVaultFixture.key()
+        let second = InputHistoryVaultFixture.key()
+        choices.add(first)
+        choices.add(second)
+        let harness = InputHistoryHarness(vaultKey: choices.source)
+        defer { harness.cleanUp() }
+        let profile = harness.makeProfile()
+        try await harness.seed(profile, ["secret"])
+        try await harness.history.unlock(profile)
+        #expect(await harness.history.keptVault(of: profile) == first.vaultID, "the default vault keeps it")
+
+        // Either vault locked: nothing moves.
+        choices.locked = [second.vaultID]
+        await #expect(throws: InputHistoryError.vaultLocked) { try await harness.history.keep(in: second.vaultID, profile: profile) }
+        choices.locked = [first.vaultID]
+        await #expect(throws: InputHistoryError.vaultLocked) { try await harness.history.keep(in: second.vaultID, profile: profile) }
+        #expect(await harness.history.keptVault(of: profile) == first.vaultID)
+
+        choices.locked = []
+        try await harness.history.keep(in: second.vaultID, profile: profile)
+        #expect(await harness.history.keptVault(of: profile) == second.vaultID)
+        #expect(harness.history.unlocked[profile.id]?.map(\.payload.value) == ["secret"], "what was open stays open")
+
+        // From now on only the second vault opens it.
+        harness.history.lock(profileID: profile.id)
+        choices.locked = [first.vaultID]
+        choices.asked = []
+        try await harness.history.unlock(profile)
+        #expect(choices.asked == [second.vaultID])
+        #expect(harness.history.unlocked[profile.id]?.map(\.payload.value) == ["secret"])
+    }
+
+    @Test func theListSaysWhereInputHistoryIsKeptAndWhyAMoveWaits() async throws {
+        let choices = InputHistoryVaultChoices()
+        let first = InputHistoryVaultFixture.key()
+        let second = InputHistoryVaultFixture.key()
+        choices.add(first)
+        choices.add(second)
+        let harness = InputHistoryHarness(vaultKey: choices.source)
+        let profile = harness.makeProfile()
+        let name = AppDatabase.defaultsSuite("InputHistoryVaultTests.\(UUID().uuidString)")
+        let settings = BrowserSettings(defaults: UserDefaults(suiteName: name) ?? UserDefaults())
+        defer {
+            UserDefaults().removePersistentDomain(forName: name)
+            harness.cleanUp()
+        }
+        let model = InputHistoryListModel(profile: profile, settings: settings, history: harness.history)
+        await model.refreshKeptVault()
+        #expect(model.keptVaultID == nil)
+
+        try await harness.seed(profile, ["secret"])
+        await model.unlock()
+        #expect(model.keptVaultID == first.vaultID, "the first opening binds it, and the list knows")
+
+        choices.locked = [first.vaultID]
+        await model.keep(in: second.vaultID, label: "Family")
+        let waiting = try #require(model.error)
+        #expect(waiting.contains("Family") && waiting != InputHistoryListModel.message(for: InputHistoryError.vaultLocked))
+        #expect(model.keptVaultID == first.vaultID && model.notice == nil)
+
+        choices.locked = []
+        await model.keep(in: second.vaultID, label: "Family")
+        #expect(model.error == nil && model.notice?.contains("Family") == true)
+        #expect(model.keptVaultID == second.vaultID)
+        #expect(!model.isMoving)
     }
 
     // MARK: - Deleting the vault
@@ -411,6 +611,32 @@ struct InputHistoryVaultTests {
             vaults[0].manager.lock(reason: .manual)
             await #expect(throws: InputHistoryError.vaultLocked) { _ = try await InputHistory.liveVaultKey(for: profile, bound: nil) }
             #expect(passkeys.assertions.count == asserted, "no passkey was asked for")
+        }
+    }
+
+    @Test func inputHistoryMovesBetweenRealVaultsOnlyWhileBothAreUnlocked() async throws {
+        try await VaultManagerFixture.with(vaults: [.unlocked, .locked]) { profile, passkeys, vaults in
+            let harness = InputHistoryHarness(vaultKey: InputHistory.liveVaultKey)
+            defer { harness.cleanUp() }
+            try await harness.seed(profile, ["one", "two"])
+            try await harness.history.unlock(profile)
+            #expect(await harness.history.keptVault(of: profile) == vaults[0].vaultID)
+
+            await #expect(throws: InputHistoryError.vaultLocked) { try await harness.history.keep(in: vaults[1].vaultID, profile: profile) }
+            try await VaultManagerFixture.unlock(vaults[1])
+            let asserted = passkeys.assertions.count
+            try await harness.history.keep(in: vaults[1].vaultID, profile: profile)
+            #expect(passkeys.assertions.count == asserted, "moving asks for no passkey")
+            #expect(await harness.history.keptVault(of: profile) == vaults[1].vaultID)
+
+            // The first vault no longer matters; the second one does.
+            harness.history.lock(profileID: profile.id)
+            vaults[0].manager.lock(reason: .manual)
+            try await harness.history.unlock(profile)
+            #expect(harness.history.unlocked[profile.id]?.map(\.payload.value) == ["two", "one"])
+            harness.history.lock(profileID: profile.id)
+            vaults[1].manager.lock(reason: .manual)
+            await #expect(throws: InputHistoryError.vaultLocked) { try await harness.history.unlock(profile) }
         }
     }
 
