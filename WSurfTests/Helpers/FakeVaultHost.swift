@@ -108,6 +108,12 @@ final class FakeVault {
         revision += 1
     }
 
+    /// The Trash entry comes back as a live entry: a deliberate change.
+    func restore(_ id: UUID) {
+        guard let old = trash.removeValue(forKey: id) else { return }
+        add(old)
+    }
+
     /// Emptying the Trash entry: nothing live changes, and a tombstone remains.
     func purge(_ id: UUID) {
         guard trash.removeValue(forKey: id) != nil else { return }
