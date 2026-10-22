@@ -51,17 +51,22 @@ public nonisolated enum VaultSyncError: Error, Equatable, Sendable {
     case authenticationFailed
 }
 
-/// One account of a vault as the sync carries it: live (the account without files) or removed (its id and version only).
+/// One account of a vault as the sync carries it: live (the account without files) or removed (its id and version, and what it stood
+/// for as keyed digests).
 public nonisolated struct SyncItem: Equatable, Sendable {
     public let accountID: UUID
     public let version: UInt64
     /// `nil`: the removed state.
     public let account: CredentialAccount?
+    /// A removed state only: what the entry stood for (`ImportTrace`), so a Mac that never held it still keeps an import from bringing
+    /// it back. Keyed digests, never a value; `nil` when the entry had nothing an import could match.
+    public let trace: ImportTrace?
 
-    public init(accountID: UUID, version: UInt64, account: CredentialAccount?) {
+    public init(accountID: UUID, version: UInt64, account: CredentialAccount?, trace: ImportTrace? = nil) {
         self.accountID = accountID
         self.version = version
         self.account = account
+        self.trace = account == nil ? trace : nil
     }
 
     /// The parts an incoming or stored item stands for; a removed one has `SyncParts.removedParts`.
@@ -112,8 +117,8 @@ public nonisolated enum VaultSyncCodec {
         return SyncableAccount(account: stripped, parts: parts)
     }
 
-    /// The envelope `u8 format ‖ u8 state ‖ u64 version ‖ sealed`. A live item must have no files; a removed one seals an empty
-    /// plaintext, so it carries nothing but its ids and version.
+    /// The envelope `u8 format ‖ u8 state ‖ u64 version ‖ sealed`. A live item must have no files; a removed one seals its trace, or an
+    /// empty plaintext without one, so it carries nothing but its ids, its version and keyed digests.
     public static func sealItem(_ item: SyncItem, key: VaultSyncKey) throws -> Data {
         try requireGeneration(key)
         guard item.version > 0 else { throw VaultSyncError.malformed }
@@ -125,7 +130,10 @@ public nonisolated enum VaultSyncCodec {
             plaintext = try encode(account)
             state = liveState
         } else {
-            plaintext = Data()
+            if let trace = item.trace, (try? trace.validate()) == nil {
+                throw VaultSyncError.malformed
+            }
+            plaintext = try item.trace.map { try CredentialContent.canonicalJSON($0) } ?? Data()
             state = removedState
         }
         guard plaintext.count + headerBytes + sealOverhead <= maxItemBytes else { throw VaultSyncError.tooLarge }
@@ -147,8 +155,11 @@ public nonisolated enum VaultSyncCodec {
         let aad = itemAAD(key: key, accountID: accountID, format: itemFormat, state: state, version: version)
         let plaintext = try open(sealed, key: key, aad: aad)
         guard state == liveState else {
-            guard plaintext.isEmpty else { throw VaultSyncError.malformed }
-            return SyncItem(accountID: accountID, version: version, account: nil)
+            guard !plaintext.isEmpty else { return SyncItem(accountID: accountID, version: version, account: nil) }
+            guard let trace = try? JSONDecoder().decode(ImportTrace.self, from: plaintext), (try? trace.validate()) != nil else {
+                throw VaultSyncError.malformed
+            }
+            return SyncItem(accountID: accountID, version: version, account: nil, trace: trace)
         }
         guard let account = try? JSONDecoder().decode(CredentialAccount.self, from: plaintext),
               account.id == accountID, account.attachments == nil

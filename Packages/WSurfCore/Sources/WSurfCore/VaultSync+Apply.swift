@@ -15,6 +15,8 @@ nonisolated struct SyncPass {
     /// The account of each write, in order (`AccountWrite` does not show it).
     var writeIDs: [UUID] = []
     var removing: [UUID: AccountStamp] = [:]
+    /// What entries removed elsewhere that this Mac never held stood for, to keep as tombstones (`VaultSyncHost.remember`).
+    var remembering: [UUID: ImportTrace] = [:]
     /// The base to record per account once its decision is applied.
     var bases: [UUID: SyncBase] = [:]
     var conflicts: [UUID: ConflictRow] = [:]
@@ -158,6 +160,10 @@ extension VaultSync {
             }
             pass.removing[id] = stamp
             pass.bases[id] = base
+        case .remember(let trace, let base):
+            pass.remembering[id] = trace
+            pass.bases[id] = base
+            pass.decided.insert(id)
         case .review(let kind, _):
             pass.conflicts[id] = ConflictRow(accountID: id, version: version, kind: kind, envelope: envelope)
             pass.decided.insert(id)
@@ -167,7 +173,25 @@ extension VaultSync {
     /// One commit for the pass. A write the vault refuses for its own rules is tried alone and, if it still fails, becomes an
     /// information row; a lease that ended or any other failure stops the pass with nothing recorded as applied.
     private func commit(_ pass: inout SyncPass, key: VaultKey, snapshot: VaultSyncSnapshot) async -> SyncCommitOutcome {
-        guard !pass.writes.isEmpty || !pass.removing.isEmpty else { return .done(nil) }
+        var remembered: UInt64?
+        if !pass.remembering.isEmpty {
+            // Its own write, first: a later stale retry finds the tombstones and keeps only the base.
+            do {
+                remembered = try await host.remember(
+                    profileID: key.profileID, vaultID: key.vaultID, lease: snapshot.lease, traces: pass.remembering
+                )
+            } catch {
+                switch Self.classify(error) {
+                case .stale:
+                    return .stale
+                case .stop:
+                    return .stop
+                case .data:
+                    pass.remembering = [:]
+                }
+            }
+        }
+        guard !pass.writes.isEmpty || !pass.removing.isEmpty else { return .done(remembered) }
         do {
             return .done(try await host.commit(
                 profileID: key.profileID, vaultID: key.vaultID, lease: snapshot.lease, writes: pass.writes, removing: pass.removing
@@ -366,6 +390,8 @@ extension VaultSync {
             !base.parts.removed && !live.contains(id) && !inputs.reviewed.contains(id) && !inputs.parked.contains(id)
         }
         let released = releasing.remove(key) != nil
+        // What each removed entry stood for goes with its removed state, when an import could match it.
+        let traces = snapshot.removed.traces
         let sending = gone.filter { id, _ in !(inputs.outgoing.contains(id) && pendingBases[key]?[id]?.parts.removed == true) }
         let limit = max(Self.removalFloor, inputs.bases.values.filter { !$0.parts.removed }.count / 4)
         let holds = sending.count > limit && !released
@@ -379,13 +405,14 @@ extension VaultSync {
             if let pending = pendingBases[key]?[id], pending.version == version, pending.parts.removed, inputs.outgoing.contains(id) {
                 continue
             }
-            let item = SyncItem(accountID: id, version: version, account: nil)
+            let item = SyncItem(accountID: id, version: version, account: nil, trace: traces[id])
             guard let envelope = try? VaultSyncCodec.sealItem(item, key: syncKey),
                   let parts = try? VaultSyncCodec.sealParts(.removedParts, accountID: id, version: version, key: syncKey)
             else { continue }
             work.rows.append(OutboxRow(accountID: id, version: version, envelope: envelope, parts: parts))
             work.bases[id] = SyncBase(version: version, parts: .removedParts)
         }
+        sendRemovedBefore(traces, inputs: inputs, live: live, key: key, syncKey: syncKey, into: &work)
         sumCache[key] = sums
         tallies[key, default: (0, 0)].notSyncable = notSyncable
         let addVaultRecord = settleVaultRecord(key, snapshot: snapshot, syncKey: syncKey, database: database)
@@ -394,6 +421,24 @@ extension VaultSync {
             engine?.add([.saveRecord(key.vaultRecord)])
         }
         refresh(key)
+    }
+
+    /// Entries removed before this vault synced (a Trash entry or a tombstone that was never sent): their removed state, with what they
+    /// stood for, so a Mac that adds the vault later keeps an import from bringing them back. It removes nothing anywhere (a Mac that
+    /// holds such an entry is asked first, `deletedThereChangedHere`), so it never counts towards the large-deletion hold.
+    private func sendRemovedBefore(
+        _ traces: [UUID: ImportTrace], inputs: ProduceState, live: Set<UUID>, key: VaultKey, syncKey: VaultSyncKey, into work: inout ProduceWork
+    ) {
+        let handed = handedOut[key] ?? []
+        for (id, trace) in traces.sorted(by: { $0.key.uuidString < $1.key.uuidString })
+        where inputs.bases[id] == nil && !live.contains(id) && !inputs.reviewed.contains(id) && !inputs.parked.contains(id)
+            && !inputs.outgoing.contains(id) && !handed.contains(id) {
+            guard let envelope = try? VaultSyncCodec.sealItem(SyncItem(accountID: id, version: 1, account: nil, trace: trace), key: syncKey),
+                  let parts = try? VaultSyncCodec.sealParts(.removedParts, accountID: id, version: 1, key: syncKey)
+            else { continue }
+            work.rows.append(OutboxRow(accountID: id, version: 1, envelope: envelope, parts: parts))
+            work.bases[id] = SyncBase(version: 1, parts: .removedParts)
+        }
     }
 
     private nonisolated struct ProduceWork {

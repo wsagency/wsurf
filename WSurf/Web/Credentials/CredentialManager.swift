@@ -674,6 +674,13 @@ final class CredentialManager {
         }
     }
 
+    /// Keeps what entries removed on another device stood for (`ImportTrace`), as tombstones, under the lease the caller decided under.
+    func rememberRemoved(_ traces: [UUID: ImportTrace], authorizedEpoch: UInt64) async throws -> VaultCommitReceipt {
+        try await authorizedWrite(epoch: authorizedEpoch) { access in
+            try await store.rememberRemoved(vaultID: vaultID, traces: traces, using: access)
+        }
+    }
+
     func removedIdentifiers() async throws -> RemovedIdentifiers {
         try await reading { access in try await store.removedIdentifiers(vaultID: vaultID, using: access) }
     }
@@ -920,5 +927,11 @@ extension CredentialManager {
     /// list asks for it; agents and the MCP server never do (`InputHistoryIsolationTests`).
     func inputHistoryKey() async throws -> InputHistoryVaultKey {
         try await reading { access in try await store.inputHistoryKey(vaultID: vaultID, using: access) }
+    }
+
+    /// The import memory key of this vault, under the current lease (`ImportMemoryKey`): what an import matches what it brought before
+    /// by, as keyed digests. Never the vault's key.
+    func importMemoryKey() async throws -> ImportMemoryKey {
+        try await reading { access in try await store.importMemoryKey(vaultID: vaultID, using: access) }
     }
 }
