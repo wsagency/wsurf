@@ -162,6 +162,9 @@ struct ThemeAdjustment: Codable, Equatable {
     var rowPadding = 9.0
     /// Points.
     var tabIconSize = 16.0
+    /// Points an open folder moves its tabs and subfolders in from its own row, once for each level of folders. 0 keeps
+    /// them under the folder's icon, as folders always were.
+    var folderIndent = 0.0
 
     /// -100 % to 100 %. Text, icons and accent text keep their contrast through `ThemeReadability` at either end.
     static let brightnessRange = -1.0...1.0
@@ -170,6 +173,8 @@ struct ThemeAdjustment: Codable, Equatable {
     static let sidebarMarginRange = 1.0...8.0
     static let rowPaddingRange = 1.0...12.0
     static let tabIconSizeRange = 12.0...24.0
+    static let folderIndentRange = 0.0...24.0
+    static let folderIndentStep = 2.0
 
     func brightness(_ scheme: ColorScheme) -> Double {
         scheme == .dark ? darkBrightness : lightBrightness
@@ -197,6 +202,8 @@ struct ThemeAdjustment: Codable, Equatable {
         result.sidebarMargin = clamp(sidebarMargin.rounded(), Self.sidebarMarginRange, default: 6)
         result.rowPadding = clamp(rowPadding.rounded(), Self.rowPaddingRange, default: 9)
         result.tabIconSize = clamp(tabIconSize.rounded(), Self.tabIconSizeRange, default: 16)
+        let indent = clamp(folderIndent, Self.folderIndentRange, default: 0)
+        result.folderIndent = (indent / Self.folderIndentStep).rounded() * Self.folderIndentStep
         return result
     }
 }
@@ -216,7 +223,8 @@ extension ThemeAdjustment {
             pageSpacing: container.lenient(.pageSpacing, 6),
             sidebarMargin: container.lenient(.sidebarMargin, 6),
             rowPadding: container.lenient(.rowPadding, 9),
-            tabIconSize: container.lenient(.tabIconSize, 16)
+            tabIconSize: container.lenient(.tabIconSize, 16),
+            folderIndent: container.lenient(.folderIndent, 0)
         )
     }
 }

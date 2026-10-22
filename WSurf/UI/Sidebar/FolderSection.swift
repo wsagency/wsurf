@@ -29,6 +29,12 @@ struct FolderSection: View {
     private var isSelected: Bool {
         context.isSelected(item)
     }
+    /// How far the rows inside this folder start to the right of its own row, from the theme's Folder indent. Each
+    /// level of folders adds one. The icons-only sidebar has no room for it.
+    private var childIndent: CGFloat {
+        sidebarStyle == .full ? BrowserSettings.application.chromeShape.folderIndent : 0
+    }
+
     /// How much larger this folder's own row is drawn. The icons-only sidebar has no title and a fixed width, so
     /// it keeps every folder at its normal size.
     private var scale: CGFloat {
@@ -219,6 +225,7 @@ struct FolderSection: View {
 
             if folder.isExpanded {
                 contents
+                    .padding(.leading, childIndent)
             }
         }
         .padding(showsOutline ? Self.outlineInset : 0)

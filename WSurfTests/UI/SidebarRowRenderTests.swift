@@ -338,6 +338,15 @@ struct SidebarRowRenderTests {
             return (top / scale)...(bottom / scale)
         }
 
+        /// The first column, in points, where the ink in the rows `ys` (points) reaches half of its strongest pixel.
+        func leftEdge(in ys: ClosedRange<CGFloat>) -> CGFloat? {
+            let rows = Int((ys.lowerBound * scale).rounded(.down))..<Int((ys.upperBound * scale).rounded(.up))
+            let columns = (0..<bitmap.pixelsWide).map { x in rows.map { distance(x, $0) }.max() ?? 0 }
+            guard let strongest = columns.max(), strongest > 0,
+                  let first = columns.firstIndex(where: { $0 >= 0.5 * strongest }) else { return nil }
+            return CGFloat(first) / scale
+        }
+
         /// The first column, in points, right of `x` where the ink reaches a quarter of its densest column.
         func leading(from x: CGFloat) -> CGFloat? {
             let start = Int(x * scale)
@@ -572,6 +581,81 @@ struct SidebarRowRenderTests {
             abs(found.capitals) <= capitalsTolerance + bias && abs(found.icon) <= iconTolerance + bias,
             "a folder at \(size) with icons of \(iconSize) pt: the capitals are \(found.capitals) pt and the icon \(found.icon) pt off the middle of a row \(height) pt tall"
         )
+    }
+
+    /// Three folders, each inside the one before, with the first two open. An open folder draws an outline 2 pt
+    /// inside its parent's, so the middle folder's icon starts 2 pt and one indent right of the outer one. The inner
+    /// folder is shut and has no outline, so it starts one indent right of the middle one. At indent 0 the rows are
+    /// where they were before the setting existed.
+    @Test(arguments: [0.0, 8, 16])
+    func eachLevelOfAnOpenFolderMovesItsRowsInByTheFolderIndent(indent: Double) throws {
+        let settings = BrowserSettings.application
+        let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
+        settings.themeAdjustments["standard"] = ThemeAdjustment(folderIndent: indent)
+        settings.refreshTheme()
+        let outer = fixture.browser.createFolder(named: "Outer")
+        let middle = fixture.browser.createFolder(named: "Middle")
+        let inner = fixture.browser.createFolder(named: "Inner")
+        fixture.browser.move([.folder(inner.id)], into: middle)
+        fixture.browser.move([.folder(middle.id)], into: outer)
+        for folder in [outer, middle, inner] {
+            folder.color = .red
+        }
+        inner.isExpanded = false
+        let row = rowHeight
+        let spacing = SidebarMetrics.rowVerticalSpacing(settings: settings)
+        let outline = FolderSection.outlineInset
+        let total = 3 * row + 2 * spacing + 4 * outline
+        let middleTop = outline + row + spacing + outline
+        let centers = [
+            outline + row / 2,
+            middleTop + row / 2,
+            middleTop + row + spacing + row / 2,
+        ]
+
+        let ink = try readInk(
+            of: sidebar(FolderSection(folder: outer, depth: 0, context: fixture.context), height: total),
+            baseAt: CGPoint(x: rowWidth / 2 + 30, y: centers[0])
+        )
+        let edges = try centers.map { try #require(ink.leftEdge(in: ($0 - 3)...($0 + 3))) }
+
+        #expect(
+            abs((edges[1] - edges[0]) - (outline + indent)) <= 1,
+            "the middle folder starts \(edges[1] - edges[0]) pt right of the outer one at indent \(indent)"
+        )
+        #expect(
+            abs((edges[2] - edges[1]) - indent) <= 1,
+            "the inner folder starts \(edges[2] - edges[1]) pt right of the middle one at indent \(indent)"
+        )
+    }
+
+    @Test func aFolderIndentIsIgnoredInTheIconsOnlySidebar() throws {
+        let settings = BrowserSettings.application
+        let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
+        func edge(indent: Double) throws -> CGFloat {
+            settings.themeAdjustments["standard"] = ThemeAdjustment(folderIndent: indent)
+            settings.refreshTheme()
+            let outer = fixture.browser.createFolder(named: "Outer")
+            let inner = fixture.browser.createFolder(named: "Inner")
+            fixture.browser.move([.folder(inner.id)], into: outer)
+            outer.color = .red
+            inner.color = .red
+            inner.isExpanded = false
+            let width = SidebarMetrics.iconsWidth
+            let total = 2 * rowHeight + SidebarMetrics.rowVerticalSpacing(settings: settings) + 4 * FolderSection.outlineInset
+            let ink = try readInk(
+                of: sidebar(FolderSection(folder: outer, depth: 0, context: fixture.context), width: width, height: total, style: .icons),
+                baseAt: CGPoint(x: 1, y: 1)
+            )
+            let innerCenter = FolderSection.outlineInset + rowHeight + SidebarMetrics.rowVerticalSpacing(settings: settings)
+                + FolderSection.outlineInset + rowHeight / 2
+            return try #require(ink.leftEdge(in: (innerCenter - 3)...(innerCenter + 3)))
+        }
+        let none = try edge(indent: 0)
+        let wide = try edge(indent: 24)
+        #expect(abs(none - wide) <= 0.6, "the inner folder is at \(none) pt with no indent and \(wide) pt with 24 pt")
     }
 
     @Test func aFolderTitleStartsWhereATabTitleStarts() throws {
