@@ -92,7 +92,7 @@ struct CredentialSelectionModeTests {
         #expect(selection.menuTargets(for: ids[1]) == [ids[0], ids[1]], "read when the entry is chosen")
     }
 
-    private final class Changed: @unchecked Sendable {
+    private nonisolated final class Changed: @unchecked Sendable {
         var rows = Set<Int>()
     }
 

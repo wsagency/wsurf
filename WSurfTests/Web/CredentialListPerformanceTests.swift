@@ -91,7 +91,7 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
         return (host, window)
     }
 
-    private final class Touched: @unchecked Sendable {
+    private nonisolated final class Touched: @unchecked Sendable {
         var value = false
     }
 
