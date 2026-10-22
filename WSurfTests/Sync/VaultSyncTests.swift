@@ -462,9 +462,15 @@ struct VaultSyncTests {
         let erased = Rig()
         defer { erased.finish() }
         let (c, _) = try await erased.syncedMac(holding: accounts(1))
+        // The profile has a second vault this Mac never synced, whose zone another Mac made.
+        let neverSynced = UUID()
+        let neverSyncedZone = SyncZone.vault(profileID: erased.profile, vaultID: neverSynced)
+        erased.cloud.createZone(neverSyncedZone)
+        _ = try c.host.addVault(profile: erased.profile, vault: neverSynced, name: "Never synced here")
         c.sync.profileErased(erased.profile)
         try await c.pump()
         #expect(erased.cloud.zones[erased.zone] == nil)
+        #expect(erased.cloud.zones[neverSyncedZone] != nil, "erasing the profile deletes only the zones this Mac synced")
     }
 
     @Test func disablingLeavesICloudAndTheOtherMacsAlone() async throws {
@@ -853,6 +859,12 @@ struct VaultSyncTests {
         #expect(opened.account == account)
     }
 
+    /// Every spelling of `data` a reader could look for: the bytes, base64 at each offset, base64url, and hex.
+    private static func spellings(_ data: Data) -> [Data] {
+        let hex = data.map { String(format: "%02x", $0) }.joined()
+        return needles(data) + [Data(hex.utf8), Data(hex.uppercased().utf8)]
+    }
+
     @Test func syncStateAtRestHoldsNoPlaintext() async throws {
         let rig = Rig()
         defer { rig.finish() }
@@ -862,11 +874,29 @@ struct VaultSyncTests {
         try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
         try await a.pump()
         // A sealed change waits in A's outbox, and the sealed entries wait in B's inbox, when the files are read.
-        vault.edit(changing(account, password: "pending-\(UUID().uuidString)"))
+        let edited = changing(account, password: "pending-\(UUID().uuidString)")
+        vault.edit(edited)
         await a.wrote(vault)
+        #expect(rig.status(a) == .sending(1), "an outbox row exists")
         let (b, _) = try await rig.addedMac(unlock: false)
-        #expect(rig.status(b) == .waitingForUnlock(1))
+        #expect(rig.status(b) == .waitingForUnlock(1), "an inbox row exists")
+        // The sync base and the outbox row hold the hashes of the parts, which are plain SHA-256 of secrets.
+        for kept in [account, edited] {
+            let parts = try #require(VaultSyncCodec.syncable(kept)).parts
+            markers += [parts.password, parts.totp, parts.notes, parts.secureItems, parts.metadata, parts.sum]
+            markers += parts.passkeys.map(\.hash)
+        }
+        if let password = edited.password {
+            markers.append(Data(password.utf8))
+        }
 
+        func expectNoMarker(in bytes: Data, _ name: String) {
+            for marker in markers {
+                for needle in Self.spellings(marker) {
+                    #expect(bytes.range(of: needle) == nil, "a marker or a part hash is readable in \(name)")
+                }
+            }
+        }
         let directories = [a, b].compactMap { $0.host.syncDirectory(profileID: rig.profile) }
         #expect(directories.count == 2)
         for directory in directories {
@@ -874,13 +904,13 @@ struct VaultSyncTests {
                 .filter { $0.lastPathComponent.hasPrefix("Credentials.sync") }
             #expect(files.contains { $0.lastPathComponent == "Credentials.sync" })
             for file in files {
-                let bytes = try Data(contentsOf: file)
-                for marker in markers {
-                    for needle in Self.needles(marker) {
-                        #expect(bytes.range(of: needle) == nil, "a marker is readable in \(file.lastPathComponent)")
-                    }
-                }
+                expectNoMarker(in: try Data(contentsOf: file), file.lastPathComponent)
             }
+        }
+        // The app-level file the router keeps beside them: the engine's state and the cache of what other Macs synced.
+        for mac in [a, b] {
+            let state = SyncRouterState(engineState: Data("engine-state".utf8), vaults: mac.sync.state)
+            expectNoMarker(in: try JSONEncoder().encode(state), "iCloudSync.json")
         }
     }
 }
