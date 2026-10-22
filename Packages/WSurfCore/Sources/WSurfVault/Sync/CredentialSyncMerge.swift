@@ -34,10 +34,10 @@ public nonisolated struct PasskeyPart: Codable, Equatable, Sendable {
 }
 
 /// What an account is, part by part, as `CredentialContent.hash` sees it. These are plain SHA-256 of secrets: they are stored and
-/// uploaded only sealed (`VaultSyncCodec.sealParts`). Dates, events, the Apple observed bases, a passkey's `lastSignedAt` and files are
-/// not parts: they never raise an upload or a conflict, and they travel with the part they belong to. The items merged into an account
-/// (`mergedFrom`) are part of the metadata, by identity: a merge that changes nothing else must still reach the other Macs, or a later
-/// import there would find the entry that was merged away in the Trash and add it again.
+/// uploaded only sealed (`VaultSyncCodec.sealParts`). Dates, events, the Apple observed bases, the import trace, a passkey's
+/// `lastSignedAt` and files are not parts: they never raise an upload or a conflict, and they travel with the part they belong to. The
+/// entries merged into an account (`mergedFrom`: who they were and what they stood for, without their observed bases) are part of
+/// `metadata`, so a merge always reaches the other Macs, and with it what keeps an import from bringing a merged entry back.
 public nonisolated struct SyncParts: Codable, Equatable, Sendable {
     public var removed: Bool
     public var password: Data
@@ -95,21 +95,27 @@ public nonisolated struct SyncParts: Codable, Equatable, Sendable {
             totp: try CredentialContent.hash(.totp(account)),
             notes: try CredentialContent.hash(.note(account)),
             secureItems: try CredentialContent.hash(.secureItems(account)),
-            metadata: try metadataHash(account),
+            metadata: try metadata(of: account),
             passkeys: passkeys.sorted { $0.identity.lexicographicallyPrecedes($1.identity) }
         )
     }
 
-    /// The metadata hash with the identity of every item merged into the account, in a fixed order. The other app's observed bases that
-    /// come with each link are not in it.
-    private static func metadataHash(_ account: CredentialAccount) throws -> Data {
+    /// `CredentialContent.hash(.metadata)`, and, for an account that entries were merged into, SHA-256 of that hash and of each merged
+    /// entry's id, exchange ids and trace (an account without any keeps the plain hash, so its base does not change).
+    private static func metadata(of account: CredentialAccount) throws -> Data {
+        let content = try CredentialContent.hash(.metadata(account))
+        guard let links = account.mergedFrom else { return content }
         var writer = StoreWriter()
-        writer.bytes(try CredentialContent.hash(.metadata(account)))
-        let links = (account.mergedFrom ?? []).sorted { $0.accountID.uuidString < $1.accountID.uuidString }
+        writer.bytes(content)
         writer.array(links) { writer, link in
             writer.uuid(link.accountID)
             writer.bytes(link.exchangeAccountID)
             writer.bytes(link.exchangeItemID)
+            writer.optional(link.trace) { writer, trace in
+                writer.array(trace.logins) { $0.bytes($1) }
+                writer.optional(trace.password) { $0.bytes($1) }
+                writer.optional(trace.note) { $0.bytes($1) }
+            }
         }
         return Data(SHA256.hash(data: writer.data))
     }
@@ -170,6 +176,9 @@ public nonisolated enum SyncDecision: Equatable, Sendable {
     case write(CredentialAccount, SyncBase)
     /// Move the whole local account, with its History, to Trash.
     case moveToTrash(SyncBase)
+    /// An entry removed on another device that this Mac never held: keep what it stood for (a tombstone with its trace), so an import
+    /// here does not bring it back.
+    case remember(ImportTrace, SyncBase)
     /// Wait for the person. The incoming item is applied and uploaded by nothing until `resolve`.
     case review(SyncConflictKind, parts: [SyncPart])
 }
@@ -300,7 +309,12 @@ public nonisolated enum CredentialSyncMerge {
         let incoming = try item.parts()
         let accepted = SyncBase(version: item.version, parts: incoming)
         guard let account = item.account else {
-            guard let local else { return .keep(accepted) }
+            guard let local else {
+                if base == nil, let trace = item.trace, !index.wasRemoved(item.accountID) {
+                    return .remember(trace, accepted)
+                }
+                return .keep(accepted)
+            }
             // Files are never synced, so an entry that has some holds the only copy of them: its move to Trash is the owner's choice.
             let hasFiles = local.attachments?.isEmpty == false
             if let base, !base.parts.removed, !hasFiles, try SyncParts.of(local).sum == base.parts.sum {
@@ -363,8 +377,8 @@ public nonisolated enum CredentialSyncMerge {
 
     /// `local` with what `taking` names copied from `incoming`. Always the local one's: `id`, `attachments`, `createdAt`,
     /// `modifiedAt`, `migratedAt` and every passkey kept (so `lastSignedAt` stays local). Each part brings the fields that belong to it:
-    /// the login its events and observed base, the code likewise, the items their observed base, and the name and websites the
-    /// exchange metadata, the exchanger's ids and the merged items.
+    /// the login its events and observed base, the code likewise, the items their observed base, the login and the notes the import
+    /// trace, and the name and websites the exchange metadata, the exchanger's ids and the merged items.
     public static func merge(local: CredentialAccount, incoming: CredentialAccount, taking: SyncTaking) -> CredentialAccount {
         var result = local
         for part in taking.parts {
@@ -375,12 +389,14 @@ public nonisolated enum CredentialSyncMerge {
                 result.basicAuthenticationMetadata = incoming.basicAuthenticationMetadata
                 result.passwordEvents = incoming.passwordEvents
                 result.passwordBase = incoming.passwordBase
+                result.importTrace = incoming.importTrace
             case .totp:
                 result.totp = incoming.totp
                 result.totpEvents = incoming.totpEvents
                 result.totpBase = incoming.totpBase
             case .notes:
                 result.notes = incoming.notes
+                result.importTrace = incoming.importTrace
             case .secureItems:
                 result.secureItems = incoming.secureItems
                 result.secureItemsBase = incoming.secureItemsBase
@@ -465,6 +481,8 @@ public nonisolated enum CredentialSyncMerge {
 
     private static func judged(_ account: CredentialAccount, next: SyncBase, index: SyncLocalIndex) -> SyncDecision {
         guard acceptable(account) else { return .review(.refused, parts: []) }
+        // An entry merged into this one still holds its own identity here until its removal is applied. That is a clash for now: the drain
+        // sets such a record aside until the rest of the inbox is in (`VaultSync.drain`), so the order the two records arrive in does not matter.
         let clash = identities(of: account).contains { !index.holders(ofItem: $0).subtracting([account.id]).isEmpty }
         return clash ? .review(.ambiguous, parts: []) : .write(account, next)
     }

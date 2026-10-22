@@ -37,6 +37,22 @@ extension ProfileVaultStore {
         return PurgeReceipt(removedEntries: removed, revision: outcome.receipt.revision)
     }
 
+    /// Keeps what entries removed on another device stood for (`ImportTrace`, by account id) as tombstones in the vault's Trash, like the
+    /// ones a purge leaves: ids and keyed digests only. For entries this Mac never held, so it has no Trash entry or tombstone of its own
+    /// to keep an import from bringing them back. Nothing live changes; no trace writes nothing.
+    public func rememberRemoved(vaultID: UUID, traces: [UUID: ImportTrace], using access: VaultAccess) async throws -> VaultCommitReceipt {
+        let intent = CommitIntent(vaultID: vaultID, access: access, expectedRevision: nil, cause: nil, isCommit: false)
+        return try await run(intent, ledgerOnDemand: false) { db, request, _ in
+            let (transaction, _) = try Self.begin(db, request)
+            guard !traces.isEmpty else {
+                return CommitOutcome(receipt: VaultCommitReceipt(revision: transaction.opened.head.revision), entry: nil, trashEntry: nil)
+            }
+            try transaction.verifyHistories()
+            try transaction.remember(traces)
+            return try transaction.finish()
+        }.receipt
+    }
+
     /// The write transaction's body (`ledgerAttached` is always true: a purge removes history). Nothing purged writes nothing.
     nonisolated static func purging(
         _ db: Database, _ request: CommitRequest, requested: [UUID]?
@@ -81,7 +97,8 @@ nonisolated extension CommitTransaction {
     private func purgeEntry(_ entry: StoredTrashEntry, state: inout TrashState, group: inout JournalGroup) throws {
         let vaultID = state.side.vaultID
         let body = entry.body
-        for tombstone in Self.tombstones(of: body, entryID: entry.row.recordID, at: wall) {
+        let memory = ImportMemoryKey.derive(dek: grant.dek, profileID: ids.profileID, vaultID: source.vaultID)
+        for tombstone in Self.tombstones(of: body, entryID: entry.row.recordID, at: wall, memory: memory) {
             let aad = RowAAD(
                 ids: ids, vaultID: vaultID, recordID: UUID(), kind: .tombstone, ownerID: body.ownerID, subject: body.subject ?? .account, version: 1
             )
@@ -115,8 +132,9 @@ nonisolated extension CommitTransaction {
     }
 
     /// What survives: identity only. A whole account leaves one account-level tombstone and one per passkey (each carries one
-    /// `credentialID`); a credential leaves one. No password, TOTP seed or key material is copied.
-    private static func tombstones(of body: TrashEntryBody, entryID: UUID, at date: Date) -> [TombstoneBody] {
+    /// `credentialID`); a credential leaves one. No password, TOTP seed or key material is copied: the account-level tombstone of a whole
+    /// account keeps what it stood for as keyed digests (`ImportMemoryKey.removedTrace`), so an import does not bring it back.
+    private static func tombstones(of body: TrashEntryBody, entryID: UUID, at date: Date, memory: ImportMemoryKey) -> [TombstoneBody] {
         func tombstone(accountID: Data?, itemID: Data?, passkey: WebsitePasskey?) -> TombstoneBody {
             TombstoneBody(
                 entryID: entryID, purgedAt: date, scope: body.scope, ownerID: body.ownerID, subject: body.subject,
@@ -125,11 +143,33 @@ nonisolated extension CommitTransaction {
         }
         if let snapshot = body.snapshot {
             let ids = (snapshot.exchangeAccountID, snapshot.exchangeItemID)
-            return [tombstone(accountID: ids.0, itemID: ids.1, passkey: nil)]
+            var account = tombstone(accountID: ids.0, itemID: ids.1, passkey: nil)
+            account.trace = memory.removedTrace(of: snapshot)
+            return [account]
                 + snapshot.passkeys.map { tombstone(accountID: ids.0, itemID: ids.1, passkey: $0) }
         }
         let passkey = body.subject == .passkey ? body.credentialValue.flatMap { try? JSONDecoder().decode(WebsitePasskey.self, from: $0) } : nil
         return [tombstone(accountID: body.exchangeAccountID, itemID: body.exchangeItemID, passkey: passkey)]
+    }
+
+    /// One account-level tombstone per trace, journalled `add` on the Trash side.
+    func remember(_ traces: [UUID: ImportTrace]) throws {
+        guard var state = trash else { throw integrity }
+        var group = JournalGroup(transfer: nil)
+        for (accountID, trace) in traces.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
+            try trace.validate()
+            let tombstone = TombstoneBody(
+                entryID: UUID(), purgedAt: wall, scope: .account, ownerID: accountID, subject: nil, passkeyCredentialID: nil, rpID: nil,
+                exchangeAccountID: nil, exchangeItemID: nil, trace: trace
+            )
+            let aad = RowAAD(ids: ids, vaultID: state.side.vaultID, recordID: UUID(), kind: .tombstone, ownerID: accountID, subject: .account, version: 1)
+            let plaintext = try CredentialContent.canonicalJSON(tombstone)
+            guard plaintext.count <= StoreFormat.historyRowBytes else { throw CredentialStoreError.limit(.historyRow) }
+            try group.add(try putSealed(plaintext, aad: aad, key: state.side.key), to: &state.side, db: db, ids: ids)
+            state.side.counts.tombstone += 1
+        }
+        try group.finish(&state.side, db: db, ids: ids)
+        trash = state
     }
 
     /// The next `trashEntry` id after `previous` in `recordID` order: one statement, finished before the caller deletes.

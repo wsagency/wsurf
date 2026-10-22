@@ -155,6 +155,14 @@ final class FakeVault {
         )
     }
 
+    /// Tombstones for entries removed elsewhere that this vault never held, as the real store keeps them.
+    func remember(lease: UInt64, traces: [UUID: ImportTrace]) throws -> UInt64 {
+        guard !isLocked, lease == self.lease else { throw CredentialVaultError.expired }
+        tombstones.formUnion(traces.keys)
+        revision += 1
+        return revision
+    }
+
     func commit(lease: UInt64, writes: [AccountWrite], removing: [UUID: AccountStamp]) throws -> UInt64 {
         attempts.append(writes.map(\.accountID) + removing.keys.sorted { $0.uuidString < $1.uuidString })
         guard !isLocked, lease == self.lease else { throw CredentialVaultError.expired }
@@ -323,6 +331,11 @@ final class FakeVaultHost: VaultSyncHost {
     func commit(profileID: UUID, vaultID: UUID, lease: UInt64, writes: [AccountWrite], removing: [UUID: AccountStamp]) async throws -> UInt64 {
         guard let vault = vault(profile: profileID, vault: vaultID) else { throw CredentialVaultError.missingVault }
         return try vault.commit(lease: lease, writes: writes, removing: removing)
+    }
+
+    func remember(profileID: UUID, vaultID: UUID, lease: UInt64, traces: [UUID: ImportTrace]) async throws -> UInt64 {
+        guard let vault = vault(profile: profileID, vault: vaultID) else { throw CredentialVaultError.missingVault }
+        return try vault.remember(lease: lease, traces: traces)
     }
 }
 

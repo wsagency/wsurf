@@ -232,4 +232,7 @@ public protocol VaultSyncHost: AnyObject {
     func commit(
         profileID: UUID, vaultID: UUID, lease: UInt64, writes: [AccountWrite], removing: [UUID: AccountStamp]
     ) async throws -> UInt64
+    /// Keeps, under `lease`, what entries removed on another device that this Mac never held stood for (`ImportTrace`, by account), so
+    /// an import here does not bring them back. Nothing live changes. Returns the vault's new revision.
+    func remember(profileID: UUID, vaultID: UUID, lease: UInt64, traces: [UUID: ImportTrace]) async throws -> UInt64
 }

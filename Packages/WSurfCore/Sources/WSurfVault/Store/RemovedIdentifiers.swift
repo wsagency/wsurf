@@ -12,8 +12,8 @@ import Foundation
 /// bytes, `CredentialExchangeCodec.externalID`) that live accounts and exports use, then matches exactly.
 public nonisolated struct RemovedIdentifier: Equatable, Sendable {
     public let entryID: UUID
-    let isTombstone: Bool
-    let accountID: UUID
+    public let isTombstone: Bool
+    public let accountID: UUID
     let exchangeAccountID: Data?
     let exchangeItemID: Data?
     let passkeyCredentialID: Data?
@@ -21,8 +21,29 @@ public nonisolated struct RemovedIdentifier: Equatable, Sendable {
     /// When the entry went to Trash, or, for a tombstone, when it was purged. A date only, read from the body that is opened for the
     /// identifiers anyway; the import report shows it and nothing else uses it.
     public var removedAt: Date?
+    /// What the removed account stood for (`ImportMemoryKey.removedTrace`): on the account-level row only, `nil` on a passkey's row and
+    /// for a credential removed from an account that stays. Keyed digests, never a value: read from the Trash entry's snapshot, or kept
+    /// in the tombstone when it was purged.
+    public var trace: ImportTrace?
+
+    /// The removed credential had no item of another app (it was saved here or came from a file), so no exporter id names it.
+    public var hasNoExporterItem: Bool {
+        exchangeItemID == nil
+    }
 }
 
 public nonisolated struct RemovedIdentifiers: Equatable, Sendable {
     public let items: [RemovedIdentifier]
+
+    /// What each removed account stood for (its Trash entry's trace before a tombstone's), by account id: only a trace with a login,
+    /// which an import could match.
+    public var traces: [UUID: ImportTrace] {
+        var found: [UUID: ImportTrace] = [:]
+        for item in items.sorted(by: { !$0.isTombstone && $1.isTombstone }) where item.passkeyCredentialID == nil {
+            if found[item.accountID] == nil, let trace = item.trace, !trace.logins.isEmpty {
+                found[item.accountID] = trace
+            }
+        }
+        return found
+    }
 }

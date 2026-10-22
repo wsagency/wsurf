@@ -511,6 +511,21 @@ Unverified until the user reports: Gate B (G1–G5), and G6's install result is 
 
 ## 18. Status
 
+**Amendment (2026-10-22b, requested by the owner): import memory.** The owner asked that importing the same or a newer Passwords
+export never bring back what was deleted or merged, and that only changes come in. A credential keeps what the last file import
+brought for it (`importTrace`: its logins, password and note) only as HMAC-SHA256 digests under an import memory key that HKDF-SHA256
+derives from the vault's DEK with its own label, the profile id and the vault id, so every device of the vault derives the same key
+and no value, plain hash or index exists anywhere. A merge's link to each absorbed credential keeps its trace (written by the store
+in the merge's commit), a whole account's Trash entry yields one from its snapshot, and its account-level tombstone keeps it after a
+purge. A file row the vault holds by login is classified like a bound exchange item (§13.3: unchanged, changed in the file only,
+changed here only, both changed); a row of a merged-away entry is the survivor's (unchanged: left out; changed: compared with the
+survivor); a row of a deleted entry is `previouslyRemoved`, as is a system item that no id matches but whose login the vault
+remembers. Both stay out unless the user imports them anyway. Sync (amendment below): the trace travels with the login and notes and
+is not a part; a merge (`mergedFrom` ids and traces, never their observed bases) is part of `metadata`; a removed `Item` may carry
+the removed entry's trace, sealed like any value, entries removed before the vault synced are sent once as removed states, and a
+device that never held such an entry keeps its trace as a tombstone. No schema, head, AAD, wrapper or purge rule changes; an older
+build ignores the new fields (an edit there drops the trace: degraded memory, not lost data).
+
 **Amendment (2026-10-22, accepted by the owner): iCloud sync of sealed vault data (iCloud phase 3).** The owner accepted syncing a
 vault between their own devices through their own private CloudKit database, only after the two-Mac PRF gate passes, keyed only by
 the synced `wsurf.app` unlock passkey. This amendment changes §1 and §6.6 and adds the rules below. The store format, schema, AADs,

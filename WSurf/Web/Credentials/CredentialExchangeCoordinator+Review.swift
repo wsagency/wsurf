@@ -165,7 +165,8 @@ extension CredentialExchangeCoordinator {
                     omissions: omissions[candidate.id] ?? [],
                     effect: effect,
                     action: nil,
-                    duplicate: duplicates[candidate.id]
+                    duplicate: duplicates[candidate.id],
+                    mergedInto: context.mergedInto[candidate.id].map { storedTitles[$0] ?? "" }
                 )
             }
             var review = CredentialImportReview(
@@ -439,7 +440,7 @@ extension CredentialExchangeCoordinator {
         do {
             _ = try Self.plan(
                 live.preview, choices: trial, required: live.index.mustDecide, duplicates: live.index.duplicates,
-                inputsValidated: live.inputsValidated
+                inputsValidated: live.inputsValidated, traces: live.context.traces
             )
         } catch CredentialVaultError.invalidData, CredentialVaultError.duplicateIdentifier {
             throw CredentialExchangeCoordinatorError.invalidChoice

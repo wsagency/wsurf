@@ -391,6 +391,104 @@ struct VaultSyncDeviceTests {
         }
     }
 
+    /// Case (f) of importing a Passwords export again: a merge and a delete made on A reach B, and an import of the same export on B
+    /// brings neither back, also once B emptied its Trash.
+    @Test func aMergeAndADeleteSyncedInKeepAnImportOnTheOtherMacFromBringingThemBack() async throws {
+        try await withPair { pair in
+            let coordinator = CredentialExchangeCoordinator()
+            let owner = UUID()
+            let file = CredentialCSV.encode([
+                ["Title", "URL", "Username", "Password", "Notes", "OTPAuth"],
+                ["Ada", "https://ada.test/login", "ada", "pw", "", ""],
+                ["Ada", "https://ada.test/login", "ada (1)", "pw", "", ""],
+                ["Grace", "https://grace.test/login", "grace", "pw-g", "", ""],
+            ])
+            try await coordinator.beginCSVImport(file, into: pair.managerA, owner: owner) { _ in }
+            _ = try await coordinator.commitImport(into: pair.managerA, owner: owner)
+            try await pair.enableA()
+            try await pair.addToB()
+            try await pair.unlockB()
+            try await pair.converge()
+            let managerB = try #require(pair.managerB)
+            #expect(try await pair.accounts(managerB).count == 3)
+
+            // A merges the copy into ada and deletes grace.
+            let onA = try await pair.managerA.snapshot()
+            let ada = try #require(onA.accounts.first { $0.username == "ada" })
+            let copy = try #require(onA.accounts.first { $0.username == "ada (1)" })
+            let grace = try #require(onA.accounts.first { $0.username == "grace" })
+            let picks = try #require(CredentialMerge.defaultPicks(for: [ada, copy], survivor: ada.id))
+            let merged = try CredentialMerge.merged([ada, copy], picks: picks)
+            let epoch = try #require(pair.managerA.authorizationEpoch)
+            let mergedRevision = try await pair.managerA.commit(
+                onA.accounts.compactMap { $0.id == copy.id ? nil : ($0.id == ada.id ? merged : $0) }, expectedRevision: onA.revision,
+                authorizedEpoch: epoch, cause: "merge", changing: [ada.id, copy.id], merging: [copy.id: ada.id]
+            ).revision
+            _ = try await pair.managerA.delete(.account(grace.id), expectedRevision: mergedRevision, authorizedEpoch: epoch)
+            await pair.wrote(pair.syncA, pair.clockA)
+            try await pair.converge()
+            let onB = try await pair.accounts(managerB)
+            #expect(onB.count == 1 && onB[ada.id]?.mergedFrom?.map(\.accountID) == [copy.id], "the merge reached B whole")
+
+            // B imports the same export: nothing comes back, while the entries are in B's Trash and once it is emptied.
+            for purged in [false, true] {
+                if purged {
+                    _ = try await managerB.purge(entryIDs: [], emptyAll: true, in: VaultManagerFixture.anchor())
+                }
+                try await coordinator.beginCSVImport(file, into: managerB, owner: owner) { _ in }
+                let review = try #require(coordinator.importReview(for: managerB, owner: owner))
+                #expect(review.isResolved && review.tally.new == 0 && review.tally.writes == 0, "purged: \(purged)")
+                #expect(review.candidates.count == 2 && review.candidates.allSatisfy { $0.group == .skipped }, "purged: \(purged)")
+                coordinator.cancelImport(for: managerB, owner: owner)
+            }
+            #expect(try await pair.accounts(managerB).count == 1)
+        }
+    }
+
+    /// The same for a Mac that adds the vault after the merge and the delete, made before the vault synced at all: it never held the
+    /// entries, and still an import there brings neither back.
+    @Test func aMacThatAddsTheVaultLaterKeepsAnImportFromBringingBackWhatWasMergedOrDeletedBefore() async throws {
+        try await withPair { pair in
+            let coordinator = CredentialExchangeCoordinator()
+            let owner = UUID()
+            let file = CredentialCSV.encode([
+                ["Title", "URL", "Username", "Password", "Notes", "OTPAuth"],
+                ["Ada", "https://ada.test/login", "ada", "pw", "", ""],
+                ["Ada", "https://ada.test/login", "ada (1)", "pw", "", ""],
+                ["Grace", "https://grace.test/login", "grace", "pw-g", "", ""],
+            ])
+            try await coordinator.beginCSVImport(file, into: pair.managerA, owner: owner) { _ in }
+            _ = try await coordinator.commitImport(into: pair.managerA, owner: owner)
+            let onA = try await pair.managerA.snapshot()
+            let ada = try #require(onA.accounts.first { $0.username == "ada" })
+            let copy = try #require(onA.accounts.first { $0.username == "ada (1)" })
+            let grace = try #require(onA.accounts.first { $0.username == "grace" })
+            let picks = try #require(CredentialMerge.defaultPicks(for: [ada, copy], survivor: ada.id))
+            let merged = try CredentialMerge.merged([ada, copy], picks: picks)
+            let epoch = try #require(pair.managerA.authorizationEpoch)
+            let mergedRevision = try await pair.managerA.commit(
+                onA.accounts.compactMap { $0.id == copy.id ? nil : ($0.id == ada.id ? merged : $0) }, expectedRevision: onA.revision,
+                authorizedEpoch: epoch, cause: "merge", changing: [ada.id, copy.id], merging: [copy.id: ada.id]
+            ).revision
+            _ = try await pair.managerA.delete(.account(grace.id), expectedRevision: mergedRevision, authorizedEpoch: epoch)
+
+            try await pair.enableA()
+            try await pair.addToB()
+            try await pair.unlockB()
+            try await pair.converge()
+            let managerB = try #require(pair.managerB)
+            #expect(try await pair.accounts(managerB).keys.sorted() == [ada.id])
+            #expect(try await managerB.trashPage(after: nil).items.isEmpty, "B never held them")
+
+            try await coordinator.beginCSVImport(file, into: managerB, owner: owner) { _ in }
+            let review = try #require(coordinator.importReview(for: managerB, owner: owner))
+            #expect(review.isResolved && review.tally.new == 0 && review.tally.writes == 0)
+            #expect(review.candidates.count == 2 && review.candidates.allSatisfy { $0.group == .skipped })
+            coordinator.cancelImport(for: managerB, owner: owner)
+            #expect(pair.statusA == .synced && pair.statusB == .synced)
+        }
+    }
+
     @Test func syncNeverPromptsOrExtendsTheLease() async throws {
         try await withPair { pair in
             let target = pair.account("one")

@@ -250,6 +250,8 @@ nonisolated struct CredentialImportReview: Sendable {
         var action: ItemAction?
         /// The saved credential that already holds this item's login or passkey, if there is one. Fixed when the review is staged.
         var duplicate: Duplicate?
+        /// The title of the saved credential this item was merged into before, when it was (`ImportTrace`). Fixed when the review is staged.
+        var mergedInto: String?
         var id: UUID {
             summary.id
         }

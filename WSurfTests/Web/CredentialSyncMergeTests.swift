@@ -83,7 +83,7 @@ private extension SyncDecision {
 
     nonisolated var recorded: SyncBase? {
         switch self {
-        case .keep(let base), .write(_, let base), .moveToTrash(let base):
+        case .keep(let base), .write(_, let base), .moveToTrash(let base), .remember(_, let base):
             base
         case .ignore, .review:
             nil
