@@ -15,6 +15,8 @@ nonisolated struct PendingVaultDeletion: Equatable, Sendable {
         let earlierVersions: Int
         /// Websites excluded from save suggestions ("Never for This Site"). They keep a vault from counting as empty.
         var excludedSites = 0
+        /// Input History entries kept with this vault: they go with it, so they keep it from counting as empty too.
+        var inputHistory = 0
     }
 
     let vaultID: UUID
@@ -83,12 +85,16 @@ extension CredentialSettingsModel {
             let elsewhere = Set(enrolled.filter { $0.vault.vaultID != manager.vaultID }.map { $0.unlock.credentialID })
             let ownPasskey = manager.unlockCredentials.contains { !elsewhere.contains($0.credentialID) }
             outgoing = (manager.vaultID, DeletedVault(ordinal: listing.ordinal, leavesUnlockPasskey: ownPasskey))
-            do {
-                try await manager.deleteEmptyVault(authorizedEpoch: epoch)
-                emptied = true
-                return
-            } catch CredentialStoreError.vaultNotEmpty {
-                // Something is in it: the two confirmations below.
+            // Input History kept with this vault is deleted with it, so the sheet must name it first.
+            let inputHistory = await InputHistory.shared.entries(keptWith: manager.vaultID, in: self.profile)
+            if inputHistory == 0 {
+                do {
+                    try await manager.deleteEmptyVault(authorizedEpoch: epoch)
+                    emptied = true
+                    return
+                } catch CredentialStoreError.vaultNotEmpty {
+                    // Something is in it: the two confirmations below.
+                }
             }
             let counts = try await manager.historyCounts()
             // Read now, not taken from the page: what was saved since the page was loaded must be in the sheet's counts.
@@ -106,7 +112,8 @@ extension CredentialSettingsModel {
                     codes: snapshot.accounts.filter { $0.totp != nil }.count,
                     inTrash: counts.trash.trashEntry,
                     earlierVersions: counts.live.revision + counts.trash.revision,
-                    excludedSites: snapshot.blockedPasswordOrigins.count
+                    excludedSites: snapshot.blockedPasswordOrigins.count,
+                    inputHistory: inputHistory
                 ),
                 fallback: fallback,
                 preMigrationBackup: listing.ordinal == 1 ? manager.preMigrationBackup : nil,

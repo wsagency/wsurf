@@ -377,6 +377,14 @@ actor ProfileVaultStore {
         }
     }
 
+    /// Input History's key for `vaultID` under its current grant: HKDF-SHA256 of the DEK, bound to the profile and the vault. Only this
+    /// subkey leaves the store, never the DEK. Agents and the MCP server never reach it (`InputHistoryIsolationTests`).
+    func inputHistoryKey(vaultID: UUID, using access: VaultAccess) throws -> InputHistoryVaultKey {
+        let grant = try authorizedGrant(vaultID, access)
+        let info = Data("wsurf.input-history.v2|\(profileID.uuidString)|\(vaultID.uuidString)".utf8)
+        return InputHistoryVaultKey(vaultID: vaultID, key: HKDF<SHA256>.deriveKey(inputKeyMaterial: grant.dek, info: info, outputByteCount: 32))
+    }
+
     /// Permanent lifecycle guard, then drops every grant; idempotent. An operation that has not yet taken the operation lock refuses once
     /// `closed` is set, but only after its lock wait ends: it acquires the flock and gives it back at once, or `lockWait` runs out with
     /// `storeBusy`. An operation already holding the lock runs to completion, so a caller about to erase the directory must first drain

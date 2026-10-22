@@ -163,6 +163,11 @@ final class InputHistoryListModel {
             nil
         case InputHistoryError.keysUnusable:
             String(localized: "Input History couldn’t be opened, so it was cleared.")
+        case InputHistoryError.vaultLocked:
+            // ponytail-merge: P3 named "Settings › Credentials"; with P1 the vault and its Unlock live on Settings › Autofill.
+            String(localized: "Input History is kept with your vault. Unlock it in Settings › Autofill, then show the entries again.")
+        case InputHistoryError.vaultDeleted:
+            String(localized: "Input History was cleared because the vault it was kept with was deleted.")
         case InputHistoryError.unavailable:
             String(localized: "Another copy of WSurf is keeping Input History.")
         default:

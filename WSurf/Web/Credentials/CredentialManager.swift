@@ -750,6 +750,7 @@ final class CredentialManager {
         unlockCredentials = []
         lock(reason: .manual)
         AutofillSaveCoordinator.shared.vaultAccessEnded(profileID: profile.id)
+        InputHistory.shared.vaultDeleted(vaultID, in: profile)
     }
 
     /// Synchronous revocation is the security boundary; actor cleanup is conditional on the exact
@@ -890,5 +891,13 @@ final class CredentialManager {
         pending.removeAll { $0 === access }
         let store = store
         Task { await store.lock(ifUsing: access) }
+    }
+}
+
+extension CredentialManager {
+    /// Input History's key for this vault, under the current lease: HKDF of the vault's key, never the key itself. Only the Input History
+    /// list asks for it; agents and the MCP server never do (`InputHistoryIsolationTests`).
+    func inputHistoryKey() async throws -> InputHistoryVaultKey {
+        try await reading { access in try await store.inputHistoryKey(vaultID: vaultID, using: access) }
     }
 }

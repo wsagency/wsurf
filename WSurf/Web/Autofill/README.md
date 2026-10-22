@@ -203,6 +203,15 @@ again. It is off by default. Source behavior:
   recording never prompts and cannot read back. The private key needs Touch ID
   or the Mac password. Files are excluded from backup and never synced; both
   keys are deleted when the store empties.
+- Once the profile has a vault, Input History is kept with it, as a
+  vault-keyed inbox outside the vault's records (no History, Trash or export).
+  The first opening with the default vault unlocked binds it: an inbox key,
+  sealed under `HKDF(DEK, "wsurf.input-history.v2|profile|vault")`
+  (`ProfileVaultStore.inputHistoryKey`), and the private key resealed to that
+  inbox, checked before and after the write (the raw key is put back on any
+  failure). From then on, opening needs that vault unlocked plus Touch ID, and
+  recording still never prompts, also while the vault is locked. Deleting the
+  vault deletes the entries; Delete Vault names them first.
 - The list decrypts only on Show Entries, masks passwords until one row is
   revealed, copies with the concealed pasteboard type for 60 s, and locks two
   minutes after the page closes or on any vault lock event.

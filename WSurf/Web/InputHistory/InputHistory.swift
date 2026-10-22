@@ -9,11 +9,16 @@ import Observation
 /// - Counts come from a directory listing and need no authentication. Decrypted entries exist only in `unlocked`.
 /// - Entries are locked again two minutes after the list closes, and on every vault lock event (`CredentialManager.lock` and
 ///   `lockAll`), which also reaches profiles that have no vault.
+/// - Once the profile has a vault, the entries are kept with it (`InputHistoryStore`): opening them needs that vault unlocked, and
+///   deleting it deletes them.
 /// - Nothing outside the browser's own UI may read this type. The agent and the MCP server never do (`InputHistoryIsolationTests`).
 @MainActor
 @Observable
 final class InputHistory {
     typealias StoreFactory = @MainActor (_ profile: Profile, _ ownsSession: Bool) -> InputHistoryStore?
+    /// The key of the vault the entries are kept with (`bound`), or of the vault that will keep them when `bound` is nil. Nil when no
+    /// vault can keep them yet. It never prompts.
+    typealias VaultKeySource = @MainActor (_ profile: Profile, _ bound: UUID?) async throws -> InputHistoryVaultKey?
 
     /// Tests replace it to see the hooks that reach it.
     static var shared = InputHistory()
@@ -30,6 +35,7 @@ final class InputHistory {
     @ObservationIgnored private let clock: any Clock<Duration>
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private let makeStore: StoreFactory
+    @ObservationIgnored private let vaultKey: VaultKeySource
     @ObservationIgnored private var stores: [UUID: InputHistoryStore] = [:]
     @ObservationIgnored private var retired: Set<UUID> = []
     @ObservationIgnored private var purgeTimers: [UUID: Task<Void, Never>] = [:]
@@ -45,12 +51,14 @@ final class InputHistory {
         ownsSession: Bool = AppDatabase.ownsSession,
         clock: any Clock<Duration> = ContinuousClock(),
         now: @escaping @Sendable () -> Date = { Date() },
-        makeStore: @escaping StoreFactory = InputHistory.liveStore
+        makeStore: @escaping StoreFactory = InputHistory.liveStore,
+        vaultKey: @escaping VaultKeySource = InputHistory.liveVaultKey
     ) {
         self.ownsSession = ownsSession
         self.clock = clock
         self.now = now
         self.makeStore = makeStore
+        self.vaultKey = vaultKey
     }
 
     /// `<profile support directory>/InputHistory`. The private profile has none.
@@ -58,8 +66,8 @@ final class InputHistory {
         profile.supportDirectory.appendingPathComponent("InputHistory", isDirectory: true)
     }
 
-    /// Opening an entry needs the private key, which asks for Touch ID or the Mac password. Sealing needs only the public key. Both
-    /// items are this-device-only and never sync.
+    /// Opening an entry needs the private key, which asks for Touch ID or the Mac password, and once a vault keeps it that vault's key.
+    /// Sealing needs only the public key. The items are this-device-only and never sync.
     nonisolated static let privateKeyStorage = AutofillKeychainStorage(access: .userPresence)
     nonisolated static let publicKeyStorage = AutofillKeychainStorage(access: .whenUnlocked)
 
@@ -73,6 +81,31 @@ final class InputHistory {
             publicKeys: publicKeyStorage,
             ownsSession: ownsSession
         )
+    }
+
+    /// The live `VaultKeySource`. Not kept with a vault yet: the default vault, the one autofill and saving use, keeps it from now on.
+    /// A locked vault is unlocked in Settings › Autofill; this asks for no passkey.
+    static func liveVaultKey(for profile: Profile, bound: UUID?) async throws -> InputHistoryVaultKey? {
+        let store = try CredentialManager.store(for: profile)
+        guard case .provisional = await store.openState() else {
+            // No vault yet, or one still to upgrade or repair in Settings: today's key, unless a vault already keeps it.
+            guard bound == nil else { throw InputHistoryError.vaultLocked }
+            return nil
+        }
+        let listing = try await store.listing()
+        let vaultID: UUID
+        if let bound {
+            guard listing.contains(where: { $0.vaultID == bound }) else { throw InputHistoryError.vaultDeleted }
+            vaultID = bound
+        } else if let first = listing.min(by: { $0.ordinal < $1.ordinal }) {
+            let preferred = await store.defaultVaultID()
+            vaultID = listing.first { $0.vaultID == preferred }?.vaultID ?? first.vaultID
+        } else {
+            return nil
+        }
+        let manager = try CredentialManager.forVault(profile, vaultID: vaultID)
+        guard manager.isUnlocked else { throw InputHistoryError.vaultLocked }
+        return try await manager.inputHistoryKey()
     }
 
     // MARK: - Stores
@@ -114,8 +147,8 @@ final class InputHistory {
 
     // MARK: - Opening
 
-    /// Decrypts the profile's entries. This is what asks for Touch ID or the Mac password. A lock that happens while the prompt
-    /// is open discards the result.
+    /// Decrypts the profile's entries. This is what asks for Touch ID or the Mac password, after the key of the vault they are kept
+    /// with was found (`vaultKey`). With nothing to open, the vault is not asked for. A lock that happens meanwhile discards the result.
     func unlock(_ profile: Profile) async throws {
         guard !profile.isPrivate else { throw InputHistoryError.privateBrowsing }
         guard let store = store(for: profile) else { throw InputHistoryError.unavailable }
@@ -123,7 +156,22 @@ final class InputHistory {
         let generation = generations[id, default: 0]
         relockTimers.removeValue(forKey: id)?.cancel()
         await drain(profileID: id)
-        let entries = try await store.unlock(reason: String(localized: "Open Input History in WSurf."))
+        var vault: InputHistoryVaultKey?
+        if await store.count() > 0 {
+            let bound = try await store.boundVault()
+            do {
+                vault = try await vaultKey(profile, bound)
+            } catch InputHistoryError.vaultDeleted {
+                // Deleted without this being told (the deletion reported a failure after it committed): the entries go now, and
+                // the error tells the person why.
+                if let bound {
+                    vaultDeleted(bound, in: profile)
+                }
+                throw InputHistoryError.vaultDeleted
+            }
+            guard generations[id, default: 0] == generation, !retired.contains(id) else { return }
+        }
+        let entries = try await store.unlock(reason: String(localized: "Open Input History in WSurf."), vault: vault)
         guard generations[id, default: 0] == generation, !retired.contains(id) else { return }
         unlocked[id] = entries
         counts[id] = entries.count
@@ -191,6 +239,21 @@ final class InputHistory {
         }
         guard store(for: profile) != nil else { return }
         enqueue(profile.id) { try await $0.clear() }
+    }
+
+    /// The vault was deleted. If it kept Input History, nothing it kept can be opened again, so it goes now. Delete Vault named the
+    /// entries first (`entries(keptWith:in:)`).
+    func vaultDeleted(_ vaultID: UUID, in profile: Profile) {
+        guard store(for: profile) != nil else { return }
+        lock(profileID: profile.id)
+        enqueue(profile.id) { try await $0.vaultDeleted(vaultID) }
+    }
+
+    /// How many entries go if `vaultID` is deleted. Never prompts.
+    func entries(keptWith vaultID: UUID, in profile: Profile) async -> Int {
+        guard let store = store(for: profile) else { return 0 }
+        await drain(profileID: profile.id)
+        return await store.count(keptWith: vaultID)
     }
 
     /// Entries move to the expiry the new retention gives them. The list locks first: what it shows no longer matches the files.
