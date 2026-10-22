@@ -78,8 +78,8 @@ final class CredentialVaultSyncHost: VaultSyncHost {
         return receipt.revision
     }
 
-    func remember(profileID: UUID, vaultID: UUID, lease: UInt64, traces: [UUID: ImportTrace]) async throws -> UInt64 {
+    func remember(profileID: UUID, vaultID: UUID, lease: UInt64, memories: [UUID: RemovedMemory]) async throws -> UInt64 {
         guard let manager = profile(profileID).flatMap({ manager($0, vaultID) }) else { throw CredentialVaultError.unauthorized }
-        return try await manager.rememberRemoved(traces, authorizedEpoch: lease).revision
+        return try await manager.rememberRemoved(memories, authorizedEpoch: lease).revision
     }
 }

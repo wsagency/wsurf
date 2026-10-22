@@ -48,8 +48,15 @@ final class FakeVault {
     private(set) var accounts: [UUID: CredentialAccount] = [:]
     private(set) var trash: [UUID: CredentialAccount] = [:]
     private(set) var tombstones: Set<UUID> = []
-    /// What each tombstone kept of the entry it stands for: keyed digests, as the store keeps them. An old tombstone has none.
-    private(set) var tombstoneTraces: [UUID: ImportTrace] = [:]
+    /// What each tombstone kept of the entry it stands for, as the store keeps it: the keyed digests of its logins (never those of a
+    /// password or note) and its exchange ids. An old tombstone has none.
+    struct Kept: Equatable {
+        var trace: ImportTrace?
+        var exchangeAccountID: Data?
+        var exchangeItemID: Data?
+    }
+
+    private(set) var tombstoneKept: [UUID: Kept] = [:]
     private(set) var history: [UUID: [Revision]] = [:]
     private(set) var isLocked = true
     private(set) var lease: UInt64 = 0
@@ -120,11 +127,13 @@ final class FakeVault {
     func purge(_ id: UUID) {
         guard let old = trash.removeValue(forKey: id) else { return }
         tombstones.insert(id)
-        tombstoneTraces[id] = memory.removedTrace(of: old)
+        tombstoneKept[id] = Kept(
+            trace: memory.removedTrace(of: old).loginsOnly, exchangeAccountID: old.exchangeAccountID, exchangeItemID: old.exchangeItemID
+        )
         revision += 1
     }
 
-    /// A tombstone from before imports kept digests: it knows the ID and nothing else.
+    /// A tombstone from before imports kept digests: it knows the ID and nothing else (not its exchange ids either).
     func addOldTombstone(_ id: UUID) {
         tombstones.insert(id)
     }
@@ -163,19 +172,28 @@ final class FakeVault {
         )
     }
 
-    /// A tombstone's row: the ID and the digests it kept, if it kept any.
+    /// A tombstone's row: the ID and what it kept, if it kept any.
     private func removed(id: UUID) -> RemovedIdentifier {
-        RemovedIdentifier(
-            entryID: UUID(), isTombstone: true, accountID: id, exchangeAccountID: nil, exchangeItemID: nil, passkeyCredentialID: nil,
-            rpID: nil, removedAt: nil, trace: tombstoneTraces[id]
+        let kept = tombstoneKept[id]
+        return RemovedIdentifier(
+            entryID: UUID(), isTombstone: true, accountID: id, exchangeAccountID: kept?.exchangeAccountID, exchangeItemID: kept?.exchangeItemID,
+            passkeyCredentialID: nil, rpID: nil, removedAt: nil, trace: kept?.trace
         )
     }
 
-    /// Tombstones for entries removed elsewhere that this vault never held, as the real store keeps them.
-    func remember(lease: UInt64, traces: [UUID: ImportTrace]) throws -> UInt64 {
+    /// Tombstones for entries removed elsewhere that this vault never held, as the real store keeps them: another tombstone beside an old
+    /// one, which the vault reads together.
+    func remember(lease: UInt64, memories: [UUID: RemovedMemory]) throws -> UInt64 {
         guard !isLocked, lease == self.lease else { throw CredentialVaultError.expired }
-        tombstones.formUnion(traces.keys)
-        tombstoneTraces.merge(traces) { _, new in new }
+        tombstones.formUnion(memories.keys)
+        for (id, memory) in memories {
+            let before = tombstoneKept[id]
+            tombstoneKept[id] = Kept(
+                trace: ImportTrace(logins: (before?.trace?.logins ?? []) + memory.logins),
+                exchangeAccountID: before?.exchangeAccountID ?? memory.exchangeAccountID,
+                exchangeItemID: before?.exchangeItemID ?? memory.exchangeItemID
+            )
+        }
         revision += 1
         return revision
     }
@@ -359,9 +377,9 @@ final class FakeVaultHost: VaultSyncHost {
         return try vault.commit(lease: lease, writes: writes, removing: removing)
     }
 
-    func remember(profileID: UUID, vaultID: UUID, lease: UInt64, traces: [UUID: ImportTrace]) async throws -> UInt64 {
+    func remember(profileID: UUID, vaultID: UUID, lease: UInt64, memories: [UUID: RemovedMemory]) async throws -> UInt64 {
         guard let vault = vault(profile: profileID, vault: vaultID) else { throw CredentialVaultError.missingVault }
-        return try vault.remember(lease: lease, traces: traces)
+        return try vault.remember(lease: lease, memories: memories)
     }
 }
 

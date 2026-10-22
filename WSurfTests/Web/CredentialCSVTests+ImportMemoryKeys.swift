@@ -58,6 +58,10 @@ extension CredentialCSVTests {
             let logins = Set(tombstones.flatMap { $0.trace?.logins ?? [] })
             #expect(logins.contains(key.login(origin: "https://other.test", username: "grace")))
             #expect(logins.contains(key.login(origin: "https://example.test", username: "ada (1)")))
+            // A purge removes the History, so what it keeps is the logins and no digest of a password or a note; the merged-away entry's
+            // are in its survivor's link, which still finds it.
+            #expect(tombstones.allSatisfy { $0.trace?.password == nil && $0.trace?.note == nil })
+            #expect(try await saved(f, "ada").mergedFrom?.first?.trace?.password == key.password("pw"))
         }
     }
 
@@ -77,10 +81,12 @@ extension CredentialCSVTests {
         observed.importTrace = key.trace(of: plain)
         #expect(try SyncParts.of(observed) == SyncParts.of(remembered), "an observed base or an import trace is not a part")
 
-        // A removed state carries what the entry stood for, sealed: it opens only as itself, and a Mac that never held the entry keeps it.
+        // A removed state carries what the entry left, sealed: it opens only as itself, and a Mac that never held the entry keeps it.
         let syncKey = VaultSyncKey.derive(dek: SymmetricKey(size: .bits256), profileID: UUID(), vaultID: UUID())
         let trace = key.trace(of: plain)
-        let removed = SyncItem(accountID: plain.id, version: 2, account: nil, trace: trace)
+        let memory = key.removedMemory(of: plain)
+        #expect(memory.logins == trace.logins && trace.password != nil, "the logins of the trace, and never its password")
+        let removed = SyncItem(accountID: plain.id, version: 2, account: nil, memory: memory)
         let envelope = try VaultSyncCodec.sealItem(removed, key: syncKey)
         #expect(try VaultSyncCodec.openItem(envelope, accountID: plain.id, key: syncKey) == removed)
         #expect(throws: VaultSyncError.authenticationFailed) { try VaultSyncCodec.openItem(envelope, accountID: UUID(), key: syncKey) }
@@ -90,7 +96,7 @@ extension CredentialCSVTests {
         let bare = try VaultSyncCodec.sealItem(SyncItem(accountID: plain.id, version: 2, account: nil), key: syncKey)
         #expect(bare.count == VaultSyncCodec.headerBytes + VaultSyncCodec.sealOverhead, "without a trace it is as small as before")
         #expect(try CredentialSyncMerge.decide(removed, local: nil, base: nil, index: SyncLocalIndex(accounts: [], removed: .init(items: [])))
-            == .remember(trace, SyncBase(version: 2, parts: .removedParts)))
+            == .remember(memory, SyncBase(version: 2, parts: .removedParts)))
         #expect(try CredentialSyncMerge.decide(SyncItem(accountID: plain.id, version: 2, account: nil), local: nil, base: nil,
                                                index: SyncLocalIndex(accounts: [], removed: .init(items: [])))
             == .keep(SyncBase(version: 2, parts: .removedParts)), "nothing to remember")

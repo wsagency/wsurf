@@ -32,8 +32,8 @@ nonisolated struct TrashEntryBody: Codable, Equatable, Sendable {
     var exchangeItemID: Data?
 }
 
-/// What survives a purge: identity only. No secret field exists: `trace` holds keyed digests (`ImportTrace`), on a whole account's
-/// account-level tombstone only, so an import does not bring the account back.
+/// What survives a purge: identity only. No secret field exists: `trace` holds the keyed digests of the logins (`ImportTrace` with no
+/// password or note digest), on a whole account's account-level tombstone only, so an import does not bring the account back.
 nonisolated struct TombstoneBody: Codable, Equatable, Sendable {
     var entryID: UUID
     var purgedAt: Date

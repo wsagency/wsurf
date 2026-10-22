@@ -176,9 +176,9 @@ public nonisolated enum SyncDecision: Equatable, Sendable {
     case write(CredentialAccount, SyncBase)
     /// Move the whole local account, with its History, to Trash.
     case moveToTrash(SyncBase)
-    /// An entry removed on another device that this Mac never held: keep what it stood for (a tombstone with its trace), so an import
-    /// here does not bring it back.
-    case remember(ImportTrace, SyncBase)
+    /// An entry removed on another device that this Mac never held: keep what it left (a tombstone with its logins and exchange ids),
+    /// so an import here does not bring it back.
+    case remember(RemovedMemory, SyncBase)
     /// Wait for the person. The incoming item is applied and uploaded by nothing until `resolve`.
     case review(SyncConflictKind, parts: [SyncPart])
 }
@@ -198,11 +198,14 @@ public nonisolated struct SyncTaking: Equatable, Sendable {
 
 /// The vault's own accounts as a decision needs them: who holds an exporter item identity (as the account's own or as a merged
 /// item) or a passkey credential id, and which account ids were removed (a Trash entry or a tombstone, matched by account id: an
-/// `Item` is authenticated by the vault's key, unlike an exporter id).
+/// `Item` is authenticated by the vault's key, unlike an exporter id), and which of those removals keep logins or exchange ids.
 public nonisolated struct SyncLocalIndex: Sendable {
     private var items: [CredentialExchangeCodec.ExternalItemID: Set<UUID>]
     private var credentials: [Data: Set<UUID>]
     private var removedAccounts: Set<UUID>
+    /// Removed accounts that already keep the keyed digests of some login, and those that keep the exchange ids.
+    private var loginsKept: Set<UUID>
+    private var idsKept: Set<UUID>
 
     public init(accounts: [CredentialAccount], removed: RemovedIdentifiers) {
         var items: [CredentialExchangeCodec.ExternalItemID: Set<UUID>] = [:]
@@ -218,6 +221,9 @@ public nonisolated struct SyncLocalIndex: Sendable {
         self.items = items
         self.credentials = credentials
         removedAccounts = Set(removed.items.lazy.filter { $0.passkeyCredentialID == nil }.map(\.accountID))
+        let kept = removed.memories
+        loginsKept = Set(kept.filter { !$0.value.logins.isEmpty }.keys)
+        idsKept = Set(kept.filter { $0.value.hasExchangeIDs }.keys)
     }
 
     /// Follows a commit without building the index again: `old` stops holding what it held, `new` holds what it has. Either is nil for an
@@ -244,6 +250,23 @@ public nonisolated struct SyncLocalIndex: Sendable {
     /// The account went to the Trash.
     public mutating func noteRemoved(_ accountID: UUID) {
         removedAccounts.insert(accountID)
+    }
+
+    /// A tombstone with `memory` was kept for the account.
+    public mutating func noteRemembered(_ accountID: UUID, _ memory: RemovedMemory) {
+        removedAccounts.insert(accountID)
+        if !memory.logins.isEmpty {
+            loginsKept.insert(accountID)
+        }
+        if memory.hasExchangeIDs {
+            idsKept.insert(accountID)
+        }
+    }
+
+    /// Whether `memory` brings something the removals of the account here do not keep yet: a login, or the exchange ids. A removal that
+    /// kept no digests (one from before imports remembered any) still takes them.
+    func lacks(_ memory: RemovedMemory, of accountID: UUID) -> Bool {
+        (!memory.logins.isEmpty && !loginsKept.contains(accountID)) || (memory.hasExchangeIDs && !idsKept.contains(accountID))
     }
 
     func holders(ofItem identity: CredentialExchangeCodec.ExternalItemID) -> Set<UUID> {
@@ -310,8 +333,8 @@ public nonisolated enum CredentialSyncMerge {
         let accepted = SyncBase(version: item.version, parts: incoming)
         guard let account = item.account else {
             guard let local else {
-                if base == nil, let trace = item.trace, !index.wasRemoved(item.accountID) {
-                    return .remember(trace, accepted)
+                if base == nil, let memory = item.memory, index.lacks(memory, of: item.accountID) {
+                    return .remember(memory, accepted)
                 }
                 return .keep(accepted)
             }

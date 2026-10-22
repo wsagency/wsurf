@@ -674,10 +674,10 @@ final class CredentialManager {
         }
     }
 
-    /// Keeps what entries removed on another device stood for (`ImportTrace`), as tombstones, under the lease the caller decided under.
-    func rememberRemoved(_ traces: [UUID: ImportTrace], authorizedEpoch: UInt64) async throws -> VaultCommitReceipt {
+    /// Keeps what entries removed on another device left (`RemovedMemory`), as tombstones, under the lease the caller decided under.
+    func rememberRemoved(_ memories: [UUID: RemovedMemory], authorizedEpoch: UInt64) async throws -> VaultCommitReceipt {
         try await authorizedWrite(epoch: authorizedEpoch) { access in
-            try await store.rememberRemoved(vaultID: vaultID, traces: traces, using: access)
+            try await store.rememberRemoved(vaultID: vaultID, memories: memories, using: access)
         }
     }
 

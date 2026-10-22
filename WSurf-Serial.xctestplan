@@ -218,6 +218,7 @@
         "VaultSyncCodecTests",
         "VaultSyncDeleteRaceTests",
         "VaultSyncEdgeTests",
+        "VaultSyncMemoryTests",
         "VaultSyncParkingTests",
         "VaultSyncRaceTests",
         "VaultSyncRemovalGuardTests",

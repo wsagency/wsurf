@@ -17,192 +17,13 @@ import WSurfCore
 // passkeys are stubs that answer with the proof a test chooses, and the sync's hooks are called by the test unless a test installs
 // `CloudSync.shared`. Serial: real stores, the manager registry and the process-wide `CloudSync.shared`.
 
-/// A vault synced between two Macs. A made it; B adds it with the same passkey.
-@MainActor
-private final class Pair {
-    let cloud = FakeSyncCloud()
-    let profile: Profile
-    /// The unlock passkey both Macs answer with: the same credential and the same PRF output.
-    let proof: VaultUnlockProof
-    let vaultID: UUID
-    let envA: VaultTestEnvironment
-    let storeA: ProfileVaultStore
-    let managerA: CredentialManager
-    let passkeysA: VaultPasskeys
-    let passkeysB = VaultPasskeys()
-    let clockA = TestClock()
-    let clockB = TestClock()
-    let syncA: VaultSync
-    let syncB: VaultSync
-    let engineA: FakeSyncEngine
-    let engineB: FakeSyncEngine
-    private(set) var managerB: CredentialManager?
-
-    private init(
-        profile: Profile, proof: VaultUnlockProof, vaultID: UUID, envA: VaultTestEnvironment, storeA: ProfileVaultStore,
-        managerA: CredentialManager, passkeysA: VaultPasskeys
-    ) {
-        self.profile = profile
-        self.proof = proof
-        self.vaultID = vaultID
-        self.envA = envA
-        self.storeA = storeA
-        self.managerA = managerA
-        self.passkeysA = passkeysA
-        passkeysA.adopt(proof)
-        passkeysB.adopt(proof)
-        let hostA = CredentialVaultSyncHost(
-            profiles: { [profile] in [profile] },
-            manager: { _, id in id == vaultID ? managerA : nil },
-            directory: { _ in envA.directory }
-        )
-        syncA = VaultSync(host: hostA, state: VaultSyncAppState(), persist: { _ in }, excludedProfiles: [], clock: clockA)
-        syncB = VaultSync(
-            host: CredentialVaultSyncHost(profiles: { [profile] in [profile] }), state: VaultSyncAppState(), persist: { _ in },
-            excludedProfiles: [], clock: clockB
-        )
-        engineA = FakeSyncEngine(cloud: cloud, delegate: syncA)
-        engineB = FakeSyncEngine(cloud: cloud, delegate: syncB)
-        syncA.attach(engineA)
-        syncB.attach(engineB)
-    }
-
-    /// Mac A with its vault created and unlocked; Mac B with an empty profile in the registry.
-    static func make() async throws -> Pair {
-        let profile = try await VaultManagerFixture.newProfile("Sync")
-        let env = try VaultTestEnvironment.make()
-        let store = ProfileVaultStore(profileID: profile.id, directory: env.directory, defaults: env.defaults)
-        let proof = VaultFixtures.proof(1)
-        let lease = VaultAccess(profileID: profile.id, epoch: 1, deadline: ContinuousClock().now.advanced(by: .seconds(300)))
-        let vaultID = try await store.createVault(name: "Personal", unlock: proof, authorizedBy: .firstVault(lease: lease))
-        let passkeys = VaultPasskeys()
-        let manager = VaultManagerFixture.manager(profileID: profile.id, vaultID: vaultID, store: store, passkeys: passkeys)
-        try await manager.completeUnlock(credentialID: proof.credentialID, prf: proof.prf, access: manager.beginAccess())
-        return Pair(profile: profile, proof: proof, vaultID: vaultID, envA: env, storeA: store, managerA: manager, passkeysA: passkeys)
-    }
-
-    func cleanup() async {
-        // Close the sync databases before their folders go.
-        syncA.profileErased(profile.id)
-        syncB.profileErased(profile.id)
-        await storeA.close()
-        envA.cleanUp()
-        await VaultManagerFixture.cleanup(profile)
-    }
-
-    // MARK: Entries
-
-    func account(_ name: String, password: String = "pw") -> CredentialAccount {
-        VaultFixtures.account(username: name, password: password, origin: "https://\(name).test")
-    }
-
-    /// Replaces the vault's entries with `accounts`.
-    func save(_ accounts: [CredentialAccount], in manager: CredentialManager) async throws {
-        let epoch = try #require(manager.authorizationEpoch)
-        let revision = try await manager.snapshot().revision
-        _ = try await manager.commit(accounts, expectedRevision: revision, authorizedEpoch: epoch)
-    }
-
-    func edit(_ manager: CredentialManager, _ id: UUID, _ change: (inout CredentialAccount) -> Void) async throws {
-        let epoch = try #require(manager.authorizationEpoch)
-        let snapshot = try await manager.snapshot()
-        var accounts = snapshot.accounts
-        let index = try #require(accounts.firstIndex { $0.id == id })
-        change(&accounts[index])
-        _ = try await manager.commit(accounts, expectedRevision: snapshot.revision, authorizedEpoch: epoch, changing: [id])
-    }
-
-    func accounts(_ manager: CredentialManager) async throws -> [UUID: CredentialAccount] {
-        Dictionary(try await manager.snapshot().accounts.map { ($0.id, $0) }) { first, _ in first }
-    }
-
-    // MARK: Sync
-
-    var statusA: VaultSyncStatus {
-        syncA.status(profileID: profile.id, vaultID: vaultID)
-    }
-
-    var statusB: VaultSyncStatus {
-        syncB.status(profileID: profile.id, vaultID: vaultID)
-    }
-
-    func enableA() async throws {
-        try await syncA.enable(profileID: profile.id, vaultID: vaultID)
-        try await pump()
-    }
-
-    func pump() async throws {
-        for _ in 0..<5 {
-            await syncA.settle()
-            try await engineA.sendNow()
-            await syncA.settle()
-            await syncB.settle()
-            try await engineB.sendNow()
-            await syncB.settle()
-        }
-    }
-
-    func converge() async throws {
-        for _ in 0..<5 {
-            try await pump()
-            try await engineA.fetchNow()
-            await syncA.settle()
-            try await engineB.fetchNow()
-            await syncB.settle()
-        }
-        try await pump()
-    }
-
-    /// The person wrote to a vault: the debounce passes and the sync produces.
-    func wrote(_ sync: VaultSync, _ clock: TestClock) async {
-        sync.noteWrite(profileID: profile.id, vaultID: vaultID)
-        _ = await waitUntil { clock.pendingCount > 0 }
-        clock.advance(by: .seconds(2))
-        for _ in 0..<20 {
-            await Task.yield()
-        }
-        await sync.settle()
-    }
-
-    /// What the app does for "Add to This Mac…": the passkey assertion, the adoption, then the sync.
-    func addToB() async throws {
-        try await engineB.fetchNow()
-        await syncB.settle()
-        let remote = try #require(syncB.remoteVaults(profileID: profile.id).first)
-        let added = try await CredentialManager.adoptSyncedVault(
-            profile: profile, remote: remote, in: VaultManagerFixture.anchor(), native: passkeysB.native
-        )
-        #expect(added == vaultID)
-        await syncB.adopted(profileID: profile.id, vaultID: added)
-        managerB = try CredentialManager.forVault(profile, vaultID: added, native: passkeysB.native)
-    }
-
-    func unlockB() async throws {
-        let manager = try #require(managerB)
-        try await manager.completeUnlock(credentialID: proof.credentialID, prf: proof.prf, access: manager.beginAccess())
-        syncB.vaultUnlocked(profileID: profile.id, vaultID: vaultID)
-        await syncB.settle()
-    }
-}
-
-private func withPair(_ body: (Pair) async throws -> Void) async throws {
-    let pair = try await Pair.make()
-    do {
-        try await body(pair)
-    } catch {
-        await pair.cleanup()
-        throw error
-    }
-    await pair.cleanup()
-}
-
 @MainActor
 @Suite(.serialized)
 struct VaultSyncDeviceTests {
     // MARK: Two Macs, one passkey
 
     @Test func samePasskeyUnlocksAndConvergesBothWays() async throws {
-        try await withPair { pair in
+        try await withDevicePair { pair in
             let held = [pair.account("one"), pair.account("two")]
             try await pair.save(held, in: pair.managerA)
             try await pair.enableA()
@@ -241,7 +62,7 @@ struct VaultSyncDeviceTests {
     }
 
     @Test func aMergeOnOneMacReachesTheOtherAsARemovedStateAndASurvivorUpdate() async throws {
-        try await withPair { pair in
+        try await withDevicePair { pair in
             let survivor = VaultFixtures.account(username: "ada", password: "newer", origin: "https://one.test")
             let absorbed = VaultFixtures.account(username: "ada", password: "older", origin: "https://one.test")
             try await pair.save([survivor, absorbed], in: pair.managerA)
@@ -276,7 +97,7 @@ struct VaultSyncDeviceTests {
     }
 
     @Test func differentPRFLeavesTheMacLockedAndUndamaged() async throws {
-        try await withPair { pair in
+        try await withDevicePair { pair in
             try await pair.save([pair.account("one")], in: pair.managerA)
             try await pair.enableA()
             // B already holds an unlocked vault, which authorizes the new one.
@@ -311,7 +132,7 @@ struct VaultSyncDeviceTests {
     }
 
     @Test func aVaultIsNeverAddedToAnotherProfileThanItsZoneNames() async throws {
-        try await withPair { pair in
+        try await withDevicePair { pair in
             try await pair.save([pair.account("one")], in: pair.managerA)
             try await pair.enableA()
             try await pair.engineB.fetchNow()
@@ -359,7 +180,7 @@ struct VaultSyncDeviceTests {
     // MARK: What stays on each Mac
 
     @Test func historyTrashAndPurgeStayPerMac() async throws {
-        try await withPair { pair in
+        try await withDevicePair { pair in
             let held = [pair.account("one"), pair.account("two")]
             try await pair.save(held, in: pair.managerA)
             try await pair.enableA()
@@ -394,7 +215,7 @@ struct VaultSyncDeviceTests {
     /// Case (f) of importing a Passwords export again: a merge and a delete made on A reach B, and an import of the same export on B
     /// brings neither back, also once B emptied its Trash.
     @Test func aMergeAndADeleteSyncedInKeepAnImportOnTheOtherMacFromBringingThemBack() async throws {
-        try await withPair { pair in
+        try await withDevicePair { pair in
             let coordinator = CredentialExchangeCoordinator()
             let owner = UUID()
             let file = CredentialCSV.encode([
@@ -448,7 +269,7 @@ struct VaultSyncDeviceTests {
     /// The same for a Mac that adds the vault after the merge and the delete, made before the vault synced at all: it never held the
     /// entries, and still an import there brings neither back.
     @Test func aMacThatAddsTheVaultLaterKeepsAnImportFromBringingBackWhatWasMergedOrDeletedBefore() async throws {
-        try await withPair { pair in
+        try await withDevicePair { pair in
             let coordinator = CredentialExchangeCoordinator()
             let owner = UUID()
             let file = CredentialCSV.encode([
@@ -492,7 +313,7 @@ struct VaultSyncDeviceTests {
     /// What an import remembers about entries merged away or deleted travels to the other Mac inside sealed bytes only: not in a record,
     /// not in a sync file at rest, not in the router’s file, and neither the digests nor the values they stand for.
     @Test func theImportMemoryTravelsAndRestsOnlyInsideSealedBytes() async throws {
-        try await withPair { pair in
+        try await withDevicePair { pair in
             let coordinator = CredentialExchangeCoordinator()
             let owner = UUID()
             let file = CredentialCSV.encode([
@@ -522,7 +343,7 @@ struct VaultSyncDeviceTests {
 
             // The digests the vault holds for what was merged away and deleted, and the values they stand for.
             let managerB = try #require(pair.managerB)
-            var traces = Array(try await pair.managerA.removedIdentifiers().traces.values)
+            var traces = try await pair.managerA.removedIdentifiers().items.compactMap(\.trace)
             let survivor = try #require(try await pair.accounts(managerB)[ada.id])
             traces += (survivor.mergedFrom ?? []).compactMap(\.trace)
             var digests: [Data] = []
@@ -556,7 +377,7 @@ struct VaultSyncDeviceTests {
     }
 
     @Test func syncNeverPromptsOrExtendsTheLease() async throws {
-        try await withPair { pair in
+        try await withDevicePair { pair in
             let target = pair.account("one")
             try await pair.save([target], in: pair.managerA)
             let epoch = try #require(pair.managerA.authorizationEpoch)
@@ -581,7 +402,7 @@ struct VaultSyncDeviceTests {
     }
 
     @Test func openEditorSaveAfterASyncedChangeIsRefused() async throws {
-        try await withPair { pair in
+        try await withDevicePair { pair in
             let target = pair.account("one")
             try await pair.save([target], in: pair.managerA)
             try await pair.enableA()
@@ -607,7 +428,7 @@ struct VaultSyncDeviceTests {
     }
 
     @Test func inputHistoryAndFilesStayOnTheMac() async throws {
-        try await withPair { pair in
+        try await withDevicePair { pair in
             let source = FileManager.default.temporaryDirectory.appending(path: "scan-\(UUID().uuidString).txt")
             try Data("body-\(UUID().uuidString)".utf8).write(to: source)
             defer { try? FileManager.default.removeItem(at: source) }
@@ -645,7 +466,7 @@ struct VaultSyncDeviceTests {
 
     @Test(arguments: [true, false])
     func reviewChoicesKeepTheOtherVersionRecoverable(keepLocal: Bool) async throws {
-        try await withPair { pair in
+        try await withDevicePair { pair in
             let target = pair.account("one")
             try await pair.save([target], in: pair.managerA)
             try await pair.enableA()

@@ -22,8 +22,8 @@ public nonisolated struct RemovedIdentifier: Equatable, Sendable {
     /// identifiers anyway; the import report shows it and nothing else uses it.
     public var removedAt: Date?
     /// What the removed account stood for (`ImportMemoryKey.removedTrace`): on the account-level row only, `nil` on a passkey's row and
-    /// for a credential removed from an account that stays. Keyed digests, never a value: read from the Trash entry's snapshot, or kept
-    /// in the tombstone when it was purged.
+    /// for a credential removed from an account that stays. Keyed digests, never a value: read from the Trash entry's snapshot (with the
+    /// digests of its password and note, which its History holds in full), or kept in the tombstone when it was purged (its logins only).
     public var trace: ImportTrace?
 
     /// The removed credential had no item of another app (it was saved here or came from a file), so no exporter id names it.
@@ -35,15 +35,20 @@ public nonisolated struct RemovedIdentifier: Equatable, Sendable {
 public nonisolated struct RemovedIdentifiers: Equatable, Sendable {
     public let items: [RemovedIdentifier]
 
-    /// What each removed account stood for (its Trash entry's trace before a tombstone's), by account id: only a trace with a login,
-    /// which an import could match.
-    public var traces: [UUID: ImportTrace] {
-        var found: [UUID: ImportTrace] = [:]
+    /// What each removed account leaves for a Mac that never held it (`RemovedMemory`), by account id: the logins of its Trash entry and
+    /// its tombstones together, and the first ids they name, only where an import could match something. Only a whole account has a
+    /// trace, so a credential removed from an account that stays adds nothing. Never the digest of a password or a note.
+    public var memories: [UUID: RemovedMemory] {
+        var found: [UUID: RemovedMemory] = [:]
         for item in items.sorted(by: { !$0.isTombstone && $1.isTombstone }) where item.passkeyCredentialID == nil {
-            if found[item.accountID] == nil, let trace = item.trace, !trace.logins.isEmpty {
-                found[item.accountID] = trace
-            }
+            guard let trace = item.trace else { continue }
+            var memory = found[item.accountID] ?? RemovedMemory()
+            memory = RemovedMemory(
+                logins: ImportTrace(logins: memory.logins).adding(trace.logins), exchangeAccountID: memory.exchangeAccountID ?? item.exchangeAccountID,
+                exchangeItemID: memory.exchangeItemID ?? item.exchangeItemID
+            )
+            found[item.accountID] = memory
         }
-        return found
+        return found.filter { !$0.value.isEmpty }
     }
 }

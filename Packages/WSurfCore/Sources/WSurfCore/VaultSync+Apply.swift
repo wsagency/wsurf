@@ -15,8 +15,8 @@ nonisolated struct SyncPass {
     /// The account of each write, in order (`AccountWrite` does not show it).
     var writeIDs: [UUID] = []
     var removing: [UUID: AccountStamp] = [:]
-    /// What entries removed elsewhere that this Mac never held stood for, to keep as tombstones (`VaultSyncHost.remember`).
-    var remembering: [UUID: ImportTrace] = [:]
+    /// What entries removed elsewhere that this Mac never held left, to keep as tombstones (`VaultSyncHost.remember`).
+    var remembering: [UUID: RemovedMemory] = [:]
     /// The base to record per account once its decision is applied.
     var bases: [UUID: SyncBase] = [:]
     var conflicts: [UUID: ConflictRow] = [:]
@@ -78,8 +78,8 @@ nonisolated struct VaultView {
             local[id] = nil
             changed.insert(id)
         }
-        for id in pass.remembering.keys {
-            index.noteRemoved(id)
+        for (id, memory) in pass.remembering {
+            index.noteRemembered(id, memory)
         }
         revision = max(revision, committed ?? 0)
     }
@@ -225,8 +225,8 @@ extension VaultSync {
             }
             pass.removing[id] = stamp
             pass.bases[id] = base
-        case .remember(let trace, let base):
-            pass.remembering[id] = trace
+        case .remember(let memory, let base):
+            pass.remembering[id] = memory
             pass.bases[id] = base
             pass.decided.insert(id)
         case .review(let kind, _):
@@ -243,7 +243,7 @@ extension VaultSync {
             // Its own write, first: a later stale retry finds the tombstones and keeps only the base.
             do {
                 remembered = try await host.remember(
-                    profileID: key.profileID, vaultID: key.vaultID, lease: lease, traces: pass.remembering
+                    profileID: key.profileID, vaultID: key.vaultID, lease: lease, memories: pass.remembering
                 )
             } catch {
                 switch Self.classify(error) {
@@ -464,8 +464,8 @@ extension VaultSync {
             !base.parts.removed && !live.contains(id) && !inputs.reviewed.contains(id) && !inputs.parked.contains(id)
         }
         let confirmed = releasing.removeValue(forKey: key)
-        // What each removed entry stood for goes with its removed state, when an import could match it.
-        let traces = snapshot.removed.traces
+        // What each removed entry left goes with its removed state, when an import could match it.
+        let memories = snapshot.removed.memories
         let sending = gone.filter { id, _ in !(inputs.outgoing.contains(id) && pendingBases[key]?[id]?.parts.removed == true) }
         let limit = max(Self.removalFloor, inputs.bases.values.filter { !$0.parts.removed }.count / 4)
         let holds = sending.count > limit && !(confirmed.map { sending.count <= $0 } ?? false)
@@ -479,14 +479,14 @@ extension VaultSync {
             if let pending = pendingBases[key]?[id], pending.version == version, pending.parts.removed, inputs.outgoing.contains(id) {
                 continue
             }
-            let item = SyncItem(accountID: id, version: version, account: nil, trace: traces[id])
+            let item = SyncItem(accountID: id, version: version, account: nil, memory: memories[id])
             guard let envelope = try? VaultSyncCodec.sealItem(item, key: syncKey),
                   let parts = try? VaultSyncCodec.sealParts(.removedParts, accountID: id, version: version, key: syncKey)
             else { continue }
             work.rows.append(OutboxRow(accountID: id, version: version, envelope: envelope, parts: parts))
             work.bases[id] = SyncBase(version: version, parts: .removedParts)
         }
-        sendRemovedBefore(traces, inputs: inputs, live: live, key: key, syncKey: syncKey, into: &work)
+        sendRemovedBefore(memories, inputs: inputs, live: live, key: key, syncKey: syncKey, into: &work)
         sumCache[key] = sums
         tallies[key, default: (0, 0)].notSyncable = notSyncable
         let addVaultRecord = settleVaultRecord(key, snapshot: snapshot, syncKey: syncKey, database: database)
@@ -498,17 +498,18 @@ extension VaultSync {
     }
 
     /// Entries removed before this vault synced (a Trash entry or a tombstone that was never sent): their removed state, with what they
-    /// stood for, so a Mac that adds the vault later keeps an import from bringing them back. It removes nothing anywhere (a Mac that
+    /// left, so a Mac that adds the vault later keeps an import from bringing them back. It removes nothing anywhere (a Mac that
     /// holds such an entry is asked first, `deletedThereChangedHere`), so it never counts towards the large-deletion hold. Never for an
     /// entry whose record this Mac has seen: it would be sent on that record's change tag and overwrite it.
     private func sendRemovedBefore(
-        _ traces: [UUID: ImportTrace], inputs: ProduceState, live: Set<UUID>, key: VaultKey, syncKey: VaultSyncKey, into work: inout ProduceWork
+        _ memories: [UUID: RemovedMemory], inputs: ProduceState, live: Set<UUID>, key: VaultKey, syncKey: VaultSyncKey,
+        into work: inout ProduceWork
     ) {
         let handed = handedOut[key] ?? []
-        for (id, trace) in traces.sorted(by: { $0.key.uuidString < $1.key.uuidString })
+        for (id, memory) in memories.sorted(by: { $0.key.uuidString < $1.key.uuidString })
         where inputs.bases[id] == nil && !live.contains(id) && !inputs.reviewed.contains(id) && !inputs.parked.contains(id)
             && !inputs.outgoing.contains(id) && !handed.contains(id) && !inputs.recorded.contains(id) {
-            guard let envelope = try? VaultSyncCodec.sealItem(SyncItem(accountID: id, version: 1, account: nil, trace: trace), key: syncKey),
+            guard let envelope = try? VaultSyncCodec.sealItem(SyncItem(accountID: id, version: 1, account: nil, memory: memory), key: syncKey),
                   let parts = try? VaultSyncCodec.sealParts(.removedParts, accountID: id, version: 1, key: syncKey)
             else { continue }
             work.rows.append(OutboxRow(accountID: id, version: 1, envelope: envelope, parts: parts))

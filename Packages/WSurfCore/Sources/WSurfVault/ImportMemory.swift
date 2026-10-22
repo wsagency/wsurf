@@ -33,10 +33,58 @@ public nonisolated struct ImportTrace: Codable, Equatable, Sendable {
         return united.count <= Self.loginLimit ? united : logins
     }
 
+    /// Only the logins: what a purged or removed entry keeps (`RemovedMemory`), never the digest of its password or note.
+    var loginsOnly: ImportTrace {
+        ImportTrace(logins: logins)
+    }
+
     func validate() throws {
         let digests = logins + [password, note].compactMap { $0 }
         guard logins.count <= Self.loginLimit, digests.allSatisfy({ $0.count == ImportMemoryKey.digestBytes }),
               zip(logins, logins.dropFirst()).allSatisfy({ $0.lexicographicallyPrecedes($1) }) else { throw CredentialVaultError.invalidData }
+    }
+}
+
+/// What a removed entry leaves for a Mac that never held it, so an import there does not bring it back: the logins it stood for, as
+/// keyed digests (`ImportMemoryKey.login`), and the two ids the other app exported it under (`CredentialExchangeCodec`), which a
+/// Passwords-app import matches exactly. Never the digest of a password or a note: once an entry is purged its History is gone, and
+/// the digest of its last password would be all that is left of it. (An entry merged away keeps those in its survivor's link.) It is
+/// what a removed state seals (`VaultSyncCodec`) and what a remembered tombstone keeps; the store's own tombstone of a purge keeps the
+/// same logins (`TombstoneBody.trace`).
+public nonisolated struct RemovedMemory: Codable, Equatable, Sendable {
+    /// `ImportMemoryKey.login` of each login, sorted, without repeats.
+    public var logins: [Data]
+    /// The other app's account and item ids of the removed entry, as it stored them; `nil` for one that came from nowhere else.
+    public var exchangeAccountID: Data?
+    public var exchangeItemID: Data?
+
+    /// Longest exchange id one removed state carries. ponytail: an id over it is left out (an exporter's ids are a few dozen bytes);
+    /// the Mac that removed the entry still matches it by its own tombstone.
+    public static let idLimit = 1_024
+
+    public init(logins: [Data] = [], exchangeAccountID: Data? = nil, exchangeItemID: Data? = nil) {
+        self.logins = Array(Set(logins)).sorted { $0.lexicographicallyPrecedes($1) }
+        self.exchangeAccountID = exchangeAccountID.flatMap { Self.fits($0) ? $0 : nil }
+        self.exchangeItemID = exchangeItemID.flatMap { Self.fits($0) ? $0 : nil }
+    }
+
+    /// Nothing an import could match.
+    public var isEmpty: Bool {
+        logins.isEmpty && !hasExchangeIDs
+    }
+
+    public var hasExchangeIDs: Bool {
+        exchangeAccountID != nil || exchangeItemID != nil
+    }
+
+    private static func fits(_ id: Data) -> Bool {
+        !id.isEmpty && id.count <= idLimit
+    }
+
+    func validate() throws {
+        guard logins.count <= ImportTrace.loginLimit, logins.allSatisfy({ $0.count == ImportMemoryKey.digestBytes }),
+              zip(logins, logins.dropFirst()).allSatisfy({ $0.lexicographicallyPrecedes($1) }),
+              [exchangeAccountID, exchangeItemID].compactMap({ $0 }).allSatisfy(Self.fits) else { throw CredentialVaultError.invalidData }
     }
 }
 
@@ -86,6 +134,12 @@ public nonisolated struct ImportMemoryKey: Sendable {
         var trace = trace(of: account)
         trace.logins = trace.adding((account.mergedFrom ?? []).flatMap { $0.trace?.logins ?? [] })
         return trace
+    }
+
+    /// What a deleted `account` leaves for a Mac that never held it: the logins of `removedTrace`, without the digest of its password
+    /// or note, and the ids it was exported under.
+    public func removedMemory(of account: CredentialAccount) -> RemovedMemory {
+        RemovedMemory(logins: removedTrace(of: account).logins, exchangeAccountID: account.exchangeAccountID, exchangeItemID: account.exchangeItemID)
     }
 
     private func digest(_ kind: String, _ fields: (inout StoreWriter) -> Void) -> Data {
