@@ -319,6 +319,9 @@ final class BrowserApplication {
             self?.coordinator(for: page)?.browser.tabs.first { $0.liveView === page }
         }
         NotificationBridge.shared.tabResolver = GeolocationBridge.shared.tabResolver
+        NotificationBridge.shared.openWatchedPage = { [weak self] url, profileID in
+            self?.openWatchedPage(url, profileID: profileID)
+        }
         TabWebView.refreshHoverShield = { [weak self] in
             self?.windows.forEach { $0.applyHoverShield() }
         }

@@ -17,4 +17,14 @@ extension BrowserApplication {
         }
         forgetProfile(profile.id)
     }
+
+    /// A watch notification opens its page in a new tab of a regular window of the watch's profile, never a private window.
+    func openWatchedPage(_ url: URL, profileID: UUID) {
+        guard let profile = ProfileStore.shared.profiles.first(where: { $0.id == profileID }) else { return }
+        let window = windows.last {
+            !$0.isClosed && !$0.profiles.isPrivate && !$0.isSwitchingProfile && $0.context.profile.id == profileID
+        } ?? newWindow(profile: profile)
+        window.openNewTab(url: url)
+        window.showBrowser()
+    }
 }

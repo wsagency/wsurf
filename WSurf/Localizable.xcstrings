@@ -6718,6 +6718,18 @@
     },
     "Watches read this page with WebKit. Your Chromium sign-ins are not used." : {
       "comment" : "Note shown when a page watch is created or listed for a website set to open in Chromium: watches always read pages with WebKit, so the person's Chromium sign-ins are not used."
+    },
+    "The page changed." : {
+      "comment" : "Body of the notification when a watched page changed, for a watch that waits for any change. Also what the watch reports when Apple Intelligence cannot describe the change."
+    },
+    "The page now shows what you were waiting for: %@" : {
+      "comment" : "Body of the notification when a watched page meets its condition. %@ is what the person is waiting for, in their own words, for example price below $50. The page's own text is never shown."
+    },
+    "WSurf can’t read this page anymore, so it paused the watch." : {
+      "comment" : "Body of the notification when a watched page failed to load three times in a row and its watch was paused."
+    },
+    "WSurf stopped watching this page after 30 days." : {
+      "comment" : "Body of the notification when a page watch ended because it reached its 30-day lifetime."
     }
   },
   "version" : "1.0"

@@ -17,6 +17,8 @@ final class NotificationBridge: NSObject {
     /// Resolves the page currently owned by a tab. The resolver is supplied by
     /// the browser coordinator so a retired page can never claim a request.
     var tabResolver: ((BrowserPage) -> BrowserTab?)?
+    /// Opens a watched page from its notification, in a regular window of the watch's profile.
+    var openWatchedPage: ((URL, UUID) -> Void)?
 
     private override init() {
         super.init()
@@ -182,7 +184,7 @@ final class NotificationBridge: NSObject {
         }
     }
 
-    private func systemAuthorizationIsGranted() async -> Bool {
+    func systemAuthorizationIsGranted() async -> Bool {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         switch settings.authorizationStatus {
         case .authorized, .provisional, .ephemeral:
@@ -221,6 +223,72 @@ final class NotificationBridge: NSObject {
     }
 }
 
+// MARK: - Page watches
+
+extension NotificationBridge {
+    struct DeliveryStub: @unchecked Sendable {
+        let deliver: @MainActor (UNNotificationRequest) async -> Bool
+    }
+
+    /// Replaces the system for a test: it receives each watch notification and answers whether it was shown.
+    @TaskLocal static var watchDeliveryForTesting: DeliveryStub?
+
+    private static let watchedURLKey = "wsurf.watch.url"
+    private static let watchedProfileKey = "wsurf.watch.profile"
+
+    /// Asked in context, right after the person agrees to a watch, and only while macOS has not asked yet. True when WSurf may
+    /// show alerts.
+    func requestAlerts() async -> Bool {
+        let center = UNUserNotificationCenter.current()
+        if await center.notificationSettings().authorizationStatus == .notDetermined {
+            _ = try? await center.requestAuthorization(options: [.alert, .sound])
+        }
+        return await systemAuthorizationIsGranted()
+    }
+
+    /// The site and what the person waits for. Never the page's text, which only the watch's own judge reads.
+    static func request(for watch: PageWatch, _ notice: PageWatchCenter.Notice, profileID: UUID) -> UNNotificationRequest {
+        let content = UNMutableNotificationContent()
+        content.title = watch.place
+        switch notice {
+        case .met:
+            content.body = watch.condition.isEmpty
+                ? String(localized: "The page changed.")
+                : String(localized: "The page now shows what you were waiting for: \(watch.condition)")
+            content.sound = .default
+        case .unreachable:
+            content.body = String(localized: "WSurf can’t read this page anymore, so it paused the watch.")
+        case .expired:
+            content.body = String(localized: "WSurf stopped watching this page after 30 days.")
+        }
+        content.userInfo = [watchedURLKey: watch.url.absoluteString, watchedProfileKey: profileID.uuidString]
+        return UNNotificationRequest(identifier: watch.id.uuidString, content: content, trigger: nil)
+    }
+
+    /// Shows a watch's notice. False when notifications are off, so the Watches tab keeps it instead.
+    func announce(_ watch: PageWatch, _ notice: PageWatchCenter.Notice, profileID: UUID) async -> Bool {
+        let request = Self.request(for: watch, notice, profileID: profileID)
+        if let stub = Self.watchDeliveryForTesting {
+            return await stub.deliver(request)
+        }
+        guard await systemAuthorizationIsGranted() else { return false }
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+            return true
+        } catch {
+            Pipeline.log.error("notification: watch delivery failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// The watched page and profile of a watch notification. Website notifications carry neither.
+    static func watchedPage(in info: [AnyHashable: Any]) -> (url: URL, profileID: UUID)? {
+        guard let url = (info[watchedURLKey] as? String).flatMap(URL.init(string:)), PageWatchReader.canWatch(url),
+              let profileID = (info[watchedProfileKey] as? String).flatMap(UUID.init(uuidString:)) else { return nil }
+        return (url, profileID)
+    }
+}
+
 // MARK: - UNUserNotificationCenterDelegate
 
 extension NotificationBridge: UNUserNotificationCenterDelegate {
@@ -236,5 +304,8 @@ extension NotificationBridge: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse
     ) async {
         NSApp.activate()
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+              let watched = Self.watchedPage(in: response.notification.request.content.userInfo) else { return }
+        openWatchedPage?(watched.url, watched.profileID)
     }
 }

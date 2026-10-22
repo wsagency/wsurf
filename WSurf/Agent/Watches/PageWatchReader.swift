@@ -215,11 +215,14 @@ final class PageWatchRefusals: NSObject, WKNavigationDelegate, WKUIDelegate {
 
 extension PageWatchCenter {
     /// The center of a regular profile. It keeps its file and runs its schedule only in the copy of WSurf that owns the session,
-    /// never in tests. A watch on a site whose assistant access is Deny is never read, and one set to Deny later stops.
+    /// never in tests. A watch on a site whose assistant access is Deny is never read, and one set to Deny later stops. Pages are
+    /// judged on this Mac only; a notice WSurf may not show is kept for the Watches tab.
     static func live(for context: BrowserProfileContext) -> PageWatchCenter {
         let persists = !context.profile.isPrivate && !AppDatabase.isRunningTests && AppDatabase.ownsSession
         let permissions = context.sitePermissions
-        return PageWatchCenter(
+        let profileID = context.profile.id
+        let link = PageWatchCenterLink()
+        let center = PageWatchCenter(
             file: persists ? context.profile.pageWatchesFile : nil,
             schedules: persists,
             queue: PageWatchReader.queue,
@@ -227,15 +230,29 @@ extension PageWatchCenter {
                 guard let context else { return nil }
                 return await PageWatchReader.read(watch, in: context)
             },
-            // ponytail: judging and notices arrive with the on-device judge; until then nothing can start.
-            judge: { _, _ in nil },
-            classify: { _, _ in nil },
-            canJudge: { false },
-            notify: { _, _ in },
+            judge: { watch, reading in await PageWatchJudge.judge(watch, reading: reading) },
+            classify: { _, pair in await PageWatchJudge.classify(pair) },
+            // A change can always be told from the text; a condition without the on-device model is refused before it starts.
+            canJudge: { true },
+            notify: { watch, notice in
+                Task { @MainActor in
+                    let shown = await NotificationBridge.shared.announce(watch, notice, profileID: profileID)
+                    if !shown {
+                        link.center?.noteMissed(watch, notice)
+                    }
+                }
+            },
             allows: { url in permissions.assistantAccess(for: SitePermissions.origin(for: url)) != .deny },
             canRead: { !PageWatchReader.holdsReadings }
         )
+        link.center = center
+        return center
     }
+}
+
+/// Lets the live notice closure reach the center it was made for without keeping it alive.
+private final class PageWatchCenterLink {
+    weak var center: PageWatchCenter?
 }
 
 extension Profile {

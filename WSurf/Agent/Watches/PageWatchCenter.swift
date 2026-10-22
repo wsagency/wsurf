@@ -73,7 +73,15 @@ final class PageWatchCenter {
         case denied
     }
 
+    /// A notice WSurf could not show because its notifications are off. Kept in memory for the Watches tab, never stored.
+    struct Missed: Identifiable, Equatable {
+        let id = UUID()
+        let watch: PageWatch
+        let notice: Notice
+    }
+
     private(set) var watches: [PageWatch] = []
+    private(set) var missed: [Missed] = []
 
     static let classifyLimit = 16
     static let longestSleep: TimeInterval = 900
@@ -218,6 +226,17 @@ final class PageWatchCenter {
         save()
         wake()
         return removed
+    }
+
+    func noteMissed(_ watch: PageWatch, _ notice: Notice) {
+        missed.append(Missed(watch: watch, notice: notice))
+        if missed.count > PageWatch.limit {
+            missed.removeFirst(missed.count - PageWatch.limit)
+        }
+    }
+
+    func dismissMissed() {
+        missed = []
     }
 
     func matching(_ reference: String) -> [PageWatch] {
