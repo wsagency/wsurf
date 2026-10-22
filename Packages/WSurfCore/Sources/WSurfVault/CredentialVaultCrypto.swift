@@ -181,14 +181,15 @@ nonisolated struct CredentialVaultPayload: Codable, Sendable {
     }
 }
 
-nonisolated struct CredentialKeyWrapper: Codable, Sendable {
-    let credentialID: Data
-    let prfInput: Data
+/// One passkey's wrapper of a vault's key. Public data by design: it opens only with that passkey's PRF output.
+public nonisolated struct CredentialKeyWrapper: Codable, Sendable {
+    public let credentialID: Data
+    public let prfInput: Data
     let nonce: Data
     let ciphertext: Data
     let tag: Data
 
-    var unlock: VaultUnlock {
+    public var unlock: VaultUnlock {
         VaultUnlock(credentialID: credentialID, prfInput: prfInput)
     }
 }
@@ -204,7 +205,7 @@ nonisolated struct CredentialSealedData: Codable, Sendable {
 nonisolated extension CredentialKeyWrapper {
     private enum CodingKeys: String, CodingKey { case credentialID, prfInput, nonce, ciphertext, tag }
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         func field(_ key: CodingKeys, _ valid: (Int) -> Bool) throws -> Data {
             let data = try container.decode(Data.self, forKey: key)
@@ -272,10 +273,24 @@ nonisolated struct CredentialVaultEnvelope: Codable, Sendable {
     }
 }
 
-nonisolated enum CredentialVaultCrypto {
+public nonisolated enum CredentialVaultCrypto {
     static let format = 1
     private static let wrappingLabel = Data("WSurf vault wrapping v1".utf8)
     static let maximumUnlockFieldBytes = 1_024
+    private static let keyCheckLabel = "WSurf key check v1"
+
+    /// A diagnostic for the person comparing two Macs: 48 bits of `HKDF-SHA256(PRF output, no salt, info: text(label) ‖
+    /// bytes(credentialID))` as `XXXX-XXXX-XXXX`. The same passkey gives the same check on every Mac that gets the same PRF output.
+    /// Its HKDF info differs from the wrapping key's, so it says nothing about that key; it is not the PRF output, never logged and
+    /// never uploaded. Together with the wrapping key derivation and the unwrap it is the only use of a PRF output.
+    public static func keyCheck(prf: SymmetricKey, credentialID: Data) -> String {
+        var info = StoreWriter()
+        info.text(keyCheckLabel)
+        info.bytes(credentialID)
+        let derived = HKDF<SHA256>.deriveKey(inputKeyMaterial: prf, salt: Data(), info: info.data, outputByteCount: 6)
+        let hex = derived.withUnsafeBytes { $0.map { String(format: "%02X", $0) }.joined() }
+        return stride(from: 0, to: hex.count, by: 4).map { String(hex.dropFirst($0).prefix(4)) }.joined(separator: "-")
+    }
 
     static func validateProof(_ proof: VaultUnlockProof) throws {
         guard !proof.credentialID.isEmpty, proof.credentialID.count <= maximumUnlockFieldBytes,

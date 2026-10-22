@@ -233,21 +233,34 @@ extension ProfileVaultStore {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count <= StoreFormat.nameLimit else { throw CredentialStoreError.invalidVaultName }
         try CredentialVaultCrypto.validateProof(proof)
+        let profile = profileID
+        return try await create(proof: proof, authorizedBy: authorizedBy) { ordinal, createdAt in
+            try NewVault.fresh(ordinal: ordinal, name: trimmed, proof: proof, profileID: profile, createdAt: createdAt)
+        }
+    }
+
+    /// What one creation writes, built under the operation lock once the next ordinal is known. `createdAt` is read where the creation
+    /// path always read it.
+    typealias VaultBuilder = (_ ordinal: Int, _ createdAt: Date) throws -> NewVault
+
+    /// The one creation path of `createVault` and `adoptVault`: they differ only in the vault `build` returns. `proof` is the passkey the
+    /// new vault's wrapper list is opened by; the existing-passkey authority requires it to be the one that just opened the source vault.
+    func create(proof: VaultUnlockProof, authorizedBy: VaultCreationAuthority, build: VaultBuilder) async throws -> UUID {
         do {
             switch authorizedBy {
             case .firstVault(let lease):
-                return try await bootstrapFirstVault(name: trimmed, proof: proof, lease: lease)
+                return try await bootstrapFirstVault(proof: proof, lease: lease, build: build)
             case .unlockedVault(let sourceID, let access):
-                return try await createWithUnlockedVault(sourceID, access: access, name: trimmed, proof: proof)
+                return try await createWithUnlockedVault(sourceID, access: access, build: build)
             case .existingPasskey(let sourceID, let credentialID, let prf, let lease):
-                return try await createWithExistingPasskey(sourceID, credentialID: credentialID, prf: prf, lease: lease, name: trimmed, proof: proof)
+                return try await createWithExistingPasskey(sourceID, credentialID: credentialID, prf: prf, lease: lease, proof: proof, build: build)
             }
         } catch let error as DatabaseError {
             throw storeError(error, ordinal: nil)
         }
     }
 
-    private func createWithUnlockedVault(_ sourceID: UUID, access: VaultAccess, name: String, proof: VaultUnlockProof) async throws -> UUID {
+    private func createWithUnlockedVault(_ sourceID: UUID, access: VaultAccess, build: VaultBuilder) async throws -> UUID {
         func grant() throws -> VaultGrant {
             do {
                 return try authorizedGrant(sourceID, access)
@@ -260,7 +273,7 @@ extension ProfileVaultStore {
         let createdAt = wall()
         return try await withOperation { pool in
             let authorized = try grant()  // re-checked after the lock wait
-            return try Self.insertNewVault(pool, grant: authorized, access: access, name: name, proof: proof, now: clock, createdAt: createdAt)
+            return try Self.insertNewVault(pool, grant: authorized, access: access, build: build, now: clock, createdAt: createdAt)
         }
     }
 
@@ -276,7 +289,7 @@ extension ProfileVaultStore {
     /// vault: same credential id, same PRF output, and the PRF input the source vault stored for that credential. Anything else would wrap
     /// the new vault under a combination the chosen passkey cannot reproduce.
     private func createWithExistingPasskey(
-        _ sourceID: UUID, credentialID: Data, prf: SymmetricKey, lease: VaultAccess, name: String, proof: VaultUnlockProof
+        _ sourceID: UUID, credentialID: Data, prf: SymmetricKey, lease: VaultAccess, proof: VaultUnlockProof, build: VaultBuilder
     ) async throws -> UUID {
         guard proof.credentialID == credentialID, proof.prf.withUnsafeBytes({ Data($0) }) == prf.withUnsafeBytes({ Data($0) }) else {
             throw CredentialStoreError.passkeyUnusable
@@ -307,7 +320,7 @@ extension ProfileVaultStore {
             // The commit: the lease is checked and the transaction runs under the lease's lock (the source access differs from the lease,
             // so `openVault`'s own check cannot deadlock on it).
             return try lease.withAuthorization(now: clock) {
-                try Self.insertNewVault(pool, grant: grant, access: access, name: name, proof: proof, now: clock, createdAt: createdAt)
+                try Self.insertNewVault(pool, grant: grant, access: access, build: build, now: clock, createdAt: createdAt)
             }
         }
     }
@@ -315,7 +328,7 @@ extension ProfileVaultStore {
     /// One `BEGIN IMMEDIATE` transaction (spec §8 item 5): the registry re-read and verified with RK, both new vault rows and heads, the
     /// registry rewritten with the two new entries and revision + 1. No other vault's rows are read or written.
     nonisolated private static func insertNewVault(
-        _ pool: DatabasePool, grant: VaultGrant, access: VaultAccess, name: String, proof: VaultUnlockProof,
+        _ pool: DatabasePool, grant: VaultGrant, access: VaultAccess, build: VaultBuilder,
         now: @Sendable () -> ContinuousClock.Instant, createdAt: Date
     ) throws -> UUID {
         try pool.writeWithoutTransaction { (db: Database) throws -> UUID in
@@ -325,9 +338,11 @@ extension ProfileVaultStore {
                 let active = opened.catalog.vaults.filter { $0.role == .active }
                 guard active.count < StoreFormat.activeVaultLimit else { throw CredentialStoreError.tooManyVaults }
                 guard opened.catalog.revision < UInt64(Int64.max) else { throw CredentialVaultError.invalidData }
-                let vault = try NewVault.fresh(
-                    ordinal: (active.map(\.ordinal).max() ?? 0) + 1, name: name, proof: proof, profileID: grant.ids.profileID, createdAt: createdAt
-                )
+                let vault = try build((active.map(\.ordinal).max() ?? 0) + 1, createdAt)
+                // A fresh vault never collides. An adopted one carries the id its other Mac gave it.
+                guard !opened.catalog.vaults.contains(where: { $0.vaultID == vault.vaultID || $0.vaultID == vault.trashID }) else {
+                    throw CredentialVaultError.alreadyExists
+                }
                 let entries = try VaultBuild.writePair(db, ids: grant.ids, registryKey: grant.registryKey, vault: vault)
                 var next = opened.catalog
                 next.revision += 1
@@ -347,7 +362,7 @@ extension ProfileVaultStore {
     /// `RENAME_EXCL`, rename the pending store, set A3. The seam numbers are the migration's steps 4-7, 9 and 10. Publishes no grant.
     /// A cancellation or a dead lease before the commit-point rename removes exactly the files this call created (`created`), so the
     /// next open is `.firstRun` again; any other failure, and a crash, leaves them for the fail-closed states.
-    private func bootstrapFirstVault(name: String, proof: VaultUnlockProof, lease: VaultAccess) async throws -> UUID {
+    private func bootstrapFirstVault(proof: VaultUnlockProof, lease: VaultAccess, build: VaultBuilder) async throws -> UUID {
         let hold = try await acquireOperation(mode: .exclusive)
         defer { hold.release() }
         switch openState() {
@@ -361,7 +376,7 @@ extension ProfileVaultStore {
         try checkLease(lease)
         let ids = StoreIDs(storeID: UUID(), profileID: profileID)
         let registryKey = VaultBuild.randomBytes(32)
-        let vault = try NewVault.fresh(ordinal: 1, name: name, proof: proof, profileID: profileID, createdAt: wall())
+        let vault = try build(1, wall())
         var created: [String] = []
         do {
             try buildPending(ids: ids, registryKey: registryKey, vault: vault)

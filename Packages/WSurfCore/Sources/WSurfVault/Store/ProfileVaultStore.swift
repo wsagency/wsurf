@@ -24,8 +24,9 @@ nonisolated struct VaultGrant: Sendable {
 }
 
 /// The stored form of a vault's wrapper list: a binary property list of `[CredentialKeyWrapper]` in insertion order, 1...32
-/// entries with unique credential ids. Its digest is the SHA-256 of the stored bytes (`StoreSeal.digest`).
-nonisolated enum VaultWrapperList {
+/// entries with unique credential ids. Its digest is the SHA-256 of the stored bytes (`StoreSeal.digest`). Public for iCloud sync,
+/// which uploads the list as it stands: wrappers are public data, they open only with the passkey.
+public nonisolated enum VaultWrapperList {
     private static let maximumBytes = 256 * 1_024
 
     private nonisolated struct Bounded: Decodable {
@@ -43,13 +44,13 @@ nonisolated enum VaultWrapperList {
         }
     }
 
-    static func encode(_ wrappers: [CredentialKeyWrapper]) throws -> Data {
+    public static func encode(_ wrappers: [CredentialKeyWrapper]) throws -> Data {
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
         return try encoder.encode(wrappers)
     }
 
-    static func decode(_ stored: Data?) throws -> [CredentialKeyWrapper] {
+    public static func decode(_ stored: Data?) throws -> [CredentialKeyWrapper] {
         guard let stored, stored.count <= maximumBytes, stored.starts(with: Data("bplist00".utf8)) else { throw CredentialStoreError.malformed }
         let wrappers = try PropertyListDecoder().decode(Bounded.self, from: stored).wrappers
         guard !wrappers.isEmpty, Set(wrappers.map(\.credentialID)).count == wrappers.count else { throw CredentialStoreError.malformed }

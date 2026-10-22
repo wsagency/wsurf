@@ -19,6 +19,8 @@ public nonisolated enum CredentialChangeCause: Sendable {
     static let undo = "undo"
     /// Written by the move of the cards and addresses saved on this Mac into the vault, and by its Undo (`AutofillVaultMigration`).
     public static let autofillMigration = "autofill-migration"
+    /// Written when an entry arrives from another Mac through iCloud sync.
+    public static let sync = "sync"
 
     /// What the History panel says, `nil` when the writer said nothing.
     public static func text(for cause: String?) -> String? {
@@ -36,6 +38,8 @@ public nonisolated enum CredentialChangeCause: Sendable {
             String(localized: "Changed by Undo")
         case Self.autofillMigration:
             String(localized: "Moved from the cards and addresses saved on this Mac")
+        case Self.sync:
+            String(localized: "Changed on another device")
         default:
             cause
         }
