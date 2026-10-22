@@ -259,15 +259,16 @@ struct FreeMemoryTests {
     // MARK: - Menu and palette
 
     @Test(.boundedWebViews)
-    func theFileMenuOffersFreeMemoryAfterUnloadTab() throws {
+    func theFileMenuOffersFreeMemoryAfterTheCloseOrUnloadTabItem() throws {
         let coordinator = AppCoordinator()
         let menu = MainMenu(coordinator: coordinator)
         menu.install()
         defer { NSApp.mainMenu = nil }
         let root = try #require(NSApp.mainMenu)
         let file = try #require(root.items.compactMap(\.submenu).first { $0.title == String(localized: "File") })
-        let unload = try #require(file.items.firstIndex { $0.title == String(localized: "Unload Tab") })
-        let item = file.items[unload + 1]
+        // The ⌘W item is Close Tab or Unload Tab, depending on the active tab.
+        let closeOrUnload = try #require(file.items.firstIndex { $0.keyEquivalent == "w" && $0.keyEquivalentModifierMask == .command })
+        let item = file.items[closeOrUnload + 1]
 
         #expect(item.title == String(localized: "Free Memory"))
         #expect(item.keyEquivalent.isEmpty)
