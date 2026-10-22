@@ -31,10 +31,6 @@ Everything since 0.1.7 (build 7). None of the screens and prompts below has been
 - Settings › Appearance › Theme › Reset Theme to Default puts a theme back as it came: every slider (brightness, glass, spacing, edges, corners, icons, folder indent and the rest) and, for a theme you made, its colors, taken from the theme it was copied from. Its name and your other themes stay as they are. WSurf asks first, and a reset can't be undone.
 - Settings is denser: options sit closer together on every page, including the Colors and Layout groups on the Appearance page, which now line up with the other cards.
 
-### iCloud and importing
-
-- PLACEHOLDER, to be written when the iCloud phase 3 stack merges into 0.1.8: iCloud sync and the import memory for Passwords. Remove this section if that stack is not in the build.
-
 ### Known issues
 
 - Calm in its light appearance and Nord in its dark appearance show the low-contrast warning for Secondary text as they come: their sleeping-tab text is dimmer than 4.5:1 on the window or the sidebar.
