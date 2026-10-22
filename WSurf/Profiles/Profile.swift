@@ -5,6 +5,7 @@
 import Foundation
 import os
 import WebKit
+import WSurfCore
 
 nonisolated struct Profile: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
@@ -108,6 +109,7 @@ extension Profile {
         if !profile.isPrivate {
             // Revokes issued access and drains vault work before anything is deleted; never wipes the vault itself (the
             // support directory removal below does). First in this branch so no caller of `erase` can bypass it.
+            CloudSync.shared?.vaults?.profileErased(profile.id)
             await CredentialManager.retire(profileID: profile.id)
             CloudTabs.shared?.forget(profileID: profile.id)
             try? await WKWebsiteDataStore.remove(forIdentifier: profile.id)

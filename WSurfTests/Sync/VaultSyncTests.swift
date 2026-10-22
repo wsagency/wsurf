@@ -21,6 +21,7 @@ private final class Rig {
     let vaultID = UUID()
     let dek = SymmetricKey(size: .bits256)
     private var count = 0
+    private var macs: [SimulatedMac] = []
 
     var zone: String {
         SyncZone.vault(profileID: profile, vaultID: vaultID)
@@ -53,6 +54,7 @@ private final class Rig {
             vault.add(account)
         }
         mac.start()
+        macs.append(mac)
         return (mac, vault)
     }
 
@@ -76,6 +78,10 @@ private final class Rig {
     }
 
     func finish() {
+        // Close the sync databases before their folders go.
+        for mac in macs {
+            mac.sync.profileErased(profile)
+        }
         try? FileManager.default.removeItem(at: root)
     }
 }

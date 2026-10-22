@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             do {
                 try await application.clearDataOnQuitIfNeeded()
-                await CloudTabs.shared?.sendBeforeQuit()
+                await CloudSync.shared?.sendBeforeQuit()
                 await application.closePagesForTermination()
                 NSApp.reply(toApplicationShouldTerminate: true)
             } catch {

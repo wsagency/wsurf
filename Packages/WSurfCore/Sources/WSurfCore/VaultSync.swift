@@ -75,6 +75,8 @@ public final class VaultSync: SyncEngineDelegate {
     @ObservationIgnored let persist: (VaultSyncAppState) -> Void
     @ObservationIgnored var engine: (any SyncEngine)?
     @ObservationIgnored var databases: [UUID: VaultSyncDatabase] = [:]
+    /// Profiles being erased: their folder is about to go, so their database is never opened again.
+    @ObservationIgnored var erased: Set<UUID> = []
     @ObservationIgnored var chains: [VaultKey: Task<Void, Never>] = [:]
     @ObservationIgnored var debounced: [VaultKey: Task<Void, Never>] = [:]
     @ObservationIgnored var generation = 0
@@ -206,6 +208,15 @@ public final class VaultSync: SyncEngineDelegate {
             return .sending(max(waiting, 1))
         }
         return .synced
+    }
+
+    /// Whether this Mac syncs the vault now (whatever its status), for the copy that warns before a deletion.
+    public func isSyncing(profileID: UUID, vaultID: UUID) -> Bool {
+        summaries[VaultKey(profileID: profileID, vaultID: vaultID)]?.enabled == true
+    }
+
+    public func hasSyncedVaults(profileID: UUID) -> Bool {
+        summaries.contains { $0.key.profileID == profileID && $0.value.enabled }
     }
 
     /// Entries that stay on this Mac (too large, or only files) and changes that could not be read, counted this run.
@@ -346,6 +357,7 @@ public final class VaultSync: SyncEngineDelegate {
             summaries[key] = nil
         }
         persist(state)
+        erased.insert(profileID)
         databases[profileID] = nil
     }
 
@@ -417,7 +429,7 @@ public final class VaultSync: SyncEngineDelegate {
 
     /// The profile's database. It is created only when `create` is set; a database that cannot be opened is no database.
     func database(_ profileID: UUID, create: Bool = false) -> VaultSyncDatabase? {
-        guard !excluded.contains(profileID) else { return nil }
+        guard !excluded.contains(profileID), !erased.contains(profileID) else { return nil }
         if let existing = databases[profileID] {
             return existing
         }

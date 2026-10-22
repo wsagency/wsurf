@@ -76,6 +76,7 @@ extension CredentialSettings {
                                     .disabled(model.isBusy)
                             }
                         }
+                        CloudVaultRow(model: model, run: run)
                         RowSeparator()
                         DetailRow(title: "Delete vault", caption: deleteVaultCaption) {
                             Button("Delete Vault…", role: .destructive) { run { await model.requestVaultDeletion() } }
@@ -151,6 +152,7 @@ private struct CredentialDeleteVaultSheetHost: ViewModifier {
                 CredentialDeleteVaultSheet(
                     pending: pending,
                     isBusy: model.isBusy,
+                    syncedHere: model.vaultIsSyncedHere(pending.vaultID),
                     confirm: confirm,
                     export: {
                         exportsOnDismiss = true

@@ -86,6 +86,9 @@ struct CredentialSettings: View {
         }
         .task(id: model.authorizationEpoch) { await model.load() }
         .task { await model.legacy.refresh() }
+        // Entries another Mac synced were written to the open vault: read it again, unless an editor or an import review is open.
+        .onChange(of: model.manager?.syncWrites) { Task { await model.reloadAfterSync() } }
+        .onChange(of: model.draft == nil && model.importReview == nil) { Task { await model.reloadIfSyncWaited() } }
         .onDisappear {
             work?.cancel()
             showsCreateWarning = false
@@ -104,6 +107,16 @@ struct CredentialSettings: View {
             isPresented: Binding(get: { model.importReview != nil }, set: { if !$0 { model.cancelImport() } })
         ) {
             CredentialImportReviewSheet(model: model, run: run)
+        }
+        .sheet(
+            isPresented: Binding(get: { model.syncReview != nil }, set: { if !$0 { model.closeSyncReview() } })
+        ) {
+            VaultSyncReviewSheet(
+                conflicts: model.syncReview ?? [],
+                isBusy: model.isBusy,
+                resolve: { ids, keepLocal in Task { await model.resolveSync(ids, keepLocal: keepLocal) } },
+                done: { model.closeSyncReview() }
+            )
         }
         .sheet(item: $exportContext) { context in
             CredentialExportSheet(model: model, csv: context.csv) { selection in
@@ -215,6 +228,8 @@ struct CredentialSettings: View {
     /// The sections, then the vault's entries (or Input History).
     @ViewBuilder
     private var vaultTab: some View {
+        // Vaults other Macs synced, entries waiting for a choice and a removal from iCloud are told whatever the vault's state.
+        VaultSyncCard(model: model, withWindow: withWindow, showSettings: { open(.settings) })
         // The import of the passwords saved before Credential Manager is on the Settings tab; a locked vault says so in its own card.
         // The cards and addresses saved on this Mac move into the open vault from their own card.
         if model.presentation == .content, !showsTrash, !list.showsInputHistory {

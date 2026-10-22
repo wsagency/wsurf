@@ -16,6 +16,8 @@ struct VaultAttachmentIsolationTests {
     private static let needles = [
         "credentialattachment", "vaultblob", "vaultfilepreview", "addattachment", "readattachment", "discardattachments",
         "sweepattachments", "hasattachment", "temporarycopy", "savefilecopy", "credentials.blobs", "vault file previews",
+        // The vault's iCloud sync (its sealing key, its adoption of another Mac's vault) is the person's own, like the vault.
+        "synckey", "vaultsynckey", "adoptsyncedvault", "vaultsync",
     ]
 
     private var repositoryRoot: URL {

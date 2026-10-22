@@ -97,6 +97,12 @@
     "Add Site…" : {
       "comment" : "Row on the Connected apps page that opens an alert for typing a developer site. The ellipsis promises the alert. Title Case."
     },
+    "Add to This Mac…" : {
+      "comment" : "Button on the Vault on your other devices card. Title Case for a command; the ellipsis means a passkey prompt follows."
+    },
+    "Add to This Mac" : {
+      "comment" : "Button in the On your other devices section that adds the profile to this Mac. Title Case for a command."
+    },
     "All %lld passwords from the old list are in Credential Manager." : {
 
     },
@@ -195,6 +201,9 @@
     },
     "It will need your approval each time it connects until you pair it again." : {
       "comment" : "Body of the dialog that confirms withdrawing a paired app."
+    },
+    "Items" : {
+      "comment" : "Name of the part of an entry that holds cards, addresses and other items, in a list of what changed on two devices."
     },
     "Keep for Now" : {
 
@@ -342,6 +351,9 @@
     },
     "Restart Page" : {
 
+    },
+    "Restore" : {
+      "comment" : "Button in the Review Sync Changes sheet that adds an entry back from iCloud. Title Case for a command."
     },
     "Restore prompts on %lld excluded sites." : {
 
@@ -499,11 +511,17 @@
     "Unlock the vault to import the passwords saved before Credential Manager." : {
 
     },
+    "Unlock this vault to turn on sync." : {
+      "comment" : "Caption of the Sync with iCloud switch, disabled, while the vault is locked. Sync needs the vault unlocked."
+    },
     "Use Another Device or Key…" : {
 
     },
     "Usual web port only. Add a port to include another." : {
       "comment" : "Caption under a developer site that has no port. It covers port 80 for http and 443 for https only."
+    },
+    "Vault on your other devices" : {
+      "comment" : "Title of the card on the Vault tab that offers to add a vault another Mac syncs through iCloud. Sentence case."
     },
     "Website access" : {
       "comment" : "Row title in Settings › Assistant, Acting on websites. It chooses how much of a website the assistant may use when that website has no setting of its own: Ask, Read Only or Allow Control. Sentence case."
@@ -725,6 +743,9 @@
     "%@ in" : {
       "comment" : "Token counter in the footer of the agent activity column, in a monospaced one-line row that reads “3 req · 12K in (38% cached) · 2K out”. %@ is an abbreviated count of tokens sent to the model; “in” is the short form of “sent in”. Extremely tight — keep it to a word or two."
     },
+    "In iCloud, but deleted here." : {
+      "comment" : "Row caption in the Review Sync Changes sheet for an entry that was deleted on this Mac before."
+    },
     "%@ in use" : {
       "comment" : "Tooltip on the permission badge in the address bar while a website is actively using a capability. %@ is the permission's own name, itself localized: Camera, Microphone, Location or Notifications. The phrase continues from that noun, so it is a fragment rather than a sentence."
     },
@@ -802,6 +823,12 @@
         }
       }
     },
+    "%lld changes from iCloud couldn’t be read and were skipped." : {
+      "comment" : "Added to the Sync with iCloud caption. %lld is a number of at least 1. Changes that could not be opened with this vault’s key."
+    },
+    "%lld changes from your other devices will be added when you unlock this vault." : {
+      "comment" : "Caption of the Sync with iCloud switch while the vault is locked and other devices sent changes. %lld is a number of at least 1. Sentence case."
+    },
     "%lld downloads will be removed from the list. The files stay in your Downloads folder." : {
       "comment" : "Explanatory text in the confirmation sheet for clearing the download list, shown both in the downloads popover and on the Downloads settings page. %lld is how many finished downloads disappear from the list. “Downloads folder” is the macOS folder of that name.",
       "localizations" : {
@@ -848,6 +875,12 @@
         }
       }
     },
+    "%lld entries are too large to sync or hold only files, so they stay on this Mac." : {
+      "comment" : "Added to the Sync with iCloud caption. %lld is a number of at least 1. Files are never synced."
+    },
+    "%lld entries changed on this Mac and another device. Review them on the Vault tab." : {
+      "comment" : "Caption of the Sync with iCloud switch when entries changed here and on another device and wait for a choice. %lld is a number of at least 1. Vault tab is the tab of the Autofill page."
+    },
     "%lld entries, each kept for %@" : {
       "comment" : "Footnote under the Entries list in Settings, Autofill, Input History, shown while the list is unlocked. The first number is how many entries the list holds. %@ is how long each entry is kept, such as “30 minutes” or “1 week”. A mid-sentence time span, not a sentence of its own.",
       "localizations" : {
@@ -893,6 +926,9 @@
           }
         }
       }
+    },
+    "%lld entries need a choice. They don’t sync until you choose." : {
+      "comment" : "Caption of the card for entries that changed on two devices. %lld is a number of at least 1."
     },
     "%lld extensions, %lld running." : {
       "comment" : "Caption under the Extensions settings title. The first %lld is the total number of extensions available, the second is how many are switched on in this profile."
@@ -1412,6 +1448,9 @@
     "Add Inspect Element to a page’s right-click menu." : {
 
     },
+    "Add it to this Mac with your unlock passkey. Its entries download when you unlock it." : {
+      "comment" : "Caption of the Vault on your other devices card."
+    },
     "Add Key…" : {
       "comment" : "Button in the API key row in Settings > Provider that opens the key-entry popover; it reads Change… once a key is stored. Title Case; the trailing character is a real ellipsis (…) promising a popover, so keep it."
     },
@@ -1572,6 +1611,9 @@
     },
     "Another copy of WSurf is running. Changes in this window won’t be saved." : {
       "comment" : "Brief notice at the bottom of the window when WSurf starts while another copy of it already has the session open — a second build during development, usually. That copy keeps the tabs; this window opens empty and writes nothing down. Sentence case, two short sentences."
+    },
+    "Another entry here holds the same item from Passwords." : {
+      "comment" : "Row caption in the Review Sync Changes sheet; information only. Passwords is Apple’s app."
     },
     "Answer…" : {
 
@@ -1915,6 +1957,18 @@
     "Change these options only if your API setup needs them. Chat and voice work with the defaults." : {
 
     },
+    "Changed here and on another device: %@." : {
+      "comment" : "Row caption in the Review Sync Changes sheet. %@ is a list of part names such as “Login, Notes”."
+    },
+    "Changed on another device" : {
+      "comment" : "History line for a version that another device’s change replaced. Sentence case."
+    },
+    "Changed on another device, deleted here." : {
+      "comment" : "Row caption in the Review Sync Changes sheet."
+    },
+    "Changed on this Mac and another device" : {
+      "comment" : "Title of the card on the Vault tab for entries that changed here and on another device. Sentence case."
+    },
     "Change…" : {
       "comment" : "Button that reopens the API key popover once a key is stored; it reads Add Key… when none is. A verb, with a real ellipsis (…) promising a popover."
     },
@@ -2220,6 +2274,9 @@
     "Closing this tab also removes its pin. You can pin the page again later." : {
       "comment" : "Body of the alert that asks before closing a pinned tab. It says what is lost and nothing else; the title above already asks the question."
     },
+    "Code" : {
+      "comment" : "Name of the part of an entry that holds the verification code, in a list of what changed on two devices."
+    },
     "Codex could not update the configuration. Check it in Codex or use Copy Configuration." : {
       "comment" : "External MCP client setup in Advanced settings."
     },
@@ -2409,6 +2466,9 @@
     "Couldn’t reach %@" : {
       "comment" : "Error shown when the model provider's server does not answer. %@ is the server address, e.g. http://localhost:11434 — an address, not a name. Curly apostrophe."
     },
+    "Couldn’t reach iCloud. Check your connection and try again." : {
+      "comment" : "Error shown when turning on Sync with iCloud or adding a synced vault could not reach iCloud."
+    },
     "Couldn’t read saved contacts. Check Settings › Autofill." : {
 
     },
@@ -2543,6 +2603,9 @@
     },
     "Dictation model" : {
 
+    },
+    "Different here and in iCloud." : {
+      "comment" : "Row caption in the Review Sync Changes sheet when the two versions differ and there is no earlier common state."
     },
     "Dinner ideas" : {
 
@@ -2873,6 +2936,9 @@
     },
     "File" : {
       "comment" : "Title of the File menu in the menu bar. Use the standard macOS wording."
+    },
+    "Files stay on this Mac; they aren’t synced with iCloud." : {
+      "comment" : "Added to the Files caption of an entry in a vault that syncs through iCloud."
     },
     "Fill field" : {
 
@@ -3278,6 +3344,9 @@
     "just now" : {
       "comment" : "Relative time on a task card and in the agent activity panel, used for anything less than 45 seconds old; older ages are written by the system in the reader's own locale. Lowercase fragment on a metadata line."
     },
+    "Keep All This Mac’s" : {
+      "comment" : "Toolbar button in the Review Sync Changes sheet that keeps this Mac’s version of every entry that asks for a choice. Title Case for a command."
+    },
     "Keep as a Tab" : {
       "comment" : "Tooltip on the button beside a Peek that turns the peeked page into an ordinary tab. Title Case."
     },
@@ -3287,11 +3356,17 @@
     "Keep Beside This Page" : {
       "comment" : "Tooltip on the button beside a Peek that turns the peeked page into a tab and puts it in a split with the page the Peek was opened from. Title Case."
     },
+    "Keep Deleted" : {
+      "comment" : "Button in the Review Sync Changes sheet that leaves an entry deleted. Title Case for a command."
+    },
     "Keep history for" : {
       "comment" : "Title of the row on the Privacy settings page whose pop-up menu holds A day, A week, A month, A year and Forever — the title and the chosen value read as one phrase, so leave room for the value to follow. Sentence case."
     },
     "Keep replies in my OpenAI account" : {
 
+    },
+    "Keep This Mac’s" : {
+      "comment" : "Button in the Review Sync Changes sheet that keeps this Mac’s version of an entry. Title Case for a command."
     },
     "Keep this website loaded" : {
 
@@ -3302,8 +3377,14 @@
     "Keep Website Loaded" : {
 
     },
+    "Keeps this vault the same on your Macs signed in to your Apple Account. Entries are encrypted with the vault’s key before they leave this Mac. Files attached to entries stay on this Mac." : {
+      "comment" : "Caption of the Sync with iCloud switch while it is off and the vault is unlocked. It says what sync does, that entries are encrypted before they leave, and that files stay. Apple Account is Apple’s product name."
+    },
     "kept loaded" : {
       "comment" : "Fragment in the one-line summary under a website, meaning it is never unloaded to reclaim memory. Lower case: joined with other fragments."
+    },
+    "Key check" : {
+      "comment" : "Title of a row that shows a short non-secret code of the key this Mac’s unlock passkey gives, so two Macs can be compared when a synced vault does not open."
     },
     "key %u" : {
       "comment" : "Fallback legend on a key cap in the shortcut recorder for a key that has no name and prints no character. %u is the raw macOS key code, a bare number; only the word “key” is translated. Very tight."
@@ -3416,6 +3497,9 @@
     "WSurf couldn’t unlock or save your cards in Keychain. Try again in a signed build." : {
 
     },
+    "WSurf deletes this vault’s encrypted copy from your iCloud account and stops syncing it on all your devices. Each device keeps its own copy. Backups of your devices aren’t affected." : {
+      "comment" : "Message of the confirmation for Remove from iCloud."
+    },
     "WSurf encrypts saved contacts. Imported copies don’t sync." : {
 
     },
@@ -3478,6 +3562,12 @@
     },
     "Location" : {
       "comment" : "Name of the location permission: a row on the Websites settings page and a label in the permission badge in the toolbar. Means the Mac's geographic location."
+    },
+    "Locked on this Mac: your passkey gives a different key here, so this vault can’t open on this Mac. Nothing was changed. Key check on this Mac: %@" : {
+      "comment" : "Caption of the Vault on your other devices card when the passkey opened no copy of the vault on this Mac. %@ is the Key check code to compare with the other Mac’s."
+    },
+    "Login" : {
+      "comment" : "Name of the part of an entry that holds the username and password, in a list of what changed on two devices."
     },
     "Long" : {
 
@@ -3760,6 +3850,9 @@
     "Name and appearance" : {
       "comment" : "Heading over the name field, color swatches and symbol grid of one profile."
     },
+    "Name and websites" : {
+      "comment" : "Name of the part of an entry that holds its name and websites, in a list of what changed on two devices."
+    },
     "Name of the service" : {
 
     },
@@ -4032,6 +4125,9 @@
     },
     "on this page" : {
       "comment" : "Fragment inserted into the dialog asking the user to approve an action the assistant wants to take, used when the website’s name is unknown: The assistant wants to click “Pay now” on this page. The alternative fragment, which names the site, is on %@."
+    },
+    "On your other devices" : {
+      "comment" : "Title of the Profiles section that lists profiles whose vaults another Mac syncs through iCloud. Sentence case."
     },
     "on-device" : {
       "comment" : "Small tag beside a provider in Settings, naming the kind of connection it uses — in this case a model running on the Mac itself rather than over the network. Deliberately lowercase and technical; the other tags in the same place are responses and OpenAI compatible. Very tight space."
@@ -4702,6 +4798,15 @@
     "Remove from History" : {
       "comment" : "Tooltip on the close button of a history row on the start page; it deletes that one entry from history. Title Case."
     },
+    "Remove from iCloud" : {
+      "comment" : "Title of the row, and the destructive button of its confirmation, that deletes a vault’s encrypted copy from the person’s iCloud account. Sentence case for the row; the button reads the same."
+    },
+    "Remove from iCloud…" : {
+      "comment" : "Button that asks to delete a vault’s encrypted copy from iCloud. Title Case for a command; the ellipsis means a confirmation follows."
+    },
+    "Remove “%@” from iCloud?" : {
+      "comment" : "Title of the confirmation for Remove from iCloud. %@ is the vault’s name."
+    },
     "Remove from List" : {
       "comment" : "Tooltip on the close button of a download row, on the start page and in the Downloads view. It forgets the row only — the downloaded file stays on disk — so avoid a verb that sounds like deleting the file. Title Case."
     },
@@ -4725,6 +4830,9 @@
     },
     "Remove This Page" : {
       "comment" : "Context-menu command on one page of several shown at once. That page leaves the arrangement and goes back to being an ordinary sidebar row; the others keep the window. Title Case."
+    },
+    "Removed from iCloud" : {
+      "comment" : "Title of the card on the Vault tab after a vault’s iCloud copy was removed. Sentence case."
     },
     "Remove…" : {
       "comment" : "Button on the Website Data settings page that opens the confirmation dialog for deleting a website’s stored data. Imperative verb; the real ellipsis is the promise that a dialog follows, so keep it."
@@ -4850,6 +4958,9 @@
     },
     "Review Saved Details" : {
 
+    },
+    "Review Sync Changes" : {
+      "comment" : "Title of the sheet that lists entries changed on two devices. Title Case for a window title."
     },
     "Review the request below" : {
 
@@ -5121,6 +5232,9 @@
     "Send you notifications?" : {
       "comment" : "Question in the permission panel when a website asks to send notifications. The website is named in the header just above, so the question deliberately has no subject. Use “send” rather than “show”."
     },
+    "Sending changes to iCloud…" : {
+      "comment" : "Caption of the Sync with iCloud switch while changes are waiting to go up, or incoming changes are being added. iCloud is Apple’s product name."
+    },
     "Send…" : {
 
     },
@@ -5229,6 +5343,9 @@
     "Show in Finder" : {
       "comment" : "Tooltip on the small folder button beside a finished download, which reveals the file in the Finder. Finder is Apple’s app name — use Apple’s own name for it, and match Apple’s standard wording for this command."
     },
+    "Show in Settings" : {
+      "comment" : "Button on the Removed from iCloud card that opens the Settings tab where Sync with iCloud is."
+    },
     "Show Last Tab" : {
       "comment" : "Hidden menu command under Window, shortcut ⌘9, which switches to the last tab in the row. Title Case and established platform terminology."
     },
@@ -5328,6 +5445,9 @@
     "Sign in with your Apple Account in System Settings to share tabs." : {
       "comment" : "Note under the iCloud section of a profile’s settings page, shown when this Mac is not signed in to iCloud. Apple Account and System Settings are Apple’s own names: use the wording macOS uses in the target language. A sentence."
     },
+    "Sign in with your Apple Account in System Settings to sync." : {
+      "comment" : "Caption of the Sync with iCloud switch when no Apple Account is signed in, and the error shown when sync is turned on without one. System Settings is the macOS app."
+    },
     "Sign out" : {
 
     },
@@ -5399,6 +5519,9 @@
     },
     "Use a named palette such as Catppuccin, Nord, Dracula, Gruvbox, or Rosé Pine." : {
       "comment" : "Settings search description for the Color preset row. The palette names are proper names and stay untranslated."
+    },
+    "Use All iCloud Versions" : {
+      "comment" : "Toolbar button in the Review Sync Changes sheet that takes iCloud’s version of every entry that asks for a choice. Title Case for a command."
     },
     "Catppuccin Latte" : {
       "comment" : "Name of a color preset (the light Catppuccin palette). Proper name; do not translate."
@@ -5617,6 +5740,9 @@
     "Symbol" : {
       "comment" : "Label of the grid of symbols that stand for a profile."
     },
+    "Sync with iCloud" : {
+      "comment" : "Title of the switch on a vault’s Settings that keeps the vault the same on the person’s Macs through iCloud, and the accessibility label of that switch. iCloud is Apple’s product name. Sentence case."
+    },
     "System" : {
       "comment" : "Name of the System group in the Settings sidebar. Short section heading."
     },
@@ -5822,6 +5948,9 @@
     "The requested result has not been verified. Progress is saved; choose Continue to check it." : {
 
     },
+    "The same on every Mac that can open this vault. It isn’t the key." : {
+      "comment" : "Caption of the Key check row."
+    },
     "The server accepted the connection but never replied." : {
       "comment" : "Explanation on the error page shown when a website timed out, below the headline."
     },
@@ -5842,6 +5971,9 @@
     },
     "The text in this form was written by AI, not by you. Publishing it puts AI-generated text out under your name." : {
 
+    },
+    "The version you don’t keep stays in that entry’s History or Trash on the Mac that had it." : {
+      "comment" : "Footer of the Review Sync Changes sheet."
     },
     "The website’s certificate couldn’t be verified, so WSurf stopped before sending anything." : {
       "comment" : "Explanatory sentence on the certificate error page, under its headline. Curly apostrophes."
@@ -5866,6 +5998,9 @@
     },
     "Thinking Effort" : {
 
+    },
+    "This also removes the vault from iCloud. Your other devices keep their copies." : {
+      "comment" : "Note in the Delete Vault sheet for a vault that syncs through iCloud."
     },
     "Thinking: %@" : {
 
@@ -5938,6 +6073,9 @@
     },
     "This Mac isn’t connected to the internet." : {
       "comment" : "Explanation on the error page shown when the Mac is offline, below the headline. Curly apostrophe."
+    },
+    "This Mac’s copy is encrypted and uploaded. Entries that differ from iCloud wait for your review." : {
+      "comment" : "Message of the confirmation shown when sync is turned on again."
     },
     "This MCP connection needs its authorization token. Update it in OpenAI settings." : {
 
@@ -6065,6 +6203,9 @@
     "Try Again" : {
       "comment" : "Button that retries a failed agent turn or a failed update check."
     },
+    "Try Again…" : {
+      "comment" : "Button on the Vault on your other devices card after the passkey gave a different key. Title Case for a command."
+    },
     "Turn on any Safari extension you already have. The App Store keeps it up to date." : {
       "comment" : "Footnote under the Safari extensions section on the Extensions settings page. The first sentence invites the person to switch on an extension that arrived with an app they installed; the second says updates come through the App Store rather than through WSurf. Safari and App Store are product names and are never translated."
     },
@@ -6122,6 +6263,9 @@
     "Unlock Cards" : {
 
     },
+    "Unlock one of this profile’s vaults first, then add this vault." : {
+      "comment" : "Caption of the Vault on your other devices card when no vault of the profile is unlocked to approve adding another."
+    },
     "Unmute" : {
       "comment" : "Tooltip on the same speaker button in the media dock once sound is off; it lets the sound back. Verb, one word; pairs with “Mute”."
     },
@@ -6148,6 +6292,9 @@
     },
     "Up to date" : {
       "comment" : "Update status meaning no newer version exists, shown both in the Settings update section and on the sidebar update card. An adjective phrase describing the app."
+    },
+    "Up to date." : {
+      "comment" : "Caption of the Sync with iCloud switch when every change has been sent and received. A sentence fragment. Sentence case."
     },
     "Update" : {
 
@@ -6206,6 +6353,12 @@
     "Updated to %@" : {
 
     },
+    "Upload" : {
+      "comment" : "Button of the confirmation that uploads this Mac’s copy of a vault to iCloud again."
+    },
+    "Upload “%@” to iCloud?" : {
+      "comment" : "Title of the confirmation shown when sync is turned on again after the vault was removed from iCloud or the account changed. %@ is the vault’s name."
+    },
     "Use %@" : {
       "comment" : "Settings → Assistant → a provider page. %@ is the provider name, e.g. \"Ollama\". Button that makes this provider the one that answers."
     },
@@ -6226,6 +6379,9 @@
     },
     "Use HTTPS to encrypt your API key. HTTP is allowed only for localhost." : {
       "comment" : "Error under the field where a user-added endpoint address is typed, shown when a remote address uses an insecure protocol. https, http and localhost are technical terms and must stay exactly as they are, including their lowercase spelling. In the clear means unencrypted."
+    },
+    "Use iCloud Version" : {
+      "comment" : "Button in the Review Sync Changes sheet that takes iCloud’s version of an entry. Title Case for a command."
     },
     "Use Icons Only" : {
       "comment" : "Checkmark item in the right-click menu of the sidebar toggle button; switches the sidebar to its narrow favicons-without-titles look. The same choice Settings calls “Icons only”. Title Case."
@@ -6488,6 +6644,9 @@
     "You’re set" : {
       "comment" : "Heading of the last onboarding screen, shown once every choice is made. Warm and brief — the reader is finished. Keep it short: it is set in large type."
     },
+    "You’re signed in with a different Apple Account. This Mac keeps its copy. Turn on Sync with iCloud to upload it to this account." : {
+      "comment" : "Caption of the Sync with iCloud switch, and of the Removed from iCloud card, after the Mac’s Apple Account changed."
+    },
     "You’re signed out of %lld websites, and their preferences are removed. Your history and downloads stay." : {
 
     },
@@ -6496,6 +6655,12 @@
     },
     "You’re talking to AI. " : {
 
+    },
+    "Your iCloud encrypted data was reset. This Mac keeps its copy. Turn on Sync with iCloud to upload it again." : {
+      "comment" : "Caption of the Sync with iCloud switch, and of the Removed from iCloud card, after the person reset their iCloud encrypted data."
+    },
+    "Your iCloud storage is full. Changes stay on this Mac until there’s room." : {
+      "comment" : "Caption of the Sync with iCloud switch when the person’s iCloud storage has no room for the vault’s changes."
     },
     "Your microphone pauses while WSurf speaks." : {
 
@@ -6634,6 +6799,27 @@
     },
     "This tab is visible in a split." : {
       "comment" : "Notice explaining why a tab cannot safely be unloaded."
+    },
+    "this vault" : {
+      "comment" : "Fallback name of a vault in a sync confirmation when its name is not known. Lower case, inside a sentence."
+    },
+    "This vault belongs to another profile." : {
+      "comment" : "Error shown when a synced vault is offered to a profile it does not belong to."
+    },
+    "This vault can’t take this entry on this Mac." : {
+      "comment" : "Row caption in the Review Sync Changes sheet; information only. The vault refused the entry, for example because of a limit."
+    },
+    "This vault on this Mac is older than when it last synced, so syncing stopped. Turn Sync with iCloud off and on to compare it with iCloud." : {
+      "comment" : "Caption of the Sync with iCloud switch when this Mac’s vault file is older than the last state it synced, for example after a restore from a backup. Sync with iCloud is the name of the switch."
+    },
+    "This vault was removed from iCloud. This Mac keeps its copy. Turn on Sync with iCloud to upload this copy again." : {
+      "comment" : "Caption of the Sync with iCloud switch, and of the Removed from iCloud card, after the vault’s iCloud copy was removed from another device. Sync with iCloud is the name of the switch."
+    },
+    "This vault was synced by a newer version of WSurf. Update WSurf to add it." : {
+      "comment" : "Error shown when adding a synced vault that another device saved in a newer format."
+    },
+    "This vault was synced by a newer version of WSurf. Update WSurf to keep syncing it." : {
+      "comment" : "Caption of the Sync with iCloud switch when another device saved the vault in a newer format."
     },
     "This tab is kept active by a site setting." : {
       "comment" : "Notice explaining why a tab cannot safely be unloaded."
@@ -6989,6 +7175,9 @@
     "WSurf reads this page in the background while it’s open and tells you once. The page is judged on this Mac, never by an online model. A watch ends after 30 days." : {
       "comment" : "Explanation in the sheet that asks whether to watch a page."
     },
+    "WSurf’s iCloud data was deleted in iCloud settings. This Mac keeps its copy. Turn on Sync with iCloud to upload it again." : {
+      "comment" : "Caption of the Sync with iCloud switch, and of the Removed from iCloud card, after the person deleted WSurf’s data in iCloud settings."
+    },
     "Without your sign-ins, WSurf reads the page as a visitor would." : {
       "comment" : "Explanation in the sheet that asks whether to watch a page, about the Use my sign-ins for this page checkbox."
     },
@@ -7161,8 +7350,14 @@
     "Delete Space…" : {
       "comment" : "Destructive context-menu item on a space icon in the sidebar. Asks before closing the space's tabs and removing it. Title Case, ends with an ellipsis."
     },
+    "Deleted on another device, changed here." : {
+      "comment" : "Row caption in the Review Sync Changes sheet."
+    },
     "Move to Space" : {
       "comment" : "Submenu in the sidebar's tab and folder context menus listing the other spaces of the profile. Choosing one moves the selected rows there. Title Case."
+    },
+    "Move to Trash" : {
+      "comment" : "Button in the Review Sync Changes sheet that moves an entry to Trash because another device deleted it. Title Case for a command."
     },
     "New Space" : {
       "comment" : "Title of the dialog that names a new space, and the name a space gets when its name is left empty. Title Case."
@@ -7187,6 +7382,12 @@
     },
     "Its tabs and folders close. Pins, Favorites, sign-ins, history and passwords stay with the profile." : {
       "comment" : "Detail of the confirmation shown before deleting a space. Deleting closes the space's tabs and folders; it never deletes the profile or its passwords."
+    },
+    "Its vaults are also removed from iCloud. Your other devices keep their copies. To keep them in iCloud, turn off Sync with iCloud for each vault first." : {
+      "comment" : "Added to the Delete profile confirmation when the profile has a vault that syncs through iCloud. Sync with iCloud is the name of the switch."
+    },
+    "Its vaults sync through iCloud. Add it to use them on this Mac." : {
+      "comment" : "Caption of a row in the On your other devices section."
     },
     "Switch to “%@”?" : {
       "comment" : "Title of the one-time question before choosing a space that belongs to another profile. %@ is the space's name. Switching changes the whole window to that profile."

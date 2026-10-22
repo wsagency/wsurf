@@ -106,7 +106,7 @@ final class BrowserApplication {
         let lastWindowID = defaults.string(forKey: Self.lastWindowKey).flatMap(UUID.init(uuidString:))
         let catalog = ProfileStore.shared
         InputHistory.shared.purgeAllProfilesAtLaunch(catalog.profiles)
-        CloudTabs.startIfAvailable(profiles: catalog.profiles)
+        CloudSync.startIfAvailable(profiles: catalog.profiles)
         restoreWindows(of: catalog.profiles)
         if windows.isEmpty {
             newWindow(profile: catalog.current)
@@ -379,7 +379,7 @@ final class BrowserApplication {
         CredentialManager.lockAll(reason: .termination)
         mcpServer.stop()
         // The trees are still whole here; `closeTabsForTermination` empties them later.
-        CloudTabs.shared?.prepareToTerminate()
+        CloudSync.shared?.prepareToTerminate()
         for coordinator in windows {
             coordinator.stopAgent()
             coordinator.voiceInput.cancel()
@@ -390,7 +390,7 @@ final class BrowserApplication {
 
     func cancelTermination() {
         isTerminating = false
-        CloudTabs.shared?.cancelTermination()
+        CloudSync.shared?.cancelTermination()
         mcpServer.resume()
     }
 

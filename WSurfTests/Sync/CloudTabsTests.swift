@@ -7,8 +7,8 @@ import WSurfCore
 
 @testable import WSurf
 
-/// The app side of tab sync against real window models, a fake account and a clock the test moves. Serial: it sets the
-/// process-wide `CloudTabs.shared` and uses the shared Personal context.
+/// The app side of tab sync against real window models, a fake account and a clock the test moves, through the `CloudSync` that owns the
+/// engine. Serial: it sets the process-wide `CloudTabs.shared` and uses the shared Personal context.
 @MainActor
 @Suite(.serialized)
 struct CloudTabsTests {
@@ -16,7 +16,7 @@ struct CloudTabsTests {
     @MainActor
     final class Launch {
         static let entitlements: [String: Any] = [
-            "com.apple.developer.icloud-container-identifiers": [CloudTabsGate.container],
+            "com.apple.developer.icloud-container-identifiers": [CloudSyncGate.container],
             "com.apple.developer.icloud-services": ["CloudKit"],
             "com.apple.developer.aps-environment": "production",
         ]
@@ -28,6 +28,7 @@ struct CloudTabsTests {
         let defaults: UserDefaults
         var models: [BrowserModel] = []
         private(set) var engines: [FakeSyncEngine] = []
+        private(set) var cloudSync: CloudSync?
         private(set) var cloudTabs: CloudTabs?
 
         init() {
@@ -35,7 +36,7 @@ struct CloudTabsTests {
         }
 
         var stateFile: URL {
-            directory.appending(path: "iCloudTabs.json")
+            directory.appending(path: "iCloudSync.json")
         }
 
         var engine: FakeSyncEngine {
@@ -46,10 +47,11 @@ struct CloudTabsTests {
             cloudTabs!.sync
         }
 
-        func gate(flag: Bool = true, entitled: Bool = true) -> CloudTabsGate.Inputs {
+        func gate(flag: Bool = true, entitled: Bool = true) -> CloudSyncGate.Inputs {
             let held = Self.entitlements
-            return CloudTabsGate.Inputs(
-                flag: flag,
+            return CloudSyncGate.Inputs(
+                tabsFlag: flag,
+                vaultFlag: false,
                 isRunningTests: false,
                 isStaged: false,
                 ownsSession: true,
@@ -68,7 +70,7 @@ struct CloudTabsTests {
             if optedIn {
                 defaults.set(true, forKey: CloudTabs.optInKey)
             }
-            cloudTabs = CloudTabs.start(
+            cloudSync = CloudSync.start(
                 gate: gate(flag: flag, entitled: entitled),
                 installIDs: installIDs,
                 stateFile: stateFile,
@@ -76,12 +78,13 @@ struct CloudTabsTests {
                 optInDefaults: { [defaults] _ in defaults },
                 windows: { [unowned self] in models },
                 clock: clock,
-                makeEngine: { [unowned self] sync, _ in
-                    let engine = FakeSyncEngine(cloud: cloud, delegate: sync)
+                makeEngine: { [unowned self] delegate, _ in
+                    let engine = FakeSyncEngine(cloud: cloud, delegate: delegate)
                     engines.append(engine)
                     return engine
                 }
             )
+            cloudTabs = cloudSync?.tabs
             return cloudTabs
         }
 
@@ -110,7 +113,7 @@ struct CloudTabsTests {
             if CloudTabs.shared === cloudTabs {
                 CloudTabs.shared = nil
             }
-            cloudTabs?.prepareToTerminate()
+            cloudSync?.prepareToTerminate()
             defaults.removePersistentDomain(forName: AppDatabase.defaultsSuite(suite))
             try? FileManager.default.removeItem(at: directory)
         }
@@ -397,8 +400,9 @@ struct CloudTabsTests {
         let live = try launch.storedSession()
         #expect(live.running)
 
-        cloudTabs.prepareToTerminate()
-        await cloudTabs.sendBeforeQuit()
+        let cloudSync = try #require(launch.cloudSync)
+        cloudSync.prepareToTerminate()
+        await cloudSync.sendBeforeQuit()
 
         let stored = try launch.storedSession()
         #expect(!stored.running)
@@ -440,17 +444,18 @@ struct CloudTabsTests {
         launch.models = [regularWindow()]
         cloudTabs.publishAll(force: true)
         launch.engine.hangsOnSend = true
-        cloudTabs.prepareToTerminate()
+        let cloudSync = try #require(launch.cloudSync)
+        cloudSync.prepareToTerminate()
         let waiting = await launch.timerCount()
         var finished = false
 
         let quitting = Task {
-            await cloudTabs.sendBeforeQuit()
+            await cloudSync.sendBeforeQuit()
             finished = true
         }
         #expect(await waitUntil { launch.clock.pendingCount > waiting })
         #expect(!finished)
-        launch.clock.advance(by: cloudTabs.quitLimit)
+        launch.clock.advance(by: cloudSync.quitLimit)
         await quitting.value
 
         #expect(finished)
@@ -463,11 +468,12 @@ struct CloudTabsTests {
         launch.models = [regularWindow()]
         cloudTabs.publishAll(force: true)
         try await launch.sendAll()
-        cloudTabs.prepareToTerminate()
+        let cloudSync = try #require(launch.cloudSync)
+        cloudSync.prepareToTerminate()
         try await launch.sendAll()
         #expect(try !launch.storedSession().running)
 
-        cloudTabs.cancelTermination()
+        cloudSync.cancelTermination()
         try await launch.sendAll()
 
         #expect(try launch.storedSession().running)

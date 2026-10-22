@@ -3,6 +3,7 @@
 
 import AuthenticationServices
 import Foundation
+import WSurfCore
 import WSurfVault
 
 /// What the page says for an error, by cause: the vault and its passkeys, then the store, then the exchange. `nil` is a
@@ -75,6 +76,24 @@ extension CredentialSettingsModel {
             return nil
         case let error as VaultFileError:
             return error.message
+        default:
+            return syncMessage(for: error)
+        }
+    }
+
+    /// The errors of iCloud vault sync: turning it on, and adding a vault another Mac synced.
+    private static func syncMessage(for error: any Error) -> String? {
+        switch error {
+        case VaultSyncFailure.locked:
+            return String(localized: "Credentials are locked.")
+        case VaultSyncFailure.signedOut:
+            return String(localized: "Sign in with your Apple Account in System Settings to sync.")
+        case VaultSyncFailure.unavailable, VaultSyncFailure.tooLarge, is URLError:
+            return String(localized: "Couldn’t reach iCloud. Check your connection and try again.")
+        case VaultSyncError.unsupportedGeneration, VaultSyncError.unsupportedFormat:
+            return String(localized: "This vault was synced by a newer version of WSurf. Update WSurf to add it.")
+        case CredentialManagerError.syncedVaultOfAnotherProfile:
+            return String(localized: "This vault belongs to another profile.")
         default:
             return storeMessage(for: error)
         }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import AppKit
 import Foundation
 import Observation
 
@@ -112,6 +113,25 @@ final class ProfileStore {
             id: UUID(),
             name: trimmed.isEmpty ? String(localized: "New Profile") : trimmed,
             symbol: symbol,
+            color: color
+        )
+        profiles.append(profile)
+        save()
+        return profile
+    }
+
+    /// Adds the profile another Mac synced, under the same ID, so its synced vaults open here. Nil for the built-in profiles and for an
+    /// ID that is already a profile. The name is cut to the length the sync record allows, and a symbol or color this Mac does not
+    /// know becomes the default.
+    @discardableResult
+    func adopt(id: UUID, name: String, symbol: String, color: TabFolderColor) -> Profile? {
+        guard id != Profile.originalID, id != Profile.privateID, !profiles.contains(where: { $0.id == id }) else { return nil }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let known = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil
+        let profile = Profile(
+            id: id,
+            name: trimmed.isEmpty ? String(localized: "New Profile") : String(trimmed.prefix(64)),
+            symbol: known ? symbol : "person",
             color: color
         )
         profiles.append(profile)

@@ -8,8 +8,9 @@ import WSurfCore
 
 /// Shares each opted-in profile's open tabs with this person's other devices, and lists theirs.
 ///
-/// It exists only when `CloudTabsGate` allows it, so with the hidden flag off or in an unentitled build `shared` stays nil and
-/// every hook that asks it is a no-op. It reads the in-memory windows and the profile's pins. It never writes a session table.
+/// It exists only when `CloudSyncGate` allows it, so with the hidden flag off or in an unentitled build `shared` stays nil and
+/// every hook that asks it is a no-op. It reads the in-memory windows and the profile's pins. It never writes a session table. The
+/// one engine belongs to `CloudSync`, which attaches `sync` to it when this Mac shares something.
 @Observable
 final class CloudTabs {
     /// Set once by `startIfAvailable`, before any window exists. Tests set it and reset it in a serial suite.
@@ -24,8 +25,9 @@ final class CloudTabs {
         profile.isOriginal
     }
 
-    static var stateFile: URL {
-        AppDatabase.supportDirectory.appendingPathComponent("iCloudTabs.json")
+    /// Where `TabSyncState` rests. The engine's own state is in `CloudSync`'s file.
+    static func stateFile(besides routerFile: URL) -> URL {
+        routerFile.deletingLastPathComponent().appendingPathComponent("iCloudTabs.json")
     }
 
     let sync: TabSync
@@ -33,37 +35,26 @@ final class CloudTabs {
 
     @ObservationIgnored var debounce: Duration = .seconds(15)
     @ObservationIgnored var deadline: Duration = .seconds(60)
-    @ObservationIgnored var heartbeatInterval: Duration = .seconds(15 * 60)
-    @ObservationIgnored var quitLimit: Duration = .seconds(2)
+    /// Told when this Mac starts to share (or still owns records to delete): the engine's owner creates the engine then.
+    @ObservationIgnored var needsEngine: (() -> Void)?
 
     @ObservationIgnored private var known: [UUID: Profile]
     @ObservationIgnored private let optInDefaults: @MainActor (Profile) -> UserDefaults
     @ObservationIgnored private let windows: @MainActor () -> [BrowserModel]
     @ObservationIgnored private let clock: any Clock<Duration>
-    @ObservationIgnored private let makeEngine: @MainActor (TabSync, Data?) -> any SyncEngine
-    @ObservationIgnored private var hasEngine = false
     @ObservationIgnored private var isTerminating = false
-    @ObservationIgnored private var heartbeatTask: Task<Void, Never>?
     @ObservationIgnored private var debounceTask: Task<Void, Never>?
     @ObservationIgnored private var deadlineTask: Task<Void, Never>?
 
-    @discardableResult
-    static func startIfAvailable(profiles: [Profile]) -> CloudTabs? {
-        shared = start(gate: .live, installIDs: KeychainInstallIDStorage(), stateFile: stateFile, profiles: profiles)
-        return shared
-    }
-
-    static func start(
-        gate: CloudTabsGate.Inputs,
-        installIDs: any InstallIDStorage,
+    /// The tab sharing of this install, over the state in `stateFile`. It creates no engine.
+    static func make(
+        installID: String,
         stateFile: URL,
         profiles: [Profile],
         optInDefaults: @escaping @MainActor (Profile) -> UserDefaults = ProfileSettingsStore.defaults(for:),
         windows: @escaping @MainActor () -> [BrowserModel] = CloudTabs.liveWindows,
-        clock: any Clock<Duration> = ContinuousClock(),
-        makeEngine: @escaping @MainActor (TabSync, Data?) -> any SyncEngine = CloudTabs.cloudKitEngine
-    ) -> CloudTabs? {
-        guard CloudTabsGate.allows(gate), let installID = InstallID.resolve(installIDs) else { return nil }
+        clock: any Clock<Duration> = ContinuousClock()
+    ) -> CloudTabs {
         // A missing or damaged file starts empty, which fetches everything once.
         let restored = (try? Data(contentsOf: stateFile)).flatMap { try? JSONDecoder().decode(TabSyncState.self, from: $0) }
         let device = DeviceInfo(
@@ -84,18 +75,11 @@ final class CloudTabs {
             known: Dictionary(shareable.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }),
             optInDefaults: optInDefaults,
             windows: windows,
-            clock: clock,
-            makeEngine: makeEngine
+            clock: clock
         )
         sync.onSharingEnded = { [weak cloudTabs] profileID in cloudTabs?.sharingEnded(profileID) }
         sync.reconcile(sharing: cloudTabs.optedIn)
-        cloudTabs.ensureEngine()
         return cloudTabs
-    }
-
-    /// The only place that builds the CloudKit engine.
-    static func cloudKitEngine(_ sync: TabSync, _ state: Data?) -> any SyncEngine {
-        CloudKitSyncEngine(containerIdentifier: CloudTabsGate.container, state: state, delegate: sync)
     }
 
     /// Regular windows only. A private window never publishes, counts or times anything.
@@ -111,8 +95,7 @@ final class CloudTabs {
         known: [UUID: Profile],
         optInDefaults: @escaping @MainActor (Profile) -> UserDefaults,
         windows: @escaping @MainActor () -> [BrowserModel],
-        clock: any Clock<Duration>,
-        makeEngine: @escaping @MainActor (TabSync, Data?) -> any SyncEngine
+        clock: any Clock<Duration>
     ) {
         self.sync = sync
         self.optedIn = optedIn
@@ -120,7 +103,6 @@ final class CloudTabs {
         self.optInDefaults = optInDefaults
         self.windows = windows
         self.clock = clock
-        self.makeEngine = makeEngine
     }
 
     // MARK: - Opt-in
@@ -139,7 +121,7 @@ final class CloudTabs {
             optedIn.remove(profile.id)
         }
         sync.reconcile(sharing: optedIn)
-        ensureEngine()
+        needsEngine?()
         if on, let payload = payload(for: profile.id, running: true) {
             sync.share(payload, profileID: profile.id, force: true)
         }
@@ -223,7 +205,8 @@ final class CloudTabs {
         }
     }
 
-    /// The heartbeat: send again even if nothing changed, so the server's modification date says this device is alive, and fetch.
+    /// The heartbeat (`CloudSync` runs it): send again even if nothing changed, so the server's modification date says this device is
+    /// alive, and fetch.
     func beat() {
         publishAll(force: true)
         refresh()
@@ -265,34 +248,11 @@ final class CloudTabs {
         )
     }
 
-    // MARK: - Engine and lifecycle
-
-    // ponytail: no registerForRemoteNotifications in phase 1; add it at launch if pushes do not arrive (the heartbeat fetches meanwhile).
-    /// Creates the engine once, and only when this Mac shares a profile or still owns records on the server that it must delete.
-    private func ensureEngine() {
-        guard sync.needsEngine else { return }
-        if !hasEngine {
-            hasEngine = true
-            // The engine's state moves to `SyncRouter` with the engine itself; until then a launch reads everything again.
-            sync.attach(makeEngine(sync, nil))
-        }
-        startHeartbeat()
-    }
-
-    private func startHeartbeat() {
-        guard heartbeatTask == nil, !isTerminating else { return }
-        heartbeatTask = after(heartbeatInterval) { cloudTabs in
-            cloudTabs.heartbeatTask = nil
-            cloudTabs.beat()
-            cloudTabs.startHeartbeat()
-        }
-    }
+    // MARK: - Lifecycle
 
     private func cancelTimers() {
-        heartbeatTask?.cancel()
         debounceTask?.cancel()
         deadlineTask?.cancel()
-        heartbeatTask = nil
         debounceTask = nil
         deadlineTask = nil
     }
@@ -307,48 +267,6 @@ final class CloudTabs {
     /// Quit was cancelled: the device is live again.
     func cancelTermination() {
         isTerminating = false
-        if hasEngine {
-            startHeartbeat()
-        }
         publishAll(force: true)
-    }
-
-    /// Sends the final session, waiting at most `quitLimit`. A stuck network must not hold the quit.
-    func sendBeforeQuit() async {
-        guard hasEngine else { return }
-        let finish = Finish()
-        let send = Task { [sync] in
-            await sync.sendNow()
-            finish.complete()
-        }
-        let limit = Task { [clock, quitLimit] in
-            try? await clock.sleep(for: quitLimit)
-            finish.complete()
-        }
-        await finish.wait()
-        send.cancel()
-        limit.cancel()
-    }
-
-    /// Resumes one waiter the first time either competitor finishes.
-    private final class Finish {
-        private var continuation: CheckedContinuation<Void, Never>?
-        private var isComplete = false
-
-        func wait() async {
-            await withCheckedContinuation { continuation in
-                if isComplete {
-                    continuation.resume()
-                } else {
-                    self.continuation = continuation
-                }
-            }
-        }
-
-        func complete() {
-            isComplete = true
-            continuation?.resume()
-            continuation = nil
-        }
     }
 }
