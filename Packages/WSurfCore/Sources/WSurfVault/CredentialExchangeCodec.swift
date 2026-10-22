@@ -408,7 +408,7 @@ public nonisolated enum CredentialExchangeCodec {
         for tag in item.tags {
             try state.budget.add(tag)
         }
-        if #available(macOS 26.4, *), !item.extensions.isEmpty {
+        if #available(macOS 26.4, iOS 26.4, *), !item.extensions.isEmpty {
             omit(.sharingNotKept, &state)
         }
         guard item.credentials.count <= CredentialVaultLimits.credentials - state.totalCredentials else {
@@ -797,7 +797,7 @@ public nonisolated enum CredentialExchangeCodec {
         _ passkey: ASImportableCredential.Passkey,
         budget: inout PayloadBudget
     ) throws -> Data? {
-        if #available(macOS 26.4, *) {
+        if #available(macOS 26.4, iOS 26.4, *) {
             guard let metadata = passkey.fido2Extensions else { return nil }
             if let hmac = metadata.hmacCredentials {
                 try budget.add(hmac.credentialWithUV)

@@ -248,7 +248,7 @@ nonisolated extension CredentialExchangeCodec {
     private static func exportPasskey(_ passkey: WebsitePasskey) throws -> ASImportableCredential.Passkey {
         try passkey.validate()
         if let metadata = passkey.exchangeFIDO2Metadata {
-            guard #available(macOS 26.4, *) else { throw CredentialVaultError.invalidData }
+            guard #available(macOS 26.4, iOS 26.4, *) else { throw CredentialVaultError.invalidData }
             let fido2 = try JSONDecoder().decode(ASImportableFIDO2Extensions.self, from: metadata)
             return ASImportableCredential.Passkey(
                 credentialID: passkey.credentialID,
