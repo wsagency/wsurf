@@ -6754,6 +6754,36 @@
     },
     "Its tabs and folders close. Pins, Favorites, sign-ins, history and passwords stay with the profile." : {
       "comment" : "Detail of the confirmation shown before deleting a space. Deleting closes the space's tabs and folders; it never deletes the profile or its passwords."
+    },
+    "Switch to “%@”?" : {
+      "comment" : "Title of the one-time question before choosing a space that belongs to another profile. %@ is the space's name. Switching changes the whole window to that profile."
+    },
+    "“%@” has its own sign-ins and data, in the profile “%@”." : {
+      "comment" : "First sentence of the one-time question before choosing a space of another profile. The first %@ is the space's name, the second the name of the profile it belongs to."
+    },
+    "Switching locks this profile’s passwords, disconnects external apps from this window, stops the assistant and reloads your tabs." : {
+      "comment" : "Second sentence of the one-time question before choosing a space of another profile: what a profile switch does to the window. External apps are MCP clients controlling the browser."
+    },
+    "Switch" : {
+      "comment" : "Default button of the question before switching to a space of another profile. Verb."
+    },
+    "Don’t ask again" : {
+      "comment" : "Checkbox under the question before switching to a space of another profile. When on, later switches happen without asking."
+    },
+    "Share sign-ins with “%@”" : {
+      "comment" : "Choice in the New Space dialog. %@ is a profile's name. The new space uses that profile's website sign-ins, history and passwords."
+    },
+    "Separate sign-ins and data" : {
+      "comment" : "Last choice in the New Space dialog: the new space gets its own new profile, with its own website sign-ins, history and passwords."
+    },
+    "A new profile with its own sign-ins, history and passwords." : {
+      "comment" : "Tooltip of the Separate sign-ins and data choice in the New Space dialog."
+    },
+    "Sign-ins and data" : {
+      "comment" : "Accessibility label of the menu in the New Space dialog that chooses which profile's sign-ins the space uses, or separate ones."
+    },
+    "%@ — %@ profile" : {
+      "comment" : "Tooltip and VoiceOver label of a space icon that belongs to another profile. The first %@ is the space's name, the second the profile's name, for example: Clients — Work profile."
     }
   },
   "version" : "1.0"

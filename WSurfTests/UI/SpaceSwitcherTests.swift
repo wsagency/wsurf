@@ -35,6 +35,11 @@ private final class SpaceWindowFixture {
         coordinator.browser
     }
 
+    /// Where this profile's spaces start in the switcher, which also lists the default profile's.
+    var base: Int {
+        coordinator.spaceEntries.firstIndex { $0.profile.id == profile.id } ?? 0
+    }
+
     func tearDown() {
         browser.closeAllTabs(saving: false)
         BrowserProfileContext.forget(profile.id)
@@ -52,16 +57,40 @@ struct SpaceSwitcherTests {
     // MARK: - The switcher
 
     @Test func theSwitcherShowsOnceThereIsASecondSpace() {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("profiles-\(UUID().uuidString).json")
+        let catalog = ProfileStore(file: file)
+        let coordinator = AppCoordinator(
+            browser: BrowserModel(context: .shared(for: .original()), windowID: UUID(), database: .temporary()),
+            profiles: ProfileStore.selection(profile: .original(), catalog: catalog)
+        )
+        defer {
+            coordinator.browser.closeAllTabs(saving: false)
+            try? FileManager.default.removeItem(at: file)
+        }
+
+        #expect(coordinator.spaceEntries.count == 1)
+        #expect(!coordinator.showsSpaceSwitcher)
+
+        let second = catalog.add(name: "Second")
+        defer {
+            BrowserProfileContext.forget(second.id)
+            SpaceStore.forget(second.id)
+        }
+
+        #expect(coordinator.showsSpaceSwitcher)
+        #expect(coordinator.spaceEntries.last?.profile.id == second.id)
+    }
+
+    @Test func aNewSpaceJoinsTheSwitcherAndIsShown() {
         let fixture = SpaceWindowFixture()
         defer { fixture.tearDown() }
+        let before = fixture.coordinator.spaceEntries.count
 
-        #expect(fixture.coordinator.spaceEntries.map(\.space.name) == ["Spaces fixture"])
-        #expect(!fixture.coordinator.showsSpaceSwitcher)
+        let recipes = fixture.coordinator.createSpace(name: "Recipes", symbol: "fork.knife")
 
-        fixture.coordinator.createSpace(name: "Recipes", symbol: "fork.knife")
-
-        #expect(fixture.coordinator.showsSpaceSwitcher)
-        #expect(fixture.browser.currentSpaceID == fixture.store.spaces.last?.id)
+        #expect(fixture.coordinator.spaceEntries.count == before + 1)
+        #expect(fixture.coordinator.spaceEntries[fixture.base + 1].space == recipes)
+        #expect(fixture.browser.currentSpaceID == recipes?.id)
     }
 
     @Test func controlNumberShowsThatSpaceOfTheSwitcher() {
@@ -71,15 +100,16 @@ struct SpaceSwitcherTests {
         fixture.coordinator.createSpace(name: "Recipes", symbol: "fork.knife")
         fixture.coordinator.createSpace(name: "Travel", symbol: "airplane")
         let entries = fixture.coordinator.spaceEntries
+        let base = fixture.base
 
-        fixture.coordinator.switchToSpace(at: 0)
-        #expect(fixture.browser.currentSpaceID == entries[0].id)
+        fixture.coordinator.switchToSpace(at: base)
+        #expect(fixture.browser.currentSpaceID == entries[base].id)
 
-        fixture.coordinator.switchToSpace(at: 1)
-        #expect(fixture.browser.currentSpaceID == entries[1].id)
+        fixture.coordinator.switchToSpace(at: base + 1)
+        #expect(fixture.browser.currentSpaceID == entries[base + 1].id)
 
-        fixture.coordinator.switchToSpace(at: 8)
-        #expect(fixture.browser.currentSpaceID == entries[1].id)
+        fixture.coordinator.switchToSpace(at: entries.count)
+        #expect(fixture.browser.currentSpaceID == entries[base + 1].id)
         #expect(SpaceShortcut.label(at: 0) == "⌃1")
         #expect(SpaceShortcut.label(at: 9) == nil)
     }
@@ -99,10 +129,12 @@ struct SpaceSwitcherTests {
             #expect(bound.first?.isHidden == true)
             #expect(bound.first?.title == String(localized: "Show Space \(slot)"))
         }
-        let second = try #require(items.first { $0.keyEquivalent == "2" && $0.keyEquivalentModifierMask == [.control] })
-        #expect(!menu.validateMenuItem(second))
+        // The first slot past the switcher's spaces does nothing until a space fills it.
+        let slot = fixture.coordinator.spaceEntries.count + 1
+        let next = try #require(items.first { $0.keyEquivalent == "\(slot)" && $0.keyEquivalentModifierMask == [.control] })
+        #expect(!menu.validateMenuItem(next))
         fixture.coordinator.createSpace(name: "Recipes", symbol: "fork.knife")
-        #expect(menu.validateMenuItem(second))
+        #expect(menu.validateMenuItem(next))
     }
 
     // MARK: - Swiping
@@ -116,13 +148,14 @@ struct SpaceSwitcherTests {
         #expect(SpaceSwipe.step(travel: -15, velocity: -900, width: 200) == 0)
     }
 
-    @Test func aSwipeGoesToTheNeighborAndStopsAtTheEnds() {
+    /// The default profile's space sits before this profile's in the switcher; a swipe never switches profile.
+    @Test func aSwipeGoesToTheNeighborAndNeverLeavesTheProfile() {
         let fixture = SpaceWindowFixture()
         defer { fixture.tearDown() }
         fixture.browser.newTab()
         let recipes = fixture.coordinator.createSpace(name: "Recipes", symbol: "fork.knife")
         let first = fixture.store.spaces[0]
-        fixture.coordinator.switchToSpace(at: 0)
+        fixture.coordinator.switchToSpace(at: fixture.base)
 
         fixture.coordinator.switchSpace(by: 1)
         #expect(fixture.browser.currentSpaceID == recipes?.id)
@@ -133,6 +166,8 @@ struct SpaceSwitcherTests {
         #expect(fixture.browser.currentSpaceID == first.id)
         fixture.coordinator.switchSpace(by: -1)
         #expect(fixture.browser.currentSpaceID == first.id)
+        #expect(!fixture.coordinator.isSwitchingProfile)
+        #expect(fixture.coordinator.context.profile.id == fixture.profile.id)
     }
 
     // MARK: - Organizing

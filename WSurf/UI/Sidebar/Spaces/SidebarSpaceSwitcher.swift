@@ -4,8 +4,9 @@
 
 import SwiftUI
 
-/// The spaces of the window as a row of icons at the foot of the sidebar, shown once there is more than one. A click
-/// jumps to the space (no glide in this version); a row dragged onto an icon moves there.
+/// The spaces of every profile as a row of icons at the foot of the sidebar, shown once there is more than one. A click
+/// jumps to a space of this profile (no glide in this version) or switches to another profile; a row dragged onto an
+/// icon of this profile moves there.
 struct SidebarSpaceSwitcher: View {
     let coordinator: AppCoordinator
     var axis: Axis = .horizontal
@@ -44,6 +45,7 @@ struct SidebarSpaceSwitcher: View {
             ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                 SpaceDot(
                     entry: entry,
+                    isForeign: entry.profile.id != coordinator.context.profile.id,
                     shortcut: SpaceShortcut.label(at: index),
                     isCurrent: entry.id == coordinator.browser.currentSpaceID,
                     isArmed: coordinator.sidebarDrag.armedSpaceID == entry.id
@@ -85,14 +87,20 @@ struct SidebarSpaceSwitcher: View {
 
 private struct SpaceDot: View {
     let entry: SpaceEntry
+    /// A space of another profile: choosing it switches the window to that profile.
+    let isForeign: Bool
     let shortcut: String?
     let isCurrent: Bool
     let isArmed: Bool
     let action: () -> Void
 
+    private var name: String {
+        isForeign ? String(localized: "\(entry.space.name) — \(entry.profile.name) profile") : entry.space.name
+    }
+
     private var help: String {
-        guard let shortcut else { return entry.space.name }
-        return "\(entry.space.name) \(shortcut)"
+        guard let shortcut else { return name }
+        return "\(name) \(shortcut)"
     }
 
     var body: some View {
@@ -103,7 +111,7 @@ private struct SpaceDot: View {
             help: help,
             action: action
         )
-        .accessibilityLabel(Text(verbatim: entry.space.name))
+        .accessibilityLabel(Text(verbatim: name))
         .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 }

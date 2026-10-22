@@ -15,6 +15,31 @@ struct SpaceEntry: Identifiable, Equatable {
     }
 }
 
+/// Which sign-ins a new space uses: those of an existing profile, or its own in a new profile.
+enum SpaceSharing: Equatable {
+    case profile(UUID)
+    case separate
+}
+
+/// A space of another profile is a full profile switch. The switcher says what that costs once, until the person
+/// asks it not to.
+enum SpaceSwitchNotice {
+    static let key = "spaces.profileSwitchExplained"
+    #if DEBUG
+    static var defaults = StageMode.defaults
+    #else
+    static var defaults = UserDefaults.standard
+    #endif
+
+    static var isNeeded: Bool {
+        !defaults.bool(forKey: key)
+    }
+
+    static func stopAsking() {
+        defaults.set(true, forKey: key)
+    }
+}
+
 /// ⌃1–9 show the first nine spaces of the switcher.
 enum SpaceShortcut {
     static let slots = 1...9
@@ -37,20 +62,57 @@ extension AppCoordinator {
         spaceStore?.space(id: browser.currentSpaceID)
     }
 
-    /// The switcher's spaces, in order.
+    /// The switcher's spaces: every profile's, in the order of Settings › Profiles. None in a private window.
     var spaceEntries: [SpaceEntry] {
-        guard let spaceStore else { return [] }
-        let profile = context.profile
-        return spaceStore.spaces.map { SpaceEntry(space: $0, profile: profile) }
+        guard spaceStore != nil else { return [] }
+        return profiles.profiles.flatMap { profile in
+            (SpaceStore.shared(for: profile)?.spaces ?? []).map { SpaceEntry(space: $0, profile: profile) }
+        }
     }
 
     var showsSpaceSwitcher: Bool {
         spaceEntries.count > 1
     }
 
+    /// A space of this profile is a view change. A space of another profile switches the window to that profile, as
+    /// choosing it in the profile menu does: this profile's passwords lock, external apps lose this window, the
+    /// assistant stops and the tabs reload.
     func switchSpace(to entry: SpaceEntry) {
-        guard entry.profile.id == context.profile.id else { return }
-        browser.switchSpace(to: entry.space.id)
+        guard entry.profile.id != context.profile.id else {
+            browser.switchSpace(to: entry.space.id)
+            return
+        }
+        guard !isSwitchingProfile else { return }
+        Task { [weak self] in
+            guard let self, !isClosed, await confirmProfileSwitch(to: entry), !isClosed else { return }
+            await switchProfile(to: entry.profile, landingIn: entry.space.id)
+        }
+    }
+
+    private func confirmProfileSwitch(to entry: SpaceEntry) async -> Bool {
+        guard SpaceSwitchNotice.isNeeded else { return true }
+        guard !isClosed else { return false }
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Switch to “\(entry.space.name)”?")
+        alert.informativeText = String(localized: "“\(entry.space.name)” has its own sign-ins and data, in the profile “\(entry.profile.name)”.")
+            + " " + String(localized: "Switching locks this profile’s passwords, disconnects external apps from this window, stops the assistant and reloads your tabs.")
+        alert.addButton(withTitle: String(localized: "Switch"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = String(localized: "Don’t ask again")
+        let response: NSApplication.ModalResponse
+        if let window = nativeWindow ?? NSApp.keyWindow {
+            response = await withCheckedContinuation { continuation in
+                alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
+            }
+        } else {
+            response = alert.runModal()
+        }
+        guard response == .alertFirstButtonReturn else { return false }
+        if alert.suppressionButton?.state == .on {
+            SpaceSwitchNotice.stopAsking()
+        }
+        return true
     }
 
     /// ⌃N, counting from zero.
@@ -60,9 +122,10 @@ extension AppCoordinator {
         switchSpace(to: entries[index])
     }
 
-    /// The neighbor `step` places away in the switcher, for a swipe.
+    /// The neighbor `step` places away among this profile's spaces, for a swipe. A swipe is easy to make by accident,
+    /// so it never starts a profile switch; the icons and ⌃1–9 do.
     func switchSpace(by step: Int) {
-        let entries = spaceEntries
+        let entries = spaceEntries.filter { $0.profile.id == context.profile.id }
         guard let current = entries.firstIndex(where: { $0.id == browser.currentSpaceID }),
               entries.indices.contains(current + step) else { return }
         switchSpace(to: entries[current + step])
@@ -81,6 +144,13 @@ extension AppCoordinator {
         }
     }
 
+    private func refreshSpaces(of profile: Profile) {
+        let owned = SpaceStore.shared(for: profile)?.spaces.map(\.id) ?? []
+        for window in application?.windows ?? [self] where !window.isClosed && window.context.profile.id == profile.id {
+            window.browser.adoptSpaces(owned)
+        }
+    }
+
     // MARK: - Organizing
 
     var spaceMoveTargets: [Space] {
@@ -92,13 +162,28 @@ extension AppCoordinator {
         browser.move(items, toSpace: space.id)
     }
 
+    /// Adds a space and shows it. Sharing an existing profile's sign-ins adds the space to that profile; separate
+    /// sign-ins add a profile with WSurf's usual defaults, whose first space is this one. A space of another profile
+    /// is shown by switching the window to it.
     @discardableResult
-    func createSpace(name: String, symbol: String) -> Space? {
-        guard let spaceStore else { return nil }
-        let space = spaceStore.add(name: name, symbol: symbol)
-        refreshSpaces()
-        browser.switchSpace(to: space.id)
-        return space
+    func createSpace(name: String, symbol: String, sharing: SpaceSharing? = nil) -> Space? {
+        guard spaceStore != nil else { return nil }
+        let entry: SpaceEntry
+        switch sharing ?? .profile(context.profile.id) {
+        case .profile(let id):
+            guard let profile = profiles.profiles.first(where: { $0.id == id }),
+                  let store = SpaceStore.shared(for: profile) else { return nil }
+            entry = SpaceEntry(space: store.add(name: name, symbol: symbol), profile: profile)
+            refreshSpaces(of: profile)
+        case .separate:
+            let used = Set(spaceEntries.map(\.space.color))
+            let color = TabFolderColor.allCases.first { $0 != .gray && !used.contains($0) } ?? .blue
+            let profile = profiles.add(name: name, symbol: symbol, color: color)
+            guard let space = SpaceStore.shared(for: profile)?.spaces.first else { return nil }
+            entry = SpaceEntry(space: space, profile: profile)
+        }
+        switchSpace(to: entry)
+        return entry.space
     }
 
     func updateSpace(_ space: Space) {
@@ -141,9 +226,12 @@ extension AppCoordinator {
 
     func showNewSpaceEditor() {
         guard spaceStore != nil else { return }
+        let sharing = profiles.profiles.map { SpaceEditor.SharingOption(profile: $0) }
         Task { [weak self] in
-            guard let self, let choice = await SpaceEditor.ask(editing: nil) else { return }
-            createSpace(name: choice.name, symbol: choice.symbol)
+            guard let self,
+                  let choice = await SpaceEditor.ask(editing: nil, sharing: sharing, currentProfile: context.profile.id)
+            else { return }
+            createSpace(name: choice.name, symbol: choice.symbol, sharing: choice.sharing)
         }
     }
 

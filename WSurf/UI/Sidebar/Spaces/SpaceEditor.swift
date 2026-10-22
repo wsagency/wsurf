@@ -4,12 +4,29 @@
 
 import AppKit
 
-/// Names a new space or edits one: a name and an icon. The color is chosen for it, as Linen does.
+/// Names a new space or edits one: a name and an icon. The color is chosen for it, as Linen does. A new space also
+/// chooses its sign-ins: those of an existing profile, or its own.
 @MainActor
 enum SpaceEditor {
     struct Choice: Equatable {
         var name: String
         var symbol: String
+        /// Nil when editing: a space never changes profile.
+        var sharing: SpaceSharing?
+    }
+
+    struct SharingOption: Equatable {
+        let id: UUID
+        let name: String
+
+        init(profile: Profile) {
+            id = profile.id
+            name = profile.name
+        }
+
+        var title: String {
+            String(localized: "Share sign-ins with “\(name)”")
+        }
     }
 
     static let symbols = [
@@ -23,7 +40,7 @@ enum SpaceEditor {
     ]
 
     /// Nil when the person cancels or leaves the name empty.
-    static func ask(editing space: Space?) async -> Choice? {
+    static func ask(editing space: Space?, sharing options: [SharingOption] = [], currentProfile: UUID? = nil) async -> Choice? {
         let alert = NSAlert()
         alert.messageText = space == nil ? String(localized: "New Space") : String(localized: "Edit Space")
         alert.informativeText = String(localized: "A space shows its own tabs and folders. Pins, Favorites, sign-ins, history and passwords stay with the profile.")
@@ -37,19 +54,26 @@ enum SpaceEditor {
         name.lineBreakMode = .byTruncatingTail
 
         let icon = NSPopUpButton(frame: .zero, pullsDown: false)
-        let current = space?.symbol ?? Space.defaultSymbol
-        for symbol in symbols.contains(current) ? symbols : [current] + symbols {
-            icon.addItem(withTitle: "")
-            icon.lastItem?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: symbol)
-            icon.lastItem?.representedObject = symbol
+        let currentSymbol = space?.symbol ?? Space.defaultSymbol
+        for symbol in symbols.contains(currentSymbol) ? symbols : [currentSymbol] + symbols {
+            // Items share the empty title, so they go in through the menu: `addItem(withTitle:)` keeps one per title.
+            let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: symbol)
+            item.representedObject = symbol
+            icon.menu?.addItem(item)
         }
-        icon.selectItem(at: icon.indexOfItem(withRepresentedObject: current))
+        icon.selectItem(at: icon.indexOfItem(withRepresentedObject: currentSymbol))
         icon.setAccessibilityLabel(String(localized: "Icon"))
         icon.sizeToFit()
 
-        let stack = NSStackView(views: [name, icon])
-        stack.orientation = .horizontal
-        stack.spacing = 8
+        let row = NSStackView(views: [name, icon])
+        row.orientation = .horizontal
+        row.spacing = 8
+        let signIns = sharingPicker(options, current: currentProfile)
+        let stack = NSStackView(views: space == nil && !options.isEmpty ? [row, signIns] : [row])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
         stack.frame.size = stack.fittingSize
         alert.accessoryView = stack
         alert.window.initialFirstResponder = name
@@ -63,13 +87,40 @@ enum SpaceEditor {
             response = alert.runModal()
         }
         guard response == .alertFirstButtonReturn else { return nil }
-        return choice(name: name.stringValue, symbol: icon.selectedItem?.representedObject as? String)
+        let chosen = space == nil && !options.isEmpty ? sharing(signIns.selectedItem?.representedObject) : nil
+        return choice(name: name.stringValue, symbol: icon.selectedItem?.representedObject as? String, sharing: chosen)
+    }
+
+    /// One entry per profile ("Share sign-ins with …"), then "Separate sign-ins and data". The window's profile is
+    /// chosen at first.
+    private static func sharingPicker(_ options: [SharingOption], current: UUID?) -> NSPopUpButton {
+        let picker = NSPopUpButton(frame: .zero, pullsDown: false)
+        // Two profiles may share a name, so items go in through the menu, which keeps both.
+        for option in options {
+            let item = NSMenuItem(title: option.title, action: nil, keyEquivalent: "")
+            item.representedObject = option.id
+            picker.menu?.addItem(item)
+        }
+        picker.menu?.addItem(.separator())
+        let separate = NSMenuItem(title: String(localized: "Separate sign-ins and data"), action: nil, keyEquivalent: "")
+        separate.toolTip = String(localized: "A new profile with its own sign-ins, history and passwords.")
+        picker.menu?.addItem(separate)
+        if let current, let index = options.firstIndex(where: { $0.id == current }) {
+            picker.selectItem(at: index)
+        }
+        picker.setAccessibilityLabel(String(localized: "Sign-ins and data"))
+        picker.sizeToFit()
+        return picker
+    }
+
+    static func sharing(_ selected: Any?) -> SpaceSharing {
+        (selected as? UUID).map(SpaceSharing.profile) ?? .separate
     }
 
     /// The trimmed name and the icon, or nil for an empty name.
-    static func choice(name: String, symbol: String?) -> Choice? {
+    static func choice(name: String, symbol: String?, sharing: SpaceSharing? = nil) -> Choice? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        return Choice(name: trimmed, symbol: symbol ?? Space.defaultSymbol)
+        return Choice(name: trimmed, symbol: symbol ?? Space.defaultSymbol, sharing: sharing)
     }
 }
