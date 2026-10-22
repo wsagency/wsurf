@@ -321,13 +321,18 @@ struct CloudTabsTests {
         cloudTabs.publishAll(force: true)
         try await launch.sendAll()
 
-        // A change every ten seconds keeps the quiet period from ever ending.
+        let waiting = await launch.timerCount()
+
+        // A change every ten seconds keeps the quiet period from ever ending. The deadline timer starts with the first change, so it
+        // must be on the clock before the clock first moves.
         for index in 0..<6 {
             window.addPage("https://busy.test/\(index)")
             window.scheduleSave()
-            await Task.yield()
+            if index == 0 {
+                #expect(await waitUntil { launch.clock.pendingCount >= waiting + 2 })
+            }
+            _ = await launch.timerCount()
             launch.clock.advance(by: .seconds(10))
-            await Task.yield()
         }
         #expect(await waitUntil { launch.engine.pending.contains(.saveRecord(launch.personalSessionID)) })
         try await launch.sendAll()
