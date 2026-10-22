@@ -179,6 +179,7 @@ struct MainMenuKeyTests {
         let secondTab = second.browser.newTab(url: try server.url("/"))
         try #require(await PageSettle.untilIdle(secondTab.page))
         try #require(secondTab.canDiscardWebContent)
+        second.browser.pin(secondTab)  // ⌘W unloads a pinned tab and closes any other
         let menu = MainMenu(application: app)
         menu.install()
         defer {

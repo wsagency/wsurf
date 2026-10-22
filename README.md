@@ -90,8 +90,11 @@ versions.
   control to unload instead. Pinned tabs unload with the curved-down arrow or
   reload with Play; ⌘-click their control to remove the pin and tab.
   Right-click › Unload Tab retains the link, pin, and folder membership.
-  Middle-click and ⌘W also unload. A folder's curved-down arrow unloads all
-  descendant tabs; X is reserved for removal. Existing unload protections remain.
+  Middle-click also unloads. ⌘W removes an unpinned tab (undo and ⇧⌘T bring it
+  back) and unloads a pinned tab, a favorite, or a page in a pinned folder; the
+  File menu item reads Close Tab or Unload Tab to match. A folder's curved-down
+  arrow unloads all descendant tabs; X is reserved for removal. Existing unload
+  protections remain.
 - **Free memory:** File › Free Memory unloads every background tab in every
   window, in WebKit and Chromium. They reload when you open them, and pins and
   folders keep their links. Each window's current tab, favorites, private tabs,
