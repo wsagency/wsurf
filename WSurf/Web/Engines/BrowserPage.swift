@@ -55,18 +55,24 @@ final class BrowserPage: NSView {
     /// from this key; the underscored name as a key would match no setter and raise.
     private static let occlusionKey = "windowOcclusionDetectionEnabled"
 
-    /// WebKit stops painting, pauses animation frames and throttles timers in a page whose window is covered by other apps.
-    /// A tab an external connection controls keeps rendering instead, so its screenshots and waits work with WSurf in the
-    /// background. Private API, used only where the view answers to it. Chromium gets the same from a process-wide switch
-    /// (`ChromiumRuntime.ensureInitialized`).
+    /// WebKit stops painting, pauses animation frames, throttles timers and reports `document.visibilityState` hidden in a page
+    /// whose window is covered by other apps. A tab an external connection controls stays visible instead, so its screenshots,
+    /// waits and pages that wait to be seen (bot checks) work with WSurf in the background. Private API, used only where the
+    /// view answers to it. Chromium gets the same from a process-wide switch (`ChromiumRuntime.ensureInitialized`).
     var ignoresWindowOcclusion: Bool {
         get {
             guard let webKit, webKit.responds(to: NSSelectorFromString("_windowOcclusionDetectionEnabled")) else { return false }
             return webKit.value(forKey: Self.occlusionKey) as? Bool == false
         }
         set {
-            guard let webKit, webKit.responds(to: NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")) else { return }
+            guard let webKit, webKit.responds(to: NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")),
+                newValue != ignoresWindowOcclusion
+            else { return }
             webKit.setValue(!newValue, forKey: Self.occlusionKey)
+            // WebKit reads the setting only when it next works out whether the view is visible, which a window that stays
+            // covered never prompts. `viewDidUnhide` is that prompt and changes nothing else, so the page turns visible now
+            // (or hidden again once nobody controls it) instead of at the next window change.
+            webKit.viewDidUnhide()
         }
     }
 

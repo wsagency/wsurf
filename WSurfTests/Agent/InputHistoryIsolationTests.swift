@@ -47,7 +47,7 @@ struct InputHistoryIsolationTests {
     /// The tools as a connected app or the assistant is offered them: none of them is about Input History, so a request to read it
     /// has no tool to go to.
     @Test func noAssistantOrMCPToolOffersInputHistory() {
-        let mcp = MCPToolCatalog.entries.map { "\($0.name)\n\($0.description)" }
+        let mcp = MCPToolCatalog.listed.map { "\($0.name)\n\($0.description)" }
         let assistant = AgentToolCatalog.all.map { "\($0.id)\n\(String(localized: $0.title))\n\(String(localized: $0.summary))" }
         // An empty catalog would pass for the wrong reason.
         #expect(mcp.count > 10 && assistant.count > 10)

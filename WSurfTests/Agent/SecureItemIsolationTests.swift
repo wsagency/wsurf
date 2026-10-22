@@ -47,7 +47,7 @@ struct SecureItemIsolationTests {
 
     /// The tools as a connected app or the assistant is offered them: none of them reads a card, an address or another item.
     @Test func noAssistantOrMCPToolOffersCardsOrAddresses() {
-        let mcp = MCPToolCatalog.entries.map { "\($0.name)\n\($0.description)" }
+        let mcp = MCPToolCatalog.listed.map { "\($0.name)\n\($0.description)" }
         let assistant = AgentToolCatalog.all.map { "\($0.id)\n\(String(localized: $0.title))\n\(String(localized: $0.summary))" }
         #expect(mcp.count > 10 && assistant.count > 10)
         for text in mcp + assistant {

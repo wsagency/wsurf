@@ -98,6 +98,8 @@ final class MCPBrowserSession: Identifiable {
     @ObservationIgnored var openedTabs: Set<UUID> = []
     /// Tabs the person took over from this connection. A standing grant does not share them again.
     @ObservationIgnored var takenBack: Set<UUID> = []
+    /// The tab the Playwright MCP aliases act on, once `browser_tabs` chose or opened one (see `callPlaywright`).
+    @ObservationIgnored var playwrightTab: UUID?
     /// The person chose "Don't ask again" when asked to close a tab on this connection.
     @ObservationIgnored var closingWasConfirmed = false
     /// The latest consequential actions let through without asking (see `Grant.Source`), newest last, bounded.
@@ -171,6 +173,9 @@ final class MCPBrowserSession: Identifiable {
     }
 
     func call(name: String, arguments: [String: Value]) async throws -> CallTool.Result {
+        if let alias = MCPToolCatalog.playwrightEntries.first(where: { $0.name == name }) {
+            return try await callPlaywright(alias, arguments: arguments)
+        }
         guard let entry = MCPToolCatalog.entries.first(where: { $0.name == name }) else {
             throw MCPError.invalidParams("Unknown tool.")
         }

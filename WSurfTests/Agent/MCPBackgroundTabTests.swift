@@ -131,6 +131,25 @@ struct MCPBackgroundTabTests {
         (window.firstResponder as? NSView)?.isDescendant(of: tab.page) == true
     }
 
+    /// A tab the person had on screen and left, which no connection holds: it waits on the shelf, as `shared` does.
+    private func parkedTab(_ rig: Rig, path: String) async throws -> BrowserTab {
+        let url = try rig.server.url(path)
+        let tab = rig.browser.newTab(url: url, activate: false)
+        let container = WebViewContainer(page: tab.page)
+        container.parksWhenIdle = true
+        container.frame = rig.window.contentView?.bounds ?? .zero
+        rig.window.contentView?.addSubview(container)
+        try #require(await waitUntil { tab.page.url == url && !tab.page.isLoading && tab.page.mainDocumentID != nil })
+        container.removeFromSuperview()
+        try #require(tab.page.isParked)
+        return tab
+    }
+
+    /// What the page itself reads: `document.visibilityState` and `document.hidden`.
+    private func visibility(of tab: BrowserTab) async -> String {
+        (try? await tab.page.evaluateJavaScript("document.visibilityState + ' ' + document.hidden")) as? String ?? "unanswered"
+    }
+
     // MARK: Working in the background
 
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
@@ -236,6 +255,40 @@ struct MCPBackgroundTabTests {
         }
     }
 
+    /// A controlled tab's page behaves as if the person were looking, also with its window covered: it reports visible, so its
+    /// timers, rendering and checks that wait to be seen (bot checks) run. The person's own background tab keeps what its
+    /// engine reports. The window moves off every screen, which counts as covered: WebKit hides the person's tab there, and
+    /// Chromium's process-wide switch keeps every tab visible. Ending and giving back the grant turns WebKit's tab hidden and
+    /// visible again at once, while the window stays covered.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aControlledBackgroundTabReportsVisibleAndTheOthersAreUnchanged(engine: BrowserEngine) async throws {
+        try await withRig(engine: engine) { rig in
+            let mine = try await parkedTab(rig, path: "/other")
+            rig.window.setFrameOrigin(NSPoint(x: -30_000, y: -30_000))
+            let covered = await waitUntil(timeout: .seconds(3)) { !rig.window.occlusionState.contains(.visible) }
+            let hidesCovered = covered && engine == .webKit
+            if hidesCovered {
+                #expect(await waitUntil { await visibility(of: mine) == "hidden true" }, "a covered window hides the person's WebKit tab")
+            }
+            let before = await visibility(of: mine)
+
+            let read = try await call(rig, "readPage", rig.shared)
+            #expect(read.isError == false, "\(engine): \(text(read))")
+            #expect(await waitUntil { await visibility(of: rig.shared) == "visible false" }, "\(engine), covered \(covered): the controlled tab is seen")
+            #expect(await visibility(of: mine) == before, "\(engine): the person's tab is unchanged")
+
+            let grant = try #require(rig.session.grants[rig.shared.id])
+            rig.session.grants[rig.shared.id] = nil
+            if hidesCovered {
+                #expect(await waitUntil { await visibility(of: rig.shared) == "hidden true" }, "once nobody controls it, the tab is hidden again")
+            }
+            rig.session.grants[rig.shared.id] = grant
+            #expect(await waitUntil { await visibility(of: rig.shared) == "visible false" }, "\(engine): a new grant shows the tab at once")
+            #expect(await visibility(of: mine) == before)
+            #expect(rig.browser.activeTabID == rig.owner.id && rig.shared.page.isParked, "\(engine): nothing was shown to the person")
+        }
+    }
+
     @Test(.boundedWebViews)
     func aGrantOfAnotherConnectionKeepsTheMarkUntilItEndsToo() async throws {
         try await withRig(engine: .webKit) { rig in
@@ -268,6 +321,94 @@ struct MCPBackgroundTabTests {
             #expect(try await unseen.page.evaluateJavaScript("document.title") as? String == "Background", "nothing was clicked")
             #expect(rig.browser.activeTabID == rig.owner.id)
             #expect(unseen.page.window == nil)
+        }
+    }
+
+    // MARK: Playwright MCP names
+
+    /// An agent written for Playwright MCP works in a background tab on both engines, through WSurf's own tools.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func playwrightNamesWorkInABackgroundTab(engine: BrowserEngine) async throws {
+        try await withRig(engine: engine) { rig in
+            func playwright(_ name: String, _ arguments: [String: Value] = [:]) async throws -> CallTool.Result {
+                try await rig.session.call(name: name, arguments: arguments)
+            }
+            let tabs = try await playwright("browser_tabs", ["action": "list"])
+            #expect(text(tabs).contains(rig.shared.id.uuidString), "\(engine): \(text(tabs))")
+
+            let snapshot = try await playwright("browser_snapshot")
+            #expect(snapshot.isError == false && text(snapshot).contains("ACCESSIBILITY TREE"), "\(engine): \(text(snapshot))")
+            #expect(text(snapshot).contains("[1]"), "\(engine): the outline carries the refs the other names take")
+
+            let clicked = try await playwright("browser_click", ["element": "Go button", "ref": "e1"])
+            #expect(clicked.isError == false, "\(engine): \(text(clicked))")
+            #expect(
+                await waitUntil { (try? await rig.shared.page.evaluateJavaScript("document.title")) as? String == "Clicked" },
+                "\(engine): the click reached the page")
+
+            let waited = try await playwright("browser_wait_for", ["text": "Other"])
+            #expect(waited.isError == false, "\(engine): \(text(waited))")
+            let shot = try await playwright("browser_take_screenshot", ["type": "png"])
+            #expect(try centreColour(shot) == "green", "\(engine): \(text(shot))")
+            let script = try await playwright("browser_evaluate", ["function": "() => document.title"])
+            #expect(script.isError == true && text(script) == MCPBrowserSession.developerRefusal, "\(engine): Developer tier only: \(text(script))")
+
+            let other = try rig.server.url("/other")
+            let opened = try await playwright("browser_tabs", ["action": "new", "url": .string(other.absoluteString)])
+            #expect(opened.isError == false, "\(engine): \(text(opened))")
+            let tab = try #require(rig.browser.tabs.first { rig.session.openedTabs.contains($0.id) })
+            #expect(rig.session.playwrightTab == tab.id, "the new tab is the current one")
+            #expect(await waitUntil { tab.page.url == other && !tab.page.isLoading && tab.page.mainDocumentID != nil })
+            let read = try await playwright("browser_snapshot")
+            #expect(text(read).contains("/other"), "\(engine): the snapshot reads the current tab: \(text(read))")
+            // index counts the shared tabs in listTabs order, which is the window's tab order.
+            let index = try #require(rig.browser.tabs.filter { rig.session.grants[$0.id] != nil }.firstIndex { $0 === rig.shared })
+            let selected = try await playwright("browser_tabs", ["action": "select", "index": .int(index)])
+            #expect(selected.isError == false && rig.session.playwrightTab == rig.shared.id, "\(engine): \(text(selected))")
+
+            let tools = rig.session.activity.entries.compactMap { entry -> String? in
+                guard case .tool(let name) = entry.event else { return nil }
+                return name
+            }
+            #expect(tools.contains("clickOnPage") && !tools.contains { $0.hasPrefix("browser_") }, "Agent Activity names the WSurf tool: \(tools)")
+            #expect(rig.browser.activeTabID == rig.owner.id, "\(engine): the person's tab stays selected")
+            #expect(rig.shared.page.isParked && tab.page.isParked, "\(engine): both pages stay out of sight")
+        }
+    }
+
+    /// The Playwright names are refused exactly where their tools are: by the grant, by the tier, and with nothing shared.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func playwrightNamesAreRefusedExactlyWhereTheirToolsAre(engine: BrowserEngine) async throws {
+        try await withRig(engine: engine) { rig in
+            typealias Call = (name: String, arguments: [String: Value])
+            let pairs: [(alias: Call, tool: Call)] = [
+                (("browser_snapshot", [:]), ("readAccessibility", [:])),
+                (("browser_click", ["ref": "1"]), ("clickOnPage", ["ref": 1])),
+                (("browser_resize", ["width": 500, "height": 400]), ("setViewport", ["width": 500, "height": 400])),
+                (("browser_console_messages", ["level": "error"]), ("readConsole", ["level": "error"])),
+                (("browser_evaluate", ["function": "() => 1"]), ("evaluateScript", ["source": "() => 1"])),
+                (("browser_handle_dialog", ["accept": true]), ("handleDialog", ["action": "accept"])),
+            ]
+            let origin = try #require(rig.session.grants[rig.shared.id]).origin
+            for access in [MCPAccessConsent.Access.readOnly, .control, .development] {
+                rig.session.grants[rig.shared.id] = .init(origin: origin, access: access)
+                for pair in pairs {
+                    let tool = try await call(rig, pair.tool.name, rig.shared, pair.tool.arguments)
+                    let alias = try await rig.session.call(name: pair.alias.name, arguments: pair.alias.arguments)
+                    #expect(alias.isError == tool.isError, "\(engine) \(access) \(pair.alias.name): \(text(alias)) | \(pair.tool.name): \(text(tool))")
+                    if tool.isError == true {
+                        #expect(text(alias) == text(tool), "\(engine) \(access) \(pair.alias.name) is refused as \(pair.tool.name) is")
+                    }
+                }
+            }
+            rig.session.grants = [:]
+            for pair in pairs {
+                let tool = try await call(rig, pair.tool.name, rig.shared, pair.tool.arguments)
+                let alias = try await rig.session.call(name: pair.alias.name, arguments: pair.alias.arguments)
+                #expect(tool.isError == true && alias.isError == true, "\(engine) \(pair.alias.name) with nothing shared")
+                #expect(text(alias) == MCPBrowserSession.noPlaywrightTab)
+            }
+            #expect(rig.browser.activeTabID == rig.owner.id)
         }
     }
 }
