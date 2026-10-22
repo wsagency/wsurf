@@ -81,4 +81,48 @@ struct VaultSyncScaleTests {
         #expect(vb.commitCount == commits && rig.cloud.writeCount == writes, "replays change nothing here and nothing in iCloud")
         #expect(b.host.snapshotCount == reads, "and need no read of the vault: they never reach the inbox")
     }
+
+    /// The drain reads the vault once and follows its own commits. A change the person makes meanwhile, and a vault that is locked and
+    /// opened again while a batch waits for the host, must not leave it with a stale view: nothing is lost, nothing is sent twice, and
+    /// no row waits.
+    @Test func aLocalEditBetweenBatchesAndAnUnlockInTheMiddleOfADrainLeaveNothingWrong() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(Self.entries)
+        let (a, va) = try await rig.syncedMac(holding: held)
+        let (b, vb) = try await rig.addedMac(unlock: false)
+        let pause = HostPause()
+        let taken = vb.commitCount
+        b.host.beforeCommit = { count in
+            if count == taken + 1 {
+                await pause.wait()
+            }
+        }
+
+        // The first batch is in; the second waits for the host.
+        vb.unlock()
+        b.sync.vaultUnlocked(profileID: rig.profile, vaultID: rig.vaultID)
+        _ = await waitUntil { pause.isWaiting }
+        let edited = try #require(vb.accounts.values.sorted { $0.id.uuidString < $1.id.uuidString }.first)
+        #expect(vb.accounts.count == 200, "one batch is in")
+
+        // The person edits an entry that batch brought in, and the vault is locked and opened again while the second batch waits.
+        vb.edit(syncChanging(edited, password: "typed meanwhile"))
+        b.lock(vb)
+        vb.unlock()
+        b.sync.vaultUnlocked(profileID: rig.profile, vaultID: rig.vaultID)
+        b.host.beforeCommit = nil
+        pause.release()
+        await b.sync.settle()
+        await b.wrote(vb)
+        try await converge([a, b])
+
+        #expect(vb.accounts.count == Self.entries && va.accounts.count == Self.entries, "every entry is on both Macs")
+        #expect(vb.account(edited.id)?.password == "typed meanwhile" && va.account(edited.id)?.password == "typed meanwhile")
+        #expect(Set(vb.accounts.values.map(\.id)) == Set(held.map(\.id)) && vb.trash.isEmpty && va.trash.isEmpty)
+        #expect(try await b.sync.conflicts(profileID: rig.profile, vaultID: rig.vaultID).isEmpty)
+        #expect(rig.status(a) == .synced && rig.status(b) == .synced)
+        let sent = try VaultSyncCodec.openItem(#require(rig.item(edited)).payload, accountID: edited.id, key: va.syncKey)
+        #expect(sent.version == 2, "the edit went up once, as the version after the one B took in")
+    }
 }

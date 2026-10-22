@@ -373,6 +373,40 @@ struct VaultSyncCodecTests {
         #expect(bytes(key.key).count == 32)
     }
 
+    /// The three keys one vault key gives: the key the records are sealed under, the key of the upload mark (a subkey of that one), and the
+    /// key of the import memory. Each has its own HKDF label, and none keys another's work.
+    @Test func theImportMemoryKeyIsNotTheSyncKeyOrTheMarkKey() {
+        let (dek, profile, vault) = (SymmetricKey(size: .bits256), UUID(), UUID())
+        let sync = syncKey(dek: dek, profile: profile, vault: vault)
+        let mark = VaultSyncCodec.markKey(sync)
+        let memory = ImportMemoryKey.derive(dek: dek, profileID: profile, vaultID: vault)
+        #expect(Set([ImportMemoryKey.label, VaultSyncCodec.label, VaultSyncCodec.markLabel]).count == 3, "three labels")
+
+        // What the import memory computes for a login, and the same message under each key the sync has.
+        var message = StoreWriter()
+        message.text("login")
+        message.text("https://example.test")
+        message.text("ada")
+        let digest = memory.login(origin: "https://example.test", username: "ada")
+        func hmac(_ key: SymmetricKey) -> Data {
+            Data(HMAC<SHA256>.authenticationCode(for: message.data, using: key))
+        }
+        var info = StoreWriter()
+        info.text(ImportMemoryKey.label)
+        info.uuid(profile)
+        info.uuid(vault)
+        let derived = HKDF<SHA256>.deriveKey(inputKeyMaterial: dek, salt: Data(), info: info.data, outputByteCount: 32)
+        #expect(digest == hmac(derived), "it is the HMAC of that message under the import label’s subkey of the vault key")
+        #expect(digest != hmac(sync.key) && digest != hmac(mark) && digest != hmac(dek), "and under no other key of the vault’s")
+        #expect(bytes(derived) != bytes(sync.key) && bytes(derived) != bytes(mark) && bytes(derived) != bytes(dek))
+
+        // It is bound to the profile and the vault, as the sync key is.
+        let otherVault = ImportMemoryKey.derive(dek: dek, profileID: profile, vaultID: UUID())
+        let otherProfile = ImportMemoryKey.derive(dek: dek, profileID: UUID(), vaultID: vault)
+        #expect(otherVault.login(origin: "https://example.test", username: "ada") != digest)
+        #expect(otherProfile.login(origin: "https://example.test", username: "ada") != digest)
+    }
+
     @Test func keyCheckIsStableAndNotThePRF() {
         let prf = SymmetricKey(size: .bits256)
         let credential = Data(repeating: 4, count: 32)
