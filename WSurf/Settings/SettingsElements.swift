@@ -134,7 +134,7 @@ struct SiteRow<Trailing: View>: View {
 
             trailing
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, SettingsMetrics.rowPaddingV)
     }
 }
 
@@ -188,7 +188,7 @@ struct DrillInRow: View {
 
                 DrillInChevron()
             }
-            .padding(.vertical, caption == nil ? 10 : SettingsMetrics.rowPaddingV)
+            .padding(.vertical, SettingsMetrics.rowPaddingV)
             .settingsRowTarget()
         }
         .buttonStyle(.plain)
@@ -221,7 +221,7 @@ struct AddRow: View {
 
                 Spacer(minLength: 8)
             }
-            .padding(.vertical, 9)
+            .padding(.vertical, SettingsMetrics.rowPaddingV)
             .settingsRowTarget()
         }
         .buttonStyle(.plain)
@@ -517,7 +517,7 @@ struct StatStrip: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(.vertical, 12)
+        .padding(.vertical, SettingsMetrics.rowPaddingV)
     }
 }
 
@@ -539,7 +539,7 @@ struct ChipList: View {
                     )
             }
         }
-        .padding(.vertical, 13)
+        .padding(.vertical, SettingsMetrics.rowPaddingV)
     }
 }
 

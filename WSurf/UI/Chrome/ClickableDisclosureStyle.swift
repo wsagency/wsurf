@@ -28,8 +28,12 @@ struct ClickableDisclosureStyle: DisclosureGroupStyle {
             .accessibilityValue(configuration.isExpanded ? Text("Expanded") : Text("Collapsed"))
 
             if configuration.isExpanded {
-                configuration.content
-                    .padding(.leading, 16)
+                // One container: the content's children are views of the stack above, so the 8 points between the label
+                // and the content would otherwise also open between every child, such as the rows of a settings card.
+                VStack(alignment: .leading, spacing: 0) {
+                    configuration.content
+                }
+                .padding(.leading, 16)
             }
         }
     }
