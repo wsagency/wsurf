@@ -57,9 +57,9 @@ struct ThemeGalleryTests {
             SidebarRowStyle.contrast(ThemeReadability.composite(raw, on: $0), $0) < 3
         })
         let foreground = SidebarRowStyle.srgb(inked.primary, scheme: .light)
-        let channels = [foreground.redComponent, foreground.greenComponent, foreground.blueComponent]
-        #expect(foreground.alphaComponent == 1 && (channels.allSatisfy { $0 == 0 } || channels.allSatisfy { $0 == 1 }))
-        for ground in grounds + [SidebarRowStyle.srgb(inked.backdrop, scheme: .light)] {
+        // A green that cannot be read stays green, and reads on the grounds the icons are drawn on.
+        #expect(foreground.greenComponent > foreground.redComponent + 0.2 && foreground.greenComponent > foreground.blueComponent + 0.2)
+        for ground in grounds {
             #expect(SidebarRowStyle.contrast(ThemeReadability.composite(foreground, on: ground), ground) >= 3)
         }
         #expect(try hex(plain.primary) != 0x00AA00)

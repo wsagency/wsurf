@@ -264,9 +264,14 @@ struct ThemeGoldenTests {
         }, "only an actually below-threshold runtime ink may change")
         let ink: Color? = role == "control" ? resolved.controlInk : (role == "loaded" ? resolved.loadedInk : resolved.unloadedInk)
         let fallback = SidebarRowStyle.srgb(try #require(ink), scheme: scheme)
+        // The derived ink keeps the hue of the recorded one, and its opacity only rises.
         let channels = [fallback.redComponent, fallback.greenComponent, fallback.blueComponent]
-        #expect(fallback.alphaComponent == 1 && (channels.allSatisfy { $0 == 0 } || channels.allSatisfy { $0 == 1 }))
-        #expect(cell(fallback) == measured, "the chrome consumer receives the derived opaque ink")
+        let recorded = try #require(NSColor(base).usingColorSpace(.sRGB))
+        let recordedChannels = [recorded.redComponent, recorded.greenComponent, recorded.blueComponent]
+        let strongest = try #require(recordedChannels.indices.max { recordedChannels[$0] < recordedChannels[$1] })
+        #expect(channels[strongest] == channels.max(), "the strongest channel of the recorded ink still leads")
+        #expect(fallback.alphaComponent >= style.opacity - 0.005, "the opacity only rises")
+        #expect(cell(fallback) == measured, "the chrome consumer receives the derived ink")
         for ground in grounds {
             #expect(SidebarRowStyle.contrast(ThemeReadability.composite(fallback, on: ground), ground) >= minimum)
         }

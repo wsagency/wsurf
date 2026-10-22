@@ -192,8 +192,9 @@ struct AppearanceSettingsTests {
         #expect(reopened.selectedTheme.light.unloadedText == SidebarTextStyle(colorRGB: 0x0033CC, opacity: 0.3))
         #expect(reopened.selectedTheme.dark.unloadedText == SidebarTextStyle(colorRGB: 0x33CC00, opacity: 0.6))
 
-        // §1.4 derives runtime ink only: all three translucent choices fail AA on their window ground.
-        func expectReadableFallback(_ ink: NSColor, original: SidebarTextStyle, scheme: ColorScheme) throws {
+        // §1.4 derives runtime ink only: all three translucent choices fail AA on their window ground. What is drawn
+        // keeps the hue of the choice and its opacity as far as that reads, and the stored choice is untouched.
+        func expectReadableAdjustment(_ ink: NSColor, original: SidebarTextStyle, scheme: ColorScheme) throws {
             let appearance = try #require(NSAppearance(named: scheme == .dark ? .darkAqua : .aqua))
             let ground = SidebarRowStyle.srgb(
                 Color(nsColor: reopened.resolvedTheme.variant(scheme).window.resolved(in: appearance)), scheme: scheme
@@ -201,15 +202,20 @@ struct AppearanceSettingsTests {
             let raw = SidebarRowStyle.srgb(try #require(original.color).opacity(original.opacity), scheme: scheme)
             #expect(SidebarRowStyle.contrast(ThemeReadability.composite(raw, on: ground), ground) < 4.5)
             let channels = [ink.redComponent, ink.greenComponent, ink.blueComponent]
-            #expect(ink.alphaComponent == 1 && (channels.allSatisfy { $0 == 0 } || channels.allSatisfy { $0 == 1 }))
+            let color = try #require(original.color)
+            let chosen = try #require(NSColor(color).usingColorSpace(.sRGB))
+            let chosenChannels = [chosen.redComponent, chosen.greenComponent, chosen.blueComponent]
+            let strongest = try #require(chosenChannels.indices.max { chosenChannels[$0] < chosenChannels[$1] })
+            #expect(channels[strongest] == channels.max(), "\(scheme): the strongest channel of the choice still leads")
+            #expect(ink.alphaComponent >= original.opacity - 0.005, "\(scheme): the opacity only rises")
             #expect(SidebarRowStyle.contrast(ThemeReadability.composite(ink, on: ground), ground) >= 4.5)
         }
-        try expectReadableFallback(loaded, original: reopened.selectedTheme.light.sidebarText, scheme: .light)
-        try expectReadableFallback(unloaded, original: reopened.selectedTheme.light.unloadedText, scheme: .light)
+        try expectReadableAdjustment(loaded, original: reopened.selectedTheme.light.sidebarText, scheme: .light)
+        try expectReadableAdjustment(unloaded, original: reopened.selectedTheme.light.unloadedText, scheme: .light)
 
         // The dark variant has its own unloaded style and keeps the default loaded text: white.
         let dark = try srgb(reopened.sidebarTextColor(isDeferred: true, scheme: .dark))
-        try expectReadableFallback(dark, original: reopened.selectedTheme.dark.unloadedText, scheme: .dark)
+        try expectReadableAdjustment(dark, original: reopened.selectedTheme.dark.unloadedText, scheme: .dark)
         let darkLoaded = try srgb(reopened.sidebarTextColor(scheme: .dark))
         #expect(darkLoaded.redComponent > 0.95 && darkLoaded.greenComponent > 0.95 && darkLoaded.alphaComponent == 1)
 

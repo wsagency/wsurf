@@ -269,9 +269,24 @@ struct ThemeBehaviorTests {
                     #expect(candidate.opaqueLuminance == (rgb.alphaComponent == 1 ? SidebarRowStyle.luminance(rgb) : nil))
                     for backgrounds in grounds {
                         for minimum in minima {
-                            #expect(ThemeReadability.guarded(
+                            let guarded = ThemeReadability.guarded(
                                 color, ink: candidate, onResolved: backgrounds.map(ThemeReadability.Ground.init), minimum: minimum
-                            ) == original(color, rgb: rgb, on: backgrounds, minimum: minimum))
+                            )
+                            let before = original(color, rgb: rgb, on: backgrounds, minimum: minimum)
+                            if before == color {
+                                #expect(guarded == color, "a color that reads is left alone")
+                            } else {
+                                // A mid-tone can read on a dark and a light ground at once where neither black nor
+                                // white does, so what is drawn reads whenever any color does.
+                                let drawn = SidebarRowStyle.srgb(guarded, scheme: scheme)
+                                let reads = backgrounds.allSatisfy {
+                                    SidebarRowStyle.contrast(ThemeReadability.composite(drawn, on: $0), $0) >= minimum
+                                }
+                                #expect(
+                                    reads || guarded == before,
+                                    "a faint color reads at \(minimum):1, or becomes the better of black and white"
+                                )
+                            }
                         }
                     }
                 }
@@ -517,7 +532,14 @@ struct ThemeBehaviorTests {
             sidebarText: SidebarTextStyle(opacity: 0.1), icons: SidebarTextStyle(colorRGB: 0, opacity: 0.1)
         )
         let resolved = ResolvedVariant(original, isDark: false, brightness: 0)
-        #expect(resolved.loadedInk == Color(nsColor: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)))
+        // Black at 10% on white cannot be read, so it is drawn as black at the least opacity that reads at 4.5:1.
+        let ink = SidebarRowStyle.srgb(resolved.loadedInk, scheme: .light)
+        let white = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
+        #expect(ink.redComponent == 0 && ink.greenComponent == 0 && ink.blueComponent == 0)
+        #expect(ink.alphaComponent > 0.1 && ink.alphaComponent < 1)
+        #expect(SidebarRowStyle.contrast(ThemeReadability.composite(ink, on: white), white) >= 4.5)
+        let fainter = ink.withAlphaComponent(ink.alphaComponent - 0.01)
+        #expect(SidebarRowStyle.contrast(ThemeReadability.composite(fainter, on: white), white) < 4.5)
         #expect(original.sidebarText.opacity == 0.1 && original.icons.opacity == 0.1)
     }
 

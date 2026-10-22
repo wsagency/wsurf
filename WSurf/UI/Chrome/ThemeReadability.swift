@@ -4,7 +4,8 @@
 import AppKit
 import SwiftUI
 
-/// Runs while a theme is resolved, never while a resting row draws. Stored colors and opacities stay intact.
+/// Runs while a theme is resolved, never while a resting row draws. Stored colors and opacities stay intact, and what
+/// is drawn keeps their hue and as much of their opacity as still reads.
 enum ThemeReadability {
     private static let black = NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
     private static let white = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
@@ -50,15 +51,35 @@ enum ThemeReadability {
         guarded(color, ink: Ink(rgb), onResolved: grounds, minimum: minimum)
     }
 
+    /// `color`, unless it is too faint to reach `minimum` contrast on every ground. Then it moves by the least that
+    /// reads: its own hue turns toward black or white (whichever reads better) until it reaches `minimum` at full
+    /// opacity, and its opacity rises from the one asked for until it still reads. A color that passes is returned
+    /// as it is, and one that cannot pass on every ground becomes the better of black and white.
     static func guarded(_ color: Color, ink candidate: Ink, onResolved grounds: [Ground], minimum: CGFloat) -> Color {
-        guard grounds.contains(where: {
-            let luminance = candidate.opaqueLuminance
-                ?? SidebarRowStyle.luminance(composite(candidate.color, on: $0.color))
-            return SidebarRowStyle.contrast(luminance, $0.luminance) < minimum
-        }) else {
-            return color
+        func reads(_ ink: NSColor) -> Bool {
+            grounds.allSatisfy {
+                let luminance = ink.alphaComponent == 1
+                    ? SidebarRowStyle.luminance(ink)
+                    : SidebarRowStyle.luminance(composite(ink, on: $0.color))
+                return SidebarRowStyle.contrast(luminance, $0.luminance) >= minimum
+            }
         }
-        return Color(nsColor: ink(onResolved: grounds))
+        guard !grounds.isEmpty, !reads(candidate.color) else { return color }
+        let base = candidate.color
+        let end = ink(onResolved: grounds)
+        func moved(_ percent: Int) -> NSColor {
+            let fraction = CGFloat(percent) / 100
+            return NSColor(
+                srgbRed: base.redComponent + (end.redComponent - base.redComponent) * fraction,
+                green: base.greenComponent + (end.greenComponent - base.greenComponent) * fraction,
+                blue: base.blueComponent + (end.blueComponent - base.blueComponent) * fraction,
+                alpha: 1
+            )
+        }
+        let solid = moved((0...100).first { reads(moved($0)) } ?? 100)
+        let asked = Int((base.alphaComponent * 100).rounded(.up))
+        let opacity = (asked...100).first { reads(solid.withAlphaComponent(CGFloat($0) / 100)) } ?? 100
+        return Color(nsColor: solid.withAlphaComponent(CGFloat(opacity) / 100))
     }
 
     static func accentText(_ accent: NSColor, on grounds: [NSColor], isDark: Bool) -> NSColor {

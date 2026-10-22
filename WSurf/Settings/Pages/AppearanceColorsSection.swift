@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
+import AppKit
 import SwiftUI
 
 struct AppearanceColorsSection: View {
@@ -23,6 +24,12 @@ struct AppearanceColorsSection: View {
                     .font(Theme.Font.label)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Text(scheme == .dark
+                    ? "These colors are for the dark appearance, which is showing now."
+                    : "These colors are for the light appearance, which is showing now.")
+                    .font(Theme.Font.label)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 DetailRow(title: "Accent color") {
                     paletteColor(\.accent, label: "Accent color")
                 }
@@ -31,20 +38,29 @@ struct AppearanceColorsSection: View {
                     paletteColor(\.assistant, label: "Assistant color")
                 }
                 RowSeparator()
-                DetailRow(title: "Tab text") {
-                    inkControls(\.sidebarText, label: "Tab text", opacityLabel: "Tab text opacity")
+                DetailRow(title: "Tab text", caption: "The title of tabs and folders that are loaded.") {
+                    inkControls(
+                        \.sidebarText, label: "Tab text", opacityLabel: "Tab text opacity",
+                        drawn: { $0.loadedInk }
+                    )
                 }
                 RowSeparator()
-                DetailRow(title: "Unloaded tab text") {
-                    inkControls(\.unloadedText, label: "Unloaded tab text", opacityLabel: "Unloaded tab text opacity")
+                DetailRow(title: "Unloaded tab text", caption: "The title of tabs that are asleep (unloaded).") {
+                    inkControls(
+                        \.unloadedText, label: "Unloaded tab text", opacityLabel: "Unloaded tab text opacity",
+                        drawn: { $0.unloadedInk }
+                    )
                 }
                 RowSeparator()
-                DetailRow(title: "Icons") {
-                    inkControls(\.icons, label: "Icons", opacityLabel: "Icons opacity")
+                DetailRow(title: "Icons", caption: "The icons on the toolbar and on controls.") {
+                    inkControls(
+                        \.icons, label: "Icons", opacityLabel: "Icons opacity",
+                        drawn: { $0.controlInk }
+                    )
                 }
                 RowSeparator()
-                DetailRow(title: "URL text") {
-                    inkControls(\.url, label: "URL text", opacityLabel: "URL text opacity")
+                DetailRow(title: "URL text", caption: "The address in the toolbar.") {
+                    inkControls(\.url, label: "URL text", opacityLabel: "URL text opacity", drawn: { _ in nil })
                 }
                 RowSeparator()
                 DetailRow(
@@ -54,7 +70,7 @@ struct AppearanceColorsSection: View {
                     paletteColor(\.primary, label: "Primary color")
                 }
                 RowSeparator()
-                DetailRow(title: "Hue") {
+                DetailRow(title: "Hue", caption: "Turns the colors derived from the primary color around the color wheel.") {
                     Slider(value: colorBinding(\.hue), in: -0.5...0.5, onEditingChanged: editingChanged)
                         .frame(width: 160)
                         .accessibilityLabel("Theme hue")
@@ -112,10 +128,42 @@ struct AppearanceColorsSection: View {
 
     private func inkControls(
         _ keyPath: WritableKeyPath<ThemeVariant, SidebarTextStyle>,
-        label: LocalizedStringResource, opacityLabel: LocalizedStringResource
+        label: LocalizedStringResource, opacityLabel: LocalizedStringResource,
+        drawn: (ResolvedVariant) -> Color?
     ) -> some View {
         let style = colorBinding(keyPath)
-        return HStack(spacing: 8) {
+        let note = readabilityNote(style.wrappedValue, drawn: drawn(settings.resolvedTheme.variant(scheme)))
+        return VStack(alignment: .trailing, spacing: 4) {
+            inkRow(style: style, label: label, opacityLabel: opacityLabel)
+            if let note {
+                note
+                    .font(Theme.Font.label)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Says so when the text is drawn differently from the choice: a color or an opacity too faint for the
+    /// background to read at 4.5:1 is moved by the least that reads, keeping its hue.
+    private func readabilityNote(_ style: SidebarTextStyle, drawn: Color?) -> Text? {
+        guard let drawn, let ink = NSColor(drawn).usingColorSpace(.sRGB) else { return nil }
+        if ink.alphaComponent > style.opacity + 0.005 {
+            return Text("Shown at \(Double(ink.alphaComponent), format: .percent.precision(.fractionLength(0))) so it stays readable.")
+        }
+        guard let chosen = style.colorRGB,
+              let wanted = NSColor(Color(hex: chosen)).usingColorSpace(.sRGB),
+              abs(wanted.redComponent - ink.redComponent) + abs(wanted.greenComponent - ink.greenComponent)
+                  + abs(wanted.blueComponent - ink.blueComponent) > 0.02
+        else { return nil }
+        return Text("Adjusted a little so it stays readable.")
+    }
+
+    private func inkRow(
+        style: Binding<SidebarTextStyle>, label: LocalizedStringResource, opacityLabel: LocalizedStringResource
+    ) -> some View {
+        HStack(spacing: 8) {
             ColorPicker(String(localized: label), selection: Binding(
                 get: {
                     style.wrappedValue.color ?? settings.previewedTheme.variant(scheme).text.map(Color.init(hex:))
@@ -137,11 +185,11 @@ struct AppearanceColorsSection: View {
                     style.wrappedValue = updated
                 }
             ), in: 0...1, step: 0.05, onEditingChanged: editingChanged)
-            .frame(width: 110)
+            .frame(width: 90)
             .accessibilityLabel(Text(opacityLabel))
-            Text(style.wrappedValue.opacity, format: .percent.precision(.fractionLength(0)))
+            Text("Opacity \(style.wrappedValue.opacity, format: .percent.precision(.fractionLength(0)))")
                 .monospacedDigit()
-                .frame(width: 42, alignment: .trailing)
+                .frame(width: 92, alignment: .trailing)
         }
     }
 
