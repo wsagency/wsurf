@@ -152,18 +152,45 @@ struct ThemeSpacingTests {
         #expect(insets(margin: 6, page: 0) == EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
         #expect(insets(margin: 8, page: 6) == EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 2))
 
-        // Icons only and the floating sidebar keep their own insets.
-        for isFloating in [false, true] {
-            #expect(SidebarMetrics.contentInsets(style: .icons, isFloating: isFloating, margin: 1, pageSpacing: 0)
-                == SidebarMetrics.contentInsets(style: .icons, isFloating: isFloating))
-        }
-        #expect(SidebarMetrics.contentInsets(style: .full, isFloating: true, margin: 1, pageSpacing: 0)
-            == SidebarMetrics.contentInsets(style: .full, isFloating: true))
-
         // The media card takes the same room as the rows.
         #expect(MediaSidebarCard.panelWidth(sidebarWidth: 268, isStowed: false, isFloating: false, margin: 1, pageSpacing: 6)
             == SidebarMetrics.contentWidth(268, style: .full, isFloating: false, margin: 1, pageSpacing: 6))
         #expect(SidebarMetrics.contentWidth(268, style: .full, isFloating: false, margin: 1, pageSpacing: 6) == 267)
+    }
+
+    /// Icons only and the floating sidebar take the margin too, never below 1 pt, and keep today's 6 pt by default.
+    @Test func iconsOnlyAndFloatingSidebarsTakeTheMarginToo() {
+        func insets(_ style: SidebarStyle, floating: Bool, margin: CGFloat, page: CGFloat = 6) -> EdgeInsets {
+            SidebarMetrics.contentInsets(style: style, isFloating: floating, margin: margin, pageSpacing: page)
+        }
+        func edges(_ leading: CGFloat, _ trailing: CGFloat) -> EdgeInsets {
+            EdgeInsets(top: 0, leading: leading, bottom: 0, trailing: trailing)
+        }
+        #expect(insets(.icons, floating: false, margin: 6) == edges(6, 0), "the default is today's column")
+        #expect(insets(.icons, floating: true, margin: 6) == edges(6, 6), "the default is today's floating column")
+
+        for style in [SidebarStyle.full, .icons] {
+            // Docked: the margin from the window, and from the page where the page spacing leaves less.
+            #expect(insets(style, floating: false, margin: 1) == edges(1, 0))
+            #expect(insets(style, floating: false, margin: 1, page: 0) == edges(1, 1))
+            #expect(insets(style, floating: false, margin: 8) == edges(8, 2))
+            // Floating: the margin on both sides.
+            #expect(insets(style, floating: true, margin: 1) == edges(1, 1))
+            #expect(insets(style, floating: true, margin: 8) == edges(8, 8))
+        }
+
+        // Both columns keep their width, so the icons take what the margin leaves.
+        let docked = SidebarMetrics.iconsWidth
+        let floating = SidebarMetrics.floatingIconsWidth
+        #expect(SidebarMetrics.contentWidth(docked, style: .icons, isFloating: false, margin: 1, pageSpacing: 6) == docked - 1)
+        #expect(SidebarMetrics.contentWidth(floating, style: .icons, isFloating: true, margin: 1, pageSpacing: 6) == floating - 2)
+        #expect(SidebarMetrics.contentWidth(floating, style: .icons, isFloating: true, margin: 8, pageSpacing: 6) == floating - 16)
+
+        // The slider's own floor is 1 pt, and the shape the sidebar reads carries it through.
+        let shape = ThemeShape(ThemeAdjustment(sidebarMargin: 0).bounded())
+        #expect(shape.sidebarMargin == 1)
+        #expect(insets(.icons, floating: true, margin: shape.sidebarMargin) == edges(1, 1))
+        #expect(insets(.icons, floating: false, margin: shape.sidebarMargin, page: shape.pageSpacing) == edges(1, 0))
     }
 
     @Test func rowsGrowOnlyPastTheDefaultIcon() throws {
