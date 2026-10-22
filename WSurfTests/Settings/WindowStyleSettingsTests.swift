@@ -144,6 +144,29 @@ struct WindowStyleSettingsTests {
         }
     }
 
+    @Test func theMinimalSidebarIsNotKeptOpenByDefault() throws {
+        try withSettings { settings, _ in
+            #expect(!settings.keepsMinimalSidebarOpen, "nothing changes for anyone who never pins it")
+        }
+    }
+
+    @Test func keepingTheMinimalSidebarOpenIsOneAppWideChoiceThatSurvivesARestartAndResets() throws {
+        try withSettings { settings, defaults in
+            let profile = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false, application: settings)
+            profile.keepsMinimalSidebarOpen = true
+            #expect(settings.keepsMinimalSidebarOpen, "a profile writes the app-wide value")
+            #expect(defaults.object(forKey: BrowserSettings.Key.minimalSidebarPinned) as? Bool == true)
+            #expect(settings.windowStyle == .standard, "pinning the list does not pick the Minimal window")
+
+            let reopened = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
+            #expect(reopened.keepsMinimalSidebarOpen)
+
+            settings.resetToDefaults()
+            #expect(!settings.keepsMinimalSidebarOpen && !profile.keepsMinimalSidebarOpen)
+            #expect(defaults.object(forKey: BrowserSettings.Key.minimalSidebarPinned) as? Bool == false)
+        }
+    }
+
     @Test func anUnknownStoredStyleFallsBackToStandard() throws {
         try withSettings { _, defaults in
             defaults.set("floating", forKey: BrowserSettings.Key.windowStyle)

@@ -3261,6 +3261,9 @@
     "Keep replies in my OpenAI account" : {
 
     },
+    "Keep Sidebar Open" : {
+      "comment" : "View menu item and tooltip of the pin in the Minimal window’s tab list: while it is on, the list stays docked open and the page sits beside it instead of the list sliding away. Title Case."
+    },
     "Keep this website loaded" : {
 
     },

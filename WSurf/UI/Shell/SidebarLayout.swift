@@ -104,6 +104,13 @@ enum SidebarMetrics {
         return min(max(width, minWidth), ceiling)
     }
 
+    /// How far from the window's leading edge the page starts while the Minimal window keeps its tab list open: the
+    /// list at the full sidebar's width and clamp, and the page spacing it keeps from the window edge. Nothing while the
+    /// list floats, so the page is under it, as before.
+    static func pinnedTabListInset(isPinned: Bool, sidebarWidth: CGFloat, container: CGFloat, pageSpacing: CGFloat) -> CGFloat {
+        isPinned ? clampWidth(sidebarWidth, container: container) + pageSpacing : 0
+    }
+
     static func topControlsOpacity(isShowing: Bool) -> Double {
         isShowing ? 1 : 0
     }
