@@ -202,4 +202,37 @@ struct VaultSyncEdgeTests {
         #expect(rig.cloud.zones[rig.zone] == nil)
         #expect(rig.status(a) == .removed(.deleted))
     }
+
+    @Test func dismissingARowThatHasABaseKeepsTheVersionSoTheNextEditLandsOnTheRightTag() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let entry = syncAccounts(1)[0]
+        let (a, va) = try await rig.syncedMac(holding: [entry])
+        let (b, vb) = try await rig.addedMac()
+        try await converge([a, b])
+        // A changes the password; B’s vault refuses to take it, so it waits as information, and the owner dismisses it.
+        va.edit(syncChanging(entry, password: "from A"))
+        await a.wrote(va)
+        try await a.pump()
+        vb.commitFailure = CredentialVaultError.invalidData
+        try await b.engine.fetchNow()
+        await b.sync.settle()
+        #expect(try await b.sync.conflicts(profileID: rig.profile, vaultID: rig.vaultID).map(\.kind) == [.refused])
+        vb.commitFailure = nil
+        try await b.sync.resolve(profileID: rig.profile, vaultID: rig.vaultID, accountIDs: [entry.id], keepLocal: true)
+
+        // B then edits the entry. The record that goes up must be the version after A’s, on A’s change tag; at the version A already
+        // holds it would overwrite A’s record and be dropped by A as a replay.
+        vb.edit(syncChanging(entry, note: "from B"))
+        await b.wrote(vb)
+        try await b.pump()
+        let sent = try VaultSyncCodec.openItem(#require(rig.item(entry)).payload, accountID: entry.id, key: va.syncKey)
+        #expect(sent.version == 3 && sent.account?.notes?.first?.text == "from B")
+        try await converge([a, b])
+
+        #expect(va.account(entry.id) == vb.account(entry.id), "both Macs ended with one version of the entry")
+        #expect(va.account(entry.id)?.notes?.first?.text == "from B")
+        #expect(va.history[entry.id]?.contains { $0.account.password == "from A" } == true, "A’s own version is in its History")
+        #expect(rig.status(a) == .synced && rig.status(b) == .synced)
+    }
 }

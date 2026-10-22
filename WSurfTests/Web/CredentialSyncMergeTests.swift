@@ -557,13 +557,21 @@ struct CredentialSyncMergeTests {
         }
     }
 
-    @Test func informationRowsAreDismissedByAnyAnswerAndChangeNothing() throws {
+    @Test func informationRowsAreDismissedByAnyAnswerAndWriteNothing() throws {
         let account = entry()
+        let agreed = entry(id: account.id)
         for kind in [SyncConflictKind.ambiguous, .refused] {
             for keepLocal in [true, false] {
-                let answer = try CredentialSyncMerge.resolve(live(account), kind: kind, local: nil, base: nil, keepLocal: keepLocal, index: index())
-                // Nothing is written and the base stays, so the dismissal can never turn into a deletion elsewhere.
-                #expect(answer == .ignore)
+                // Without a base there is nothing to keep: the row goes and the dismissal changes nothing at all.
+                let alone = try CredentialSyncMerge.resolve(live(account), kind: kind, local: nil, base: nil, keepLocal: keepLocal, index: index())
+                #expect(alone == .ignore)
+                // With one, the base takes the version the row stands for and keeps its parts, so this Mac’s next version is the one after
+                // it and nothing is agreed or written.
+                let known = try CredentialSyncMerge.resolve(
+                    live(account, version: 4), kind: kind, local: agreed, base: try base(agreed), keepLocal: keepLocal, index: index([agreed])
+                )
+                #expect(known == .keep(SyncBase(version: 4, parts: try parts(agreed))))
+                #expect(known.written == nil)
             }
         }
     }

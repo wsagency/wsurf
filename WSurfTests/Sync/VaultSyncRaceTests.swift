@@ -79,6 +79,15 @@ struct VaultSyncRaceTests {
         try await converge([lockout.a, lockout.b])
         #expect(lockout.vb.account(lockout.entry.id)?.password == "from B")
         #expect(rig.item(lockout.entry)?.payload == lockout.theirs.payload)
+
+        // A keeps its version: it goes up as the next version, on the change tag of B’s record, and B takes it.
+        try await lockout.a.sync.resolve(profileID: rig.profile, vaultID: rig.vaultID, accountIDs: [lockout.entry.id], keepLocal: true)
+        try await converge([lockout.a, lockout.b])
+        let latest = try VaultSyncCodec.openItem(#require(rig.item(lockout.entry)).payload, accountID: lockout.entry.id, key: rig.key)
+        #expect(latest.version == 3 && latest.account?.password == "from A")
+        #expect(lockout.vb.account(lockout.entry.id)?.password == "from A")
+        #expect(lockout.vb.history[lockout.entry.id]?.contains { $0.account.password == "from B" } == true, "B’s own version is in its History")
+        #expect(rig.status(lockout.a) == .synced && rig.status(lockout.b) == .synced)
     }
 
     @Test func aSaveTheServerTurnsDownIsNotSentAgainOverTheRecordThatWaitsToBeMerged() async throws {
