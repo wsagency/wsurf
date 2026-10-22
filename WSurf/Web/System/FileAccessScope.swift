@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import UniformTypeIdentifiers
 
 /// What a page loaded from a `file:` URL may read, which depends on whether the file can be trusted with its neighbours.
 ///
@@ -17,8 +18,9 @@ import Foundation
 ///
 /// WebKit, measured with a standalone web view outside the temporary directory, holds a PDF, an image, a text file, an SVG and an
 /// XHTML document to a single-file grant, but still lets an `.html` document load the files in its folder. So on WebKit a
-/// quarantined HTML-type document also runs without script (`allowsScript(inFile:)`): static siblings may still render, but the
-/// page cannot read them into data or send them anywhere. Chromium's gate confines it fully.
+/// quarantined file whose type is not known to be inert (an image, PDF, plain text, audio or video) also runs without script
+/// (`allowsScript(inFile:)`) and refuses file frames (`refusesSubframe`): static siblings may still render,
+/// but the page cannot read them into data or send them anywhere. Chromium's gate confines it fully.
 nonisolated enum FileAccessScope {
     static let quarantineAttribute = "com.apple.quarantine"
 
@@ -37,14 +39,39 @@ nonisolated enum FileAccessScope {
         }
     }
 
-    /// File types that are documents with script of their own.
-    private static let scriptedDocumentExtensions: Set<String> = ["html", "htm", "xhtml", "svg"]
+    /// Types a quarantined file may be shown as without taking its script away: images, PDF, plain text, audio and video. An SVG is
+    /// an image but also XML, and a web archive is neither, so the second list takes precedence. Anything else, and any type that
+    /// is not known, may carry script.
+    private static let inertTypes: [UTType] = [.image, .pdf, .plainText, .audiovisualContent]
+    private static let scriptedTypes: [UTType] = [.xml, .html, .webArchive]
 
-    /// Whether a page loaded from `url` may run script on WebKit: not when it is a quarantined HTML, XHTML or SVG file, which WebKit
-    /// may let read its folder. The person's own file, a file of another type, a folder and a web address are not held back.
+    /// Whether a file's type is known to run no script when shown.
+    static func isInert(_ file: URL) -> Bool {
+        guard let type = UTType(filenameExtension: file.pathExtension) else { return false }
+        return inertTypes.contains { type.conforms(to: $0) } && !scriptedTypes.contains { type.conforms(to: $0) }
+    }
+
+    /// Whether a page loaded from `url` may run script on WebKit. Not when it is a quarantined file whose type is not known to be
+    /// inert (HTML, XHTML, XML, SVG, a web archive, or a type nobody knows): WebKit may let such a document read its folder, and
+    /// without script it cannot read the files into data or send them anywhere. The person's own file, a quarantined image, PDF,
+    /// text, audio or video file, a folder and a web address are not held back.
     static func allowsScript(inFile url: URL) -> Bool {
-        guard url.isFileURL, scriptedDocumentExtensions.contains(url.pathExtension.lowercased()) else { return true }
-        return !isQuarantined(URL(fileURLWithPath: url.path(percentEncoded: false)).standardizedFileURL)
+        guard url.isFileURL else { return true }
+        let item = URL(fileURLWithPath: url.path(percentEncoded: false)).standardizedFileURL
+        guard !item.hasDirectoryPath, isQuarantined(item) else { return true }
+        return isInert(item)
+    }
+
+    /// Whether a frame inside the page at `main` must not be shown `target`. Any `file:` frame of a quarantined file page is refused,
+    /// and so is a quarantined file that could run script, wherever it is embedded: the page's script setting covers its frames, so
+    /// an embedded one would run script the way its page does.
+    static func refusesSubframe(to target: URL, inPageAt main: URL?) -> Bool {
+        guard target.isFileURL else { return false }
+        if !allowsScript(inFile: target) {
+            return true
+        }
+        guard let main, main.isFileURL else { return false }
+        return isQuarantined(URL(fileURLWithPath: main.path(percentEncoded: false)).standardizedFileURL)
     }
 
     /// Whether the document at `document` may load `resource`. A resource that is not a `file:` URL is not a file read and is

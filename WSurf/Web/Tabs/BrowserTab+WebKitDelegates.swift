@@ -31,8 +31,9 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
                 to: preferences
             )
         }
-        // WebKit lets an HTML file read its folder whatever it was granted, so a downloaded page runs no script of its own.
-        if navigationAction.targetFrame?.isMainFrame == true, let url = navigationAction.request.url,
+        // WebKit lets an HTML file read its folder whatever it was granted, so a downloaded page runs no script of its own. A
+        // navigation with no target frame is a new window's own page, held to the same rule.
+        if navigationAction.targetFrame?.isMainFrame != false, let url = navigationAction.request.url,
            !FileAccessScope.allowsScript(inFile: url) {
             preferences.allowsContentJavaScript = false
         }
@@ -46,6 +47,13 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
     ) {
         if navigationAction.targetFrame?.isMainFrame == true {
             mainFrameActionGeneration &+= 1
+        }
+        // The script rule above covers a page's frames, so a frame may not bring a downloaded file into one that runs script, nor
+        // any file into a downloaded page.
+        if navigationAction.targetFrame?.isMainFrame == false, let url = navigationAction.request.url,
+           FileAccessScope.refusesSubframe(to: url, inPageAt: webView.url) {
+            decisionHandler(.cancel)
+            return
         }
         if navigationAction.shouldPerformDownload {
             downloadSource = navigationAction.request.url

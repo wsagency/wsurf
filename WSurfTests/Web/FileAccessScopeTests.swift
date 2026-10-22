@@ -190,42 +190,90 @@ struct FileAccessScopeTests {
 
     // MARK: Script in a downloaded page (WebKit)
 
-    @Test(arguments: ["mailed.html", "MAILED.HTM", "mailed.xhtml", "mailed.svg", "Mailed.SVG"])
-    func aDownloadedPageOrDrawingRunsNoScript(_ name: String) throws {
+    /// A file of `name` in the site's folder, quarantined as if downloaded, or the person's own.
+    private func file(_ name: String, in site: Site, downloaded: Bool) throws -> URL {
+        let file = site.folder.appendingPathComponent(name)
+        try Data("<html></html>".utf8).write(to: file)
+        if downloaded {
+            try mailed(file)
+        } else {
+            own(file)
+        }
+        return file
+    }
+
+    /// Everything that may carry script, or that nobody can say does, runs none when it is downloaded.
+    @Test(arguments: [
+        "mailed.html", "MAILED.HTM", "mailed.xhtml", "mailed.svg", "Mailed.SVG", "mailed.svgz", "mailed.xml", "mailed.xsl",
+        "mailed.webarchive", "mailed.mhtml", "mailed.json", "mailed.css", "mailed.unheardof", "mailed",
+    ])
+    func aDownloadedFileThatMayCarryScriptRunsNone(_ name: String) throws {
         let site = try makeSite()
         defer { site.remove() }
-        let downloaded = site.folder.appendingPathComponent(name)
-        try Data("<html></html>".utf8).write(to: downloaded)
-        try mailed(downloaded)
+        let downloaded = try file(name, in: site, downloaded: true)
 
         #expect(!FileAccessScope.allowsScript(inFile: downloaded))
         let typed = try #require(Omnibox.location(for: downloaded.absoluteString + "?draft=1#top"))
         #expect(!FileAccessScope.allowsScript(inFile: typed), "an address with a query and a fragment")
     }
 
-    @Test func thePersonsOwnPagesRunScriptAndOtherFilesAreLeftAlone() throws {
+    @Test(arguments: [
+        "mailed.png", "MAILED.JPG", "mailed.jpeg", "mailed.gif", "mailed.webp", "mailed.heic", "mailed.pdf", "mailed.PDF",
+        "mailed.txt", "mailed.mp4", "mailed.mov", "mailed.mp3", "mailed.m4a", "mailed.wav",
+    ])
+    func aDownloadedImagePDFTextAudioOrVideoFileIsUnaffected(_ name: String) throws {
         let site = try makeSite()
         defer { site.remove() }
-        let other = site.folder.appendingPathComponent("mailed.pdf")
-        try Data("%PDF".utf8).write(to: other)
-        try mailed(other)
-        let script = site.folder.appendingPathComponent("mailed.js")
-        try Data("1".utf8).write(to: script)
-        try mailed(script)
+        let downloaded = try file(name, in: site, downloaded: true)
 
-        #expect(FileAccessScope.allowsScript(inFile: site.page))
-        #expect(FileAccessScope.allowsScript(inFile: site.drawing))
-        #expect(FileAccessScope.allowsScript(inFile: other), "a downloaded PDF runs no script of the page's")
-        #expect(FileAccessScope.allowsScript(inFile: script))
-        #expect(FileAccessScope.allowsScript(inFile: site.folder), "a folder listing")
-        #expect(FileAccessScope.allowsScript(inFile: URL(string: "https://example.test/mailed.html")!), "a web address")
+        #expect(FileAccessScope.allowsScript(inFile: downloaded))
     }
 
-    @Test func aPageThatCannotBeInspectedRunsNoScript() throws {
+    @Test(arguments: ["own.html", "own.xhtml", "own.svg", "own.xml", "own.webarchive", "own.unheardof", "own", "own.png", "own.pdf"])
+    func thePersonsOwnFilesKeepTheirScripts(_ name: String) throws {
         let site = try makeSite()
         defer { site.remove() }
 
-        #expect(!FileAccessScope.allowsScript(inFile: site.folder.appendingPathComponent("gone.html")))
+        #expect(FileAccessScope.allowsScript(inFile: try file(name, in: site, downloaded: false)))
+    }
+
+    @Test func aFolderAWebAddressAndAMissingFileAreJudgedByTheSameRule() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+
+        #expect(FileAccessScope.allowsScript(inFile: site.folder), "a folder listing")
+        #expect(FileAccessScope.allowsScript(inFile: URL(string: "https://example.test/mailed.html")!), "a web address")
+        #expect(!FileAccessScope.allowsScript(inFile: site.folder.appendingPathComponent("gone.html")), "a file that cannot be inspected")
+    }
+
+    @Test func aFrameIsRefusedWhereItWouldRunADownloadedFileOrSitInADownloadedPage() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let downloadedImage = try file("mailed.png", in: site, downloaded: true)
+        let ownImage = try file("own.png", in: site, downloaded: false)
+        let web = try #require(URL(string: "https://example.test/"))
+        func refused(_ target: URL, in page: URL?) -> Bool {
+            FileAccessScope.refusesSubframe(to: target, inPageAt: page)
+        }
+
+        // Every file frame of a downloaded page, whatever the file.
+        #expect(refused(site.mailedPage, in: site.mailedPage), "a page framing itself")
+        #expect(refused(site.page, in: site.mailedPage))
+        #expect(refused(ownImage, in: site.mailedPage))
+        #expect(refused(downloadedImage, in: site.mailedPage))
+        // A downloaded file that could run script, in any page.
+        #expect(refused(site.mailedPage, in: site.page))
+        #expect(refused(site.mailedDrawing, in: site.page))
+        #expect(refused(site.mailedPage, in: nil))
+        #expect(refused(site.mailedPage, in: web))
+        // What stays: the person's own pages, inert downloads in them, and anything that is not a file.
+        #expect(!refused(site.drawing, in: site.page))
+        #expect(!refused(downloadedImage, in: site.page))
+        #expect(!refused(site.page, in: nil))
+        #expect(!refused(site.page, in: web))
+        for target in ["about:blank", "https://example.test/a", "data:text/html,hi", "blob:https://example.test/1"] {
+            #expect(!refused(try #require(URL(string: target)), in: site.mailedPage), "\(target)")
+        }
     }
 
     // MARK: What a document may load
@@ -594,6 +642,96 @@ struct FileAccessScopeTests {
 
         expectHeldBack(try await typed(site.mailedPage), site.mailedPage, engine: .webKit)
         expectReads(try await typed(site.page), site.page, engine: .webKit)
+    }
+
+    // MARK: Frames (WebKit)
+
+    /// Pages that frame a sibling. The inner pages post `ran` to their parent if their script runs, and hold a frame of their own, so
+    /// the outer page can tell, from the number of frames in its frame, that the sibling loaded.
+    private struct FramePages {
+        let framesItself: URL
+        let downloadedFramesDownloaded: URL
+        let ownFramesDownloaded: URL
+        let ownFramesOwn: URL
+    }
+
+    private func makeFramePages(in site: Site) throws -> FramePages {
+        let post = "parent.postMessage('ran', '*');"
+        let listen = "window.addEventListener('message', event => document.documentElement.setAttribute('data-child', String(event.data)));"
+        func page(_ name: String, body: String, downloaded: Bool) throws -> URL {
+            let file = site.folder.appendingPathComponent(name)
+            try "<!doctype html><title>Frames</title>\(body)".write(to: file, atomically: true, encoding: .utf8)
+            if downloaded {
+                try mailed(file)
+            } else {
+                own(file)
+            }
+            return file
+        }
+        _ = try page("mailed-inner.html", body: "<script>\(post)</script><iframe srcdoc='x'></iframe>", downloaded: true)
+        _ = try page("own-inner.html", body: "<script>\(post)</script><iframe srcdoc='x'></iframe>", downloaded: false)
+        return FramePages(
+            framesItself: try page("mailed-itself.html", body: "<iframe src='mailed-itself.html'></iframe>", downloaded: true),
+            downloadedFramesDownloaded: try page("mailed-outer.html", body: "<iframe src='mailed-inner.html'></iframe>", downloaded: true),
+            ownFramesDownloaded: try page("own-outer-downloaded.html", body: "<script>\(listen)</script><iframe src='mailed-inner.html'></iframe>", downloaded: false),
+            ownFramesOwn: try page("own-outer-own.html", body: "<script>\(listen)</script><iframe src='own-inner.html'></iframe>", downloaded: false)
+        )
+    }
+
+    /// How many frames the first frame of `document` holds (nil when it holds none to count) and what its script posted to its
+    /// parent, once `document` has loaded and its frames have had time to.
+    private func framed(_ document: URL) async throws -> (frames: String?, message: String?) {
+        var found: (frames: String?, message: String?) = (nil, nil)
+        try await withTab(engine: .webKit) { tab in
+            tab.load(document)
+            let page = tab.page
+            _ = await waitUntil { page.url?.lastPathComponent == document.lastPathComponent && !page.isLoading }
+            try await Task.sleep(for: .seconds(1.5))
+            func ask(_ script: String) async -> String? {
+                (try? await page.evaluateJavaScript(script, in: nil, contentWorld: .defaultClient)) as? String
+            }
+            found = (
+                await ask("(() => { const frame = document.querySelector('iframe'); return frame ? String(frame.contentWindow.length) : 'no frame'; })()"),
+                await ask("document.documentElement.getAttribute('data-child') ?? 'unset'")
+            )
+        }
+        return found
+    }
+
+    @Test func aDownloadedPageCannotFrameItselfOrADownloadedSibling() async throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let pages = try makeFramePages(in: site)
+
+        let itself = try await framed(pages.framesItself)
+        #expect(itself.frames == "0" && itself.message == "unset", "frames \(itself.frames ?? "nil"), message \(itself.message ?? "nil")")
+
+        let sibling = try await framed(pages.downloadedFramesDownloaded)
+        #expect(sibling.frames == "0", "the downloaded sibling was framed")
+        #expect(sibling.message == "unset", "script ran in a downloaded page's frame")
+    }
+
+    @Test func aPageOfThePersonsOwnCannotRunADownloadedSiblingInAFrame() async throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let pages = try makeFramePages(in: site)
+
+        let result = try await framed(pages.ownFramesDownloaded)
+
+        #expect(result.frames == "0", "the downloaded sibling was framed")
+        #expect(result.message == "unset", "a downloaded page ran script in the person's page")
+    }
+
+    /// The probe sees a framed sibling when it is allowed, so the refusals above are the rule and not a broken fixture.
+    @Test func aPageOfThePersonsOwnFramesItsOwnSiblingAndHearsFromIt() async throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let pages = try makeFramePages(in: site)
+
+        let result = try await framed(pages.ownFramesOwn)
+
+        #expect(result.frames == "1", "the sibling did not load")
+        #expect(result.message == "ran", "the sibling's script did not run")
     }
 
     @Test func droppingNothingOpensNothing() {
