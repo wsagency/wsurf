@@ -16,7 +16,7 @@ final class PasswordAutofill {
         !context.profile.isPrivate && context.settings.fillsPasswords
     }
     @ObservationIgnored private let pages = NSHashTable<BrowserPage>.weakObjects()
-    @ObservationIgnored private var frames: [ObjectIdentifier: [String: BrowserFrame]] = [:]
+    @ObservationIgnored private(set) var frames: [ObjectIdentifier: [String: BrowserFrame]] = [:]
 
     func refreshPolicy() {
         AutofillSaveCoordinator.shared.refreshPolicy()
@@ -48,22 +48,39 @@ final class PasswordAutofill {
         pages.add(page)
         page.installScript(AutofillFormScript.source + AutofillSuggestionScript.source, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.installScript(PasswordAutofillScript.clientSource, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        page.addScriptMessageHandler(name: Self.handlerName, in: Self.world) { [weak self] message in
-            guard let self else { return }
-            if let body = message.body as? [String: Any], body["action"] as? String == "ready" {
-                guard let documentID = body["documentID"] as? String, UUID(uuidString: documentID) != nil else { return }
-                var values = self.frames[ObjectIdentifier(message.page)] ?? [:]
-                values[documentID] = message.frameInfo
-                if message.frameInfo.isMainFrame {
-                    self.frames[ObjectIdentifier(message.page)] = [documentID: message.frameInfo]
-                } else {
-                    self.frames[ObjectIdentifier(message.page)] = values
-                }
-                AutofillDiagnostics.note(.scriptReady, kind: .password)
-                self.applyPolicy(in: message.page, frame: message.frameInfo)
+        page.addScriptMessageHandler(name: Self.handlerName, in: Self.world) { [weak self] message in self?.receive(message) }
+        // The page's own invalidation point: closing the page (a closed tab, a replaced engine) ends here, and so does a retired document.
+        page.addCredentialInvalidationObserver { [weak self] page, documentID in self?.forgetFrames(of: page, retiring: documentID) }
+    }
+
+    func receive(_ message: BrowserScriptMessage) {
+        if let body = message.body as? [String: Any], body["action"] as? String == "ready" {
+            guard let documentID = body["documentID"] as? String, UUID(uuidString: documentID) != nil else { return }
+            var values = frames[ObjectIdentifier(message.page)] ?? [:]
+            values[documentID] = message.frameInfo
+            if message.frameInfo.isMainFrame {
+                frames[ObjectIdentifier(message.page)] = [documentID: message.frameInfo]
             } else {
-                AutofillSuggestions.shared.receive(message, kind: .password, world: Self.world, bridge: "__wsurfPasswords")
+                frames[ObjectIdentifier(message.page)] = values
             }
+            AutofillDiagnostics.note(.scriptReady, kind: .password)
+            applyPolicy(in: message.page, frame: message.frameInfo)
+        } else {
+            AutofillSuggestions.shared.receive(message, kind: .password, world: Self.world, bridge: "__wsurfPasswords")
+        }
+    }
+
+    /// A page that closed, or one of its documents that is gone (`documentID`), is no longer tracked. The start of a navigation is
+    /// not that: it can fail or turn into a download and leave the document, and its registration, alive. The next main document
+    /// replaces the page's frames in `receive`.
+    private func forgetFrames(of page: BrowserPage, retiring documentID: String?) {
+        let key = ObjectIdentifier(page)
+        guard var values = frames[key] else { return }
+        if let documentID, !documentID.isEmpty {
+            values[documentID] = nil
+            frames[key] = values.isEmpty ? nil : values
+        } else if page.isClosed {
+            frames[key] = nil
         }
     }
     static func isSecure(_ url: URL) -> Bool { url.scheme?.lowercased() == "https" && url.host != nil && url.user == nil && url.password == nil }
