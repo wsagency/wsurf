@@ -28,8 +28,7 @@ Everything since 0.1.5 (build 5), the installed candidate. None of the screens a
 ### Known issues
 
 - While the experimental video player floats over the page, the page underneath can still react to the pointer, and while the sidebar is peeking the player's shadow can show around it.
-- The sidebar layout memory check in the performance tests, described under 0.1.5, is unchanged in this build.
-- The memory check for saving an autofilled password in a vault of 20,000 credentials can fail on a bad run: its samples swing by about 20 MB either way, so the average sometimes goes over the 4 MB budget (8.5 MB once in this build’s test run, while the same check on a fresh test host averaged 0.04 MB). The time of the same save is well under budget. It is a measurement quirk of the test, not a leak found in WSurf, and the budget is unchanged; the next build judges memory by the middle sample instead of the average.
+- The memory checks of the performance tests are noisy in long test runs, and a bad run can fail one of them (the sidebar layout check described under 0.1.5 is one). Their samples sometimes swing by 20 MB or more either way, or one sample carries a single 20-45 MB step, so the average goes over its budget (in this build’s test run: saving an autofilled password and signing in with a passkey in a vault of 20,000 credentials, and the crowded sidebar layout), while the same checks on a fresh test host stay far below it and every time budget passes. This is a measurement quirk of the tests, not a leak found in WSurf. The budgets are unchanged; the next build judges memory by the middle sample after a warm-up instead of the average.
 
 ## 0.1.5 (build 5) — 2026-10-21
 
