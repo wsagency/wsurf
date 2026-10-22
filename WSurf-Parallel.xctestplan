@@ -166,6 +166,7 @@
         "TabSplitTests",
         "ThemeBehaviorTests",
         "ThemeCatalogTests",
+        "ThemeEditorTests",
         "ThemeGalleryTests",
         "ThemeLayoutTests",
         "ThemeMigrationTests",
