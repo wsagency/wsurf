@@ -6736,6 +6736,36 @@
     },
     "Next Sentence" : {
       "comment" : "Tooltip and accessibility label of the forward button in Reader's floating bar while the article is read aloud; it goes to the next sentence. Title Case. Pairs with “Previous Sentence”."
+    },
+    "Block on this site" : {
+      "comment" : "Button in an extension's row in Website Settings (the sliders button beside the address). It stops that extension running on the website in front, and on its subdomains. It reads “Allow on this site” while the extension is blocked there. Sentence case, no final full stop."
+    },
+    "Allow on this site" : {
+      "comment" : "Button in an extension's row in Website Settings, shown while that extension is blocked on the website in front. It lets the extension run there again. Sentence case, no final full stop."
+    },
+    "Allow on %@" : {
+      "comment" : "Button in Website Settings, and item in an extension's toolbar-button menu, that lets a blocked extension run on a website again. %@ is the website, for example example.com. In Website Settings it names a parent website only when the block is on that parent and so also covers the page in front. Sentence case, no final full stop. Do not translate the website."
+    },
+    "Block on %@" : {
+      "comment" : "Item in an extension's toolbar-button right-click menu that stops the extension running on the website in front and on its subdomains. %@ is the website, for example example.com. Sentence case, no final full stop. Do not translate the website."
+    },
+    "Blocked on %@" : {
+      "comment" : "Caption under an extension's name in Website Settings while it is blocked on the website in front. %@ is the website that is blocked, for example example.com. Sentence case, no final full stop. Do not translate the website."
+    },
+    "Extensions run only in WebKit tabs. This tab uses Chromium." : {
+      "comment" : "Note in Website Settings, and a disabled item in an extension's toolbar-button menu, shown when the tab in front uses the Chromium engine. Web extensions only run in WebKit tabs, so there is nothing to block or allow there. WebKit and Chromium are engine names and are never translated. Two short sentences."
+    },
+    "Blocks made in a private window are forgotten when it closes." : {
+      "comment" : "Footnote under the per-website extension controls (Website Settings and Settings > Extensions) in a private window. Blocking an extension on a website there is kept only until the private window closes. One sentence."
+    },
+    "Blocked websites (%lld)" : {
+      "comment" : "Label of a folded list under an extension's row in Settings > Extensions. The list holds the websites that extension is blocked on. %lld is how many there are. Sentence case; keep the number in parentheses or equivalent."
+    },
+    "Allow %@ on %@ again" : {
+      "comment" : "Tooltip and spoken hint of the Remove button beside a blocked website in an extension's Blocked websites list in Settings. The first %@ is the extension's name, the second the website, for example example.com. Do not translate either. Sentence case, no final full stop."
+    },
+    "Removing a website lets the extension run there again and reloads its open tabs." : {
+      "comment" : "Footnote under an extension's Blocked websites list in Settings > Extensions. Removing a website from the list lets the extension run on it again, and WSurf reloads that website's open WebKit tabs so the extension's page scripts start. One sentence."
     }
   },
   "version" : "1.0"

@@ -8,13 +8,17 @@ import WebKit
 @MainActor
 final class ExtensionMenuCommand: NSObject {
     let id: String
+    /// The website a block or allow item acts on, fixed when the menu is built.
+    let host: String?
     weak var window: ExtensionWindowAdapter?
 
-    init(id: String, window: ExtensionWindowAdapter) {
+    init(id: String, window: ExtensionWindowAdapter, host: String? = nil) {
         self.id = id
         self.window = window
+        self.host = host
     }
 }
+
 @MainActor
 final class ExtensionTabAdapter: NSObject, WKWebExtensionTab {
     private(set) weak var tab: BrowserTab?

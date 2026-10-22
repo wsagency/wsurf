@@ -85,6 +85,8 @@ private struct SiteControlsPanel: View {
             if showsSafety {
                 SiteSafetySection(tab: tab, blockableHost: blockableHost)
             }
+
+            SiteExtensionControls(manager: tab.context.extensions, tab: tab)
         }
         .padding(.bottom, 6)
         .frame(width: 340)
@@ -92,7 +94,7 @@ private struct SiteControlsPanel: View {
     }
 }
 
-private struct SiteControlGroup<Content: View>: View {
+struct SiteControlGroup<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
