@@ -175,9 +175,9 @@ public nonisolated struct SyncTaking: Equatable, Sendable {
 /// item) or a passkey credential id, and which account ids were removed (a Trash entry or a tombstone, matched by account id: an
 /// `Item` is authenticated by the vault's key, unlike an exporter id).
 public nonisolated struct SyncLocalIndex: Sendable {
-    private let items: [CredentialExchangeCodec.ExternalItemID: Set<UUID>]
-    private let credentials: [Data: Set<UUID>]
-    private let removedAccounts: Set<UUID>
+    private var items: [CredentialExchangeCodec.ExternalItemID: Set<UUID>]
+    private var credentials: [Data: Set<UUID>]
+    private var removedAccounts: Set<UUID>
 
     public init(accounts: [CredentialAccount], removed: RemovedIdentifiers) {
         var items: [CredentialExchangeCodec.ExternalItemID: Set<UUID>] = [:]
@@ -193,6 +193,32 @@ public nonisolated struct SyncLocalIndex: Sendable {
         self.items = items
         self.credentials = credentials
         removedAccounts = Set(removed.items.lazy.filter { $0.passkeyCredentialID == nil }.map(\.accountID))
+    }
+
+    /// Follows a commit without building the index again: `old` stops holding what it held, `new` holds what it has. Either is nil for an
+    /// account that was not there or is gone.
+    public mutating func replace(_ old: CredentialAccount?, with new: CredentialAccount?) {
+        if let old {
+            for identity in CredentialSyncMerge.identities(of: old) {
+                items[identity]?.remove(old.id)
+            }
+            for passkey in old.passkeys {
+                credentials[passkey.credentialID]?.remove(old.id)
+            }
+        }
+        if let new {
+            for identity in CredentialSyncMerge.identities(of: new) {
+                items[identity, default: []].insert(new.id)
+            }
+            for passkey in new.passkeys {
+                credentials[passkey.credentialID, default: []].insert(new.id)
+            }
+        }
+    }
+
+    /// The account went to the Trash.
+    public mutating func noteRemoved(_ accountID: UUID) {
+        removedAccounts.insert(accountID)
     }
 
     func holders(ofItem identity: CredentialExchangeCodec.ExternalItemID) -> Set<UUID> {

@@ -201,7 +201,14 @@ final class FakeSyncEngine: SyncEngine {
     var failsZoneDeletes = false
     /// Names of records that cannot be read when a zone is read in full, as the server can fail one record of a page.
     var unreadable: Set<String> = []
-    private(set) var pending: [SyncChange] = []
+    /// The queued changes by target, each with its place in the queue: a change for a target that is queued again moves to the end, and
+    /// adding costs the same with 25,000 queued as with one.
+    private var queue: [String: (change: SyncChange, place: Int)] = [:]
+    private var places = 0
+
+    var pending: [SyncChange] {
+        queue.values.sorted { $0.place < $1.place }.map(\.change)
+    }
     private(set) var sendCount = 0
     private(set) var fetchCount = 0
     private var fetchedAt = 0
@@ -214,15 +221,15 @@ final class FakeSyncEngine: SyncEngine {
 
     func add(_ changes: [SyncChange]) {
         for change in changes {
-            pending.removeAll { Self.target(of: $0) == Self.target(of: change) }
-            pending.append(change)
+            places += 1
+            queue[Self.target(of: change)] = (change, places)
         }
     }
 
     /// What the real engine does before it sends a change: takes it off its queue and asks the model for the record. The save is then
     /// in flight until the test reports how it ended.
     func handOut(_ id: SyncRecordID) -> SyncRecord? {
-        pending.removeAll { $0 == .saveRecord(id) }
+        queue[Self.target(of: .saveRecord(id))] = nil
         return delegate?.record(for: id)
     }
 
@@ -235,10 +242,10 @@ final class FakeSyncEngine: SyncEngine {
             try await Task.sleep(for: .seconds(86_400))
         }
         var rounds = 0
-        while !pending.isEmpty, rounds < 8 {
+        while !queue.isEmpty, rounds < 8 {
             rounds += 1
             let batch = pending
-            pending = []
+            queue = [:]
             await send(batch)
         }
     }
@@ -276,9 +283,14 @@ final class FakeSyncEngine: SyncEngine {
         available
     }
 
+    /// The server no longer knows the engine's change token (it expired, or the state was lost): the next fetch is a read from scratch.
+    func expireChangeToken() {
+        fetchedAt = 0
+    }
+
     /// The account changed under the engine: its queue is gone, and a different account is fetched from the start.
     func simulateAccount(_ change: SyncAccountChange) async {
-        pending = []
+        queue = [:]
         if change != .signOut {
             fetchedAt = 0
         }

@@ -70,9 +70,7 @@ extension VaultSync {
         var queuedAny = false
         do {
             try database.write { tx in
-                let bases = try tx.baseVersions(key.vaultID)
-                var waiting = try tx.inboxVersions(key.vaultID)
-                let reviewed = try tx.conflictVersions(key.vaultID)
+                // One lookup per record, so a read of a whole zone is O(records), not O(records x events).
                 for record in records {
                     guard let account = Self.accountID(record.id.name) else { continue }
                     try tx.setSystemFields(record.systemFields, vault: key.vaultID, name: record.id.name)
@@ -82,20 +80,21 @@ extension VaultSync {
                     } catch VaultSyncError.unsupportedFormat {
                         // This one entry waits for an update; the vault goes on.
                         try tx.save(InboxRow(accountID: account, version: 0, envelope: record.payload), vault: key.vaultID)
-                        waiting[account] = 0
                         queuedAny = true
                         continue
                     } catch {
                         continue
                     }
-                    if waiting[account] == 0 {
+                    var waiting = try tx.inboxVersion(key.vaultID, account)
+                    if waiting == 0 {
                         // A record this build reads replaces the one it could not.
                         try tx.deleteInbox(key.vaultID, account, upTo: 0)
-                        waiting[account] = nil
+                        waiting = nil
                     }
-                    guard version > (bases[account] ?? 0), version > (waiting[account] ?? 0), version > (reviewed[account] ?? 0) else { continue }
+                    guard version > (try tx.baseVersion(key.vaultID, account) ?? 0), version > (waiting ?? 0),
+                          version > (try tx.conflictVersion(key.vaultID, account) ?? 0)
+                    else { continue }
                     try tx.save(InboxRow(accountID: account, version: version, envelope: record.payload), vault: key.vaultID)
-                    waiting[account] = version
                     queuedAny = true
                 }
             }
@@ -118,6 +117,7 @@ extension VaultSync {
     func applySent(saved: [SyncRecord], deleted: [SyncRecordID], failed: [SyncFailedSave]) {
         var produce = Set<VaultKey>()
         var drain = Set<VaultKey>()
+        var items: [VaultKey: [SyncRecord]] = [:]
         for record in saved {
             guard let ids = SyncZone.vaultIDs(record.id.zone), !excluded.contains(ids.profileID) else { continue }
             let key = VaultKey(ids)
@@ -126,18 +126,20 @@ extension VaultSync {
                 confirmVaultRecord(record, key: key)
                 produce.insert(key)
             case .item:
-                switch confirmItem(record, key: key) {
-                case .confirmed(let held):
-                    if held {
-                        produce.insert(key)
-                    }
-                case .other:
-                    drain.insert(key)
-                case .ignored:
-                    break
-                }
+                items[key, default: []].append(record)
             default:
                 break
+            }
+        }
+        // One transaction and one refresh per vault for everything a `.sent` confirms, not one per record: a first upload of a large
+        // vault is confirmed in many hundreds of records at a time.
+        for key in items.keys.sorted(by: { $0.zone < $1.zone }) {
+            let confirmed = confirmItems(items[key] ?? [], key: key)
+            if confirmed.held {
+                produce.insert(key)
+            }
+            if confirmed.other {
+                drain.insert(key)
             }
         }
         for failure in failed {
@@ -178,38 +180,58 @@ extension VaultSync {
         refresh(key)
     }
 
-    private enum Confirmation {
-        /// The server holds this Mac's row: its parts are the base now. `held` says a change waited for it.
-        case confirmed(held: Bool)
-        /// The server holds something this Mac did not seal for that version: it is read as incoming.
-        case other
-        case ignored
+    /// What the `Item` records of one `.sent` did: a change waited for a confirmation (`held`), or the server holds a record this Mac did
+    /// not seal for that version, which is read as incoming (`other`).
+    private struct Confirmed {
+        var held = false
+        var other = false
     }
 
-    private func confirmItem(_ record: SyncRecord, key: VaultKey) -> Confirmation {
-        guard let account = Self.accountID(record.id.name), let (database, row) = enabledRow(key) else { return .ignored }
-        handedOut[key]?.remove(account)
-        queued[key]?.remove(account)
-        var result = Confirmation.ignored
+    private func confirmItems(_ records: [SyncRecord], key: VaultKey) -> Confirmed {
+        guard let (database, row) = enabledRow(key) else { return Confirmed() }
+        var result = Confirmed()
+        var promoted: [(outgoing: OutboxRow, account: UUID)] = []
         var next = row
         if next.status == .iCloudFull {
             next.status = .active
         }
-        try? database.write { tx in
-            try tx.setSystemFields(record.systemFields, vault: key.vaultID, name: record.id.name)
-            if let outgoing = try tx.outbox(key.vaultID, account), outgoing.envelope == record.payload {
-                try tx.save(BaseRow(accountID: account, version: outgoing.version, parts: outgoing.parts), vault: key.vaultID)
-                try tx.deleteOutbox(key.vaultID, account)
-                result = .confirmed(held: row.dirty)
-                promote(outgoing, key: key, account: account)
-            } else if let version = try? VaultSyncCodec.version(of: record.payload),
-                      version > (try tx.base(key.vaultID, account)?.version ?? 0) {
-                // Not the bytes this Mac handed out (a row resealed since, or another Mac's record at that version): read it as
-                // incoming, so the base is never set to parts the server does not hold.
-                try tx.save(InboxRow(accountID: account, version: version, envelope: record.payload), vault: key.vaultID)
-                result = .other
+        let written: Bool
+        do {
+            try database.write { tx in
+                for record in records {
+                    guard let account = Self.accountID(record.id.name) else { continue }
+                    try tx.setSystemFields(record.systemFields, vault: key.vaultID, name: record.id.name)
+                    if let outgoing = try tx.outbox(key.vaultID, account), outgoing.envelope == record.payload {
+                        try tx.save(BaseRow(accountID: account, version: outgoing.version, parts: outgoing.parts), vault: key.vaultID)
+                        try tx.deleteOutbox(key.vaultID, account)
+                        result.held = result.held || row.dirty
+                        promoted.append((outgoing, account))
+                    } else if let version = try? VaultSyncCodec.version(of: record.payload),
+                              version > (try tx.baseVersion(key.vaultID, account) ?? 0) {
+                        // Not the bytes this Mac handed out (a row resealed since, or another Mac's record at that version): read it
+                        // as incoming, so the base is never set to parts the server does not hold.
+                        try tx.save(InboxRow(accountID: account, version: version, envelope: record.payload), vault: key.vaultID)
+                        result.other = true
+                    }
+                }
+                try tx.save(next)
             }
-            try tx.save(next)
+            written = true
+        } catch {
+            written = false
+        }
+        for record in records {
+            if let account = Self.accountID(record.id.name) {
+                handedOut[key]?.remove(account)
+                queued[key]?.remove(account)
+            }
+        }
+        if written {
+            for (outgoing, account) in promoted {
+                promote(outgoing, key: key, account: account)
+            }
+        } else {
+            result = Confirmed()
         }
         refresh(key)
         return result
@@ -256,7 +278,7 @@ extension VaultSync {
                 }
                 guard version > (try tx.base(key.vaultID, account)?.version ?? 0) else { return }
                 ahead = true
-                if version > (try tx.inboxVersions(key.vaultID)[account] ?? 0) {
+                if version > (try tx.inboxVersion(key.vaultID, account) ?? 0) {
                     try tx.save(InboxRow(accountID: account, version: version, envelope: server.payload), vault: key.vaultID)
                 }
             }

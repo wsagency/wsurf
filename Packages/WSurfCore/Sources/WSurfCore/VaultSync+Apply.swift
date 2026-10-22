@@ -28,12 +28,52 @@ nonisolated struct SyncPass {
     var unreadable = 0
     /// Accounts whose record came back as the very row this Mac sealed: the send is done, whether or not its `.sent` arrived.
     var own: Set<UUID> = []
+    /// The account each write puts in the vault, for the view that follows the commit.
+    var replacements: [UUID: CredentialAccount] = [:]
 
     /// The vault cannot take this entry on this Mac: it waits as information, and its base stays.
     mutating func refuse(_ id: UUID) {
         bases[id] = nil
         guard let incoming = envelopes[id] else { return }
         conflicts[id] = ConflictRow(accountID: id, version: incoming.version, kind: .refused, envelope: incoming.envelope)
+    }
+}
+
+/// The vault as one pass sees it: read once, with who holds what indexed, and kept current from what the pass itself commits. A drain
+/// of a large zone takes many batches of 200 and reads the vault once, not once per batch. An account the pass wrote or removed is read
+/// again before the pass meets it a second time, and a change made elsewhere meanwhile fails the stamp of the commit and reads again.
+nonisolated struct VaultView {
+    let lease: UInt64
+    var revision: UInt64
+    var local: [UUID: CredentialAccount]
+    let stamps: [UUID: AccountStamp]
+    var index: SyncLocalIndex
+    /// Accounts the pass committed: their stamps here are old.
+    var changed: Set<UUID> = []
+
+    init(_ snapshot: VaultSyncSnapshot) {
+        lease = snapshot.lease
+        revision = snapshot.revision
+        local = Dictionary(snapshot.accounts.map { ($0.id, $0) }) { first, _ in first }
+        stamps = snapshot.stamps
+        index = SyncLocalIndex(accounts: snapshot.accounts, removed: snapshot.removed)
+    }
+
+    /// Follows a commit that went through: the accounts it wrote or removed, and the revision it left.
+    mutating func committed(_ pass: SyncPass, revision committed: UInt64?) {
+        for id in pass.writeIDs where pass.conflicts[id] == nil {
+            guard let account = pass.replacements[id] else { continue }
+            index.replace(local[id], with: account)
+            local[id] = account
+            changed.insert(id)
+        }
+        for id in pass.removing.keys where pass.conflicts[id] == nil {
+            index.replace(local[id], with: nil)
+            index.noteRemoved(id)
+            local[id] = nil
+            changed.insert(id)
+        }
+        revision = max(revision, committed ?? 0)
     }
 }
 
@@ -51,27 +91,36 @@ extension VaultSync {
 
     func drain(_ key: VaultKey) async {
         var staleRetries = 0
+        var open: (view: VaultView, syncKey: VaultSyncKey)?
         while true {
             let mine = token(key)
             guard let (database, _) = runningRow(key),
-                  let batch = try? database.read({ try $0.inbox(key.vaultID, limit: Self.drainBatch) }), !batch.isEmpty
+                  let batch = try? database.read({ try $0.inbox(key.vaultID, limit: Self.drainBatch) }), !batch.isEmpty,
+                  stillOpen(key, mine)
             else { return }
-            guard let syncKey = await host.syncKey(profileID: key.profileID, vaultID: key.vaultID) else {
-                locked(key)
-                return
-            }
-            guard let snapshot = await snapshot(key) else { return }
-            guard stillOpen(key, mine), let (_, row) = runningRow(key), notRolledBack(key, snapshot, row, database) else { return }
-            var pass = SyncPass()
-            decide(batch, key: key, snapshot: snapshot, syncKey: syncKey, database: database, into: &pass)
-            pass.processed = batch
-            switch await commit(&pass, key: key, snapshot: snapshot) {
-            case .done(let revision):
-                guard mine == token(key), record(pass, key: key, database: database, syncKey: syncKey, revision: max(revision ?? 0, snapshot.revision)) else {
+            if open == nil || batch.contains(where: { open?.view.changed.contains($0.accountID) == true }) {
+                guard let syncKey = await host.syncKey(profileID: key.profileID, vaultID: key.vaultID) else {
+                    locked(key)
                     return
                 }
+                guard let snapshot = await snapshot(key) else { return }
+                guard stillOpen(key, mine), let (_, row) = runningRow(key), notRolledBack(key, snapshot, row, database) else { return }
+                open = (VaultView(snapshot), syncKey)
+            }
+            guard var (view, syncKey) = open else { return }
+            var pass = SyncPass()
+            decide(batch, key: key, view: view, syncKey: syncKey, database: database, into: &pass)
+            pass.processed = batch
+            switch await commit(&pass, key: key, lease: view.lease) {
+            case .done(let revision):
+                guard mine == token(key), record(pass, key: key, database: database, syncKey: syncKey, revision: max(revision ?? 0, view.revision)) else {
+                    return
+                }
+                view.committed(pass, revision: revision)
+                open = (view, syncKey)
                 staleRetries = 0
             case .stale:
+                open = nil
                 staleRetries += 1
                 guard staleRetries < 3 else { return }
             case .stop:
@@ -81,16 +130,10 @@ extension VaultSync {
         }
     }
 
-    /// One decision per inbox row (§4.4), from the vault as `snapshot` shows it.
+    /// One decision per inbox row (§4.4), from the vault as `view` shows it.
     private func decide(
-        _ batch: [InboxRow], key: VaultKey, snapshot: VaultSyncSnapshot, syncKey: VaultSyncKey, database: VaultSyncDatabase,
-        into pass: inout SyncPass
+        _ batch: [InboxRow], key: VaultKey, view: VaultView, syncKey: VaultSyncKey, database: VaultSyncDatabase, into pass: inout SyncPass
     ) {
-        let index = SyncLocalIndex(accounts: snapshot.accounts, removed: snapshot.removed)
-        var local: [UUID: CredentialAccount] = [:]
-        for account in snapshot.accounts {
-            local[account.id] = account
-        }
         let rows = (try? database.read { tx in
             try batch.map { (try tx.base(key.vaultID, $0.accountID), try tx.outbox(key.vaultID, $0.accountID)) }
         }) ?? []
@@ -117,19 +160,19 @@ extension VaultSync {
             }
             let decision: SyncDecision
             do {
-                decision = try CredentialSyncMerge.decide(item, local: local[id], base: base, index: index)
+                decision = try CredentialSyncMerge.decide(item, local: view.local[id], base: base, index: view.index)
             } catch {
                 pass.conflicts[id] = ConflictRow(accountID: id, version: inbound.version, kind: .refused, envelope: inbound.envelope)
                 pass.decided.insert(id)
                 continue
             }
-            apply(decision, id: id, version: inbound.version, envelope: inbound.envelope, snapshot: snapshot, into: &pass)
+            apply(decision, id: id, version: inbound.version, envelope: inbound.envelope, view: view, into: &pass)
         }
     }
 
     /// Turns a decision into rows and writes. A write or removal needs the stamp it was decided against.
     private func apply(
-        _ decision: SyncDecision, id: UUID, version: UInt64, envelope: Data, snapshot: VaultSyncSnapshot, into pass: inout SyncPass
+        _ decision: SyncDecision, id: UUID, version: UInt64, envelope: Data, view: VaultView, into pass: inout SyncPass
     ) {
         switch decision {
         case .ignore:
@@ -139,8 +182,8 @@ extension VaultSync {
             pass.decided.insert(id)
         case .write(let account, let base):
             pass.decided.insert(id)
-            if snapshot.accounts.contains(where: { $0.id == id }) {
-                guard let stamp = snapshot.stamps[id] else {
+            if view.local[id] != nil {
+                guard let stamp = view.stamps[id] else {
                     pass.conflicts[id] = ConflictRow(accountID: id, version: version, kind: .refused, envelope: envelope)
                     return
                 }
@@ -149,10 +192,11 @@ extension VaultSync {
                 pass.writes.append(AccountWrite(accountID: id, expected: .absent, replacement: account))
             }
             pass.writeIDs.append(id)
+            pass.replacements[id] = account
             pass.bases[id] = base
         case .moveToTrash(let base):
             pass.decided.insert(id)
-            guard let stamp = snapshot.stamps[id] else {
+            guard let stamp = view.stamps[id] else {
                 pass.conflicts[id] = ConflictRow(accountID: id, version: version, kind: .refused, envelope: envelope)
                 return
             }
@@ -166,11 +210,11 @@ extension VaultSync {
 
     /// One commit for the pass. A write the vault refuses for its own rules is tried alone and, if it still fails, becomes an
     /// information row; a lease that ended or any other failure stops the pass with nothing recorded as applied.
-    private func commit(_ pass: inout SyncPass, key: VaultKey, snapshot: VaultSyncSnapshot) async -> SyncCommitOutcome {
+    private func commit(_ pass: inout SyncPass, key: VaultKey, lease: UInt64) async -> SyncCommitOutcome {
         guard !pass.writes.isEmpty || !pass.removing.isEmpty else { return .done(nil) }
         do {
             return .done(try await host.commit(
-                profileID: key.profileID, vaultID: key.vaultID, lease: snapshot.lease, writes: pass.writes, removing: pass.removing
+                profileID: key.profileID, vaultID: key.vaultID, lease: lease, writes: pass.writes, removing: pass.removing
             ))
         } catch {
             switch Self.classify(error) {
@@ -186,7 +230,7 @@ extension VaultSync {
         for (write, id) in zip(pass.writes, pass.writeIDs) {
             do {
                 revision = try await host.commit(
-                    profileID: key.profileID, vaultID: key.vaultID, lease: snapshot.lease, writes: [write], removing: [:]
+                    profileID: key.profileID, vaultID: key.vaultID, lease: lease, writes: [write], removing: [:]
                 )
             } catch {
                 switch Self.classify(error) {
@@ -202,7 +246,7 @@ extension VaultSync {
         for (id, stamp) in pass.removing.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
             do {
                 revision = try await host.commit(
-                    profileID: key.profileID, vaultID: key.vaultID, lease: snapshot.lease, writes: [], removing: [id: stamp]
+                    profileID: key.profileID, vaultID: key.vaultID, lease: lease, writes: [], removing: [id: stamp]
                 )
             } catch {
                 switch Self.classify(error) {
@@ -422,8 +466,8 @@ extension VaultSync {
     private func produceState(_ key: VaultKey, database: VaultSyncDatabase, syncKey: VaultSyncKey) -> ProduceState {
         let loaded = try? database.read { tx in
             ProduceRows(
-                versions: try tx.baseVersions(key.vaultID), outgoing: Set(try tx.outbox(key.vaultID).map(\.accountID)),
-                reviewed: Set(try tx.conflicts(key.vaultID).map(\.accountID)), parked: try tx.parkedAccounts(key.vaultID)
+                versions: try tx.baseVersions(key.vaultID), outgoing: try tx.outboxAccounts(key.vaultID),
+                reviewed: try tx.conflictAccounts(key.vaultID), parked: try tx.parkedAccounts(key.vaultID)
             )
         }
         return ProduceState(
@@ -541,7 +585,7 @@ extension VaultSync {
             }
             let rows = ((try? database.read { try $0.conflicts(key.vaultID) }) ?? []).filter { accountIDs.contains($0.accountID) }
             var pass = SyncPass()
-            let index = SyncLocalIndex(accounts: snapshot.accounts, removed: snapshot.removed)
+            let view = VaultView(snapshot)
             for conflict in rows {
                 let id = conflict.accountID
                 pass.answered.insert(id)
@@ -551,17 +595,16 @@ extension VaultSync {
                     continue
                 }
                 let base = openBase((try? database.read { try $0.base(key.vaultID, id) }) ?? nil, account: id, key: syncKey)
-                let local = snapshot.accounts.first { $0.id == id }
                 let decision = try CredentialSyncMerge.resolve(
-                    item, kind: conflict.kind, local: local, base: base, keepLocal: keepLocal, index: index
+                    item, kind: conflict.kind, local: view.local[id], base: base, keepLocal: keepLocal, index: view.index
                 )
                 if case .review = decision {
                     pass.answered.remove(id)
                     continue
                 }
-                apply(decision, id: id, version: conflict.version, envelope: conflict.envelope, snapshot: snapshot, into: &pass)
+                apply(decision, id: id, version: conflict.version, envelope: conflict.envelope, view: view, into: &pass)
             }
-            switch await commit(&pass, key: key, snapshot: snapshot) {
+            switch await commit(&pass, key: key, lease: view.lease) {
             case .done(let revision):
                 record(pass, key: key, database: database, syncKey: syncKey, revision: max(revision ?? 0, snapshot.revision))
                 await produce(key)
@@ -582,14 +625,14 @@ extension VaultSync {
         guard let syncKey = await host.syncKey(profileID: profileID, vaultID: vaultID) else { throw VaultSyncFailure.locked }
         guard let snapshot = await snapshot(key) else { throw VaultSyncFailure.locked }
         let rows = (try? database.read { try $0.conflicts(vaultID) }) ?? []
-        let index = SyncLocalIndex(accounts: snapshot.accounts, removed: snapshot.removed)
+        let view = VaultView(snapshot)
         var result: [VaultSyncConflict] = []
         for conflict in rows {
             guard let item = try? VaultSyncCodec.openItem(conflict.envelope, accountID: conflict.accountID, key: syncKey) else { continue }
-            let local = snapshot.accounts.first { $0.id == conflict.accountID }
+            let local = view.local[conflict.accountID]
             let base = openBase((try? database.read { try $0.base(vaultID, conflict.accountID) }) ?? nil, account: conflict.accountID, key: syncKey)
             var parts: [SyncPart] = []
-            if case .review(_, let found)? = try? CredentialSyncMerge.decide(item, local: local, base: base, index: index) {
+            if case .review(_, let found)? = try? CredentialSyncMerge.decide(item, local: local, base: base, index: view.index) {
                 parts = found
             }
             result.append(VaultSyncConflict(id: conflict.accountID, kind: conflict.kind, parts: parts, local: local, incoming: item.account))

@@ -201,6 +201,31 @@ nonisolated final class VaultSyncDatabase: Sendable {
             try versions("base", vault)
         }
 
+        func baseVersion(_ vault: UUID, _ account: UUID) throws -> UInt64? {
+            try version("base", vault, account)
+        }
+
+        /// The version of one row of `table`, or nil when the account has none.
+        private func version(_ table: String, _ vault: UUID, _ account: UUID) throws -> UInt64? {
+            try Int64.fetchOne(
+                db, sql: "SELECT version FROM \(table) WHERE vaultID = ? AND accountID = ?", arguments: [vault.sqlText, account.sqlText]
+            ).map { UInt64(clamping: $0) }
+        }
+
+        /// The accounts that have a row in `table`, without their sealed bytes.
+        private func accountIDs(_ table: String, _ vault: UUID) throws -> Set<UUID> {
+            Set(try String.fetchAll(db, sql: "SELECT accountID FROM \(table) WHERE vaultID = ?", arguments: [vault.sqlText])
+                .compactMap { UUID(uuidString: $0) })
+        }
+
+        func outboxAccounts(_ vault: UUID) throws -> Set<UUID> {
+            try accountIDs("outbox", vault)
+        }
+
+        func conflictAccounts(_ vault: UUID) throws -> Set<UUID> {
+            try accountIDs("conflict", vault)
+        }
+
         /// The version of every row of `table` for the vault, without the sealed bytes.
         private func versions(_ table: String, _ vault: UUID) throws -> [UUID: UInt64] {
             var found: [UUID: UInt64] = [:]
@@ -261,10 +286,6 @@ nonisolated final class VaultSyncDatabase: Sendable {
             }
         }
 
-        func inboxVersions(_ vault: UUID) throws -> [UUID: UInt64] {
-            try versions("inbox", vault)
-        }
-
         /// The accounts whose newer-format record is parked.
         func parkedAccounts(_ vault: UUID) throws -> Set<UUID> {
             Set(try String.fetchAll(
@@ -274,9 +295,7 @@ nonisolated final class VaultSyncDatabase: Sendable {
 
         /// The version waiting in the inbox for one account (0: parked), or nil when none waits.
         func inboxVersion(_ vault: UUID, _ account: UUID) throws -> UInt64? {
-            try Int64.fetchOne(
-                db, sql: "SELECT version FROM inbox WHERE vaultID = ? AND accountID = ?", arguments: [vault.sqlText, account.sqlText]
-            ).map { UInt64(clamping: $0) }
+            try version("inbox", vault, account)
         }
 
         func save(_ row: InboxRow, vault: UUID) throws {
@@ -305,8 +324,8 @@ nonisolated final class VaultSyncDatabase: Sendable {
             }
         }
 
-        func conflictVersions(_ vault: UUID) throws -> [UUID: UInt64] {
-            try versions("conflict", vault)
+        func conflictVersion(_ vault: UUID, _ account: UUID) throws -> UInt64? {
+            try version("conflict", vault, account)
         }
 
         func save(_ row: ConflictRow, vault: UUID) throws {

@@ -236,6 +236,8 @@ final class FakeVaultHost: VaultSyncHost {
     private var vaults: [Slot: FakeVault] = [:]
     /// Held once by the next `snapshot`, after it read the vault.
     var pauseAfterSnapshot: HostPause?
+    /// How many times the vault was read in full, by any vault of this Mac.
+    private(set) var snapshotCount = 0
 
     init(root: URL) {
         self.root = root
@@ -299,6 +301,7 @@ final class FakeVaultHost: VaultSyncHost {
     func snapshot(profileID: UUID, vaultID: UUID) async throws -> VaultSyncSnapshot {
         guard let vault = vault(profile: profileID, vault: vaultID) else { throw CredentialVaultError.missingVault }
         let snapshot = try vault.snapshot()
+        snapshotCount += 1
         if let pause = pauseAfterSnapshot {
             pauseAfterSnapshot = nil
             await pause.wait()

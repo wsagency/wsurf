@@ -220,6 +220,7 @@
         "VaultSyncParkingTests",
         "VaultSyncRaceTests",
         "VaultSyncRemovalGuardTests",
+        "VaultSyncScaleTests",
         "VaultSyncTests",
         "VaultTablesTests",
         "VaultTrashIdentityTests",
