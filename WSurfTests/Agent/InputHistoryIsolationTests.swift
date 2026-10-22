@@ -64,8 +64,17 @@ struct InputHistoryIsolationTests {
         let viaStore: (ProfileVaultStore, UUID, VaultAccess) async throws -> InputHistoryVaultKey = {
             try await $0.inputHistoryKey(vaultID: $1, using: $2)
         }
-        _ = (viaManager, viaStore)
-        for name in [String(describing: InputHistoryVaultKey.self), "inputHistoryKey", "wsurf.input-history.v2"] {
+        // Moving Input History to another vault is reached only through `InputHistory` and `InputHistoryStore`, which the scan refuses too.
+        let viaMove: (InputHistory, UUID, Profile) async throws -> Void = { try await $0.keep(in: $1, profile: $2) }
+        let viaRebind: (InputHistoryStore, InputHistoryVaultKey, InputHistoryVaultKey?) async throws -> Void = {
+            try await $0.keep(with: $1, from: $2)
+        }
+        _ = (viaManager, viaStore, viaMove, viaRebind)
+        let names = [
+            String(describing: InputHistoryVaultKey.self), String(describing: InputHistory.self), String(describing: InputHistoryStore.self),
+            "inputHistoryKey", "wsurf.input-history.v2",
+        ]
+        for name in names {
             #expect(Self.needles.contains { name.lowercased().contains($0) }, "the scan would not see \(name)")
         }
     }

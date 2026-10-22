@@ -3,7 +3,7 @@
 
 import Foundation
 
-/// Cards from a Safari export, or a contact chosen in Contacts, reviewed before anything is written: the review shows titles only (a
+/// Cards from a Safari export, or contacts chosen in Contacts, reviewed before anything is written: the review shows titles only (a
 /// card's network and last four digits, a contact's title). The values stay in memory until Import or Cancel.
 struct AutofillImportPlan: Identifiable {
     let id = UUID()

@@ -318,6 +318,9 @@ private struct AgentTaskTraceView: View {
                     onOpenLink: open(_:),
                     allowsContinuation: isLatest
                 )
+                if !trace.memoryUpdates.isEmpty, let facts = browser.context.assistantFacts {
+                    AgentMemoryLine(updates: trace.memoryUpdates, facts: facts).transition(.opacity)
+                }
                 if let output = trace.checkpoint?.openAI?.presentation {
                     OpenAIOutputView(output: output, providerID: trace.providerID, onOpenLink: open(_:))
                 }

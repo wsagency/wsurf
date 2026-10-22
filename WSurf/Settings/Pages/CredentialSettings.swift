@@ -226,7 +226,7 @@ struct CredentialSettings: View {
             VaultSectionBar(list: list, showsCounts: model.presentation == .content, offersInputHistory: context != nil)
         }
         if list.showsInputHistory, let context {
-            InputHistorySettings(context: context)
+            InputHistorySettings(context: context, vaults: model.vaults, selectedVaultID: model.selectedVaultID)
         } else {
             vaultContent { credentialsTab } locked: { lockedCredentials }
         }

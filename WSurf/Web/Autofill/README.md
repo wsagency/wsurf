@@ -81,9 +81,9 @@ and contact rows of the save index are never written again: the Vault tab's "Car
 and compares every entry with its old copy, Undo moves those entries to Trash, and only Erase Old Copies…, after a confirmation that
 names the counts, erases both Keychain items and the rows, and checks that nothing is left.
 
-Import & Export on the Settings tab imports payment cards from a Safari export (its ZIP or PaymentCards.json) and a contact chosen in
-Contacts, into the open vault only: a review lists titles only, Import writes what the vault lacks in one commit, and the notice
-offers Undo. A vault that changed since the review writes nothing. With no vault yet, the rows offer Create Vault…; with a locked
+Import & Export on the Settings tab imports payment cards from a Safari export (its ZIP or PaymentCards.json) and contacts chosen in
+Contacts (every contact clicked while the picker is open, each once), into the open vault only: a review lists titles only, Import
+writes what the vault lacks in one commit, and the notice offers Undo. A vault that changed since the review writes nothing. With no vault yet, the rows offer Create Vault…; with a locked
 one they stay off. Imported cards follow the vault's Touch ID rules.
 
 A field whose autocomplete includes `webauthn` also gets "Use a Passkey…" while
@@ -212,6 +212,13 @@ again. It is off by default. Source behavior:
   failure). From then on, opening needs that vault unlocked plus Touch ID, and
   recording still never prompts, also while the vault is locked. Deleting the
   vault deletes the entries; Delete Vault names them first.
+- "Keep Input History in this vault" (the Input History section, for the vault
+  the page's picker shows) moves it to another vault: with both vaults
+  unlocked, the inbox key is sealed again under the target's key
+  (`InputHistoryStore.keep(with:from:)`). The private key, the entries and
+  Touch ID are untouched; the new binding is read back and opened before it
+  counts, and the old one is written back on any failure. Not bound yet, the
+  chosen vault is bound at once and today's key moves at the next opening.
 - The list decrypts only on Show Entries, masks passwords until one row is
   revealed, copies with the concealed pasteboard type for 60 s, and locks two
   minutes after the page closes or on any vault lock event.

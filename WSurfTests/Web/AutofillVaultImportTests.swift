@@ -8,7 +8,7 @@ import Testing
 
 @testable import WSurf
 
-/// Cards from a Safari export and a contact from Contacts are imported into the vault only: a review by title, one commit, Undo. The
+/// Cards from a Safari export and contacts from Contacts are imported into the vault only: a review by title, one commit, Undo. The
 /// real settings model over a fixture vault; synthetic test card numbers and example.test details only.
 @MainActor
 struct AutofillVaultImportTests {
@@ -117,6 +117,68 @@ struct AutofillVaultImportTests {
             let again = try #require(await f.model.planAutofillImport(sources))
             #expect(again.writes == 0, "a contact the vault holds is not imported again")
         }
+    }
+
+    private static func contact(_ given: String, _ family: String, email: String) -> CNMutableContact {
+        let source = CNMutableContact()
+        source.givenName = given
+        source.familyName = family
+        source.emailAddresses = [CNLabeledValue(label: CNLabelHome, value: email as NSString)]
+        return source
+    }
+
+    @Test func severalContactsAreReviewedTogetherThenImportedInOneCommitWithOneUndo() async throws {
+        try await withFixture { f in
+            let ada = Self.contact("Ada", "Lovelace", email: "ada@example.test")
+            let grace = Self.contact("Grace", "Hopper", email: "grace@example.test")
+            let alan = Self.contact("Alan", "Turing", email: "alan@example.test")
+            let again = Self.contact("Ada", "Lovelace", email: "ada@example.test")
+            let empty = CNMutableContact()
+            try await VaultManagerFixture.save([VaultItemAutofill.account(for: AutofillContact(contact: alan))], in: f.vault)
+            await f.model.load()
+            let before = try await f.snapshot()
+
+            // A contact without usable details and one with the same details as an earlier pick are left out of the review.
+            let sources = try #require(AutofillImportRows.contactSources([ada, grace, alan, again, empty]))
+            #expect(sources.contacts.count == 3 && sources.cards.isEmpty)
+            #expect(AutofillImportRows.contactSources([empty]) == nil)
+            let plan = try #require(await f.model.planAutofillImport(sources))
+            #expect(plan.titles == sources.contacts.map(\.title) && plan.writes == 2, "Alan is already in the vault")
+            #expect(!plan.titles.contains { $0.contains("@example.test") }, "the review shows titles only")
+            #expect(try await f.snapshot().revision == before.revision, "the review writes nothing")
+
+            await f.model.commitAutofillImport(plan)
+
+            let after = try await f.snapshot()
+            #expect(after.revision == before.revision + 1, "one commit")
+            #expect(after.accounts.count == 3)
+            #expect(f.model.notice?.text == String(localized: "Added 2 entries to the vault.") && f.model.notice?.offersUndo == true)
+            let imported = Set(after.accounts.map(\.id)).subtracting(before.accounts.map(\.id))
+            #expect(imported.count == 2)
+
+            await f.model.undo()
+
+            #expect(try await f.snapshot().accounts.map(\.id) == before.accounts.map(\.id), "one Undo takes both back")
+            #expect(Set(try await f.vault.manager.trashPage(after: nil).items.map(\.ownerID)) == imported)
+        }
+    }
+
+    @Test func thePickerCollectsEveryContactClickedAndHandsThemOverOnceWhenItCloses() {
+        var delivered: [[String]] = []
+        let coordinator = ContactImportButton.Coordinator { contacts in delivered.append(contacts.map(\.givenName)) }
+        let ada = Self.contact("Ada", "Lovelace", email: "ada@example.test")
+        let grace = Self.contact("Grace", "Hopper", email: "grace@example.test")
+
+        coordinator.contactPicker(coordinator.picker, didSelect: ada)
+        coordinator.contactPicker(coordinator.picker, didSelect: grace)
+        coordinator.contactPicker(coordinator.picker, didSelect: ada)
+        #expect(delivered.isEmpty, "nothing is reviewed while the picker is open")
+        coordinator.contactPickerDidClose(coordinator.picker)
+        #expect(delivered == [["Ada", "Grace"]], "every contact once, in the order clicked")
+
+        // Closed without a click: nothing to review.
+        coordinator.contactPickerDidClose(coordinator.picker)
+        #expect(delivered.count == 1 && coordinator.picked.isEmpty)
     }
 
     @Test func aVaultThatChangedSinceTheReviewWritesNothing() async throws {

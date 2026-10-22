@@ -10,14 +10,14 @@ import Observation
 /// - Entries are locked again two minutes after the list closes, and on every vault lock event (`CredentialManager.lock` and
 ///   `lockAll`), which also reaches profiles that have no vault.
 /// - Once the profile has a vault, the entries are kept with it (`InputHistoryStore`): opening them needs that vault unlocked, and
-///   deleting it deletes them.
+///   deleting it deletes them. The default vault keeps them unless the person chose another on the Vault tab (`keep(in:profile:)`).
 /// - Nothing outside the browser's own UI may read this type. The agent and the MCP server never do (`InputHistoryIsolationTests`).
 @MainActor
 @Observable
 final class InputHistory {
     typealias StoreFactory = @MainActor (_ profile: Profile, _ ownsSession: Bool) -> InputHistoryStore?
-    /// The key of the vault the entries are kept with (`bound`), or of the vault that will keep them when `bound` is nil. Nil when no
-    /// vault can keep them yet. It never prompts.
+    /// The key of the vault named (`bound`: the one the entries are kept with, or the one they move to), or of the vault that will keep
+    /// them when `bound` is nil. Nil when no vault can keep them yet. It never prompts.
     typealias VaultKeySource = @MainActor (_ profile: Profile, _ bound: UUID?) async throws -> InputHistoryVaultKey?
 
     /// Tests replace it to see the hooks that reach it.
@@ -247,6 +247,37 @@ final class InputHistory {
         guard store(for: profile) != nil else { return }
         lock(profileID: profile.id)
         enqueue(profile.id) { try await $0.vaultDeleted(vaultID) }
+    }
+
+    /// The vault the entries are kept with, read without a prompt. Nil while none keeps them.
+    func keptVault(of profile: Profile) async -> UUID? {
+        guard let store = store(for: profile) else { return nil }
+        await drain(profileID: profile.id)
+        return try? await store.boundVault()
+    }
+
+    /// Keeps the profile's Input History with `vaultID` from now on. It needs that vault unlocked and the vault keeping it now, since the
+    /// inbox key moves from one to the other (`InputHistoryStore.keep(with:from:)`). No passkey and no Touch ID is asked for, and no
+    /// entry is encrypted again; what is unlocked stays unlocked.
+    func keep(in vaultID: UUID, profile: Profile) async throws {
+        guard !profile.isPrivate else { throw InputHistoryError.privateBrowsing }
+        guard let store = store(for: profile) else { throw InputHistoryError.unavailable }
+        await drain(profileID: profile.id)
+        let bound = try await store.boundVault()
+        guard bound != vaultID else { return }
+        var source: InputHistoryVaultKey?
+        if let bound {
+            do {
+                source = try await vaultKey(profile, bound)
+            } catch InputHistoryError.vaultDeleted {
+                // As on opening: what a vault deleted unseen kept can never be opened again.
+                vaultDeleted(bound, in: profile)
+                throw InputHistoryError.vaultDeleted
+            }
+        }
+        // A target that is locked, or gone since the picker listed it, cannot keep anything.
+        guard let target = try? await vaultKey(profile, vaultID), target.vaultID == vaultID else { throw InputHistoryError.vaultLocked }
+        try await store.keep(with: target, from: source)
     }
 
     /// How many entries go if `vaultID` is deleted. Never prompts.

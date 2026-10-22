@@ -342,6 +342,15 @@ extension AnyLanguageModelAgent {
                 continue
             }
             callbacks.event("tool_proposed", ["name": call.toolName])
+            // A preference only the person knows: the first page change waits for their answer, and nothing runs.
+            if let refusal = state.preferenceGate.refusal(for: call.toolName) {
+                let reason = toolkit.rejectTool(name: call.toolName, reason: refusal)
+                entries.append(.toolOutput(.init(id: call.id, toolName: call.toolName, segments: [.text(.init(content: reason))])))
+                state.session = makeSession(transcript: Transcript(entries: entries))
+                callbacks.save()
+                continue
+            }
+            let answersBefore = toolkit.givenAnswers.count
             if AgentTaskLedger.mutations.contains(call.toolName) {
                 toolkit.taskLedger.beginAction(call.toolName)
                 callbacks.save()
@@ -354,6 +363,8 @@ extension AnyLanguageModelAgent {
             if call.toolName == "askUser", !failed, !text.isEmpty {
                 state.checkpoint.userAnswers.append(text)
             }
+            // Only the replies the question model handed back count as the person's answer, never the transcript text above.
+            state.preferenceGate.noteAnswers(Array(toolkit.givenAnswers.dropFirst(answersBefore)))
             callbacks.save()
             let progress = inspectProgress(state.monitor.observe(
                 name: call.toolName, arguments: call.arguments.jsonString, output: text, failed: failed,
@@ -392,6 +403,8 @@ extension AnyLanguageModelAgent {
         var responsePrefix = 0
         var verificationRounds = 0
         var providerRetries = 0
+        /// A new task only: a continuation already asked, or acted, in the run before it.
+        var preferenceGate: AgentPreferenceGate
 
         init(agent: AnyLanguageModelAgent, utterance: String, task: AgentTaskContext, reply: AgentReplyModel) {
             self.task = task
@@ -405,9 +418,13 @@ extension AnyLanguageModelAgent {
             session = agent.session(for: task.anchorID)
             policy = agent.executionPolicy ?? .current
             monitor = AgentProgressMonitor(policy: policy)
-            prompt = task.isContinuation ? AnyLanguageModelAgent.continuationPrompt : agent.toolkit.rememberedContext() + AssistantAttachment.prompt(
-                utterance, attachments: task.attachments, textOnly: task.attachmentTextOnly || !agent.acceptsImages
-            )
+            let toolkit = agent.toolkit
+            preferenceGate = AgentPreferenceGate(request: task.isContinuation ? "" : AgentToolkit.userText(of: utterance)) { toolkit.knowsPreference($0) }
+            prompt = task.isContinuation
+                ? AnyLanguageModelAgent.continuationPrompt
+                : toolkit.rememberedContext() + preferenceGate.hint + AssistantAttachment.prompt(
+                    utterance, attachments: task.attachments, textOnly: task.attachmentTextOnly || !agent.acceptsImages
+                )
             images = AttachmentRequest.images(task.attachments, textOnly: task.attachmentTextOnly || !agent.acceptsImages)
             originalPrompt = prompt
             originalImages = images

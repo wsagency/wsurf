@@ -13,7 +13,8 @@ import LocalAuthentication
 // - When the last entry goes, both keys go with it. Ciphertext that survives on the disk can no longer be read.
 // - Once a vault keeps Input History, the private key is stored sealed to an inbox key that only that vault's Input History key
 //   opens (`Binding`). Recording still needs only the public key, so it goes on while the vault is locked; opening needs the vault
-//   unlocked as well as Touch ID or the Mac password. The entries themselves are never encrypted again.
+//   unlocked as well as Touch ID or the Mac password. The entries themselves are never encrypted again. Keeping it with another vault
+//   seals only the inbox key again, under that vault's key (`keep(with:from:)`).
 // - Nothing here logs, and no plaintext reaches the disk, the Keychain or user defaults.
 
 nonisolated enum InputHistoryRetention: String, CaseIterable, Sendable {
@@ -420,6 +421,43 @@ actor InputHistoryStore {
         return InputHistoryStatus(count: 0, nextExpiry: nil)
     }
 
+    /// Keeps Input History with `target` from now on (Settings › Autofill › Vault › Input History). Only the binding changes: the inbox
+    /// key that `source`, the vault keeping it now, opens is sealed again under `target`'s key. The private key, the entries and Touch ID
+    /// stay as they are, so nothing is encrypted again and no prompt is shown. Not kept with a vault yet: a new inbox is bound to `target`,
+    /// and today's key moves under it at the next opening, as it would under the default vault.
+    ///
+    /// The new binding is read back and opened with `target` before this returns. On any failure the binding as it was is written back,
+    /// so the entries keep opening with the vault that kept them.
+    func keep(with target: InputHistoryVaultKey, from source: InputHistoryVaultKey?) throws {
+        try requireWritable()
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        let stored = try publicKeys.read(service: bindingService, context: context)
+        let current = stored.flatMap(Binding.init)
+        guard current?.vaultID != target.vaultID else { return }
+        let inbox: Curve25519.KeyAgreement.PrivateKey
+        if let current {
+            // The vault that keeps it now must be unlocked: only its key opens the inbox key.
+            guard let source, source.vaultID == current.vaultID else { throw InputHistoryError.vaultLocked }
+            inbox = try self.inbox(for: source, binding: current)
+        } else {
+            inbox = Curve25519.KeyAgreement.PrivateKey()
+        }
+        do {
+            try bind(inbox, to: target)
+            guard let back = try binding(), back.vaultID == target.vaultID, back.inbox.rawRepresentation == inbox.publicKey.rawRepresentation,
+                  (try? self.inbox(for: target, binding: back).rawRepresentation) == inbox.rawRepresentation
+            else { throw InputHistoryError.invalid }
+        } catch {
+            if let stored {
+                try? publicKeys.write(stored, service: bindingService, context: LAContext())
+            } else {
+                try? publicKeys.erase(service: bindingService)
+            }
+            throw error
+        }
+    }
+
     private func binding() throws -> Binding? {
         let context = LAContext()
         context.interactionNotAllowed = true
@@ -435,12 +473,17 @@ actor InputHistoryStore {
             return try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: raw)
         }
         let inbox = Curve25519.KeyAgreement.PrivateKey()
+        try bind(inbox, to: vault)
+        return inbox
+    }
+
+    /// Writes the binding that keeps `inbox` with `vault`.
+    private func bind(_ inbox: Curve25519.KeyAgreement.PrivateKey, to vault: InputHistoryVaultKey) throws {
         let header = Data([Self.keptVersion]) + Data(vault.vaultID.uuidString.utf8) + inbox.publicKey.rawRepresentation
         guard let sealed = try AES.GCM.seal(inbox.rawRepresentation, using: vault.key, authenticating: header).combined else {
             throw InputHistoryError.invalid
         }
         try publicKeys.write(header + sealed, service: bindingService, context: LAContext())
-        return inbox
     }
 
     /// The private key as it is stored: raw without an inbox, else `0x02 | encapsulated key | HPKE(private key)` sealed to the inbox

@@ -72,7 +72,10 @@ struct AutofillPageTests {
         }
         // The page shows the switches on its Settings tab and Input History on its Vault tab.
         let page = try source("WSurf/Settings/Pages/CredentialSettings.swift")
-        #expect(page.contains("AutofillOptions(context: context)") && page.contains("InputHistorySettings(context: context)"))
+        #expect(
+            page.contains("AutofillOptions(context: context)")
+                && page.contains("InputHistorySettings(context: context, vaults: model.vaults, selectedVaultID: model.selectedVaultID)")
+        )
     }
 
     // MARK: - The Vault tab's sections
