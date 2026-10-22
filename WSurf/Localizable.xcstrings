@@ -1949,6 +1949,9 @@
     "Choose a Different Match" : {
       "comment" : "Tooltip on the ⋯ button at the top of the lyrics view. Its menu lists the other entries the lyrics library holds for this song, so the user can pick a better one. Title Case."
     },
+    "Choose a layout" : {
+      "comment" : "Title of the setup screen that chooses the window style, Standard or Minimal."
+    },
     "Choose a location every time." : {
       "comment" : "Caption for the “Ask where to save each file” row in Settings search results. “Location” means a folder on disk."
     },
@@ -3311,6 +3314,9 @@
     },
     "Latest action: %@" : {
       "comment" : "Most recent tool used by an external MCP connection. The inserted action name is already localized."
+    },
+    "Layout" : {
+      "comment" : "Title of the Layout card in Settings › Appearance (a theme’s edges, corners and spacing), and VoiceOver name of the two window style choices on the setup screen. A noun."
     },
     "Leave blank to keep the saved token" : {
 

@@ -404,6 +404,7 @@ extension AppCoordinator {
             return false
         }
         if onboarding.isPresented {
+            onboarding.applyChoices(to: settings)
             onboarding.finish()
             return true
         }

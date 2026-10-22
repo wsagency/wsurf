@@ -11,6 +11,7 @@ final class OnboardingModel {
     enum Step: Int, CaseIterable {
         case welcome
         case model
+        case layout
         case extensions
         case bookmarks
         case finish
@@ -28,6 +29,9 @@ final class OnboardingModel {
     private(set) var step: Step?
 
     var modelChoice: ModelChoice = .onDevice
+
+    /// The layout picked during setup; nil until the person picks one.
+    var windowStyleChoice: BrowserWindowStyle?
 
     private(set) var handedOverToSystemSettings = false
 
@@ -77,6 +81,14 @@ final class OnboardingModel {
         guard step != nil else { return }
         defaults.set(true, forKey: Self.completedKey)
         step = nil
+    }
+
+    /// Applies the setup choices to the settings. Called once, when setup ends: skipping without choosing keeps
+    /// Standard, and installs that already completed setup never see the step.
+    func applyChoices(to settings: BrowserSettings) {
+        if let windowStyleChoice {
+            settings.windowStyle = windowStyleChoice
+        }
     }
 
     func requestDefaultBrowser() {
