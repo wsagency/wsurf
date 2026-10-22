@@ -74,7 +74,7 @@ struct AppearanceLayoutSection: View {
                             \.tabIconSize, in: ThemeAdjustment.tabIconSizeRange)
             }
             .disclosureGroupStyle(ClickableDisclosureStyle())
-            .padding(SettingsMetrics.cardInset)
+            .padding(.vertical, SettingsMetrics.rowPaddingV)
         }
         .settingsAnchor("appearance.layout")
         .onChange(of: highlight, initial: true) { _, value in

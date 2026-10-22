@@ -86,7 +86,7 @@ struct AppearanceColorsSection: View {
                 }
             }
             .disclosureGroupStyle(ClickableDisclosureStyle())
-            .padding(SettingsMetrics.cardInset)
+            .padding(.vertical, SettingsMetrics.rowPaddingV)
         }
         .settingsAnchor("appearance.colors")
         .onChange(of: highlight, initial: true) { _, value in
