@@ -923,8 +923,11 @@ needs a window), renders and answers. The user's selected tab, key window, keybo
 were; WSurf is never activated or raised for it. `newTab` opens behind the user's tab, and `openComparison` splits its pair
 without showing it. `switchTab` is needed only to show a tab to the user.
 
-- A controlled tab keeps rendering while other apps cover its window: WebKit through a per-tab setting, Chromium through a
-  process-wide switch. A minimized window is not supported.
+- A controlled tab keeps rendering while other apps cover its window, and its page reports `document.visibilityState`
+  `visible` (`document.hidden` false), so timers, animation frames and checks that wait for the page to be seen, such as bot
+  checks, run as if the user were looking. WebKit does this through a per-tab setting that follows the grant: it applies as
+  soon as a tab is shared and ends when nobody controls it. Chromium does it through a process-wide switch. No script is
+  added to the page. The user's own tabs are unchanged. A minimized window, or WSurf hidden with ⌘H, is not supported.
 - Reading, clicking, typing (setter-based), selecting, filling, scrolling, DOM drags, Chromium's trusted pointer drags,
   waits, screenshots, diagnostics, scripts and DOM edits work in the background.
 - Anything that needs keyboard focus or the real pointer is refused in the background instead of taking them from the

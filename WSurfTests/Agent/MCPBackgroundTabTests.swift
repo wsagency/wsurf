@@ -131,6 +131,25 @@ struct MCPBackgroundTabTests {
         (window.firstResponder as? NSView)?.isDescendant(of: tab.page) == true
     }
 
+    /// A tab the person had on screen and left, which no connection holds: it waits on the shelf, as `shared` does.
+    private func parkedTab(_ rig: Rig, path: String) async throws -> BrowserTab {
+        let url = try rig.server.url(path)
+        let tab = rig.browser.newTab(url: url, activate: false)
+        let container = WebViewContainer(page: tab.page)
+        container.parksWhenIdle = true
+        container.frame = rig.window.contentView?.bounds ?? .zero
+        rig.window.contentView?.addSubview(container)
+        try #require(await waitUntil { tab.page.url == url && !tab.page.isLoading && tab.page.mainDocumentID != nil })
+        container.removeFromSuperview()
+        try #require(tab.page.isParked)
+        return tab
+    }
+
+    /// What the page itself reads: `document.visibilityState` and `document.hidden`.
+    private func visibility(of tab: BrowserTab) async -> String {
+        (try? await tab.page.evaluateJavaScript("document.visibilityState + ' ' + document.hidden")) as? String ?? "unanswered"
+    }
+
     // MARK: Working in the background
 
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
@@ -233,6 +252,40 @@ struct MCPBackgroundTabTests {
             #expect(rig.shared.processState.externalControllers.isEmpty)
             #expect(rig.browser.protectionReason(for: rig.shared) == nil)
             #expect(!rig.shared.page.ignoresWindowOcclusion, "the page pauses again when covered once nobody controls it")
+        }
+    }
+
+    /// A controlled tab's page behaves as if the person were looking, also with its window covered: it reports visible, so its
+    /// timers, rendering and checks that wait to be seen (bot checks) run. The person's own background tab keeps what its
+    /// engine reports. The window moves off every screen, which counts as covered: WebKit hides the person's tab there, and
+    /// Chromium's process-wide switch keeps every tab visible. Ending and giving back the grant turns WebKit's tab hidden and
+    /// visible again at once, while the window stays covered.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aControlledBackgroundTabReportsVisibleAndTheOthersAreUnchanged(engine: BrowserEngine) async throws {
+        try await withRig(engine: engine) { rig in
+            let mine = try await parkedTab(rig, path: "/other")
+            rig.window.setFrameOrigin(NSPoint(x: -30_000, y: -30_000))
+            let covered = await waitUntil(timeout: .seconds(3)) { !rig.window.occlusionState.contains(.visible) }
+            let hidesCovered = covered && engine == .webKit
+            if hidesCovered {
+                #expect(await waitUntil { await visibility(of: mine) == "hidden true" }, "a covered window hides the person's WebKit tab")
+            }
+            let before = await visibility(of: mine)
+
+            let read = try await call(rig, "readPage", rig.shared)
+            #expect(read.isError == false, "\(engine): \(text(read))")
+            #expect(await waitUntil { await visibility(of: rig.shared) == "visible false" }, "\(engine), covered \(covered): the controlled tab is seen")
+            #expect(await visibility(of: mine) == before, "\(engine): the person's tab is unchanged")
+
+            let grant = try #require(rig.session.grants[rig.shared.id])
+            rig.session.grants[rig.shared.id] = nil
+            if hidesCovered {
+                #expect(await waitUntil { await visibility(of: rig.shared) == "hidden true" }, "once nobody controls it, the tab is hidden again")
+            }
+            rig.session.grants[rig.shared.id] = grant
+            #expect(await waitUntil { await visibility(of: rig.shared) == "visible false" }, "\(engine): a new grant shows the tab at once")
+            #expect(await visibility(of: mine) == before)
+            #expect(rig.browser.activeTabID == rig.owner.id && rig.shared.page.isParked, "\(engine): nothing was shown to the person")
         }
     }
 

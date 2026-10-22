@@ -45,16 +45,15 @@ extension MCPBrowserSession {
         takenBack.insert(tab.id)
     }
 
-    /// Records on each tab whether this connection holds a grant for it: the tab's AI mark and its protection from unloading
-    /// follow the grants exactly, whichever path changed them. A tab nobody controls any more pauses again while covered.
+    /// Records on each tab whether this connection holds a grant for it: the tab's AI mark, its protection from unloading and
+    /// whether its page counts as seen while its window is covered follow the grants exactly, whichever path changed them. A
+    /// tab nobody controls any more is hidden and pauses again while covered.
     func markControlledTabs(previous: [UUID: Grant]) {
         let changed = Set(previous.keys).symmetricDifference(grants.keys)
         guard !changed.isEmpty else { return }
         for tab in browser.tabs where changed.contains(tab.id) {
             tab.processState.setExternalController(id, holds: grants[tab.id] != nil)
-            if tab.processState.externalControllers.isEmpty {
-                tab.liveView?.ignoresWindowOcclusion = false
-            }
+            tab.liveView?.ignoresWindowOcclusion = !tab.processState.externalControllers.isEmpty
         }
     }
 
