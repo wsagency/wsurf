@@ -315,6 +315,8 @@ private struct ProfileDetailPage: View {
         lookSection(profile)
 
         historySection(profile)
+
+        ProfileICloudTabsSection(profile: profile)
     }
 
     private func heading(_ profile: Profile) -> some View {

@@ -166,6 +166,9 @@
     "Development" : {
       "comment" : "Choice in the Without asking menu on a paired app’s row, and the name of the access level that adds inspection, diagnostics and device emulation to control. Title Case."
     },
+    "Device" : {
+      "comment" : "Name shown in the sidebar’s device picker for another device that has no name of its own. A single word. Sentence case."
+    },
     "Enter a site like staging.example.com or staging.example.com:8443. Wildcards and address ranges aren’t supported." : {
       "comment" : "Error under the developer sites when the typed site is not an exact host with an optional port."
     },
@@ -373,6 +376,9 @@
     "Tabs cannot move between profiles or private sessions." : {
 
     },
+    "Tabs open in this profile appear on your other devices, and theirs appear in the sidebar here. Private windows are never shared." : {
+      "comment" : "Caption of the Share tabs through iCloud switch. It says what sharing does and that private windows are left out. “Private windows” is the app’s name for windows of Private Browsing."
+    },
     "The browser could not create the requested window." : {
 
     },
@@ -398,7 +404,7 @@
 
     },
     "This Mac" : {
-      "comment" : "Row title for the built-in developer sites on this computer (localhost, 127.0.0.1 and [::1]). Capitalized as a name."
+      "comment" : "Two places use it. Row title for the built-in developer sites on this computer (localhost, 127.0.0.1 and [::1]). And the first segment of the sidebar’s device picker, which lists this Mac’s own tabs. Capitalized as a name."
     },
     "This page wants to open %@." : {
 
@@ -1011,6 +1017,29 @@
     },
     "%lld more" : {
 
+    },
+    "%lld more tabs not shown" : {
+      "comment" : "Note at the end of another device’s list of tabs in the sidebar. That many tabs were left out because the shared list was too large. %lld is a number of at least 1. Sentence case.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more tab not shown"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more tabs not shown"
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "%lld of %lld" : {
       "comment" : "Match position in the find bar: current match, then total matches, e.g. “3 of 17”. Sits between the field and the arrow buttons.",
@@ -3064,6 +3093,9 @@
     "Hundreds of models from every vendor, with a single key." : {
       "comment" : "One-line description of the OpenRouter provider in the provider picker. Key means API key. OpenRouter is a vendor name and is not in this string."
     },
+    "iCloud" : {
+      "comment" : "Title of the section on a profile’s settings page that holds the switch for sharing the profile’s tabs through iCloud. iCloud is Apple’s product name — leave as is."
+    },
     "Icons only" : {
       "comment" : "Title of the switch on the Appearance settings page that narrows the sidebar to favicons alone, and the title of that same row in Settings search. Sentence case."
     },
@@ -3305,6 +3337,9 @@
     },
     "Last name" : {
 
+    },
+    "Last seen %@" : {
+      "comment" : "Line at the top of the sidebar’s list of another device’s tabs when that device has not reported for a while. %@ is a phrase such as “2 hours ago”. A fragment, not a sentence. Sentence case."
     },
     "Last used %@" : {
       "comment" : "When a profile was last open, shown in the profile list. %@ is a phrase such as “2 days ago”. A fragment, not a sentence."
@@ -3836,6 +3871,9 @@
     "No notes for this release." : {
       "comment" : "Shown in the release notes sheet when the update carries no description."
     },
+    "No open tabs" : {
+      "comment" : "Shown in the sidebar in place of another device’s list when that device shares no tabs. Sentence case."
+    },
     "No pages match “%@”." : {
       "comment" : "Empty state in the History view when a search returns nothing. %@ is the text the user typed into the search field. Keep the curly quotation marks and the final period."
     },
@@ -4129,6 +4167,9 @@
     },
     "Opens a new issue on WSurf’s repository." : {
 
+    },
+    "Opens in a new tab" : {
+      "comment" : "VoiceOver hint of a row in the sidebar’s list of another device’s tabs: activating it opens that page in a new tab on this Mac. Sentence case."
     },
     "Optional" : {
 
@@ -5137,6 +5178,9 @@
     "SHA-256: %@" : {
 
     },
+    "Share tabs through iCloud" : {
+      "comment" : "Row title on a profile’s settings page: the switch that shares the tabs open in this profile with the person’s other devices through iCloud. iCloud is Apple’s product name — leave as is. Sentence case."
+    },
     "Shared tabs: %lld · Tool calls: %lld" : {
       "comment" : "Native MCP connection settings or access prompt. MCP is the protocol name. Inserted client names, website addresses, and page titles are supplied at runtime; do not translate them."
     },
@@ -5239,6 +5283,9 @@
     "Show Tabs" : {
       "comment" : "In the Minimal window style: the View menu item, command palette command and tooltip of the bar’s tab button that slide in the list of tabs. Title Case."
     },
+    "Show tabs from" : {
+      "comment" : "VoiceOver label of the control at the top of the sidebar that chooses whose tabs the sidebar lists: This Mac or one of the person’s other devices. The control does not show this text. Sentence case."
+    },
     "Show the whole address of the page in the address bar, not just the website name." : {
       "comment" : "Caption under the Show full website address switch on the General settings page."
     },
@@ -5277,6 +5324,9 @@
     },
     "Sign in with the service" : {
 
+    },
+    "Sign in with your Apple Account in System Settings to share tabs." : {
+      "comment" : "Note under the iCloud section of a profile’s settings page, shown when this Mac is not signed in to iCloud. Apple Account and System Settings are Apple’s own names: use the wording macOS uses in the target language. A sentence."
     },
     "Sign out" : {
 
@@ -6398,6 +6448,9 @@
     },
     "Window" : {
       "comment" : "Title of one of the menus in the menu bar. Use Apple’s own wording for the standard Window menu in the target language."
+    },
+    "Window %lld" : {
+      "comment" : "Heading above one window’s tabs in the sidebar’s list of another device that has two or more windows open. %lld is the window’s number, starting at 1. Sentence case."
     },
     "Window style" : {
 

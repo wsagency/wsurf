@@ -4,6 +4,7 @@
 
 import AppKit
 import SwiftUI
+import WSurfCore
 
 struct Sidebar: View {
     let browser: BrowserModel
@@ -21,6 +22,8 @@ struct Sidebar: View {
     @State private var bottomObscuredHeight: CGFloat = 0
     @State private var newFolderDrop = SidebarNewFolderDrop()
     @State private var pinDrop = SidebarPinDrop()
+    /// The install ID of the other device whose tabs are shown, or nil for This Mac.
+    @State private var shownDevice: String?
 
     private var selection: SidebarSelection {
         browser.sidebarSelection
@@ -82,31 +85,59 @@ struct Sidebar: View {
         )
     }
 
-    var body: some View {
-        WorkspaceList(
+    private func topBar(remote: [RemoteDeviceSession]) -> SidebarTopChrome {
+        SidebarTopChrome(
             browser: browser,
             coordinator: coordinator,
             selection: selection,
             newFolderDrop: newFolderDrop,
             pinDrop: pinDrop,
-            frames: frames,
-            bottomClearance: bottomObscuredHeight,
-            topBar: SidebarTopChrome(
-                browser: browser,
-                coordinator: coordinator,
-                selection: selection,
-                newFolderDrop: newFolderDrop,
-                pinDrop: pinDrop
-            ),
-            bottomBar: SidebarBottomChrome(
-                coordinator: coordinator,
-                obscuredHeight: $bottomObscuredHeight
-            ),
-            contentInsets: contentInsets
+            remote: remote,
+            shownDevice: $shownDevice
         )
-        .background {
-            if coordinator.showsSpaceSwitcher {
-                SpaceSwipeCatcher { coordinator.switchSpace(by: $0) }
+    }
+
+    /// The bottom chrome of either list. A remote device's list has no spaces, so its switcher is left out.
+    private func bottomBar(showsSpaces: Bool) -> SidebarBottomChrome {
+        SidebarBottomChrome(
+            coordinator: coordinator,
+            obscuredHeight: $bottomObscuredHeight,
+            showsSpaceSwitcher: showsSpaces
+        )
+    }
+
+    var body: some View {
+        let remote = CloudTabs.shared?.remoteSessions(for: coordinator.context.profile) ?? []
+        let shown = sidebarStyle == .full ? SidebarDeviceFilter.shown(shownDevice, in: remote) : nil
+        Group {
+            if let shown {
+                RemoteSessionList(
+                    session: shown,
+                    coordinator: coordinator,
+                    bottomClearance: bottomObscuredHeight,
+                    topBar: topBar(remote: remote),
+                    bottomBar: bottomBar(showsSpaces: false),
+                    contentInsets: contentInsets,
+                    onOpen: { shownDevice = nil }
+                )
+            } else {
+                WorkspaceList(
+                    browser: browser,
+                    coordinator: coordinator,
+                    selection: selection,
+                    newFolderDrop: newFolderDrop,
+                    pinDrop: pinDrop,
+                    frames: frames,
+                    bottomClearance: bottomObscuredHeight,
+                    topBar: topBar(remote: remote),
+                    bottomBar: bottomBar(showsSpaces: coordinator.showsSpaceSwitcher),
+                    contentInsets: contentInsets
+                )
+                .background {
+                    if coordinator.showsSpaceSwitcher {
+                        SpaceSwipeCatcher { coordinator.switchSpace(by: $0) }
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -132,6 +163,18 @@ struct Sidebar: View {
         .environment(\.colorScheme, inkIsLight ? .light : .dark)
         .animation(nil, value: inkIsLight)
         .animation(Theme.Motion.settle, value: coordinator.media.model.isActive)
+        .onChange(of: coordinator.context.profile.id) {
+            shownDevice = nil
+        }
+        // A space chosen by menu, swipe, ⌘K or a link shows this Mac's list of that space.
+        .onChange(of: browser.currentSpaceID) {
+            shownDevice = nil
+        }
+        .onChange(of: shownDevice) { _, device in
+            if device != nil {
+                CloudTabs.shared?.refresh()
+            }
+        }
     }
 }
 
@@ -141,9 +184,18 @@ private struct SidebarTopChrome: View {
     let selection: SidebarSelection
     let newFolderDrop: SidebarNewFolderDrop
     let pinDrop: SidebarPinDrop
+    let remote: [RemoteDeviceSession]
+    @Binding var shownDevice: String?
+
+    @Environment(\.sidebarStyle) private var sidebarStyle
 
     private var offersPin: Bool {
         coordinator.sidebarDrag.acceptsPin
+    }
+
+    /// Favorites belong to This Mac. Another device's list brings its own.
+    private var showsFavorites: Bool {
+        sidebarStyle != .full || SidebarDeviceFilter.shown(shownDevice, in: remote) == nil
     }
 
     var body: some View {
@@ -152,17 +204,24 @@ private struct SidebarTopChrome: View {
                 browser: browser,
                 coordinator: coordinator,
                 selection: selection,
-                newFolderDrop: newFolderDrop
+                newFolderDrop: newFolderDrop,
+                allowsNewFolder: showsFavorites
             )
 
-            SidebarFavorites(browser: browser, coordinator: coordinator)
-                .opacity(offersPin ? 0 : 1)
-                .overlay {
-                    if offersPin {
-                        SidebarDropMark(kind: .pin, isArmed: pinDrop.isArmed)
+            if sidebarStyle == .full, !remote.isEmpty {
+                SidebarDevicePicker(sessions: remote, shown: $shownDevice)
+            }
+
+            if showsFavorites {
+                SidebarFavorites(browser: browser, coordinator: coordinator)
+                    .opacity(offersPin ? 0 : 1)
+                    .overlay {
+                        if offersPin {
+                            SidebarDropMark(kind: .pin, isArmed: pinDrop.isArmed)
+                        }
                     }
-                }
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { pinDrop.frame = $0 }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { pinDrop.frame = $0 }
+            }
         }
         .frame(maxWidth: .infinity)
     }
@@ -171,6 +230,7 @@ private struct SidebarTopChrome: View {
 private struct SidebarBottomChrome: View {
     let coordinator: AppCoordinator
     @Binding var obscuredHeight: CGFloat
+    let showsSpaceSwitcher: Bool
 
     @Environment(\.sidebarStyle) private var sidebarStyle
 
@@ -191,7 +251,7 @@ private struct SidebarBottomChrome: View {
 
             if sidebarStyle == .icons {
                 VStack(spacing: 6) {
-                    if coordinator.showsSpaceSwitcher {
+                    if showsSpaceSwitcher {
                         SidebarSpaceSwitcher(coordinator: coordinator, axis: .vertical)
                     }
                     SidebarProfileControl(coordinator: coordinator)
@@ -203,7 +263,7 @@ private struct SidebarBottomChrome: View {
                     SidebarProfileControl(coordinator: coordinator)
                         .padding(.leading, SidebarMetrics.profileLeading)
 
-                    if coordinator.showsSpaceSwitcher {
+                    if showsSpaceSwitcher {
                         SidebarSpaceSwitcher(coordinator: coordinator)
                     } else {
                         Spacer(minLength: 0)
@@ -269,6 +329,8 @@ struct SidebarTopRow: View {
     let coordinator: AppCoordinator
     let selection: SidebarSelection
     let newFolderDrop: SidebarNewFolderDrop
+    /// False while another device's list is shown: a new folder would appear in a list that is not on screen.
+    var allowsNewFolder = true
 
     @Environment(\.sidebarStyle) private var sidebarStyle
     @Environment(\.sidebarIsFloating) private var isFloating
@@ -285,7 +347,8 @@ struct SidebarTopRow: View {
                         browser: browser,
                         coordinator: coordinator,
                         selection: selection,
-                        newFolderDrop: newFolderDrop
+                        newFolderDrop: newFolderDrop,
+                        allowsNewFolder: allowsNewFolder
                     )
                 }
             } else {
@@ -295,7 +358,8 @@ struct SidebarTopRow: View {
                         browser: browser,
                         coordinator: coordinator,
                         selection: selection,
-                        newFolderDrop: newFolderDrop
+                        newFolderDrop: newFolderDrop,
+                        allowsNewFolder: allowsNewFolder
                     )
                 }
             }
@@ -370,6 +434,7 @@ private struct SidebarTopActions: View {
     let coordinator: AppCoordinator
     let selection: SidebarSelection
     let newFolderDrop: SidebarNewFolderDrop
+    let allowsNewFolder: Bool
 
     var body: some View {
         Group {
@@ -390,6 +455,7 @@ private struct SidebarTopActions: View {
                     : browser.sidebarTree.normalized(selection.items))
                 selection.clear()
             }
+            .disabled(!allowsNewFolder)
             .overlay {
                 if newFolderDrop.isArmed {
                     Circle()

@@ -13,7 +13,7 @@ private enum SpringLoad {
     static let dwell: Duration = .milliseconds(250)
 }
 
-private struct WorkspaceListFadeMask: View {
+struct WorkspaceListFadeMask: View {
     var body: some View {
         VStack(spacing: 0) {
             Rectangle()
