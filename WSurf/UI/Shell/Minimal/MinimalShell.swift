@@ -19,6 +19,7 @@ struct MinimalShell: View {
     @State private var tabButtonFrame: CGRect = .zero
     @State private var tabListFrame: CGRect = .zero
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.titleStripInset) private var titleStripInset
 
     private static let edgeSensorWidth: CGFloat = 10
 
@@ -52,7 +53,7 @@ struct MinimalShell: View {
                         raiseIsland(towardTop)
                     },
                     onEdge: { if $0 == edge { raiseIsland(true) } },
-                    onPointerDown: { closeTabList(unlessAt: $0, height: proxy.size.height) },
+                    onPointerDown: { closeTabList(unlessAt: $0, height: proxy.size.height + titleStripInset) },
                     pinsWindowControls: coordinator.isMinimalTabListOpen
                 )
                 .allowsHitTesting(false)
@@ -147,7 +148,7 @@ struct MinimalShell: View {
     }
 
     /// A click beside the open list closes it, unless it lands on the bar's tab button (which toggles it itself) or the
-    /// profile switcher the list opened.
+    /// profile switcher the list opened. `height` is the window's, strip included: the point is a window point.
     private func closeTabList(unlessAt windowPoint: CGPoint, height: CGFloat) {
         guard coordinator.isMinimalTabListOpen, !coordinator.isProfileSwitcherOpen else { return }
         let point = CGPoint(x: windowPoint.x, y: height - windowPoint.y)

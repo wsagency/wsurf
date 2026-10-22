@@ -30,6 +30,7 @@ struct BrowserView: View {
     @State private var containerWidth: CGFloat = 0
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.titleStripInset) private var titleStripInset
 
     private var isMinimal: Bool {
         (style ?? BrowserSettings.application.windowStyle) == .minimal
@@ -73,14 +74,6 @@ struct BrowserView: View {
         )
 
         ZStack(alignment: .leading) {
-            LoomAmbientBackdrop(
-                sampledPageColor: ChromeBand.pageColor(
-                    browser: browser,
-                    coordinator: coordinator
-                ),
-                settings: BrowserSettings.application
-            )
-
             ContentArea(
                 browser: browser,
                 coordinator: coordinator,
@@ -138,8 +131,10 @@ struct BrowserView: View {
             SidebarDragOverlay(browser: browser, model: coordinator.sidebarDrag)
                 .environment(\.sidebarStyle, isMinimal ? .full : sidebar.style)
 
+            // Flights fly between window points, so the layer is lifted back to the window's top.
             DownloadFlightLayer(flights: coordinator.downloadFlights)
                 .environment(\.sidebarStyle, isMinimal ? .full : sidebar.style)
+                .offset(y: -titleStripInset)
 
             PaneDragOverlay(browser: browser, model: coordinator.sidebarDrag)
                 .environment(\.sidebarStyle, isMinimal ? .full : sidebar.style)
@@ -184,7 +179,7 @@ struct BrowserView: View {
                             coordinator.isProfileSwitcherOpen = false
                         }
                         .padding(.leading, anchor.minX)
-                        .padding(.bottom, max(0, proxy.size.height - anchor.minY + 6))
+                        .padding(.bottom, max(0, proxy.size.height + titleStripInset - anchor.minY + 6))
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                 }
@@ -195,6 +190,17 @@ struct BrowserView: View {
                 OnboardingOverlay(coordinator: coordinator, model: coordinator.onboarding)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+        // Full screen: every layout starts below the system's title strip; the backdrop still fills the window.
+        .padding(.top, titleStripInset)
+        .background {
+            LoomAmbientBackdrop(
+                sampledPageColor: ChromeBand.pageColor(
+                    browser: browser,
+                    coordinator: coordinator
+                ),
+                settings: BrowserSettings.application
+            )
         }
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .global)

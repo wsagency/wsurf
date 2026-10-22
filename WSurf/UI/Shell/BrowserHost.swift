@@ -316,15 +316,20 @@ final class BrowserHost: NSObject, NSWindowDelegate {
 
     // MARK: - State out
 
+    private var isFullScreen: Bool {
+        window?.styleMask.contains(.fullScreen) == true
+    }
+
     private var windowControlsInset: CGFloat {
-        guard let window, window.styleMask.contains(.fullScreen) else {
-            return Self.windowControlsInset
-        }
-        return 0
+        isFullScreen ? 0 : Self.windowControlsInset
     }
 
     private func publish() {
-        coordinator?.hostDidChange(visible: isVisible, controlsInset: windowControlsInset)
+        coordinator?.hostDidChange(
+            visible: isVisible,
+            controlsInset: windowControlsInset,
+            titleStripInset: BrowserWindowMetrics.fullScreenTitleStrip(isFullScreen: isFullScreen)
+        )
     }
 }
 
@@ -438,6 +443,7 @@ struct BrowserRootView: View {
             .disclosureGroupStyle(ClickableDisclosureStyle())
             .writingToolsAffordanceVisibility(.hidden)
             .environment(\.windowControlsInset, coordinator.windowControlsInset)
+            .environment(\.titleStripInset, coordinator.titleStripInset)
             .environment(\.profileFavicons, coordinator.browser.context.favicons)
             .environment(\.assistantProviderID, coordinator.selectedProvider.id)
             .onChange(of: coordinator.windowTitle) { _, _ in
@@ -447,10 +453,31 @@ struct BrowserRootView: View {
 }
 extension EnvironmentValues {
     @Entry var windowControlsInset: CGFloat = 0
+    /// How far below the window's top edge the layout starts: the system's title strip in full screen, else 0.
+    @Entry var titleStripInset: CGFloat = 0
 }
 
 nonisolated enum BrowserWindowMetrics {
     static let minWidth: CGFloat = 680
+
+    /// The titlebar height AppKit reports for a window without a toolbar, and the least the strip is ever given.
+    private static let plainTitlebarHeight: CGFloat = 28
+
+    /// In full screen the system draws its own strip, with the traffic lights, over the top of the window when the pointer
+    /// reaches the top edge or the menu bar comes down. The strip floats over the content instead of making room for it,
+    /// and the browser window is full-size content with no safe area, so a layout that starts at the window's top has its
+    /// toolbar and address field under it. Every layout starts this far lower in full screen. Windowed, the traffic lights
+    /// sit in the toolbar's own leading inset and nothing is reserved.
+    @MainActor
+    static func fullScreenTitleStrip(isFullScreen: Bool) -> CGFloat {
+        guard isFullScreen else { return 0 }
+        let content = NSRect(x: 0, y: 0, width: 100, height: 100)
+        let frame = NSWindow.frameRect(
+            forContentRect: content,
+            styleMask: [.titled, .closable, .miniaturizable, .resizable]
+        )
+        return max(frame.height - content.height, plainTitlebarHeight)
+    }
 }
 
 private final class BrowserWindow: NSWindow {
