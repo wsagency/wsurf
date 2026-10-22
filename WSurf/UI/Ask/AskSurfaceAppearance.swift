@@ -16,7 +16,7 @@ enum AskSurfaceStatus: Equatable {
         case .warning:
             Theme.warning
         case .agent:
-            Theme.accent
+            Theme.assistant
         }
     }
 }

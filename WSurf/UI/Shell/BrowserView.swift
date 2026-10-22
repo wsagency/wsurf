@@ -207,6 +207,9 @@ struct BrowserView: View {
             settingsWorkspace.adoptProfile(coordinator: coordinator)
         }
         .modifier(TranslationDownloadHost(downloads: coordinator.translationDownloads))
+        // Switches, sliders and progress bars, in the page chrome and in Settings, take the theme's accent. A theme
+        // without one keeps the macOS accent color.
+        .tint(Theme.systemAccent)
         .environment(\.profileFavicons, coordinator.context.favicons)
         .environment(\.assistantProviderID, coordinator.selectedProvider.id)
         .environment(\.chromeIsLight, scheme == .light)

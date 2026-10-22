@@ -30,11 +30,14 @@ struct AppearanceColorsSection: View {
                     .font(Theme.Font.label)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                DetailRow(title: "Accent color") {
+                DetailRow(title: "Accent color", caption: "Buttons, highlights, drop targets and the new-tab dot.") {
                     paletteColor(\.accent, label: "Accent color")
                 }
                 RowSeparator()
-                DetailRow(title: "Assistant color", caption: "Marks assistant activity. Follows the accent color until you choose one.") {
+                DetailRow(
+                    title: "Assistant color",
+                    caption: "The assistant’s activity, questions and buttons. A theme without one uses the accent color."
+                ) {
                     paletteColor(\.assistant, label: "Assistant color")
                 }
                 RowSeparator()

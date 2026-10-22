@@ -162,4 +162,77 @@ struct ThemeColorControlsTests {
             }
         }
     }
+
+    // MARK: - Accent and assistant
+
+    @Test func theAccentColorIsWhatTheThemeDrawsAndTheAppTints() throws {
+        for scheme in schemes {
+            try withSettings { settings in
+                edited(settings, scheme) { $0.accent = 0xFF0000 }
+                let variant = settings.resolvedTheme.variant(scheme)
+                #expect(same(variant.accent.srgb(scheme: scheme), rgb(Color(hex: 0xFF0000), scheme)), "\(scheme)")
+                #expect(contrast(of: rgb(variant.accentText, scheme), in: settings, scheme) >= 4.5, "the accent as text")
+                // The window's tint, and every switch and slider in it, is the system accent unless a theme sets one.
+                let tint = settings.resolvedTheme.systemAccent
+                #expect(same(rgb(tint, scheme), rgb(Color(hex: 0xFF0000), scheme)), "\(scheme): the tint follows the accent")
+            }
+        }
+    }
+
+    /// A row outside a window reads the light variant, and the default sidebar ground is dark: the dot is the
+    /// accent where it reaches 3:1 on that ground, so these colors are light enough to be drawn as themselves.
+    @Test func aRowsNewTabDotTakesTheThemesAccent() throws {
+        let settings = BrowserSettings.application
+        try #require(settings.themePreview == nil, "must not replace a theme preview in progress")
+        settings.beginThemePreview()
+        defer { settings.cancelThemePreview() }
+        let unseen = SidebarRowStyle.resolve(
+            isCurrent: false, isMarked: false, isUnseen: true, paletteOpen: false, increasedContrast: false
+        )
+
+        var dots: [NSColor] = []
+        for hex: UInt32 in [0xFFD54F, 0x66E0FF] {
+            settings.previewThemeColors(scheme: .light) { $0.accent = hex }
+            let ink = SidebarRowInkSource().ink(for: unseen)
+            dots.append(try #require(ink.mark.map { SidebarRowStyle.srgb($0, scheme: .light) }))
+        }
+        #expect(!same(dots[0], dots[1]), "a new accent color is a new dot")
+        #expect(dots[0].redComponent > dots[0].blueComponent && dots[1].blueComponent > dots[1].redComponent)
+    }
+
+    /// The default WSurf theme sets its own assistant color. A theme that sets none, like Standard, draws the assistant in its accent.
+    @Test func theAssistantColorIsWhatAssistantSurfacesDrawAndFollowsTheAccentWhenNoneIsSet() throws {
+        for scheme in schemes {
+            try withSettings { settings in
+                edited(settings, scheme) {
+                    $0.accent = 0xFF0000
+                    $0.assistant = nil
+                }
+                var variant = settings.resolvedTheme.variant(scheme)
+                #expect(same(variant.assistant.srgb(scheme: scheme), variant.accent.srgb(scheme: scheme)), "\(scheme): follows")
+                #expect(same(rgb(variant.assistantText, scheme), rgb(variant.accentText, scheme)))
+
+                edited(settings, scheme) { $0.assistant = 0x00AA00 }
+                variant = settings.resolvedTheme.variant(scheme)
+                #expect(same(variant.assistant.srgb(scheme: scheme), rgb(Color(hex: 0x00AA00), scheme)), "\(scheme): chosen")
+                #expect(same(variant.accent.srgb(scheme: scheme), rgb(Color(hex: 0xFF0000), scheme)), "the accent stays")
+                #expect(contrast(of: rgb(variant.assistantText, scheme), in: settings, scheme) >= 4.5, "as text")
+            }
+        }
+    }
+
+    @Test func theAssistantSurfaceTakesTheAssistantColorAndTheRestKeepsTheAccent() throws {
+        let settings = BrowserSettings.application
+        try #require(settings.themePreview == nil, "must not replace a theme preview in progress")
+        settings.beginThemePreview()
+        defer { settings.cancelThemePreview() }
+        settings.previewThemeColors(scheme: .light) {
+            $0.accent = 0xFF0000
+            $0.assistant = 0x00AA00
+        }
+
+        #expect(same(rgb(AskSurfaceStatus.agent.color, .light), rgb(Color(hex: 0x00AA00), .light)), "the assistant's tint")
+        #expect(same(rgb(Theme.assistant, .light), rgb(Color(hex: 0x00AA00), .light)))
+        #expect(same(rgb(Theme.accent, .light), rgb(Color(hex: 0xFF0000), .light)), "everything else keeps the accent")
+    }
 }

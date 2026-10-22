@@ -66,7 +66,7 @@ struct EffortSlider: View {
                     .frame(height: Metrics.track)
 
                 Capsule()
-                    .fill(effort == .max ? Theme.thinkingMax : Theme.accent)
+                    .fill(effort == .max ? Theme.thinkingMax : Theme.assistant)
                     .frame(width: knobX, height: Metrics.track)
                     .opacity(index == 0 ? 0 : 1)
 

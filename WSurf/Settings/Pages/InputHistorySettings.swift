@@ -447,7 +447,7 @@ private struct InputHistoryRowView: View {
         .padding(.vertical, 9)
         .padding(.horizontal, 6)
         .background(
-            isSelected ? Color.accentColor.opacity(0.12) : Color.clear,
+            isSelected ? Theme.systemAccent.opacity(0.12) : Color.clear,
             in: RoundedRectangle(cornerRadius: Theme.Radius.tight, style: .continuous)
         )
         .contentShape(Rectangle())
