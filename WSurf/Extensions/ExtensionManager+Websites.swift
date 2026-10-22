@@ -42,6 +42,7 @@ extension ExtensionManager {
     }
 
     func blockedHosts(id: String) -> [String] {
+        _ = actionRevision  // A view that lists the blocks redraws when `setAllowed` changes them.
         let stored = profile?.isPrivate == true ? sessionBlockedHosts[id] ?? [] : library.blockedHosts(for: id)
         return stored.compactMap(Self.normalizedHost)
     }
@@ -129,5 +130,6 @@ extension ExtensionManager {
             guard let website = Self.website(of: URL(string: tab.urlString)), Self.website(website, isCoveredBy: host) else { continue }
             tab.reload()
         }
+        noteActionUpdate()
     }
 }

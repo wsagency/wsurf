@@ -828,6 +828,10 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         if context.optionsPageURL != nil {
             menu.addItem(appMenuItem(title: String(localized: "Extension Options"), action: #selector(openOptionsFromMenu(_:)), id: id, window: window))
         }
+        if let item = siteMenuItem(for: id, in: window) {
+            menu.addItem(.separator())
+            menu.addItem(item)
+        }
         menu.addItem(.separator())
         let title: LocalizedStringResource = known?.isSystem == true ? "Disable Extension" : "Remove Extension"
         let action: Selector = known?.isSystem == true ? #selector(disableFromMenu(_:)) : #selector(removeFromMenu(_:))
@@ -835,15 +839,16 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
         return menu
     }
 
-    private func appMenuItem(
+    func appMenuItem(
         title: String,
         action: Selector,
         id: String,
-        window: ExtensionWindowAdapter
+        window: ExtensionWindowAdapter,
+        host: String? = nil
     ) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
-        item.representedObject = ExtensionMenuCommand(id: id, window: window)
+        item.representedObject = ExtensionMenuCommand(id: id, window: window, host: host)
         return item
     }
 

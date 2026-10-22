@@ -26,6 +26,7 @@ struct ExtensionsSettingsCard: View {
                     RowSeparator()
                 }
                 ExtensionRow(manager: manager, record: record)
+                ExtensionBlockedSites(manager: manager, record: record)
             }
         }
     }
@@ -51,6 +52,7 @@ struct SafariExtensionsSettingsCard: View {
                             RowSeparator()
                         }
                         ExtensionRow(manager: manager, record: record)
+                        ExtensionBlockedSites(manager: manager, record: record)
                     }
                 }
             }
@@ -200,6 +202,56 @@ private struct ExtensionRow: View {
             get: { record.enabled },
             set: { manager.setEnabled($0, id: record.id) }
         ))
+    }
+}
+
+/// The websites an extension is blocked on, folded under its row (Safari extensions too). Each has a button that lets the
+/// extension run there again. Nothing shows while it is blocked nowhere.
+private struct ExtensionBlockedSites: View {
+    let manager: ExtensionManager
+    let record: InstalledExtension
+
+    @State private var isExpanded = false
+
+    var body: some View {
+        let hosts = manager.blockedHosts(id: record.id)
+        if !hosts.isEmpty {
+            DisclosureGroup(isExpanded: $isExpanded) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(hosts, id: \.self) { host in
+                        HStack(spacing: 12) {
+                            Text(verbatim: host)
+                                .font(Theme.Font.body)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 8)
+                            SettingsButton(title: "Remove") {
+                                manager.setAllowed(true, on: host, id: record.id)
+                            }
+                            .help(Text("Allow \(record.displayName) on \(host) again"))
+                            // The visible word comes first so Voice Control still matches it.
+                            .accessibilityLabel(Text(verbatim: "\(String(localized: "Remove")), \(host)"))
+                        }
+                    }
+                    Text("Removing a website lets the extension run there again and reloads its open tabs.")
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(.tertiary)
+                    if manager.profile?.isPrivate == true {
+                        Text("Blocks made in a private window are forgotten when it closes.")
+                            .font(Theme.Font.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .padding(.top, 2)
+            } label: {
+                Text("Blocked websites (\(hosts.count))")
+                    .font(Theme.Font.label)
+                    .foregroundStyle(.secondary)
+            }
+            .disclosureGroupStyle(ClickableDisclosureStyle())
+            .padding(.horizontal, SettingsMetrics.rowPaddingH)
+            .padding(.bottom, SettingsMetrics.rowPaddingV)
+        }
     }
 }
 
