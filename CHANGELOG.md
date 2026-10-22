@@ -87,8 +87,8 @@ Everything since 0.1.6 (build 6). None of the screens and prompts below has been
 - With the vault locked, Input History's Show Entries asks you to unlock it in Settings › Autofill; it doesn't unlock on the click. Input History stays with the vault it is kept in until you choose Keep Here on another vault; making another vault the default doesn't move it.
 - A removed file stays on disk, encrypted, while History names it. History never empties by itself, so that room comes back only when the entry is moved to the Trash and the Trash is emptied.
 - Reading aloud and VoiceOver speak at the same time if both are on.
-- The new performance cases for the Minimal window (switching window styles, laying out the Minimal bar) have no budget yet, and the budget for switching spaces (0.4 s, 8,192 kB) is provisional; both wait for a baseline from a native test run.
-- The noisy memory checks described under 0.1.6 are addressed by the new gating above; it has not yet been confirmed in a native test run. While the sidebar is peeking, the experimental video player's shadow can still show around it.
+- A native test of the website sign-in ceremony (a profile with no vault asks the same question and hands off only on the choice) waited out its two-minute limit once in a full test run, late in the run; it passes every time when run alone. It is the late-run time-limit failure known from earlier builds, with no fault found in the sign-in itself.
+- The noisy memory checks described under 0.1.6 are addressed by the new gating above, and this build's native test run held every performance budget with it, including the new ones for the Minimal window and for switching spaces. While the sidebar is peeking, the experimental video player's shadow can still show around it.
 
 ## 0.1.6 (build 6) — 2026-10-21
 
