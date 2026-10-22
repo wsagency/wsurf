@@ -215,6 +215,13 @@ final class FakeSyncEngine: SyncEngine {
         }
     }
 
+    /// What the real engine does before it sends a change: takes it off its queue and asks the model for the record. The save is then
+    /// in flight until the test reports how it ended.
+    func handOut(_ id: SyncRecordID) -> SyncRecord? {
+        pending.removeAll { $0 == .saveRecord(id) }
+        return delegate?.record(for: id)
+    }
+
     func sendNow() async throws {
         sendCount += 1
         if offline {

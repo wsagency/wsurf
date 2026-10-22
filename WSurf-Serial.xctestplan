@@ -216,6 +216,7 @@
         "VaultStoreUnlockTests",
         "VaultStoreWrapperTests",
         "VaultSyncCodecTests",
+        "VaultSyncRaceTests",
         "VaultSyncTests",
         "VaultTablesTests",
         "VaultTrashIdentityTests",

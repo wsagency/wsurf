@@ -392,6 +392,11 @@ public final class VaultSync: SyncEngineDelegate {
         guard let account = Self.accountID(id.name),
               let outgoing = (try? database.read { try $0.outbox(key.vaultID, account) }) ?? nil
         else { return nil }
+        // A record from another Mac that is fetched and not yet merged is newer than the tag this row would be sent on, or as new:
+        // sending over it would overwrite it. The row waits; the merge decides what happens to it.
+        if let waiting = (try? database.read { try $0.inboxVersion(key.vaultID, account) }) ?? nil, waiting >= outgoing.version {
+            return nil
+        }
         handedOut[key, default: []].insert(account)
         return SyncRecord(id: id, type: .item, schema: 1, payload: outgoing.envelope, systemFields: fields)
     }

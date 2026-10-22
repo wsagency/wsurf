@@ -261,6 +261,13 @@ nonisolated final class VaultSyncDatabase: Sendable {
             try versions("inbox", vault)
         }
 
+        /// The version waiting in the inbox for one account, or nil when none waits.
+        func inboxVersion(_ vault: UUID, _ account: UUID) throws -> UInt64? {
+            try Int64.fetchOne(
+                db, sql: "SELECT version FROM inbox WHERE vaultID = ? AND accountID = ?", arguments: [vault.sqlText, account.sqlText]
+            ).map { UInt64(clamping: $0) }
+        }
+
         func save(_ row: InboxRow, vault: UUID) throws {
             try db.execute(
                 sql: "INSERT OR REPLACE INTO inbox(vaultID, accountID, version, envelope) VALUES (?, ?, ?, ?)",

@@ -242,25 +242,27 @@ extension VaultSync {
         }
         switch failure.failure {
         case .serverRecordChanged(let server):
-            var queuedAny = false
+            // Whether the server holds a version this Mac has not agreed on: it is merged, and this Mac's row never goes up over it.
+            var ahead = false
             try? database.write { tx in
                 try tx.setSystemFields(server.systemFields, vault: key.vaultID, name: failure.id.name)
                 guard let account, let version = try? VaultSyncCodec.version(of: server.payload),
-                      version > (try tx.base(key.vaultID, account)?.version ?? 0),
-                      version > (try tx.inboxVersions(key.vaultID)[account] ?? 0)
+                      version > (try tx.base(key.vaultID, account)?.version ?? 0)
                 else { return }
-                try tx.save(InboxRow(accountID: account, version: version, envelope: server.payload), vault: key.vaultID)
-                queuedAny = true
+                ahead = true
+                if version > (try tx.inboxVersions(key.vaultID)[account] ?? 0) {
+                    try tx.save(InboxRow(accountID: account, version: version, envelope: server.payload), vault: key.vaultID)
+                }
             }
             if isVaultRecord {
                 // This Mac's list wins on the server's tag: every list in it was sealed by a holder of the vault's key.
                 engine?.add([.saveRecord(failure.id)])
                 return false
             }
-            if queuedAny {
+            if ahead {
                 return true
             }
-            // Nothing newer to take in: the engine dropped the save, so send this Mac's row again on the server's tag.
+            // The server holds nothing newer than the base: the engine dropped the save, so send this Mac's row again on its tag.
             if let account, (try? database.read { try $0.outbox(key.vaultID, account) }) != nil {
                 engine?.add([.saveRecord(failure.id)])
             }
