@@ -261,4 +261,61 @@ struct VaultSyncRaceTests {
         let sent = try VaultSyncCodec.openItem(#require(rig.item(entry)).payload, accountID: entry.id, key: va.syncKey)
         #expect(sent.account?.password == "sealed before the quit", "and it is sent once they are")
     }
+
+    // MARK: A drain that decides a survivor beside the entry it absorbed
+
+    /// A merge arrives as the survivor, which holds the item of the entry merged away, and a removed state for that entry. The survivor
+    /// waits until the removal is in. Here the pair arrives while an earlier pair is still being brought in, so it is decided in the
+    /// same pass as its removal, against the vault as it was before the entry went: it must not stay as a row that says another entry
+    /// holds its item.
+    @Test func aSurvivorDecidedInTheSamePassAsTheRemovalOfItsAbsorbedEntryIsDecidedAgain() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        func pair(_ origin: String) -> (keep: CredentialAccount, gone: CredentialAccount) {
+            (
+                SyncVaultFixtures.account(username: "ada", password: "newer", origin: origin),
+                SyncVaultFixtures.account(username: "ada", password: "older", origin: origin)
+            )
+        }
+        let (first, second) = (pair("https://one.test"), pair("https://two.test"))
+        let (a, va) = try await rig.syncedMac(holding: [first.keep, first.gone, second.keep, second.gone])
+        let (b, vb) = try await rig.addedMac()
+        try await converge([a, b])
+
+        func merge(_ entries: (keep: CredentialAccount, gone: CredentialAccount)) async throws {
+            let identity = try CredentialExchangeCodec.externalItemID(for: entries.gone)
+            var survivor = entries.keep
+            survivor.mergedFrom = [MergedItemLink(accountID: entries.gone.id, exchangeAccountID: identity.account, exchangeItemID: identity.item)]
+            va.edit(survivor)
+            va.remove(entries.gone.id)
+            await a.wrote(va)
+            try await a.pump()
+        }
+        try await merge(first)
+        // B takes the first pair in, and waits for the host at the commit that brings its survivor in, after its removal.
+        let pause = HostPause()
+        let taken = vb.commitCount
+        b.host.beforeCommit = { count in
+            if count == taken + 1 {
+                await pause.wait()
+            }
+        }
+        try await b.engine.fetchNow()
+        _ = await waitUntil { pause.isWaiting }
+
+        // The second pair arrives together while it waits.
+        try await merge(second)
+        try await b.engine.fetchNow()
+        b.host.beforeCommit = nil
+        pause.release()
+        await b.sync.settle()
+        try await converge([a, b])
+
+        #expect(try await b.sync.conflicts(profileID: rig.profile, vaultID: rig.vaultID).isEmpty, "no survivor is left waiting")
+        for entries in [first, second] {
+            #expect(vb.account(entries.keep.id)?.mergedFrom?.map(\.accountID) == [entries.gone.id])
+            #expect(vb.account(entries.gone.id) == nil && vb.trash[entries.gone.id]?.password == "older")
+        }
+        #expect(rig.status(a) == .synced && rig.status(b) == .synced)
+    }
 }

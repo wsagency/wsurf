@@ -285,6 +285,9 @@ final class FakeVaultHost: VaultSyncHost {
     private var vaults: [Slot: FakeVault] = [:]
     /// Held once by the next `snapshot`, after it read the vault.
     var pauseAfterSnapshot: HostPause?
+    /// Run before each commit reaches its vault, with the number of commits that vault has taken so far: a test holds one here, as the
+    /// real host's awaits let other work run (a local edit, a lock, a record that arrives).
+    var beforeCommit: (@MainActor (Int) async -> Void)?
     /// How many times the vault was read in full, by any vault of this Mac.
     private(set) var snapshotCount = 0
     /// The next reads of a vault fail, as a read can, while the vault stays unlocked.
@@ -374,6 +377,7 @@ final class FakeVaultHost: VaultSyncHost {
 
     func commit(profileID: UUID, vaultID: UUID, lease: UInt64, writes: [AccountWrite], removing: [UUID: AccountStamp]) async throws -> UInt64 {
         guard let vault = vault(profile: profileID, vault: vaultID) else { throw CredentialVaultError.missingVault }
+        await beforeCommit?(vault.commitCount)
         return try vault.commit(lease: lease, writes: writes, removing: removing)
     }
 

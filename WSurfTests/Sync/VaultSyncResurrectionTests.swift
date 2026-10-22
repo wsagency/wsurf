@@ -222,4 +222,33 @@ struct VaultSyncResurrectionTests {
             #expect(rig.status(b) == .synced)
         }
     }
+
+    // MARK: (f) The survivor and the entry it absorbed, answered together
+
+    /// B deleted the survivor and edited the entry A merged into it, and answers both rows at once: Restore for the survivor, Move to
+    /// Trash for the entry. The survivor is checked against the vault as it is when the answer starts, with the entry still there to
+    /// hold its item; the entry is in the Trash by the time the answer ends. So the answer is given again, and the survivor comes back
+    /// instead of staying as a row that says another entry holds its item.
+    @Test func answeringTheSurvivorAndTheEntryItAbsorbedTogetherBringsTheSurvivorBack() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let entries = try await MergedEntries.synced(rig)
+        let (a, b, vb, keep, gone) = (entries.a, entries.b, entries.vb, entries.keep, entries.gone)
+        try await entries.merge(send: true)
+        // B deletes the survivor and edits the other entry before it has fetched: both are turned down with A’s records.
+        vb.remove(keep.id)
+        vb.edit(syncChanging(gone, password: "B edit"))
+        await b.wrote(vb)
+        try await b.pump()
+        try await entries.rounds()
+        #expect(try await kinds(b, rig) == [.changedThereDeletedHere, .deletedThereChangedHere])
+
+        try await b.sync.resolve(profileID: rig.profile, vaultID: rig.vaultID, accountIDs: [keep.id, gone.id], keepLocal: false)
+        try await entries.rounds()
+
+        #expect(try await kinds(b, rig).isEmpty, "the survivor is not left as an information row")
+        #expect(vb.account(keep.id)?.mergedFrom?.map(\.accountID) == [gone.id], "it is back, with the entry it absorbed")
+        #expect(vb.account(gone.id) == nil && vb.trash[gone.id]?.password == "B edit", "and B’s edit is in B’s Trash")
+        #expect(rig.status(a) == .synced && rig.status(b) == .synced)
+    }
 }

@@ -355,17 +355,21 @@ extension VaultSync {
                 for id in pass.answered where pass.conflicts[id] == nil {
                     try tx.deleteConflict(key.vaultID, id)
                 }
+                var conflicts = pass.conflicts
                 if !pass.removing.isEmpty {
-                    // An entry moved to the Trash may be what held the item another entry's record needs: those rows are decided again.
-                    for row in try tx.conflicts(key.vaultID, kind: .ambiguous) where pass.conflicts[row.accountID] == nil {
+                    // An entry moved to the Trash may be what held the item another entry's record needs: those rows are decided again,
+                    // and so are this pass's own, which were decided against the vault before the entry went.
+                    let waiting = try tx.conflicts(key.vaultID, kind: .ambiguous).filter { pass.conflicts[$0.accountID] == nil }
+                    for row in waiting + conflicts.values.filter({ $0.kind == .ambiguous }) {
                         if try tx.inboxVersion(key.vaultID, row.accountID) == nil {
                             try tx.save(InboxRow(accountID: row.accountID, version: row.version, envelope: row.envelope), vault: key.vaultID)
                         }
                         try tx.deleteConflict(key.vaultID, row.accountID)
+                        conflicts[row.accountID] = nil
                     }
                 }
-                for id in pass.conflicts.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
-                    if let conflict = pass.conflicts[id] {
+                for id in conflicts.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
+                    if let conflict = conflicts[id] {
                         try tx.save(conflict, vault: key.vaultID)
                     }
                 }
@@ -655,7 +659,9 @@ extension VaultSync {
         }
     }
 
-    private func resolveNow(_ key: VaultKey, accountIDs: Set<UUID>, keepLocal: Bool) async throws {
+    private func resolveNow(_ key: VaultKey, accountIDs ids: Set<UUID>, keepLocal: Bool) async throws {
+        var accountIDs = ids
+        var again = false
         var staleRetries = 0
         while true {
             let mine = token(key)
@@ -667,6 +673,7 @@ extension VaultSync {
             }
             let rows = ((try? database.read { try $0.conflicts(key.vaultID) }) ?? []).filter { accountIDs.contains($0.accountID) }
             var pass = SyncPass()
+            var refusedForAHolder: Set<UUID> = []
             let view = VaultView(snapshot)
             for conflict in rows {
                 let id = conflict.accountID
@@ -684,13 +691,31 @@ extension VaultSync {
                     // The answer would put a second holder of an item beside the first: the row says that now, and the person can
                     // dismiss it, instead of a button that does nothing.
                     pass.conflicts[id] = ConflictRow(accountID: id, version: conflict.version, kind: kind, envelope: conflict.envelope)
+                    if kind == .ambiguous {
+                        refusedForAHolder.insert(id)
+                    }
                     continue
                 }
                 apply(decision, id: id, version: conflict.version, envelope: conflict.envelope, view: view, into: &pass)
             }
+            if !pass.removing.isEmpty, !again {
+                // An answer set aside for the entry that holds the item is given again, as it was, once this pass has moved that entry
+                // to the Trash. (It would not do to decide the row again as a new record: that asks the question that was just answered.)
+                for id in refusedForAHolder {
+                    pass.conflicts[id] = nil
+                    pass.answered.remove(id)
+                }
+            } else {
+                refusedForAHolder = []
+            }
             switch await commit(&pass, key: key, lease: view.lease) {
             case .done(let revision):
                 record(pass, key: key, database: database, syncKey: syncKey, revision: max(revision ?? 0, snapshot.revision))
+                if !refusedForAHolder.isEmpty {
+                    accountIDs = refusedForAHolder
+                    again = true
+                    continue
+                }
                 // An answer that moved an entry to the Trash can free a record that waited for it.
                 await drain(key)
                 await produce(key)
